@@ -688,7 +688,7 @@ function renderFooter(): void {
   if (mode === "transcript") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
   else if (tab === 0) hints = k("?", "keys") + k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
   else hints = k("?", "keys") + k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
-  put(0, y, fit("", 0) + hints + CSI + "K");
+  put(0, y, fitStyled(hints, W - 1) + CSI + "K");
   if (toast && Date.now() - toastAt < 5000) {
     const icon = toastKind === "ok" ? "✔" : toastKind === "err" ? "✖" : toastKind === "warn" ? "⚠" : "ℹ";
     const col = toastKind === "ok" ? C.green : toastKind === "err" ? C.red : toastKind === "warn" ? C.yellow : C.cyan;
@@ -1294,11 +1294,11 @@ function termSize(): void {
 }
 function enter(): void {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
-  process.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h" + CSI + "2J");
+  process.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h" + CSI + "2J"); // ?7l: no autowrap, overlong rows never scroll
   termSize();
 }
 function leave(): void {
-  process.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[?1049l");
+  process.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[?1049l");
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
 }
 function quit(): never { leave(); process.exit(0); }
