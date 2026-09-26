@@ -7,12 +7,16 @@ import type { Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
 import { price, cost } from "./pricing.ts";
+import { toolArg } from "../../harness/common.ts";
+import { type TS, type Cnt, type Pend, newTS, cnt, done, norm, program, argv, execCmds, exitCodes, codexFailed, patchFiles, argSummary } from "./calls.ts";
 
 // one local day of one session; unk = tokens (or fx turns) whose price is unknown
-export interface Day { tools: number; names: Map<string, number>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
+// tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"
+export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Set<string>; days: Map<string, Day>; model: string;
+  pend: Map<string, Pend>; // calls waiting for their result, by call id (not persisted: a restart loses their duration)
   cx: number[]; // codex cumulative totals seen so far: input, cached, cache write, output
   fx: number[]; fxM: number; // fx usage snapshot seen so far: in, out, cache r, cache w, cost, +, −
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
@@ -37,7 +41,7 @@ export function lastDays(n: number): string[] {
 function nlines(s: string): number { if (!s) return 0; const n = s.split("\n").length; return s.endsWith("\n") ? n - 1 : n; }
 
 function newAcc(): Acc {
-  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", cx: [0, 0, 0, 0], fx: [0, 0, 0, 0, 0, 0, 0], fxM: 0,
+  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), cx: [0, 0, 0, 0], fx: [0, 0, 0, 0, 0, 0, 0], fxM: 0,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0 };
 }
 export function accOf(s: Sess): Acc {
@@ -55,13 +59,35 @@ function bucket(a: Acc, ms: number, iso: string): Day {
     if (k !== tsKey) { const d = new Date(iso); tsKey = k; tsDay = dayKey(d); tsHour = d.getHours(); }
   } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); }
   let d = a.days.get(tsDay);
-  if (!d) { d = { tools: 0, names: new Map<string, number>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
+  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
   return d;
 }
-function tool(a: Acc, d: Day, name: string): void {
+function tool(a: Acc, d: Day, name: string): TS {
   a.tools++; d.tools++;
-  d.names.set(name, (d.names.get(name) ?? 0) + 1);
+  let st = d.tt.get(name);
+  if (!st) { st = newTS(); d.tt.set(name, st); }
+  st.n = st.n + 1;
+  st.h[tsHour] = (st.h[tsHour] ?? 0) + 1;
   d.hours[tsHour] = (d.hours[tsHour] ?? 0) + 1;
+  return st;
+}
+// remember a call until its result shows up; shell commands are counted now, their errors on the result
+function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number, ts: string, arg: string, cmds: string[]): void {
+  const sh: Cnt[] = [];
+  for (const c of cmds) { const n = norm(c); if (n) { sh.push(cnt(d.prog, name + "\t" + program(n))); sh.push(cnt(d.cmds, name + "\t" + n)); } }
+  if (!id) return;
+  if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh });
+}
+function file(d: Day, name: string, path: string, add: number, del: number): void {
+  if (!path) return;
+  const c = cnt(d.files, name + "\t" + path);
+  c.add = c.add + add; c.del = c.del + del;
+}
+function isoMs(iso: string): number {
+  if (!iso) return 0;
+  const d = new Date(iso); const t = d.getTime();
+  return t > 0 ? t : 0;
 }
 function lines(a: Acc, d: Day, nAdd: number, nDel: number): void {
   a.add = a.add + nAdd;
@@ -78,11 +104,25 @@ function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: n
   else { const t = nIn + nOut + nCr + w5 + w1; a.unk += t; d.unk += t; }
 }
 
+// tool_result lines are the bulk of the bytes: no JSON.parse — the block's keys are unescaped only at the structural level
+function claudeResult(a: Acc, l: string): void {
+  const at = l.indexOf("\"tool_use_id\":\"");
+  const m = /^"tool_use_id":"([^"]+)"/.exec(l.slice(at, at + 200));
+  const id = m ? m[1] ?? "" : "";
+  const p = a.pend.get(id); if (!p) return;
+  a.pend.delete(id);
+  const tm = /"timestamp":"([^"]+)"/.exec(l.slice(at));
+  const t = tm ? isoMs(tm[1] ?? "") : 0;
+  const tr = l.indexOf("\"type\":\"tool_result\"");
+  const s0 = tr >= 0 && tr < at ? tr : at; const end = l.indexOf("]},\"uuid\":\"", at); // result block ≈ up to the end of the message (JSON-escaped size)
+  done(p, t > 0 && p.t > 0 ? t - p.t : -1, l.indexOf("\"is_error\":true") >= 0, end > s0 ? end - s0 : 0, id, []);
+}
 function claudeLine(a: Acc, l: string): void {
-  if (l.indexOf("\"type\":\"assistant\"") < 0) return;
+  if (l.indexOf("\"type\":\"assistant\"") < 0) { if (a.pend.size && l.indexOf("\"tool_use_id\":\"") >= 0) claudeResult(a, l); return; }
   const o = parse(l); if (!o || str(o["type"]) !== "assistant") return;
   const m = obj(o["message"]); if (!m) return;
-  const d = bucket(a, 0, str(o["timestamp"]));
+  const iso = str(o["timestamp"]);
+  const d = bucket(a, 0, iso);
   const id = str(m["id"]); const u = obj(m["usage"]);
   if (u && !(id && a.ids.has(id))) { // one API message is split over several lines carrying the same id + usage
     if (id) a.ids.add(id);
@@ -93,27 +133,38 @@ function claudeLine(a: Acc, l: string): void {
   }
   for (const b of arr(m["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "tool_use") continue;
-    const name = str(bo["name"]) || "tool"; tool(a, d, name);
-    const inp = obj(bo["input"]); if (!inp) continue;
-    if (name === "Edit") lines(a, d, nlines(str(inp["new_string"])), nlines(str(inp["old_string"])));
-    else if (name === "Write") lines(a, d, nlines(str(inp["content"])), 0);
-    else if (name === "MultiEdit") for (const e of arr(inp["edits"])) { const eo = obj(e); if (eo) lines(a, d, nlines(str(eo["new_string"])), nlines(str(eo["old_string"]))); }
+    const name = str(bo["name"]) || "tool"; const st = tool(a, d, name);
+    const inp = obj(bo["input"]);
+    pend(a, d, st, name, str(bo["id"]), isoMs(iso), iso, toolArg(name, inp, ""), name === "Bash" && inp ? [str(inp["command"])] : []);
+    if (!inp) continue;
+    let add = 0; let del = 0;
+    if (name === "Edit") { add = nlines(str(inp["new_string"])); del = nlines(str(inp["old_string"])); }
+    else if (name === "Write") add = nlines(str(inp["content"]));
+    else if (name === "NotebookEdit") add = nlines(str(inp["new_source"]));
+    else if (name === "MultiEdit") for (const e of arr(inp["edits"])) { const eo = obj(e); if (eo) { add += nlines(str(eo["new_string"])); del += nlines(str(eo["old_string"])); } }
+    else continue;
+    lines(a, d, add, del); file(d, name, str(inp["file_path"]) || str(inp["notebook_path"]), add, del);
   }
 }
 
-function patchLines(a: Acc, d: Day, patch: string): void {
-  let add = 0; let del = 0;
-  for (const l of patch.split("\n")) {
-    if (l.startsWith("+") && !l.startsWith("+++")) add++;
-    else if (l.startsWith("-") && !l.startsWith("---")) del++;
-  }
-  lines(a, d, add, del);
+function patchLines(a: Acc, d: Day, name: string, patch: string): void {
+  for (const f of patchFiles(patch)) { lines(a, d, f.add, f.del); file(d, name, f.p, f.add, f.del); }
 }
+const SHELL = ["exec_command", "shell", "shell_command", "container.exec"];
 function codexLine(a: Acc, l: string): void {
   const h = l.slice(0, 200); // cheap pre-filter: most bytes are tool outputs and messages we never parse
   const tc = h.indexOf("\"payload\":{\"type\":\"token_count\"") >= 0;
   const ctx = h.indexOf("\"type\":\"turn_context\"") >= 0;
   const call = h.indexOf("\"payload\":{\"type\":\"function_call\"") >= 0 || h.indexOf("\"payload\":{\"type\":\"custom_tool_call\"") >= 0 || h.indexOf("\"payload\":{\"type\":\"local_shell_call\"") >= 0;
+  if (h.indexOf("_call_output\"") >= 0) { // outputs: no JSON.parse — only the head, the exit codes and the size
+    const m = /"call_id":"([^"]+)"/.exec(l.slice(0, 400)); const id = m ? m[1] ?? "" : "";
+    const p = a.pend.get(id); if (!p) return;
+    a.pend.delete(id);
+    const tm = /"timestamp":"([^"]+)"/.exec(h); const t = tm ? isoMs(tm[1] ?? "") : 0;
+    const codes = exitCodes(l);
+    done(p, t > 0 && p.t > 0 ? t - p.t : -1, codexFailed(l, codes), l.length, id, codes);
+    return;
+  }
   if (!tc && !ctx && !call) return;
   const o = parse(l); if (!o) return;
   const p = obj(o["payload"]); if (!p) return;
@@ -122,16 +173,28 @@ function codexLine(a: Acc, l: string): void {
   const d = bucket(a, 0, iso);
   if (call) {
     const t = str(p["type"]);
-    const name = str(p["name"]) || (t === "local_shell_call" ? "shell" : "tool");
-    tool(a, d, name);
-    if (t !== "custom_tool_call") return;
+    const ns = str(p["namespace"]);
+    const bn = str(p["name"]) || (t === "local_shell_call" ? "shell" : "tool");
+    const name = ns.startsWith("mcp__") ? ns + "__" + bn : bn; // MCP tools come namespaced: group them like Claude's mcp__server__tool
+    const st = tool(a, d, name);
+    const id = str(p["call_id"]); const tms = isoMs(iso);
     const inp = str(p["input"]);
-    if (name === "apply_patch") { patchLines(a, d, inp); return; }
+    if (t === "local_shell_call") { const act = obj(p["action"]); const c = argv(act ? act["command"] : null); pend(a, d, st, name, id, tms, iso, c, [c]); return; }
+    if (t === "function_call") {
+      const raw = str(p["arguments"]); const args = parse(raw);
+      const c = args && SHELL.indexOf(name) >= 0 ? argv(args["cmd"] ?? args["command"]) : "";
+      pend(a, d, st, name, id, tms, iso, c || toolArg(name, args, raw), c ? [c] : []);
+      if (name === "apply_patch" && args) patchLines(a, d, name, str(args["input"]));
+      return;
+    }
+    if (name === "apply_patch") { pend(a, d, st, name, id, tms, iso, inp, []); patchLines(a, d, name, inp); return; }
+    const cmds = execCmds(inp);
+    pend(a, d, st, name, id, tms, iso, cmds.length ? cmds.join(" ; ") : inp, cmds);
     // newer Codex calls tools.apply_patch("*** Begin Patch\n…") from inside its JS `exec` tool: patches are escaped string literals
     let at = inp.indexOf("*** Begin Patch");
     while (at >= 0) {
       const end = inp.indexOf("*** End Patch", at);
-      patchLines(a, d, inp.slice(at, end > at ? end : inp.length).split("\\n").join("\n"));
+      patchLines(a, d, name, inp.slice(at, end > at ? end : inp.length).split("\\n").join("\n"));
       at = end > at ? inp.indexOf("*** Begin Patch", end) : -1;
     }
     return;
@@ -155,10 +218,30 @@ function codexLine(a: Acc, l: string): void {
 }
 
 function fxLine(a: Acc, l: string): void {
-  if (l.indexOf("\"tool_call\"") < 0) return;
+  const res = l.indexOf("\"tool_result\"") >= 0;
+  if (!res && l.indexOf("\"tool_call\"") < 0) return;
   const o = parse(l); if (!o) return;
-  const e = obj(o["event"]); const c = e ? obj(e["tool_call"]) : null; if (!c) return;
-  tool(a, bucket(a, num(o["timestamp_ms"]), ""), str(c["tool_name"]) || "tool");
+  const e = obj(o["event"]); if (!e) return;
+  const ms = num(o["timestamp_ms"]);
+  const r = res ? obj(e["tool_result"]) : null;
+  if (r) {
+    const id = str(r["call_id"]); const p = a.pend.get(id); if (!p) return;
+    a.pend.delete(id);
+    // fx stamps a whole turn's events alike: 0 ms means "unknown", not "instant"
+    done(p, ms > p.t && p.t > 0 ? ms - p.t : -1, str(r["status"]) !== "success", num(r["output_bytes"]), id, []);
+    return;
+  }
+  const c = obj(e["tool_call"]); if (!c) return;
+  const d = bucket(a, ms, ""); const name = str(c["tool_name"]) || "tool";
+  const st = tool(a, d, name);
+  const aj = str(c["arguments_json"]); const args = parse(aj);
+  const cmd = name === "shell" && args ? str(args["command"]) : "";
+  pend(a, d, st, name, str(c["call_id"]), ms, ms > 0 ? new Date(ms).toISOString() : "", toolArg(name, null, aj), cmd ? [cmd] : []);
+  if (!args) return;
+  // edits, best effort: a path plus new content / replacements, or an embedded patch (totals come from usage-v2.json)
+  const fp = str(args["path"]) || str(args["file_path"]);
+  if (aj.indexOf("*** Begin Patch") >= 0) { for (const f of patchFiles(str(args["patch"]) || str(args["input"]))) file(d, name, f.p, f.add, f.del); }
+  else if (fp && (args["content"] !== undefined || args["new_string"] !== undefined || args["edits"] !== undefined)) file(d, name, fp, nlines(str(args["content"]) || str(args["new_string"])), nlines(str(args["old_string"])));
 }
 // fx keeps running totals in usage-v2.json; attribute changes to the day the file was written
 function fxUsage(s: Sess, a: Acc): void {

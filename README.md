@@ -52,6 +52,9 @@ burning CPU? **agentglass answers that in one keystroke.**
 - **Know what it costs.** Tokens (in/out/cache) and API-equivalent cost per session and per day,
   with Claude list prices built in and your own rates via `~/.agentglass/prices.json`. A **Stats**
   tab shows today and the last 7 days: per-harness totals, busiest session, top tools, activity by hour.
+  Top tools carry error rates (MCP servers grouped, `␣` expands); `↵` drills into one: p50/p95/max
+  duration, calls over time, top shell programs and command lines, most-changed files, the slowest
+  calls and latest errors — `↵` on one opens its session at that call.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a macOS notification and marks the row `◆`. `!` jumps there.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and

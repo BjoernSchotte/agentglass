@@ -4,7 +4,8 @@
 import type { Sess } from "./model/types.ts";
 import type { HelpSec } from "./state.ts";
 
-export interface Tab { name: string; render: () => void; key: (k: string) => boolean }
+// mouse: left click inside the tab's body (0-based cell), dbl = second click on the same row within 450ms
+export interface Tab { name: string; render: () => void; key: (k: string) => boolean; mouse?: (x: number, y: number, dbl: boolean) => void }
 // full-screen feature view: shown while S.mode === "view" && S.fview === name; its keys arrive via H.keys with mode "view"
 export interface View { name: string; render: () => void }
 
