@@ -1,5 +1,6 @@
 // agentglass — a tiny TUI to browse, watch and steer coding-agent sessions
-// (Claude Code ~/.claude, Codex ~/.codex). Built as a native binary with scriptc.
+// (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
+// SPDX-License-Identifier: Apache-2.0
 import { readdirSync, statSync, openSync, readSync, closeSync, existsSync, renameSync, writeSync, mkdirSync } from "node:fs";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { homedir, totalmem } from "node:os";
