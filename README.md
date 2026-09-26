@@ -59,7 +59,7 @@ burning CPU? **agentglass answers that in one keystroke.**
 ```sh
 npm i -g scriptc          # needs Node 24+ to build (not to run)
 git clone https://github.com/BjoernSchotte/agentglass && cd agentglass
-scriptc build agentglass.ts -o agentglass
+./build.sh                # scriptc build src/main.ts -o agentglass
 ln -s "$PWD/agentglass" ~/.local/bin/agentglass
 agentglass
 ```
