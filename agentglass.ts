@@ -11,6 +11,8 @@ interface Ev { kind: string; text: string; ts: string }
 interface Sess {
   h: Harness; id: string; path: string; cwd: string; title: string; prompt: string; branch: string; model: string;
   mtime: number; size: number; headDone: boolean; tailSize: number; evs: Ev[]; pid: number; status: string; name: string; archived: boolean;
+  parent: string; kind: string; // subagents: parent session id + agent type/role ("" for top-level sessions)
+  subs: Sess[]; last: number; depth: number; // derived per buildView: children, newest mtime across self + children, tree depth
 }
 interface Proc {
   pid: number; ppid: number; cpu: number; rss: number; etime: string; tty: string; args: string; h: string;
@@ -156,27 +158,59 @@ const codexTitles = new Map<string, string>();
 let codexIndexM = 0;
 
 function newSess(h: Harness, id: string, path: string, archived: boolean): Sess {
-  return { h, id, path, cwd: "", title: "", prompt: "", branch: "", model: "", mtime: 0, size: 0, headDone: false, tailSize: -1, evs: [], pid: 0, status: "", name: "", archived };
+  return { h, id, path, cwd: "", title: "", prompt: "", branch: "", model: "", mtime: 0, size: 0, headDone: false, tailSize: -1, evs: [], pid: 0, status: "", name: "", archived, parent: "", kind: "", subs: [], last: 0, depth: 0 };
 }
-function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>): void {
+function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>, parent: string): void {
   let mt = 0; let sz = 0;
   try { const st = statSync(path); mt = st.mtimeMs; sz = st.size; } catch (e) { return; }
   let s = sessions.get(path);
-  if (!s) { s = newSess(h, id, path, archived); sessions.set(path, s); }
+  if (!s) {
+    s = newSess(h, id, path, archived);
+    sessions.set(path, s);
+    if (parent) claudeSub(s, parent);
+    else if (h === "codex") codexSub(s);
+  }
   s.mtime = mt; s.size = sz;
   seen.add(path);
+}
+// Claude: <project>/<session>/subagents/agent-<id>.jsonl + agent-<id>.meta.json {agentType, description, model}
+function claudeSub(s: Sess, parent: string): void {
+  s.parent = parent;
+  s.kind = "agent";
+  const o = parse(readText(s.path.slice(0, -6) + ".meta.json", 0, 4096).trim());
+  if (!o) return;
+  s.kind = str(o["agentType"]) || "agent";
+  s.title = str(o["description"]);
+  s.model = str(o["model"]);
+}
+// Codex: first line (session_meta) names parent_thread_id + source.subagent {thread_spawn{agent_role,agent_nickname} | other:"guardian"}
+function codexSub(s: Sess): void {
+  const head = readText(s.path, 0, 8192);
+  const par = /"parent_thread_id":"([^"]+)"/.exec(head);
+  if (!par || head.indexOf('"subagent"') < 0) return;
+  s.parent = par[1];
+  const role = /"agent_role":"([^"]*)"/.exec(head);
+  const other = /"subagent":\{"other":"([^"]*)"/.exec(head);
+  const nick = /"agent_nickname":"([^"]*)"/.exec(head);
+  s.kind = role ? role[1] : other ? other[1] : "subagent";
+  if (nick) s.name = nick[1];
 }
 function listDir(p: string): string[] { try { return readdirSync(p); } catch (e) { return []; } }
 function scan(): void {
   const seen = new Set<string>();
   const pdir = join(CLAUDE, "projects");
   for (const proj of listDir(pdir)) {
-    for (const f of listDir(join(pdir, proj))) if (f.endsWith(".jsonl")) addFile("claude", join(pdir, proj, f), f.slice(0, -6), false, seen);
+    for (const f of listDir(join(pdir, proj))) {
+      if (f.endsWith(".jsonl")) { addFile("claude", join(pdir, proj, f), f.slice(0, -6), false, seen, ""); continue; }
+      if (f.length !== 36) continue; // <session-uuid>/ dirs hold subagent transcripts
+      const sd = join(pdir, proj, f, "subagents");
+      for (const a of listDir(sd)) if (a.endsWith(".jsonl")) addFile("claude", join(sd, a), a.slice(6, -6), false, seen, f);
+    }
   }
   const walk = (dir: string, archived: boolean, depth: number): void => {
     for (const f of listDir(dir)) {
       const p = join(dir, f);
-      if (f.endsWith(".jsonl")) addFile("codex", p, f.length > 42 ? f.slice(-42, -6) : f, archived, seen);
+      if (f.endsWith(".jsonl")) addFile("codex", p, f.length > 42 ? f.slice(-42, -6) : f, archived, seen, "");
       else if (depth < 3 && /^\d+$/.test(f)) walk(p, archived, depth + 1);
     }
   };
@@ -506,20 +540,55 @@ interface TV { s: Sess; evs: Ev[]; off: number; scroll: number; follow: boolean;
 let tv: TV | null = null;
 
 function say(kind: string, msg: string): void { toast = msg; toastKind = kind; toastAt = Date.now(); }
+// ── subagent tree ───────────────────────────────────────────────────────────
+const expanded = new Set<string>(); const collapsed = new Set<string>();
+const AUTO_KIDS = 8; // auto-expanded parents show this many children; an explicit expand shows all
+function subActive(s: Sess): boolean { return Date.now() - s.mtime < 45000; }
+function activeSubs(s: Sess): number { let n = 0; for (const c of s.subs) if (subActive(c)) n++; return n; }
+function isOpen(s: Sess): boolean {
+  if (collapsed.has(s.path)) return false;
+  return expanded.has(s.path) || activeSubs(s) > 0; // auto-expand while subagents work
+}
+function matches(s: Sess, q: string): boolean {
+  if (useFull && !fulltext.has(s.path)) return false;
+  if (!q) return true;
+  return (titleOf(s) + " " + s.cwd + " " + s.id + " " + s.h + " " + s.name + " " + s.branch + " " + s.kind).toLowerCase().indexOf(q) >= 0;
+}
+function parentOf(s: Sess): Sess | null {
+  if (!s.parent) return null;
+  for (const p of sessions.values()) if (!p.parent && p.h === s.h && p.id === s.parent) return p;
+  return null;
+}
 function buildView(): void {
   const q = filter.toLowerCase();
-  const out: Sess[] = [];
+  const filtering = q !== "" || useFull;
+  const roots = new Map<string, Sess>();
+  for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; if (!s.parent) roots.set(s.h + ":" + s.id, s); }
   for (const s of sessions.values()) {
-    if (hfilter && s.h !== hfilter) continue;
-    if (liveOnly && !s.pid) continue;
-    if (useFull && !fulltext.has(s.path)) continue;
-    if (q) {
-      const hay = (titleOf(s) + " " + s.cwd + " " + s.id + " " + s.h + " " + s.name + " " + s.branch).toLowerCase();
-      if (hay.indexOf(q) < 0) continue;
-    }
-    out.push(s);
+    if (!s.parent) continue;
+    const p = roots.get(s.h + ":" + s.parent);
+    if (!p) continue; // orphan subagent: listed as its own root
+    p.subs.push(s); s.depth = 1;
+    if (s.mtime > p.last) p.last = s.mtime;
   }
-  out.sort((a, b) => (b.pid ? 1 : 0) - (a.pid ? 1 : 0) || b.mtime - a.mtime);
+  const tops: Sess[] = [];
+  for (const s of sessions.values()) {
+    if (s.depth !== 0) continue;
+    if (hfilter && s.h !== hfilter) continue;
+    if (liveOnly && !s.pid && activeSubs(s) === 0) continue;
+    if (!matches(s, q) && !(filtering && s.subs.some((c) => matches(c, q)))) continue;
+    tops.push(s);
+  }
+  tops.sort((a, b) => (b.pid ? 1 : 0) - (a.pid ? 1 : 0) || b.last - a.last);
+  const out: Sess[] = [];
+  for (const t of tops) {
+    out.push(t);
+    if (!t.subs.length || collapsed.has(t.path) || !(filtering || isOpen(t))) continue;
+    const kids = filtering ? t.subs.filter((c) => matches(c, q)) : t.subs.slice();
+    kids.sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime);
+    const n = filtering || expanded.has(t.path) ? kids.length : Math.max(AUTO_KIDS, activeSubs(t));
+    for (const c of kids.slice(0, n)) out.push(c);
+  }
   const cur = sessAt(sel);
   view = out;
   if (cur) { const i = view.indexOf(cur); if (i >= 0) sel = i; }
@@ -560,8 +629,8 @@ function renderFooter(): void {
   }
   const k = (key: string, what: string): string => fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
   let hints = "";
-  if (mode === "transcript") hints = k("↑↓/jk", "scroll") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("s", "send") + k("R", "resume") + k("esc", "back");
-  else if (tab === 0) hints = k("↵", "open") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash") + k("?", "help");
+  if (mode === "transcript") hints = k("↑↓/jk", "scroll") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
+  else if (tab === 0) hints = k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash") + k("?", "help");
   else hints = k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("?", "help") + k("q", "quit");
   put(0, y, fit("", 0) + hints + CSI + "K");
   if (toast && Date.now() - toastAt < 5000) {
@@ -622,10 +691,22 @@ function renderSessions(): void {
     if (!s.headDone && pending < 40) { loadHead(s); pending++; }
     const on = top + r === sel;
     const b = on ? bg(C.sel) : "";
+    const cursor = b + (on ? fg(C.accent) + "❯" : " ") + RST + b;
+    const tstyle = on ? fg(C.text) + CSI + "1m" : fg(C.sub);
+    if (s.depth === 1) {
+      const nx = sessAt(top + r + 1);
+      const branch = nx && nx.depth === 1 ? "├─" : "└─";
+      const glyph = subActive(s) ? fg(C.cyan) + SPIN[frame % SPIN.length] : fg(C.dim) + "·";
+      const who = s.name ? s.name + " · " : "";
+      put(1, 2 + r, cursor + "   " + fg(C.line) + branch + " " + glyph + RST + b + " " + fg(C.purple) + fit(s.kind, 16) + fg(C.dim) + fit(ago(s.mtime), 5) + RST + b + tstyle + fit(clean(who + titleOf(s)), iw - 30) + RST);
+      continue;
+    }
     const proj = base(s.cwd) || "?";
-    const tw = iw - 21 - BADGE_W;
-    const row = b + (on ? fg(C.accent) + "❯" : " ") + RST + b + statusGlyph(s) + b + " " + badge(s.h) + b + fg(C.dim) + fit(ago(s.mtime), 4) + RST + b + fg(C.purple) + fit(proj, 13) + RST + b + " " +
-      (on ? fg(C.text) + CSI + "1m" : fg(C.sub)) + fit(clean(titleOf(s)), tw) + RST;
+    const chip = s.subs.length ? (isOpen(s) ? "▾" : "▸") + "⑂" + activeSubs(s) + "/" + s.subs.length : "";
+    const cw2 = chip ? Math.min(12, width(chip) + 1) : 0;
+    const tw = iw - 21 - BADGE_W - cw2;
+    const row = cursor + statusGlyph(s) + b + " " + badge(s.h) + b + fg(C.dim) + fit(ago(s.last), 4) + RST + b + fg(C.purple) + fit(proj, 13) + RST + b + " " +
+      tstyle + fit(clean(titleOf(s)), tw) + RST + b + (activeSubs(s) ? fg(C.cyan) : fg(C.dim)) + fit(chip, cw2) + RST;
     put(1, 2 + r, row);
   }
   const s = current();
@@ -645,6 +726,16 @@ function renderSessions(): void {
     kv("updated", ago(s.mtime) + " ago · " + new Date(s.mtime).toISOString().slice(0, 10) + " " + localHM(new Date(s.mtime).toISOString()), C.sub);
     if (s.pid) { const t = tmuxTarget(s.pid); kv("process", "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : "") + (t ? " · tmux " + t : ""), C.green); }
     else kv("process", s.archived ? "archived" : "not running", C.dim);
+    if (s.depth === 1 || s.parent) { const par = parentOf(s); kv("subagent", s.kind + (s.name ? " · " + s.name : "") + (par ? "  ↰ " + titleOf(par) : ""), C.cyan); }
+    if (s.subs.length) {
+      lines.push(fg(C.line) + "─ " + fg(C.cyan) + "subagents " + fg(C.dim) + activeSubs(s) + " active / " + s.subs.length + RST);
+      const kids = s.subs.slice().sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime).slice(0, 6);
+      for (const c of kids) {
+        loadTail(c);
+        const g = subActive(c) ? fg(C.cyan) + SPIN[frame % SPIN.length] : fg(C.dim) + "·";
+        lines.push(g + " " + fg(C.purple) + fit(c.kind, 14) + fg(C.dim) + fit(ago(c.mtime), 5) + fg(C.sub) + fit(clean(titleOf(c)), Math.max(10, Math.floor((iw2 - 21) / 2))) + fg(C.dim) + " " + fit(clean(activity(c)), Math.max(0, iw2 - 22 - Math.max(10, Math.floor((iw2 - 21) / 2)))) + RST);
+      }
+    }
     lines.push(fg(C.line) + "─".repeat(iw2) + RST);
     const act: string[] = [];
     for (const e of s.evs.slice(-25)) evLines(e, iw2, false, act);
@@ -753,8 +844,10 @@ function renderTranscript(): void {
   const maxScroll = Math.max(0, t.lines.length - vh);
   if (t.follow) t.scroll = maxScroll;
   t.scroll = Math.max(0, Math.min(t.scroll, maxScroll));
-  const live = s.pid ? " · " + SPIN[frame % SPIN.length] + " live" : "";
-  box(0, 1, W, H - 2, clean(titleOf(s)).slice(0, W - 40), home(s.cwd) + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%"), true);
+  const live = s.pid || (s.depth === 1 && subActive(s)) ? " · " + SPIN[frame % SPIN.length] + " live" : "";
+  const subs = s.subs.length ? " · ⑂ " + activeSubs(s) + "/" + s.subs.length + " (n)" : "";
+  const name = s.depth === 1 ? "↳ " + s.kind + (s.name ? " " + s.name : "") + ": " + titleOf(s) : titleOf(s);
+  box(0, 1, W, H - 2, name, (s.depth === 1 ? "u parent · n next · " : "") + home(s.cwd) + subs + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%"), true);
   for (let r = 0; r < vh; r++) {
     const l = t.lines[t.scroll + r] ?? "";
     const f = fitStyled(l, iw);
@@ -780,6 +873,8 @@ const HELP = [
   "Tab / 1 2       switch Sessions / Processes",
   "↑↓ jk PgUp/Dn   move · mouse wheel + click work too",
   "↵               open transcript (live-follow) / jump to session",
+  "space           fold / unfold subagents (auto-open while they work)",
+  "n N  u          transcript: next / prev subagent · up to parent",
   "/  F            filter list · full-text search (ripgrep)",
   "h  l            cycle harness filter · live-only",
   "s               send prompt: tmux pane if live, else headless resume",
@@ -818,6 +913,14 @@ function targetPid(): number {
   const s = target(); if (!s || !s.pid) return 0;
   const r = rootOf(s.pid); return r ? r.pid : s.pid;
 }
+function cycleSub(dir: number): void {
+  if (!tv) return;
+  const root = tv.s.depth === 1 ? parentOf(tv.s) : tv.s;
+  if (!root || !root.subs.length) { say("info", "no subagents"); return; }
+  const kids = root.subs.slice().sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime);
+  const i = kids.indexOf(tv.s);
+  openTranscript(kids[(((i + dir) % kids.length) + kids.length) % kids.length]);
+}
 function openTranscript(s: Sess): void {
   const start = Math.max(0, s.size - 6291456);
   tv = { s, evs: [], off: start, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false };
@@ -843,7 +946,16 @@ function sendTmux(t: string, msg: string): void {
     setTimeout(() => { run("tmux", ["send-keys", "-t", t, "Enter"]); say("ok", "sent to tmux " + t); }, 400);
   } catch (e) { say("err", "tmux send failed"); }
 }
-function sendPrompt(s: Sess, msg: string): void {
+// subagent transcripts are not resumable sessions: prompts and resumes go to the owning session
+function owner(s: Sess): Sess | null {
+  if (!s.parent) return s;
+  const p = parentOf(s);
+  if (!p) say("warn", "subagent without its parent session — nothing to resume");
+  return p;
+}
+function sendPrompt(sub: Sess, msg: string): void {
+  const s = owner(sub);
+  if (!s) return;
   if (s.pid) {
     const t = tmuxTarget(s.pid);
     if (!t) { say("warn", "session is live outside tmux — cannot inject input safely"); return; }
@@ -866,7 +978,9 @@ function sendPrompt(s: Sess, msg: string): void {
     say("ok", "headless " + c[0] + " resumed · log " + home(log));
   } catch (e) { say("err", "spawn failed: " + String(e)); }
 }
-function resume(s: Sess): void {
+function resume(sub: Sess): void {
+  const s = owner(sub);
+  if (!s) return;
   if (s.pid) {
     const t = tmuxTarget(s.pid);
     if (t && process.env.TMUX) { run("tmux", ["switch-client", "-t", t]); say("ok", "switched to " + t); }
@@ -891,6 +1005,7 @@ function trash(s: Sess): void {
     renameSync(s.path, join(t, base(s.path)));
     const dir = s.path.slice(0, -6);
     if (s.h === "claude" && existsSync(dir)) renameSync(dir, join(t, base(dir)));
+    if (s.h === "claude" && existsSync(dir + ".meta.json")) renameSync(dir + ".meta.json", join(t, base(dir) + ".meta.json"));
     sessions.delete(s.path);
     if (tv && tv.s === s) { tv = null; mode = "list"; }
     say("ok", "moved to ~/.Trash");
@@ -979,6 +1094,8 @@ function onInput(k: string): void {
     else if (k === "t") tv.expand = !tv.expand;
     else if (k === "s") ask("send to " + tv.s.h, "send", "");
     else if (k === "R") resume(tv.s);
+    else if (k === "n" || k === "N") cycleSub(k === "n" ? 1 : -1);
+    else if (k === "u") { const par = parentOf(tv.s); if (par) openTranscript(par); }
     if (tv.lines.length && tv.scroll >= tv.lines.length - vh) tv.follow = true;
     return;
   }
@@ -996,12 +1113,20 @@ function onInput(k: string): void {
     else if (k === "home" || k === "g") sel = 0;
     else if (k === "end" || k === "G") sel = view.length - 1;
     else if (k === "enter" || k === "right") { const s = current(); if (s) openTranscript(s); }
+    else if (k === " ") { // fold/unfold the subagent tree of the selected session (or of a subagent's parent)
+      const cur = current();
+      const root = cur && cur.depth === 1 ? parentOf(cur) : cur;
+      if (root && root.subs.length) {
+        if (isOpen(root)) { collapsed.add(root.path); expanded.delete(root.path); } else { expanded.add(root.path); collapsed.delete(root.path); }
+        buildView(); const i = view.indexOf(root); if (i >= 0 && cur !== root && !isOpen(root)) sel = i;
+      }
+    }
     else if (k === "/") ask("filter", "filter", filter);
     else if (k === "F") ask("full-text", "fulltext", fullq);
     else if (k === "h") { hfilter = hfilter === "" ? "claude" : hfilter === "claude" ? "codex" : ""; sel = 0; buildView(); }
     else if (k === "l") { liveOnly = !liveOnly; sel = 0; buildView(); }
     else if (k === "esc") { filter = ""; hfilter = ""; liveOnly = false; useFull = false; fullq = ""; buildView(); }
-    else if (k === "s") { const s = current(); if (s) ask("send to " + s.h + (s.pid ? " (live)" : " (headless)"), "send", ""); }
+    else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }
     else if (k === "R") { const s = current(); if (s) resume(s); }
     else if (k === "x") { const s = current(); if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
     else if (k === "D") { const s = current(); if (s) { if (s.pid) say("warn", "session is live — stop it first"); else confirm("Move “" + clean(titleOf(s)).slice(0, 40) + "” to ~/.Trash?", "trash"); } }
