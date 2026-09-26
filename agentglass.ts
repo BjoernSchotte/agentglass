@@ -685,9 +685,9 @@ function renderFooter(): void {
   }
   const k = (key: string, what: string): string => fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
   let hints = "";
-  if (mode === "transcript") hints = k("↑↓/jk", "scroll") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
-  else if (tab === 0) hints = k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash") + k("?", "help");
-  else hints = k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("?", "help") + k("q", "quit");
+  if (mode === "transcript") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
+  else if (tab === 0) hints = k("?", "keys") + k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
+  else hints = k("?", "keys") + k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
   put(0, y, fit("", 0) + hints + CSI + "K");
   if (toast && Date.now() - toastAt < 5000) {
     const icon = toastKind === "ok" ? "✔" : toastKind === "err" ? "✖" : toastKind === "warn" ? "⚠" : "ℹ";
@@ -925,22 +925,77 @@ function renderModal(title: string, body: string[], col: string): void {
   for (let i = 0; i < body.length; i++) put(x, y + 1 + i, bc + "│" + RST + bg(C.panel) + fg(C.text) + " " + fit(body[i], w - 3) + RST + bc + "│" + RST);
   put(x, y + h - 1, bc + "╰" + "─".repeat(w - 2) + "╯" + RST);
 }
-const HELP = [
-  "Tab / 1 2       switch Sessions / Processes",
-  "↑↓ jk PgUp/Dn   move · mouse wheel + click work too",
-  "↵               open transcript (live-follow) / jump to session",
-  "space           fold / unfold subagents (auto-open while they work)",
-  "n N  u          transcript: next / prev subagent · up to parent",
-  "/  F            filter list · full-text search (ripgrep)",
-  "h  l            cycle harness filter · live-only",
-  "s               send prompt: tmux pane if live, else headless resume",
-  "R               resume interactively (suspends agentglass)",
-  "a               switch tmux client to the agent's pane",
-  "x  X            SIGTERM / SIGKILL the agent process tree root",
-  "D               move session file to ~/.Trash",
-  "y               copy session id",
-  "esc             back / clear filters     q  quit",
+// ── help layer ──────────────────────────────────────────────────────────────
+interface HelpSec { name: string; ctx: string; keys: string[][] }
+const HELP: HelpSec[] = [
+  { name: "global", ctx: "", keys: [
+    ["?", "show / hide this help"], ["Tab  1  2", "switch Sessions / Processes"], ["q  ctrl-c", "quit"] ] },
+  { name: "sessions", ctx: "sessions", keys: [
+    ["↑↓  j k", "move"], ["PgUp PgDn", "page"], ["g G  Home End", "first / last"],
+    ["↵  →", "open live transcript"], ["space", "fold / unfold subagents"],
+    ["/", "filter (title, path, id, harness)"], ["F", "full-text search (ripgrep)"],
+    ["h", "harness: all → claude → codex → fx"], ["l", "live sessions only"], ["esc", "clear filters"],
+    ["s", "send prompt (tmux if live, else headless)"], ["R", "resume interactively"],
+    ["x", "SIGTERM the session's agent"], ["D", "move session to ~/.Trash"], ["y", "copy session id"] ] },
+  { name: "processes", ctx: "processes", keys: [
+    ["↑↓  j k", "move"], ["g G  Home End", "first / last"], ["↵  →", "open linked session"],
+    ["s", "send prompt to the agent's tmux pane"], ["a", "switch tmux client to the pane"],
+    ["x", "SIGTERM (asks first)"], ["X", "SIGKILL (asks first)"] ] },
+  { name: "transcript", ctx: "transcript", keys: [
+    ["↑↓  j k", "scroll a line"], ["PgUp PgDn  b ␣", "scroll a page"], ["g  Home", "top"],
+    ["G  End  f", "bottom + live follow"], ["t", "expand / collapse tool output"],
+    ["n  N", "next / previous subagent"], ["u", "up to parent session"],
+    ["s", "send prompt"], ["R", "resume interactively"], ["esc  q  ←", "back to list"] ] },
+  { name: "prompt & dialogs", ctx: "", keys: [
+    ["↵", "submit"], ["esc", "cancel"], ["ctrl-u  ctrl-w", "clear line / delete word"], ["y  n", "confirm / cancel dialog"] ] },
+  { name: "mouse", ctx: "", keys: [
+    ["wheel", "scroll list / transcript"], ["click", "select row · click again to open"], ["click tab", "switch view"] ] },
 ];
+let helpScroll = 0;
+function helpContext(): string { return prevMode === "transcript" ? "transcript" : tab === 0 ? "sessions" : "processes"; }
+function helpLines(sec: HelpSec, w: number, ctx: string): string[] {
+  const on = sec.ctx !== "" && sec.ctx === ctx;
+  const out: string[] = [];
+  out.push((on ? fg(C.accent) + CSI + "1m" + "▍" : fg(C.sub) + CSI + "1m" + " ") + fit(sec.name.toUpperCase() + (on ? "  · current view" : ""), w - 1) + RST);
+  const kw = Math.min(18, Math.floor(w * 0.4));
+  for (const kd of sec.keys) {
+    out.push("  " + bg(C.sel) + fg(on ? C.accent : C.text) + CSI + "1m" + " " + fit(kd[0], kw - 2) + " " + RST + " " + fg(C.sub) + fit(kd[1], w - kw - 3) + RST);
+  }
+  out.push("");
+  return out;
+}
+function renderHelp(): void {
+  const w = Math.min(W - 4, 120);
+  const two = w >= 96;
+  const cw1 = two ? Math.floor((w - 5) / 2) : w - 4;
+  const ctx = helpContext();
+  const blocks = HELP.map((sec) => helpLines(sec, cw1, ctx));
+  let total = 0; for (const b of blocks) total += b.length;
+  const left: string[] = []; const right: string[] = [];
+  for (const b of blocks) { const tgt = two && left.length >= total / 2 ? right : left; for (const l of b) tgt.push(l); }
+  const rows = Math.max(left.length, right.length);
+  const h = Math.min(rows + 4, H - 3); // leave the footer row free for the drop shadow
+  const view2 = h - 4;
+  helpScroll = Math.max(0, Math.min(helpScroll, rows - view2));
+  const x0 = Math.floor((W - w) / 2); const y0 = Math.max(1, Math.floor((H - h) / 2));
+  const bc = fg(C.accent);
+  const title = " ⌨ keyboard shortcuts ";
+  put(x0, y0, bc + "╭─" + CSI + "1m" + fg(C.text) + title + RST + bc + "─".repeat(Math.max(0, w - 3 - width(title))) + "╮" + RST);
+  put(x0, y0 + 1, bc + "│" + RST + bg(C.panel) + " ".repeat(w - 2) + RST + bc + "│" + RST);
+  for (let r = 0; r < view2; r++) {
+    const l = left[helpScroll + r] ?? ""; const rr = right[helpScroll + r] ?? "";
+    const body = " " + l + fillTo(l, cw1) + (two ? " " + fg(C.line) + "│" + RST + bg(C.panel) + " " + rr + fillTo(rr, cw1) : "");
+    put(x0, y0 + 2 + r, bc + "│" + RST + bg(C.panel) + body + RST + bg(C.panel) + fillTo(body, w - 2) + RST + bc + "│" + RST);
+  }
+  const more = rows > view2 ? "  j/k scroll " + (helpScroll + 1) + "–" + Math.min(rows, helpScroll + view2) + "/" + rows : "";
+  const foot = " esc  ?  q  close" + more + " ";
+  put(x0, y0 + h - 2, bc + "│" + RST + bg(C.panel) + fg(C.dim) + fit(foot, w - 2) + RST + bc + "│" + RST);
+  put(x0, y0 + h - 1, bc + "╰" + "─".repeat(w - 2) + "╯" + RST);
+  // drop shadow
+  const sh = bg("8;8;10") + " " + RST;
+  for (let r = 1; r < h; r++) put(x0 + w, y0 + r, sh);
+  put(x0 + 1, y0 + h, bg("8;8;10") + " ".repeat(w) + RST);
+}
 function render(): void {
   buf = [];
   buf.push("\x1b[?2026h");
@@ -950,7 +1005,7 @@ function render(): void {
   else renderProcs();
   renderFooter();
   if (mode === "confirm") renderModal("confirm", [confirmText, "", "y  yes      n / esc  cancel"], C.yellow);
-  if (mode === "help") renderModal("keys", HELP, C.accent);
+  if (mode === "help") renderHelp();
   buf.push("\x1b[?2026l");
   process.stdout.write(buf.join(""));
 }
@@ -1138,7 +1193,14 @@ function onInput(k: string): void {
     } else if (k === "n" || k === "N" || k === "esc" || k === "q") mode = prevMode;
     return;
   }
-  if (mode === "help") { mode = prevMode; return; }
+  if (mode === "help") {
+    if (k === "down" || k === "j" || k === "wheeldown") helpScroll++;
+    else if (k === "up" || k === "k" || k === "wheelup") helpScroll--;
+    else if (k === "pgdn" || k === " ") helpScroll += 10;
+    else if (k === "pgup") helpScroll -= 10;
+    else { mode = prevMode; helpScroll = 0; }
+    return;
+  }
   if (k === "ctrl-c") quit();
   if (k === "?") { prevMode = mode; mode = "help"; return; }
 
