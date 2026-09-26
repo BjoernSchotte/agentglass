@@ -18,6 +18,7 @@ import { tokens, keyName, onInput, onMouse } from "./input.ts";
 import { enter, quit, termSize } from "./term.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
+import "./features/cli.ts";
 
 function render(): void {
   buf.length = 0;

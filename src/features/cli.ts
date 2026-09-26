@@ -1,0 +1,172 @@
+// agentglass — machine-readable CLI: --json snapshot, --watch JSONL event stream, --help, --version (no TTY needed)
+// SPDX-License-Identifier: Apache-2.0
+import { writeSync, statSync } from "node:fs";
+import { H, complete } from "../hooks.ts";
+import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
+import { refreshProcs, refreshSlow } from "../model/procs.ts";
+import { parseEvents } from "../harness/index.ts";
+import { readLines } from "../util/fs.ts";
+import { base } from "../util/json.ts";
+import type { Ev, Sess } from "../model/types.ts";
+
+export const VERSION = "0.1.0";
+
+const USAGE = `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (Claude Code, Codex, fx)
+
+usage:
+  agentglass                      interactive TUI
+  agentglass --theme <name>       TUI with a color theme
+  agentglass --json [opts]        print a JSON snapshot of sessions (newest first) and exit
+  agentglass --watch [opts]       stream new events of all agents as JSONL (tail -f for every session)
+  agentglass --help | -h          this text
+  agentglass --version            print the version
+
+options for --json / --watch:
+  --live                          only sessions with a running agent process
+  --harness claude|codex|fx       only this harness
+  --limit N                       --json: at most N sessions
+  --subagents                     --json: include subagent sessions
+  --from-start                    --watch: replay existing logs from the beginning (combine with a filter)
+
+--json fields: id harness title cwd branch model path updated bytes live pid status parent kind subagents
+  activity tokens{in,out,cacheRead,cacheWrite} costUsd tools linesAdded linesRemoved attention stuck
+--watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
+  plus live|exit when an agent process appears or disappears
+`;
+
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean }
+interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
+interface JSess {
+  id: string; harness: string; title: string; cwd: string; branch: string; model: string; path: string; updated: string; bytes: number;
+  live: boolean; pid: number; status: string; parent: string | null; kind: string; subagents: number; activity: string; tokens: JTok;
+  costUsd: number | null; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null;
+}
+interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
+
+// sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
+function out(line: string): void {
+  try { writeSync(1, line + "\n"); } catch (e) { process.exit(0); }
+}
+function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
+
+function opts(args: string[]): Opts {
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--live") o.live = true;
+    else if (a === "--subagents") o.subs = true;
+    else if (a === "--from-start") o.fromStart = true;
+    else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (["claude", "codex", "fx"].indexOf(o.harness) < 0) fail("--harness must be claude, codex or fx"); }
+    else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
+  }
+  return o;
+}
+// subagents have no process of their own: they are live while their parent is
+function livePid(s: Sess): number {
+  if (s.pid) return s.pid;
+  const p = parentOf(s);
+  return p ? p.pid : 0;
+}
+function wanted(s: Sess, o: Opts): boolean {
+  if (o.harness && s.h !== o.harness) return false;
+  return !o.live || livePid(s) > 0;
+}
+function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
+
+function snapshot(o: Opts): void {
+  discover();
+  const list: Sess[] = [];
+  for (const s of sessions.values()) if ((o.subs || s.depth === 0) && wanted(s, o)) list.push(s);
+  list.sort((a, b) => b.mtime - a.mtime);
+  const res: JSess[] = [];
+  for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) {
+    loadHead(s); loadTail(s); complete(s);
+    res.push({
+      id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, model: s.model, path: s.path,
+      updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
+      parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
+      tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
+      costUsd: s.cost < 0 ? null : s.cost, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
+      attention: s.attention, stuck: s.stuck ? s.stuck : null,
+    });
+  }
+  out(process.stdout.isTTY ? JSON.stringify(res, null, 2) : JSON.stringify(res));
+  process.exit(0);
+}
+
+function oneLine(t: string): string {
+  const l = t.replace(/\s+/g, " ").trim();
+  return l.length > 500 ? l.slice(0, 500) + "…" : l;
+}
+function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string): void {
+  const w: WEv = {
+    ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd),
+    parent: s.parent ? s.parent : null, kind, tool, text: oneLine(text),
+  };
+  out(JSON.stringify(w));
+}
+function emitEv(s: Sess, e: Ev): void {
+  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts); return; }
+  const i = e.text.indexOf("\u0000");
+  emit(s, "tool", i >= 0 ? e.text.slice(0, i) : e.text, i >= 0 ? e.text.slice(i + 1) : "", e.ts);
+}
+
+function watch(o: Opts): void {
+  discover();
+  const off = new Map<string, number>(); // path → next unread byte
+  const headed = new Set<string>();
+  const live = new Map<string, number>(); // path → pid, to report appear/disappear
+  for (const s of sessions.values()) {
+    off.set(s.path, o.fromStart ? 0 : s.size);
+    if (s.pid) live.set(s.path, s.pid);
+  }
+  const quit = (): void => process.exit(0);
+  process.on("SIGINT", quit); process.on("SIGTERM", quit);
+  const liveDiff = (): void => {
+    for (const s of sessions.values()) {
+      if (!s.pid || live.get(s.path) === s.pid || (o.harness && s.h !== o.harness)) continue;
+      live.set(s.path, s.pid);
+      emit(s, "live", null, "pid " + s.pid, "");
+    }
+    for (const [p, pid] of [...live.entries()]) {
+      const s = sessions.get(p);
+      if (s && s.pid === pid) continue;
+      live.delete(p);
+      if (s && !(o.harness && s.h !== o.harness)) emit(s, "exit", null, "pid " + pid, "");
+    }
+  };
+  const poll = (): void => {
+    for (const s of sessions.values()) {
+      let at = off.get(s.path);
+      if (at === undefined) { at = 0; off.set(s.path, 0); } // appeared after start: read it whole
+      if (!wanted(s, o)) continue;
+      let size = 0;
+      try { size = statSync(s.path).size; } catch (e) { continue; }
+      if (size < at) { off.set(s.path, size); continue; } // truncated/rewritten: resync at the end
+      if (size === at) continue;
+      if (!headed.has(s.path)) { headed.add(s.path); if (!s.headDone) loadHead(s); loadTail(s); } // title/cwd for the output
+      const r = readLines(s.path, at, size, false);
+      off.set(s.path, r.next);
+      const evs: Ev[] = [];
+      for (const l of r.lines) parseEvents(s.h, l, evs, s);
+      for (const e of evs) emitEv(s, e);
+    }
+  };
+  poll();
+  let tick = 0;
+  setInterval(() => {
+    tick++;
+    if (tick % 4 === 0) scan();
+    if (tick % 3 === 0) { refreshProcs(); liveDiff(); }
+    if (tick % 10 === 0) { refreshSlow(); liveDiff(); }
+    poll();
+  }, 500);
+}
+
+H.cli.push((args: string[]): boolean => {
+  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(USAGE.trimEnd()); return true; }
+  if (args.indexOf("--version") >= 0) { out(VERSION); return true; }
+  if (args.indexOf("--json") >= 0) { snapshot(opts(args)); return true; }
+  if (args.indexOf("--watch") >= 0) { watch(opts(args)); return true; }
+  return false;
+});
