@@ -2,7 +2,7 @@
 // (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "./state.ts";
-import { H, tabAt } from "./hooks.ts";
+import { H, tabAt, viewOf } from "./hooks.ts";
 import { scan, buildView } from "./model/sessions.ts";
 import { refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
@@ -23,13 +23,16 @@ import "./features/themes.ts";
 import "./features/ticker.ts";
 import "./features/watchdog.ts";
 import "./features/usage/stats.ts";
+import "./features/callgraph/view.ts";
 
 function render(): void {
   buf.length = 0;
   buf.push("\x1b[?2026h");
   renderHeader();
   const mode = S.mode; const pm = S.prevMode;
-  if (mode === "detail" || (mode !== "list" && S.dv && pm === "detail")) { renderTranscript(); renderDetail(); }
+  const fv = mode === "view" || (pm === "view" && (mode === "help" || mode === "input" || mode === "confirm")) ? viewOf(S.fview) : null;
+  if (fv) { S.listH = 0; for (let y = 1; y < S.H - 1; y++) put(0, y, CSI + "2K"); fv.render(); }
+  else if (mode === "detail" || (mode !== "list" && S.dv && pm === "detail")) { renderTranscript(); renderDetail(); }
   else if (mode === "transcript" || (mode !== "list" && S.tv && pm === "transcript")) renderTranscript();
   else if (S.tab === 0) renderSessions();
   else if (S.tab === 1) renderProcs();

@@ -45,6 +45,10 @@ burning CPU? **agentglass answers that in one keystroke.**
   full-text search across every transcript you've ever had.
 - **Replay any session as a time-lapse.** Press `P` in a transcript and watch the agent's run play
   back at 1×/4×/16×/64× from its own timestamps: pause, step, scrub.
+- **See where the time went.** Press `c` on a session (or in its transcript) for a call graph like
+  the DevTools Performance panel: a zoomable flame chart of turns › tool calls › subagents › their
+  tools, colored by tool kind, and a sortable call tree with total/self time, counts and errors.
+  `↵` on any bar opens that call's detail.
 - **Know what it costs.** Tokens (in/out/cache) and API-equivalent cost per session and per day,
   with Claude list prices built in and your own rates via `~/.agentglass/prices.json`. A **Stats**
   tab shows today and the last 7 days: per-harness totals, busiest session, top tools, activity by hour.

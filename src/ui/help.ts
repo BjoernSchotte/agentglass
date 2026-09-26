@@ -39,6 +39,7 @@ const HELP: HelpSec[] = [
 // a feature tab can name itself as ctx to get its section highlighted
 function helpContext(): string {
   const pm = S.prevMode;
+  if (pm === "view") return S.fview;
   if (pm === "detail") return "detail";
   if (pm === "transcript") return "transcript";
   if (S.tab === 0) return "sessions";

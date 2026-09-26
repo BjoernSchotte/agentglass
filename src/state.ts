@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "./model/types.ts";
 
-export type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "help";
+export type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "help" | "view"; // view = a full-screen feature view (S.fview names it)
 export interface TV {
   s: Sess; evs: Ev[]; off: number; scroll: number; follow: boolean; expand: boolean; lines: string[]; lw: number; ln: number; lexp: boolean;
   cur: number; lineEv: number[]; lineStart: number[]; // event cursor + rendered-line ↔ event maps
@@ -16,7 +16,7 @@ export interface HelpSec { name: string; ctx: string; keys: string[][] }
 interface State {
   W: number; H: number; frame: number;
   tab: number; // 0 sessions, 1 processes, 2+ H.tabs
-  mode: Mode; prevMode: Mode;
+  mode: Mode; prevMode: Mode; fview: string;
   sel: number; top: number; psel: number; ptop: number;
   filter: string; hfilter: string; liveOnly: boolean; // hfilter: "", "claude", "codex", "fx"
   fulltext: Set<string>; useFull: boolean; fullq: string;
@@ -34,7 +34,7 @@ interface State {
 }
 export const S: State = {
   W: 80, H: 24, frame: 0,
-  tab: 0, mode: "list", prevMode: "list",
+  tab: 0, mode: "list", prevMode: "list", fview: "",
   sel: 0, top: 0, psel: 0, ptop: 0,
   filter: "", hfilter: "", liveOnly: false,
   fulltext: new Set<string>(), useFull: false, fullq: "",

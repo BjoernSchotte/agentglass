@@ -186,6 +186,7 @@ export function onMouse(k: string): void {
   const m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(k);
   if (!m) return;
   const b = Number(m[1] ?? "0"); const x = Number(m[2] ?? "1") - 1; const y = Number(m[3] ?? "1") - 1; // groups are string | undefined: default them or every derived index is untyped
+  for (const f of H.mouse) if (f(S.mode, b, x, y, m[4] === "M")) return;
   if (b === 64 || b === 65) { // wheel: over the preview it scrolls nothing, elsewhere it drives the focused view
     if (S.mode === "list" && S.tab === 0 && x >= S.prevX0 && x < S.prevX1 && y >= S.prevY0) return;
     onInput(b === 64 ? "wheelup" : "wheeldown");
