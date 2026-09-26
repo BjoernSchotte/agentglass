@@ -8,9 +8,10 @@ import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger, L, type Acc, type Day } from "./ledger.ts";
 import { PRICES_SIG } from "./pricing.ts";
+import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-const VERSION = 1;
+const VERSION = 2;
 const DIR = join(HOME, ".agentglass", "cache");
 const FILE = join(DIR, "ledger.json");
 const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset (a message's lines are adjacent)
@@ -18,18 +19,34 @@ const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset 
 function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
 
+function recsOut(rs: Rec[]): Obj[] { const out: Obj[] = []; for (const r of rs) out.push({ t: r.t, m: r.ms, i: r.id, s: r.ts, a: r.arg }); return out; }
+function recsIn(v: unknown): Rec[] {
+  const out: Rec[] = [];
+  for (const x of arr(v)) { const o = obj(x); if (o) out.push({ t: num(o["t"]), ms: num(o["m"]), id: str(o["i"]), ts: str(o["s"]), arg: str(o["a"]) }); }
+  return out;
+}
+function cntsOut(m: Map<string, Cnt>): Obj { const o: Obj = {}; for (const [k, c] of m) o[k] = [c.n, c.err, c.add, c.del]; return o; }
+function cntsIn(v: unknown): Map<string, Cnt> {
+  const m = new Map<string, Cnt>(); const o = obj(v);
+  if (o) for (const k of Object.keys(o)) { const a = nums(o[k]); m.set(k, { n: at(a, 0), err: at(a, 1), add: at(a, 2), del: at(a, 3) }); }
+  return m;
+}
+function at(a: number[], i: number): number { let v = 0; for (const x of a.slice(i, i + 1)) v = x; return v; }
+function padTo(a: number[], n: number): number[] { while (a.length < n) a.push(0); return a; }
 function dayOut(d: Day): Obj {
-  const names: Obj = {};
-  for (const k of [...d.names.keys()]) names[k] = d.names.get(k) ?? 0;
-  return { t: d.tools, n: names, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del };
+  const tt: Obj = {};
+  for (const [k, s] of d.tt) tt[k] = { n: s.n, e: s.err, dn: s.dn, ms: s.ms, mx: s.max, o: s.out, hi: s.hist, h: s.h, s: recsOut(s.slow), x: recsOut(s.errs) };
+  return { t: d.tools, tt, p: cntsOut(d.prog), m: cntsOut(d.cmds), f: cntsOut(d.files), h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del };
 }
 function dayIn(o: Obj): Day {
-  const names = new Map<string, number>();
-  const n = obj(o["n"]);
-  if (n) for (const k of Object.keys(n)) names.set(k, num(n[k]));
-  const hours = nums(o["h"]);
-  while (hours.length < 24) hours.push(0);
-  return { tools: num(o["t"]), names, hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]) };
+  const tt = new Map<string, TS>();
+  const n = obj(o["tt"]);
+  if (n) for (const k of Object.keys(n)) {
+    const s = obj(n[k]); if (!s) continue;
+    tt.set(k, { n: num(s["n"]), err: num(s["e"]), dn: num(s["dn"]), ms: num(s["ms"]), max: num(s["mx"]), out: num(s["o"]), hist: padTo(nums(s["hi"]), HB), h: padTo(nums(s["h"]), 24), slow: recsIn(s["s"]), errs: recsIn(s["x"]) });
+  }
+  const hours = padTo(nums(o["h"]), 24);
+  return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]) };
 }
 function accOut(a: Acc): Obj {
   const days: Obj = {};
@@ -50,7 +67,7 @@ function accIn(o: Obj): Acc {
   const cx = nums(o["cx"]); while (cx.length < 4) cx.push(0);
   const fx = nums(o["fx"]); while (fx.length < 7) fx.push(0);
   return {
-    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), cx, fx, fxM: num(o["fxM"]),
+    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), cx, fx, fxM: num(o["fxM"]),
     inTok: at(0), outTok: at(1), cr: at(2), cw: at(3), cost: at(4), unk: at(5), tools: at(6), add: at(7), del: at(8),
   };
 }

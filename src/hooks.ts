@@ -4,7 +4,8 @@
 import type { Sess } from "./model/types.ts";
 import type { HelpSec } from "./state.ts";
 
-export interface Tab { name: string; render: () => void; key: (k: string) => boolean }
+// mouse: left click inside the tab's body (0-based cell), dbl = second click on the same row within 450ms
+export interface Tab { name: string; render: () => void; key: (k: string) => boolean; mouse?: (x: number, y: number, dbl: boolean) => void }
 
 export const H = {
   cli: [] as ((args: string[]) => boolean)[], // before the TUI starts, with argv[2..]; true = handled, the TUI does not start

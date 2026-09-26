@@ -67,7 +67,7 @@ export function renderTranscript(): void {
   if (t.focusTs || t.focusText) { // opened from a preview row: put the cursor on that event
     for (let i = n - 1; i >= 0; i--) {
       const e = t.evs[i];
-      if (e.kind === t.focusKind && e.ts === t.focusTs && e.text === t.focusText) { t.cur = i; t.follow = false; t.scroll = Math.max(0, numAt(t.lineStart, i, 0) - Math.floor(vh / 3)); break; }
+      if (e.kind === t.focusKind && e.ts === t.focusTs && (e.text === t.focusText || (e.id !== "" && e.id === t.focusText))) { t.cur = i; t.follow = false; t.scroll = Math.max(0, numAt(t.lineStart, i, 0) - Math.floor(vh / 3)); break; }
     }
     t.focusTs = ""; t.focusText = "";
   }

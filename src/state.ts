@@ -6,7 +6,7 @@ export type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "hel
 export interface TV {
   s: Sess; evs: Ev[]; off: number; scroll: number; follow: boolean; expand: boolean; lines: string[]; lw: number; ln: number; lexp: boolean;
   cur: number; lineEv: number[]; lineStart: number[]; // event cursor + rendered-line ↔ event maps
-  focusKind: string; focusTs: string; focusText: string; // jump target when opened from the preview
+  focusKind: string; focusTs: string; focusText: string; // jump target when opened from the preview; focusText may instead be the event's id
   limit: number; // -1 = all events; else only evs[0..limit) are laid out (replay)
 }
 // detail layer: one event (tool call + its result) fully expanded

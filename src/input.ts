@@ -229,6 +229,8 @@ export function onMouse(k: string): void {
   }
   if (S.mode !== "list") return;
   if (y === 0) { for (let i = 0; i < tabX0.length; i++) if (x >= numAt(tabX0, i, 0) && x < numAt(tabX1, i, 0)) S.tab = i; return; }
+  const xt = tabAt(S.tab - 2);
+  if (xt) { const f = xt.mouse; if (f) f(x, y, dbl); return; }
   const ps = S.prevSess;
   if (S.tab === 0 && ps && x >= S.prevX0 && x < S.prevX1 && y >= S.prevY0) { // preview rows jump straight in
     const r = y - S.prevY0;
