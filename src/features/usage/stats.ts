@@ -8,6 +8,7 @@ import { sessions, titleOf } from "../../model/sessions.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { ledger, L, accOf, pending, todayKey, lastDays, startOfDay } from "./ledger.ts";
+import "./cache.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export function kfmt(n: number): string {

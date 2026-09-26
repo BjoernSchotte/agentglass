@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { S } from "./state.ts";
 import { CSI } from "./ui/theme.ts";
+import { H } from "./hooks.ts";
 
 export function termSize(): void {
   const r = spawnSync("stty", ["size"], { encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] });
@@ -19,4 +20,7 @@ export function leave(): void {
   process.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[?1049l");
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
 }
-export function quit(): never { leave(); process.exit(0); }
+export function quit(): never {
+  for (const f of H.onQuit) { try { f(); } catch (e) { /* never block the exit */ } }
+  leave(); process.exit(0);
+}

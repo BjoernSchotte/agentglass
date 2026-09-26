@@ -27,6 +27,8 @@ if (user) for (const k of Object.keys(user)) {
   if (r && typeof r["input"] === "number") add(k.toLowerCase(), num(r["input"], 0), num(r["output"], 0), num(r["cacheRead"], -1), num(r["cacheWrite"], -1));
 }
 P.sort((a, b) => b.p.length - a.p.length); // longest prefix wins (opus-4-1 before opus-4)
+// fingerprint of the user overrides: cached costs are only valid for the prices they were computed with
+export const PRICES_SIG = user ? JSON.stringify(user) : "";
 
 const memo = new Map<string, Price | null>();
 export function price(model: string): Price | null {

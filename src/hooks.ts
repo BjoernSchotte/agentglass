@@ -9,6 +9,7 @@ export interface Tab { name: string; render: () => void; key: (k: string) => boo
 export const H = {
   cli: [] as ((args: string[]) => boolean)[], // before the TUI starts, with argv[2..]; true = handled, the TUI does not start
   onTick: [] as (() => void)[], // every 500ms tick, before render
+  onQuit: [] as (() => void)[], // right before the TUI exits (flush caches); keep it fast
   onFastTick: [] as (() => boolean)[], // every 50ms (timer only runs when any are registered); true = re-render
   keys: [] as ((mode: string, key: string) => boolean)[], // list/transcript/detail modes, before built-in keys; true = handled
   enrich: [] as ((s: Sess) => void)[], // before a session is shown in preview/transcript/detail (runs every frame: cache!)
