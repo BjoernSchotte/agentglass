@@ -462,7 +462,7 @@ function fit(s: string, w: number): string {
 function wrap(s: string, w: number): string[] {
   const out: string[] = [];
   for (const raw of s.split("\n")) {
-    const l = clean(raw);
+    const l = clean(raw).replace(/\s+$/, ""); // trailing padding would wrap into blank rows
     if (l.length === 0) { out.push(""); continue; }
     let cur = ""; let n = 0;
     for (const ch of l) {
@@ -608,6 +608,7 @@ interface TV {
 // detail layer: one event (tool call + its result) fully expanded
 interface DV { idx: number; lines: string[]; plain: string; files: string[]; fileRow: number[]; fsel: number; scroll: number; title: string; lw: number }
 let dv: DV | null = null;
+let wrapCode = true; // detail: wrap wide code/diff/output lines, or cut them at the edge (w)
 // mouse hit maps, rebuilt every frame
 const footX0: number[] = []; const footX1: number[] = []; const footKey: string[] = [];
 const prevKind: number[] = []; const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
@@ -715,7 +716,7 @@ function renderFooter(): void {
     return fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
   };
   let hints = "";
-  if (mode === "detail") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
+  if (mode === "detail") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
   else if (mode === "transcript") hints = k("?", "keys") + k("↑↓/jk", "event") + k("↵", "details") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
   else if (tab === 0) hints = k("?", "keys") + k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
   else hints = k("?", "keys") + k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
@@ -994,7 +995,7 @@ const HELP: HelpSec[] = [
     ["s", "send prompt"], ["R", "resume interactively"], ["esc  q  ←", "back to list"] ] },
   { name: "event details", ctx: "detail", keys: [
     ["↑↓  j k  wheel", "scroll"], ["[  ]  p n", "previous / next event"], ["1-9  click file", "open referenced file in $PAGER"],
-    ["tab  o  e", "select file · open in pager · open in $EDITOR"], ["v", "whole detail in $PAGER"], ["y", "copy detail to clipboard"],
+    ["tab  o  e", "select file · open in pager · open in $EDITOR"], ["w", "wrap / cut long code lines"], ["v", "whole detail in $PAGER"], ["y", "copy detail to clipboard"],
     ["esc  q  ←  right-click", "back to transcript"] ] },
   { name: "prompt & dialogs", ctx: "", keys: [
     ["↵", "submit"], ["esc", "cancel"], ["ctrl-u  ctrl-w", "clear line / delete word"], ["y  n", "confirm / cancel dialog"] ] },
@@ -1122,9 +1123,10 @@ function dCode(L: string[], P: string[], text: string, w: number, numbered: bool
   if (src.length > 1 && src[src.length - 1] === "") src.pop();
   const nw = numbered ? String(src.length).length : 0;
   for (let i = 0; i < src.length; i++) {
-    const segs = wrap(src[i], Math.max(10, w - (numbered ? nw + 3 : 2)));
+    const cw0 = Math.max(10, w - (numbered ? nw + 3 : 2));
+    const segs = wrapCode ? wrap(src[i], cw0) : [fit(clean(src[i]).replace(/\s+$/, ""), cw0)];
     for (let j = 0; j < segs.length; j++) {
-      const gut = numbered ? fg(C.dim) + (j === 0 ? String(i + 1).padStart(nw, " ") : " ".repeat(nw)) + " │ " : fg(C.line) + "│ ";
+      const gut = numbered ? fg(C.dim) + (j === 0 ? String(i + 1).padStart(nw, " ") + " │ " : " ".repeat(nw) + " ┆ ") : fg(C.line) + (j === 0 ? "│ " : "┆ ");
       L.push(gut + RST + fg(C.text) + segs[j] + RST);
     }
   }
@@ -1134,7 +1136,9 @@ function dDiff(L: string[], P: string[], text: string, w: number): void {
   for (const raw of text.split("\n")) {
     const c = raw.charAt(0);
     const col = c === "+" && !raw.startsWith("+++") ? C.green : c === "-" && !raw.startsWith("---") ? C.red : c === "@" ? C.cyan : C.sub;
-    for (const seg of wrap(raw, w)) L.push(fg(col) + seg + RST);
+    const sign = c === "+" || c === "-" ? raw.slice(0, raw.charAt(1) === " " ? 2 : 1) : "";
+    const segs = wrapCode ? wrap(raw.slice(sign.length), Math.max(10, w - 2)) : [fit(clean(raw.slice(sign.length)).replace(/\s+$/, ""), Math.max(10, w - 2))];
+    for (let j = 0; j < segs.length; j++) L.push(fg(col) + (j === 0 ? fit(sign, 2) : fg(C.line) + "┆ " + fg(col)) + segs[j] + RST); // continuation rows sit under the text
   }
   P.push(text);
 }
@@ -1553,6 +1557,7 @@ function onInput(k: string): void {
     else if (k === "o" || k === "enter") openFileN(dv.fsel, false);
     else if (k === "e") openFileN(dv.fsel, true);
     else if (k === "v") pageDetail();
+    else if (k === "w") { wrapCode = !wrapCode; dv.lw = -1; say("info", wrapCode ? "wrapping long lines" : "cutting long lines at the edge"); }
     else if (k === "y") { try { execFileSync("pbcopy", [], { input: dv.plain }); say("ok", "copied " + dv.plain.length + " chars"); } catch (err) { say("err", "pbcopy failed"); } }
     else if (k.length === 1 && "123456789".indexOf(k) >= 0) openFileN(Number(k) - 1, false);
     return;
