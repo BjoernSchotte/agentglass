@@ -607,7 +607,7 @@ interface TV {
   focusKind: string; focusTs: string; focusText: string; // jump target when opened from the preview
 }
 // detail layer: one event (tool call + its result) fully expanded
-interface DV { idx: number; lines: string[]; plain: string; files: string[]; fileRow: number[]; fsel: number; scroll: number; title: string; lw: number }
+interface DV { idx: number; lines: string[]; plain: string; files: string[]; fileRow: number[]; foldRow: number[]; foldId: number[]; fsel: number; scroll: number; title: string; lw: number }
 let dv: DV | null = null;
 let wrapCode = true; // detail: wrap wide code/diff/output lines, or cut them at the edge (w)
 // mouse hit maps, rebuilt every frame
@@ -717,7 +717,7 @@ function renderFooter(): void {
     return fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
   };
   let hints = "";
-  if (mode === "detail") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
+  if (mode === "detail") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("z", "fold all") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
   else if (mode === "transcript") hints = k("?", "keys") + k("↑↓/jk", "event") + k("↵", "details") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
   else if (tab === 0) hints = k("?", "keys") + k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
   else hints = k("?", "keys") + k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
@@ -996,7 +996,7 @@ const HELP: HelpSec[] = [
     ["s", "send prompt"], ["R", "resume interactively"], ["esc  q  ←", "back to list"] ] },
   { name: "event details", ctx: "detail", keys: [
     ["↑↓  j k  wheel", "scroll"], ["[  ]  p n", "previous / next event"], ["1-9  click file", "open referenced file in $PAGER"],
-    ["tab  o  e", "select file · open in pager · open in $EDITOR"], ["w", "wrap / cut long code lines"], ["v", "whole detail in $PAGER"], ["y", "copy detail to clipboard"],
+    ["tab  o  e", "select file · open in pager · open in $EDITOR"], ["z  click ▸", "expand / collapse long blocks (>10 lines)"], ["w", "wrap / cut long code lines"], ["v", "whole detail in $PAGER"], ["y", "copy detail to clipboard"],
     ["esc  q  ←  right-click", "back to transcript"] ] },
   { name: "prompt & dialogs", ctx: "", keys: [
     ["↵", "submit"], ["esc", "cancel"], ["ctrl-u  ctrl-w", "clear line / delete word"], ["y  n", "confirm / cancel dialog"] ] },
@@ -1119,31 +1119,230 @@ function dText(L: string[], P: string[], text: string, w: number, col: string): 
   for (const l of wrap(text, w)) L.push(fg(col) + l + RST);
   P.push(text);
 }
-function dCode(L: string[], P: string[], text: string, w: number, numbered: boolean): void {
+// ── syntax highlighting (shiki-ish, tokyo-night palette) ─────────────────────
+interface Seg { s: string; t: string }
+const HL = {
+  kw: "187;154;247", str: "158;206;106", num: "255;158;100", com: "86;95;137", fn: "122;162;247", type: "42;195;222",
+  key: "115;218;202", punct: "137;221;255", flag: "224;175;104", text: "192;202;245",
+};
+const KEYWORDS = new Set<string>(("const let var function return if else for while do switch case break continue new class extends import from export default " +
+  "async await try catch finally throw typeof instanceof in of interface type enum implements public private protected static readonly void null undefined " +
+  "true false this super yield def lambda pass elif not and or is None True False with as raise except global nonlocal func package struct map chan go defer " +
+  "range fn impl pub mut use mod match self Self then fi done esac local export source print").split(" "));
+function langOf(path: string, text: string): string {
+  const m = /\.([A-Za-z0-9]+)$/.exec(path);
+  const ext = m ? (m[1] ?? "").toLowerCase() : "";
+  if (["ts", "tsx", "js", "jsx", "mjs", "cjs", "java", "c", "h", "cpp", "cs", "swift", "kt", "zig", "css", "scss"].indexOf(ext) >= 0) return "js";
+  if (ext === "py") return "py";
+  if (["sh", "bash", "zsh", "fish"].indexOf(ext) >= 0) return "sh";
+  if (ext === "go" || ext === "rs") return "js";
+  if (ext === "json" || ext === "jsonl") return "json";
+  if (ext === "yml" || ext === "yaml" || ext === "toml") return "yaml";
+  if (ext === "md" || ext === "txt" || ext === "log") return "text";
+  const t = text.trimStart();
+  if ((t.startsWith("{") || t.startsWith("[")) && parse(t.trim()) !== null) return "json";
+  if (t.startsWith("#!/")) return "sh";
+  if (t.startsWith("---\n") || looksYaml(text)) return "yaml";
+  return ext ? "js" : "text";
+}
+function looksYaml(text: string): boolean {
+  let n = 0; let y = 0;
+  for (const l of text.split("\n").slice(0, 40)) { if (!l.trim()) continue; n++; if (/^\s*(- )?[\w.\-"']+:( |$)/.test(l) || /^\s*- /.test(l) || /^\s*#/.test(l)) y++; }
+  return n >= 3 && y / n >= 0.7;
+}
+function segPush(out: Seg[], col: string, t: string): void { if (t) out.push({ s: fg(col), t }); }
+function hlLine(lang: string, line: string, state: number[]): Seg[] {
+  const out: Seg[] = [];
+  if (lang === "text") { segPush(out, HL.text, line); return out; }
+  if (lang === "yaml") return hlYaml(line);
+  let rest = line;
+  let first = true; // shell: first word of a command is the program
+  while (rest.length) {
+    if (numAt(state, 0, 0) === 1) { // inside /* … */
+      const e = rest.indexOf("*/");
+      if (e < 0) { segPush(out, HL.com, rest); return out; }
+      segPush(out, HL.com, rest.slice(0, e + 2)); rest = rest.slice(e + 2); state[0] = 0; continue;
+    }
+    const c = rest.charAt(0);
+    if (lang !== "json" && lang !== "sh" && lang !== "py" && rest.startsWith("/*")) { state[0] = 1; continue; }
+    if ((lang === "js" && rest.startsWith("//")) || ((lang === "py" || lang === "sh") && c === "#")) { segPush(out, HL.com, rest); return out; }
+    if (c === "\"" || c === "'" || c === "`") {
+      let j = 1;
+      while (j < rest.length && rest.charAt(j) !== c) j += rest.charAt(j) === "\\" ? 2 : 1;
+      const lit = rest.slice(0, Math.min(rest.length, j + 1));
+      const after = rest.slice(lit.length).trimStart();
+      segPush(out, after.startsWith(":") && lang !== "sh" ? HL.key : HL.str, lit);
+      rest = rest.slice(lit.length); first = false; continue;
+    }
+    const ws = /^\s+/.exec(rest);
+    if (ws) { const t = ws[0] ?? " "; segPush(out, HL.text, t); rest = rest.slice(t.length); continue; }
+    const num = /^-?\d[\d_]*(\.\d+)?([eE][+-]?\d+)?\b/.exec(rest);
+    if (num && lang !== "sh") { const t = num[0] ?? ""; segPush(out, HL.num, t); rest = rest.slice(t.length); first = false; continue; }
+    if (lang === "sh") {
+      const fl = /^--?[A-Za-z][\w-]*/.exec(rest);
+      if (fl && !first) { const t = fl[0] ?? ""; segPush(out, HL.flag, t); rest = rest.slice(t.length); continue; }
+      const vr = /^\$\{?[A-Za-z_][\w]*\}?/.exec(rest);
+      if (vr) { const t = vr[0] ?? ""; segPush(out, HL.key, t); rest = rest.slice(t.length); continue; }
+      const op = /^(\|\||&&|;|\||>>|>|<|&)/.exec(rest);
+      if (op) { const t = op[0] ?? ""; segPush(out, HL.kw, t); rest = rest.slice(t.length); first = true; continue; }
+      const wd = /^[^\s|&;<>"'`$]+/.exec(rest);
+      if (wd) { const t = wd[0] ?? ""; segPush(out, first ? HL.fn : KEYWORDS.has(t) ? HL.kw : HL.text, t); rest = rest.slice(t.length); first = false; continue; }
+    }
+    const id = /^[A-Za-z_$][\w$]*/.exec(rest);
+    if (id) {
+      const t = id[0] ?? "";
+      const nx = rest.slice(t.length);
+      const col = lang === "json" ? (t === "true" || t === "false" || t === "null" ? HL.num : HL.text)
+        : KEYWORDS.has(t) ? (t === "true" || t === "false" || t === "null" || t === "None" || t === "True" || t === "False" || t === "undefined" ? HL.num : HL.kw)
+        : nx.startsWith("(") ? HL.fn : /^[A-Z]/.test(t) ? HL.type : nx.trimStart().startsWith(":") && !nx.trimStart().startsWith("::") ? HL.key : HL.text;
+      segPush(out, col, t); rest = nx; first = false; continue;
+    }
+    segPush(out, HL.punct, c); rest = rest.slice(1);
+  }
+  return out;
+}
+function hlYaml(line: string): Seg[] {
+  const out: Seg[] = [];
+  const m = /^(\s*)(- )?([^:#]+?)(:)(\s|$)(.*)$/.exec(line);
+  if (/^\s*#/.test(line)) { segPush(out, HL.com, line); return out; }
+  if (!m) {
+    const d = /^(\s*)(- )(.*)$/.exec(line);
+    if (d) { segPush(out, HL.text, d[1] ?? ""); segPush(out, HL.punct, d[2] ?? ""); yamlValue(out, d[3] ?? ""); return out; }
+    segPush(out, line === "---" ? HL.punct : HL.text, line);
+    return out;
+  }
+  segPush(out, HL.text, m[1] ?? ""); segPush(out, HL.punct, m[2] ?? ""); segPush(out, HL.key, m[3] ?? ""); segPush(out, HL.punct, m[4] ?? ""); segPush(out, HL.text, m[5] ?? "");
+  yamlValue(out, m[6] ?? "");
+  return out;
+}
+function yamlValue(out: Seg[], v: string): void {
+  const h = v.indexOf(" #");
+  const val = h >= 0 ? v.slice(0, h) : v;
+  const t = val.trim();
+  const col = /^-?\d+(\.\d+)?$/.test(t) || /^(true|false|null|yes|no|~)$/i.test(t) ? HL.num : /^[|>][-+]?$/.test(t) || /^[&*!]/.test(t) ? HL.kw : HL.str;
+  segPush(out, col, val);
+  if (h >= 0) segPush(out, HL.com, v.slice(h));
+}
+function highlight(text: string, lang: string): Seg[][] {
+  const rows: Seg[][] = [];
+  const state: number[] = [0];
   const src = text.split("\n");
   if (src.length > 1 && src[src.length - 1] === "") src.pop();
-  const nw = numbered ? String(src.length).length : 0;
-  for (let i = 0; i < src.length; i++) {
-    const cw0 = Math.max(10, w - (numbered ? nw + 3 : 2));
-    const segs = wrapCode ? wrap(src[i], cw0) : [fit(clean(src[i]).replace(/\s+$/, ""), cw0)];
-    for (let j = 0; j < segs.length; j++) {
-      const gut = numbered ? fg(C.dim) + (j === 0 ? String(i + 1).padStart(nw, " ") + " │ " : " ".repeat(nw) + " ┆ ") : fg(C.line) + (j === 0 ? "│ " : "┆ ");
-      L.push(gut + RST + fg(C.text) + segs[j] + RST);
+  for (const l of src.slice(0, 20000)) rows.push(hlLine(lang, clean(l).replace(/\s+$/, ""), state));
+  return rows;
+}
+// wrap styled segments into rows of width w (continuation rows get `cont`, width contW); bg tints the whole row
+function wrapSegs(segs: Seg[], w: number, cont: string, contW: number, bgc: string): string[] {
+  const rows: string[] = [];
+  const pre = bgc ? bg(bgc) : "";
+  let cur = ""; let n = 0; let limit = w;
+  const flush = (): void => { rows.push(cur + (bgc ? pre + " ".repeat(Math.max(0, limit - n)) : "") + RST); cur = cont + pre; n = 0; limit = contW; };
+  for (const sg of segs) {
+    cur += pre + sg.s;
+    for (const ch of sg.t) {
+      const c = cw(cpOf(ch));
+      if (n + c > limit) { flush(); cur += sg.s; }
+      cur += ch; n += c;
     }
   }
-  P.push(text);
+  rows.push(cur + (bgc ? pre + " ".repeat(Math.max(0, limit - n)) : "") + RST);
+  return wrapCode ? rows : rows.slice(0, 1).map((r) => r); // cut mode keeps only the first row
 }
-function dDiff(L: string[], P: string[], text: string, w: number): void {
-  for (const raw of text.split("\n")) {
-    const c = raw.charAt(0);
-    const col = c === "+" && !raw.startsWith("+++") ? C.green : c === "-" && !raw.startsWith("---") ? C.red : c === "@" ? C.cyan : C.sub;
-    const sign = c === "+" || c === "-" ? raw.slice(0, raw.charAt(1) === " " ? 2 : 1) : "";
-    const segs = wrapCode ? wrap(raw.slice(sign.length), Math.max(10, w - 2)) : [fit(clean(raw.slice(sign.length)).replace(/\s+$/, ""), Math.max(10, w - 2))];
-    for (let j = 0; j < segs.length; j++) L.push(fg(col) + (j === 0 ? fit(sign, 2) : fg(C.line) + "┆ " + fg(col)) + segs[j] + RST); // continuation rows sit under the text
+// fold state for the detail layer: blocks longer than FOLD_AT rows start collapsed
+const FOLD_AT = 10;
+let foldOpen: number[] = []; let foldAll = false; let blockNo = 0;
+const foldRows: number[] = []; const foldIds: number[] = [];
+function emitBlock(L: string[], P: string[], rows: Seg[][], rowBg: string[], w: number, numbered: boolean, plain: string, gutterCol: string, foldAt: number = FOLD_AT): void {
+  const id = blockNo++;
+  const open = foldAll || foldOpen.indexOf(id) >= 0;
+  const foldable = rows.length > foldAt + 3 || (foldAt < FOLD_AT && rows.length > foldAt); // never fold away just a line or two
+  const shown = foldable && !open ? foldAt : rows.length;
+  const nw = numbered ? String(rows.length).length : 0;
+  for (let i = 0; i < shown; i++) {
+    const head = numbered ? fg(C.dim) + String(i + 1).padStart(nw, " ") + " " + fg(gutterCol) + "│ " + RST : fg(gutterCol) + "│ " + RST;
+    const cont = numbered ? fg(C.dim) + " ".repeat(nw) + " " + fg(C.line) + "┆ " + RST : fg(C.line) + "┆ " + RST;
+    const avail = Math.max(10, w - (numbered ? nw + 3 : 2));
+    const none: Seg[] = [];
+    const segs = i < rows.length ? rows[i] ?? none : none;
+    const out = wrapSegs(segs, avail, cont, avail, i < rowBg.length ? rowBg[i] ?? "" : "");
+    for (let j = 0; j < out.length; j++) L.push((j === 0 ? head : "") + out[j]);
   }
-  P.push(text);
+  if (foldable) {
+    foldRows.push(L.length); foldIds.push(id);
+    L.push(fg(C.line) + (numbered ? " ".repeat(nw + 1) : "") + "╰ " + fg(C.accent) + CSI + "1m" + (open ? "▾ collapse" : "▸ " + (rows.length - foldAt) + " more lines of " + rows.length) + RST + fg(C.dim) + "  · click or z" + RST);
+  }
+  P.push(plain);
+}
+function dCode(L: string[], P: string[], text: string, w: number, numbered: boolean, lang: string, foldAt: number = FOLD_AT): void {
+  emitBlock(L, P, highlight(text, lang), [], w, numbered, text, C.line, foldAt);
+}
+function dDiff(L: string[], P: string[], text: string, w: number, lang: string): void {
+  const rows: Seg[][] = []; const bgs: string[] = [];
+  const state: number[] = [0];
+  for (const raw of text.split("\n").slice(0, 20000)) {
+    const c = raw.charAt(0);
+    const add = c === "+" && !raw.startsWith("+++"); const del = c === "-" && !raw.startsWith("---");
+    if (c === "@" || raw.startsWith("***") || raw.startsWith("+++") || raw.startsWith("---")) { rows.push([{ s: fg(C.cyan), t: clean(raw) }]); bgs.push(""); continue; }
+    const body = add || del || c === " " ? raw.slice(raw.charAt(1) === " " ? 2 : 1) : raw;
+    const segs: Seg[] = [{ s: fg(add ? C.green : del ? C.red : C.dim) + CSI + "1m", t: add ? "+ " : del ? "- " : "  " }];
+    for (const sg of hlLine(lang, clean(body).replace(/\s+$/, ""), state)) segs.push(sg);
+    rows.push(segs); bgs.push(add ? "22;48;32" : del ? "58;26;30" : "");
+  }
+  emitBlock(L, P, rows, bgs, w, false, text, C.line);
+}
+// tool output: single-line JSON (whole or embedded, e.g. codex "Output:\n{...}") is pretty-printed and colored
+function dOutput(L: string[], P: string[], text: string, w: number): void {
+  const whole = parse(text.trim());
+  if (whole) { dCode(L, P, pretty(whole), w, false, "json"); return; }
+  const rows: Seg[][] = [];
+  const lang = looksYaml(text) ? "yaml" : "text";
+  const state: number[] = [0];
+  for (const l of text.split("\n").slice(0, 20000)) {
+    const t = l.trim();
+    const j = (t.startsWith("{") || t.startsWith("[")) && t.length > 2 ? parse(t) : null;
+    if (j) { for (const r of highlight(pretty(j), "json")) rows.push(r); continue; }
+    rows.push(hlLine(lang, clean(l).replace(/\s+$/, ""), state));
+  }
+  while (rows.length && rows[rows.length - 1].length === 0) rows.pop();
+  emitBlock(L, P, rows, [], w, false, text, C.line);
 }
 function pretty(o: Obj): string { return JSON.stringify(o, null, 2); }
+// structured values as colored key/value rows; multi-line strings become real indented blocks (key: |)
+function kvRows(v: unknown, key: string, ind: string, rows: Seg[][]): void {
+  const k = (r: Seg[]): void => { segPush(r, HL.text, ind); if (key) { segPush(r, HL.key, key); segPush(r, HL.punct, ":"); } };
+  if (typeof v === "string") {
+    if (v.indexOf("\n") >= 0) {
+      const r: Seg[] = []; k(r); segPush(r, HL.kw, " |"); rows.push(r);
+      const ls = v.split("\n"); if (ls.length > 1 && ls[ls.length - 1] === "") ls.pop();
+      for (const l of ls) { const b: Seg[] = []; segPush(b, HL.text, ind + "  "); segPush(b, HL.str, clean(l).replace(/\s+$/, "")); rows.push(b); }
+    } else { const r: Seg[] = []; k(r); segPush(r, HL.text, key ? " " : ""); segPush(r, HL.str, clean(v)); rows.push(r); }
+    return;
+  }
+  if (typeof v === "number" || typeof v === "boolean" || v === null) { const r: Seg[] = []; k(r); segPush(r, HL.text, key ? " " : ""); segPush(r, HL.num, String(v)); rows.push(r); return; }
+  if (Array.isArray(v)) {
+    const items = v as unknown[];
+    if (!items.length) { const r: Seg[] = []; k(r); segPush(r, HL.punct, " []"); rows.push(r); return; }
+    if (key) { const r: Seg[] = []; k(r); rows.push(r); }
+    for (const it of items) {
+      const o = obj(it);
+      if (o && Object.keys(o).length) {
+        const mark: Seg[] = []; segPush(mark, HL.text, ind + "  "); segPush(mark, HL.punct, "-"); rows.push(mark);
+        for (const kk of Object.keys(o)) kvRows(o[kk], kk, ind + "    ", rows);
+      } else { const at = rows.length; kvRows(it, "", ind + "    ", rows); const r = rows[at]; if (r) r.unshift({ s: fg(HL.punct), t: ind + "  - " }); }
+    }
+    return;
+  }
+  const o = obj(v);
+  if (o) {
+    if (key) { const r: Seg[] = []; k(r); if (!Object.keys(o).length) segPush(r, HL.punct, " {}"); rows.push(r); }
+    for (const kk of Object.keys(o)) kvRows(o[kk], kk, key ? ind + "  " : ind, rows);
+  }
+}
+function dKV(L: string[], P: string[], o: Obj, w: number, skip: string[]): void {
+  const rows: Seg[][] = [];
+  for (const kk of Object.keys(o)) if (skip.indexOf(kk) < 0) kvRows(o[kk], kk, "", rows);
+  if (rows.length) emitBlock(L, P, rows, [], w, false, pretty(o), C.line);
+}
 function prefixLines(text: string, pre: string): string { return text.split("\n").map((l) => pre + l).join("\n"); }
 function fmtCall(L: string[], P: string[], e: Ev, w: number): void {
   const i0 = e.text.indexOf("\u0000");
@@ -1155,16 +1354,16 @@ function fmtCall(L: string[], P: string[], e: Ev, w: number): void {
     const req = obj(a["request"]);
     if (typeof a["old_string"] === "string" || typeof a["new_string"] === "string") {
       dHead(L, P, "EDIT  " + home(fp), w, C.yellow);
-      dDiff(L, P, prefixLines(str(a["old_string"]), "- ") + "\n" + prefixLines(str(a["new_string"]), "+ "), w);
+      dDiff(L, P, prefixLines(str(a["old_string"]), "- ") + "\n" + prefixLines(str(a["new_string"]), "+ "), w, langOf(fp, ""));
     } else if (arr(a["edits"]).length) {
       dHead(L, P, "MULTI-EDIT  " + home(fp), w, C.yellow);
-      for (const ed of arr(a["edits"])) { const eo = obj(ed); if (eo) dDiff(L, P, prefixLines(str(eo["old_string"]), "- ") + "\n" + prefixLines(str(eo["new_string"]), "+ ") + "\n", w); }
+      for (const ed of arr(a["edits"])) { const eo = obj(ed); if (eo) dDiff(L, P, prefixLines(str(eo["old_string"]), "- ") + "\n" + prefixLines(str(eo["new_string"]), "+ "), w, langOf(fp, "")); }
     } else if (typeof a["content"] === "string" && fp) {
       dHead(L, P, "WRITE  " + home(fp), w, C.yellow);
-      dCode(L, P, str(a["content"]), w, true);
+      dCode(L, P, str(a["content"]), w, true, langOf(fp, str(a["content"])));
     } else if (cmd) {
       dHead(L, P, "COMMAND" + (str(a["workdir"]) || str(a["cwd"]) ? "  in " + home(str(a["workdir"]) || str(a["cwd"])) : ""), w, C.yellow);
-      dCode(L, P, cmd, w, false);
+      dCode(L, P, cmd, w, false, "sh");
     } else if (req && str(req["task"])) {
       dHead(L, P, "SUBAGENT TASK", w, C.yellow);
       dText(L, P, str(req["task"]), w, C.text);
@@ -1172,11 +1371,24 @@ function fmtCall(L: string[], P: string[], e: Ev, w: number): void {
       dHead(L, P, "PROMPT" + (str(a["description"]) ? "  " + str(a["description"]) : ""), w, C.yellow);
       dText(L, P, str(a["prompt"]), w, C.text);
     }
-    dHead(L, P, "ARGUMENTS  " + name, w, C.sub);
-    dCode(L, P, pretty(a), w, false);
+    const shownKeys = ["command", "cmd", "content", "old_string", "new_string", "edits", "prompt"];
+    if (req && str(req["task"])) shownKeys.push("request");
+    const rest = Object.keys(a).filter((x) => shownKeys.indexOf(x) < 0);
+    if (rest.length) { dHead(L, P, (rest.length < Object.keys(a).length ? "OTHER ARGUMENTS  " : "ARGUMENTS  ") + name, w, C.sub); dKV(L, P, a, w, shownKeys); }
+  } else if (e.full && /exec_command\(\{\s*cmd:\s*"/.test(e.full)) { // codex wraps shell calls in JS
+    const cm = /cmd:\s*("(?:[^"\\]|\\.)*")/.exec(e.full);
+    const wd = /workdir:\s*("(?:[^"\\]|\\.)*")/.exec(e.full);
+    let cmdText = "";
+    try { cmdText = str(JSON.parse(cm ? cm[1] ?? "\"\"" : "\"\"")); } catch (err) { cmdText = cm ? cm[1] ?? "" : ""; }
+    let wdText = "";
+    try { wdText = str(JSON.parse(wd ? wd[1] ?? "\"\"" : "\"\"")); } catch (err) { wdText = ""; }
+    dHead(L, P, "COMMAND" + (wdText ? "  in " + home(wdText) : ""), w, C.yellow);
+    dCode(L, P, cmdText, w, false, "sh");
+    dHead(L, P, "RAW INPUT  " + name, w, C.sub);
+    dCode(L, P, e.full, w, false, "js", 1); // already shown above: keep the raw call folded
   } else if (e.full) {
     dHead(L, P, "INPUT  " + name, w, C.yellow);
-    if (e.full.indexOf("*** Begin Patch") >= 0 || e.full.indexOf("\n+") >= 0) dDiff(L, P, e.full, w); else dCode(L, P, e.full, w, true);
+    if (e.full.indexOf("*** Begin Patch") >= 0) dDiff(L, P, e.full, w, "js"); else dCode(L, P, e.full, w, true, langOf("", e.full) === "text" ? "js" : langOf("", e.full));
   } else {
     dHead(L, P, "CALL  " + name, w, C.yellow);
     dText(L, P, i0 >= 0 ? e.text.slice(i0 + 1) : e.text, w, C.text);
@@ -1194,26 +1406,26 @@ function fmtResult(L: string[], P: string[], e: Ev, w: number): void {
         if (!h) continue;
         const ls: string[] = [];
         for (const x of arr(h["lines"])) ls.push(str(x));
-        dDiff(L, P, "@@ -" + String(h["oldStart"]) + " +" + String(h["newStart"]) + " @@\n" + ls.join("\n"), w);
+        dDiff(L, P, "@@ -" + String(h["oldStart"]) + " +" + String(h["newStart"]) + " @@\n" + ls.join("\n"), w, langOf(str(tur["filePath"]), ""));
       }
       shown = true;
     }
     const file = obj(tur["file"]);
     if (file && str(file["content"])) {
       dHead(L, P, "FILE  " + home(str(file["filePath"])), w, C.green);
-      dCode(L, P, str(file["content"]), w, true);
+      dCode(L, P, str(file["content"]), w, true, langOf(str(file["filePath"]), str(file["content"])));
       shown = true;
     }
     const so = str(tur["stdout"]); const se = str(tur["stderr"]);
-    if (so) { dHead(L, P, "STDOUT", w, C.green); dCode(L, P, so, w, false); shown = true; }
-    if (se) { dHead(L, P, "STDERR", w, C.red); dCode(L, P, se, w, false); shown = true; }
-    if (!shown) { dHead(L, P, "RESULT", w, C.green); dCode(L, P, e.text, w, false); dHead(L, P, "RESULT DATA", w, C.sub); dCode(L, P, pretty(tur), w, false); }
+    if (so) { dHead(L, P, "STDOUT", w, C.green); dOutput(L, P, so, w); shown = true; }
+    if (se) { dHead(L, P, "STDERR", w, C.red); dOutput(L, P, se, w); shown = true; }
+    if (!shown) { dHead(L, P, "RESULT", w, C.green); dOutput(L, P, e.text, w); dHead(L, P, "RESULT DATA", w, C.sub); dKV(L, P, tur, w, []); }
     return;
   }
   const full = resolveFull(e);
   dHead(L, P, "RESULT" + (e.full.startsWith("@file:") ? "  " + home(e.full.slice(6)) : ""), w, C.green);
   const body = full || e.text;
-  if (body.indexOf("\n@@ ") >= 0 || body.startsWith("diff --git")) dDiff(L, P, body, w); else dCode(L, P, body, w, false);
+  if (body.indexOf("\n@@ ") >= 0 || body.startsWith("diff --git")) dDiff(L, P, body, w, "js"); else dOutput(L, P, body, w);
 }
 function filesOf(texts: string[], cwd: string): string[] {
   const out: string[] = [];
@@ -1231,6 +1443,7 @@ function filesOf(texts: string[], cwd: string): string[] {
 }
 function buildDetail(t: TV, idx: number, w: number): DV {
   const L: string[] = []; const P: string[] = [];
+  blockNo = 0; foldRows.length = 0; foldIds.length = 0;
   const e = evIn(t.evs, idx);
   let title = "event";
   const texts: string[] = [];
@@ -1265,10 +1478,12 @@ function buildDetail(t: TV, idx: number, w: number): DV {
       head.push("  " + fg(C.accent) + CSI + "1m" + "[" + (i + 1) + "]" + RST + " " + fg(ok ? C.text : C.dim) + home(files[i]) + RST + (ok ? "" : fg(C.red) + "  (missing)" + RST));
     }
   }
-  return { idx, lines: head.concat(L), plain: P.join("\n"), files, fileRow, fsel: 0, scroll: 0, title, lw: w };
+  const foldRow = foldRows.map((r) => r + head.length);
+  return { idx, lines: head.concat(L), plain: P.join("\n"), files, fileRow, foldRow, foldId: foldIds.slice(), fsel: 0, scroll: 0, title, lw: w };
 }
 function openDetail(i: number): void {
   if (!tv || i < 0 || i >= tv.evs.length) return;
+  foldOpen = []; foldAll = false; // every event starts with long blocks folded
   dv = buildDetail(tv, i, W - 4);
   mode = "detail";
 }
@@ -1558,6 +1773,7 @@ function onInput(k: string): void {
     else if (k === "o" || k === "enter") openFileN(dv.fsel, false);
     else if (k === "e") openFileN(dv.fsel, true);
     else if (k === "v") pageDetail();
+    else if (k === "z") { foldAll = !foldAll; foldOpen = []; dv.lw = -1; }
     else if (k === "w") { wrapCode = !wrapCode; dv.lw = -1; say("info", wrapCode ? "wrapping long lines" : "cutting long lines at the edge"); }
     else if (k === "y") { try { execFileSync("pbcopy", [], { input: dv.plain }); say("ok", "copied " + dv.plain.length + " chars"); } catch (err) { say("err", "pbcopy failed"); } }
     else if (k.length === 1 && "123456789".indexOf(k) >= 0) openFileN(Number(k) - 1, false);
@@ -1639,6 +1855,14 @@ function onMouse(k: string): void {
     const li = dv.scroll + (y - 2);
     const fi = dv.fileRow.indexOf(li);
     if (y >= 2 && fi >= 0) { if (dv.fsel === fi || dbl) openFileN(fi, false); else dv.fsel = fi; }
+    const fo = dv.foldRow.indexOf(li);
+    if (y >= 2 && fo >= 0) { // toggle that one block
+      const id = numAt(dv.foldId, fo, -1);
+      if (foldAll) { foldAll = false; foldOpen = dv.foldId.filter((x) => x !== id); }
+      else if (foldOpen.indexOf(id) >= 0) foldOpen = foldOpen.filter((x) => x !== id);
+      else foldOpen.push(id);
+      dv.lw = -1;
+    }
     return;
   }
   if (mode === "transcript" && tv) {
