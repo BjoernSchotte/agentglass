@@ -21,6 +21,7 @@ import "./features/replay.ts";
 import "./features/cli.ts";
 import "./features/themes.ts";
 import "./features/ticker.ts";
+import "./features/watchdog.ts";
 
 function render(): void {
   buf.length = 0;
