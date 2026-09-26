@@ -43,6 +43,17 @@ burning CPU? **agentglass answers that in one keystroke.**
   `fx ask --resume-id`). Press `R` to jump back into a session interactively.
 - **Search everything.** `/` filters by title, path, id, branch or harness. `F` runs a ripgrep
   full-text search across every transcript you've ever had.
+- **Replay any session as a time-lapse.** Press `P` in a transcript and watch the agent's run play
+  back at 1×/4×/16×/64× from its own timestamps: pause, step, scrub.
+- **Know what it costs.** Tokens (in/out/cache) and API-equivalent cost per session and per day,
+  with Claude list prices built in and your own rates via `~/.agentglass/prices.json`. A **Stats**
+  tab shows today and the last 7 days: per-harness totals, busiest session, top tools, activity by hour.
+- **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
+  agentglass rings the bell, sends a macOS notification and marks the row `◆`. `!` jumps there.
+- **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
+  silent CPU burners get a red `⚠` with the reason.
+- **A live ticker** in the header scrolls what every running agent is doing right now.
+- **Themes.** tokyo-night, catppuccin (mocha and latte), gruvbox, nord and dracula. Press `T` or pass `--theme`.
 - **Mouse too.** Click rows, click again to open, click a preview line to jump straight to that
   event, click footer hints like buttons. Right-click goes back, and the wheel scrolls everything.
 
@@ -78,7 +89,18 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `s` `R` | send a prompt · resume interactively |
 | `x` `X` | SIGTERM / SIGKILL the agent |
 | `1`–`9` `e` | open a referenced file in `$PAGER` / `$EDITOR` |
-| `Tab` | Sessions ⇄ Processes |
+| `P` | replay the open transcript |
+| `!` | jump to the next agent waiting for you |
+| `T` | cycle themes |
+| `Tab` `1` `2` `3` | Sessions ⇄ Processes ⇄ Stats |
+
+## Scriptable
+
+```sh
+agentglass --json --live | jq '.[] | {title, costUsd, attention}'   # snapshot of your sessions
+agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL stream of every agent's events
+agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one
+```
 
 ## Custom agent commands
 
