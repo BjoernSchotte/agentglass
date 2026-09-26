@@ -12,6 +12,7 @@ export const H = {
   onFastTick: [] as (() => boolean)[], // every 50ms (timer only runs when any are registered); true = re-render
   keys: [] as ((mode: string, key: string) => boolean)[], // list/transcript/detail modes, before built-in keys; true = handled
   enrich: [] as ((s: Sess) => void)[], // before a session is shown in preview/transcript/detail (runs every frame: cache!)
+  complete: [] as ((s: Sess) => void)[], // blocking full computation of a session's derived fields, for exports (CLI --json/--watch)
   rowBadges: [] as ((s: Sess) => string)[], // styled glyphs in a 2-col slot before each session row's title
   previewSections: [] as ((s: Sess, w: number) => string[])[], // styled lines after the preview's metadata block
   headerWidgets: [] as ((w: number) => string)[], // styled segments between the tabs and the header stats; w = free width
@@ -22,5 +23,6 @@ export const H = {
 
 export const BADGE_SLOT = 2;
 export function enrich(s: Sess): void { for (const f of H.enrich) f(s); }
+export function complete(s: Sess): void { for (const f of H.complete) f(s); }
 // bounds-checked: in scriptc an out-of-range object read traps
 export function tabAt(i: number): Tab | null { return i >= 0 && i < H.tabs.length ? H.tabs[i] : null; }
