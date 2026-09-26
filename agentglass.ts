@@ -6,7 +6,7 @@ import { homedir, totalmem } from "node:os";
 import { join } from "node:path";
 
 type Obj = Record<string, unknown>;
-type Harness = "claude" | "codex";
+type Harness = "claude" | "codex" | "fx";
 interface Ev { kind: string; text: string; ts: string }
 interface Sess {
   h: Harness; id: string; path: string; cwd: string; title: string; prompt: string; branch: string; model: string;
@@ -22,8 +22,9 @@ interface Proc {
 const HOME = homedir();
 const CLAUDE = join(HOME, ".claude");
 const CODEX = join(HOME, ".codex");
+const FX = join(HOME, ".fx");
 const TOTALMEM = totalmem();
-const HARN = ["claude", "codex", "gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
+const HARN = ["claude", "codex", "fx", "gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
 
 // ── json helpers ────────────────────────────────────────────────────────────
 function obj(v: unknown): Obj | null {
@@ -69,8 +70,10 @@ function firstLine(s: string, n: number): string {
 }
 function toolArg(name: string, inp: Obj | null, raw: string): string {
   if (inp) {
-    const keys = ["command", "cmd", "file_path", "path", "pattern", "url", "query", "description", "prompt", "skill"];
+    const keys = ["command", "cmd", "file_path", "path", "pattern", "url", "query", "description", "prompt", "skill", "task", "location"];
     for (const k of keys) { const v = str(inp[k]); if (v) return v; }
+    const req = obj(inp["request"]);
+    if (req) return toolArg(name, req, "");
     return JSON.stringify(inp);
   }
   const j = parse(raw);
@@ -87,11 +90,44 @@ function isNoise(t: string): boolean {
   const s = t.trimStart();
   return s.length === 0 || s.startsWith("<") || s.startsWith("# AGENTS.md") || s.startsWith("Caveat:");
 }
+// fx events.jsonl: {seq, timestamp_ms, event: {<kind>: {...}}} — one kind per line
+function fxResult(preview: string): string {
+  const p = parse(preview);
+  if (!p) return preview;
+  const t = str(p["output_delta"]) || str(p["result"]) || str(p["output"]) || str(p["error"]) || str(p["error_code"]);
+  return t || preview;
+}
+function parseFx(o: Obj, out: Ev[]): void {
+  const e = obj(o["event"]);
+  if (!e) return;
+  const ms = typeof o["timestamp_ms"] === "number" ? (o["timestamp_ms"] as number) : 0;
+  const ts = ms ? new Date(ms).toISOString() : "";
+  const u = obj(e["user"]);
+  if (u) { const t = str(u["text"]); if (t) out.push({ kind: "user", text: t, ts }); return; }
+  const a = obj(e["assistant"]);
+  if (a) { const t = str(a["text"]); if (t) out.push({ kind: "assistant", text: t, ts }); return; }
+  const r = obj(e["reasoning"]) ?? obj(e["thinking"]);
+  if (r) { const t = str(r["text"]) || str(r["summary"]); if (t) out.push({ kind: "thinking", text: t, ts }); return; }
+  const c = obj(e["tool_call"]);
+  if (c) { const n = str(c["tool_name"]) || "tool"; out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, null, str(c["arguments_json"])), ts }); return; }
+  const res = obj(e["tool_result"]);
+  if (res) { const t = fxResult(str(res["preview"])); out.push({ kind: "result", text: (str(res["status"]) === "success" ? "" : "[" + str(res["status"]) + "] ") + t, ts }); return; }
+  const done = obj(e["turn_completed"]);
+  if (done) {
+    const sum = obj(done["turn_summary"]);
+    const dur = sum && typeof sum["turn_duration_ms"] === "number" ? " · " + ((sum["turn_duration_ms"] as number) / 1000).toFixed(1) + "s" : "";
+    out.push({ kind: "meta", text: "turn complete" + dur, ts });
+    return;
+  }
+  const keys = Object.keys(e);
+  if (keys.length && keys[0] !== "turn_started") out.push({ kind: "meta", text: keys[0].replace(/_/g, " "), ts });
+}
 function parseEvents(h: Harness, line: string, out: Ev[], s: Sess | null): void {
   const o = parse(line);
   if (!o) return;
   const ts = str(o["timestamp"]);
   const type = str(o["type"]);
+  if (h === "fx") { parseFx(o, out); return; }
   if (h === "claude") {
     if (type === "ai-title") { if (s) s.title = str(o["aiTitle"]); return; }
     if (type === "summary") { out.push({ kind: "meta", text: "summary: " + str(o["summary"]), ts }); return; }
@@ -169,6 +205,7 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
     sessions.set(path, s);
     if (parent) claudeSub(s, parent);
     else if (h === "codex") codexSub(s);
+    else if (h === "fx") fxMeta(s);
   }
   s.mtime = mt; s.size = sz;
   seen.add(path);
@@ -182,6 +219,19 @@ function claudeSub(s: Sess, parent: string): void {
   s.kind = str(o["agentType"]) || "agent";
   s.title = str(o["description"]);
   s.model = str(o["model"]);
+}
+// fx: ~/.fx/sessions/<id>/{session.json, events.jsonl, subagent/owner.json {parent_id}}
+function fxMeta(s: Sess): void {
+  const dir = s.path.slice(0, -"events.jsonl".length);
+  const o = parse(readText(dir + "session.json", 0, 65536).trim());
+  if (o) {
+    s.cwd = str(o["workspace_root"]) || str(o["origin_workspace_root"]);
+    s.title = str(o["title"]);
+    s.model = str(o["model"]);
+    if (o["subagent_child"] === true) s.kind = "subagent";
+  }
+  const own = parse(readText(dir + "subagent/owner.json", 0, 4096).trim());
+  if (own) { s.parent = str(own["parent_id"]); if (!s.kind) s.kind = "subagent"; }
 }
 // Codex: first line (session_meta) names parent_thread_id + source.subagent {thread_spawn{agent_role,agent_nickname} | other:"guardian"}
 function codexSub(s: Sess): void {
@@ -215,6 +265,8 @@ function scan(): void {
     }
   };
   walk(join(CODEX, "sessions"), false, 0);
+  const fxd = join(FX, "sessions");
+  for (const id of listDir(fxd)) addFile("fx", join(fxd, id, "events.jsonl"), id, false, seen, "");
   walk(join(CODEX, "archived_sessions"), true, 3);
   for (const k of [...sessions.keys()]) if (!seen.has(k)) sessions.delete(k);
   // codex thread names
@@ -238,11 +290,13 @@ function loadHead(s: Sess): void {
 function loadTail(s: Sess): void {
   if (s.tailSize === s.size) return;
   s.tailSize = s.size;
+  if (s.h === "fx") fxMeta(s);
   const start = Math.max(0, s.size - 98304);
   const r = readLines(s.path, start, s.size, start > 0);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
   s.evs = evs.slice(-60);
+  if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; } // head was read before the first prompt
 }
 function titleOf(s: Sess): string {
   if (s.h === "codex") { const t = codexTitles.get(s.id); if (t) return t; }
@@ -330,7 +384,7 @@ function refreshSlow(): void {
       else if (l.startsWith("n")) {
         const n = l.slice(1);
         if (fd === "cwd") cwdByPid.set(pid, n);
-        else if (n.endsWith(".jsonl") && n.indexOf("/rollout-") >= 0) codexPidByPath.set(n, pid);
+        else if (n.endsWith(".jsonl") && (n.indexOf("/rollout-") >= 0 || n.indexOf("/.fx/sessions/") >= 0)) codexPidByPath.set(n, pid);
       }
     }
   }
@@ -369,7 +423,7 @@ function fg(c: string): string { return CSI + "38;2;" + c + "m"; }
 function bg(c: string): string { return CSI + "48;2;" + c + "m"; }
 const C = {
   text: "220;223;228", sub: "150;156;168", dim: "96;101;112", line: "58;62;72", sel: "40;44;54", panel: "22;24;30",
-  accent: "122;162;247", claude: "217;119;87", codex: "110;180;255", green: "126;211;135", yellow: "229;192;123",
+  accent: "122;162;247", claude: "217;119;87", codex: "110;180;255", fx: "94;234;212", green: "126;211;135", yellow: "229;192;123",
   red: "240;113;120", cyan: "125;207;255", purple: "187;154;247",
 };
 function cpOf(ch: string): number {
@@ -462,13 +516,14 @@ const BADGE_W = 10;
 function badge(h: string): string {
   if (h === "claude") return fg(C.claude) + CSI + "1m" + "✻" + RST + fg(C.claude) + " Claude  " + RST;
   if (h === "codex") return bg("236;236;240") + fg("16;16;20") + CSI + "1m" + ">_" + RST + fg("236;236;240") + " Codex  " + RST;
+  if (h === "fx") return fg("255;255;255") + CSI + "1m" + "▲" + RST + fg(C.fx) + CSI + "1m" + " 𝒇x" + RST + fg(C.fx) + "      " + RST;
   return fg(C.purple) + CSI + "1m" + "◆" + RST + fg(C.purple) + " " + fit(h, BADGE_W - 2) + RST;
 }
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 let frame = 0;
 function statusGlyph(s: Sess): string {
   if (s.pid) {
-    const busy = s.status === "busy" || (s.h === "codex" && working(s)) || Date.now() - s.mtime < 8000;
+    const busy = s.status === "busy" || (s.h !== "claude" && working(s)) || Date.now() - s.mtime < 8000;
     return busy ? fg(C.green) + SPIN[frame % SPIN.length] + RST : fg(C.yellow) + "●" + RST;
   }
   if (Date.now() - s.mtime < 120000) return fg(C.green) + "○" + RST;
@@ -478,7 +533,8 @@ function working(s: Sess): boolean {
   for (let i = s.evs.length - 1; i >= 0; i--) {
     const e = s.evs[i];
     if (e.kind === "meta" && e.text === "turn started") return true;
-    if (e.kind === "meta" && (e.text === "turn complete" || e.text === "turn aborted")) return false;
+    if (e.kind === "meta" && (e.text.startsWith("turn complete") || e.text === "turn aborted")) return false;
+    if (s.h === "fx" && e.kind === "user") return true; // fx logs no turn-start marker
   }
   return false;
 }
@@ -528,7 +584,7 @@ let mode: Mode = "list";
 let sel = 0; let top = 0;
 let psel = 0; let ptop = 0;
 let filter = "";
-let hfilter = ""; // "", "claude", "codex"
+let hfilter = ""; // "", "claude", "codex", "fx"
 let liveOnly = false;
 let fulltext = new Set<string>(); let useFull = false; let fullq = "";
 let view: Sess[] = [];
@@ -935,7 +991,7 @@ function alignOff(): void {
   tv.off += a + 1;
 }
 function cmdOf(h: Harness): string[] {
-  const env = h === "claude" ? process.env.AGENTGLASS_CLAUDE : process.env.AGENTGLASS_CODEX;
+  const env = h === "claude" ? process.env.AGENTGLASS_CLAUDE : h === "codex" ? process.env.AGENTGLASS_CODEX : process.env.AGENTGLASS_FX;
   const cmd: string = env !== undefined ? env : h;
   return cmd.split(" ").filter((x) => x.length > 0);
 }
@@ -963,7 +1019,8 @@ function sendPrompt(sub: Sess, msg: string): void {
     return;
   }
   const c = cmdOf(s.h);
-  const args = s.h === "claude" ? c.slice(1).concat(["-p", "--resume", s.id, msg]) : c.slice(1).concat(["exec", "resume", s.id, msg]);
+  const tail = s.h === "claude" ? ["-p", "--resume", s.id, msg] : s.h === "codex" ? ["exec", "resume", s.id, msg] : ["ask", "--auto", "--resume-id", s.id, "--", msg];
+  const args = c.slice(1).concat(tail);
   const logDir = join(HOME, ".agentglass", "logs");
   try { mkdirSync(logDir, { recursive: true }); } catch (e) { /* exists */ }
   const log = join(logDir, s.id + ".log");
@@ -988,7 +1045,7 @@ function resume(sub: Sess): void {
     return;
   }
   const c = cmdOf(s.h);
-  const args = s.h === "claude" ? c.slice(1).concat(["--resume", s.id]) : c.slice(1).concat(["resume", s.id]);
+  const args = c.slice(1).concat(s.h === "claude" ? ["--resume", s.id] : ["resume", s.id]);
   leave();
   try { execFileSync(c[0], args, { stdio: "inherit", cwd: s.cwd && existsSync(s.cwd) ? s.cwd : HOME }); } catch (e) { /* non-zero exit */ }
   enter();
@@ -1002,7 +1059,10 @@ function killPid(pid: number, sig: string): void {
 function trash(s: Sess): void {
   const t = join(HOME, ".Trash");
   try {
-    renameSync(s.path, join(t, base(s.path)));
+    if (s.h === "fx") {
+      const d = s.path.slice(0, -"/events.jsonl".length);
+      renameSync(d, join(t, "fx-session-" + base(d)));
+    } else renameSync(s.path, join(t, base(s.path)));
     const dir = s.path.slice(0, -6);
     if (s.h === "claude" && existsSync(dir)) renameSync(dir, join(t, base(dir)));
     if (s.h === "claude" && existsSync(dir + ".meta.json")) renameSync(dir + ".meta.json", join(t, base(dir) + ".meta.json"));
@@ -1015,7 +1075,7 @@ function trash(s: Sess): void {
 function fullText(q: string): void {
   fullq = q;
   if (!q) { useFull = false; buildView(); return; }
-  const dirs = [join(CLAUDE, "projects"), join(CODEX, "sessions"), join(CODEX, "archived_sessions")].filter((d) => existsSync(d));
+  const dirs = [join(CLAUDE, "projects"), join(CODEX, "sessions"), join(CODEX, "archived_sessions"), join(FX, "sessions")].filter((d) => existsSync(d));
   const r = spawnSync("rg", ["-l", "-i", "-F", "--glob", "*.jsonl", "--", q].concat(dirs), { encoding: "utf8", timeout: 30000 });
   let out = r.stdout;
   if (r.error) out = run("grep", ["-rilF", "--include=*.jsonl", "--", q].concat(dirs));
@@ -1123,7 +1183,7 @@ function onInput(k: string): void {
     }
     else if (k === "/") ask("filter", "filter", filter);
     else if (k === "F") ask("full-text", "fulltext", fullq);
-    else if (k === "h") { hfilter = hfilter === "" ? "claude" : hfilter === "claude" ? "codex" : ""; sel = 0; buildView(); }
+    else if (k === "h") { hfilter = hfilter === "" ? "claude" : hfilter === "claude" ? "codex" : hfilter === "codex" ? "fx" : ""; sel = 0; buildView(); }
     else if (k === "l") { liveOnly = !liveOnly; sel = 0; buildView(); }
     else if (k === "esc") { filter = ""; hfilter = ""; liveOnly = false; useFull = false; fullq = ""; buildView(); }
     else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }
