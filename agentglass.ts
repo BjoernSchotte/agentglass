@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 type Obj = Record<string, unknown>;
 type Harness = "claude" | "codex" | "fx";
-interface Ev { kind: string; text: string; ts: string }
+interface Ev { kind: string; text: string; ts: string; id: string; full: string } // id pairs tool call ↔ result; full = untruncated detail ("@file:" = load lazily)
 interface Sess {
   h: Harness; id: string; path: string; cwd: string; title: string; prompt: string; branch: string; model: string;
   mtime: number; size: number; headDone: boolean; tailSize: number; evs: Ev[]; pid: number; status: string; name: string; archived: boolean;
@@ -97,40 +97,46 @@ function fxResult(preview: string): string {
   const t = str(p["output_delta"]) || str(p["result"]) || str(p["output"]) || str(p["error"]) || str(p["error_code"]);
   return t || preview;
 }
-function parseFx(o: Obj, out: Ev[]): void {
+function parseFx(o: Obj, out: Ev[], logPath: string): void {
   const e = obj(o["event"]);
   if (!e) return;
   const ms = typeof o["timestamp_ms"] === "number" ? (o["timestamp_ms"] as number) : 0;
   const ts = ms ? new Date(ms).toISOString() : "";
   const u = obj(e["user"]);
-  if (u) { const t = str(u["text"]); if (t) out.push({ kind: "user", text: t, ts }); return; }
+  if (u) { const t = str(u["text"]); if (t) out.push({ kind: "user", text: t, ts, id: "", full: "" }); return; }
   const a = obj(e["assistant"]);
-  if (a) { const t = str(a["text"]); if (t) out.push({ kind: "assistant", text: t, ts }); return; }
+  if (a) { const t = str(a["text"]); if (t) out.push({ kind: "assistant", text: t, ts, id: "", full: "" }); return; }
   const r = obj(e["reasoning"]) ?? obj(e["thinking"]);
-  if (r) { const t = str(r["text"]) || str(r["summary"]); if (t) out.push({ kind: "thinking", text: t, ts }); return; }
+  if (r) { const t = str(r["text"]) || str(r["summary"]); if (t) out.push({ kind: "thinking", text: t, ts, id: "", full: "" }); return; }
   const c = obj(e["tool_call"]);
-  if (c) { const n = str(c["tool_name"]) || "tool"; out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, null, str(c["arguments_json"])), ts }); return; }
+  if (c) { const n = str(c["tool_name"]) || "tool"; const aj = str(c["arguments_json"]); out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, null, aj), ts, id: str(c["call_id"]), full: aj }); return; }
   const res = obj(e["tool_result"]);
-  if (res) { const t = fxResult(str(res["preview"])); out.push({ kind: "result", text: (str(res["status"]) === "success" ? "" : "[" + str(res["status"]) + "] ") + t, ts }); return; }
+  if (res) {
+    const t = fxResult(str(res["preview"]));
+    const art = str(res["artifact_ref"]);
+    const dir = logPath.slice(0, logPath.lastIndexOf("/") + 1);
+    out.push({ kind: "result", text: (str(res["status"]) === "success" ? "" : "[" + str(res["status"]) + "] ") + t, ts, id: str(res["call_id"]), full: art && dir ? "@file:" + dir + "tool-results/" + art : "" });
+    return;
+  }
   const done = obj(e["turn_completed"]);
   if (done) {
     const sum = obj(done["turn_summary"]);
     const dur = sum && typeof sum["turn_duration_ms"] === "number" ? " · " + ((sum["turn_duration_ms"] as number) / 1000).toFixed(1) + "s" : "";
-    out.push({ kind: "meta", text: "turn complete" + dur, ts });
+    out.push({ kind: "meta", text: "turn complete" + dur, ts, id: "", full: "" });
     return;
   }
   const keys = Object.keys(e);
-  if (keys.length && keys[0] !== "turn_started") out.push({ kind: "meta", text: keys[0].replace(/_/g, " "), ts });
+  if (keys.length && keys[0] !== "turn_started") out.push({ kind: "meta", text: keys[0].replace(/_/g, " "), ts, id: "", full: "" });
 }
 function parseEvents(h: Harness, line: string, out: Ev[], s: Sess | null): void {
   const o = parse(line);
   if (!o) return;
   const ts = str(o["timestamp"]);
   const type = str(o["type"]);
-  if (h === "fx") { parseFx(o, out); return; }
+  if (h === "fx") { parseFx(o, out, s ? s.path : ""); return; }
   if (h === "claude") {
     if (type === "ai-title") { if (s) s.title = str(o["aiTitle"]); return; }
-    if (type === "summary") { out.push({ kind: "meta", text: "summary: " + str(o["summary"]), ts }); return; }
+    if (type === "summary") { out.push({ kind: "meta", text: "summary: " + str(o["summary"]), ts, id: "", full: "" }); return; }
     if (type !== "user" && type !== "assistant") return;
     if (o["isMeta"] === true) return;
     if (s) { const c = str(o["cwd"]); if (c) s.cwd = c; const g = str(o["gitBranch"]); if (g) s.branch = g; }
@@ -141,18 +147,18 @@ function parseEvents(h: Harness, line: string, out: Ev[], s: Sess | null): void 
     if (typeof c === "string") {
       const cmd = /<command-name>([^<]*)<\/command-name>/.exec(c);
       const cargs = /<command-args>([^<]*)/.exec(c);
-      if (cmd) out.push({ kind: cargs && cargs[1].trim() ? "user" : "meta", text: cmd[1] + (cargs && cargs[1].trim() ? " " + cargs[1].trim() : ""), ts });
-      else if (!isNoise(c)) out.push({ kind: "user", text: c, ts });
+      if (cmd) out.push({ kind: cargs && cargs[1].trim() ? "user" : "meta", text: cmd[1] + (cargs && cargs[1].trim() ? " " + cargs[1].trim() : ""), ts, id: "", full: "" });
+      else if (!isNoise(c)) out.push({ kind: "user", text: c, ts, id: "", full: "" });
       return;
     }
     for (const b of arr(c)) {
       const bo = obj(b);
       if (!bo) continue;
       const bt = str(bo["type"]);
-      if (bt === "text") { const t = str(bo["text"]); if (type === "assistant") out.push({ kind: "assistant", text: t, ts }); else if (!isNoise(t)) out.push({ kind: "user", text: t, ts }); }
-      else if (bt === "thinking") { const t = str(bo["thinking"]); if (t) out.push({ kind: "thinking", text: t, ts }); }
-      else if (bt === "tool_use") { const n = str(bo["name"]); out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, obj(bo["input"]), ""), ts }); }
-      else if (bt === "tool_result") out.push({ kind: "result", text: blockText(bo["content"]), ts });
+      if (bt === "text") { const t = str(bo["text"]); if (type === "assistant") out.push({ kind: "assistant", text: t, ts, id: "", full: "" }); else if (!isNoise(t)) out.push({ kind: "user", text: t, ts, id: "", full: "" }); }
+      else if (bt === "thinking") { const t = str(bo["thinking"]); if (t) out.push({ kind: "thinking", text: t, ts, id: "", full: "" }); }
+      else if (bt === "tool_use") { const n = str(bo["name"]); const inp = obj(bo["input"]); out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, inp, ""), ts, id: str(bo["id"]), full: inp ? JSON.stringify(inp) : "" }); }
+      else if (bt === "tool_result") { const tur = obj(o["toolUseResult"]); out.push({ kind: "result", text: blockText(bo["content"]), ts, id: str(bo["tool_use_id"]), full: tur ? JSON.stringify(tur) : "" }); }
     }
     return;
   }
@@ -164,27 +170,29 @@ function parseEvents(h: Harness, line: string, out: Ev[], s: Sess | null): void 
     if (s) { const c = str(p["cwd"]); if (c) s.cwd = c; const md = str(p["model"]); if (md) s.model = md; const g = obj(p["git"]); if (g) { const br = str(g["branch"]); if (br) s.branch = br; } }
     return;
   }
-  if (type === "compacted") { out.push({ kind: "meta", text: "context compacted", ts }); return; }
+  if (type === "compacted") { out.push({ kind: "meta", text: "context compacted", ts, id: "", full: "" }); return; }
   if (type === "event_msg") {
-    if (pt === "task_started") out.push({ kind: "meta", text: "turn started", ts });
-    else if (pt === "task_complete") out.push({ kind: "meta", text: "turn complete", ts });
-    else if (pt === "turn_aborted") out.push({ kind: "meta", text: "turn aborted", ts });
+    if (pt === "task_started") out.push({ kind: "meta", text: "turn started", ts, id: "", full: "" });
+    else if (pt === "task_complete") out.push({ kind: "meta", text: "turn complete", ts, id: "", full: "" });
+    else if (pt === "turn_aborted") out.push({ kind: "meta", text: "turn aborted", ts, id: "", full: "" });
     return;
   }
   if (type !== "response_item") return;
   if (pt === "message") {
     const role = str(p["role"]);
     const t = blockText(p["content"]);
-    if (role === "assistant") out.push({ kind: "assistant", text: t, ts });
-    else if (role === "user" && !isNoise(t)) out.push({ kind: "user", text: t, ts });
+    if (role === "assistant") out.push({ kind: "assistant", text: t, ts, id: "", full: "" });
+    else if (role === "user" && !isNoise(t)) out.push({ kind: "user", text: t, ts, id: "", full: "" });
   } else if (pt === "reasoning") {
     const t = blockText(p["summary"]);
-    if (t) out.push({ kind: "thinking", text: t, ts });
+    if (t) out.push({ kind: "thinking", text: t, ts, id: "", full: "" });
   } else if (pt === "function_call" || pt === "custom_tool_call" || pt === "local_shell_call") {
     const n = str(p["name"]) || "shell";
-    out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, obj(p["action"]), str(p["arguments"]) || str(p["input"])), ts });
+    const act = obj(p["action"]);
+    const raw = str(p["arguments"]) || str(p["input"]);
+    out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, act, raw), ts, id: str(p["call_id"]), full: act ? JSON.stringify(act) : raw });
   } else if (pt === "function_call_output" || pt === "custom_tool_call_output") {
-    out.push({ kind: "result", text: blockText(p["output"]), ts });
+    out.push({ kind: "result", text: blockText(p["output"]), ts, id: str(p["call_id"]), full: "" });
   }
 }
 
@@ -578,7 +586,7 @@ function gauge(frac: number, w: number): string {
 }
 
 // ── app state ───────────────────────────────────────────────────────────────
-type Mode = "list" | "transcript" | "input" | "confirm" | "help";
+type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "help";
 let tab = 0; // 0 sessions, 1 processes
 let mode: Mode = "list";
 let sel = 0; let top = 0;
@@ -592,7 +600,20 @@ let toast = ""; let toastKind = "info"; let toastAt = 0;
 let inputLabel = ""; let inputText = ""; let inputAction = "";
 let confirmText = ""; let confirmAction = "";
 let listY = 0; let listH = 0; let listX = 0; let listW = 0;
-interface TV { s: Sess; evs: Ev[]; off: number; scroll: number; follow: boolean; expand: boolean; lines: string[]; lw: number; ln: number; lexp: boolean }
+interface TV {
+  s: Sess; evs: Ev[]; off: number; scroll: number; follow: boolean; expand: boolean; lines: string[]; lw: number; ln: number; lexp: boolean;
+  cur: number; lineEv: number[]; lineStart: number[]; // event cursor + rendered-line ↔ event maps
+  focusKind: string; focusTs: string; focusText: string; // jump target when opened from the preview
+}
+// detail layer: one event (tool call + its result) fully expanded
+interface DV { idx: number; lines: string[]; plain: string; files: string[]; fileRow: number[]; fsel: number; scroll: number; title: string; lw: number }
+let dv: DV | null = null;
+// mouse hit maps, rebuilt every frame
+const footX0: number[] = []; const footX1: number[] = []; const footKey: string[] = [];
+const prevKind: number[] = []; const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
+const prevKids: Sess[] = [];
+let prevSess: Sess | null = null; let prevY0 = 0; let prevX0 = 0; let prevX1 = 0;
+let lastClickY = -1; let lastClickAt = 0;
 let tv: TV | null = null;
 
 function say(kind: string, msg: string): void { toast = msg; toastKind = kind; toastAt = Date.now(); }
@@ -683,9 +704,19 @@ function renderFooter(): void {
     put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + inputLabel + " ❯ " + RST + bg(C.sel) + fg(C.text) + fit(clean(inputText) + "▏", W - inputLabel.length - 4) + RST);
     return;
   }
-  const k = (key: string, what: string): string => fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
+  footX0.length = 0; footX1.length = 0; footKey.length = 0;
+  let fx = 0;
+  const k = (key: string, what: string): string => {
+    const w = width(key) + 1 + width(what);
+    // clickable: the hint's key, when it maps to one keystroke
+    const act = key === "↵" ? "enter" : key === "␣" ? " " : key === "esc" ? "esc" : key === "tab" ? "tab" : width(key.split("/")[0]) === 1 && key.split("/")[0].length === 1 ? key.split("/")[0] : "";
+    if (act) { footX0.push(fx); footX1.push(fx + w); footKey.push(act); }
+    fx += w + 2;
+    return fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
+  };
   let hints = "";
-  if (mode === "transcript") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
+  if (mode === "detail") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
+  else if (mode === "transcript") hints = k("?", "keys") + k("↑↓/jk", "event") + k("↵", "details") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
   else if (tab === 0) hints = k("?", "keys") + k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
   else hints = k("?", "keys") + k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
@@ -770,6 +801,8 @@ function renderSessions(): void {
   box(px, py, pw, ph, "preview", s ? s.h + " · " + bytes(s.size) : "", false);
   const iw2 = pw - 4;
   const lines: string[] = [];
+  prevKind.length = 0; prevIdx.length = 0; prevKids.length = 0; prevSess = s; prevY0 = py + 1; prevX0 = px; prevX1 = px + pw;
+  const hit = (kind: number, idx: number): void => { while (prevKind.length < lines.length - 1) { prevKind.push(0); prevIdx.push(0); } prevKind.push(kind); prevIdx.push(idx); };
   if (s) {
     if (!s.headDone) loadHead(s);
     loadTail(s);
@@ -789,14 +822,17 @@ function renderSessions(): void {
       for (const c of kids) {
         loadTail(c);
         const g = subActive(c) ? fg(C.cyan) + SPIN[frame % SPIN.length] : fg(C.dim) + "·";
+        prevKids.push(c);
         lines.push(g + " " + fg(C.purple) + fit(c.kind, 14) + fg(C.dim) + fit(ago(c.mtime), 5) + fg(C.sub) + fit(clean(titleOf(c)), Math.max(10, Math.floor((iw2 - 21) / 2))) + fg(C.dim) + " " + fit(clean(activity(c)), Math.max(0, iw2 - 22 - Math.max(10, Math.floor((iw2 - 21) / 2)))) + RST);
+        hit(1, prevKids.length - 1);
       }
     }
     lines.push(fg(C.line) + "─".repeat(iw2) + RST);
-    const act: string[] = [];
-    for (const e of s.evs.slice(-25)) evLines(e, iw2, false, act);
+    const act: string[] = []; const actEv: number[] = [];
+    for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], iw2, false, act); while (actEv.length < act.length) actEv.push(i); }
     const room = ph - 2 - lines.length;
-    for (const l of act.slice(-room)) lines.push(l);
+    const from = Math.max(0, act.length - room);
+    for (let i = from; i < act.length; i++) { lines.push(act[i]); hit(2, actEv[i]); }
   }
   for (let r = 0; r < ph - 2; r++) put(px + 1, py + 1 + r, " " + (lines[r] ?? "") + CSI + "0m" + " ".repeat(0) + fillTo(lines[r] ?? "", iw2) + " ");
 }
@@ -892,22 +928,31 @@ function renderTranscript(): void {
   }
   const iw = W - 4;
   if (t.lw !== iw || t.ln !== t.evs.length || t.lexp !== t.expand) {
-    const out: string[] = [];
-    for (const e of t.evs) evLines(e, iw, t.expand, out);
-    t.lines = out; t.lw = iw; t.ln = t.evs.length; t.lexp = t.expand;
+    const out: string[] = []; const le: number[] = []; const ls: number[] = [];
+    for (let i = 0; i < t.evs.length; i++) { ls.push(out.length); evLines(t.evs[i], iw - 1, t.expand, out); while (le.length < out.length) le.push(i); }
+    t.lines = out; t.lineEv = le; t.lineStart = ls; t.lw = iw; t.ln = t.evs.length; t.lexp = t.expand;
   }
   const vh = H - 4;
   const maxScroll = Math.max(0, t.lines.length - vh);
-  if (t.follow) t.scroll = maxScroll;
+  if (t.focusTs || t.focusText) { // opened from a preview row: put the cursor on that event
+    for (let i = t.evs.length - 1; i >= 0; i--) {
+      const e = t.evs[i];
+      if (e.kind === t.focusKind && e.ts === t.focusTs && e.text === t.focusText) { t.cur = i; t.follow = false; t.scroll = Math.max(0, numAt(t.lineStart, i, 0) - Math.floor(vh / 3)); break; }
+    }
+    t.focusTs = ""; t.focusText = "";
+  }
+  if (t.follow) { t.scroll = maxScroll; t.cur = t.evs.length - 1; }
   t.scroll = Math.max(0, Math.min(t.scroll, maxScroll));
   const live = s.pid || (s.depth === 1 && subActive(s)) ? " · " + SPIN[frame % SPIN.length] + " live" : "";
   const subs = s.subs.length ? " · ⑂ " + activeSubs(s) + "/" + s.subs.length + " (n)" : "";
   const name = s.depth === 1 ? "↳ " + s.kind + (s.name ? " " + s.name : "") + ": " + titleOf(s) : titleOf(s);
   box(0, 1, W, H - 2, name, (s.depth === 1 ? "u parent · n next · " : "") + home(s.cwd) + subs + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%"), true);
   for (let r = 0; r < vh; r++) {
-    const l = t.lines[t.scroll + r] ?? "";
-    const f = fitStyled(l, iw);
-    put(1, 2 + r, " " + f + fillTo(f, iw) + " ");
+    const li = t.scroll + r;
+    const l = li < t.lines.length ? t.lines[li] : "";
+    const on = li < t.lines.length && numAt(t.lineEv, li, -1) === t.cur;
+    const f = fitStyled(l, iw - 1);
+    put(1, 2 + r, (on ? fg(C.accent) + "▌" + RST : " ") + f + fillTo(f, iw - 1) + "  ");
   }
   // scrollbar
   if (t.lines.length > vh) {
@@ -942,17 +987,23 @@ const HELP: HelpSec[] = [
     ["s", "send prompt to the agent's tmux pane"], ["a", "switch tmux client to the pane"],
     ["x", "SIGTERM (asks first)"], ["X", "SIGKILL (asks first)"] ] },
   { name: "transcript", ctx: "transcript", keys: [
-    ["↑↓  j k", "scroll a line"], ["PgUp PgDn  b ␣", "scroll a page"], ["g  Home", "top"],
+    ["↑↓  j k", "previous / next event (cursor ▌)"], ["↵  →  click", "drill into event: full call, result, diff, files"],
+    ["wheel", "scroll lines"], ["PgUp PgDn  b ␣", "scroll a page"], ["g  Home", "top"],
     ["G  End  f", "bottom + live follow"], ["t", "expand / collapse tool output"],
     ["n  N", "next / previous subagent"], ["u", "up to parent session"],
     ["s", "send prompt"], ["R", "resume interactively"], ["esc  q  ←", "back to list"] ] },
+  { name: "event details", ctx: "detail", keys: [
+    ["↑↓  j k  wheel", "scroll"], ["[  ]  p n", "previous / next event"], ["1-9  click file", "open referenced file in $PAGER"],
+    ["tab  o  e", "select file · open in pager · open in $EDITOR"], ["v", "whole detail in $PAGER"], ["y", "copy detail to clipboard"],
+    ["esc  q  ←  right-click", "back to transcript"] ] },
   { name: "prompt & dialogs", ctx: "", keys: [
     ["↵", "submit"], ["esc", "cancel"], ["ctrl-u  ctrl-w", "clear line / delete word"], ["y  n", "confirm / cancel dialog"] ] },
   { name: "mouse", ctx: "", keys: [
-    ["wheel", "scroll list / transcript"], ["click", "select row · click again to open"], ["click tab", "switch view"] ] },
+    ["wheel", "scroll list / transcript / details"], ["click", "select row · click again (or double-click) to open"],
+    ["click preview row", "jump to that event / subagent"], ["click footer hint", "press that key"], ["right-click", "back"], ["click tab", "switch view"] ] },
 ];
 let helpScroll = 0;
-function helpContext(): string { return prevMode === "transcript" ? "transcript" : tab === 0 ? "sessions" : "processes"; }
+function helpContext(): string { return prevMode === "detail" ? "detail" : prevMode === "transcript" ? "transcript" : tab === 0 ? "sessions" : "processes"; }
 function helpLines(sec: HelpSec, w: number, ctx: string): string[] {
   const on = sec.ctx !== "" && sec.ctx === ctx;
   const out: string[] = [];
@@ -1000,7 +1051,8 @@ function render(): void {
   buf = [];
   buf.push("\x1b[?2026h");
   renderHeader();
-  if (mode === "transcript" || (mode !== "list" && tv && prevMode === "transcript")) renderTranscript();
+  if (mode === "detail" || (mode !== "list" && dv && prevMode === "detail")) { renderTranscript(); renderDetail(); }
+  else if (mode === "transcript" || (mode !== "list" && tv && prevMode === "transcript")) renderTranscript();
   else if (tab === 0) renderSessions();
   else renderProcs();
   renderFooter();
@@ -1024,6 +1076,256 @@ function targetPid(): number {
   const s = target(); if (!s || !s.pid) return 0;
   const r = rootOf(s.pid); return r ? r.pid : s.pid;
 }
+// ── event detail (drill-down) ───────────────────────────────────────────────
+// ponytail: slice+for-of read — in scriptc a number read via a[i] (or a[i] ?? d) cannot index another array afterwards
+function numAt(a: number[], i: number, d: number): number {
+  let v = d;
+  if (i >= 0 && i < a.length) for (const x of a.slice(i, i + 1)) v = x;
+  return v;
+}
+function evIn(list: Ev[], i: number): Ev | null { return i >= 0 && i < list.length ? list[i] ?? null : null; }
+function resolveFull(e: Ev): string {
+  if (!e.full.startsWith("@file:")) return e.full;
+  const p = e.full.slice(6);
+  try { const st = statSync(p); return readText(p, 0, Math.min(st.size, 4194304)); } catch (err) { return ""; }
+}
+// tool call ↔ result, by id when the harness logs one, else the adjacent event
+function pairOf(evs: Ev[], i: number): number {
+  const e = evIn(evs, i);
+  if (!e) return -1;
+  if (e.kind === "tool") {
+    for (let j = i + 1; j < evs.length && j < i + 500; j++) {
+      const r = evs[j];
+      if (r.kind === "result" && (!e.id || r.id === e.id)) return j;
+      if (!e.id && r.kind === "tool") return -1;
+    }
+  } else if (e.kind === "result") {
+    for (let j = i - 1; j >= 0 && j > i - 500; j--) {
+      const c = evs[j];
+      if (c.kind === "tool" && (!e.id || c.id === e.id)) return j;
+    }
+  }
+  return -1;
+}
+function dHead(L: string[], P: string[], title: string, w: number, col: string): void {
+  L.push("");
+  const t = clean(title);
+  L.push(fg(col) + CSI + "1m" + "━━ " + fit(t, Math.min(width(t), w - 4)) + " " + RST + fg(C.line) + "━".repeat(Math.max(0, w - width(t) - 4)) + RST);
+  P.push("", "== " + title);
+}
+function dText(L: string[], P: string[], text: string, w: number, col: string): void {
+  for (const l of wrap(text, w)) L.push(fg(col) + l + RST);
+  P.push(text);
+}
+function dCode(L: string[], P: string[], text: string, w: number, numbered: boolean): void {
+  const src = text.split("\n");
+  if (src.length > 1 && src[src.length - 1] === "") src.pop();
+  const nw = numbered ? String(src.length).length : 0;
+  for (let i = 0; i < src.length; i++) {
+    const segs = wrap(src[i], Math.max(10, w - (numbered ? nw + 3 : 2)));
+    for (let j = 0; j < segs.length; j++) {
+      const gut = numbered ? fg(C.dim) + (j === 0 ? String(i + 1).padStart(nw, " ") : " ".repeat(nw)) + " │ " : fg(C.line) + "│ ";
+      L.push(gut + RST + fg(C.text) + segs[j] + RST);
+    }
+  }
+  P.push(text);
+}
+function dDiff(L: string[], P: string[], text: string, w: number): void {
+  for (const raw of text.split("\n")) {
+    const c = raw.charAt(0);
+    const col = c === "+" && !raw.startsWith("+++") ? C.green : c === "-" && !raw.startsWith("---") ? C.red : c === "@" ? C.cyan : C.sub;
+    for (const seg of wrap(raw, w)) L.push(fg(col) + seg + RST);
+  }
+  P.push(text);
+}
+function pretty(o: Obj): string { return JSON.stringify(o, null, 2); }
+function prefixLines(text: string, pre: string): string { return text.split("\n").map((l) => pre + l).join("\n"); }
+function fmtCall(L: string[], P: string[], e: Ev, w: number): void {
+  const i0 = e.text.indexOf("\u0000");
+  const name = i0 >= 0 ? e.text.slice(0, i0) : e.text;
+  const a = parse(e.full.trim());
+  if (a) {
+    const fp = str(a["file_path"]) || str(a["path"]) || str(a["notebook_path"]);
+    const cmd = str(a["command"]) || str(a["cmd"]);
+    const req = obj(a["request"]);
+    if (typeof a["old_string"] === "string" || typeof a["new_string"] === "string") {
+      dHead(L, P, "EDIT  " + home(fp), w, C.yellow);
+      dDiff(L, P, prefixLines(str(a["old_string"]), "- ") + "\n" + prefixLines(str(a["new_string"]), "+ "), w);
+    } else if (arr(a["edits"]).length) {
+      dHead(L, P, "MULTI-EDIT  " + home(fp), w, C.yellow);
+      for (const ed of arr(a["edits"])) { const eo = obj(ed); if (eo) dDiff(L, P, prefixLines(str(eo["old_string"]), "- ") + "\n" + prefixLines(str(eo["new_string"]), "+ ") + "\n", w); }
+    } else if (typeof a["content"] === "string" && fp) {
+      dHead(L, P, "WRITE  " + home(fp), w, C.yellow);
+      dCode(L, P, str(a["content"]), w, true);
+    } else if (cmd) {
+      dHead(L, P, "COMMAND" + (str(a["workdir"]) || str(a["cwd"]) ? "  in " + home(str(a["workdir"]) || str(a["cwd"])) : ""), w, C.yellow);
+      dCode(L, P, cmd, w, false);
+    } else if (req && str(req["task"])) {
+      dHead(L, P, "SUBAGENT TASK", w, C.yellow);
+      dText(L, P, str(req["task"]), w, C.text);
+    } else if (str(a["prompt"])) {
+      dHead(L, P, "PROMPT" + (str(a["description"]) ? "  " + str(a["description"]) : ""), w, C.yellow);
+      dText(L, P, str(a["prompt"]), w, C.text);
+    }
+    dHead(L, P, "ARGUMENTS  " + name, w, C.sub);
+    dCode(L, P, pretty(a), w, false);
+  } else if (e.full) {
+    dHead(L, P, "INPUT  " + name, w, C.yellow);
+    if (e.full.indexOf("*** Begin Patch") >= 0 || e.full.indexOf("\n+") >= 0) dDiff(L, P, e.full, w); else dCode(L, P, e.full, w, true);
+  } else {
+    dHead(L, P, "CALL  " + name, w, C.yellow);
+    dText(L, P, i0 >= 0 ? e.text.slice(i0 + 1) : e.text, w, C.text);
+  }
+}
+function fmtResult(L: string[], P: string[], e: Ev, w: number): void {
+  const tur = e.full && !e.full.startsWith("@file:") ? parse(e.full.trim()) : null; // Claude toolUseResult
+  if (tur) {
+    let shown = false;
+    const patch = arr(tur["structuredPatch"]);
+    if (patch.length) {
+      dHead(L, P, "PATCH  " + home(str(tur["filePath"])), w, C.green);
+      for (const hk of patch) {
+        const h = obj(hk);
+        if (!h) continue;
+        const ls: string[] = [];
+        for (const x of arr(h["lines"])) ls.push(str(x));
+        dDiff(L, P, "@@ -" + String(h["oldStart"]) + " +" + String(h["newStart"]) + " @@\n" + ls.join("\n"), w);
+      }
+      shown = true;
+    }
+    const file = obj(tur["file"]);
+    if (file && str(file["content"])) {
+      dHead(L, P, "FILE  " + home(str(file["filePath"])), w, C.green);
+      dCode(L, P, str(file["content"]), w, true);
+      shown = true;
+    }
+    const so = str(tur["stdout"]); const se = str(tur["stderr"]);
+    if (so) { dHead(L, P, "STDOUT", w, C.green); dCode(L, P, so, w, false); shown = true; }
+    if (se) { dHead(L, P, "STDERR", w, C.red); dCode(L, P, se, w, false); shown = true; }
+    if (!shown) { dHead(L, P, "RESULT", w, C.green); dCode(L, P, e.text, w, false); dHead(L, P, "RESULT DATA", w, C.sub); dCode(L, P, pretty(tur), w, false); }
+    return;
+  }
+  const full = resolveFull(e);
+  dHead(L, P, "RESULT" + (e.full.startsWith("@file:") ? "  " + home(e.full.slice(6)) : ""), w, C.green);
+  const body = full || e.text;
+  if (body.indexOf("\n@@ ") >= 0 || body.startsWith("diff --git")) dDiff(L, P, body, w); else dCode(L, P, body, w, false);
+}
+function filesOf(texts: string[], cwd: string): string[] {
+  const out: string[] = [];
+  const add = (p0: string): void => {
+    const p = p0.replace(/\\\//g, "/").trim();
+    if (!p || p.length > 400 || p.indexOf("\n") >= 0) return;
+    const abs = p.startsWith("/") ? p : p.startsWith("~/") ? HOME + p.slice(1) : cwd ? join(cwd, p) : p;
+    if (out.indexOf(abs) < 0) out.push(abs);
+  };
+  for (const t of texts) {
+    for (const m of t.matchAll(/"(?:file_path|filePath|path|notebook_path)"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) add(m[1]);
+    for (const m of t.matchAll(/\*\*\* (?:Add|Update|Delete) File: ([^\n]+)/g)) add(m[1]);
+  }
+  return out;
+}
+function buildDetail(t: TV, idx: number, w: number): DV {
+  const L: string[] = []; const P: string[] = [];
+  const e = evIn(t.evs, idx);
+  let title = "event";
+  const texts: string[] = [];
+  if (e) {
+    const j = pairOf(t.evs, idx);
+    const pe = evIn(t.evs, j);
+    const call = e.kind === "tool" ? e : e.kind === "result" ? pe : null;
+    const res = e.kind === "result" ? e : e.kind === "tool" ? pe : null;
+    if (call || res) {
+      const i0 = call ? call.text.indexOf("\u0000") : -1;
+      title = "⚒ " + (call && i0 >= 0 ? call.text.slice(0, i0) : "tool result");
+      if (call) { fmtCall(L, P, call, w); texts.push(call.full); }
+      else { dHead(L, P, "CALL", w, C.dim); dText(L, P, "(call not in the loaded part of the log)", w, C.dim); }
+      if (res) { fmtResult(L, P, res, w); texts.push(res.full.startsWith("@file:") ? "" : res.full); }
+      else { dHead(L, P, "RESULT", w, C.dim); dText(L, P, "(no result yet — still running?)", w, C.dim); }
+    } else {
+      title = e.kind === "user" ? "❯ user" : e.kind === "assistant" ? "⏺ assistant" : e.kind === "thinking" ? "∴ thinking" : "── " + e.kind;
+      dHead(L, P, e.kind.toUpperCase(), w, e.kind === "user" ? C.cyan : C.text);
+      dText(L, P, e.text, w, e.kind === "thinking" ? C.sub : C.text);
+      texts.push(e.text);
+    }
+    if (e.ts) title += "  ·  " + localHM(e.ts);
+    if (e.id) title += "  ·  " + e.id;
+  }
+  const files = filesOf(texts, t.s.cwd);
+  const head: string[] = []; const fileRow: number[] = [];
+  if (files.length) {
+    head.push(fg(C.purple) + CSI + "1m" + "FILES" + RST + fg(C.dim) + "   1-9 / click open in $PAGER · e edit · tab select" + RST);
+    for (let i = 0; i < files.length; i++) {
+      fileRow.push(head.length);
+      const ok = existsSync(files[i]);
+      head.push("  " + fg(C.accent) + CSI + "1m" + "[" + (i + 1) + "]" + RST + " " + fg(ok ? C.text : C.dim) + home(files[i]) + RST + (ok ? "" : fg(C.red) + "  (missing)" + RST));
+    }
+  }
+  return { idx, lines: head.concat(L), plain: P.join("\n"), files, fileRow, fsel: 0, scroll: 0, title, lw: w };
+}
+function openDetail(i: number): void {
+  if (!tv || i < 0 || i >= tv.evs.length) return;
+  dv = buildDetail(tv, i, W - 4);
+  mode = "detail";
+}
+function stepDetail(dir: number): void {
+  if (!tv || !dv) return;
+  let i = dv.idx + dir;
+  // a result already shown with its call is skipped
+  while (i >= 0 && i < tv.evs.length) {
+    const e = tv.evs[i];
+    if (e.kind === "result" && pairOf(tv.evs, i) >= 0) { i += dir; continue; }
+    if (e.kind === "meta") { i += dir; continue; }
+    break;
+  }
+  if (i < 0 || i >= tv.evs.length) return;
+  tv.cur = i; tv.follow = false;
+  openDetail(i);
+}
+function openExternal(cmd: string, path: string): void {
+  if (!existsSync(path)) { say("warn", "not found: " + home(path)); return; }
+  const c = cmd.split(" ").filter((x) => x.length > 0);
+  leave();
+  try { execFileSync(c[0], c.slice(1).concat([path]), { stdio: "inherit" }); } catch (err) { /* viewer exit code */ }
+  enter();
+}
+function pagerCmd(): string { const p = process.env.PAGER; return p !== undefined && p.trim() ? p : "less -R"; }
+function editorCmd(): string { const v = process.env.VISUAL; const e = process.env.EDITOR; return v !== undefined && v.trim() ? v : e !== undefined && e.trim() ? e : "vi"; }
+function openFileN(n: number, edit: boolean): void {
+  if (!dv || n < 0 || n >= dv.files.length) return;
+  dv.fsel = n;
+  openExternal(edit ? editorCmd() : pagerCmd(), dv.files[n]);
+}
+function pageDetail(): void {
+  if (!dv) return;
+  const dir = join(HOME, ".agentglass", "tmp");
+  try { mkdirSync(dir, { recursive: true }); } catch (err) { /* exists */ }
+  const f = join(dir, "detail.txt");
+  try { const fd = openSync(f, "w"); writeSync(fd, dv.plain + "\n"); closeSync(fd); } catch (err) { say("err", "cannot write " + home(f)); return; }
+  openExternal(pagerCmd(), f);
+}
+function renderDetail(): void {
+  if (!dv || !tv) return;
+  const d = dv;
+  if (d.lw !== W - 4) { const keep = d.scroll; const fs = d.fsel; dv = buildDetail(tv, d.idx, W - 4); dv.scroll = keep; dv.fsel = fs; }
+  const v = dv;
+  const vh = H - 4; const iw = W - 4;
+  const maxScroll = Math.max(0, v.lines.length - vh);
+  v.scroll = Math.max(0, Math.min(v.scroll, maxScroll));
+  box(0, 1, W, H - 2, v.title, "event " + (v.idx + 1) + "/" + tv.evs.length + " · " + clean(titleOf(tv.s)), true);
+  for (let r = 0; r < vh; r++) {
+    const li = v.scroll + r;
+    const l = li < v.lines.length ? v.lines[li] : "";
+    const fi = v.fileRow.indexOf(li);
+    const mark = fi >= 0 && fi === v.fsel ? fg(C.accent) + "▌" + RST : " ";
+    const f = fitStyled(l, iw);
+    put(1, 2 + r, mark + f + fillTo(f, iw) + " ");
+  }
+  if (v.lines.length > vh) {
+    const th = Math.max(1, Math.floor((vh * vh) / v.lines.length));
+    const ty = Math.floor((v.scroll / Math.max(1, maxScroll)) * (vh - th));
+    for (let r = 0; r < vh; r++) put(W - 1, 2 + r, fg(r >= ty && r < ty + th ? C.accent : C.line) + (r >= ty && r < ty + th ? "┃" : "│") + RST);
+  }
+}
 function cycleSub(dir: number): void {
   if (!tv) return;
   const root = tv.s.depth === 1 ? parentOf(tv.s) : tv.s;
@@ -1032,11 +1334,21 @@ function cycleSub(dir: number): void {
   const i = kids.indexOf(tv.s);
   openTranscript(kids[(((i + dir) % kids.length) + kids.length) % kids.length]);
 }
+function moveCur(t: TV, d: number, vh: number): void {
+  if (!t.evs.length) return;
+  t.cur = Math.max(0, Math.min(t.evs.length - 1, (t.cur < 0 ? t.evs.length - 1 : t.cur) + d));
+  t.follow = false;
+  const s0 = numAt(t.lineStart, t.cur, 0);
+  const e0 = numAt(t.lineStart, t.cur + 1, t.lines.length);
+  if (s0 < t.scroll) t.scroll = s0;
+  else if (e0 > t.scroll + vh) t.scroll = Math.min(s0, e0 - vh);
+  if (d > 0 && t.cur === t.evs.length - 1) t.follow = true;
+}
 function openTranscript(s: Sess): void {
   const start = Math.max(0, s.size - 6291456);
-  tv = { s, evs: [], off: start, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false };
+  tv = { s, evs: [], off: start, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "" };
   if (start > 0) alignOff();
-  if (start > 0) tv.evs.push({ kind: "meta", text: "showing last " + bytes(s.size - start) + " of " + bytes(s.size), ts: "" });
+  if (start > 0) tv.evs.push({ kind: "meta", text: "showing last " + bytes(s.size - start) + " of " + bytes(s.size), ts: "", id: "", full: "" });
   mode = "transcript";
 }
 function alignOff(): void {
@@ -1207,18 +1519,42 @@ function onInput(k: string): void {
   if (mode === "transcript" && tv) {
     const vh = H - 4;
     if (k === "esc" || k === "q" || k === "left") { mode = "list"; tv = null; return; }
-    if (k === "up" || k === "k") { tv.scroll--; tv.follow = false; }
-    else if (k === "down" || k === "j") tv.scroll++;
-    else if (k === "pgup" || k === "b" || k === "wheelup") { tv.scroll -= k === "wheelup" ? 3 : vh - 1; tv.follow = false; }
-    else if (k === "pgdn" || k === " " || k === "wheeldown") tv.scroll += k === "wheeldown" ? 3 : vh - 1;
-    else if (k === "g" || k === "home") { tv.scroll = 0; tv.follow = false; }
+    if (k === "up" || k === "k") moveCur(tv, -1, vh);
+    else if (k === "down" || k === "j") moveCur(tv, 1, vh);
+    else if (k === "enter" || k === "right") openDetail(tv.cur);
+    else if (k === "wheelup") { tv.scroll -= 3; tv.follow = false; }
+    else if (k === "wheeldown") tv.scroll += 3;
+    else if (k === "pgup" || k === "b") { tv.scroll = Math.max(0, tv.scroll - (vh - 1)); tv.follow = false; tv.cur = numAt(tv.lineEv, tv.scroll, tv.cur); }
+    else if (k === "pgdn" || k === " ") { tv.scroll += vh - 1; tv.cur = numAt(tv.lineEv, Math.min(tv.scroll, tv.lines.length - 1), tv.cur); }
+    else if (k === "g" || k === "home") { tv.scroll = 0; tv.cur = 0; tv.follow = false; }
     else if (k === "G" || k === "end" || k === "f") tv.follow = true;
     else if (k === "t") tv.expand = !tv.expand;
     else if (k === "s") ask("send to " + tv.s.h, "send", "");
     else if (k === "R") resume(tv.s);
     else if (k === "n" || k === "N") cycleSub(k === "n" ? 1 : -1);
     else if (k === "u") { const par = parentOf(tv.s); if (par) openTranscript(par); }
-    if (tv.lines.length && tv.scroll >= tv.lines.length - vh) tv.follow = true;
+    if (k.startsWith("wheel") || k === "pgdn" || k === " ") { if (tv.lines.length && tv.scroll >= tv.lines.length - vh) tv.follow = true; }
+    return;
+  }
+  if (mode === "detail" && dv) {
+    const vh = H - 4;
+    if (k === "esc" || k === "q" || k === "left" || k === "backspace") { mode = "transcript"; dv = null; return; }
+    if (k === "up" || k === "k") dv.scroll--;
+    else if (k === "down" || k === "j") dv.scroll++;
+    else if (k === "wheelup") dv.scroll -= 3;
+    else if (k === "wheeldown") dv.scroll += 3;
+    else if (k === "pgup" || k === "b") dv.scroll -= vh - 1;
+    else if (k === "pgdn" || k === " ") dv.scroll += vh - 1;
+    else if (k === "g" || k === "home") dv.scroll = 0;
+    else if (k === "G" || k === "end") dv.scroll = dv.lines.length;
+    else if (k === "]" || k === "n") stepDetail(1);
+    else if (k === "[" || k === "p") stepDetail(-1);
+    else if (k === "tab") { if (dv.files.length) dv.fsel = (dv.fsel + 1) % dv.files.length; }
+    else if (k === "o" || k === "enter") openFileN(dv.fsel, false);
+    else if (k === "e") openFileN(dv.fsel, true);
+    else if (k === "v") pageDetail();
+    else if (k === "y") { try { execFileSync("pbcopy", [], { input: dv.plain }); say("ok", "copied " + dv.plain.length + " chars"); } catch (err) { say("err", "pbcopy failed"); } }
+    else if (k.length === 1 && "123456789".indexOf(k) >= 0) openFileN(Number(k) - 1, false);
     return;
   }
 
@@ -1275,14 +1611,54 @@ function onInput(k: string): void {
 function onMouse(k: string): void {
   const m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(k);
   if (!m) return;
-  const b = Number(m[1]); const x = Number(m[2]) - 1; const y = Number(m[3]) - 1;
-  if (b === 64) { onInput("wheelup"); return; }
-  if (b === 65) { onInput("wheeldown"); return; }
-  if (b !== 0 || m[4] !== "M" || mode !== "list") return;
+  const b = Number(m[1] ?? "0"); const x = Number(m[2] ?? "1") - 1; const y = Number(m[3] ?? "1") - 1; // groups are string | undefined: default them or every derived index is untyped
+  if (b === 64 || b === 65) { // wheel: over the preview it scrolls nothing, elsewhere it drives the focused view
+    if (mode === "list" && tab === 0 && x >= prevX0 && x < prevX1 && y >= prevY0) return;
+    onInput(b === 64 ? "wheelup" : "wheeldown");
+    return;
+  }
+  if (m[4] !== "M") return; // ignore releases
+  if (b === 2) { onInput("esc"); return; } // right click = back
+  if (b !== 0) return;
+  const now = Date.now();
+  const dbl = y === lastClickY && now - lastClickAt < 450;
+  lastClickY = y; lastClickAt = now;
+  if (mode === "help") { onInput("esc"); return; }
+  if (mode === "input" || mode === "confirm") return;
+  if (y === H - 1) { // footer hints are buttons
+    for (let i = 0; i < footKey.length; i++) if (x >= numAt(footX0, i, 0) && x < numAt(footX1, i, 0)) { onInput(footKey[i]); return; }
+    return;
+  }
+  if (mode === "detail" && dv) {
+    const li = dv.scroll + (y - 2);
+    const fi = dv.fileRow.indexOf(li);
+    if (y >= 2 && fi >= 0) { if (dv.fsel === fi || dbl) openFileN(fi, false); else dv.fsel = fi; }
+    return;
+  }
+  if (mode === "transcript" && tv) {
+    const li = tv.scroll + (y - 2);
+    if (y < 2 || li >= tv.lines.length) return;
+    const ei = numAt(tv.lineEv, li, -1);
+    if (ei < 0) return;
+    if (ei === tv.cur || dbl) openDetail(ei); else { tv.cur = ei; tv.follow = false; }
+    return;
+  }
+  if (mode !== "list") return;
   if (y === 0) { if (x >= 16 && x < 28) tab = 0; else if (x >= 28 && x < 42) tab = 1; return; }
+  if (tab === 0 && prevSess && x >= prevX0 && x < prevX1 && y >= prevY0) { // preview rows jump straight in
+    const r = y - prevY0;
+    const kind = numAt(prevKind, r, 0); const at = numAt(prevIdx, r, 0);
+    if (kind === 1 && at < prevKids.length) { openTranscript(prevKids[at]); return; }
+    if (kind === 2 && at < prevSess.evs.length) {
+      const e = prevSess.evs[at];
+      openTranscript(prevSess);
+      if (tv) { tv.focusKind = e.kind; tv.focusTs = e.ts; tv.focusText = e.text; }
+    }
+    return;
+  }
   if (x < listX || x >= listX + listW || y < listY || y >= listY + listH) return;
-  if (tab === 0) { const i = top + (y - listY); if (i === sel && i < view.length) { const s = current(); if (s) openTranscript(s); } else if (i < view.length) sel = i; }
-  else { const i = ptop + (y - listY); if (i < procs.length) psel = i; }
+  if (tab === 0) { const i = top + (y - listY); if (i < view.length && (i === sel || dbl)) { sel = i; const s = current(); if (s) openTranscript(s); } else if (i < view.length) sel = i; }
+  else { const i = ptop + (y - listY); if (i < procs.length && (i === psel || dbl)) { psel = i; onInput("enter"); } else if (i < procs.length) psel = i; }
 }
 
 // ── terminal lifecycle ──────────────────────────────────────────────────────
