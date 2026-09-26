@@ -84,7 +84,7 @@ function renderStats(): void {
   const l1 = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx + fg(C.dim) + "   ≈ API list price" + RST;
   const wide = W >= 130; const sp = wide ? " " : "";
   const l2 = fg(C.yellow) + CSI + "1m" + money(t.cost, t.unk) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
-    fg(C.accent) + "⟳" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "✎" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
+    fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
     fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST;
   const b = g.busy;
   const l3 = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? money(g.busyCost, 0) + " " : "") + RST +
@@ -187,7 +187,7 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   const a = accOf(s);
   const k = fg(C.dim) + fit("usage", 9) + RST;
   if (pending(s, a) && a.off < s.size * 0.98) return [k + fg(C.yellow) + spin() + " indexing " + Math.floor((a.off / Math.max(1, s.size)) * 100) + "%" + RST];
-  const tok = fg(C.cyan) + "↑" + kfmt(s.inTok) + " " + RST + fg(C.purple) + "↓" + kfmt(s.outTok) + " " + RST + fg(C.accent) + "⟳" + kfmt(s.cacheRTok + s.cacheWTok) + RST;
+  const tok = fg(C.cyan) + "↑" + kfmt(s.inTok) + " " + RST + fg(C.purple) + "↓" + kfmt(s.outTok) + " " + RST + fg(C.accent) + "↻" + kfmt(s.cacheRTok + s.cacheWTok) + RST;
   const out = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + money(s.cost, a.unk)) + RST + dot + fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(s.linesAdd, s.linesDel)];
   const d = a.days.get(todayKey());
   if (d && a.days.size > 1 && w > 30) out.push(fg(C.dim) + fit("today", 9) + RST + fg(C.yellow) + (d.cost === 0 && d.unk > 0 ? "cost ?" : money(d.cost, 0)) + RST + dot + fg(C.text) + grp(d.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(d.add, d.del));
