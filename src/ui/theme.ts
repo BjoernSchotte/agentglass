@@ -8,6 +8,7 @@ export const C = {
   text: "220;223;228", sub: "150;156;168", dim: "96;101;112", line: "58;62;72", sel: "40;44;54", panel: "22;24;30",
   accent: "122;162;247", claude: "217;119;87", codex: "110;180;255", fx: "94;234;212", green: "126;211;135", yellow: "229;192;123",
   red: "240;113;120", cyan: "125;207;255", purple: "187;154;247",
+  addBg: "22;48;32", delBg: "58;26;30", shadow: "8;8;10", // diff row backgrounds, popup drop shadow
 };
 // syntax highlighting (shiki-ish, tokyo-night palette)
 export const HL = {

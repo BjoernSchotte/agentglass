@@ -84,7 +84,7 @@ function dDiff(L: string[], P: string[], text: string, w: number, lang: string):
     const body = add || del || c === " " ? raw.slice(raw.charAt(1) === " " ? 2 : 1) : raw;
     const segs: Seg[] = [{ s: fg(add ? C.green : del ? C.red : C.dim) + CSI + "1m", t: add ? "+ " : del ? "- " : "  " }];
     for (const sg of hlLine(lang, clean(body).replace(/\s+$/, ""), state)) segs.push(sg);
-    rows.push(segs); bgs.push(add ? "22;48;32" : del ? "58;26;30" : "");
+    rows.push(segs); bgs.push(add ? C.addBg : del ? C.delBg : "");
   }
   emitBlock(L, P, rows, bgs, w, false, text, C.line);
 }

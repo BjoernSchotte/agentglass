@@ -17,6 +17,8 @@ import { renderHelp } from "./ui/help.ts";
 import { tokens, keyName, onInput, onMouse } from "./input.ts";
 import { enter, quit, termSize } from "./term.ts";
 // feature modules: import each once here for its side effects (they register on H)
+import "./features/themes.ts";
+import "./features/ticker.ts";
 
 function render(): void {
   buf.length = 0;
