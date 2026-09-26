@@ -21,7 +21,7 @@ export function renderHeader(): void {
   const tabs = [" Sessions ", " Processes "];
   for (const t of H.tabs) tabs.push(" " + t.name + " ");
   let x = 0;
-  let s = bg(C.accent) + fg("20;20;24") + CSI + "1m" + " ◈ agentglass " + RST + " ";
+  let s = bg(C.accent) + fg(C.panel) + CSI + "1m" + " ◈ agentglass " + RST + " ";
   x = 16;
   tabX0.length = 0; tabX1.length = 0;
   for (let i = 0; i < tabs.length; i++) {

@@ -87,7 +87,7 @@ export function renderHelp(): void {
   put(x0, y0 + h - 2, bc + "│" + RST + bg(C.panel) + fg(C.dim) + fit(foot, w - 2) + RST + bc + "│" + RST);
   put(x0, y0 + h - 1, bc + "╰" + "─".repeat(w - 2) + "╯" + RST);
   // drop shadow
-  const sh = bg("8;8;10") + " " + RST;
+  const sh = bg(C.shadow) + " " + RST;
   for (let r = 1; r < h; r++) put(x0 + w, y0 + r, sh);
-  put(x0 + 1, y0 + h, bg("8;8;10") + " ".repeat(w) + RST);
+  put(x0 + 1, y0 + h, bg(C.shadow) + " ".repeat(w) + RST);
 }
