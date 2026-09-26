@@ -16,6 +16,7 @@ export const H = {
   rowBadges: [] as ((s: Sess) => string)[], // styled glyphs in a 2-col slot before each session row's title
   previewSections: [] as ((s: Sess, w: number) => string[])[], // styled lines after the preview's metadata block
   headerWidgets: [] as ((w: number) => string)[], // styled segments between the tabs and the header stats; w = free width
+  headerFlex: [] as ((w: number) => string)[], // laid out after headerWidgets, filling the width they leave (e.g. a ticker)
   footerHints: [] as ((mode: string) => string[][])[], // extra [key, label] footer hints (clickable when key is one keystroke)
   tabs: [] as Tab[], // extra top-level tabs 3, 4, … after Sessions / Processes
   helpSections: [] as HelpSec[], // appended to the ? popup

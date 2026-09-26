@@ -27,13 +27,14 @@ export function renderFooter(): void {
     fx += w + 2;
     return fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
   };
-  let hints = "";
-  if (mode === "detail") hints = k("?", "keys") + k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("z", "fold all") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
-  else if (mode === "transcript") hints = k("?", "keys") + k("↑↓/jk", "event") + k("↵", "details") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
-  else if (S.tab === 0) hints = k("?", "keys") + k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
-  else if (S.tab === 1) hints = k("?", "keys") + k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
-  else hints = k("?", "keys") + k("q", "quit");
+  // feature hints right after "? keys": they are the mode-specific ones (e.g. replay) and must survive truncation
+  let hints = k("?", "keys");
   for (const f of H.footerHints) for (const kd of f(mode)) hints += k(kd[0] ?? "", kd[1] ?? "");
+  if (mode === "detail") hints += k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("z", "fold all") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
+  else if (mode === "transcript") hints += k("↑↓/jk", "event") + k("↵", "details") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
+  else if (S.tab === 0) hints += k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
+  else if (S.tab === 1) hints += k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
+  else hints += k("q", "quit");
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
   if (S.toast && Date.now() - S.toastAt < 5000) {
     const tk = S.toastKind;

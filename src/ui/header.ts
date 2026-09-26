@@ -30,16 +30,23 @@ export function renderHeader(): void {
     x += tabs[i].length + 2;
     tabX1.push(i === tabs.length - 1 ? x + 1 : x);
   }
-  const spark = braille(cpuHist, 16, 1, Math.max(100, Math.max(...cpuHist.slice(-32))))[0];
+  const spark = braille(cpuHist, W >= 150 ? 16 : 6, 1, Math.max(100, Math.max(...cpuHist.slice(-32))))[0];
   const right = fg(C.green) + "● " + live + " live" + RST + fg(C.dim) + " · " + RST + fg(C.yellow) + busy + " busy" + RST + fg(C.dim) + " · " + RST +
     fg(C.sub) + "cpu " + RST + fg(heat(cpu / 400)) + cpu.toFixed(1) + "% " + spark + RST + fg(C.dim) + " · " + RST +
-    fg(C.sub) + "mem " + RST + fg(C.text) + bytes(mem) + RST + fg(C.dim) + "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions " + RST;
+    fg(C.text) + bytes(mem) + RST + fg(C.dim) + (W >= 190 ? "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions" : "") + " " + RST; // totals only when wide: widgets need the room
   const rw = width(right.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
   const free = Math.max(0, W - x - rw);
   let wid = "";
-  if (H.headerWidgets.length && free > 1) {
+  if ((H.headerWidgets.length || H.headerFlex.length) && free > 1) {
     const parts: string[] = [];
-    for (const f of H.headerWidgets) { const w = f(free - 1); if (w) parts.push(w); }
+    let used = 0;
+    for (const f of H.headerWidgets) {
+      const w = f(Math.max(0, free - 1 - used));
+      if (!w) continue;
+      parts.push(w); used += width(w.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")) + 1;
+    }
+    const room = free - 1 - used - 2;
+    if (room > 8) for (const f of H.headerFlex) { const w = f(room); if (w) { parts.push(fg(C.line) + "│" + RST + " " + w); break; } }
     if (parts.length) wid = fitStyled(parts.join(" "), free - 1);
   }
   const ww = width(wid.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));

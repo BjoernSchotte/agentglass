@@ -62,7 +62,7 @@ H.onFastTick.push(() => {
   off = (off + 1) % total;
   return true;
 });
-H.headerWidgets.push((w) => {
+H.headerFlex.push((w) => {
   if (!built) build();
   slot = w;
   if (w <= 0) return "";
