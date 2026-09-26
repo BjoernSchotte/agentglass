@@ -22,6 +22,7 @@ import "./features/cli.ts";
 import "./features/themes.ts";
 import "./features/ticker.ts";
 import "./features/watchdog.ts";
+import "./features/usage/stats.ts";
 
 function render(): void {
   buf.length = 0;
