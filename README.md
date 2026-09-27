@@ -5,8 +5,7 @@ One tiny native TUI for Claude Code, Codex and fx: browse every session you ever
 ones think, drill into any call, see where the time and money went, and get tapped on the shoulder
 when an agent needs you.
 
-<!-- launch video: replace the line below with the github.com/user-attachments/assets/… URL of the uploaded mp4 (on its own line = inline player) -->
-VIDEO_URL_PLACEHOLDER
+https://github.com/user-attachments/assets/7553c26d-2877-4dca-be2a-5508ec93707e
 
 <sub>▶ 46 s launch video, recorded from the real binary in <code>--redact</code> mode · also in the repo: <a href="docs/media/agentglass-launch.webm"><code>docs/media/agentglass-launch.webm</code></a></sub>
 
