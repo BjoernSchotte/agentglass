@@ -5,15 +5,21 @@ import type { Ev, Sess, Harness } from "../model/types.ts";
 import { parseClaude, claudeHeadless, claudeResume } from "./claude.ts";
 import { parseCodex, codexHeadless, codexResume } from "./codex.ts";
 import { parseFx, fxHeadless, fxResume } from "./fx.ts";
+import { H, applyMeta } from "../hooks.ts";
 
 export function parseEvents(h: Harness, line: string, out: Ev[], s: Sess | null): void {
   const o = parse(line);
   if (!o) return;
-  if (h === "fx") { parseFx(o, out, s ? s.path : ""); return; }
-  const ts = str(o["timestamp"]);
-  const type = str(o["type"]);
-  if (h === "claude") parseClaude(o, ts, type, out, s);
-  else parseCodex(o, ts, type, out, s);
+  const n = out.length;
+  if (h === "fx") parseFx(o, out, s ? s.path : "");
+  else {
+    const ts = str(o["timestamp"]);
+    const type = str(o["type"]);
+    if (h === "claude") parseClaude(o, ts, type, out, s);
+    else parseCodex(o, ts, type, out, s);
+  }
+  if (s) applyMeta(s);
+  if (out.length > n) for (const f of H.events) f(s, out, n);
 }
 // the user's claude/codex are often shell functions: AGENTGLASS_<HARNESS> overrides the command
 export function cmdOf(h: Harness): string[] {

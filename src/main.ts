@@ -2,7 +2,7 @@
 // (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "./state.ts";
-import { H, tabAt, viewOf } from "./hooks.ts";
+import { H, tabAt, viewOf, screenOut } from "./hooks.ts";
 import { scan, buildView } from "./model/sessions.ts";
 import { refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
@@ -24,6 +24,7 @@ import "./features/ticker.ts";
 import "./features/watchdog.ts";
 import "./features/usage/stats.ts";
 import "./features/callgraph/view.ts";
+import "./features/redact.ts";
 
 function render(): void {
   buf.length = 0;
@@ -45,6 +46,7 @@ function render(): void {
   if (mode === "confirm") renderModal("confirm", [S.confirmText, "", "y  yes      n / esc  cancel"], C.yellow);
   if (mode === "help") renderHelp();
   buf.push("\x1b[?2026l");
+  if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
   process.stdout.write(buf.join(""));
 }
 

@@ -6,6 +6,7 @@ import { CLAUDE, readText, listDir, run } from "../util/fs.ts";
 import type { Proc, Sess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
+import { applyMeta } from "../hooks.ts";
 
 const HARN = ["claude", "codex", "fx", "gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
 export let procs: Proc[] = [];
@@ -107,6 +108,7 @@ function linkSessions(): void {
     s.pid = 0; s.status = ""; s.name = "";
     if (s.h === "claude") { const l = claudeLive.get(s.id); if (l) { s.pid = l.pid; s.status = l.status; s.name = l.name; } }
     else { const pid = codexPidByPath.get(s.path); if (pid && allProcs.has(pid)) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; } }
+    applyMeta(s);
   }
   for (const p of procs) p.sess = "";
   for (const s of sessions.values()) if (s.pid) { const r = rootOf(s.pid); if (r) r.sess = s.path; }

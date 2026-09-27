@@ -1,7 +1,7 @@
 // agentglass — machine-readable CLI: --json snapshot, --watch JSONL event stream, --help, --version (no TTY needed)
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync, statSync } from "node:fs";
-import { H, complete } from "../hooks.ts";
+import { H, complete, screenOut } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { parseEvents } from "../harness/index.ts";
@@ -16,6 +16,8 @@ const USAGE = `agentglass ${VERSION} — browse, watch and steer coding-agent se
 usage:
   agentglass                      interactive TUI
   agentglass --theme <name>       TUI with a color theme
+  agentglass --redact             privacy mode for screencasts: fake titles/projects/content, scrubbed names
+                                  (also AGENTGLASS_REDACT=1; combinable with --json / --watch)
   agentglass --json [opts]        print a JSON snapshot of sessions (newest first) and exit
   agentglass --watch [opts]       stream new events of all agents as JSONL (tail -f for every session)
   agentglass --help | -h          this text
@@ -45,7 +47,7 @@ interface WEv { ts: string; harness: string; session: string; title: string; pro
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
 function out(line: string): void {
-  try { writeSync(1, line + "\n"); } catch (e) { process.exit(0); }
+  try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); }
 }
 function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
 

@@ -3,7 +3,7 @@
 import { fit, fitStyled, fillTo, width, clean, numAt, home, bytes } from "../../util/text.ts";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
-import { H, type Tab } from "../../hooks.ts";
+import { H, type Tab, display } from "../../hooks.ts";
 import { sessions, titleOf } from "../../model/sessions.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
@@ -259,12 +259,12 @@ function when(t: number, wk: boolean): string {
   return wk ? WD.slice(wd * 2, wd * 2 + 2) + " " + hm : hm + ":" + (d.getSeconds() < 10 ? "0" : "") + d.getSeconds();
 }
 // rows of a (name, gauge, calls, error rate) table
-function cntRows(x: number, y: number, w: number, h: number, rows: [string, Cnt][], total: number, empty: string): void {
+function cntRows(x: number, y: number, w: number, h: number, rows: [string, Cnt][], total: number, empty: string, kind: string): void {
   const nw = Math.max(8, Math.floor((w - 4) * 0.45)); const bw = Math.max(0, w - 4 - nw - 1 - 7 - 7);
   let mx = 1; for (const r of rows) if (r[1].n > mx) mx = r[1].n;
   for (let i = 0; i < h; i++) {
     const e = rows[i];
-    const l = e ? fg(C.text) + fit(e[0], nw) + RST + " " + gauge(e[1].n / mx, bw) + fg(C.sub) + rj(grp(e[1].n), 7) + RST + errCol(e[1].n, e[1].err, 7) : i === 0 && !rows.length ? fg(C.dim) + empty + RST : "";
+    const l = e ? fg(C.text) + fit(kind ? display(kind, e[0], null) : e[0], nw) + RST + " " + gauge(e[1].n / mx, bw) + fg(C.sub) + rj(grp(e[1].n), 7) + RST + errCol(e[1].n, e[1].err, 7) : i === 0 && !rows.length ? fg(C.dim) + empty + RST : "";
     const f = fitStyled(l, w - 4);
     put(x + 1, y + i, " " + f + fillTo(f, w - 4) + " ");
   }
@@ -275,7 +275,7 @@ function recRows(x: number, y: number, w: number, h: number, list: DR[], base: n
     const e = i < list.length ? list[i] : undefined;
     if (e) {
       const on = base + i === dsel;
-      const a = clean(e.r.arg || "(no arguments)"); const aw = w - 3 - (wk ? 9 : 8) - 7 - 4;
+      const a = clean(display("tool:" + dKey, e.r.arg, sessions.get(e.path) ?? null) || "(no arguments)"); const aw = w - 3 - (wk ? 9 : 8) - 7 - 4;
       const arg = a.startsWith("/") && a.indexOf(" ") < 0 ? tail(home(a), aw) : a; // a bare path: keep its file name
       l = (on ? fg(C.accent) + "▌" + RST + bg(C.sel) : " ") + fg(C.dim) + fit(when(e.r.t, wk), wk ? 9 : 8) + RST + (on ? bg(C.sel) : "") + fg(e.r.ms >= 60000 ? C.red : e.r.ms >= 10000 ? C.yellow : C.text) + rj(fmtMs(e.r.ms), 7) + RST + " " + glyph(e.h) + " " +
         (on ? bg(C.sel) : "") + fg(e.err ? C.red : C.sub) + arg + RST;
@@ -313,20 +313,20 @@ function renderDrill(days: string[]): void {
   const ih = h1 - 2;
   if (dServer) {
     box(cw, y1, rw, h1, "tools", String(da.kids.size) + " used", false);
-    cntRows(cw, y1 + 1, rw, ih, top(da.kids, ih), da.n, "no calls");
+    cntRows(cw, y1 + 1, rw, ih, top(da.kids, ih), da.n, "no calls", "");
   } else if (da.prog.size) {
     const pw = Math.min(40, Math.floor(rw * 0.4));
     box(cw, y1, pw, h1, "programs", String(da.prog.size), false);
-    cntRows(cw, y1 + 1, pw, ih, top(da.prog, ih), da.n, "");
+    cntRows(cw, y1 + 1, pw, ih, top(da.prog, ih), da.n, "", "prog");
     box(cw + pw, y1, rw - pw, h1, "top commands", String(da.cmds.size) + " distinct", false);
-    cntRows(cw + pw, y1 + 1, rw - pw, ih, top(da.cmds, ih), da.n, "");
+    cntRows(cw + pw, y1 + 1, rw - pw, ih, top(da.cmds, ih), da.n, "", "cmd");
   } else if (da.files.size) {
     box(cw, y1, rw, h1, "most-changed files", String(da.files.size) + " files", false);
     const fw = rw - 4; const cols = 22; const pw = Math.max(10, fw - cols);
     const fs = top(da.files, ih);
     for (let i = 0; i < ih; i++) {
       const e = fs[i];
-      const l = e ? fg(C.text) + tail(home(e[0]) || "(unknown)", pw) + RST + fg(C.sub) + rj(grp(e[1].n) + "×", 6) + RST + " " + fg(C.green) + rj("+" + grp(e[1].add), 7) + RST + " " + fg(C.red) + fit("−" + grp(e[1].del), 7) + RST : "";
+      const l = e ? fg(C.text) + tail(home(display("file", e[0], null)) || "(unknown)", pw) + RST + fg(C.sub) + rj(grp(e[1].n) + "×", 6) + RST + " " + fg(C.green) + rj("+" + grp(e[1].add), 7) + RST + " " + fg(C.red) + fit("−" + grp(e[1].del), 7) + RST : "";
       const f = fitStyled(l, fw);
       put(cw + 1, y1 + 1 + i, " " + f + fillTo(f, fw) + " ");
     }

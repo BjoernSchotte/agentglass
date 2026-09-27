@@ -1,7 +1,7 @@
 // agentglass — extension seams. Feature modules push callbacks here at load time; main.ts imports them once.
 // Empty arrays = stock behavior. Styled strings may carry ANSI escapes; widths are visible columns.
 // SPDX-License-Identifier: Apache-2.0
-import type { Sess } from "./model/types.ts";
+import type { Ev, Sess } from "./model/types.ts";
 import type { HelpSec } from "./state.ts";
 
 // mouse: left click inside the tab's body (0-based cell), dbl = second click on the same row within 450ms
@@ -26,6 +26,10 @@ export const H = {
   tabs: [] as Tab[], // extra top-level tabs 3, 4, … after Sessions / Processes
   helpSections: [] as HelpSec[], // appended to the ? popup
   views: [] as View[], // full-screen views a feature enters by setting S.fview + S.mode = "view"
+  meta: [] as ((s: Sess) => void)[], // after log parsing / process linking (re)set a session's title, cwd, branch or name; may override them
+  events: [] as ((s: Sess | null, evs: Ev[], from: number) => void)[], // after parseEvents appended evs[from..]; may rewrite them in place
+  display: [] as ((kind: string, text: string, s: Sess | null) => string)[], // display-time rewrite of text that bypasses parseEvents (stats "tool:<name>"/"cmd"/"prog"/"file", process "args"/"cwd")
+  screenFilter: [] as ((s: string) => string)[], // every chunk written to the terminal (TUI frame chunks, CLI output lines); must keep visible widths
 };
 
 export const BADGE_SLOT = 2;
@@ -34,3 +38,6 @@ export function complete(s: Sess): void { for (const f of H.complete) f(s); }
 // bounds-checked: in scriptc an out-of-range object read traps
 export function tabAt(i: number): Tab | null { return i >= 0 && i < H.tabs.length ? H.tabs[i] : null; }
 export function viewOf(name: string): View | null { for (const v of H.views) if (v.name === name) return v; return null; }
+export function applyMeta(s: Sess): void { for (const f of H.meta) f(s); }
+export function display(kind: string, text: string, s: Sess | null): string { let t = text; for (const f of H.display) t = f(kind, t, s); return t; }
+export function screenOut(s: string): string { let t = s; for (const f of H.screenFilter) t = f(t); return t; }

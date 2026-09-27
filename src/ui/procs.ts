@@ -3,6 +3,7 @@
 import { totalmem } from "node:os";
 import { clean, fit, fitStyled, fillTo, bytes, home } from "../util/text.ts";
 import { S } from "../state.ts";
+import { display } from "../hooks.ts";
 import { titleOf } from "../model/sessions.ts";
 import { procs, allProcs, hist, procAt, procSess, tmuxTarget } from "../model/procs.ts";
 import { C, CSI, RST, fg, bg, heat } from "./theme.ts";
@@ -28,7 +29,7 @@ export function renderProcs(): void {
     const on = S.ptop + r === S.psel;
     const b = on ? bg(C.sel) : "";
     const s = procSess(p);
-    const where = s ? clean(titleOf(s)) + "  " + home(s.cwd || p.cwd) : home(p.cwd) || p.args;
+    const where = s ? clean(titleOf(s)) + "  " + home(s.cwd || display("cwd", p.cwd, null)) : home(display("cwd", p.cwd, null)) || display("args", p.args, null);
     const ph0 = hist.get(p.pid) ?? [];
     const g = braille(ph0, 16, 1, Math.max(20, Math.max(...ph0)))[0];
     put(1, 3 + r, b + (on ? fg(C.accent) + "❯" : " ") + fg(C.sub) + fit(String(p.pid), 7) + RST + badge(p.h) + b + " " + fg(heat(p.tcpu / 100)) + fit(p.tcpu.toFixed(1), 7) + fg(C.text) + fit(bytes(p.trss), 7) +
@@ -54,12 +55,12 @@ export function renderProcs(): void {
   // tree to the right
   const tree: string[] = [];
   if (p) {
-    tree.push(fg(C.text) + CSI + "1m" + clean(p.args) + RST);
-    tree.push(fg(C.purple) + home(p.cwd) + RST);
+    tree.push(fg(C.text) + CSI + "1m" + clean(display("args", p.args, null)) + RST);
+    tree.push(fg(C.purple) + home(display("cwd", p.cwd, null)) + RST);
     const walk = (pid: number, depth: number): void => {
       for (const q of allProcs.values()) {
         if (q.ppid !== pid) continue;
-        tree.push(fg(C.line) + "  ".repeat(depth) + "└─ " + fg(C.sub) + fit(String(q.pid), 7) + fg(heat(q.cpu / 100)) + fit(q.cpu.toFixed(1) + "%", 7) + fg(C.dim) + fit(bytes(q.rss), 7) + fg(q.h ? C.claude : C.text) + clean(q.args) + RST);
+        tree.push(fg(C.line) + "  ".repeat(depth) + "└─ " + fg(C.sub) + fit(String(q.pid), 7) + fg(heat(q.cpu / 100)) + fit(q.cpu.toFixed(1) + "%", 7) + fg(C.dim) + fit(bytes(q.rss), 7) + fg(q.h ? C.claude : C.text) + clean(display("args", q.args, null)) + RST);
         if (depth < 6) walk(q.pid, depth + 1);
       }
     };

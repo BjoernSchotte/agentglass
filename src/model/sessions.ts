@@ -11,6 +11,7 @@ import { claudeSub } from "../harness/claude.ts";
 import { codexSub } from "../harness/codex.ts";
 import { fxMeta } from "../harness/fx.ts";
 import { S } from "../state.ts";
+import { applyMeta } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
 const codexTitles = new Map<string, string>();
@@ -28,6 +29,7 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
     else if (h === "fx") fxMeta(s);
   }
   s.mtime = mt; s.size = sz;
+  applyMeta(s);
   seen.add(path);
 }
 export function scan(): void {
@@ -74,7 +76,7 @@ export function loadHead(s: Sess): void {
 export function loadTail(s: Sess): void {
   if (s.tailSize === s.size) return;
   s.tailSize = s.size;
-  if (s.h === "fx") fxMeta(s);
+  if (s.h === "fx") { fxMeta(s); applyMeta(s); }
   const start = Math.max(0, s.size - 98304);
   const r = readLines(s.path, start, s.size, start > 0);
   const evs: Ev[] = [];
@@ -83,8 +85,9 @@ export function loadTail(s: Sess): void {
   if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; } // head was read before the first prompt
 }
 export function titleOf(s: Sess): string {
+  if (s.title) return s.title; // codex logs never set one, so an H.meta override wins over the thread name
   if (s.h === "codex") { const t = codexTitles.get(s.id); if (t) return t; }
-  return s.title || s.prompt || "(no prompt yet)";
+  return s.prompt || "(no prompt yet)";
 }
 export function working(s: Sess): boolean {
   for (let i = s.evs.length - 1; i >= 0; i--) {
