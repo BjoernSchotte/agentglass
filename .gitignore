@@ -1,3 +1,4 @@
 agentglass
 *.ll
 .claude/
+videos/*/renders/

@@ -1,27 +1,24 @@
 # ◈ agentglass
 
-**A looking glass for your coding agents.** One tiny native binary that shows every
-Claude Code, Codex and fx session on your machine, past and live. You can watch the agents think,
-drill into every tool call and diff, and steer them without leaving the terminal.
+**See every coding agent on your machine — live, down to every tool call, diff and dollar.**
+One tiny native TUI for Claude Code, Codex and fx: browse every session you ever ran, watch the running
+ones think, drill into any call, see where the time and money went, and get tapped on the shoulder
+when an agent needs you.
 
-```
- ◈ agentglass  1 Sessions  2 Processes      ● 4 live · 2 busy · cpu 38.2% ⣀⣠⣤⣶⣿⣷⣤⣀ · mem 2.1G
-╭─ sessions ───────────────────────────────────────── 1/412╮╭─ preview ────────────────────── claude · 3.4M╮
-│❯⠹ ✻ Claude  4s  api-server  Migrate auth to OAuth ▾⑂2/3  ││ Migrate auth to OAuth device flow            │
-│   ├─ ⠹ Explore          6s  Map token refresh paths      ││ process  pid 81234 · busy · tmux work:1.0    │
-│   ├─ ⠹ general-purpose  9s  Write migration tests        ││ ─ subagents 2 active / 3                     │
-│   └─ · Plan             4m  Draft rollout plan           ││ ⠹ Explore     6s  ⚒ Grep refresh_token       │
-│ ● >_ Codex  1m  web-app     Fix hydration mismatch       ││ ⠹ general…    9s  ⚒ Write auth.test.ts       │
-│ ● ▲ 𝒇x      3m  infra       Bump node to 24              ││ ──────────────────────────────────────────── │
-│ · ✻ Claude  2h  docs        Rewrite quickstart           ││ ⚒ Edit(src/auth/session.ts)                  │
-│ · >_ Codex  1d  cli         Add --json output            ││   ⎿ Updated 12 lines                         │
-╰──────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
-? keys  ↵ open  ␣ subagents  / filter  F full-text  h harness  s send  R resume
-```
+<!-- launch video: replace the line below with the github.com/user-attachments/assets/… URL of the uploaded mp4 (on its own line = inline player) -->
+VIDEO_URL_PLACEHOLDER
+
+<sub>▶ 46 s launch video, recorded from the real binary in <code>--redact</code> mode · also in the repo: <a href="docs/media/agentglass-launch.webm"><code>docs/media/agentglass-launch.webm</code></a></sub>
 
 You have agents running in five tmux panes and two IDE windows, plus a Codex desktop app humming
-in the background. Which one is stuck? Which one just rewrote your auth layer? Which subagent is
-burning CPU? **agentglass answers that in one keystroke.**
+in the background. Which one is stuck? Which one just rewrote your auth layer? What did today cost?
+**agentglass answers that in one keystroke.**
+
+| Every agent, one screen | Every call, every diff |
+|---|---|
+| ![sessions](docs/screenshots/sessions.png) | ![event drill-down](docs/screenshots/detail.png) |
+| **Where the time went** | **What it costs** |
+| ![call graph](docs/screenshots/callgraph.png) | ![stats](docs/screenshots/stats.png) |
 
 ## Why it slaps
 
@@ -64,13 +61,31 @@ burning CPU? **agentglass answers that in one keystroke.**
 - **Mouse too.** Click rows, click again to open, click a preview line to jump straight to that
   event, click footer hints like buttons. Right-click goes back, and the wheel scrolls everything.
 
+## More screens
+
+| Live transcript | Tool drill-down |
+|---|---|
+| ![transcript](docs/screenshots/transcript.png) | ![tool drill-down](docs/screenshots/tool-drilldown.png) |
+| **btop for agents** | **Themes** |
+| ![processes](docs/screenshots/processes.png) | ![themes](docs/screenshots/themes.png) |
+
+## Privacy mode
+
+Streaming, screenshotting or demoing? `agentglass --redact` swaps session titles, project names,
+paths, branches and subagent tasks for consistent fakes, replaces the content of other sessions with
+neutral stand-ins, and scrubs your username, home path, e-mail addresses, secrets and anything listed
+in `~/.agentglass/redact.txt` from every pixel — at the same width, so the layout stays intact.
+`AGENTGLASS_REDACT_KEEP=<path-substring>` keeps chosen sessions readable (they are still scrubbed).
+Every screen in this README and the launch video was recorded this way.
+
 ## Tiny, fast, local
 
-- **~730 KB native binary**, starts instantly, zero runtime dependencies. It's TypeScript
+- **~1.5 MB native binary**, starts instantly, zero runtime dependencies. It's TypeScript
   compiled to native code with [scriptc](https://github.com/vercel-labs/scriptc), with no Node,
   no Bun and no `node_modules` at runtime.
 - **Local only.** It reads the agents' own session logs from disk and never phones home.
-- **Nothing to set up.** It works with whatever is already in your home directory.
+- **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
+  is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off.
 
 ## Install
 
@@ -97,9 +112,10 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `x` `X` | SIGTERM / SIGKILL the agent |
 | `1`–`9` `e` | open a referenced file in `$PAGER` / `$EDITOR` |
 | `P` | replay the open transcript |
+| `c` | call graph (flame chart ⇄ call tree with `Tab`) |
 | `!` | jump to the next agent waiting for you |
 | `T` | cycle themes |
-| `Tab` `1` `2` `3` | Sessions ⇄ Processes ⇄ Stats |
+| `Tab` `1` `2` `3` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) |
 
 ## Scriptable
 
@@ -107,6 +123,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 agentglass --json --live | jq '.[] | {title, costUsd, attention}'   # snapshot of your sessions
 agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL stream of every agent's events
 agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one
+agentglass --redact                                                 # privacy mode for streams and screenshots
 ```
 
 ## Custom agent commands
