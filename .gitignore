@@ -2,3 +2,4 @@ agentglass
 *.ll
 .claude/
 videos/*/renders/
+specs/internals/
