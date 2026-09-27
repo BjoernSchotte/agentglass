@@ -377,7 +377,6 @@ function setup(): void {
     codeDirs.add(d.toLowerCase());
   }
   for (const d of codeDirs) learnSeg(d);
-  addWord("acmecorp", fakeProject("acmecorp"), false);
   for (const l of readText(join(HOME, ".agentglass", "redact.txt"), 0, 65536).split("\n")) {
     const t = l.trim();
     if (!t || t.startsWith("#")) continue;

@@ -31,11 +31,11 @@ applyMeta(s);
 ok("stable", s.title === t1 && s.cwd === c1, s.title + " " + s.cwd);
 
 // scrubber: same length, names and learned projects gone, box line stays aligned
-const line = "│ /Users/" + user + "/code/secretproj/acmecorp-web · " + user.toUpperCase() + " · me@example.org · sk-" + "Ab3".repeat(10) + " │";
+const line = "│ /Users/" + user + "/code/secretproj/web · " + user.toUpperCase() + " · me@example.org · sk-" + "Ab3".repeat(10) + " │";
 const out = scrubText(line);
 ok("same width", width(out) === width(line), out);
 ok("no user", out.toLowerCase().indexOf(user.toLowerCase()) < 0, out);
-ok("no project", out.indexOf("secretproj") < 0 && out.indexOf("acmecorp") < 0, out);
+ok("no project", out.indexOf("secretproj") < 0, out);
 ok("no email", out.indexOf("example.org") < 0, out);
 ok("no key", out.indexOf("Ab3Ab3") < 0, out);
 ok("words bound", scrubText("xsecretprojx") === "xsecretprojx", scrubText("xsecretprojx"));
