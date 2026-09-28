@@ -1,7 +1,7 @@
 # ◈ agentglass
 
 **See every coding agent on your machine — live, down to every tool call, diff and dollar.**
-One tiny native TUI for Claude Code, Codex and fx: browse every session you ever ran, watch the running
+One tiny native TUI for Claude Code, Codex, fx and kiro-cli: browse every session you ever ran, watch the running
 ones think, drill into any call, see where the time and money went, and get tapped on the shoulder
 when an agent needs you.
 
@@ -22,8 +22,8 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
 ## Why it slaps
 
 - **Every agent, one screen.** Claude Code (`~/.claude`), Codex (`~/.codex`) and
-  [fx](https://github.com/vercel-labs/fx) (`~/.fx`) sessions in one searchable list. Live sessions
-  come first, and all your history is there too.
+  [fx](https://github.com/vercel-labs/fx) (`~/.fx`) and kiro-cli (`~/.kiro`) sessions in one
+  searchable list. Live sessions come first, and all your history is there too.
 - **Live transcripts.** Open a session and it follows the log as the agent works: prompts,
   thinking, tool calls and results as they land.
 - **Drill all the way down.** Put the cursor on any event and hit `↵`. You get the full tool call,
@@ -134,6 +134,7 @@ them:
 export AGENTGLASS_CLAUDE="claude --settings ~/.config/my/claude.json"
 export AGENTGLASS_CODEX="codex --profile work"
 export AGENTGLASS_FX="fx"
+export AGENTGLASS_KIRO="kiro-cli"
 ```
 
 ## Supported harnesses
@@ -143,9 +144,26 @@ export AGENTGLASS_FX="fx"
 | ✻ **Claude Code** | `~/.claude/projects` | session registry | `subagents/` | ✔ |
 | >_ **Codex** | `~/.codex/sessions` | open rollout (`lsof`) | `parent_thread_id` | ✔ |
 | ▲ **fx** | `~/.fx/sessions` | open event log (`lsof`) | `subagent/owner.json` | ✔ |
+| ◈ **kiro-cli** | `~/.kiro/sessions/cli` | open transcript / log (`lsof`) | `parent_session_id` | ⧗ |
 
 Gemini, opencode, aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.
+
+<sub>⧗ kiro-cli send/resume is stubbed pending confirmation of the CLI's headless/resume flags; the
+session browser, live transcript, tool drill-down, subagent nesting, live detection and per-turn
+credit/token stats are fully wired. kiro-cli meters usage in <em>credits</em> rather than tokens or
+dollars — agentglass sums the credits each session/day actually consumed (from the per-turn
+<code>metering_usage</code> in each session's sidecar <code>.json</code>). The live
+<code>/usage</code> billing window (allotment, overages, reset date) is fetched from the
+CodeWhisperer <code>GetUsageLimits</code> API and is never written to disk, so agentglass cannot read
+it without an authenticated network call — which would break its local-only contract (a maintainer
+decision, see the PR note). Instead it models the same window locally when you describe your plan in
+<code>~/.agentglass/prices.json</code>: <code>"kiroCreditUsd"</code> ($/credit within the plan),
+<code>"kiroMonthlyCredits"</code> (included credits per reset window, 0 = uncapped) and
+<code>"kiroOverageUsd"</code> ($/credit beyond the allotment); <code>AGENTGLASS_KIRO_CREDIT_USD</code>
+overrides the base rate. Cost is then base credits up to the allotment plus overage credits beyond
+it. With no rate set, agentglass surfaces the credits and reports cost as unknown — never a
+fabricated dollar figure.</sub>
 
 ## License
 

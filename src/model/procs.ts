@@ -8,7 +8,7 @@ import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
 import { applyMeta } from "../hooks.ts";
 
-const HARN = ["claude", "codex", "fx", "gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
+const HARN = ["claude", "codex", "fx", "kiro-cli", "q", "gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
 export let procs: Proc[] = [];
 export const allProcs = new Map<number, Proc>();
 export const hist = new Map<number, number[]>();
@@ -86,7 +86,7 @@ export function refreshSlow(): void {
       else if (l.startsWith("n")) {
         const n = l.slice(1);
         if (fd === "cwd") cwdByPid.set(pid, n);
-        else if (n.endsWith(".jsonl") && (n.indexOf("/rollout-") >= 0 || n.indexOf("/.fx/sessions/") >= 0)) codexPidByPath.set(n, pid);
+        else if (n.endsWith(".jsonl") && (n.indexOf("/rollout-") >= 0 || n.indexOf("/.fx/sessions/") >= 0 || n.indexOf("/.kiro/sessions/cli/") >= 0)) codexPidByPath.set(n, pid);
       }
     }
   }

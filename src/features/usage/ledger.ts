@@ -1,8 +1,9 @@
 // agentglass — usage ledger: incremental, budgeted per-session/per-day token, cost, tool and line counts from the raw logs
 // SPDX-License-Identifier: Apache-2.0
 import { statSync } from "node:fs";
+import { join } from "node:path";
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
-import { readBytes, readText } from "../../util/fs.ts";
+import { readBytes, readText, HOME } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
@@ -12,13 +13,14 @@ import { type TS, type Cnt, type Pend, newTS, cnt, done, norm, program, argv, ex
 
 // one local day of one session; unk = tokens (or fx turns) whose price is unknown
 // tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"
-export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
+export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number; credit: number }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Set<string>; days: Map<string, Day>; model: string;
   pend: Map<string, Pend>; // calls waiting for their result, by call id (not persisted: a restart loses their duration)
   cx: number[]; // codex cumulative totals seen so far: input, cached, cache write, output
   fx: number[]; fxM: number; // fx usage snapshot seen so far: in, out, cache r, cache w, cost, +, −
+  kiroM: number; kiroCredit: number; // kiro: sidecar .json mtime last read + total metering credits seen
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
 }
 export const ledger = new Map<string, Acc>();
@@ -41,7 +43,7 @@ export function lastDays(n: number): string[] {
 function nlines(s: string): number { if (!s) return 0; const n = s.split("\n").length; return s.endsWith("\n") ? n - 1 : n; }
 
 function newAcc(): Acc {
-  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), cx: [0, 0, 0, 0], fx: [0, 0, 0, 0, 0, 0, 0], fxM: 0,
+  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), cx: [0, 0, 0, 0], fx: [0, 0, 0, 0, 0, 0, 0], fxM: 0, kiroM: 0, kiroCredit: 0,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0 };
 }
 export function accOf(s: Sess): Acc {
@@ -59,7 +61,7 @@ function bucket(a: Acc, ms: number, iso: string): Day {
     if (k !== tsKey) { const d = new Date(iso); tsKey = k; tsDay = dayKey(d); tsHour = d.getHours(); }
   } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); }
   let d = a.days.get(tsDay);
-  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
+  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0, credit: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
   return d;
 }
 function tool(a: Acc, d: Day, name: string): TS {
@@ -262,7 +264,112 @@ function fxUsage(s: Sess, a: Acc): void {
   lines(a, d, dl[5] ?? 0, dl[6] ?? 0);
 }
 
-// one chunk (≤ CHUNK bytes) of new log lines; returns bytes consumed (0 = nothing to do right now)
+// kiro-cli keeps per-turn usage in the sidecar <uuid>.json (session_state.conversation_metadata.
+// user_turn_metadatas[]): input_token_count / output_token_count (often 0) and metering_usage[] in
+// *credits* (not USD or tokens). Attribute each turn to the day of its end_timestamp (unix seconds).
+// Re-read on mtime change, like fxUsage.
+//
+// The /usage view (billing window: current_usage, usage_limit, overage_charges, overage_rate,
+// next_date_reset) is fetched live via the CodeWhisperer GetUsageLimits API and is NOT persisted to
+// disk (verified: absent from ~/.local/share/kiro-cli/data.sqlite3, settings and logs). Reading it
+// would require an authenticated network call, which breaks agentglass's local-only contract — a
+// maintainer decision (see README/PR note). So agentglass models the window locally instead: it sums
+// the credits actually consumed and, when the user supplies their plan shape in
+// ~/.agentglass/prices.json, computes USD as base credits up to the monthly allotment plus overage
+// credits beyond it — mirroring how /usage bills overages, without phoning home:
+//   { "kiroCreditUsd": 0.003,        // $ per credit within the plan
+//     "kiroMonthlyCredits": 1000,    // included credits per reset window (0 = no cap)
+//     "kiroOverageUsd": 0.004 }      // $ per credit beyond the allotment (defaults to kiroCreditUsd)
+// AGENTGLASS_KIRO_CREDIT_USD overrides the base rate. Without any rate, credits are surfaced and USD
+// stays unknown — never a fabricated dollar figure.
+function kiroMetering(s: Sess, a: Acc): void {
+  const f = s.path.slice(0, -6) + ".json";
+  let mt = 0; try { mt = statSync(f).mtimeMs; } catch (e) { return; }
+  if (mt === a.kiroM) return;
+  a.kiroM = mt;
+  const o = parse(readText(f, 0, 4194304).trim()); if (!o) return;
+  const ss = obj(o["session_state"]); const cm = ss ? obj(ss["conversation_metadata"]) : null; if (!cm) return;
+  // recompute from scratch each read (the file is rewritten wholesale): reset the credit-derived accumulators
+  a.inTok -= a.inTok; a.outTok -= a.outTok; a.kiroCredit -= a.kiroCredit; // scriptc: no `-= x` on some obj fields → subtract self
+  for (const [k, d] of a.days) { d.inTok = 0; d.outTok = 0; d.credit = 0; }
+  for (const t of arr(cm["user_turn_metadatas"])) {
+    const tm = obj(t); if (!tm) continue;
+    const endS = num(tm["end_timestamp"]); // unix seconds
+    const d = bucket(a, endS > 0 ? endS * 1000 : 0, "");
+    const nIn = num(tm["input_token_count"]); const nOut = num(tm["output_token_count"]);
+    a.inTok += nIn; a.outTok += nOut; d.inTok += nIn; d.outTok += nOut;
+    let cr = 0;
+    for (const m of arr(tm["metering_usage"])) { const mo = obj(m); if (mo && str(mo["unit"]) === "credit") cr += num(mo["value"]); }
+    a.kiroCredit += cr; d.credit += cr;
+  }
+  const w = kiroWindow();
+  if (w.base > 0) { a.cost = creditUsd(a.kiroCredit, w); for (const [k, d] of a.days) d.cost = creditUsd(d.credit, w); }
+  else if (a.kiroCredit > 0) a.unk = a.unk > 0 ? a.unk : 1; // credits seen but no USD rate → cost unknown, never fabricated
+}
+// price a credit total against the plan window: base rate up to the allotment, overage rate beyond it
+interface KWin { base: number; cap: number; over: number }
+function creditUsd(credits: number, w: KWin): number {
+  if (w.cap <= 0 || credits <= w.cap) return credits * w.base;
+  return w.cap * w.base + (credits - w.cap) * w.over;
+}
+// plan window from env + prices.json, loaded once. base 0 = no rate configured (cost unknown)
+let kiroWin: KWin | null = null;
+function kiroWindow(): KWin {
+  if (kiroWin) return kiroWin;
+  let base = 0; let cap = 0; let over = 0;
+  const o = kiroPricesFile();
+  if (o) {
+    if (typeof o["kiroCreditUsd"] === "number" && (o["kiroCreditUsd"] as number) > 0) base = o["kiroCreditUsd"] as number;
+    if (typeof o["kiroMonthlyCredits"] === "number" && (o["kiroMonthlyCredits"] as number) > 0) cap = o["kiroMonthlyCredits"] as number;
+    if (typeof o["kiroOverageUsd"] === "number" && (o["kiroOverageUsd"] as number) > 0) over = o["kiroOverageUsd"] as number;
+  }
+  const env = process.env.AGENTGLASS_KIRO_CREDIT_USD;
+  if (env !== undefined && Number(env) > 0) base = Number(env);
+  if (over <= 0) over = base; // no explicit overage rate → bill overage at the base rate
+  kiroWin = { base, cap, over };
+  return kiroWin;
+}
+function kiroPricesFile(): Obj | null {
+  try { return obj(JSON.parse(readText(join(HOME, ".agentglass", "prices.json"), 0, 262144))); } catch (e) { return null; }
+}
+
+// kiro-cli transcript: tool counts, shell programs/commands and file edits for the stats drill-down.
+// Tokens/credits come from the sidecar .json (kiroMetering); lines here carry no timestamp so
+// tool durations stay unknown (-1). Results pair to calls by toolUseId to attribute errors.
+function kiroLine(a: Acc, l: string): void {
+  const isAsst = l.indexOf("\"kind\":\"AssistantMessage\"") >= 0;
+  const isRes = l.indexOf("\"kind\":\"ToolResults\"") >= 0;
+  if (!isAsst && !isRes) return;
+  const o = parse(l); if (!o) return;
+  const d0 = obj(o["data"]); if (!d0) return;
+  const d = bucket(a, 0, ""); // no per-line ts: bucket by wall-clock now (kiroMetering owns accurate day attribution)
+  if (isRes) {
+    for (const b of arr(d0["content"])) {
+      const bo = obj(b); if (!bo || str(bo["kind"]) !== "toolResult") continue;
+      const r = obj(bo["data"]); if (!r) continue;
+      const id = str(r["toolUseId"]); const p = a.pend.get(id); if (!p) continue;
+      a.pend.delete(id);
+      done(p, -1, str(r["status"]) !== "success", 0, id, []);
+    }
+    return;
+  }
+  for (const b of arr(d0["content"])) {
+    const bo = obj(b); if (!bo || str(bo["kind"]) !== "toolUse") continue;
+    const u = obj(bo["data"]); if (!u) continue;
+    const name = str(u["name"]) || "tool";
+    const st = tool(a, d, name);
+    const inp = obj(u["input"]);
+    const cmd = name === "shell" && inp ? str(inp["command"]) : "";
+    pend(a, d, st, name, str(u["toolUseId"]), 0, "", toolArg(name, inp, ""), cmd ? [cmd] : []);
+    if (!inp) continue;
+    // write tool: command ∈ {create, strReplace, insert}; edits carry oldStr/newStr/content
+    const path = str(inp["path"]) || str(inp["file_path"]);
+    if (path && (inp["content"] !== undefined || inp["newStr"] !== undefined || inp["oldStr"] !== undefined)) {
+      const add = nlines(str(inp["newStr"]) || str(inp["content"])); const del = nlines(str(inp["oldStr"]));
+      lines(a, d, add, del); file(d, name, path, add, del);
+    }
+  }
+}
 function step(s: Sess, a: Acc): number {
   const len = Math.min(CHUNK, s.size - a.off);
   if (len <= 0) return 0;
@@ -277,7 +384,7 @@ function step(s: Sess, a: Acc): number {
   const ls = new TextDecoder("utf-8").decode(b.subarray(0, z + 1)).split("\n");
   for (let i = a.skip ? 1 : 0; i < ls.length; i++) {
     const l = ls[i] ?? "";
-    if (s.h === "claude") claudeLine(a, l); else if (s.h === "codex") codexLine(a, l); else fxLine(a, l);
+    if (s.h === "claude") claudeLine(a, l); else if (s.h === "codex") codexLine(a, l); else if (s.h === "kiro") kiroLine(a, l); else fxLine(a, l);
   }
   a.skip = false;
   a.off += z + 1;
@@ -301,6 +408,7 @@ function tick(): void {
   for (const s of sessions.values()) {
     const a = accOf(s);
     if (s.h === "fx") fxUsage(s, a); // a stat per fx session; there are few
+    else if (s.h === "kiro") kiroMetering(s, a); // per-turn credits from the sidecar .json
     if (pending(s, a)) q.push(s);
     apply(s, a);
   }
@@ -321,6 +429,7 @@ export function complete(s: Sess): void {
   const a = accOf(s);
   while (step(s, a) > 0) { /* next chunk */ }
   if (s.h === "fx") fxUsage(s, a);
+  else if (s.h === "kiro") kiroMetering(s, a);
   apply(s, a);
 }
 

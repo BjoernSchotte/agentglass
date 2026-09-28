@@ -3,13 +3,14 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { str, parse } from "../util/json.ts";
-import { CLAUDE, CODEX, FX, readText, readLines, listDir } from "../util/fs.ts";
+import { CLAUDE, CODEX, FX, KIRO, readText, readLines, listDir } from "../util/fs.ts";
 import { firstLine } from "../util/text.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { parseEvents } from "../harness/index.ts";
 import { claudeSub } from "../harness/claude.ts";
 import { codexSub } from "../harness/codex.ts";
 import { fxMeta } from "../harness/fx.ts";
+import { kiroMeta } from "../harness/kiro.ts";
 import { S } from "../state.ts";
 import { applyMeta } from "../hooks.ts";
 
@@ -27,6 +28,7 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
     if (parent) claudeSub(s, parent);
     else if (h === "codex") codexSub(s);
     else if (h === "fx") fxMeta(s);
+    else if (h === "kiro") kiroMeta(s);
   }
   s.mtime = mt; s.size = sz;
   applyMeta(s);
@@ -53,6 +55,10 @@ export function scan(): void {
   walk(join(CODEX, "sessions"), false, 0);
   const fxd = join(FX, "sessions");
   for (const id of listDir(fxd)) addFile("fx", join(fxd, id, "events.jsonl"), id, false, seen, "");
+  // kiro-cli: flat ~/.kiro/sessions/cli/<uuid>.jsonl transcripts, paired <uuid>.json metadata.
+  // Subagent linkage (parent_session_id) is read from the .json by kiroMeta, not from the dir shape.
+  const kd = join(KIRO, "sessions", "cli");
+  for (const f of listDir(kd)) if (f.length === 42 && f.endsWith(".jsonl")) addFile("kiro", join(kd, f), f.slice(0, -6), false, seen, "");
   walk(join(CODEX, "archived_sessions"), true, 3);
   for (const k of [...sessions.keys()]) if (!seen.has(k)) sessions.delete(k);
   // codex thread names
@@ -77,6 +83,7 @@ export function loadTail(s: Sess): void {
   if (s.tailSize === s.size) return;
   s.tailSize = s.size;
   if (s.h === "fx") { fxMeta(s); applyMeta(s); }
+  else if (s.h === "kiro") { kiroMeta(s); applyMeta(s); }
   const start = Math.max(0, s.size - 98304);
   const r = readLines(s.path, start, s.size, start > 0);
   const evs: Ev[] = [];
@@ -95,6 +102,8 @@ export function working(s: Sess): boolean {
     if (e.kind === "meta" && e.text === "turn started") return true;
     if (e.kind === "meta" && (e.text.startsWith("turn complete") || e.text === "turn aborted")) return false;
     if (s.h === "fx" && e.kind === "user") return true; // fx logs no turn-start marker
+    if (s.h === "kiro" && (e.kind === "user" || e.kind === "tool")) return true; // kiro logs no turn markers: a live pid with an open call/prompt is working
+    if (s.h === "kiro" && e.kind === "result") return false; // a result with nothing after it means the turn settled
   }
   return false;
 }

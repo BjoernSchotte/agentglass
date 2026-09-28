@@ -9,6 +9,7 @@ export const HOME = homedir();
 export const CLAUDE = join(HOME, ".claude");
 export const CODEX = join(HOME, ".codex");
 export const FX = join(HOME, ".fx");
+export const KIRO = join(HOME, ".kiro");
 
 export function readBytes(path: string, start: number, len: number): Uint8Array {
   const b = new Uint8Array(len);
