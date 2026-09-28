@@ -13,7 +13,7 @@ const HELP: HelpSec[] = [
     ["↑↓  j k", "move"], ["PgUp PgDn", "page"], ["g G  Home End", "first / last"],
     ["↵  →", "open live transcript"], ["space", "fold / unfold subagents"],
     ["/", "filter (title, path, id, harness)"], ["F", "full-text search (ripgrep)"],
-    ["h", "harness: all → claude → codex → fx"], ["l", "live sessions only"], ["esc", "clear filters"],
+    ["h", "harness: all → claude → codex → fx → kiro"], ["l", "live sessions only"], ["esc", "clear filters"],
     ["s", "send prompt (tmux if live, else headless)"], ["R", "resume interactively"],
     ["x", "SIGTERM the session's agent"], ["D", "move session to ~/.Trash"], ["y", "copy session id"] ] },
   { name: "processes", ctx: "processes", keys: [

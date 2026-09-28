@@ -24,6 +24,7 @@ export function badge(h: string): string {
   if (h === "claude") return fg(C.claude) + CSI + "1m" + "✻" + RST + fg(C.claude) + " Claude  " + RST;
   if (h === "codex") return bg("236;236;240") + fg("16;16;20") + CSI + "1m" + ">_" + RST + fg(C.text) + " Codex  " + RST;
   if (h === "fx") return fg(C.text) + CSI + "1m" + "▲" + RST + fg(C.fx) + CSI + "1m" + " 𝒇x" + RST + fg(C.fx) + "      " + RST;
+  if (h === "kiro") return fg(C.purple) + CSI + "1m" + "◈" + RST + fg(C.purple) + " kiro   " + RST;
   return fg(C.purple) + CSI + "1m" + "◆" + RST + fg(C.purple) + " " + fit(h, BADGE_W - 2) + RST;
 }
 export const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

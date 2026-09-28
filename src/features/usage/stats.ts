@@ -47,14 +47,14 @@ function agg(days: string[]): Agg {
   const key = days.join(",");
   const hit = cache.get(key);
   if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit;
-  const rows = [ha("claude"), ha("codex"), ha("fx")]; const tot = ha("total");
+  const rows = [ha("claude"), ha("codex"), ha("fx"), ha("kiro")]; const tot = ha("total");
   const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0 };
   const from = startOfDay() - (days.length - 1) * 86400000; // ±1h around DST: fine for a progress gauge
   for (const s of sessions.values()) {
     const a = ledger.get(s.path);
     if (s.mtime >= from) { g.total += s.size; if (a) g.done += pending(s, a) ? Math.min(a.off, s.size) : s.size; }
     if (!a) continue;
-    const r = s.h === "claude" ? rows[0] : s.h === "codex" ? rows[1] : rows[2];
+    const r = s.h === "claude" ? rows[0] : s.h === "codex" ? rows[1] : s.h === "fx" ? rows[2] : rows[3];
     let st = 0; let sc = 0; let any = false;
     for (let i = 0; i < days.length; i++) {
       const d = a.days.get(days[i] ?? ""); if (!d) continue;
@@ -106,7 +106,7 @@ function renderStats(): void {
   let used = 0; for (const c of cols) used += c;
   const lw = Math.min(18, Math.max(0, W - 4 - used));
   const shareW = Math.max(0, W - 4 - used - lw - 2);
-  box(0, 6, W, 8, "by harness", "", false);
+  box(0, 6, W, 9, "by harness", "", false);
   const hdr = ["harness", "sessions", "tool calls", "in", "out", "cache r", "cache w", "≈cost"];
   let hl = fg(C.dim);
   for (let i = 0; i < hdr.length; i++) hl += i === 0 ? fit(hdr[i] ?? "", numAt(cols, i, 0)) : rj(hdr[i] ?? "", numAt(cols, i, 0));
@@ -124,11 +124,11 @@ function renderStats(): void {
     if (shareW >= 6 && !label) s += "  " + gauge(t.tools ? x.tools / t.tools : 0, shareW - 5) + fg(C.sub) + rj(t.tools ? Math.round((x.tools / t.tools) * 100) + "%" : "", 5) + RST;
     put(1, y, " " + fitStyled(s, W - 4) + fillTo(fitStyled(s, W - 4), W - 4) + " ");
   };
-  for (let i = 0; i < 3; i++) row(g.rows[i] ?? ha(""), 8 + i, "");
-  put(1, 11, " " + fg(C.line) + "─".repeat(W - 4) + RST + " ");
-  row(t, 12, "Σ total");
+  for (let i = 0; i < 4; i++) row(g.rows[i] ?? ha(""), 8 + i, "");
+  put(1, 12, " " + fg(C.line) + "─".repeat(W - 4) + RST + " ");
+  row(t, 13, "Σ total");
   // bottom: top tools | activity
-  const y0 = 14; const bh = Ht - 1 - y0;
+  const y0 = 15; const bh = Ht - 1 - y0;
   if (bh < 5) return;
   const lw2 = Math.max(34, Math.floor(W * 0.42)); const rw = W - lw2;
   box(0, y0, lw2, bh, "top tools", String(g.names.size) + " distinct · ↵ details", false);
@@ -218,12 +218,12 @@ function dagg(days: string[]): DA {
   const key = days.join(",") + "|" + dKey;
   const hit = dCache;
   if (hit && hit.key === key && hit.ver === L.ver && Date.now() - hit.at < 3000) return hit;
-  const da: DA = { key, ver: L.ver, at: Date.now(), n: 0, err: 0, dn: 0, ms: 0, max: 0, out: 0, hist: zeros(HB), vals: zeros(days.length > 1 ? days.length : 24), hs: zeros(3), all: 0,
+  const da: DA = { key, ver: L.ver, at: Date.now(), n: 0, err: 0, dn: 0, ms: 0, max: 0, out: 0, hist: zeros(HB), vals: zeros(days.length > 1 ? days.length : 24), hs: zeros(4), all: 0,
     prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), kids: new Map<string, Cnt>(), slow: [], errs: [] };
   const pre = dKey + "\t";
   for (const s of sessions.values()) {
     const a = ledger.get(s.path); if (!a) continue;
-    const hi = s.h === "claude" ? 0 : s.h === "codex" ? 1 : 2;
+    const hi = s.h === "claude" ? 0 : s.h === "codex" ? 1 : s.h === "fx" ? 2 : 3;
     for (let i = 0; i < days.length; i++) {
       const d = a.days.get(days[i] ?? ""); if (!d) continue;
       da.all = da.all + d.tools;
@@ -251,7 +251,7 @@ function openDrill(r: Row): void { dKey = r.key; dServer = r.server; dLabel = r.
 function top(m: Map<string, Cnt>, n: number): [string, Cnt][] { return [...m.entries()].sort((x, y) => y[1].n - x[1].n).slice(0, n); }
 // keep the end of long paths: the file name matters more than the root
 function tail(s: string, w: number): string { const a: string[] = []; for (const ch of s) a.push(ch); return a.length <= w ? fit(s, w) : "…" + a.slice(a.length - w + 1).join(""); }
-function glyph(h: string): string { return h === "claude" ? fg(C.claude) + "✻" + RST : h === "codex" ? fg(C.codex) + "›" + RST : fg(C.fx) + "▲" + RST; }
+function glyph(h: string): string { return h === "claude" ? fg(C.claude) + "✻" + RST : h === "codex" ? fg(C.codex) + "›" + RST : h === "kiro" ? fg(C.purple) + "◈" + RST : fg(C.fx) + "▲" + RST; }
 function when(t: number, wk: boolean): string {
   if (t <= 0) return "--:--";
   const d = new Date(t); const hm = (d.getHours() < 10 ? "0" : "") + d.getHours() + ":" + (d.getMinutes() < 10 ? "0" : "") + d.getMinutes();
@@ -301,8 +301,8 @@ function renderDrill(days: string[]): void {
     fg(C.sub) + "   avg " + RST + fg(C.text) + fmtMs(da.dn ? da.ms / da.dn : -1) + RST + dot + fg(C.dim) + "timed " + grp(da.dn) + "/" + grp(da.n) + RST +
     (da.out > 0 && da.n ? dot + fg(C.sub) + "≈" + bytes(Math.round(da.out / da.n)) + " per result" + RST : "");
   let l3 = "";
-  const HS = ["claude", "codex", "fx"];
-  for (let i = 0; i < 3; i++) { const c = numAt(da.hs, i, 0); if (c) l3 += badge(HS[i] ?? "") + fg(C.text) + grp(c) + RST + " " + gauge(c / Math.max(1, da.n), 10) + fg(C.sub) + " " + Math.round((c / Math.max(1, da.n)) * 100) + "%   " + RST; }
+  const HS = ["claude", "codex", "fx", "kiro"];
+  for (let i = 0; i < 4; i++) { const c = numAt(da.hs, i, 0); if (c) l3 += badge(HS[i] ?? "") + fg(C.text) + grp(c) + RST + " " + gauge(c / Math.max(1, da.n), 10) + fg(C.sub) + " " + Math.round((c / Math.max(1, da.n)) * 100) + "%   " + RST; }
   for (const [i, l] of [l1, l2, l3].entries()) put(1, 2 + i, " " + fitStyled(l, W - 4) + fillTo(fitStyled(l, W - 4), W - 4) + " ");
   // middle: calls over time | breakdown
   const y1 = 6; const R = Ht - 1 - y1;

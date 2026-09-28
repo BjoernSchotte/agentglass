@@ -4,7 +4,7 @@ import { existsSync, renameSync, openSync, writeSync, closeSync, mkdirSync } fro
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { join } from "node:path";
 import { base } from "./util/json.ts";
-import { HOME, CLAUDE, CODEX, FX, run } from "./util/fs.ts";
+import { HOME, CLAUDE, CODEX, FX, KIRO, run } from "./util/fs.ts";
 import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
@@ -128,7 +128,7 @@ export function trash(s: Sess): void {
 export function fullText(q: string): void {
   S.fullq = q;
   if (!q) { S.useFull = false; buildView(); return; }
-  const dirs = [join(CLAUDE, "projects"), join(CODEX, "sessions"), join(CODEX, "archived_sessions"), join(FX, "sessions")].filter((d) => existsSync(d));
+  const dirs = [join(CLAUDE, "projects"), join(CODEX, "sessions"), join(CODEX, "archived_sessions"), join(FX, "sessions"), join(KIRO, "sessions", "cli")].filter((d) => existsSync(d));
   const r = spawnSync("rg", ["-l", "-i", "-F", "--glob", "*.jsonl", "--", q].concat(dirs), { encoding: "utf8", timeout: 30000 });
   let out = r.stdout;
   if (r.error) out = run("grep", ["-rilF", "--include=*.jsonl", "--", q].concat(dirs));

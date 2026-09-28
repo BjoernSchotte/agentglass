@@ -155,7 +155,7 @@ export function onInput(k: string): void {
     }
     else if (k === "/") ask("filter", "filter", S.filter);
     else if (k === "F") ask("full-text", "fulltext", S.fullq);
-    else if (k === "h") { S.hfilter = S.hfilter === "" ? "claude" : S.hfilter === "claude" ? "codex" : S.hfilter === "codex" ? "fx" : ""; S.sel = 0; buildView(); }
+    else if (k === "h") { S.hfilter = S.hfilter === "" ? "claude" : S.hfilter === "claude" ? "codex" : S.hfilter === "codex" ? "fx" : S.hfilter === "fx" ? "kiro" : ""; S.sel = 0; buildView(); }
     else if (k === "l") { S.liveOnly = !S.liveOnly; S.sel = 0; buildView(); }
     else if (k === "esc") { S.filter = ""; S.hfilter = ""; S.liveOnly = false; S.useFull = false; S.fullq = ""; buildView(); }
     else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }

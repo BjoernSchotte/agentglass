@@ -11,7 +11,7 @@ import type { Ev, Sess } from "../model/types.ts";
 
 export const VERSION = "0.1.0";
 
-const USAGE = `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (Claude Code, Codex, fx)
+const USAGE = `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (Claude Code, Codex, fx, kiro-cli)
 
 usage:
   agentglass                      interactive TUI
@@ -25,7 +25,7 @@ usage:
 
 options for --json / --watch:
   --live                          only sessions with a running agent process
-  --harness claude|codex|fx       only this harness
+  --harness claude|codex|fx|kiro  only this harness
   --limit N                       --json: at most N sessions
   --subagents                     --json: include subagent sessions
   --from-start                    --watch: replay existing logs from the beginning (combine with a filter)
@@ -58,7 +58,7 @@ function opts(args: string[]): Opts {
     if (a === "--live") o.live = true;
     else if (a === "--subagents") o.subs = true;
     else if (a === "--from-start") o.fromStart = true;
-    else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (["claude", "codex", "fx"].indexOf(o.harness) < 0) fail("--harness must be claude, codex or fx"); }
+    else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (["claude", "codex", "fx", "kiro"].indexOf(o.harness) < 0) fail("--harness must be claude, codex, fx or kiro"); }
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
   }
   return o;

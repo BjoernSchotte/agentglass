@@ -16,10 +16,10 @@ let off = 0; let step = 0; let slot = 0; let built = false;
 function add(style: string, s: string): void {
   for (const c of clean(s)) { const w = cw(cpOf(c)); ch.push(c); st.push(style); cwid.push(w); total += w; }
 }
-function col(s: Sess): string { return s.h === "claude" ? C.claude : s.h === "codex" ? C.codex : C.fx; }
+function col(s: Sess): string { return s.h === "claude" ? C.claude : s.h === "codex" ? C.codex : s.h === "kiro" ? C.purple : C.fx; }
 function glyph(s: Sess): string {
   if (s.parent) return "⑂";
-  return s.h === "claude" ? "✻" : s.h === "codex" ? ">_" : "▲";
+  return s.h === "claude" ? "✻" : s.h === "codex" ? ">_" : s.h === "kiro" ? "◈" : "▲";
 }
 function build(): void {
   built = true;
