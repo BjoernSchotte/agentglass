@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join } from "node:path";
 import { str, parse, base } from "../util/json.ts";
-import { CLAUDE, readText, listDir, run } from "../util/fs.ts";
+import { CLAUDE, KIRO, readText, listDir, run } from "../util/fs.ts";
 import type { Proc, Sess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
@@ -17,11 +17,15 @@ const tmuxByTty = new Map<string, string>();
 const cwdByPid = new Map<number, string>();
 const codexPidByPath = new Map<string, number>();
 const claudeLive = new Map<string, { pid: number; status: string; name: string }>();
+const kiroLive = new Map<string, number>(); // kiro session uuid → live pid (from <uuid>.lock, pid verified running)
 
 function harnessOf(args: string): string {
   const t = args.split(" ");
   let b = base(t[0]);
   if ((b === "node" || b === "bun" || b === "deno") && t.length > 1) b = base(t[1]).replace(/\.(m?js|ts)$/, "");
+  // kiro-cli spawns child processes named kiro-cli-chat and a bundled `bun .../kiro-cli/.../tui.js`;
+  // fold the whole tree onto kiro-cli so process linking and rootOf() see one harness
+  if (b === "kiro-cli-chat" || (b === "tui" && args.indexOf("/kiro-cli/") >= 0)) b = "kiro-cli";
   return HARN.indexOf(b) >= 0 ? b : "";
 }
 export function refreshProcs(): void {
@@ -72,6 +76,18 @@ export function refreshProcs(): void {
     const pid = typeof o["pid"] === "number" ? (o["pid"] as number) : 0;
     if (pid && allProcs.has(pid)) claudeLive.set(str(o["sessionId"]), { pid, status: str(o["status"]), name: str(o["name"]) });
   }
+  // kiro live registry: <uuid>.lock holds the owning pid. kiro-cli does not keep the transcript
+  // open (unlike codex/fx), so lsof never links it — but a lock whose pid is still running is live.
+  // Stale locks persist after death, so the pid must be verified against the live process table.
+  kiroLive.clear();
+  const kd = join(KIRO, "sessions", "cli");
+  for (const f of listDir(kd)) {
+    if (!f.endsWith(".lock")) continue;
+    const o = parse(readText(join(kd, f), 0, 4096).trim());
+    if (!o) continue;
+    const pid = typeof o["pid"] === "number" ? (o["pid"] as number) : 0;
+    if (pid && allProcs.has(pid)) kiroLive.set(f.slice(0, -5), pid); // strip ".lock" → uuid
+  }
   linkSessions();
 }
 export function refreshSlow(): void {
@@ -107,6 +123,7 @@ function linkSessions(): void {
   for (const s of sessions.values()) {
     s.pid = 0; s.status = ""; s.name = "";
     if (s.h === "claude") { const l = claudeLive.get(s.id); if (l) { s.pid = l.pid; s.status = l.status; s.name = l.name; } }
+    else if (s.h === "kiro") { const pid = kiroLive.get(s.id); if (pid && allProcs.has(pid)) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; } }
     else { const pid = codexPidByPath.get(s.path); if (pid && allProcs.has(pid)) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; } }
     applyMeta(s);
   }
