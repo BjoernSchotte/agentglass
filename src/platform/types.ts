@@ -24,6 +24,8 @@ export interface Platform {
   fullName(): string;
   // move a file or directory to the desktop trash (restorable there); throws on failure
   trash(path: string): void;
+  // SHA-256 of a file as lowercase hex, "" when it cannot be read
+  sha256File(path: string): string;
   // where trash() puts things, for messages ("~/.Trash")
   trashName: string;
 }
