@@ -14,10 +14,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: linux-x64, os: ubuntu-22.04 }
-          - { target: linux-arm64, os: ubuntu-22.04-arm }
-          - { target: darwin-x64, os: macos-15-intel }
-          - { target: darwin-arm64, os: macos-14 }
+          # Linux: scriptc's runtime needs glibc >= 2.36 (pidfd_open) — 22.04 has 2.35
+          - { target: linux-x64, os: ubuntu-24.04, flags: "" }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, flags: "" }
+          # scriptc 0.1.7 ships no LLVM helper for macOS x64: use its C backend there
+          - { target: darwin-x64, os: macos-15-intel, flags: "--backend c" }
+          - { target: darwin-arm64, os: macos-14, flags: "" }
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
@@ -31,6 +33,7 @@ jobs:
           AGENTGLASS_VERSION: ${{ inputs.version }}
           AGENTGLASS_CHANNEL: ${{ inputs.channel }}
           AGENTGLASS_COMMIT: ${{ inputs.ref }}
+          SCRIPTC_FLAGS: ${{ matrix.flags }}
       - run: sh scripts/package.sh ${{ matrix.target }} "${{ inputs.version }}"
       - uses: actions/upload-artifact@v4
         with: { name: "agentglass-${{ matrix.target }}", path: "dist/agentglass-${{ matrix.target }}.tar.gz", retention-days: 7, if-no-files-found: error }
