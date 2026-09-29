@@ -4,14 +4,14 @@ import { writeSync, statSync } from "node:fs";
 import { H, complete, screenOut } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
-import { parseEvents } from "../harness/index.ts";
+import { HARNESSES, harnessIds, isHarness, parseEvents } from "../harness/index.ts";
 import { readLines } from "../util/fs.ts";
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 
 export const VERSION = "0.1.0";
 
-const USAGE = `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (Claude Code, Codex, fx)
+const USAGE = `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})
 
 usage:
   agentglass                      interactive TUI
@@ -25,7 +25,7 @@ usage:
 
 options for --json / --watch:
   --live                          only sessions with a running agent process
-  --harness claude|codex|fx       only this harness
+  --harness ${(harnessIds().join("|") + " ").padEnd(22)}only this harness
   --limit N                       --json: at most N sessions
   --subagents                     --json: include subagent sessions
   --from-start                    --watch: replay existing logs from the beginning (combine with a filter)
@@ -58,7 +58,7 @@ function opts(args: string[]): Opts {
     if (a === "--live") o.live = true;
     else if (a === "--subagents") o.subs = true;
     else if (a === "--from-start") o.fromStart = true;
-    else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (["claude", "codex", "fx"].indexOf(o.harness) < 0) fail("--harness must be claude, codex or fx"); }
+    else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (!isHarness(o.harness)) fail("--harness must be one of " + harnessIds().join(", ")); }
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
   }
   return o;

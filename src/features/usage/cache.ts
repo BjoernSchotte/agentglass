@@ -6,12 +6,13 @@ import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
 import { HOME, readText } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger, L, type Acc, type Day } from "./ledger.ts";
+import { ledger } from "./ledger.ts";
+import { L, type Acc, type Day } from "./record.ts";
 import { PRICES_SIG } from "./pricing.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-const VERSION = 2;
+const VERSION = 3; // 3: per-harness running state as x/xM (was cx/fx/fxM)
 const DIR = join(HOME, ".agentglass", "cache");
 const FILE = join(DIR, "ledger.json");
 const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset (a message's lines are adjacent)
@@ -52,7 +53,7 @@ function accOut(a: Acc): Obj {
   const days: Obj = {};
   for (const k of [...a.days.keys()]) { const d = a.days.get(k); if (d) days[k] = dayOut(d); }
   return {
-    off: a.off, skip: a.skip, model: a.model, ids: [...a.ids].slice(-KEEP_IDS), cx: a.cx, fx: a.fx, fxM: a.fxM,
+    off: a.off, skip: a.skip, model: a.model, ids: [...a.ids].slice(-KEEP_IDS), x: a.x, xM: a.xM,
     t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del], days,
   };
 }
@@ -64,10 +65,8 @@ function accIn(o: Obj): Acc {
   const days = new Map<string, Day>();
   const dd = obj(o["days"]);
   if (dd) for (const k of Object.keys(dd)) { const d = obj(dd[k]); if (d) days.set(k, dayIn(d)); }
-  const cx = nums(o["cx"]); while (cx.length < 4) cx.push(0);
-  const fx = nums(o["fx"]); while (fx.length < 7) fx.push(0);
   return {
-    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), cx, fx, fxM: num(o["fxM"]),
+    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), x: nums(o["x"]), xM: num(o["xM"]),
     inTok: at(0), outTok: at(1), cr: at(2), cw: at(3), cost: at(4), unk: at(5), tools: at(6), add: at(7), del: at(8),
   };
 }

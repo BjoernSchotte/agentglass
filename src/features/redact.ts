@@ -5,6 +5,7 @@ import { userInfo } from "node:os";
 import { join } from "node:path";
 import { HOME, readText, listDir, run } from "../util/fs.ts";
 import { OS } from "../platform/index.ts";
+import { HARNESSES } from "../harness/index.ts";
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { H } from "../hooks.ts";
@@ -94,6 +95,7 @@ const GENERIC = new Set<string>(["code", "src", "app", "apps", "packages", "web"
   "tools", "misc", "static", "stuff", "hello", "learn", "try", "tst", "well", "books", "writer", "writings", "generated", "til", "documents", "desktop",
   "downloads", "library", "projects", "work", "dev", "private", "var", "opt", "usr", "bin", "home", "users", "workspace", "repos", "main", "claude",
   "codex", "fx", "agents", "agent", "sessions", "agentglass", "node_modules", "vendor", "public", "assets", "site", "mobile", "infra", "icloud", "mnt"]);
+for (const ad of HARNESSES) GENERIC.add(ad.id); // harness dirs (.kiro, .pi, …) are never secrets
 const FIRST = ["sam", "alex", "robin", "jordan", "charlie", "harrison", "alexander", "maximilian"];
 const LAST = ["lee", "park", "smith", "miller", "johnson", "anderson", "rodriguez", "richardson"];
 

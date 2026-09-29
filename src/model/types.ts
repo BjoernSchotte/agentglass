@@ -1,6 +1,6 @@
 // agentglass — core data types: events, sessions, processes
 // SPDX-License-Identifier: Apache-2.0
-export type Harness = "claude" | "codex" | "fx";
+export type Harness = string; // a registered adapter id (src/harness/index.ts)
 export interface Ev { kind: string; text: string; ts: string; id: string; full: string } // id pairs tool call ↔ result; full = untruncated detail ("@file:" = load lazily)
 export interface Sess {
   h: Harness; id: string; path: string; cwd: string; title: string; prompt: string; branch: string; model: string;

@@ -15,7 +15,7 @@ export const tabX0: number[] = []; export const tabX1: number[] = [];
 export function renderHeader(): void {
   const W = S.W;
   let live = 0; let busy = 0;
-  for (const s of sessions.values()) if (s.pid) { live++; if (s.status === "busy" || working(s)) busy++; }
+  for (const s of sessions.values()) if (s.pid) { live++; if (working(s)) busy++; }
   const cpu = cpuHist.length ? cpuHist[cpuHist.length - 1] : 0;
   let mem = 0; for (const p of procs) mem += p.trss;
   const tabs = [" Sessions ", " Processes "];

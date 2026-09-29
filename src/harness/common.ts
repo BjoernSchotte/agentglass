@@ -1,6 +1,7 @@
 // agentglass — event-parsing helpers shared by the harness parsers
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr, parse } from "../util/json.ts";
+import type { Sess } from "../model/types.ts";
 
 export function toolArg(name: string, inp: Obj | null, raw: string): string {
   if (inp) {
@@ -23,4 +24,15 @@ export function blockText(v: unknown): string {
 export function isNoise(t: string): boolean {
   const s = t.trimStart();
   return s.length === 0 || s.startsWith("<") || s.startsWith("# AGENTS.md") || s.startsWith("Caveat:");
+}
+// mid-turn? scans back for the last turn marker ("turn started" … "turn complete"/"turn aborted");
+// userStarts: a user event also opens a turn (harnesses that log no start marker)
+export function turnBusy(s: Sess, userStarts: boolean): boolean {
+  for (let i = s.evs.length - 1; i >= 0; i--) {
+    const e = s.evs[i];
+    if (e.kind === "meta" && e.text === "turn started") return true;
+    if (e.kind === "meta" && (e.text.startsWith("turn complete") || e.text === "turn aborted")) return false;
+    if (userStarts && e.kind === "user") return true;
+  }
+  return false;
 }

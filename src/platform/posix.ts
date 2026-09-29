@@ -1,6 +1,8 @@
 // agentglass — building blocks shared by the POSIX adapters: ps, lsof, detached helper processes
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
+import { existsSync, renameSync } from "node:fs";
+import { join, basename } from "node:path";
 import { run } from "../util/fs.ts";
 import type { ProcRow } from "./types.ts";
 
@@ -32,3 +34,12 @@ export function devOf(tty: string): string { return tty && tty !== "??" && tty !
 export function detached(cmd: string, args: string[]): void {
   try { const ch = spawn(cmd, args, { stdio: "ignore", detached: true }); ch.on("error", (e: Error) => { /* not installed */ }); ch.unref(); } catch (e) { /* best effort */ }
 }
+// a name for path inside dir that is not taken yet: "x.jsonl", "x 2.jsonl", "x 3.jsonl", …
+export function freeName(dir: string, path: string): string {
+  const b = basename(path);
+  if (!existsSync(join(dir, b))) return b;
+  const dot = b.lastIndexOf(".");
+  const stem = dot > 0 ? b.slice(0, dot) : b; const ext = dot > 0 ? b.slice(dot) : "";
+  for (let n = 2; ; n++) { const c = stem + " " + n + ext; if (!existsSync(join(dir, c))) return c; }
+}
+export function moveInto(dir: string, path: string): string { const n = freeName(dir, path); renameSync(path, join(dir, n)); return n; }

@@ -1,10 +1,11 @@
 // agentglass — Linux adapter: cpu from /proc tick deltas, cwd and open files from /proc (no lsof needed)
 // SPDX-License-Identifier: Apache-2.0
-import { realpathSync } from "node:fs";
+import { realpathSync, renameSync, mkdirSync, openSync, writeSync, closeSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { userInfo } from "node:os";
-import { readText, listDir, run } from "../util/fs.ts";
+import { HOME, readText, listDir, run } from "../util/fs.ts";
 import type { Platform } from "./types.ts";
-import { psProcs, devOf, detached } from "./posix.ts";
+import { psProcs, devOf, detached, freeName } from "./posix.ts";
 
 // ps %cpu on Linux is the lifetime average, so fresh helpers read as 100%+ and long-lived agents as idle →
 // diff utime+stime from /proc/<pid>/stat between refreshes instead
@@ -32,6 +33,21 @@ function procFiles(pids: number[], want: (path: string) => boolean): { cwd: Map<
   }
   return { cwd, open };
 }
+// freedesktop.org trash spec: $XDG_DATA_HOME/Trash/{files/<name>, info/<name>.trashinfo} — file managers can restore it
+function two(n: number): string { return (n < 10 ? "0" : "") + n; }
+function trash(path: string): void {
+  const root = join(process.env.XDG_DATA_HOME || join(HOME, ".local", "share"), "Trash");
+  const files = join(root, "files"); const info = join(root, "info");
+  mkdirSync(files, { recursive: true }); mkdirSync(info, { recursive: true });
+  const name = freeName(files, path);
+  const d = new Date();
+  const when = d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()) + "T" + two(d.getHours()) + ":" + two(d.getMinutes()) + ":" + two(d.getSeconds());
+  const ip = join(info, name + ".trashinfo");
+  const fd = openSync(ip, "w");
+  writeSync(fd, "[Trash Info]\nPath=" + path.split("/").map((p: string) => encodeURIComponent(p)).join("/") + "\nDeletionDate=" + when + "\n");
+  closeSync(fd);
+  try { renameSync(path, join(files, name)); } catch (e) { try { unlinkSync(ip); } catch (e2) { /* gone */ } throw e; }
+}
 
 export const linux: Platform = {
   name: "linux",
@@ -51,4 +67,6 @@ export const linux: Platform = {
   },
   // passwd GECOS: "Full Name,Room,Phone,…"
   fullName: () => ((run("getent", ["passwd", userInfo().username]).split(":")[4] ?? "").split(",")[0] ?? "").trim(),
+  trash,
+  trashName: "the trash (~/.local/share/Trash)",
 };

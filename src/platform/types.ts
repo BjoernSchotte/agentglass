@@ -22,4 +22,8 @@ export interface Platform {
   notify(title: string, subtitle: string, msg: string): void;
   // the user's full name as the OS knows it, "" if unknown
   fullName(): string;
+  // move a file or directory to the desktop trash (restorable there); throws on failure
+  trash(path: string): void;
+  // where trash() puts things, for messages ("~/.Trash")
+  trashName: string;
 }

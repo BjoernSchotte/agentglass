@@ -1,17 +1,16 @@
 // agentglass — side effects: send prompts, resume, kill, trash, full-text search, external pager/editor
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, renameSync, openSync, writeSync, closeSync, mkdirSync } from "node:fs";
+import { existsSync, openSync, writeSync, closeSync, mkdirSync } from "node:fs";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { join } from "node:path";
-import { base } from "./util/json.ts";
-import { HOME, CLAUDE, CODEX, FX, run } from "./util/fs.ts";
+import { HOME, run } from "./util/fs.ts";
 import { OS } from "./platform/index.ts";
 import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
 import { sessions, scan, buildView, parentOf, current } from "./model/sessions.ts";
 import { refreshProcs, rootOf, tmuxTarget, procAt, procSess } from "./model/procs.ts";
-import { cmdOf, headlessArgs, resumeArgs } from "./harness/index.ts";
+import { HARNESSES, harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
 
 export function ask(label: string, action: string, init: string): void { S.prevMode = S.mode === "input" ? S.prevMode : S.mode; S.mode = "input"; S.inputLabel = label; S.inputAction = action; S.inputText = init; }
@@ -87,8 +86,10 @@ export function sendPrompt(sub: Sess, msg: string): void {
     sendTmux(t, msg);
     return;
   }
+  const hl = harnessOf(s.h).headless;
+  if (!hl) { say("warn", harnessOf(s.h).label + " has no headless mode — run it in tmux to send prompts"); return; }
   const c = cmdOf(s.h);
-  const args = c.slice(1).concat(headlessArgs(s.h, s.id, msg));
+  const args = c.slice(1).concat(hl(s.id, msg));
   const logDir = join(HOME, ".agentglass", "logs");
   try { mkdirSync(logDir, { recursive: true }); } catch (e) { /* exists */ }
   const log = join(logDir, s.id + ".log");
@@ -112,8 +113,10 @@ export function resume(sub: Sess): void {
     else say("warn", "already running (pid " + s.pid + ")" + (t ? " in tmux " + t : ""));
     return;
   }
+  const rs = harnessOf(s.h).resume;
+  if (!rs) { say("warn", harnessOf(s.h).label + " can't resume a session by id"); return; }
   const c = cmdOf(s.h);
-  const args = c.slice(1).concat(resumeArgs(s.h, s.id));
+  const args = c.slice(1).concat(rs(s.id));
   leave();
   try { execFileSync(c[0], args, { stdio: "inherit", cwd: s.cwd && existsSync(s.cwd) ? s.cwd : HOME }); } catch (e) { /* non-zero exit */ }
   enter();
@@ -125,25 +128,19 @@ export function killPid(pid: number, sig: string): void {
   refreshProcs();
 }
 export function trash(s: Sess): void {
-  const t = join(HOME, ".Trash");
   try {
-    if (s.h === "fx") {
-      const d = s.path.slice(0, -"/events.jsonl".length);
-      renameSync(d, join(t, "fx-session-" + base(d)));
-    } else renameSync(s.path, join(t, base(s.path)));
-    const dir = s.path.slice(0, -6);
-    if (s.h === "claude" && existsSync(dir)) renameSync(dir, join(t, base(dir)));
-    if (s.h === "claude" && existsSync(dir + ".meta.json")) renameSync(dir + ".meta.json", join(t, base(dir) + ".meta.json"));
+    for (const f of harnessOf(s.h).files(s)) if (existsSync(f)) OS.trash(f);
     sessions.delete(s.path);
     if (S.tv && S.tv.s === s) { S.tv = null; S.mode = "list"; }
-    say("ok", "moved to ~/.Trash");
+    say("ok", "moved to " + OS.trashName);
   } catch (e) { say("err", "trash failed: " + String(e)); }
   buildView();
 }
 export function fullText(q: string): void {
   S.fullq = q;
   if (!q) { S.useFull = false; buildView(); return; }
-  const dirs = [join(CLAUDE, "projects"), join(CODEX, "sessions"), join(CODEX, "archived_sessions"), join(FX, "sessions")].filter((d) => existsSync(d));
+  const dirs: string[] = [];
+  for (const ad of HARNESSES) for (const d of ad.roots()) if (existsSync(d)) dirs.push(d);
   const r = spawnSync("rg", ["-l", "-i", "-F", "--glob", "*.jsonl", "--", q].concat(dirs), { encoding: "utf8", timeout: 30000 });
   let out = r.stdout;
   if (r.error) out = run("grep", ["-rilF", "--include=*.jsonl", "--", q].concat(dirs));

@@ -18,7 +18,7 @@ interface State {
   tab: number; // 0 sessions, 1 processes, 2+ H.tabs
   mode: Mode; prevMode: Mode; fview: string;
   sel: number; top: number; psel: number; ptop: number;
-  filter: string; hfilter: string; liveOnly: boolean; // hfilter: "", "claude", "codex", "fx"
+  filter: string; hfilter: string; liveOnly: boolean; // hfilter: "" (all) or a harness id
   fulltext: Set<string>; useFull: boolean; fullq: string;
   view: Sess[];
   toast: string; toastKind: string; toastAt: number;

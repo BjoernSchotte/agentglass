@@ -17,7 +17,7 @@ export const prevKids: Sess[] = [];
 
 function statusGlyph(s: Sess): string {
   if (s.pid) {
-    const busy = s.status === "busy" || (s.h !== "claude" && working(s)) || Date.now() - s.mtime < 8000;
+    const busy = working(s) || Date.now() - s.mtime < 8000;
     return busy ? fg(C.green) + spin() + RST : fg(C.yellow) + "●" + RST;
   }
   if (Date.now() - s.mtime < 120000) return fg(C.green) + "○" + RST;

@@ -152,6 +152,22 @@ export AGENTGLASS_FX="fx"
 Gemini, opencode, aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.
 
+### Adding a harness
+
+Every agent is one adapter file behind the `HarnessAdapter` port
+([`src/harness/types.ts`](src/harness/types.ts)): where its transcripts live, how a log line becomes
+events and usage, how to tell it is live and busy, and how to send to / resume it. Copy the smallest
+adapter ([`fx.ts`](src/harness/fx.ts)), register it in `HARNESSES`
+([`src/harness/index.ts`](src/harness/index.ts)), and add a few real log lines to the contract check:
+
+```sh
+scriptc build src/harness/harness.check.ts -o hc && ./hc   # registry + golden samples for every adapter
+```
+
+The list, filters, badges, ticker, Stats rows, `--harness`, help, full-text search, trash and live
+detection pick the new harness up from the registry. OS specifics (processes, open files, clipboard,
+notifications, trash) sit behind the `Platform` port in [`src/platform/`](src/platform/).
+
 ## License
 
 [Apache-2.0](LICENSE)

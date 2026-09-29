@@ -106,7 +106,7 @@ const st = new Map<string, St>();
 let selPath = ""; let selSince = 0;
 
 function watched(s: Sess): boolean { return s.pid !== 0 && !s.parent; }
-function isBusy(s: Sess): boolean { return s.h === "claude" ? s.status === "busy" : working(s); }
+function isBusy(s: Sess): boolean { return working(s); }
 function kidsMap(): Map<number, Proc[]> {
   const k = new Map<number, Proc[]>();
   for (const p of allProcs.values()) { const a = k.get(p.ppid); if (a) a.push(p); else k.set(p.ppid, [p]); }

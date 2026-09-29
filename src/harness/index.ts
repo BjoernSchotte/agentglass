@@ -1,31 +1,48 @@
-// agentglass — harness dispatch: one log line → events, and the per-harness CLI invocations
+// agentglass — harness registry: the adapters agentglass knows, and the lookups everything else goes through
 // SPDX-License-Identifier: Apache-2.0
-import { str, parse } from "../util/json.ts";
-import type { Ev, Sess, Harness } from "../model/types.ts";
-import { parseClaude, claudeHeadless, claudeResume } from "./claude.ts";
-import { parseCodex, codexHeadless, codexResume } from "./codex.ts";
-import { parseFx, fxHeadless, fxResume } from "./fx.ts";
+import { parse } from "../util/json.ts";
+import type { Ev, Sess } from "../model/types.ts";
 import { H, applyMeta } from "../hooks.ts";
+import type { HarnessAdapter } from "./types.ts";
+import { turnBusy } from "./common.ts";
+import { claude } from "./claude.ts";
+import { codex } from "./codex.ts";
+import { fx } from "./fx.ts";
 
-export function parseEvents(h: Harness, line: string, out: Ev[], s: Sess | null): void {
+// order = order in filters, stats rows and help
+export const HARNESSES: HarnessAdapter[] = [claude, codex, fx];
+
+const byId = new Map<string, HarnessAdapter>();
+const byProc = new Map<string, string>();
+for (const a of HARNESSES) {
+  if (byId.has(a.id)) throw new Error("duplicate harness id " + a.id);
+  byId.set(a.id, a);
+  for (const p of a.procs) byProc.set(p, a.id);
+}
+
+export function harnessOf(id: string): HarnessAdapter {
+  const a = byId.get(id);
+  if (!a) throw new Error("unknown harness " + id);
+  return a;
+}
+export function isHarness(id: string): boolean { return byId.has(id); }
+export function harnessIds(): string[] { return HARNESSES.map((a) => a.id); }
+export function harnessIndex(id: string): number { for (let i = 0; i < HARNESSES.length; i++) if (HARNESSES[i].id === id) return i; return -1; }
+// process basename → harness id ("" = not one of ours)
+export function harnessOfProc(name: string): string { return byProc.get(name) ?? ""; }
+
+export function parseEvents(h: string, line: string, out: Ev[], s: Sess | null): void {
   const o = parse(line);
   if (!o) return;
   const n = out.length;
-  if (h === "fx") parseFx(o, out, s ? s.path : "");
-  else {
-    const ts = str(o["timestamp"]);
-    const type = str(o["type"]);
-    if (h === "claude") parseClaude(o, ts, type, out, s);
-    else parseCodex(o, ts, type, out, s);
-  }
+  harnessOf(h).parse(o, out, s);
   if (s) applyMeta(s);
   if (out.length > n) for (const f of H.events) f(s, out, n);
 }
-// the user's claude/codex are often shell functions: AGENTGLASS_<HARNESS> overrides the command
-export function cmdOf(h: Harness): string[] {
-  const env = h === "claude" ? process.env.AGENTGLASS_CLAUDE : h === "codex" ? process.env.AGENTGLASS_CODEX : process.env.AGENTGLASS_FX;
-  const cmd: string = env !== undefined ? env : h;
+export function busy(s: Sess): boolean { const f = harnessOf(s.h).busy; return f ? f(s) : turnBusy(s, false); }
+// the user's claude/codex are often shell functions: AGENTGLASS_<ID> overrides the command
+export function cmdOf(h: string): string[] {
+  const env = process.env["AGENTGLASS_" + h.toUpperCase().replace(/[^A-Z0-9]/g, "_")];
+  const cmd: string = env !== undefined ? env : harnessOf(h).bin;
   return cmd.split(" ").filter((x) => x.length > 0);
 }
-export function headlessArgs(h: Harness, id: string, msg: string): string[] { return h === "claude" ? claudeHeadless(id, msg) : h === "codex" ? codexHeadless(id, msg) : fxHeadless(id, msg); }
-export function resumeArgs(h: Harness, id: string): string[] { return h === "claude" ? claudeResume(id) : h === "codex" ? codexResume(id) : fxResume(id); }

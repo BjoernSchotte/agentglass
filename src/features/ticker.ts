@@ -6,6 +6,7 @@ import type { Sess } from "../model/types.ts";
 import { H } from "../hooks.ts";
 import { sessions, loadTail, activity, subActive } from "../model/sessions.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
+import { harnessOf } from "../harness/index.ts";
 
 // the text as cells (char, style, width) so it can be cut at any column without breaking escapes or wide chars
 const ch: string[] = []; const st: string[] = []; const cwid: number[] = [];
@@ -16,10 +17,10 @@ let off = 0; let step = 0; let slot = 0; let built = false;
 function add(style: string, s: string): void {
   for (const c of clean(s)) { const w = cw(cpOf(c)); ch.push(c); st.push(style); cwid.push(w); total += w; }
 }
-function col(s: Sess): string { return s.h === "claude" ? C.claude : s.h === "codex" ? C.codex : C.fx; }
+function col(s: Sess): string { return harnessOf(s.h).color(); }
 function glyph(s: Sess): string {
   if (s.parent) return "⑂";
-  return s.h === "claude" ? "✻" : s.h === "codex" ? ">_" : "▲";
+  return harnessOf(s.h).glyph;
 }
 function build(): void {
   built = true;

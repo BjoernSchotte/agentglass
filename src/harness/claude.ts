@@ -1,11 +1,44 @@
-// agentglass — Claude Code (~/.claude): event parsing, subagent meta, resume commands
+// agentglass — Claude Code (~/.claude) adapter
 // SPDX-License-Identifier: Apache-2.0
-import { type Obj, obj, str, arr, parse } from "../util/json.ts";
-import { readText } from "../util/fs.ts";
+import { join } from "node:path";
+import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
+import { CLAUDE, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
+import { C, CSI, RST, fg } from "../ui/theme.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, isoMs, nlines, num } from "../features/usage/record.ts";
+import { done } from "../features/usage/calls.ts";
+import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise } from "./common.ts";
 
-export function parseClaude(o: Obj, ts: string, type: string, out: Ev[], s: Sess | null): void {
+const PROJECTS = join(CLAUDE, "projects");
+
+// ~/.claude/projects/<project>/<session>.jsonl, subagents in <project>/<session>/subagents/agent-<id>.jsonl
+function scan(add: AddFn): void {
+  for (const proj of listDir(PROJECTS)) {
+    for (const f of listDir(join(PROJECTS, proj))) {
+      if (f.endsWith(".jsonl")) { add(join(PROJECTS, proj, f), f.slice(0, -6), "", false); continue; }
+      if (f.length !== 36) continue; // <session-uuid>/ dirs hold subagent transcripts
+      const sd = join(PROJECTS, proj, f, "subagents");
+      for (const a of listDir(sd)) if (a.endsWith(".jsonl")) add(join(sd, a), a.slice(6, -6), f, false);
+    }
+  }
+}
+// subagents: agent-<id>.meta.json {agentType, description, model, toolUseId}
+function meta(s: Sess): void {
+  if (!s.parent) return;
+  s.kind = "agent";
+  const o = parseJson(readText(s.path.slice(0, -6) + ".meta.json", 0, 4096).trim());
+  if (!o) return;
+  s.kind = str(o["agentType"]) || "agent";
+  s.title = str(o["description"]);
+  s.model = str(o["model"]);
+}
+function spawnCall(s: Sess): string {
+  const m = /"toolUseId":"([^"]+)"/.exec(readText(s.path.slice(0, -6) + ".meta.json", 0, 8192));
+  return m ? m[1] ?? "" : "";
+}
+function parse(o: Obj, out: Ev[], s: Sess | null): void {
+  const ts = str(o["timestamp"]); const type = str(o["type"]);
   if (type === "ai-title") { if (s) s.title = str(o["aiTitle"]); return; }
   if (type === "summary") { out.push({ kind: "meta", text: "summary: " + str(o["summary"]), ts, id: "", full: "" }); return; }
   if (type !== "user" && type !== "assistant") return;
@@ -32,15 +65,73 @@ export function parseClaude(o: Obj, ts: string, type: string, out: Ev[], s: Sess
     else if (bt === "tool_result") { const tur = obj(o["toolUseResult"]); out.push({ kind: "result", text: blockText(bo["content"]), ts, id: str(bo["tool_use_id"]), full: tur ? JSON.stringify(tur) : "" }); }
   }
 }
-// Claude: <project>/<session>/subagents/agent-<id>.jsonl + agent-<id>.meta.json {agentType, description, model}
-export function claudeSub(s: Sess, parent: string): void {
-  s.parent = parent;
-  s.kind = "agent";
-  const o = parse(readText(s.path.slice(0, -6) + ".meta.json", 0, 4096).trim());
-  if (!o) return;
-  s.kind = str(o["agentType"]) || "agent";
-  s.title = str(o["description"]);
-  s.model = str(o["model"]);
+// ~/.claude/sessions/<pid>.json: {pid, sessionId, status: busy|idle|…, name} for every running claude
+function liveRegistry(alive: (pid: number) => boolean): Live[] {
+  const out: Live[] = [];
+  const sd = join(CLAUDE, "sessions");
+  for (const f of listDir(sd)) {
+    if (!f.endsWith(".json")) continue;
+    const o = parseJson(readText(join(sd, f), 0, 8192).trim());
+    if (!o) continue;
+    const pid = num(o["pid"]);
+    if (pid && alive(pid)) out.push({ id: str(o["sessionId"]), pid, status: str(o["status"]), name: str(o["name"]) });
+  }
+  return out;
 }
-export function claudeHeadless(id: string, msg: string): string[] { return ["-p", "--resume", id, msg]; }
-export function claudeResume(id: string): string[] { return ["--resume", id]; }
+function files(s: Sess): string[] { const d = s.path.slice(0, -6); return [s.path, d, d + ".meta.json"]; }
+
+// tool_result lines are the bulk of the bytes: no JSON.parse — the block's keys are unescaped only at the structural level
+function claudeResult(a: Acc, l: string): void {
+  const at = l.indexOf("\"tool_use_id\":\"");
+  const m = /^"tool_use_id":"([^"]+)"/.exec(l.slice(at, at + 200));
+  const id = m ? m[1] ?? "" : "";
+  const p = a.pend.get(id); if (!p) return;
+  a.pend.delete(id);
+  const tm = /"timestamp":"([^"]+)"/.exec(l.slice(at));
+  const t = tm ? isoMs(tm[1] ?? "") : 0;
+  const tr = l.indexOf("\"type\":\"tool_result\"");
+  const s0 = tr >= 0 && tr < at ? tr : at; const end = l.indexOf("]},\"uuid\":\"", at); // result block ≈ up to the end of the message (JSON-escaped size)
+  done(p, t > 0 && p.t > 0 ? t - p.t : -1, l.indexOf("\"is_error\":true") >= 0, end > s0 ? end - s0 : 0, id, []);
+}
+function usage(a: Acc, l: string): void {
+  if (l.indexOf("\"type\":\"assistant\"") < 0) { if (a.pend.size && l.indexOf("\"tool_use_id\":\"") >= 0) claudeResult(a, l); return; }
+  const o = parseJson(l); if (!o || str(o["type"]) !== "assistant") return;
+  const m = obj(o["message"]); if (!m) return;
+  const iso = str(o["timestamp"]);
+  const d = bucket(a, 0, iso);
+  const id = str(m["id"]); const u = obj(m["usage"]);
+  if (u && !(id && a.ids.has(id))) { // one API message is split over several lines carrying the same id + usage
+    if (id) a.ids.add(id);
+    const model = str(m["model"]) || a.model; if (model) a.model = model;
+    const cw = num(u["cache_creation_input_tokens"]); const cc = obj(u["cache_creation"]);
+    const w1 = cc ? num(cc["ephemeral_1h_input_tokens"]) : 0;
+    if (model !== "<synthetic>") tokens(a, d, model, num(u["input_tokens"]), num(u["output_tokens"]), num(u["cache_read_input_tokens"]), Math.max(0, cw - w1), w1);
+  }
+  for (const b of arr(m["content"])) {
+    const bo = obj(b); if (!bo || str(bo["type"]) !== "tool_use") continue;
+    const name = str(bo["name"]) || "tool"; const st = tool(a, d, name);
+    const inp = obj(bo["input"]);
+    pend(a, d, st, name, str(bo["id"]), isoMs(iso), iso, toolArg(name, inp, ""), name === "Bash" && inp ? [str(inp["command"])] : []);
+    if (!inp) continue;
+    let add = 0; let del = 0;
+    if (name === "Edit") { add = nlines(str(inp["new_string"])); del = nlines(str(inp["old_string"])); }
+    else if (name === "Write") add = nlines(str(inp["content"]));
+    else if (name === "NotebookEdit") add = nlines(str(inp["new_source"]));
+    else if (name === "MultiEdit") for (const e of arr(inp["edits"])) { const eo = obj(e); if (eo) { add += nlines(str(eo["new_string"])); del += nlines(str(eo["old_string"])); } }
+    else continue;
+    lines(a, d, add, del); file(d, name, str(inp["file_path"]) || str(inp["notebook_path"]), add, del);
+  }
+}
+
+export const claude: HarnessAdapter = {
+  id: "claude", label: "Claude", glyph: "✻", mark: "✻", color: () => C.claude,
+  badge: () => fg(C.claude) + CSI + "1m" + "✻" + RST + fg(C.claude) + " Claude  " + RST, // terracotta spark
+  bin: "claude", procs: ["claude"],
+  roots: () => [PROJECTS], scan, meta, headBytes: 131072,
+  parse, spawnOf: (s: Sess) => spawnCall(s),
+  busy: (s: Sess) => s.status === "busy", // the registry knows; its logs carry no turn markers
+  liveRegistry,
+  headless: (id: string, msg: string) => ["-p", "--resume", id, msg],
+  resume: (id: string) => ["--resume", id],
+  files, usage,
+};

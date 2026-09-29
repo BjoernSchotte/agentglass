@@ -1,8 +1,9 @@
 // agentglass — macOS adapter: ps %cpu is already a recent (decaying) average, lsof for open files
 // SPDX-License-Identifier: Apache-2.0
-import { run } from "../util/fs.ts";
+import { join } from "node:path";
+import { HOME, run } from "../util/fs.ts";
 import type { Platform } from "./types.ts";
-import { psProcs, lsofFiles, devOf, detached } from "./posix.ts";
+import { psProcs, lsofFiles, devOf, detached, moveInto } from "./posix.ts";
 
 function esc(t: string): string { return t.replace(/\\/g, "\\\\").replace(/"/g, "\\\""); }
 
@@ -17,4 +18,6 @@ export const darwin: Platform = {
   notify: (title: string, subtitle: string, msg: string) =>
     detached("osascript", ["-e", "display notification \"" + esc(msg) + "\" with title \"" + esc(title) + "\" subtitle \"" + esc(subtitle) + "\""]),
   fullName: () => run("id", ["-F"]).trim(),
+  trash: (path: string) => { moveInto(join(HOME, ".Trash"), path); },
+  trashName: "~/.Trash",
 };

@@ -1,12 +1,12 @@
 // agentglass — call graph (c): a session's turns, tool calls and subagents as a DevTools-style flame chart + call tree
 // SPDX-License-Identifier: Apache-2.0
 import { statSync } from "node:fs";
-import { readLines, readText } from "../../util/fs.ts";
+import { readLines } from "../../util/fs.ts";
 import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home } from "../../util/text.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
 import { H } from "../../hooks.ts";
-import { parseEvents } from "../../harness/index.ts";
+import { harnessOf, parseEvents } from "../../harness/index.ts";
 import { titleOf, subActive, current } from "../../model/sessions.ts";
 import { openDetail } from "../../ui/detail.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
@@ -38,12 +38,8 @@ function loadTV(s: Sess): TV {
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
   return { s, evs, off: r.next, scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
 }
-// Claude: agent-<id>.meta.json names the Agent/Task tool_use that spawned it
-function spawnOf(s: Sess): string {
-  if (s.h !== "claude") return "";
-  const m = /"toolUseId":"([^"]+)"/.exec(readText(s.path.slice(0, -6) + ".meta.json", 0, 8192));
-  return m ? m[1] ?? "" : "";
-}
+// the parent's tool call that spawned subagent s, if the harness records it
+function spawnOf(s: Sess): string { const f = harnessOf(s.h).spawnOf; return f ? f(s) : ""; }
 function load(s: Sess): void {
   G.root = s; G.tvs = [loadTV(s)]; G.spawn = [""];
   for (const c of s.subs) { G.tvs.push(loadTV(c)); G.spawn.push(spawnOf(c)); }

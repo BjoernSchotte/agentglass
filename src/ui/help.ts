@@ -5,6 +5,7 @@ import { S, type HelpSec } from "../state.ts";
 import { H } from "../hooks.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put } from "./screen.ts";
+import { harnessIds } from "../harness/index.ts";
 
 const HELP: HelpSec[] = [
   { name: "global", ctx: "", keys: [
@@ -13,9 +14,9 @@ const HELP: HelpSec[] = [
     ["↑↓  j k", "move"], ["PgUp PgDn", "page"], ["g G  Home End", "first / last"],
     ["↵  →", "open live transcript"], ["space", "fold / unfold subagents"],
     ["/", "filter (title, path, id, harness)"], ["F", "full-text search (ripgrep)"],
-    ["h", "harness: all → claude → codex → fx"], ["l", "live sessions only"], ["esc", "clear filters"],
+    ["h", "harness: all → " + harnessIds().join(" → ")], ["l", "live sessions only"], ["esc", "clear filters"],
     ["s", "send prompt (tmux if live, else headless)"], ["R", "resume interactively"],
-    ["x", "SIGTERM the session's agent"], ["D", "move session to ~/.Trash"], ["y", "copy session id"] ] },
+    ["x", "SIGTERM the session's agent"], ["D", "move session to the trash"], ["y", "copy session id"] ] },
   { name: "processes", ctx: "processes", keys: [
     ["↑↓  j k", "move"], ["g G  Home End", "first / last"], ["↵  →", "open linked session"],
     ["s", "send prompt to the agent's tmux pane"], ["a", "switch tmux client to the pane"],

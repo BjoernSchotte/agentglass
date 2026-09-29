@@ -1,29 +1,31 @@
 // agentglass — harness processes (via the platform adapter, tmux) and their link to sessions
 // SPDX-License-Identifier: Apache-2.0
-import { join } from "node:path";
-import { str, parse, base } from "../util/json.ts";
-import { CLAUDE, readText, listDir, run } from "../util/fs.ts";
+import { base } from "../util/json.ts";
+import { run } from "../util/fs.ts";
 import { OS } from "../platform/index.ts";
+import { HARNESSES, harnessOfProc } from "../harness/index.ts";
+import type { Live } from "../harness/types.ts";
 import type { Proc, Sess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
 import { applyMeta } from "../hooks.ts";
 
-const HARN = ["claude", "codex", "fx", "gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
+// agents without an adapter yet: shown in the process view under their own name
+const OTHER = ["gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot", "kiro-cli", "pi"];
 export let procs: Proc[] = [];
 export const allProcs = new Map<number, Proc>();
 export const hist = new Map<number, number[]>();
 export const cpuHist: number[] = [];
 const tmuxByTty = new Map<string, string>();
 const cwdByPid = new Map<number, string>();
-const codexPidByPath = new Map<string, number>();
-const claudeLive = new Map<string, { pid: number; status: string; name: string }>();
+const filePid = new Map<string, number>(); // open transcript → pid (HarnessAdapter.liveFile)
+const registry = new Map<string, Live>(); // "<harness>:<session id>" → entry (HarnessAdapter.liveRegistry)
 
 function harnessOf(args: string): string {
   const t = args.split(" ");
   let b = base(t[0]);
   if ((b === "node" || b === "bun" || b === "deno") && t.length > 1) b = base(t[1]).replace(/\.(m?js|ts)$/, "");
-  return HARN.indexOf(b) >= 0 ? b : "";
+  return harnessOfProc(b) || (OTHER.indexOf(b) >= 0 ? b : "");
 }
 export function refreshProcs(): void {
   allProcs.clear();
@@ -64,26 +66,19 @@ export function refreshProcs(): void {
   const sp = procAt(S.psel); const selPid = sp ? sp.pid : 0;
   procs = out;
   for (let i = 0; i < procs.length; i++) if (procs[i].pid === selPid) S.psel = i; // selection follows the pid, not the row
-  // claude live registry
-  claudeLive.clear();
-  const sd = join(CLAUDE, "sessions");
-  for (const f of listDir(sd)) {
-    if (!f.endsWith(".json")) continue;
-    const o = parse(readText(join(sd, f), 0, 8192).trim());
-    if (!o) continue;
-    const pid = typeof o["pid"] === "number" ? (o["pid"] as number) : 0;
-    if (pid && allProcs.has(pid)) claudeLive.set(str(o["sessionId"]), { pid, status: str(o["status"]), name: str(o["name"]) });
-  }
+  registry.clear();
+  const alive = (pid: number): boolean => allProcs.has(pid);
+  for (const ad of HARNESSES) { const f = ad.liveRegistry; if (f) for (const l of f(alive)) registry.set(ad.id + ":" + l.id, l); }
   linkSessions();
 }
 export function refreshSlow(): void {
   // cwd + open rollout files of every harness proc — nested ones too (codex app-server under its daemon holds the rollouts), tmux panes
   const hp: number[] = [];
   for (const p of allProcs.values()) if (p.h) hp.push(p.pid);
-  const f = OS.procFiles(hp, (n: string) => n.endsWith(".jsonl") && (n.indexOf("/rollout-") >= 0 || n.indexOf("/.fx/sessions/") >= 0));
-  cwdByPid.clear(); codexPidByPath.clear();
+  const f = OS.procFiles(hp, (n: string) => { for (const ad of HARNESSES) { const lf = ad.liveFile; if (lf && lf(n)) return true; } return false; });
+  cwdByPid.clear(); filePid.clear();
   for (const [k, v] of f.cwd) cwdByPid.set(k, v);
-  for (const [k, v] of f.open) codexPidByPath.set(k, v);
+  for (const [k, v] of f.open) filePid.set(k, v);
   tmuxByTty.clear();
   for (const l of run("tmux", ["list-panes", "-a", "-F", "#{pane_tty} #{session_name}:#{window_index}.#{pane_index}"]).split("\n")) {
     const i = l.indexOf(" ");
@@ -100,8 +95,9 @@ export function rootOf(pid: number): Proc | null {
 function linkSessions(): void {
   for (const s of sessions.values()) {
     s.pid = 0; s.status = ""; s.name = "";
-    if (s.h === "claude") { const l = claudeLive.get(s.id); if (l) { s.pid = l.pid; s.status = l.status; s.name = l.name; } }
-    else { const pid = codexPidByPath.get(s.path); if (pid && allProcs.has(pid)) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; } }
+    const l = registry.get(s.h + ":" + s.id);
+    if (l) { s.pid = l.pid; s.status = l.status; s.name = l.name; }
+    else { const pid = filePid.get(s.path); if (pid && allProcs.has(pid)) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; } }
     applyMeta(s);
   }
   for (const p of procs) p.sess = "";

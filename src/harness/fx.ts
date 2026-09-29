@@ -1,18 +1,28 @@
-// agentglass — fx (~/.fx): event parsing, session meta, resume commands
+// agentglass — fx (~/.fx) adapter
 // SPDX-License-Identifier: Apache-2.0
-import { type Obj, obj, str, parse } from "../util/json.ts";
-import { readText } from "../util/fs.ts";
+import { statSync } from "node:fs";
+import { join } from "node:path";
+import { type Obj, obj, str, parse as parseJson } from "../util/json.ts";
+import { FX, readText, listDir } from "../util/fs.ts";
+import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
-import { toolArg } from "./common.ts";
+import { C, CSI, RST, fg } from "../ui/theme.ts";
+import { type Acc, bucket, tool, pend, file, lines, nlines, num } from "../features/usage/record.ts";
+import { done, patchFiles } from "../features/usage/calls.ts";
+import type { AddFn, HarnessAdapter } from "./types.ts";
+import { toolArg, turnBusy } from "./common.ts";
 
+const SESSIONS = join(FX, "sessions");
+function scan(add: AddFn): void { for (const id of listDir(SESSIONS)) add(join(SESSIONS, id, "events.jsonl"), id, "", false); }
 // fx events.jsonl: {seq, timestamp_ms, event: {<kind>: {...}}} — one kind per line
 function fxResult(preview: string): string {
-  const p = parse(preview);
+  const p = parseJson(preview);
   if (!p) return preview;
   const t = str(p["output_delta"]) || str(p["result"]) || str(p["output"]) || str(p["error"]) || str(p["error_code"]);
   return t || preview;
 }
-export function parseFx(o: Obj, out: Ev[], logPath: string): void {
+function parse(o: Obj, out: Ev[], s: Sess | null): void {
+  const logPath = s ? s.path : "";
   const e = obj(o["event"]);
   if (!e) return;
   const ms = typeof o["timestamp_ms"] === "number" ? (o["timestamp_ms"] as number) : 0;
@@ -44,17 +54,73 @@ export function parseFx(o: Obj, out: Ev[], logPath: string): void {
   if (keys.length && keys[0] !== "turn_started") out.push({ kind: "meta", text: keys[0].replace(/_/g, " "), ts, id: "", full: "" });
 }
 // fx: ~/.fx/sessions/<id>/{session.json, events.jsonl, subagent/owner.json {parent_id}}
-export function fxMeta(s: Sess): void {
+function meta(s: Sess): void {
   const dir = s.path.slice(0, -"events.jsonl".length);
-  const o = parse(readText(dir + "session.json", 0, 65536).trim());
+  const o = parseJson(readText(dir + "session.json", 0, 65536).trim());
   if (o) {
     s.cwd = str(o["workspace_root"]) || str(o["origin_workspace_root"]);
     s.title = str(o["title"]);
     s.model = str(o["model"]);
     if (o["subagent_child"] === true) s.kind = "subagent";
   }
-  const own = parse(readText(dir + "subagent/owner.json", 0, 4096).trim());
+  const own = parseJson(readText(dir + "subagent/owner.json", 0, 4096).trim());
   if (own) { s.parent = str(own["parent_id"]); if (!s.kind) s.kind = "subagent"; }
 }
-export function fxHeadless(id: string, msg: string): string[] { return ["ask", "--auto", "--resume-id", id, "--", msg]; }
-export function fxResume(id: string): string[] { return ["resume", id]; }
+function usage(a: Acc, l: string): void {
+  const res = l.indexOf("\"tool_result\"") >= 0;
+  if (!res && l.indexOf("\"tool_call\"") < 0) return;
+  const o = parseJson(l); if (!o) return;
+  const e = obj(o["event"]); if (!e) return;
+  const ms = num(o["timestamp_ms"]);
+  const r = res ? obj(e["tool_result"]) : null;
+  if (r) {
+    const id = str(r["call_id"]); const p = a.pend.get(id); if (!p) return;
+    a.pend.delete(id);
+    // fx stamps a whole turn's events alike: 0 ms means "unknown", not "instant"
+    done(p, ms > p.t && p.t > 0 ? ms - p.t : -1, str(r["status"]) !== "success", num(r["output_bytes"]), id, []);
+    return;
+  }
+  const c = obj(e["tool_call"]); if (!c) return;
+  const d = bucket(a, ms, ""); const name = str(c["tool_name"]) || "tool";
+  const st = tool(a, d, name);
+  const aj = str(c["arguments_json"]); const args = parseJson(aj);
+  const cmd = name === "shell" && args ? str(args["command"]) : "";
+  pend(a, d, st, name, str(c["call_id"]), ms, ms > 0 ? new Date(ms).toISOString() : "", toolArg(name, null, aj), cmd ? [cmd] : []);
+  if (!args) return;
+  // edits, best effort: a path plus new content / replacements, or an embedded patch (totals come from usage-v2.json)
+  const fp = str(args["path"]) || str(args["file_path"]);
+  if (aj.indexOf("*** Begin Patch") >= 0) { for (const f of patchFiles(str(args["patch"]) || str(args["input"]))) file(d, name, f.p, f.add, f.del); }
+  else if (fp && (args["content"] !== undefined || args["new_string"] !== undefined || args["edits"] !== undefined)) file(d, name, fp, nlines(str(args["content"]) || str(args["new_string"])), nlines(str(args["old_string"])));
+}
+// fx keeps running totals in usage-v2.json; attribute changes to the day the file was written
+function usageSidecar(s: Sess, a: Acc): void {
+  const f = s.path.slice(0, -"events.jsonl".length) + "usage-v2.json";
+  let mt = 0; try { mt = statSync(f).mtimeMs; } catch (e) { return; }
+  if (mt === a.xM) return;
+  a.xM = mt;
+  const o = parseJson(readText(f, 0, 1048576).trim()); const sn = o ? obj(o["snapshot"]) : null; if (!sn) return;
+  const cur = [num(sn["input_tokens"]), num(sn["output_tokens"]), num(sn["cache_read_tokens"]), num(sn["cache_write_tokens"]), num(sn["total_cost"]), num(sn["lines_added"]), num(sn["lines_removed"])];
+  const dl: number[] = [];
+  for (let i = 0; i < 7; i++) dl.push(Math.max(0, (cur[i] ?? 0) - numAt(a.x, i, 0)));
+  a.x = cur;
+  const d = bucket(a, mt, "");
+  const inp = dl[0] ?? 0; const out = dl[1] ?? 0; const cr = dl[2] ?? 0; const cw = dl[3] ?? 0; const c = dl[4] ?? 0;
+  a.inTok += inp; a.outTok += out; a.cr += cr; a.cw += cw; d.inTok += inp; d.outTok += out; d.cr += cr; d.cw += cw;
+  if (c > 0) { a.cost += c; d.cost += c; }
+  else if ((cur[4] ?? 0) === 0 && a.unk === 0) { a.unk = 1; d.unk += 1; } // custom model connections report $0 → unknown
+  lines(a, d, dl[5] ?? 0, dl[6] ?? 0);
+}
+
+export const fx: HarnessAdapter = {
+  id: "fx", label: "fx", glyph: "▲", mark: "▲", color: () => C.fx,
+  badge: () => fg(C.text) + CSI + "1m" + "▲" + RST + fg(C.fx) + CSI + "1m" + " 𝒇x" + RST + fg(C.fx) + "      " + RST,
+  bin: "fx", procs: ["fx"],
+  roots: () => [SESSIONS], scan, meta, refresh: meta, headBytes: 524288,
+  parse,
+  busy: (s: Sess) => turnBusy(s, true), // fx logs no turn-start marker: a trailing user event is one
+  liveFile: (p: string) => p.endsWith(".jsonl") && p.indexOf("/.fx/sessions/") >= 0,
+  headless: (id: string, msg: string) => ["ask", "--auto", "--resume-id", id, "--", msg],
+  resume: (id: string) => ["resume", id],
+  files: (s: Sess) => [s.path.slice(0, -"/events.jsonl".length)], // the whole session dir
+  usage, usageSidecar,
+};

@@ -1,21 +1,14 @@
 // agentglass — session discovery, lazy log loading, and the filtered subagent tree shown in the list
 // SPDX-License-Identifier: Apache-2.0
 import { statSync } from "node:fs";
-import { join } from "node:path";
-import { str, parse } from "../util/json.ts";
-import { CLAUDE, CODEX, FX, readText, readLines, listDir } from "../util/fs.ts";
+import { readText, readLines } from "../util/fs.ts";
 import { firstLine } from "../util/text.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
-import { parseEvents } from "../harness/index.ts";
-import { claudeSub } from "../harness/claude.ts";
-import { codexSub } from "../harness/codex.ts";
-import { fxMeta } from "../harness/fx.ts";
+import { HARNESSES, harnessOf, parseEvents, busy } from "../harness/index.ts";
 import { S } from "../state.ts";
 import { applyMeta } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
-const codexTitles = new Map<string, string>();
-let codexIndexM = 0;
 
 function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>, parent: string): void {
   let mt = 0; let sz = 0;
@@ -23,10 +16,9 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
   let s = sessions.get(path);
   if (!s) {
     s = newSess(h, id, path, archived);
+    s.parent = parent;
     sessions.set(path, s);
-    if (parent) claudeSub(s, parent);
-    else if (h === "codex") codexSub(s);
-    else if (h === "fx") fxMeta(s);
+    const m = harnessOf(h).meta; if (m) m(s);
   }
   s.mtime = mt; s.size = sz;
   applyMeta(s);
@@ -34,41 +26,13 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
 }
 export function scan(): void {
   const seen = new Set<string>();
-  const pdir = join(CLAUDE, "projects");
-  for (const proj of listDir(pdir)) {
-    for (const f of listDir(join(pdir, proj))) {
-      if (f.endsWith(".jsonl")) { addFile("claude", join(pdir, proj, f), f.slice(0, -6), false, seen, ""); continue; }
-      if (f.length !== 36) continue; // <session-uuid>/ dirs hold subagent transcripts
-      const sd = join(pdir, proj, f, "subagents");
-      for (const a of listDir(sd)) if (a.endsWith(".jsonl")) addFile("claude", join(sd, a), a.slice(6, -6), false, seen, f);
-    }
-  }
-  const walk = (dir: string, archived: boolean, depth: number): void => {
-    for (const f of listDir(dir)) {
-      const p = join(dir, f);
-      if (f.endsWith(".jsonl")) addFile("codex", p, f.length > 42 ? f.slice(-42, -6) : f, archived, seen, "");
-      else if (depth < 3 && /^\d+$/.test(f)) walk(p, archived, depth + 1);
-    }
-  };
-  walk(join(CODEX, "sessions"), false, 0);
-  const fxd = join(FX, "sessions");
-  for (const id of listDir(fxd)) addFile("fx", join(fxd, id, "events.jsonl"), id, false, seen, "");
-  walk(join(CODEX, "archived_sessions"), true, 3);
+  for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, seen, parent));
   for (const k of [...sessions.keys()]) if (!seen.has(k)) sessions.delete(k);
-  // codex thread names
-  const idx = join(CODEX, "session_index.jsonl");
-  try {
-    const st = statSync(idx);
-    if (st.mtimeMs !== codexIndexM) {
-      codexIndexM = st.mtimeMs;
-      for (const l of readText(idx, 0, st.size).split("\n")) { const o = parse(l); if (o) codexTitles.set(str(o["id"]), str(o["thread_name"])); }
-    }
-  } catch (e) { /* no codex */ }
 }
 export function loadHead(s: Sess): void {
   s.headDone = true;
   const evs: Ev[] = [];
-  for (const l of readText(s.path, 0, s.h === "claude" ? 131072 : 524288).split("\n")) {
+  for (const l of readText(s.path, 0, harnessOf(s.h).headBytes).split("\n")) {
     parseEvents(s.h, l, evs, s);
     if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; }
   }
@@ -76,7 +40,7 @@ export function loadHead(s: Sess): void {
 export function loadTail(s: Sess): void {
   if (s.tailSize === s.size) return;
   s.tailSize = s.size;
-  if (s.h === "fx") { fxMeta(s); applyMeta(s); }
+  const rf = harnessOf(s.h).refresh; if (rf) { rf(s); applyMeta(s); }
   const start = Math.max(0, s.size - 98304);
   const r = readLines(s.path, start, s.size, start > 0);
   const evs: Ev[] = [];
@@ -85,19 +49,12 @@ export function loadTail(s: Sess): void {
   if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; } // head was read before the first prompt
 }
 export function titleOf(s: Sess): string {
-  if (s.title) return s.title; // codex logs never set one, so an H.meta override wins over the thread name
-  if (s.h === "codex") { const t = codexTitles.get(s.id); if (t) return t; }
+  if (s.title) return s.title; // an H.meta override wins over the harness's out-of-band title
+  const tf = harnessOf(s.h).title; if (tf) { const t = tf(s); if (t) return t; }
   return s.prompt || "(no prompt yet)";
 }
-export function working(s: Sess): boolean {
-  for (let i = s.evs.length - 1; i >= 0; i--) {
-    const e = s.evs[i];
-    if (e.kind === "meta" && e.text === "turn started") return true;
-    if (e.kind === "meta" && (e.text.startsWith("turn complete") || e.text === "turn aborted")) return false;
-    if (s.h === "fx" && e.kind === "user") return true; // fx logs no turn-start marker
-  }
-  return false;
-}
+// mid-turn right now (the harness adapter decides how to tell)
+export function working(s: Sess): boolean { return busy(s); }
 export function activity(s: Sess): string {
   const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
   if (!e) return "";

@@ -3,6 +3,7 @@
 import { S } from "../state.ts";
 import { C, CSI, RST, fg, bg, heat } from "./theme.ts";
 import { width, clean, fit } from "../util/text.ts";
+import { harnessOf, isHarness } from "../harness/index.ts";
 
 export const buf: string[] = [];
 export function put(x: number, y: number, s: string): void { if (y >= 0 && y < S.H) buf.push(CSI + (y + 1) + ";" + (x + 1) + "H" + s); }
@@ -18,13 +19,14 @@ export function box(x: number, y: number, w: number, h: number, title: string, i
   for (let r = 1; r < h - 1; r++) { put(x, y + r, bc + "│" + RST); put(x + w - 1, y + r, bc + "│" + RST); }
   put(x, y + h - 1, bc + "╰" + "─".repeat(Math.max(0, w - 2)) + "╯" + RST);
 }
-// harness "logos": Claude's terracotta spark vs. Codex's terminal prompt — distinct in shape, color and name
+// harness "logos", BADGE_W cells: an adapter's own badge, else its glyph + label in its color; other agents (process view) get ◆ + name
 export const BADGE_W = 10;
 export function badge(h: string): string {
-  if (h === "claude") return fg(C.claude) + CSI + "1m" + "✻" + RST + fg(C.claude) + " Claude  " + RST;
-  if (h === "codex") return bg("236;236;240") + fg("16;16;20") + CSI + "1m" + ">_" + RST + fg(C.text) + " Codex  " + RST;
-  if (h === "fx") return fg(C.text) + CSI + "1m" + "▲" + RST + fg(C.fx) + CSI + "1m" + " 𝒇x" + RST + fg(C.fx) + "      " + RST;
-  return fg(C.purple) + CSI + "1m" + "◆" + RST + fg(C.purple) + " " + fit(h, BADGE_W - 2) + RST;
+  if (!isHarness(h)) return fg(C.purple) + CSI + "1m" + "◆" + RST + fg(C.purple) + " " + fit(h, BADGE_W - 2) + RST;
+  const ad = harnessOf(h);
+  const own = ad.badge; if (own) return own();
+  const g = fit(ad.glyph, 2).trimEnd();
+  return fg(ad.color()) + CSI + "1m" + g + RST + fg(ad.color()) + fit(" " + ad.label, BADGE_W - width(g)) + RST;
 }
 export const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 export function spin(): string { return SPIN[S.frame % SPIN.length]; }
