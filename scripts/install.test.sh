@@ -25,7 +25,7 @@ run() { HOME="$t/home" PATH="/usr/bin:/bin" sh "$here/install.sh" "$@" > "$t/out
 mkdir -p "$t/home"
 run && eq "stable exit" 0 0 || eq "stable exit" 1 0
 eq "stable version" "$("$t/home/.local/bin/agentglass")" "2026.9.2"
-grep -q '"method":"script"' "$t/home/.agentglass/install.json" && grep -q '"channel":"stable"' "$t/home/.agentglass/install.json" && grep -q "\"path\":\"$t/home/.local/bin/agentglass\"" "$t/home/.agentglass/install.json" && grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL install.json: $(cat "$t/home/.agentglass/install.json")"; fail=1; }
+grep -q '"method":"script"' "$t/home/.agentglass/install.json" && grep -q '"channel":"stable"' "$t/home/.agentglass/install.json" && grep -q "\"path\":\"$(cd "$t" && pwd -P)/home/.local/bin/agentglass\"" "$t/home/.agentglass/install.json" && grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL install.json: $(cat "$t/home/.agentglass/install.json")"; fail=1; }
 grep -q "not on your PATH" "$t/out" || { echo "FAIL PATH warning"; fail=1; }
 run --channel dev; eq "dev version" "$("$t/home/.local/bin/agentglass")" "2026.9.2-dev.20260930.3+a1b2c3d4"
 grep -q '"channel":"dev"' "$t/home/.agentglass/install.json" || { echo "FAIL dev channel in install.json"; fail=1; }
@@ -42,4 +42,18 @@ if AGENTGLASS_TEST_UNAME_M=riscv64 run --prefix "$t/p4"; then echo "FAIL riscv a
 grep -qi "unsupported" "$t/out" || { echo "FAIL unsupported message"; fail=1; }
 if run --channel nightly; then echo "FAIL bad channel accepted"; fail=1; fi
 [ -z "$(ls -A "$t/home/.local/bin" | grep -v '^agentglass$' || true)" ] || { echo "FAIL leftovers in prefix: $(ls -A "$t/home/.local/bin")"; fail=1; }
+# a binary that cannot run here (e.g. needs a newer glibc) is never installed over a working one
+rel v2026.9.5 broken; printf '#!/bin/sh\nexit 127\n' > "$t/brk"; chmod 755 "$t/brk"; tar -czf "$t/dl/v2026.9.5/$asset" -C "$t" brk --transform 's/brk/agentglass/' 2>/dev/null || { mkdir -p "$t/b2"; cp "$t/brk" "$t/b2/agentglass"; tar -czf "$t/dl/v2026.9.5/$asset" -C "$t/b2" agentglass; }
+(cd "$t/dl/v2026.9.5" && $H "$asset" > SHA256SUMS)
+run --prefix "$t/p2" --version 2026.9.1
+if run --prefix "$t/p2" --version 2026.9.5; then echo "FAIL broken binary installed"; fail=1; fi
+grep -qi "does not run" "$t/out" || { echo "FAIL broken message: $(cat "$t/out")"; fail=1; }
+eq "working binary kept" "$("$t/p2/agentglass")" "2026.9.1"
+# a download cut off mid-script runs nothing
+lines=$(wc -l < "$here/install.sh")
+for pct in 25 50 75 90 95; do
+  head -n $((lines * pct / 100)) "$here/install.sh" > "$t/cut.sh"
+  HOME="$t/home2" sh "$t/cut.sh" --prefix "$t/p5" > "$t/cut.out" 2>&1 || true
+  if grep -q "agentglass:" "$t/cut.out" || [ -e "$t/p5" ] || [ -e "$t/home2" ]; then echo "FAIL installer cut at $pct% still ran: $(head -2 "$t/cut.out" | tr '\n' ' ')"; fail=1; fi
+done
 [ $fail = 0 ] && echo "install.sh: all tests passed"; exit $fail

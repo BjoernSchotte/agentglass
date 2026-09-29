@@ -6,6 +6,8 @@
 # needs curl, tar and sha256sum (or shasum); verifies SHA256SUMS; replaces the binary atomically
 set -eu
 
+# everything runs from main(), called on the last line: a download cut off mid-way runs nothing
+main() {
 REPO="BjoernSchotte/agentglass"
 API="${AGENTGLASS_RELEASES_API:-https://api.github.com/repos/$REPO/releases?per_page=100}"
 BASE="${AGENTGLASS_DOWNLOAD_BASE:-https://github.com/$REPO/releases/download}"
@@ -60,6 +62,7 @@ expected=$(awk -v f="$asset" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1 }'
 [ -n "$expected" ] && [ "$(hash "$tmp/$asset")" = "$expected" ] || die "checksum mismatch for $asset — not installed"
 mkdir -p "$tmp/x" && tar -xzf "$tmp/$asset" -C "$tmp/x" agentglass || die "archive does not contain agentglass"
 chmod 755 "$tmp/x/agentglass"
+"$tmp/x/agentglass" --version >/dev/null 2>&1 || die "the downloaded agentglass does not run here$( [ "$os" = linux ] && echo " — Linux builds need glibc 2.38+ (found: $(ldd --version 2>&1 | head -1))" ); nothing changed — build from source instead"
 
 mkdir -p "$prefix" 2>/dev/null || die "cannot write to $prefix — choose another --prefix"
 prefix=$(cd "$prefix" && pwd -P)   # physical path: agentglass compares it with its resolved executable path
@@ -72,3 +75,6 @@ mkdir -p "$HOME/.agentglass"
 printf '{"method":"script","channel":"%s","path":"%s","version":"%s"}\n' "$channel" "$prefix/agentglass" "$version" > "$HOME/.agentglass/install.json"
 echo "agentglass $version installed to $prefix/agentglass"
 case ":$PATH:" in *":$prefix:"*) ;; *) echo "note: $prefix is not on your PATH — add it, e.g. export PATH=\"$prefix:\$PATH\"" ;; esac
+}
+
+main "$@"

@@ -81,20 +81,22 @@ async function update(args: string[]): Promise<number> {
     say(o, "rolled back to " + execFileSync(exe, ["--version"], { encoding: "utf8" }).trim(), { rolledBack: true });
     return 0;
   }
+  if (o.status) {
+    const rs = await releases();
+    const latest = typeof rs === "string" ? null : pickTarget(rs, channel, "", BUILD.platform);
+    say(o, "agentglass " + BUILD.version + " (" + BUILD.channel + ", " + method + ") · channel " + channel + " · latest " + (latest ? latest.tag : typeof rs === "string" ? "unknown (" + rs + ")" : "none"),
+      { installed: versionInfo(), channel, latest: latest ? latest.tag : null });
+    return 0;
+  }
   if (method === "homebrew") {
     const f = channel === "dev" ? "agentglass-dev" : "agentglass";
     return fail("installed with Homebrew — run: brew upgrade " + f + (o.channel && o.channel !== BUILD.channel ? " (switch: brew uninstall agentglass agentglass-dev; brew install bjoernschotte/tap/" + f + ")" : ""), 2);
   }
-  if (method === "source" && !o.force && !o.status) return fail("built from source — run: git pull && ./build.sh (or --force to replace it with a release)", 2);
+  if (method === "source" && !o.force) return fail("built from source — run: git pull && ./build.sh (or --force to replace it with a release)", 2);
 
   const rels = await releases();
   if (typeof rels === "string") return fail(rels, 1);
   const target = pickTarget(rels, channel, o.tag ? tagOf(o.tag) : "", BUILD.platform);
-  if (o.status) {
-    say(o, "agentglass " + BUILD.version + " (" + BUILD.channel + ", " + method + ") · channel " + channel + " · latest " + (target ? target.tag : "none"),
-      { installed: versionInfo(), channel, latest: target ? target.tag : null });
-    return 0;
-  }
   if (!target) return fail("no complete " + (o.tag ? "release " + tagOf(o.tag) : channel + " release") + " for " + BUILD.platform, 1);
 
   const base = (process.env.AGENTGLASS_DOWNLOAD_BASE ?? ("https://github.com/" + REPO + "/releases/download")) + "/" + target.tag + "/";
@@ -132,7 +134,7 @@ async function update(args: string[]): Promise<number> {
       return fail("downloaded binary failed its self-check (expected " + tv + " " + tch + ") — nothing changed", 1);
     try { copyFileSync(exe, exe + ".prev"); renameSync(cand, exe); }
     catch (e) { return fail("cannot replace " + exe + ": " + String(e), 1); }
-    setConfig("update", "channel", tch);
+    if (!o.tag) setConfig("update", "channel", tch); // --tag is one-off: the saved channel stays
     rewriteInstallJson(exe, tch, tv);
     say(o, "updated " + BUILD.version + " → " + tv + " (" + tch + ")", { updated: true, from: BUILD.version, to: tv, channel: tch, tag: target.tag });
     return 0;
