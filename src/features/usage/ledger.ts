@@ -90,8 +90,8 @@ function tick(): void {
 // blocking: everything up to the end of the file (CLI exports)
 export function complete(s: Sess): void {
   const a = accOf(s);
+  sidecar(s, a); // first: some adapters date log lines from it (kiro turn times)
   while (step(s, a) > 0) { /* next chunk */ }
-  sidecar(s, a);
   apply(s, a);
 }
 

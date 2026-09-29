@@ -5,7 +5,7 @@ import type { Sess } from "../model/types.ts";
 
 export function toolArg(name: string, inp: Obj | null, raw: string): string {
   if (inp) {
-    const keys = ["command", "cmd", "file_path", "path", "pattern", "url", "query", "description", "prompt", "skill", "task", "location"];
+    const keys = ["command", "cmd", "file_path", "path", "pattern", "url", "query", "description", "prompt", "skill", "task", "location", "__tool_use_purpose"];
     for (const k of keys) { const v = str(inp[k]); if (v) return v; }
     const req = obj(inp["request"]);
     if (req) return toolArg(name, req, "");
@@ -18,7 +18,16 @@ export function toolArg(name: string, inp: Obj | null, raw: string): string {
 export function blockText(v: unknown): string {
   if (typeof v === "string") return v;
   const parts: string[] = [];
-  for (const b of arr(v)) { const o = obj(b); if (o) { const t = str(o["text"]); if (t) parts.push(t); } }
+  for (const b of arr(v)) {
+    const o = obj(b);
+    if (!o) continue;
+    const t = str(o["text"]); // Claude/Codex text blocks
+    if (t) { parts.push(t); continue; }
+    const k = str(o["kind"]); if (k !== "text" && k !== "json") continue; // kiro blocks only: pi image blocks carry base64 in `data`
+    const d = o["data"]; // kiro: {kind: "text" | "json", data}
+    if (typeof d === "string") parts.push(d);
+    else if (d !== undefined && d !== null) parts.push(JSON.stringify(d));
+  }
   return parts.join("\n");
 }
 export function isNoise(t: string): boolean {

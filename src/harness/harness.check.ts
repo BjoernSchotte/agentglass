@@ -55,6 +55,12 @@ const SAMPLES: Sample[] = [
     "{\"type\":\"message\",\"id\":\"e3\",\"parentId\":null,\"timestamp\":\"2026-09-29T13:30:05.000Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"new1\",\"name\":\"bash\",\"arguments\":{\"command\":\"ls\"}}],\"model\":\"claude-sonnet-5-5\",\"usage\":{\"input\":2,\"output\":86,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":88,\"cost\":{\"total\":0.0111444}},\"stopReason\":\"toolUse\"}}",
     "{\"type\":\"message\",\"id\":\"e4\",\"parentId\":null,\"timestamp\":\"2026-09-29T13:30:05.020Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"new1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"a\"}],\"isError\":false}}",
   ] },
+  { h: "kiro", kinds: "user assistant tool result meta", tools: 1, inTok: 0, outTok: 0, cost: 0, lines: [
+    "{\"version\":\"v1\",\"kind\":\"Prompt\",\"data\":{\"content\":[{\"kind\":\"text\",\"data\":\"hello\"}]}}",
+    "{\"version\":\"v1\",\"kind\":\"AssistantMessage\",\"data\":{\"content\":[{\"kind\":\"text\",\"data\":\"hi\"},{\"kind\":\"toolUse\",\"data\":{\"toolUseId\":\"t1\",\"name\":\"shell\",\"input\":{\"command\":\"ls\",\"__tool_use_purpose\":\"list\"}}}]}}",
+    "{\"version\":\"v1\",\"kind\":\"ToolResults\",\"data\":{\"content\":[{\"kind\":\"toolResult\",\"data\":{\"toolUseId\":\"t1\",\"status\":\"success\",\"content\":[{\"kind\":\"text\",\"data\":\"a\"}]}}]}}",
+    "{\"version\":\"v1\",\"kind\":\"Compaction\",\"data\":{}}",
+  ] },
 ];
 
 // ── registry: identity, look, commands ──

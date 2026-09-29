@@ -38,6 +38,8 @@ if (user) for (const k of Object.keys(user)) {
   if (r && typeof r["input"] === "number") add(k.toLowerCase(), num(r["input"], 0), num(r["output"], 0), num(r["cacheRead"], -1), num(r["cacheWrite"], -1), num(r["cacheWrite1h"], -1));
 }
 P.sort((a, b) => b.p.length - a.p.length); // longest prefix wins (opus-4-1 before opus-4)
+// a flat unit rate from prices.json ("kiroCreditUsd": 0.04 → $ per kiro credit), 0 = not configured
+export function userRate(key: string): number { const v = user ? user[key] : undefined; return typeof v === "number" && (v as number) > 0 ? (v as number) : 0; }
 // fingerprint of every price that differs from the built-ins: cached costs are only valid for the prices they were
 // computed with. Content-hashed, so a daily refresh that changes nothing does not re-index.
 function remoteSig(): string {

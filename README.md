@@ -1,7 +1,7 @@
 # ◈ agentglass
 
 **See every coding agent on your machine — live, down to every tool call, diff and dollar.**
-One tiny native TUI for Claude Code, Codex, fx, pi and OpenCode: browse every session you ever ran, watch the running
+One tiny native TUI for Claude Code, Codex, fx, pi, OpenCode and Kiro: browse every session you ever ran, watch the running
 ones think, drill into any call, see where the time and money went, and get tapped on the shoulder
 when an agent needs you.
 
@@ -222,6 +222,7 @@ export AGENTGLASS_FX="fx"
 export AGENTGLASS_PI="pi --model sonnet"
 export AGENTGLASS_OPENCODE="opencode"
 export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with the sqlite3 CLI
+export AGENTGLASS_KIRO="kiro-cli"
 ```
 
 ## Supported harnesses
@@ -233,6 +234,10 @@ export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with
 | ▲ **fx** | `~/.fx/sessions` | open event log (`lsof` / `/proc`) | `subagent/owner.json` | ✔ |
 | π **pi** | `~/.pi/agent/sessions` | process cwd = session cwd | – | ✔ |
 | ▣ **OpenCode** | `~/.local/share/opencode/opencode.db` | `service.json` daemon (v2) · process cwd (1.x) | `parent_id` | ✔ |
+| ◇ **Kiro** | `~/.kiro/sessions/cli` | `<id>.lock` pid | `parent_session_id` | ✔ |
+
+Kiro bills in credits, not tokens: set `"kiroCreditUsd"` in `~/.agentglass/prices.json` (or
+`AGENTGLASS_KIRO_CREDIT_USD`) to see its cost; without a rate it shows as unknown.
 
 Gemini, aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.
