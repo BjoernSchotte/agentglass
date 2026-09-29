@@ -9,7 +9,7 @@ import { psProcs, devOf, detached, freeName } from "./posix.ts";
 
 // ps %cpu on Linux is the lifetime average, so fresh helpers read as 100%+ and long-lived agents as idle →
 // diff utime+stime from /proc/<pid>/stat between refreshes instead
-const ticks = new Map<number, { t: number; at: number }>();
+const ticks = new Map<number, { t: number; at: number; cpu: number }>();
 let hz = 0;
 function cpuOf(pid: number, reported: number, now: number): number {
   if (!hz) hz = Number(run("getconf", ["CLK_TCK"]).trim()) || 100;
@@ -19,8 +19,10 @@ function cpuOf(pid: number, reported: number, now: number): number {
   const t = Number(f[11]) + Number(f[12]); // fields 14 utime + 15 stime, counted from field 3 (state)
   if (!isFinite(t)) return 0;
   const prev = ticks.get(pid);
-  ticks.set(pid, { t, at: now });
-  return prev && now > prev.at ? Math.max(0, (t - prev.t) / hz / ((now - prev.at) / 1000) * 100) : 0;
+  if (prev && now - prev.at < 500) return prev.cpu; // a refresh right after another (kill, resume): a 10 ms tick over a few ms would read as 1000%+
+  const cpu = prev ? Math.max(0, (t - prev.t) / hz / ((now - prev.at) / 1000) * 100) : 0;
+  ticks.set(pid, { t, at: now, cpu });
+  return cpu;
 }
 function realpath(p: string): string { try { return realpathSync(p); } catch (e) { return ""; } }
 function procFiles(pids: number[], want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> } {
