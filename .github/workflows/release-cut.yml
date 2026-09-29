@@ -1,0 +1,18 @@
+name: Release cut
+# fallback when no local checkout is at hand: same release-lib as scripts/release.sh, without the editor step.
+# The tag must be pushed with a PAT (HOMEBREW_TAP_TOKEN, contents: write here) — a GITHUB_TOKEN push would not start release.yml.
+on:
+  workflow_dispatch:
+    inputs: { dry_run: { type: boolean, default: true } }
+permissions: { contents: write, actions: read }
+concurrency: { group: release-cut, cancel-in-progress: false }
+jobs:
+  cut:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main, fetch-depth: 0, token: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ "${{ inputs.dry_run }}" = true ]; then sh scripts/release.sh --dry-run; else sh scripts/release.sh --yes; fi
