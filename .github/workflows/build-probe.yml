@@ -1,0 +1,8 @@
+name: Build probe (temporary)
+on:
+  push: { branches: [feat/release-management] }
+permissions: { contents: read }
+jobs:
+  probe:
+    uses: ./.github/workflows/build-artifacts.yml
+    with: { ref: "${{ github.sha }}", version: "0.0.0-dev.20260101.1+PROBE", channel: dev }

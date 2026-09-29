@@ -1,0 +1,36 @@
+name: Build artifacts
+on:
+  workflow_call:
+    inputs:
+      ref: { type: string, required: true }
+      version: { type: string, required: true }
+      channel: { type: string, required: true }
+permissions: { contents: read }
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-22.04 }
+          - { target: linux-arm64, os: ubuntu-22.04-arm }
+          - { target: darwin-x64, os: macos-15-intel }
+          - { target: darwin-arm64, os: macos-14 }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm i -g scriptc@0.1.7
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - run: ./build.sh
+        env:
+          AGENTGLASS_VERSION: ${{ inputs.version }}
+          AGENTGLASS_CHANNEL: ${{ inputs.channel }}
+          AGENTGLASS_COMMIT: ${{ inputs.ref }}
+      - run: sh scripts/package.sh ${{ matrix.target }} "${{ inputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with: { name: "agentglass-${{ matrix.target }}", path: "dist/agentglass-${{ matrix.target }}.tar.gz", retention-days: 7, if-no-files-found: error }
