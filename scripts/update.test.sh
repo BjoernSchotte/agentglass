@@ -68,4 +68,11 @@ eq "brew refused" "$(code env HOME="$t/home" AGENTGLASS_RELEASES_API="file://$t/
 mkdir -p "$t/ro"; cp "$t/old" "$t/ro/agentglass"; printf '{"method":"script","channel":"stable","path":"%s","version":"2026.9.1"}\n' "$t/ro/agentglass" > "$t/home/.agentglass/install.json"; chmod 555 "$t/ro"
 eq "read-only dir" "$(code env HOME="$t/home" AGENTGLASS_RELEASES_API="file://$t/good.json" "$t/ro/agentglass" update --channel stable)" 1
 eq "read-only unchanged" "$("$t/ro/agentglass" --version)" "2026.9.1"
+# install.json written with a symlinked path (macOS: /var → /private/var) must still be recognised and updated
+mkdir -p "$t/real/bin"; ln -s "$t/real" "$t/link"; cp "$t/old" "$t/real/bin/agentglass"
+printf '{"method":"script","channel":"stable","path":"%s","version":"2026.9.1"}\n' "$t/link/bin/agentglass" > "$t/home/.agentglass/install.json"
+rm -f "$t/home/.agentglass/config.json"
+eq "symlinked install method" "$(HOME="$t/home" "$t/link/bin/agentglass" --version --json | sed -n 's/.*"installMethod":"\([a-z]*\)".*/\1/p')" "script"
+if HOME="$t/home" AGENTGLASS_RELEASES_API="file://$t/good.json" "$t/link/bin/agentglass" update > /dev/null; then r=0; else r=$?; fi; eq "symlinked update" "$r" 0
+grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL symlinked install.json version: $(cat "$t/home/.agentglass/install.json")"; fail=1; }
 [ $fail = 0 ] && echo "update: all e2e tests passed"; exit $fail
