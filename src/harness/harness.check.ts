@@ -5,7 +5,7 @@
 import { width } from "../util/text.ts";
 import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
-import { newAcc } from "../features/usage/record.ts";
+import { newAcc, bucket, usageExact } from "../features/usage/record.ts";
 import { HARNESSES, harnessOf, parseEvents, cmdOf, busy } from "./index.ts";
 
 let bad = 0;
@@ -52,10 +52,10 @@ for (const ad of HARNESSES) {
   ok(n + " procs", ad.procs.length > 0, String(ad.procs.length));
   ok(n + " headBytes", ad.headBytes >= 4096, String(ad.headBytes));
   ok(n + " roots", ad.roots().length > 0, String(ad.roots().length));
-  const hl = ad.headless; if (hl) ok(n + " headless names the session and message", hl("ID1", "MSG").join(" ").indexOf("ID1") >= 0 && hl("ID1", "MSG").indexOf("MSG") >= 0, hl("ID1", "MSG").join(" "));
-  const rs = ad.resume; if (rs) ok(n + " resume names the session", rs("ID1").join(" ").indexOf("ID1") >= 0, rs("ID1").join(" "));
   const s = newSess(n, "ID1", "/nonexistent/ID1.jsonl", false);
-  ok(n + " files include the transcript or its dir", ad.files(s).some((f: string) => s.path.startsWith(f)), ad.files(s).join(" "));
+  const hl = ad.headless; if (hl) { const c = hl(s, "MSG"); ok(n + " headless names the session and message", c.join(" ").indexOf("ID1") >= 0 && c.indexOf("MSG") >= 0, c.join(" ")); }
+  const rs = ad.resume; if (rs) ok(n + " resume names the session", rs(s).join(" ").indexOf("ID1") >= 0, rs(s).join(" "));
+  const fl = ad.files; if (fl) ok(n + " files include the transcript or its dir", fl(s).some((f: string) => s.path.startsWith(f)), fl(s).join(" "));
   // robustness: junk must never throw
   const out: Ev[] = [];
   for (const l of ["", "{}", "[]", "null", "{\"type\":42}", "{\"payload\":null,\"event\":\"x\",\"kind\":7}", "not json", "{\"message\":{\"content\":[null,1,{}]}}"]) {
@@ -79,6 +79,18 @@ for (const sm of SAMPLES) {
   ok(sm.h + " usage tools", a.tools === sm.tools, String(a.tools));
   ok(sm.h + " usage tokens", a.inTok === sm.inTok && a.outTok === sm.outTok, a.inTok + "/" + a.outTok);
   ok(sm.h + " no pending calls left", a.pend.size === 0, String(a.pend.size));
+}
+// usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
+{
+  const a = newAcc(); const d = bucket(a, 0, "2026-01-02T10:00:00Z");
+  usageExact(a, d, "claude-sonnet-4-5", 1000, 500, 0, 0, 0, 0.5);
+  ok("usageExact books the reported cost", a.cost === 0.5 && d.cost === 0.5 && a.inTok === 1000 && a.outTok === 500 && a.unk === 0, String(a.cost));
+  const b = newAcc(); const e = bucket(b, 0, "2026-01-02T10:00:00Z");
+  usageExact(b, e, "claude-sonnet-4-5", 1000, 500, 0, 0, 0, 0);
+  ok("usageExact with cost 0 books the table price", b.cost > 0 && e.cost === b.cost && b.unk === 0, String(b.cost));
+  const c = newAcc(); const g = bucket(c, 0, "2026-01-02T10:00:00Z");
+  usageExact(c, g, "no-such-model", 10, 5, 0, 0, 0, 0);
+  ok("usageExact with cost 0 and unknown model counts unpriced tokens", c.cost === 0 && c.unk === 15, String(c.unk));
 }
 for (const ad of HARNESSES) ok(ad.id + " has SAMPLES", SAMPLES.some((sm: Sample) => sm.h === ad.id), "add a few real log lines above");
 

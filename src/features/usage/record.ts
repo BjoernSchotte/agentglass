@@ -79,10 +79,19 @@ export function lines(a: Acc, d: Day, nAdd: number, nDel: number): void {
   d.add = d.add + nAdd;
   d.del = d.del + nDel;
 }
-export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number): void {
+function count(a: Acc, d: Day, nIn: number, nOut: number, nCr: number, w5: number, w1: number): void {
   // ponytail: spelled out — scriptc rejects some `obj.field += n` pairs on one line (SC1043)
   a.inTok = a.inTok + nIn; a.outTok = a.outTok + nOut; a.cr = a.cr + nCr; a.cw = a.cw + w5 + w1;
   d.inTok = d.inTok + nIn; d.outTok = d.outTok + nOut; d.cr = d.cr + nCr; d.cw = d.cw + w5 + w1;
+}
+// the harness reports its own cost (OpenCode, pi): booked as is; usd <= 0 = unknown (0 for models it has no price for) → priced like tokens()
+export function usageExact(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number): void {
+  if (usd <= 0) { tokens(a, d, model, nIn, nOut, nCr, w5, w1); return; }
+  count(a, d, nIn, nOut, nCr, w5, w1);
+  a.cost += usd; d.cost += usd;
+}
+export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number): void {
+  count(a, d, nIn, nOut, nCr, w5, w1);
   const p = price(model);
   if (p) { const c = cost(p, nIn, nOut, nCr, w5, w1); a.cost += c; d.cost += c; }
   else { const t = nIn + nOut + nCr + w5 + w1; a.unk += t; d.unk += t; }

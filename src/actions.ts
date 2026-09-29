@@ -89,7 +89,7 @@ export function sendPrompt(sub: Sess, msg: string): void {
   const hl = harnessOf(s.h).headless;
   if (!hl) { say("warn", harnessOf(s.h).label + " has no headless mode — run it in tmux to send prompts"); return; }
   const c = cmdOf(s.h);
-  const args = c.slice(1).concat(hl(s.id, msg));
+  const args = c.slice(1).concat(hl(s, msg));
   const logDir = join(HOME, ".agentglass", "logs");
   try { mkdirSync(logDir, { recursive: true }); } catch (e) { /* exists */ }
   const log = join(logDir, s.id + ".log");
@@ -116,7 +116,7 @@ export function resume(sub: Sess): void {
   const rs = harnessOf(s.h).resume;
   if (!rs) { say("warn", harnessOf(s.h).label + " can't resume a session by id"); return; }
   const c = cmdOf(s.h);
-  const args = c.slice(1).concat(rs(s.id));
+  const args = c.slice(1).concat(rs(s));
   leave();
   try { execFileSync(c[0], args, { stdio: "inherit", cwd: s.cwd && existsSync(s.cwd) ? s.cwd : HOME }); } catch (e) { /* non-zero exit */ }
   enter();
@@ -128,8 +128,10 @@ export function killPid(pid: number, sig: string): void {
   refreshProcs();
 }
 export function trash(s: Sess): void {
+  const fl = harnessOf(s.h).files;
+  if (!fl) { say("warn", harnessOf(s.h).label + " sessions can't be moved to the trash"); return; }
   try {
-    for (const f of harnessOf(s.h).files(s)) if (existsSync(f)) OS.trash(f);
+    for (const f of fl(s)) if (existsSync(f)) OS.trash(f);
     sessions.delete(s.path);
     if (S.tv && S.tv.s === s) { S.tv = null; S.mode = "list"; }
     say("ok", "moved to " + OS.trashName);
@@ -145,6 +147,7 @@ export function fullText(q: string): void {
   let out = r.stdout;
   if (r.error) out = run("grep", ["-rilF", "--include=*.jsonl", "--", q].concat(dirs));
   S.fulltext = new Set<string>(out.split("\n").filter((l) => l.length > 0)); S.useFull = true;
+  for (const ad of HARNESSES) { const se = ad.search; if (se) for (const p of se(q)) S.fulltext.add(p); }
   S.sel = 0; buildView();
   say("info", S.fulltext.size + " sessions contain “" + q + "”");
 }

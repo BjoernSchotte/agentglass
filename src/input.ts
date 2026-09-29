@@ -13,7 +13,7 @@ import { prevKind, prevIdx, prevKids } from "./ui/list.ts";
 import { footX0, footX1, footKey } from "./ui/footer.ts";
 import { tabX0, tabX1 } from "./ui/header.ts";
 import { quit } from "./term.ts";
-import { harnessIds } from "./harness/index.ts";
+import { harnessIds, harnessOf } from "./harness/index.ts";
 import { OS } from "./platform/index.ts";
 
 export function tokens(s: string): string[] {
@@ -162,7 +162,7 @@ export function onInput(k: string): void {
     else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }
     else if (k === "R") { const s = current(); if (s) resume(s); }
     else if (k === "x") { const s = current(); if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
-    else if (k === "D") { const s = current(); if (s) { if (s.pid) say("warn", "session is live — stop it first"); else confirm("Move “" + clean(titleOf(s)).slice(0, 40) + "” to " + OS.trashName + "?", "trash"); } }
+    else if (k === "D") { const s = current(); if (s) { if (s.pid) say("warn", "session is live — stop it first"); else if (!harnessOf(s.h).files) say("warn", harnessOf(s.h).label + " sessions can't be moved to the trash"); else confirm("Move “" + clean(titleOf(s)).slice(0, 40) + "” to " + OS.trashName + "?", "trash"); } }
     else if (k === "y") { const s = current(); if (s) copyText(s.id, s.id); }
     S.sel = Math.max(0, Math.min(S.sel, S.view.length - 1));
   } else {

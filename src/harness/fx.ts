@@ -119,8 +119,8 @@ export const fx: HarnessAdapter = {
   parse,
   busy: (s: Sess) => turnBusy(s, true), // fx logs no turn-start marker: a trailing user event is one
   liveFile: (p: string) => p.endsWith(".jsonl") && p.indexOf("/.fx/sessions/") >= 0,
-  headless: (id: string, msg: string) => ["ask", "--auto", "--resume-id", id, "--", msg],
-  resume: (id: string) => ["resume", id],
+  headless: (s: Sess, msg: string) => ["ask", "--auto", "--resume-id", s.id, "--", msg],
+  resume: (s: Sess) => ["resume", s.id],
   files: (s: Sess) => [s.path.slice(0, -"/events.jsonl".length)], // the whole session dir
   usage, usageSidecar,
 };

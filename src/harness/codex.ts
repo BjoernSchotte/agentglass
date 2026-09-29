@@ -156,7 +156,7 @@ export const codex: HarnessAdapter = {
   roots: () => [join(CODEX, "sessions"), join(CODEX, "archived_sessions")], scan, meta, headBytes: 524288,
   parse, title: (s: Sess) => titles.get(s.id) ?? "",
   liveFile: (p: string) => p.endsWith(".jsonl") && p.indexOf("/rollout-") >= 0, // codex keeps its rollout open
-  headless: (id: string, msg: string) => ["exec", "resume", id, msg],
-  resume: (id: string) => ["resume", id],
+  headless: (s: Sess, msg: string) => ["exec", "resume", s.id, msg],
+  resume: (s: Sess) => ["resume", s.id],
   files: (s: Sess) => [s.path], usage,
 };

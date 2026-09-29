@@ -8,6 +8,7 @@ import type { Live } from "../harness/types.ts";
 import type { Proc, Sess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
+import { linkByCwd, type CwdProc } from "./link.ts";
 import { applyMeta } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
@@ -99,6 +100,18 @@ function linkSessions(): void {
     if (l) { s.pid = l.pid; s.status = l.status; s.name = l.name; }
     else { const pid = filePid.get(s.path); if (pid && allProcs.has(pid)) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; } }
     applyMeta(s);
+  }
+  // harnesses with neither registry nor open transcript: process cwd ↔ newest session in that cwd
+  for (const ad of HARNESSES) {
+    if (!ad.liveCwd) continue;
+    const cp: CwdProc[] = [];
+    for (const p of procs) if (p.h === ad.id && p.cwd) cp.push({ pid: p.pid, h: p.h, cwd: p.cwd });
+    const ss: { path: string; h: string; cwd: string; mtime: number; pid: number }[] = [];
+    for (const s of sessions.values()) if (s.h === ad.id) ss.push({ path: s.path, h: s.h, cwd: s.cwd, mtime: s.mtime, pid: s.pid });
+    for (const [path, pid] of linkByCwd(cp, ss)) {
+      const s = sessions.get(path);
+      if (s) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; }
+    }
   }
   for (const p of procs) p.sess = "";
   for (const s of sessions.values()) if (s.pid) { const r = rootOf(s.pid); if (r) r.sess = s.path; }

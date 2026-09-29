@@ -57,9 +57,11 @@ export interface HarnessAdapter {
   liveRegistry?: (alive: (pid: number) => boolean) => Live[]; // the harness writes a pid ↔ session registry
 
   // ── steering: args after bin; leave out what the CLI can't do ──
-  headless?: (id: string, msg: string) => string[]; // send msg to session id without a terminal
-  resume?: (id: string) => string[]; // reopen session id interactively
-  files: (s: Sess) => string[]; // every file/dir that belongs to the session (moved to the trash together)
+  headless?: (s: Sess, msg: string) => string[]; // send msg to session s without a terminal (s.id, s.path, s.cwd for the CLI's own addressing)
+  resume?: (s: Sess) => string[]; // reopen session s interactively
+  files?: (s: Sess) => string[]; // every file/dir that belongs to the session (moved to the trash together); absent = can't be trashed
+  search?: (q: string) => string[]; // session paths whose content matches q (non-file sources); file harnesses are searched via roots() + rg
+  liveCwd?: boolean; // no registry, no open transcript: link a live process to the newest session whose cwd equals the process cwd
 
   // ── usage (tokens, cost, tools, lines, files → Stats tab, --json) ──
   usage: (a: Acc, line: string) => void; // one raw log line; pre-filter with indexOf before parse(), most lines are noise

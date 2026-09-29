@@ -131,7 +131,7 @@ export const claude: HarnessAdapter = {
   parse, spawnOf: (s: Sess) => spawnCall(s),
   busy: (s: Sess) => s.status === "busy", // the registry knows; its logs carry no turn markers
   liveRegistry,
-  headless: (id: string, msg: string) => ["-p", "--resume", id, msg],
-  resume: (id: string) => ["--resume", id],
+  headless: (s: Sess, msg: string) => ["-p", "--resume", s.id, msg],
+  resume: (s: Sess) => ["--resume", s.id],
   files, usage,
 };
