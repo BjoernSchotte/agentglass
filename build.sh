@@ -2,4 +2,19 @@
 # build the native binary (scriptc needs Node 24+ to build, not to run)
 set -e
 cd "$(dirname "$0")"
-PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH" scriptc build src/main.ts -o agentglass
+
+node_major() { "$1" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+
+# scriptc + Node 24+ on PATH wins; else the newest nvm-installed Node 24+ that has scriptc
+if ! command -v scriptc >/dev/null 2>&1 || [ "$(node_major "$(command -v node || echo node)")" -lt 24 ]; then
+  for d in $(ls -d "$HOME"/.nvm/versions/node/v*/bin 2>/dev/null | sort -rV); do
+    if [ -x "$d/scriptc" ] && [ "$(node_major "$d/node")" -ge 24 ]; then PATH="$d:$PATH"; break; fi
+  done
+fi
+
+command -v scriptc >/dev/null 2>&1 || { echo "build.sh: scriptc not found — npm i -g scriptc (with Node 24+)" >&2; exit 1; }
+[ "$(node_major "$(command -v node)")" -ge 24 ] || { echo "build.sh: Node 24+ required to build (found $(node -v 2>/dev/null || echo none))" >&2; exit 1; }
+# scriptc links with clang (-target); gcc can't stand in
+command -v "${SCRIPTC_LINKER:-clang}" >/dev/null 2>&1 || { echo "build.sh: clang not found — Linux: apt install clang / dnf install clang, macOS: xcode-select --install" >&2; exit 1; }
+
+scriptc build src/main.ts -o agentglass
