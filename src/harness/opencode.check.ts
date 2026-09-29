@@ -171,6 +171,26 @@ rmSync(dir + "/state/opencode/service.json");
 scan();
 ok("no service.json: not busy", !busy(sess(P2)), "busy");
 
+// ── 2.x without the service daemon (`--standalone`, `--server`): a suspended turn written to recently still runs ──
+const IN_FLIGHT = 1800000; const now0 = Date.now();
+row("msg_sidle", "idle", 99, "{\"time\":{\"created\":1790688400000},\"outcome\":\"interrupted\"}");
+sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('msg_su','" + P2 + "','user',101," + now0 + "," + now0 + ",'{\"time\":{\"created\":" + now0 + "},\"text\":\"go on\",\"files\":[]}')");
+sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('msg_sa','" + P2 + "','assistant',102," + now0 + "," + now0 + ",'{\"time\":{\"created\":" + now0 + "}," + ASST + "}')");
+scan();
+ok("no daemon, suspended, written just now: busy", busy(sess(P2)), "idle");
+ok("no daemon, suspended, written just now: the streaming row is held", end(sess(P2)) === 102 && src.lines(sess(P2), 99, 102).lines.length === 2, String(end(sess(P2))));
+// running is decided when asked, not when the DB was last read: an unchanged DB goes idle once the turn is IN_FLIGHT old
+const old = now0 - IN_FLIGHT + 1500;
+sql("update session_message set time_updated=" + old + " where id in ('msg_su','msg_sa')");
+sql("insert into message (id,session_id,time_created,time_updated,data) values ('msg_v1run','" + P1 + "'," + old + "," + old + ",'{\"role\":\"assistant\",\"modelID\":\"claude-sonnet-5-5\",\"time\":{\"created\":" + old + "}}')");
+scan();
+ok("aging: 2.x still busy", busy(sess(P2)), "idle");
+ok("aging: 1.x in flight = busy", busy(sess(P1)), "idle");
+execFileSync("sleep", ["2"]);
+scan();
+ok("aged without a DB change: 2.x idle, all rows readable", !busy(sess(P2)) && end(sess(P2)) === 103, (busy(sess(P2)) ? "busy " : "idle ") + String(end(sess(P2))));
+ok("aged without a DB change: 1.x idle", !busy(sess(P1)), "busy");
+
 // ── no sqlite3: nothing listed, one warning, fast ──
 process.env["AGENTGLASS_SQLITE3"] = "/bin/false";
 S.toast = "";

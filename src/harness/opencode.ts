@@ -27,14 +27,15 @@ function statePath(): string {
 
 // one session as of the last scan query. end = cursor after the last record; hold = first record of the running turn still
 // being written (-1 none), honored only while the turn really runs; floor = the end readers were given (never moves back);
+// busy = a turn is open in the DB (2.x time_suspended, 1.x an assistant message without time.completed); act = its last write;
 // fork = the session's creation time when rows older than it are copies of another session's (0 = none can be)
-interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; hold: number; floor: number; busy: boolean; archived: boolean; v1: boolean; fork: number }
+interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; hold: number; floor: number; busy: boolean; act: number; archived: boolean; v1: boolean; fork: number }
 const rows = new Map<string, Row>(); // path ("<db>#<id>") → row
 let tables = new Set<string>();
 let dbKey = ""; // db + db-wal size/mtime at the last successful query: unchanged → no query
 let failedAt = 0; let warned = false;
 let daemonUp = false; // the 2.x daemon (service.json pid) is alive: without it a leftover time_suspended means nothing
-const IN_FLIGHT_MS = 1800000; // a 1.x assistant message without time.completed counts as running for this long after its last write
+const IN_FLIGHT_MS = 1800000; // an open turn nothing vouches for (1.x; 2.x without the daemon) runs for this long after its last write
 
 function fileKey(p: string): string { try { const st = statSync(p); return st.size + ":" + st.mtimeMs; } catch (e) { return "-"; } }
 function warnOnce(msg: string): void { if (!warned) { warned = true; say("warn", msg); } }
@@ -63,7 +64,7 @@ function load(db: string): boolean {
     if (!res) return false;
     for (const r of res) {
       const id = str(r["id"]); const e = num(r["e"]); const o = r["o"];
-      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: e, hold: typeof o === "number" ? num(o) : -1, floor: 0, busy: num(r["b"]) === 1, archived: num(r["x"]) === 1, v1: false, fork: num(r["f"]) });
+      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: e, hold: typeof o === "number" ? num(o) : -1, floor: 0, busy: num(r["b"]) === 1, act: num(r["u"]), archived: num(r["x"]) === 1, v1: false, fork: num(r["f"]) });
     }
   }
   if (tables.has("session") && tables.has("message") && tables.has("part")) { // 1.x
@@ -75,15 +76,14 @@ function load(db: string): boolean {
       " 'u',max(m.time_updated, coalesce((select max(pt.time_updated) from part pt where pt.message_id=m.id),0))) from message m where m.session_id=s.id order by m.time_created desc, m.id desc limit 1) l" +
       " from session s");
     if (!res) return false;
-    const now = Date.now();
     for (const r of res) {
       const id = str(r["id"]); const path = db + "#" + id;
       if (next.has(path)) continue; // the same id in both schemas: the 2.x row is the live one
       const l = parseJson(str(r["l"]));
       const lu = l ? num(l["u"]) : 0;
-      const busy = !!l && str(l["r"]) === "assistant" && (l["c"] === null || l["c"] === undefined) && now - lu < IN_FLIGHT_MS;
+      const busy = !!l && str(l["r"]) === "assistant" && (l["c"] === null || l["c"] === undefined);
       const n = num(r["n"]);
-      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: n, hold: busy && l ? n - num(l["n"]) : -1, floor: 0, busy, archived: num(r["x"]) === 1, v1: true, fork: num(r["f"]) });
+      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: n, hold: busy && l ? n - num(l["n"]) : -1, floor: 0, busy, act: lu, archived: num(r["x"]) === 1, v1: true, fork: num(r["f"]) });
     }
   }
   // the end never moves back (a row that became unsettled again would otherwise reset every reader)
@@ -92,8 +92,10 @@ function load(db: string): boolean {
   return true;
 }
 
-// mid-turn: 2.x only while the daemon that suspended it lives (a dead daemon leaves time_suspended set)
-function running(r: Row): boolean { return r.busy && (r.v1 || daemonUp); }
+// mid-turn, decided when asked (the DB is only re-read when it changes): an open 2.x turn while the service daemon lives
+// (it resumes suspended sessions; a dead one leaves time_suspended set); otherwise — 1.x, 2.x `--standalone`/`--server`
+// with a private server and no service.json — while the turn was written to within IN_FLIGHT_MS
+function running(r: Row): boolean { return r.busy && ((!r.v1 && daemonUp) || Date.now() - r.act < IN_FLIGHT_MS); }
 function endOf(r: Row): number {
   const e = running(r) && r.hold >= 0 ? Math.min(r.end, r.hold) : r.end;
   if (e > r.floor) r.floor = e;
