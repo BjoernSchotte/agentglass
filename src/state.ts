@@ -1,6 +1,7 @@
 // agentglass — all mutable UI state in one object, so every module (and feature modules) sees the same values
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "./model/types.ts";
+import { screenOut } from "./hooks.ts";
 
 export type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "help" | "view"; // view = a full-screen feature view (S.fview names it)
 export interface TV {
@@ -31,6 +32,7 @@ interface State {
   helpScroll: number;
   prevSess: Sess | null; prevY0: number; prevX0: number; prevX1: number; // preview panel, for mouse hits
   lastClickY: number; lastClickAt: number;
+  cli: boolean; // --json / --watch: no screen, say() warnings go to stderr
 }
 export const S: State = {
   W: 80, H: 24, frame: 0,
@@ -49,6 +51,10 @@ export const S: State = {
   helpScroll: 0,
   prevSess: null, prevY0: 0, prevX0: 0, prevX1: 0,
   lastClickY: -1, lastClickAt: 0,
+  cli: false,
 };
 
-export function say(kind: string, msg: string): void { S.toast = msg; S.toastKind = kind; S.toastAt = Date.now(); }
+export function say(kind: string, msg: string): void {
+  S.toast = msg; S.toastKind = kind; S.toastAt = Date.now();
+  if (S.cli && (kind === "warn" || kind === "err")) process.stderr.write("agentglass: " + screenOut(msg) + "\n");
+}

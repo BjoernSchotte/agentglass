@@ -7,34 +7,49 @@ import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf } from "../harness/index.ts";
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
+import { S } from "../state.ts";
 
 export const VERSION = "0.1.0";
 
-const USAGE = `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})
+// option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
+const CMDS: string[][] = [
+  ["agentglass", "interactive TUI"],
+  ["agentglass --theme <name>", "TUI with a color theme"],
+  ["agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names"],
+  ["", "(also AGENTGLASS_REDACT=1; combinable with --json / --watch)"],
+  ["agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit"],
+  ["agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)"],
+  ["agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)"],
+  ["agentglass --help | -h", "this text"],
+  ["agentglass --version", "print the version"],
+];
+const OPTS: string[][] = [
+  ["--live", "only sessions with a running agent process"],
+  ["--harness " + harnessIds().join("|"), "only this harness"],
+  ["--limit N", "--json: at most N sessions"],
+  ["--subagents", "--json: include subagent sessions"],
+  ["--from-start", "--watch: replay existing logs from the beginning (combine with a filter)"],
+];
+function table(rows: string[][], col: number): string { return rows.map((r: string[]) => "  " + (r[0] ?? "").padEnd(col) + (r[1] ?? "")).join("\n"); }
+function usage(): string {
+  let col = 0; for (const r of CMDS.concat(OPTS)) col = Math.max(col, (r[0] ?? "").length + 2);
+  return `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})
 
 usage:
-  agentglass                      interactive TUI
-  agentglass --theme <name>       TUI with a color theme
-  agentglass --redact             privacy mode for screencasts: fake titles/projects/content, scrubbed names
-                                  (also AGENTGLASS_REDACT=1; combinable with --json / --watch)
-  agentglass --json [opts]        print a JSON snapshot of sessions (newest first) and exit
-  agentglass --watch [opts]       stream new events of all agents as JSONL (tail -f for every session)
-  agentglass --update-prices      fetch the opted-in community price list now (see ~/.agentglass/config.json)
-  agentglass --help | -h          this text
-  agentglass --version            print the version
+${table(CMDS, col)}
 
 options for --json / --watch:
-  --live                          only sessions with a running agent process
-  --harness ${(harnessIds().join("|") + " ").padEnd(22)}only this harness
-  --limit N                       --json: at most N sessions
-  --subagents                     --json: include subagent sessions
-  --from-start                    --watch: replay existing logs from the beginning (combine with a filter)
+${table(OPTS, col)}
 
 --json fields: id harness title cwd branch model path updated bytes live pid status parent kind subagents
   activity tokens{in,out,cacheRead,cacheWrite} costUsd tools linesAdded linesRemoved attention stuck
 --watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears
+
+OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
+  without it they are not listed (a warning says so)
 `;
+}
 
 interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean }
 interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
@@ -168,9 +183,9 @@ function watch(o: Opts): void {
 }
 
 H.cli.push((args: string[]): boolean => {
-  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(USAGE.trimEnd()); return true; }
+  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(usage().trimEnd()); return true; }
   if (args.indexOf("--version") >= 0) { out(VERSION); return true; }
-  if (args.indexOf("--json") >= 0) { snapshot(opts(args)); return true; }
-  if (args.indexOf("--watch") >= 0) { watch(opts(args)); return true; }
+  if (args.indexOf("--json") >= 0) { S.cli = true; snapshot(opts(args)); return true; } // no toast line: warnings go to stderr
+  if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args)); return true; }
   return false;
 });
