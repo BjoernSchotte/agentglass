@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Run from the repo root (reads specs/pi-opencode-harnesses/fixtures/opencode.sql); needs the real sqlite3 CLI.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, unlinkSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
+import { mkdirSync, unlinkSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
 import { newSess, type Ev, type Sess } from "../model/types.ts";
 import { newAcc } from "../features/usage/record.ts";
 import { S } from "../state.ts";
@@ -113,23 +113,42 @@ const f1 = se ? se("hello.txt") : [];
 ok("search finds the 1.x session", f1.indexOf(sess(P1).path) >= 0, f1.join(","));
 ok("search: LIKE wildcards are literal", (se ? se("t_d%") : ["x"]).length === 0, "");
 
-// ── busy + live: a suspended session with a message still streaming ──
-sql("update session_v2 set time_suspended=1790688300000 where id='" + P2 + "'");
-sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('msg_run','" + P2 + "','assistant',95,1790688300000,1790688300000,'{\"time\":{\"created\":1790688300000},\"agent\":\"build\",\"model\":{\"id\":\"claude-sonnet-5-5\"},\"content\":[{\"type\":\"text\",\"text\":\"work\"}]}')");
-scan();
-ok("suspended = busy", busy(sess(P2)), "idle");
-ok("a streaming row is not read yet", end(sess(P2)) === 95 && src.lines(sess(P2), 91, 95).lines.length === 0, String(end(sess(P2))));
+// ── busy + live: a suspended session with a message still streaming, run by a live daemon ──
+const ME = process.pid; // stands in for the daemon: alive for the whole check
 mkdirSync(dir + "/state/opencode", { recursive: true });
-writeFileSync(dir + "/state/opencode/service.json", JSON.stringify({ id: "x", version: "2.0.19", url: "http://127.0.0.1:1", pid: 4242, password: "keepme" }));
+function daemon(pid: number): void { writeFileSync(dir + "/state/opencode/service.json", JSON.stringify({ id: "x", version: "2.0.19", url: "http://127.0.0.1:1", pid, password: "keepme" })); }
+function row(id: string, type: string, seq: number, data: string): void {
+  sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('" + id + "','" + P2 + "','" + type + "'," + String(seq) + ",1790688300000,1790688300000,'" + data + "')");
+}
+const ASST = "\"agent\":\"build\",\"model\":{\"id\":\"claude-sonnet-5-5\"},\"content\":[{\"type\":\"text\",\"text\":\"work\"}]";
+daemon(ME);
+row("msg_old", "assistant", 92, "{\"time\":{\"created\":1790688300000}," + ASST + "}"); // an earlier turn that never finished its step
+row("msg_oldidle", "idle", 93, "{\"time\":{\"created\":1790688300000},\"outcome\":\"interrupted\"}");
+sql("update session_v2 set time_suspended=1790688300000 where id='" + P2 + "'");
+row("msg_done", "assistant", 94, "{\"time\":{\"created\":1790688300000,\"completed\":1790688300500}," + ASST + "}");
+row("msg_run", "assistant", 95, "{\"time\":{\"created\":1790688300000}," + ASST + "}");
+scan();
+ok("suspended + live daemon = busy", busy(sess(P2)), "idle");
+ok("the running turn's finished rows are readable, an old unfinished turn doesn't hold them", end(sess(P2)) === 95 && src.lines(sess(P2), 91, 95).lines.length === 3, String(end(sess(P2))));
 const lr = opencode.liveRegistry;
 function reg(alive: (pid: number) => boolean): Live[] { return lr ? lr(alive) : []; }
-const live = reg((pid: number) => pid === 4242);
-ok("the daemon runs the suspended session", live.some((l: Live) => l.id === P2 && l.pid === 4242 && l.status === "busy") && live.some((l: Live) => l.id === "" && l.pid === 4242) && live.length === 2, JSON.stringify(live));
+const live = reg((pid: number) => pid === ME);
+ok("the daemon runs the suspended session", live.some((l: Live) => l.id === P2 && l.pid === ME && l.status === "busy") && live.some((l: Live) => l.id === "" && l.pid === ME) && live.length === 2, JSON.stringify(live));
 ok("dead daemon: nothing live", reg((pid: number) => pid < 0).length === 0, "");
 sql("update session_message set data=json_set(data,'$.time.completed',1790688301000) where id='msg_run'");
 sql("update session_v2 set time_suspended=null where id='" + P2 + "'");
 scan();
-ok("settled: readable and idle", end(sess(P2)) === 96 && src.lines(sess(P2), 91, 96).lines.length === 1 && !busy(sess(P2)), String(end(sess(P2))));
+ok("settled: readable and idle", end(sess(P2)) === 96 && src.lines(sess(P2), 95, 96).lines.length === 1 && !busy(sess(P2)), String(end(sess(P2))));
+// the daemon died mid-turn: time_suspended stays set, but nothing runs the session any more
+sql("update session_v2 set time_suspended=1790688400000 where id='" + P2 + "'");
+row("msg_dead", "assistant", 98, "{\"time\":{\"created\":1790688400000}," + ASST + "}");
+daemon(999999999);
+scan();
+ok("stale time_suspended without a daemon: not busy", !busy(sess(P2)) && reg((pid: number) => pid === ME).length === 0, "busy");
+ok("stale time_suspended without a daemon: all rows readable", end(sess(P2)) === 99 && src.lines(sess(P2), 96, 99).lines.length === 1, String(end(sess(P2))));
+rmSync(dir + "/state/opencode/service.json");
+scan();
+ok("no service.json: not busy", !busy(sess(P2)), "busy");
 
 // ── no sqlite3: nothing listed, one warning, fast ──
 process.env["AGENTGLASS_SQLITE3"] = "/bin/false";
@@ -139,11 +158,11 @@ scan(); scan();
 ok("no sqlite3: no sessions", added === 0, String(added));
 ok("no sqlite3: fast", Date.now() - t0 < 500, String(Date.now() - t0) + " ms");
 ok("no sqlite3: one warning", S.toast.indexOf("sqlite3") >= 0, S.toast);
-ok("no sqlite3: records empty", src.lines(sess(P2), 0, 96).lines.length === 0, "");
+ok("no sqlite3: records empty", src.lines(sess(P2), 0, 99).lines.length === 0, "");
 // a hanging sqlite3: one bounded stall, then back off instead of stalling every tick
 const hang = dir + "/hang.sh"; writeFileSync(hang, "#!/bin/sh\n[ \"$1\" = -version ] && exit 0\nexec sleep 10\n"); chmodSync(hang, 493);
 process.env["AGENTGLASS_SQLITE3"] = hang;
-sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('msg_x','" + P2 + "','idle',97,1790688400000,1790688400000,'{}')");
+sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('msg_x','" + P2 + "','idle',100,1790688400000,1790688400000,'{}')");
 t0 = Date.now(); scan(); const first = Date.now() - t0;
 t0 = Date.now(); scan(); const second = Date.now() - t0;
 ok("hung query: bounded by the 3 s limit", first >= 2500 && first < 4500, String(first) + " ms");

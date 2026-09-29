@@ -25,12 +25,14 @@ function statePath(): string {
   return join(x !== undefined && x ? x : join(HOME, ".local", "state"), "opencode", "service.json");
 }
 
-// one session as of the last scan query; end = cursor after the last settled record
-interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; busy: boolean; archived: boolean; v1: boolean }
+// one session as of the last scan query. end = cursor after the last record; hold = first record of the running turn still
+// being written (-1 none), honored only while the turn really runs; floor = the end readers were given (never moves back)
+interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; hold: number; floor: number; busy: boolean; archived: boolean; v1: boolean }
 const rows = new Map<string, Row>(); // path ("<db>#<id>") → row
 let tables = new Set<string>();
 let dbKey = ""; // db + db-wal size/mtime at the last successful query: unchanged → no query
 let failedAt = 0; let warned = false;
+let daemonUp = false; // the 2.x daemon (service.json pid) is alive: without it a leftover time_suspended means nothing
 const IN_FLIGHT_MS = 1800000; // a 1.x assistant message without time.completed counts as running for this long after its last write
 
 function fileKey(p: string): string { try { const st = statSync(p); return st.size + ":" + st.mtimeMs; } catch (e) { return "-"; } }
@@ -46,14 +48,16 @@ function load(db: string): boolean {
       " max(s.time_updated, coalesce((select max(m.time_updated) from session_message m where m.session_id=s.id),0)) u," +
       " coalesce((select max(m.seq)+1 from session_message m where m.session_id=s.id),0) e," +
       " s.time_suspended is not null b, s.time_archived is not null x," +
-      // while it runs, the first message still being written (streaming assistant, running shell/compaction) ends the readable range
-      " case when s.time_suspended is not null then (select min(m.seq) from session_message m where m.session_id=s.id and" +
+      // while it runs, the first message of this turn (after the last idle) still being written — streaming assistant,
+      // running shell/compaction — ends the readable range; an older turn that never finished doesn't count
+      " case when s.time_suspended is not null then (select min(m.seq) from session_message m where m.session_id=s.id" +
+      " and m.seq > coalesce((select max(i.seq) from session_message i where i.session_id=s.id and i.type='idle'),-1) and" +
       " ((m.type='assistant' and json_extract(m.data,'$.time.completed') is null) or (m.type in ('shell','compaction') and json_extract(m.data,'$.status')='running'))) end o" +
       " from session_v2 s");
     if (!res) return false;
     for (const r of res) {
       const id = str(r["id"]); const e = num(r["e"]); const o = r["o"];
-      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: typeof o === "number" ? Math.min(e, num(o)) : e, busy: num(r["b"]) === 1, archived: num(r["x"]) === 1, v1: false });
+      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: e, hold: typeof o === "number" ? num(o) : -1, floor: 0, busy: num(r["b"]) === 1, archived: num(r["x"]) === 1, v1: false });
     }
   }
   if (tables.has("session") && tables.has("message") && tables.has("part")) { // 1.x
@@ -71,18 +75,29 @@ function load(db: string): boolean {
       const lu = l ? num(l["u"]) : 0;
       const busy = !!l && str(l["r"]) === "assistant" && (l["c"] === null || l["c"] === undefined) && now - lu < IN_FLIGHT_MS;
       const n = num(r["n"]);
-      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: busy && l ? n - num(l["n"]) : n, busy, archived: num(r["x"]) === 1, v1: true });
+      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: n, hold: busy && l ? n - num(l["n"]) : -1, floor: 0, busy, archived: num(r["x"]) === 1, v1: true });
     }
   }
   // the end never moves back (a row that became unsettled again would otherwise reset every reader)
-  for (const [p, r] of next) { const old = rows.get(p); if (old && old.end > r.end) r.end = old.end; }
+  for (const [p, r] of next) { const old = rows.get(p); if (old) r.floor = old.floor; }
   rows.clear(); for (const [p, r] of next) rows.set(p, r);
   return true;
 }
 
+// mid-turn: 2.x only while the daemon that suspended it lives (a dead daemon leaves time_suspended set)
+function running(r: Row): boolean { return r.busy && (r.v1 || daemonUp); }
+function endOf(r: Row): number {
+  const e = running(r) && r.hold >= 0 ? Math.min(r.end, r.hold) : r.end;
+  if (e > r.floor) r.floor = e;
+  return r.floor;
+}
+function daemonPid(): number { const o = parseJson(readText(statePath(), 0, 8192).trim()); return o ? num(o["pid"]) : 0; }
+function pidAlive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (e) { return false; } } // the daemon is the user's own process
+
 function scan(add: AddFn): void {
   const db = dbPath();
   if (!existsSync(db)) { rows.clear(); dbKey = ""; return; }
+  const dp = daemonPid(); daemonUp = dp > 0 && pidAlive(dp); // before any stat: sizes depend on it
   if (!sqliteBin()) { warnOnce("OpenCode sessions need the sqlite3 CLI"); rows.clear(); dbKey = ""; return; } // probe cached
   const k = db + "|" + fileKey(db) + "|" + fileKey(db + "-wal");
   if (k !== dbKey && Date.now() - failedAt > 30000) { // a failed query backs off: never a 3 s stall on every tick
@@ -101,7 +116,7 @@ function meta(s: Sess): void {
 // ── source: records are rows ──
 function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; next: number } {
   const r = rows.get(s.path);
-  const to = r ? Math.min(to0, r.end) : from;
+  const to = r ? Math.min(to0, endOf(r)) : from;
   if (!r || to <= from) return { lines: [], next: from };
   if (!r.v1) { // every row in [from, to) comes back, gaps included: the cursor moves to `to`
     const res = query(r.db, "select json_patch(json_object('type',type,'seq',seq), data) l from session_message where session_id=" + q(r.id) +
@@ -118,7 +133,7 @@ function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; ne
   return { lines: out, next: from + out.length };
 }
 const source: SessionSource = {
-  stat: (s: Sess) => { const r = rows.get(s.path); return r ? { size: r.end, mtime: r.mtime } : null; },
+  stat: (s: Sess) => { const r = rows.get(s.path); return r ? { size: endOf(r), mtime: r.mtime } : null; },
   align: (s: Sess, at: number) => at, // every cursor value starts a record
   lines: sessionLines,
   unit: 2048, // ≈ bytes per row, for the byte-sized read windows
@@ -274,10 +289,11 @@ function spawnOf(s: Sess): string {
 // ~/.local/state/opencode/service.json names the 2.x daemon ({id, version, url, pid, password}; only pid is read):
 // it runs every suspended (= mid-turn) session
 function liveRegistry(alive: (pid: number) => boolean): Live[] {
-  const o = parseJson(readText(statePath(), 0, 8192).trim()); if (!o) return [];
-  const pid = num(o["pid"]); if (!pid || !alive(pid)) return [];
+  const pid = daemonPid();
+  daemonUp = pid > 0 && alive(pid);
+  if (!daemonUp) return [];
   const out: Live[] = [{ id: "", pid, status: "", name: "" }]; // the daemon itself, so the cwd link never takes it for a TUI
-  for (const r of rows.values()) if (r.busy && !r.v1) out.push({ id: r.id, pid, status: "busy", name: "" });
+  for (const r of rows.values()) if (running(r) && !r.v1) out.push({ id: r.id, pid, status: "busy", name: "" });
   return out;
 }
 function likeEsc(t: string): string { return t.split("\\").join("\\\\").split("%").join("\\%").split("_").join("\\_"); }
@@ -296,7 +312,7 @@ function search(term: string): string[] {
   if (res) for (const x of res) { const p = db + "#" + str(x["id"]); if (rows.has(p)) out.push(p); }
   return out;
 }
-function busy(s: Sess): boolean { const r = rows.get(s.path); return !!r && r.busy; }
+function busy(s: Sess): boolean { const r = rows.get(s.path); return !!r && running(r); }
 function title(s: Sess): string { const r = rows.get(s.path); return r ? r.title : ""; }
 
 export const opencode: HarnessAdapter = {
