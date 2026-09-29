@@ -22,15 +22,16 @@ cat > "$t/api.json" <<EOJ
 EOJ
 export AGENTGLASS_RELEASES_API="file://$t/api.json" AGENTGLASS_DOWNLOAD_BASE="file://$t/dl"
 run() { HOME="$t/home" PATH="/usr/bin:/bin" sh "$here/install.sh" "$@" > "$t/out" 2>&1; }
+must() { run "$@" || { echo "FAIL install.sh $*: $(cat "$t/out")"; fail=1; }; }
 mkdir -p "$t/home"
 run && eq "stable exit" 0 0 || eq "stable exit" 1 0
 eq "stable version" "$("$t/home/.local/bin/agentglass")" "2026.9.2"
 grep -q '"method":"script"' "$t/home/.agentglass/install.json" && grep -q '"channel":"stable"' "$t/home/.agentglass/install.json" && grep -q "\"path\":\"$(cd "$t" && pwd -P)/home/.local/bin/agentglass\"" "$t/home/.agentglass/install.json" && grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL install.json: $(cat "$t/home/.agentglass/install.json")"; fail=1; }
 grep -q "not on your PATH" "$t/out" || { echo "FAIL PATH warning"; fail=1; }
-run --channel dev; eq "dev version" "$("$t/home/.local/bin/agentglass")" "2026.9.2-dev.20260930.3+a1b2c3d4"
+must --channel dev; eq "dev version" "$("$t/home/.local/bin/agentglass")" "2026.9.2-dev.20260930.3+a1b2c3d4"
 grep -q '"channel":"dev"' "$t/home/.agentglass/install.json" || { echo "FAIL dev channel in install.json"; fail=1; }
-run --version 2026.9.1; eq "pinned version" "$("$t/home/.local/bin/agentglass")" "2026.9.1"
-run --prefix "$t/p2"; eq "prefix" "$("$t/p2/agentglass")" "2026.9.2"
+must --version 2026.9.1; eq "pinned version" "$("$t/home/.local/bin/agentglass")" "2026.9.1"
+must --prefix "$t/p2"; eq "prefix" "$("$t/p2/agentglass")" "2026.9.2"
 echo x >> "$t/dl/v2026.9.2/$asset"; rm -f "$t/p3/agentglass"
 if run --prefix "$t/p3"; then echo "FAIL checksum mismatch accepted"; fail=1; fi
 grep -qi "checksum" "$t/out" || { echo "FAIL checksum message: $(cat "$t/out")"; fail=1; }
@@ -45,7 +46,7 @@ if run --channel nightly; then echo "FAIL bad channel accepted"; fail=1; fi
 # a binary that cannot run here (e.g. needs a newer glibc) is never installed over a working one
 rel v2026.9.5 broken; printf '#!/bin/sh\nexit 127\n' > "$t/brk"; chmod 755 "$t/brk"; tar -czf "$t/dl/v2026.9.5/$asset" -C "$t" brk --transform 's/brk/agentglass/' 2>/dev/null || { mkdir -p "$t/b2"; cp "$t/brk" "$t/b2/agentglass"; tar -czf "$t/dl/v2026.9.5/$asset" -C "$t/b2" agentglass; }
 (cd "$t/dl/v2026.9.5" && $H "$asset" > SHA256SUMS)
-run --prefix "$t/p2" --version 2026.9.1
+must --prefix "$t/p2" --version 2026.9.1
 if run --prefix "$t/p2" --version 2026.9.5; then echo "FAIL broken binary installed"; fail=1; fi
 grep -qi "does not run" "$t/out" || { echo "FAIL broken message: $(cat "$t/out")"; fail=1; }
 eq "working binary kept" "$("$t/p2/agentglass")" "2026.9.1"
