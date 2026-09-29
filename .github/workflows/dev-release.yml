@@ -1,0 +1,81 @@
+name: Dev release
+on:
+  schedule: [{ cron: "43 2 * * *" }]
+  workflow_dispatch:
+    inputs:
+      source_sha: { description: "commit on main (empty = origin/main)", required: false, type: string, default: "" }
+      force: { description: "build even if unchanged", required: false, type: boolean, default: false }
+permissions: { contents: read }
+concurrency: { group: dev-release, cancel-in-progress: false }
+jobs:
+  decide:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, actions: read }
+    outputs: { go: "${{ steps.d.outputs.go }}", sha: "${{ steps.d.outputs.sha }}", tag: "${{ steps.d.outputs.tag }}", version: "${{ steps.d.outputs.version }}" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main, fetch-depth: 0 }
+      - id: d
+        env: { GH_TOKEN: "${{ github.token }}", SRC: "${{ inputs.source_sha }}", FORCE: "${{ inputs.force }}", RUN: "${{ github.run_number }}", ATTEMPT: "${{ github.run_attempt }}" }
+        run: |
+          sha=${SRC:-$(git rev-parse origin/main)}
+          git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
+          sha=$(git rev-parse "$sha"); sha8=$(echo "$sha" | cut -c1-8)
+          last=$(gh release list --limit 100 --json tagName -q '.[].tagName' | sh scripts/dev-retention.sh 0 "" | tail -1)
+          if [ "$FORCE" != true ] && [ -n "$last" ] && [ "${last##*-}" = "$sha8" ]; then echo "main unchanged since $last"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          ci=$(gh run list --workflow ci.yml --commit "$sha" --json conclusion -q '.[0].conclusion' || true)
+          if [ "$ci" != success ]; then echo "CI for $sha is '${ci:-missing}' — skipping"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          . scripts/release-lib.sh; base=$(last_stable_tag "$sha" | sed 's/^v//'); [ -n "$base" ] || base=0.0.0
+          day=$(date -u +%Y%m%d)
+          { echo "go=true"; echo "sha=$sha"; echo "tag=dev-$day.$RUN.$ATTEMPT-$sha8"; echo "version=$base-dev.$day.$RUN+$sha8"; } >> "$GITHUB_OUTPUT"
+  build:
+    needs: decide
+    if: needs.decide.outputs.go == 'true'
+    uses: ./.github/workflows/build-artifacts.yml
+    with: { ref: "${{ needs.decide.outputs.sha }}", version: "${{ needs.decide.outputs.version }}", channel: dev }
+  publish:
+    needs: [decide, build]
+    runs-on: ubuntu-24.04
+    permissions: { contents: write, id-token: write, attestations: write }
+    outputs: { meta: "${{ steps.h.outputs.meta }}", sums: "${{ steps.h.outputs.sums }}" }
+    env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ needs.decide.outputs.tag }}", VERSION: "${{ needs.decide.outputs.version }}", SHA: "${{ needs.decide.outputs.sha }}" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.decide.outputs.sha }}", fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "agentglass-*", path: out, merge-multiple: true }
+      - run: sh scripts/release-assets.sh out dev "$TAG" "$VERSION" "$SHA" && sh scripts/verify-release-assets.sh out
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-path: "out/agentglass-*.tar.gz" }
+      - name: draft, upload, verify, publish as prerelease
+        run: |
+          . scripts/release-lib.sh; prev=$(last_stable_tag "$SHA")
+          { echo "Dev build of \`$(echo "$SHA" | cut -c1-8)\` — not a stable release."; echo; changelog "$prev" "$SHA"; } > notes.md
+          gh release create "$TAG" --draft --prerelease --target "$SHA" --title "agentglass $VERSION" --notes-file notes.md
+          gh release upload "$TAG" out/*
+          mkdir -p check && gh release download "$TAG" -D check && sh scripts/verify-release-assets.sh check
+          gh release edit "$TAG" --draft=false --prerelease --latest=false
+      - id: h
+        run: |
+          { echo "meta=$(sha256sum out/build-metadata.json | cut -d' ' -f1)"; echo "sums=$(sha256sum out/SHA256SUMS | cut -d' ' -f1)"; } >> "$GITHUB_OUTPUT"
+  tap:
+    needs: [decide, publish]
+    runs-on: ubuntu-24.04
+    steps:
+      - env: { GH_TOKEN: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
+        run: |
+          gh workflow run update-agentglass-dev.yml -R BjoernSchotte/homebrew-tap \
+            -f dev_tag="${{ needs.decide.outputs.tag }}" -f source_sha="${{ needs.decide.outputs.sha }}" \
+            -f request_id="${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.decide.outputs.tag }}" \
+            -f metadata_sha256="${{ needs.publish.outputs.meta }}" -f checksums_sha256="${{ needs.publish.outputs.sums }}"
+  retention:
+    needs: [decide, publish]
+    runs-on: ubuntu-24.04
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          pinned=$(gh api repos/BjoernSchotte/homebrew-tap/contents/metadata/agentglass-dev.json -q .content 2>/dev/null | base64 -d 2>/dev/null | sed -n 's/.*"tag": *"\([^"]*\)".*/\1/p' || true)
+          gh release list --limit 200 --json tagName -q '.[].tagName' | sh scripts/dev-retention.sh 14 "$pinned" |
+            while read -r t; do gh release delete "$t" --cleanup-tag -y; done
