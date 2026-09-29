@@ -66,7 +66,7 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   }
 }
 // ~/.claude/sessions/<pid>.json: {pid, sessionId, status: busy|idle|…, name} for every running claude
-function liveRegistry(alive: (pid: number) => boolean): Live[] {
+function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: number) => string): Live[] { // claude writes one file per running pid: alive is enough
   const out: Live[] = [];
   const sd = join(CLAUDE, "sessions");
   for (const f of listDir(sd)) {

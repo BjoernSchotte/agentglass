@@ -54,7 +54,8 @@ export interface HarnessAdapter {
 
   // ── live detection (either or both) ──
   liveFile?: (path: string) => boolean; // the harness keeps its transcript open while running: is this open file one?
-  liveRegistry?: (alive: (pid: number) => boolean) => Live[]; // the harness writes a pid ↔ session registry
+  liveRegistry?: (alive: (pid: number) => boolean, harnessOfPid: (pid: number) => string) => Live[]; // the harness writes a pid ↔ session registry (harnessOfPid: "" = no agent process)
+  daemon?: string; // its registry pids are one shared daemon running many sessions: never signalled from here; how the user stops it
 
   // ── steering: args after bin; leave out what the CLI can't do ──
   headless?: (s: Sess, msg: string) => string[]; // send msg to session s without a terminal (s.id, s.path, s.cwd for the CLI's own addressing)

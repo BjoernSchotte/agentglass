@@ -9,6 +9,7 @@ import { S } from "../state.ts";
 import { parseEvents, sourceOf, busy } from "./index.ts";
 import { opencode } from "./opencode.ts";
 import type { Live } from "./types.ts";
+import { daemonWarn } from "../model/link.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -152,10 +153,23 @@ scan();
 ok("suspended + live daemon = busy", busy(sess(P2)), "idle");
 ok("the running turn's finished rows are readable, an old unfinished turn doesn't hold them", end(sess(P2)) === 95 && src.lines(sess(P2), 91, 95).lines.length === 3, String(end(sess(P2))));
 const lr = opencode.liveRegistry;
-function reg(alive: (pid: number) => boolean): Live[] { return lr ? lr(alive) : []; }
-const live = reg((pid: number) => pid === ME);
+const isOC = (pid: number): string => "opencode"; // harness of a pid, as the process table says
+function reg(alive: (pid: number) => boolean, hOf: (pid: number) => string): Live[] { return lr ? lr(alive, hOf) : []; }
+const live = reg((pid: number) => pid === ME, isOC);
 ok("the daemon runs the suspended session", live.some((l: Live) => l.id === P2 && l.pid === ME && l.status === "busy") && live.some((l: Live) => l.id === "" && l.pid === ME) && live.length === 2, JSON.stringify(live));
-ok("dead daemon: nothing live", reg((pid: number) => pid < 0).length === 0, "");
+// x / X must not SIGTERM the shared daemon: it runs every busy session (and resumes the turn on its next start anyway)
+const dw = daemonWarn(ME, "OpenCode", "opencode service stop", live);
+ok("kill guard: the daemon pid is refused with a hint", dw.indexOf("runs 1 session") >= 0 && dw.indexOf("opencode service stop") >= 0, dw);
+ok("kill guard: other pids pass", daemonWarn(ME + 1, "OpenCode", "opencode service stop", live) === "" && daemonWarn(ME, "OpenCode", "x", []) === "", "");
+ok("kill guard: an idle daemon is refused too", daemonWarn(ME, "OpenCode", "opencode service stop", [{ id: "", pid: ME, status: "", name: "" }]).indexOf("runs 0 sessions") >= 0, "");
+ok("the adapter names how to stop its daemon", (opencode.daemon ?? "") === "opencode service stop", opencode.daemon ?? "-");
+ok("dead daemon: nothing live", reg((pid: number) => pid < 0, isOC).length === 0, "");
+// service.json names a pid that is alive but no OpenCode process (recycled): no daemon, the row is read as idle
+ok("recycled daemon pid: nothing live", reg((pid: number) => pid === ME, (pid: number) => "claude").length === 0, "");
+scan();
+ok("recycled daemon pid: an old suspended turn is not busy", !busy(sess(P2)), "busy");
+reg((pid: number) => pid === ME, isOC); scan();
+ok("the real daemon again: busy", busy(sess(P2)), "idle");
 sql("update session_message set data=json_set(data,'$.time.completed',1790688301000) where id='msg_run'");
 sql("update session_v2 set time_suspended=null where id='" + P2 + "'");
 scan();
@@ -165,7 +179,7 @@ sql("update session_v2 set time_suspended=1790688400000 where id='" + P2 + "'");
 row("msg_dead", "assistant", 98, "{\"time\":{\"created\":1790688400000}," + ASST + "}");
 daemon(999999999);
 scan();
-ok("stale time_suspended without a daemon: not busy", !busy(sess(P2)) && reg((pid: number) => pid === ME).length === 0, "busy");
+ok("stale time_suspended without a daemon: not busy", !busy(sess(P2)) && reg((pid: number) => pid === ME, isOC).length === 0, "busy");
 ok("stale time_suspended without a daemon: all rows readable", end(sess(P2)) === 99 && src.lines(sess(P2), 96, 99).lines.length === 1, String(end(sess(P2))));
 rmSync(dir + "/state/opencode/service.json");
 scan();

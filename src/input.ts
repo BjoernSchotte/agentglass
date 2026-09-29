@@ -5,7 +5,7 @@ import { clean, numAt } from "./util/text.ts";
 import { S, say } from "./state.ts";
 import { H, tabAt } from "./hooks.ts";
 import { buildView, titleOf, parentOf, isOpen, expanded, collapsed, current } from "./model/sessions.ts";
-import { procs, procAt, procSess, tmuxTarget } from "./model/procs.ts";
+import { procs, procAt, procSess, tmuxTarget, sharedDaemon } from "./model/procs.ts";
 import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, sendTmux, owner, sendPrompt, resume, killPid, trash, fullText } from "./actions.ts";
 import { openTranscript, moveCur, cycleSub } from "./ui/transcript.ts";
 import { openDetail, stepDetail } from "./ui/detail.ts";
@@ -161,7 +161,7 @@ export function onInput(k: string): void {
     else if (k === "esc") { S.filter = ""; S.hfilter = ""; S.liveOnly = false; S.useFull = false; S.fullq = ""; buildView(); }
     else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }
     else if (k === "R") { const s = current(); if (s) resume(s); }
-    else if (k === "x") { const s = current(); if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
+    else if (k === "x") { const s = current(); const w = s && s.pid ? sharedDaemon(targetPid()) : ""; if (w) say("warn", w); else if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
     else if (k === "D") { const s = current(); if (s) { if (s.pid) say("warn", "session is live — stop it first"); else if (!harnessOf(s.h).files) say("warn", harnessOf(s.h).label + " sessions can't be moved to the trash"); else confirm("Move “" + clean(titleOf(s)).slice(0, 40) + "” to " + OS.trashName + "?", "trash"); } }
     else if (k === "y") { const s = current(); if (s) copyText(s.id, s.id); }
     S.sel = Math.max(0, Math.min(S.sel, S.view.length - 1));
@@ -171,8 +171,11 @@ export function onInput(k: string): void {
     else if (k === "home" || k === "g") S.psel = 0;
     else if (k === "end" || k === "G") S.psel = procs.length - 1;
     else if (k === "enter" || k === "right") { const p = procAt(S.psel); const s = p ? procSess(p) : null; if (s) openTranscript(s); else say("info", "no session linked to this process"); }
-    else if (k === "x") { const p = procAt(S.psel); if (p) confirm("SIGTERM " + p.h + " pid " + p.pid + "?", "TERM"); }
-    else if (k === "X") { const p = procAt(S.psel); if (p) confirm("SIGKILL " + p.h + " pid " + p.pid + " (no cleanup)?", "KILL"); }
+    else if (k === "x" || k === "X") { // a shared daemon (OpenCode 2.x) runs every session: refused, the warning says how to stop it
+      const p = procAt(S.psel); const w = p ? sharedDaemon(p.pid) : "";
+      if (w) say("warn", w);
+      else if (p) confirm(k === "x" ? "SIGTERM " + p.h + " pid " + p.pid + "?" : "SIGKILL " + p.h + " pid " + p.pid + " (no cleanup)?", k === "x" ? "TERM" : "KILL");
+    }
     else if (k === "s") {
       const p = procAt(S.psel); const s = p ? procSess(p) : null; const t = p ? tmuxTarget(p.pid) : "";
       if (s) ask("send to " + s.h + " (live)", "send", "");

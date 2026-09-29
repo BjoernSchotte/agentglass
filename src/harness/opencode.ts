@@ -35,6 +35,7 @@ let tables = new Set<string>();
 let dbKey = ""; // db + db-wal size/mtime at the last successful query: unchanged → no query
 let failedAt = 0; let warned = false;
 let daemonUp = false; // the 2.x daemon (service.json pid) is alive: without it a leftover time_suspended means nothing
+let notDaemon = 0; // the service.json pid is alive but, per the process table, no OpenCode process (recycled after a crash)
 const IN_FLIGHT_MS = 1800000; // an open turn nothing vouches for (1.x; 2.x without the daemon) runs for this long after its last write
 
 function fileKey(p: string): string { try { const st = statSync(p); return st.size + ":" + st.mtimeMs; } catch (e) { return "-"; } }
@@ -107,7 +108,7 @@ function pidAlive(pid: number): boolean { try { process.kill(pid, 0); return tru
 function scan(add: AddFn): void {
   const db = dbPath();
   if (!existsSync(db)) { rows.clear(); dbKey = ""; return; }
-  const dp = daemonPid(); daemonUp = dp > 0 && pidAlive(dp); // before any stat: sizes depend on it
+  const dp = daemonPid(); daemonUp = dp > 0 && dp !== notDaemon && pidAlive(dp); // before any stat: sizes depend on it
   if (!sqliteBin()) { warnOnce("OpenCode sessions need the sqlite3 CLI"); rows.clear(); dbKey = ""; return; } // probe cached
   const k = db + "|" + fileKey(db) + "|" + fileKey(db + "-wal");
   if (k !== dbKey && Date.now() - failedAt > 30000) { // a failed query backs off: never a 3 s stall on every tick
@@ -301,9 +302,11 @@ function spawnOf(s: Sess): string {
 }
 // ~/.local/state/opencode/service.json names the 2.x daemon ({id, version, url, pid, password}; only pid is read):
 // it runs every suspended (= mid-turn) session
-function liveRegistry(alive: (pid: number) => boolean): Live[] {
+function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: number) => string): Live[] {
   const pid = daemonPid();
-  daemonUp = pid > 0 && alive(pid);
+  const up = pid > 0 && alive(pid);
+  daemonUp = up && harnessOfPid(pid) === "opencode";
+  notDaemon = up && !daemonUp ? pid : 0;
   if (!daemonUp) return [];
   const out: Live[] = [{ id: "", pid, status: "", name: "" }]; // the daemon itself, so the cwd link never takes it for a TUI
   for (const r of rows.values()) if (running(r) && !r.v1) out.push({ id: r.id, pid, status: "busy", name: "" });
@@ -335,6 +338,7 @@ export const opencode: HarnessAdapter = {
   roots: (): string[] => [], scan, meta, source, headBytes: 262144,
   parse, title, busy, spawnOf,
   liveRegistry, liveCwd: true, // 1.x TUIs have neither registry nor open transcript
+  daemon: "opencode service stop", // SIGTERM would stop every running session (and the next start resumes them anyway)
   headless: (s: Sess, msg: string) => ["run", "-s", s.id, msg],
   resume: (s: Sess) => ["-s", s.id],
   search, usage, // no files: the rows can't be moved to the trash

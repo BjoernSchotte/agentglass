@@ -1,6 +1,15 @@
 // agentglass — liveness by cwd for harnesses with no registry and no open transcript (pi, OpenCode)
 // SPDX-License-Identifier: Apache-2.0
+import type { Live } from "../harness/types.ts";
+
 export interface CwdProc { pid: number; h: string; cwd: string }
+// a shared daemon's pid (a harness's registry, HarnessAdapter.daemon): SIGTERM would stop every session it runs, so x/X
+// refuse it with this warning; "" = pid is not in that registry
+export function daemonWarn(pid: number, label: string, stop: string, live: Live[]): string {
+  if (!live.some((l: Live) => l.pid === pid)) return "";
+  let n = 0; for (const l of live) if (l.pid === pid && l.id !== "") n++;
+  return label + " daemon — runs " + String(n) + " session" + (n === 1 ? "" : "s") + "; stop it with `" + stop + "`";
+}
 // session path → pid. A process gets the newest session of its harness+cwd that has no process yet;
 // a process that already owns a session (s.pid) is not a candidate — one process, one live session.
 // A session already live through another link (OpenCode: the daemon runs it, the TUI/`run` client sits in its cwd)

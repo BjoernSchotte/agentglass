@@ -9,7 +9,7 @@ import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
 import { sessions, scan, buildView, parentOf, current } from "./model/sessions.ts";
-import { refreshProcs, rootOf, tmuxTarget, procAt, procSess } from "./model/procs.ts";
+import { refreshProcs, rootOf, tmuxTarget, procAt, procSess, sharedDaemon } from "./model/procs.ts";
 import { HARNESSES, harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
 
@@ -124,6 +124,7 @@ export function resume(sub: Sess): void {
 }
 export function killPid(pid: number, sig: string): void {
   if (!pid) { say("warn", "no process linked"); return; }
+  const w = sharedDaemon(pid); if (w) { say("warn", w); return; }
   try { process.kill(pid, sig); say("ok", sig + " → " + pid); } catch (e) { say("err", "kill failed: " + String(e)); }
   refreshProcs();
 }

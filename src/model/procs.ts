@@ -8,7 +8,7 @@ import type { Live } from "../harness/types.ts";
 import type { Proc, Sess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
-import { linkByCwd, type CwdProc } from "./link.ts";
+import { linkByCwd, daemonWarn, type CwdProc } from "./link.ts";
 import { applyMeta } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
@@ -21,6 +21,7 @@ const tmuxByTty = new Map<string, string>();
 const cwdByPid = new Map<number, string>();
 const filePid = new Map<string, number>(); // open transcript → pid (HarnessAdapter.liveFile)
 const registry = new Map<string, Live>(); // "<harness>:<session id>" → entry (HarnessAdapter.liveRegistry)
+const daemonLive = new Map<string, Live[]>(); // harness id → its registry, for harnesses whose registry is a shared daemon
 
 function harnessOf(args: string): string {
   const t = args.split(" ");
@@ -67,9 +68,15 @@ export function refreshProcs(): void {
   const sp = procAt(S.psel); const selPid = sp ? sp.pid : 0;
   procs = out;
   for (let i = 0; i < procs.length; i++) if (procs[i].pid === selPid) S.psel = i; // selection follows the pid, not the row
-  registry.clear();
+  registry.clear(); daemonLive.clear();
   const alive = (pid: number): boolean => allProcs.has(pid);
-  for (const ad of HARNESSES) { const f = ad.liveRegistry; if (f) for (const l of f(alive)) registry.set(ad.id + ":" + l.id, l); }
+  const hOf = (pid: number): string => { const p = allProcs.get(pid); return p ? p.h : ""; };
+  for (const ad of HARNESSES) {
+    const f = ad.liveRegistry; if (!f) continue;
+    const ls = f(alive, hOf);
+    for (const l of ls) registry.set(ad.id + ":" + l.id, l);
+    if (ad.daemon) daemonLive.set(ad.id, ls);
+  }
   linkSessions();
 }
 export function refreshSlow(): void {
@@ -118,6 +125,14 @@ function linkSessions(): void {
   }
   for (const p of procs) p.sess = "";
   for (const s of sessions.values()) if (s.pid) { const r = rootOf(s.pid); if (r) r.sess = s.path; }
+}
+// pid is a harness's shared daemon: the warning to show instead of signalling it ("" = fine to signal)
+export function sharedDaemon(pid: number): string {
+  for (const ad of HARNESSES) {
+    const d = ad.daemon; const ls = daemonLive.get(ad.id);
+    if (d && ls) { const w = daemonWarn(pid, ad.label, d, ls); if (w) return w; }
+  }
+  return "";
 }
 export function tmuxTarget(pid: number): string {
   const p = allProcs.get(pid);
