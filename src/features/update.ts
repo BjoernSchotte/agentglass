@@ -10,7 +10,7 @@ import { section, setConfig } from "../util/config.ts";
 import { OS } from "../platform/index.ts";
 import { H } from "../hooks.ts";
 import { BUILD } from "../build-info.ts";
-import { installMethod, versionOfTag, versionInfo } from "./version.ts";
+import { installMethod, samePath, versionOfTag, versionInfo } from "./version.ts";
 import { type Rel, relsFromJson, pickTarget, isDowngrade, sumFor } from "./update-core.ts";
 
 const REPO = "BjoernSchotte/agentglass";
@@ -59,7 +59,7 @@ function ask(q: string): boolean {
 }
 function rewriteInstallJson(path: string, channel: string, version: string): void {
   const o = parse(readText(INSTALL_JSON, 0, 65536).trim());
-  if (!o || o["path"] !== path) return;
+  if (!o || !samePath(path, o["path"])) return;
   o["channel"] = channel; o["version"] = version;
   try { const fd = openSync(INSTALL_JSON, "w"); writeSync(fd, JSON.stringify(o) + "\n"); closeSync(fd); } catch (e) { /* marker only */ }
 }

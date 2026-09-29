@@ -1,5 +1,6 @@
 // agentglass — versions: stable YYYY.M.N, dev <base>-dev.<YYYYMMDD>.<run>+<sha8>, local <base>-local+<sha>[-dirty]; own ordering, never semver or dates
 // SPDX-License-Identifier: Apache-2.0
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, parse } from "../util/json.ts";
 import { HOME, readText } from "../util/fs.ts";
@@ -36,11 +37,17 @@ export function versionOfTag(tag: string): string {
   const p = parseVersion(v);
   return p && p.rank === 0 ? v : "";
 }
+// the same file? execPath is already resolved; a recorded path may go through a symlink (macOS /var → /private/var)
+export function samePath(execPath: string, recorded: unknown): boolean {
+  if (typeof recorded !== "string" || !recorded) return false;
+  if (recorded === execPath) return true;
+  try { return realpathSync(recorded) === execPath; } catch (e) { return false; }
+}
 // how this binary got here: Homebrew keeps it under a Cellar; install.sh leaves a marker naming the path it wrote
 export function installMethod(execPath: string, channel: string, installJson: string): string {
   if (execPath.indexOf("/Cellar/") >= 0) return "homebrew";
   const o = parse(installJson.trim());
-  if (o && o["method"] === "script" && o["path"] === execPath) return "script";
+  if (o && o["method"] === "script" && samePath(execPath, o["path"])) return "script";
   return channel === "local" ? "source" : "unknown";
 }
 export function versionInfo(): Obj {

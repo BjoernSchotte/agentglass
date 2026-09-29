@@ -62,7 +62,7 @@ mkdir -p "$tmp/x" && tar -xzf "$tmp/$asset" -C "$tmp/x" agentglass || die "archi
 chmod 755 "$tmp/x/agentglass"
 
 mkdir -p "$prefix" 2>/dev/null || die "cannot write to $prefix — choose another --prefix"
-prefix=$(cd "$prefix" && pwd)
+prefix=$(cd "$prefix" && pwd -P)   # physical path: agentglass compares it with its resolved executable path
 new="$prefix/.agentglass.new.$$"
 cp "$tmp/x/agentglass" "$new" 2>/dev/null || die "cannot write to $prefix — choose another --prefix"
 mv -f "$new" "$prefix/agentglass" || { rm -f "$new"; die "cannot write to $prefix — choose another --prefix"; }
