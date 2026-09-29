@@ -8,7 +8,7 @@ permissions: { contents: write, actions: read }
 concurrency: { group: release-cut, cancel-in-progress: false }
 jobs:
   cut:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with: { ref: main, fetch-depth: 0, token: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
