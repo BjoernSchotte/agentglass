@@ -83,8 +83,9 @@ Every screen in this README and the launch video was recorded this way.
 - **~1.5 MB native binary**, starts instantly, zero runtime dependencies. It's TypeScript
   compiled to native code with [scriptc](https://github.com/vercel-labs/scriptc), with no Node,
   no Bun and no `node_modules` at runtime.
-- **Local only.** It reads the agents' own session logs from disk and never phones home. The one
-  exception is opt-in: a community price list (see [Prices](#prices)).
+- **Local only.** It reads the agents' own session logs from disk and never phones home. The
+  exceptions are explicit: an opt-in community price list (see [Prices](#prices)), and
+  `agentglass update`, which asks GitHub for releases only when you run it.
 - **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
   is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off.
 
@@ -114,15 +115,68 @@ the next start. Your `prices.json` still wins. `agentglass --update-prices` fetc
 
 ## Install
 
-Runs on macOS and Linux. Building needs Node 24+ and clang (Linux: `apt install clang`).
+Prebuilt binaries for macOS (Apple Silicon, Intel) and Linux (x64, arm64; glibc 2.38+, e.g. Ubuntu
+24.04+, Debian 13+, Fedora 39+).
+
+**Homebrew**
 
 ```sh
-npm i -g scriptc          # needs Node 24+ to build (not to run)
-git clone https://github.com/BjoernSchotte/agentglass && cd agentglass
-./build.sh                # scriptc build src/main.ts -o agentglass
-ln -s "$PWD/agentglass" ~/.local/bin/agentglass
-agentglass
+brew install bjoernschotte/tap/agentglass       # stable
+brew install bjoernschotte/tap/agentglass-dev   # daily dev build (conflicts with stable)
 ```
+
+**Install script** (into `~/.local/bin`, verifies checksums)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BjoernSchotte/agentglass/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BjoernSchotte/agentglass/main/install.sh | sh -s -- --channel dev
+```
+
+`--version 2026.10.1` pins a release, `--prefix <dir>` picks another directory.
+
+**From source** (needs Node 24+, [scriptc](https://github.com/vercel-labs/scriptc) and clang; Linux: `apt install clang`)
+
+```sh
+npm i -g scriptc
+git clone https://github.com/BjoernSchotte/agentglass && cd agentglass
+./build.sh
+ln -s "$PWD/agentglass" ~/.local/bin/agentglass
+```
+
+## Releases & channels
+
+- **stable** — versions are `YYYY.M.N`: year, month, and a counter of releases within that month
+  (`2026.10.1`, `2026.10.2`, `2026.11.1`). See [CHANGELOG.md](CHANGELOG.md).
+- **dev** — a build of `main` every night (when it changed and CI is green), tagged
+  `dev-YYYYMMDD.<run>.<attempt>-<sha>` as a GitHub prerelease; the newest 14 are kept.
+
+```sh
+agentglass --version --json        # version, channel, commit, build date, platform, install method
+agentglass update                  # newest release of your channel (default stable)
+agentglass update --channel dev    # switch channels (remembered after a successful update)
+agentglass update --dry-run        # show what would happen; --json for scripts
+agentglass update --tag 2026.10.1  # one specific release; downgrades ask first (--yes to skip)
+agentglass update --rollback       # back to the binary before the last update
+agentglass update status
+```
+
+`update` verifies the download against `SHA256SUMS`, runs the new binary once to check it is what it
+claims to be, and swaps it atomically. Homebrew installs are updated with `brew upgrade`, source
+builds with `git pull && ./build.sh`.
+
+<details><summary>Maintainers: cutting a release</summary>
+
+- `sh scripts/release.sh` on a clean, green `main`: computes the next version, writes the
+  `CHANGELOG.md` section from Conventional Commits (opens `$EDITOR`), commits, tags `v<version>` and
+  pushes; the tag starts `release.yml` (4-platform build → draft → published when every asset is there
+  → Homebrew formula). `--dry-run` previews. Fallback without a checkout: the **Release cut** workflow.
+- Dev releases run on their own (`dev-release.yml`, 02:43 UTC) or via *Run workflow*.
+- Secret `HOMEBREW_TAP_TOKEN`: a fine-grained PAT with **Actions: write** on
+  `BjoernSchotte/homebrew-tap` (formula updates) and **Contents: write** on this repo (the Release
+  cut workflow pushes the tag with it, because a `GITHUB_TOKEN` push would not start `release.yml`).
+- All tests: `sh scripts/check.sh`.
+
+</details>
 
 `y` copies via `pbcopy`, `wl-copy`, `xclip` or `xsel`, else through tmux or the terminal (OSC 52), so it
 works over ssh too.
