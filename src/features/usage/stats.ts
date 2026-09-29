@@ -10,6 +10,7 @@ import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { ledger, accOf, pending } from "./ledger.ts";
 import { L, todayKey, lastDays, startOfDay } from "./record.ts";
+import { PRICES_FROM } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer } from "./calls.ts";
 import "./cache.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
@@ -94,7 +95,7 @@ function renderStats(): void {
   const frac = g.total > 0 ? g.done / g.total : 1;
   const idx = frac < 0.999 ? fg(C.yellow) + spin() + " indexing " + RST + gauge(frac, 12) + fg(C.text) + " " + Math.floor(frac * 100) + "%" + RST
     : fg(C.green) + "✔ indexed" + RST;
-  const l1 = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx + fg(C.dim) + "   ≈ API list price" + RST;
+  const l1 = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx + fg(C.dim) + "   ≈ API list price · " + PRICES_FROM + RST;
   const wide = W >= 130; const sp = wide ? " " : "";
   const l2 = fg(C.yellow) + CSI + "1m" + money(t.cost, t.unk) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
     fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
@@ -479,4 +480,4 @@ H.footerHints.push((mode: string): string[][] => {
 });
 H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server"],
   ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
-  ["", "costs ≈ API list price; ~/.agentglass/prices.json overrides"]] });
+  ["", "costs ≈ API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"]] });

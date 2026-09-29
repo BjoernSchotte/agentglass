@@ -82,9 +82,34 @@ Every screen in this README and the launch video was recorded this way.
 - **~1.5 MB native binary**, starts instantly, zero runtime dependencies. It's TypeScript
   compiled to native code with [scriptc](https://github.com/vercel-labs/scriptc), with no Node,
   no Bun and no `node_modules` at runtime.
-- **Local only.** It reads the agents' own session logs from disk and never phones home.
+- **Local only.** It reads the agents' own session logs from disk and never phones home. The one
+  exception is opt-in: a community price list (see [Prices](#prices)).
 - **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
   is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off.
+
+## Prices
+
+Costs are API-equivalent list prices. Claude prices are built in. `~/.agentglass/prices.json`
+overrides any model by id prefix:
+
+```json
+{ "claude-opus-4-5": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25, "cacheWrite1h": 10 },
+  "kiroCreditUsd": 0.04 }
+```
+
+For Codex, Gemini and new models without maintaining that file, opt in to a community-maintained
+list in `~/.agentglass/config.json`:
+
+```json
+{ "prices": { "source": "litellm", "refreshHours": 24 } }
+```
+
+`source` is [`litellm`](https://github.com/BerriAI/litellm) (covers Codex ids and 1-hour cache
+writes) or [`models.dev`](https://models.dev). agentglass then fetches that public file at most every
+`refreshHours` in the background — a plain GET, nothing about you or your sessions is sent, but the
+host sees your IP — keeps only first-party model prices in `~/.agentglass/cache/`, and uses them from
+the next start. Your `prices.json` still wins. `agentglass --update-prices` fetches now,
+`AGENTGLASS_OFFLINE=1` stops fetching. The Stats tab shows which prices are in use.
 
 ## Install
 

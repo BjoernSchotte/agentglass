@@ -25,6 +25,7 @@ import "./features/watchdog.ts";
 import "./features/usage/stats.ts";
 import "./features/callgraph/view.ts";
 import "./features/redact.ts";
+import "./features/prices.ts";
 
 function render(): void {
   buf.length = 0;

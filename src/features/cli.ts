@@ -20,6 +20,7 @@ usage:
                                   (also AGENTGLASS_REDACT=1; combinable with --json / --watch)
   agentglass --json [opts]        print a JSON snapshot of sessions (newest first) and exit
   agentglass --watch [opts]       stream new events of all agents as JSONL (tail -f for every session)
+  agentglass --update-prices      fetch the opted-in community price list now (see ~/.agentglass/config.json)
   agentglass --help | -h          this text
   agentglass --version            print the version
 
