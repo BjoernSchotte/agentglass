@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: { os: [ubuntu-22.04, macos-14] }
+      matrix: { os: [ubuntu-24.04, macos-14] }
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }

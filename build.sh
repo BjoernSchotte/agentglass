@@ -4,4 +4,5 @@ set -e
 cd "$(dirname "$0")"
 . ./scripts/toolchain.sh
 sh scripts/build-info.sh
-scriptc build src/main.ts -o agentglass
+# SCRIPTC_FLAGS: extra flags, e.g. --backend c where scriptc ships no LLVM helper (macOS x64)
+scriptc build ${SCRIPTC_FLAGS:-} src/main.ts -o agentglass
