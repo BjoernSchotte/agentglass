@@ -9,9 +9,15 @@ export const FILE_SOURCE: SessionSource = {
   stat: (s: Sess) => { try { const st = statSync(s.path); return { size: st.size, mtime: st.mtimeMs }; } catch (e) { return null; } },
   align: (s: Sess, at: number) => {
     if (at <= 0) return 0;
-    const b = readBytes(s.path, at - 1, 1048576); // the byte before `at`: a newline means `at` already starts a line
-    let i = 0; while (i < b.length && b[i] !== 10) i++;
-    return i < b.length ? at + i : at;
+    let pos = at - 1; // the byte before `at`: a newline means `at` already starts a line
+    for (;;) {
+      const b = readBytes(s.path, pos, 65536);
+      if (!b.length) break;
+      let i = 0; while (i < b.length && b[i] !== 10) i++;
+      if (i < b.length) return pos + i + 1;
+      pos += b.length;
+    }
+    try { return Math.max(at, statSync(s.path).size); } catch (e) { return at; } // no record starts before EOF
   },
   lines: (s: Sess, from: number, to: number) => {
     const r = readLines(s.path, from, to, false);
