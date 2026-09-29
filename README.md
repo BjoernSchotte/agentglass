@@ -164,6 +164,7 @@ them:
 export AGENTGLASS_CLAUDE="claude --settings ~/.config/my/claude.json"
 export AGENTGLASS_CODEX="codex --profile work"
 export AGENTGLASS_FX="fx"
+export AGENTGLASS_PI="pi --model sonnet"
 ```
 
 ## Supported harnesses
@@ -173,6 +174,7 @@ export AGENTGLASS_FX="fx"
 | ✻ **Claude Code** | `~/.claude/projects` | session registry | `subagents/` | ✔ |
 | >_ **Codex** | `~/.codex/sessions` | open rollout (`lsof` / `/proc`) | `parent_thread_id` | ✔ |
 | ▲ **fx** | `~/.fx/sessions` | open event log (`lsof` / `/proc`) | `subagent/owner.json` | ✔ |
+| π **pi** | `~/.pi/agent/sessions` | process cwd = session cwd | – | ✔ |
 
 Gemini, opencode, aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.

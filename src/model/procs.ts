@@ -12,7 +12,7 @@ import { linkByCwd, type CwdProc } from "./link.ts";
 import { applyMeta } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
-const OTHER = ["gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot", "kiro-cli", "pi"];
+const OTHER = ["gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot", "kiro-cli"];
 export let procs: Proc[] = [];
 export const allProcs = new Map<number, Proc>();
 export const hist = new Map<number, number[]>();

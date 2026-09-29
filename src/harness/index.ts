@@ -9,9 +9,10 @@ import { turnBusy } from "./common.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
 import { fx } from "./fx.ts";
+import { pi } from "./pi.ts";
 
 // order = order in filters, stats rows and help
-export const HARNESSES: HarnessAdapter[] = [claude, codex, fx];
+export const HARNESSES: HarnessAdapter[] = [claude, codex, fx, pi];
 
 const byId = new Map<string, HarnessAdapter>();
 const byProc = new Map<string, string>();
