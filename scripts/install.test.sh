@@ -39,7 +39,8 @@ grep -qi "checksum" "$t/out" || { echo "FAIL checksum message: $(cat "$t/out")";
 mkdir -p "$t/ro" && chmod 555 "$t/ro"
 if run --version 2026.9.1 --prefix "$t/ro"; then echo "FAIL read-only prefix accepted"; fail=1; fi
 grep -qi "cannot write" "$t/out" || { echo "FAIL read-only message: $(cat "$t/out")"; fail=1; }
-if AGENTGLASS_TEST_UNAME_M=riscv64 run --prefix "$t/p4"; then echo "FAIL riscv accepted"; fail=1; fi
+# subshell: bash in POSIX mode (macOS /bin/sh) keeps assignments made in front of a function call
+if (AGENTGLASS_TEST_UNAME_M=riscv64; export AGENTGLASS_TEST_UNAME_M; run --prefix "$t/p4"); then echo "FAIL riscv accepted"; fail=1; fi
 grep -qi "unsupported" "$t/out" || { echo "FAIL unsupported message"; fail=1; }
 if run --channel nightly; then echo "FAIL bad channel accepted"; fail=1; fi
 [ -z "$(ls -A "$t/home/.local/bin" | grep -v '^agentglass$' || true)" ] || { echo "FAIL leftovers in prefix: $(ls -A "$t/home/.local/bin")"; fail=1; }
