@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, unlinkSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
 import { newSess, type Ev, type Sess } from "../model/types.ts";
-import { newAcc } from "../features/usage/record.ts";
+import { newAcc, type Acc } from "../features/usage/record.ts";
 import { S } from "../state.ts";
 import { parseEvents, sourceOf, busy } from "./index.ts";
 import { opencode } from "./opencode.ts";
@@ -105,6 +105,27 @@ for (const l of src.lines(sess(P1), 0, end(sess(P1))).lines) opencode.usage(b, l
 const in1 = Number(sql("select sum(json_extract(data,'$.tokens.input')) from part where session_id='" + P1 + "' and json_extract(data,'$.type')='step-finish'"));
 const in1m = Number(sql("select sum(json_extract(data,'$.tokens.input')) from message where session_id='" + P1 + "' and json_extract(data,'$.role')='assistant'"));
 ok("1.x usage = step-finish parts, not also the messages", b.inTok === in1 && in1 === in1m && b.tools === 2 && b.pend.size === 0, b.inTok + "/" + in1 + " tools " + b.tools);
+
+// ── forks: the rows a fork copied from its parent are the parent's usage, not the fork's ──
+const F2 = "ses_fork2"; const F1 = "ses_fork1";
+sql("insert into session_v2 (id,project_id,slug,directory,title,version,fork_session_id,time_created,time_updated) values ('" + F2 + "','global','fk2','/tmp/agtest-oc','fork (fork #1)','2.0.19','" + P2 + "',1790688250000,1790688260000)");
+sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) select 'f_'||id,'" + F2 + "',type,seq,time_created,time_updated,data from session_message where session_id='" + P2 + "'");
+sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('f_new','" + F2 + "','assistant',91,1790688260000,1790688260000,'" +
+  "{\"time\":{\"created\":1790688260000,\"completed\":1790688260500},\"agent\":\"build\",\"model\":{\"id\":\"claude-sonnet-5-5\"},\"content\":[{\"type\":\"tool\",\"id\":\"tf2\",\"name\":\"write\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"/tmp/agtest-oc/n.txt\",\"content\":\"a\\nb\"},\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]},\"time\":{\"created\":1790688260000,\"ran\":1790688260000,\"completed\":1790688260100}}],\"cost\":0.5,\"tokens\":{\"input\":7,\"output\":3,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}')");
+sql("insert into session (id,project_id,slug,directory,title,version,time_created,time_updated) values ('" + F1 + "','global','fk1','/tmp/agtest-oc1','v1 fork (fork #1)','1.18.33',1790688280000,1790688290000)");
+sql("insert into message (id,session_id,time_created,time_updated,data) select 'f_'||id,'" + F1 + "',time_created,time_updated,data from message where session_id='" + P1 + "'");
+sql("insert into part (id,message_id,session_id,time_created,time_updated,data) select 'f_'||id,'f_'||message_id,'" + F1 + "',time_created,time_updated,data from part where session_id='" + P1 + "'");
+sql("insert into message (id,session_id,time_created,time_updated,data) values ('msg_fnew','" + F1 + "',1790688290000,1790688290000,'{\"role\":\"assistant\",\"modelID\":\"claude-sonnet-5-5\",\"time\":{\"created\":1790688290000,\"completed\":1790688290500}}')");
+sql("insert into part (id,message_id,session_id,time_created,time_updated,data) values ('prt_fnew','msg_fnew','" + F1 + "',1790688290000,1790688290000,'{\"type\":\"step-finish\",\"cost\":0.25,\"tokens\":{\"input\":7,\"output\":3,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}')");
+scan();
+function useOf(s: Sess): Acc { const u = newAcc(); for (const l of src.lines(s, 0, end(s)).lines) opencode.usage(u, l); return u; }
+const fa = useOf(sess(F2));
+ok("2.x fork: copied rows add no cost/tokens/tools/lines", Math.abs(fa.cost - 0.5) < 1e-9 && fa.inTok === 7 && fa.tools === 1 && fa.add === 2 && fa.pend.size === 0, fa.cost + " in " + fa.inTok + " tools " + fa.tools + " add " + fa.add);
+ok("2.x fork: the transcript still shows the copied rows", events(sess(F2), 0, end(sess(F2))).length > events(sess(F2), 91, end(sess(F2))).length, "");
+const fb = useOf(sess(F1));
+ok("1.x fork: copied parts add no cost/tokens/tools", Math.abs(fb.cost - 0.25) < 1e-9 && fb.inTok === 7 && fb.tools === 0, fb.cost + " in " + fb.inTok + " tools " + fb.tools);
+const pa = useOf(sess(P2));
+ok("the fork's parent keeps its own usage", pa.inTok === a.inTok && pa.tools === a.tools, pa.inTok + "/" + a.inTok);
 
 // ── full text ──
 const se = opencode.search; const found = se ? se("todo") : [];

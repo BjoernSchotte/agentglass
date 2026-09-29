@@ -26,8 +26,9 @@ function statePath(): string {
 }
 
 // one session as of the last scan query. end = cursor after the last record; hold = first record of the running turn still
-// being written (-1 none), honored only while the turn really runs; floor = the end readers were given (never moves back)
-interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; hold: number; floor: number; busy: boolean; archived: boolean; v1: boolean }
+// being written (-1 none), honored only while the turn really runs; floor = the end readers were given (never moves back);
+// fork = the session's creation time when rows older than it are copies of another session's (0 = none can be)
+interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; hold: number; floor: number; busy: boolean; archived: boolean; v1: boolean; fork: number }
 const rows = new Map<string, Row>(); // path ("<db>#<id>") → row
 let tables = new Set<string>();
 let dbKey = ""; // db + db-wal size/mtime at the last successful query: unchanged → no query
@@ -44,7 +45,12 @@ function load(db: string): boolean {
   tables = new Set<string>(); for (const r of t) tables.add(str(r["name"]));
   const next = new Map<string, Row>();
   if (tables.has("session_v2") && tables.has("session_message")) { // 2.x (a 1.18 DB has session_message but no session_v2)
+    // `--fork` copies the parent's rows verbatim (seq, time_created, data with cost/tokens) into the new session; like
+    // OpenCode's own stats, rows created before a fork session count as copies
+    const fc = query(db, "select 1 from pragma_table_info('session_v2') where name='fork_session_id'");
+    if (!fc) return false;
     const res = query(db, "select s.id, coalesce(s.parent_id,'') p, s.directory d, coalesce(s.title,'') t, coalesce(s.agent,'') a," +
+      (fc.length ? " case when s.fork_session_id is not null then s.time_created else 0 end f," : " 0 f,") +
       " max(s.time_updated, coalesce((select max(m.time_updated) from session_message m where m.session_id=s.id),0)) u," +
       " coalesce((select max(m.seq)+1 from session_message m where m.session_id=s.id),0) e," +
       " s.time_suspended is not null b, s.time_archived is not null x," +
@@ -57,11 +63,13 @@ function load(db: string): boolean {
     if (!res) return false;
     for (const r of res) {
       const id = str(r["id"]); const e = num(r["e"]); const o = r["o"];
-      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: e, hold: typeof o === "number" ? num(o) : -1, floor: 0, busy: num(r["b"]) === 1, archived: num(r["x"]) === 1, v1: false });
+      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: e, hold: typeof o === "number" ? num(o) : -1, floor: 0, busy: num(r["b"]) === 1, archived: num(r["x"]) === 1, v1: false, fork: num(r["f"]) });
     }
   }
   if (tables.has("session") && tables.has("message") && tables.has("part")) { // 1.x
-    const res = query(db, "select s.id, coalesce(s.parent_id,'') p, s.directory d, coalesce(s.title,'') t, coalesce(s.agent,'') a, s.time_updated u, s.time_archived is not null x," +
+    // a 1.x fork has no marker: it clones the parent's messages and parts with their original time_created (all older
+    // than the new session, which a session's own messages never are)
+    const res = query(db, "select s.id, coalesce(s.parent_id,'') p, s.directory d, coalesce(s.title,'') t, coalesce(s.agent,'') a, s.time_updated u, s.time_archived is not null x, s.time_created f," +
       " (select count(*) from part pt join message m on m.id=pt.message_id where pt.session_id=s.id) n," +
       " (select json_object('r',json_extract(m.data,'$.role'),'c',json_extract(m.data,'$.time.completed'),'n',(select count(*) from part pt where pt.message_id=m.id)," +
       " 'u',max(m.time_updated, coalesce((select max(pt.time_updated) from part pt where pt.message_id=m.id),0))) from message m where m.session_id=s.id order by m.time_created desc, m.id desc limit 1) l" +
@@ -75,7 +83,7 @@ function load(db: string): boolean {
       const lu = l ? num(l["u"]) : 0;
       const busy = !!l && str(l["r"]) === "assistant" && (l["c"] === null || l["c"] === undefined) && now - lu < IN_FLIGHT_MS;
       const n = num(r["n"]);
-      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: n, hold: busy && l ? n - num(l["n"]) : -1, floor: 0, busy, archived: num(r["x"]) === 1, v1: true });
+      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: n, hold: busy && l ? n - num(l["n"]) : -1, floor: 0, busy, archived: num(r["x"]) === 1, v1: true, fork: num(r["f"]) });
     }
   }
   // the end never moves back (a row that became unsettled again would otherwise reset every reader)
@@ -118,14 +126,17 @@ function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; ne
   const r = rows.get(s.path);
   const to = r ? Math.min(to0, endOf(r)) : from;
   if (!r || to <= from) return { lines: [], next: from };
+  // rows a fork copied from its parent are tagged "copied" (usage skips them, the transcript shows them)
+  const f = String(r.fork);
   if (!r.v1) { // every row in [from, to) comes back, gaps included: the cursor moves to `to`
-    const res = query(r.db, "select json_patch(json_object('type',type,'seq',seq), data) l from session_message where session_id=" + q(r.id) +
+    const head = r.fork > 0 ? "case when time_created < " + f + " then json_object('type',type,'seq',seq,'copied',1) else json_object('type',type,'seq',seq) end" : "json_object('type',type,'seq',seq)";
+    const res = query(r.db, "select json_patch(" + head + ", data) l from session_message where session_id=" + q(r.id) +
       " and seq >= " + String(from) + " and seq < " + String(to) + " order by seq");
     if (!res) return { lines: [], next: from };
     const out: string[] = []; for (const x of res) out.push(str(x["l"]));
     return { lines: out, next: to };
   }
-  const res = query(r.db, "select json_object('v1',1,'role',json_extract(m.data,'$.role'),'model',json_extract(m.data,'$.modelID'),'t',m.time_created,'part',json(pt.data)) l" +
+  const res = query(r.db, "select json_object('v1',1,'role',json_extract(m.data,'$.role'),'model',json_extract(m.data,'$.modelID'),'t',m.time_created,'copied',m.time_created < " + f + ",'part',json(pt.data)) l" +
     " from part pt join message m on m.id=pt.message_id where pt.session_id=" + q(r.id) +
     " order by m.time_created, m.id, pt.id limit " + String(to - from) + " offset " + String(from));
   if (!res) return { lines: [], next: from };
@@ -242,7 +253,7 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
 function usage(a: Acc, l: string): void {
   if (l.startsWith("{\"v1\":")) {
     if (l.indexOf("\"type\":\"step-finish\"") < 0 && l.indexOf("\"type\":\"tool\"") < 0) return;
-    const o = parseJson(l); if (!o) return;
+    const o = parseJson(l); if (!o || o["copied"] === 1) return;
     const p = obj(o["part"]); if (!p) return;
     const t = num(o["t"]); const d = bucket(a, t, "");
     const pt = str(p["type"]);
@@ -251,7 +262,7 @@ function usage(a: Acc, l: string): void {
     return;
   }
   if (!l.startsWith("{\"type\":\"assistant\"") && !l.startsWith("{\"type\":\"compaction\"")) return;
-  const o = parseJson(l); if (!o) return;
+  const o = parseJson(l); if (!o || o["copied"] === 1) return;
   const d = bucket(a, tm(o, "created"), "");
   const m = obj(o["model"]);
   book(a, d, m ? str(m["id"]) : "", obj(o["tokens"]), num(o["cost"]));
