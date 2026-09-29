@@ -1,12 +1,10 @@
 // agentglass — call graph (c): a session's turns, tool calls and subagents as a DevTools-style flame chart + call tree
 // SPDX-License-Identifier: Apache-2.0
-import { statSync } from "node:fs";
-import { readLines } from "../../util/fs.ts";
 import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home } from "../../util/text.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
 import { H } from "../../hooks.ts";
-import { harnessOf, parseEvents } from "../../harness/index.ts";
+import { harnessOf, sourceOf, window, parseEvents } from "../../harness/index.ts";
 import { titleOf, subActive, current } from "../../model/sessions.ts";
 import { openDetail } from "../../ui/detail.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
@@ -30,10 +28,10 @@ const G = {
 
 // ── loading: the same bounded tail the transcript reads (last 6 MB), one TV per session so ↵ can drill into it ──
 function loadTV(s: Sess): TV {
-  let size = s.size;
-  try { size = statSync(s.path).size; } catch (e) { /* gone */ }
-  const start = Math.max(0, size - 6291456);
-  const r = readLines(s.path, start, size, start > 0);
+  const src = sourceOf(s.h);
+  const st = src.stat(s);
+  const size = st ? st.size : s.size; // else gone
+  const r = src.lines(s, src.align(s, Math.max(0, size - window(src, 6291456))), size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
   return { s, evs, off: r.next, scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
@@ -78,10 +76,10 @@ function refresh(): void {
   if (r.subs.length !== G.nsubs) { load(r); rebuild(); return; }
   let grew = false;
   for (const t of G.tvs) {
-    let size = 0;
-    try { size = statSync(t.s.path).size; } catch (e) { continue; }
-    if (size <= t.off) continue;
-    const rl = readLines(t.s.path, t.off, Math.min(size, t.off + 16777216), false);
+    const src = sourceOf(t.s.h);
+    const st = src.stat(t.s);
+    if (!st || st.size <= t.off) continue;
+    const rl = src.lines(t.s, t.off, Math.min(st.size, t.off + window(src, 16777216)));
     for (const l of rl.lines) parseEvents(t.s.h, l, t.evs, t.s);
     t.off = rl.next; grew = true;
   }

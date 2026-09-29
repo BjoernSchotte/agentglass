@@ -1,26 +1,24 @@
 // agentglass — session discovery, lazy log loading, and the filtered subagent tree shown in the list
 // SPDX-License-Identifier: Apache-2.0
-import { statSync } from "node:fs";
-import { readText, readLines } from "../util/fs.ts";
 import { firstLine } from "../util/text.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
-import { HARNESSES, harnessOf, parseEvents, busy } from "../harness/index.ts";
+import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy } from "../harness/index.ts";
 import { S } from "../state.ts";
 import { applyMeta } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
 
 function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>, parent: string): void {
-  let mt = 0; let sz = 0;
-  try { const st = statSync(path); mt = st.mtimeMs; sz = st.size; } catch (e) { return; }
   let s = sessions.get(path);
-  if (!s) {
-    s = newSess(h, id, path, archived);
-    s.parent = parent;
+  const fresh = !s;
+  if (!s) { s = newSess(h, id, path, archived); s.parent = parent; }
+  const st = sourceOf(h).stat(s);
+  if (!st) return; // gone (a new session is not in the map yet)
+  if (fresh) {
     sessions.set(path, s);
     const m = harnessOf(h).meta; if (m) m(s);
   }
-  s.mtime = mt; s.size = sz;
+  s.mtime = st.mtime; s.size = st.size;
   applyMeta(s);
   seen.add(path);
 }
@@ -32,7 +30,8 @@ export function scan(): void {
 export function loadHead(s: Sess): void {
   s.headDone = true;
   const evs: Ev[] = [];
-  for (const l of readText(s.path, 0, harnessOf(s.h).headBytes).split("\n")) {
+  const src = sourceOf(s.h);
+  for (const l of src.lines(s, 0, window(src, harnessOf(s.h).headBytes)).lines) {
     parseEvents(s.h, l, evs, s);
     if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; }
   }
@@ -41,8 +40,8 @@ export function loadTail(s: Sess): void {
   if (s.tailSize === s.size) return;
   s.tailSize = s.size;
   const rf = harnessOf(s.h).refresh; if (rf) { rf(s); applyMeta(s); }
-  const start = Math.max(0, s.size - 98304);
-  const r = readLines(s.path, start, s.size, start > 0);
+  const src = sourceOf(s.h);
+  const r = src.lines(s, src.align(s, Math.max(0, s.size - window(src, 98304))), s.size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
   s.evs = evs.slice(-60);

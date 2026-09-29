@@ -1,12 +1,10 @@
 // agentglass — live transcript view: event rendering, incremental tail, event cursor
 // SPDX-License-Identifier: Apache-2.0
-import { statSync } from "node:fs";
-import { readBytes, readLines } from "../util/fs.ts";
 import { width, clean, fit, wrap, fitStyled, fillTo, localHM, bytes, home, numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S, say, type TV } from "../state.ts";
 import { enrich } from "../hooks.ts";
-import { parseEvents } from "../harness/index.ts";
+import { parseEvents, sourceOf, window } from "../harness/index.ts";
 import { titleOf, parentOf, subActive, activeSubs } from "../model/sessions.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, spin, scrollbar } from "./screen.ts";
@@ -48,9 +46,10 @@ export function renderTranscript(): void {
   const s = t.s;
   enrich(s);
   // incremental read
-  try { const st = statSync(s.path); s.size = st.size; s.mtime = st.mtimeMs; } catch (e) { /* gone */ }
+  const src = sourceOf(s.h);
+  const st = src.stat(s); if (st) { s.size = st.size; s.mtime = st.mtime; } // else gone
   if (s.size > t.off) {
-    const r = readLines(s.path, t.off, Math.min(s.size, t.off + 16777216), false);
+    const r = src.lines(s, t.off, Math.min(s.size, t.off + window(src, 16777216)));
     for (const l of r.lines) parseEvents(s.h, l, t.evs, s);
     t.off = r.next;
   }
@@ -98,14 +97,13 @@ export function moveCur(t: TV, d: number, vh: number): void {
   if (d > 0 && t.cur === n - 1) t.follow = true;
 }
 export function openTranscript(s: Sess): void {
-  const start = Math.max(0, s.size - 6291456);
+  const src = sourceOf(s.h);
+  const start = Math.max(0, s.size - window(src, 6291456));
   const t: TV = { s, evs: [], off: start, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
   S.tv = t;
   if (start > 0) { // skip the partial first line
-    const b = readBytes(s.path, t.off, 1048576);
-    let a = 0; while (a < b.length && b[a] !== 10) a++;
-    t.off += a + 1;
-    t.evs.push({ kind: "meta", text: "showing last " + bytes(s.size - start) + " of " + bytes(s.size), ts: "", id: "", full: "" });
+    t.off = src.align(s, start);
+    t.evs.push({ kind: "meta", text: "showing last " + bytes((s.size - start) * src.unit) + " of " + bytes(s.size * src.unit), ts: "", id: "", full: "" });
   }
   S.mode = "transcript";
 }

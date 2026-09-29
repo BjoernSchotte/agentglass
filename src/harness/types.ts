@@ -11,6 +11,14 @@ import type { Obj } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import type { Acc } from "../features/usage/record.ts";
 
+// how a session's records are read: files by default (cursor = byte offset); a database-backed adapter brings its own cursor
+export interface SessionSource {
+  stat: (s: Sess) => { size: number; mtime: number } | null; // size = end cursor (bytes for files)
+  align: (s: Sess, at: number) => number; // first whole record at/after `at`
+  lines: (s: Sess, from: number, to: number) => { lines: string[]; next: number }; // whole records in [from, to); next = cursor after the last one
+  unit: number; // bytes one cursor step stands for (window budgets)
+}
+
 // scan() reports each transcript it finds; parent = the parent session's id for subagents known from the
 // directory layout ("" otherwise, meta() may still set s.parent), archived = shown dimmed
 export type AddFn = (path: string, id: string, parent: string, archived: boolean) => void;
@@ -35,6 +43,7 @@ export interface HarnessAdapter {
   scan: (add: AddFn) => void; // report every transcript; called every few seconds, keep it to listDir + cheap checks
   meta?: (s: Sess) => void; // once, when a session is first seen: sidecar metadata, subagent parent/kind, title
   refresh?: (s: Sess) => void; // before each tail load: sidecars that change while the agent runs
+  source?: SessionSource; // where records come from; default = the file at s.path (byte cursor)
   headBytes: number; // bytes of the log head read for the first prompt and metadata
 
   // ── transcript ──

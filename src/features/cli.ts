@@ -1,11 +1,10 @@
 // agentglass — machine-readable CLI: --json snapshot, --watch JSONL event stream, --help, --version (no TTY needed)
 // SPDX-License-Identifier: Apache-2.0
-import { writeSync, statSync } from "node:fs";
+import { writeSync } from "node:fs";
 import { H, complete, screenOut } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
-import { HARNESSES, harnessIds, isHarness, parseEvents } from "../harness/index.ts";
-import { readLines } from "../util/fs.ts";
+import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf } from "../harness/index.ts";
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 
@@ -143,12 +142,14 @@ function watch(o: Opts): void {
       let at = off.get(s.path);
       if (at === undefined) { at = 0; off.set(s.path, 0); } // appeared after start: read it whole
       if (!wanted(s, o)) continue;
-      let size = 0;
-      try { size = statSync(s.path).size; } catch (e) { continue; }
+      const src = sourceOf(s.h);
+      const st = src.stat(s);
+      if (!st) continue;
+      const size = st.size;
       if (size < at) { off.set(s.path, size); continue; } // truncated/rewritten: resync at the end
       if (size === at) continue;
       if (!headed.has(s.path)) { headed.add(s.path); if (!s.headDone) loadHead(s); loadTail(s); } // title/cwd for the output
-      const r = readLines(s.path, at, size, false);
+      const r = src.lines(s, at, size);
       off.set(s.path, r.next);
       const evs: Ev[] = [];
       for (const l of r.lines) parseEvents(s.h, l, evs, s);

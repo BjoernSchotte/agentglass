@@ -6,7 +6,8 @@ import { readBytes } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
-import { harnessOf } from "../../harness/index.ts";
+import { harnessOf, sourceOf, window } from "../../harness/index.ts";
+import { FILE_SOURCE } from "../../harness/source.ts";
 import { type Acc, L, newAcc, startOfDay } from "./record.ts";
 
 export const ledger = new Map<string, Acc>();
@@ -24,6 +25,15 @@ function sidecar(s: Sess, a: Acc): void { const f = harnessOf(s.h).usageSidecar;
 
 // one chunk (≤ CHUNK bytes) of new log lines; returns bytes consumed (0 = nothing to do right now)
 function step(s: Sess, a: Acc): number {
+  const src = sourceOf(s.h);
+  if (src !== FILE_SOURCE) { // record-cursor source (database rows): whole records, no byte skipping
+    const r = src.lines(s, a.off, Math.min(s.size, a.off + window(src, CHUNK)));
+    const ad = harnessOf(s.h);
+    for (const l of r.lines) ad.usage(a, l);
+    const used = r.next - a.off; a.off = r.next;
+    if (used <= 0) a.stall = s.size;
+    return used * src.unit;
+  }
   const len = Math.min(CHUNK, s.size - a.off);
   if (len <= 0) return 0;
   const b = readBytes(s.path, a.off, len);

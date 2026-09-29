@@ -3,7 +3,8 @@
 import { parse } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { H, applyMeta } from "../hooks.ts";
-import type { HarnessAdapter } from "./types.ts";
+import type { HarnessAdapter, SessionSource } from "./types.ts";
+import { FILE_SOURCE } from "./source.ts";
 import { turnBusy } from "./common.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
@@ -25,6 +26,9 @@ export function harnessOf(id: string): HarnessAdapter {
   if (!a) throw new Error("unknown harness " + id);
   return a;
 }
+export function sourceOf(h: string): SessionSource { return harnessOf(h).source ?? FILE_SOURCE; }
+// a byte budget as a cursor span for this source
+export function window(src: SessionSource, bytes: number): number { return Math.max(1, Math.round(bytes / src.unit)); }
 export function isHarness(id: string): boolean { return byId.has(id); }
 export function harnessIds(): string[] { return HARNESSES.map((a) => a.id); }
 export function harnessIndex(id: string): number { for (let i = 0; i < HARNESSES.length; i++) if (HARNESSES[i].id === id) return i; return -1; }
