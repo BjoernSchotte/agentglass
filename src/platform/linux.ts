@@ -70,5 +70,6 @@ export const linux: Platform = {
   // passwd GECOS: "Full Name,Room,Phone,…"
   fullName: () => ((run("getent", ["passwd", userInfo().username]).split(":")[4] ?? "").split(",")[0] ?? "").trim(),
   trash,
+  sha256File: (path: string) => (run("sha256sum", [path]).split(" ")[0] ?? "").trim(),
   trashName: "the trash (~/.local/share/Trash)",
 };

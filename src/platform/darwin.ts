@@ -18,6 +18,7 @@ export const darwin: Platform = {
   notify: (title: string, subtitle: string, msg: string) =>
     detached("osascript", ["-e", "display notification \"" + esc(msg) + "\" with title \"" + esc(title) + "\" subtitle \"" + esc(subtitle) + "\""]),
   fullName: () => run("id", ["-F"]).trim(),
+  sha256File: (path: string) => (run("shasum", ["-a", "256", path]).split(" ")[0] ?? "").trim(),
   trash: (path: string) => { moveInto(join(HOME, ".Trash"), path); },
   trashName: "~/.Trash",
 };

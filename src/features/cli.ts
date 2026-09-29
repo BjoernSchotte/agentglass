@@ -21,6 +21,7 @@ const CMDS: string[][] = [
   ["agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)"],
   ["agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)"],
   ["agentglass --help | -h", "this text"],
+  ["agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)"],
   ["agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)"],
 ];
 const OPTS: string[][] = [

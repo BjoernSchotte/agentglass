@@ -26,6 +26,7 @@ import "./features/usage/stats.ts";
 import "./features/callgraph/view.ts";
 import "./features/redact.ts";
 import "./features/prices.ts";
+import "./features/update.ts";
 
 function render(): void {
   buf.length = 0;
