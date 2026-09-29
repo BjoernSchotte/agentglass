@@ -37,8 +37,6 @@ function meta(s: Sess): void {
   if (o && str(o["type"]) === "session") s.cwd = str(o["cwd"]);
 }
 
-// last message per session file: "user" / "result" / the assistant's stopReason — busy() reads it (the log has no turn markers)
-const lastMsg = new Map<string, string>();
 function ev(out: Ev[], kind: string, text: string, ts: string, id: string, full: string): void { out.push({ kind, text, ts, id, full }); }
 function parse(o: Obj, out: Ev[], s: Sess | null): void {
   const type = str(o["type"]); const ts = str(o["timestamp"]);
@@ -52,9 +50,9 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   const role = str(m["role"]);
   if (role === "user") {
     const c = m["content"];
-    const t = typeof c === "string" ? c : blockText(c);
+    let t = typeof c === "string" ? c : blockText(c);
+    if (!t) for (const b of arr(c)) { const bo = obj(b); if (bo && str(bo["type"]) === "image") { t = "[image]"; break; } } // an image-only prompt still starts a turn
     if (t) ev(out, "user", t, ts, "", "");
-    if (s) lastMsg.set(s.path, "user");
   } else if (role === "assistant") {
     if (s) { const md = str(m["responseModel"]) || str(m["model"]); if (md) s.model = md; }
     for (const b of arr(m["content"])) {
@@ -66,27 +64,24 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     }
     const stop = str(m["stopReason"]);
     if (stop === "error" || stop === "aborted") ev(out, "meta", "[" + stop + "] " + str(m["errorMessage"]), ts, "", "");
-    if (s) lastMsg.set(s.path, stop);
   } else if (role === "toolResult") {
     const det = obj(m["details"]);
     ev(out, "result", (m["isError"] === true ? "[error] " : "") + blockText(m["content"]), ts, str(m["toolCallId"]), det ? JSON.stringify(det) : "");
-    if (s) lastMsg.set(s.path, "result");
-  } else if (role === "bashExecution") {
+  } else if (role === "bashExecution") { // the user's own `!cmd`: pi records it outside any turn (while streaming: at agent_end)
     const id = str(o["id"]); const cmd = str(m["command"]);
     ev(out, "tool", "!bash\u0000" + cmd, ts, id, JSON.stringify({ command: cmd }));
     const code = num(m["exitCode"]); const bad = m["cancelled"] === true || (m["exitCode"] !== undefined && m["exitCode"] !== null && code !== 0);
     ev(out, "result", (bad ? "[error] " : "") + str(m["output"]), ts, id, "");
-    if (s) lastMsg.set(s.path, "result");
   }
 }
-// mid-turn: the last message is the user's or a tool result, or the assistant stopped for tools
+// mid-turn, from the tail's events alone (the log has no turn markers): the last event is the user's prompt, a tool call
+// or a tool result — not a `!bash` pair, which is no turn; assistant text/thinking, an error or an abort end the turn
 function busy(s: Sess): boolean {
   for (let i = s.evs.length - 1; i >= 0; i--) {
     const e = s.evs[i];
-    if (e.kind === "user" || e.kind === "result") return true;
     if (e.kind === "meta") { if (e.text.startsWith("[error]") || e.text.startsWith("[aborted]")) return false; continue; }
-    const st = lastMsg.get(s.path) ?? "";
-    return st === "toolUse" || st === "deferred";
+    if (e.kind === "result") { const c = i > 0 ? s.evs[i - 1] : null; return !(c && c.kind === "tool" && c.id === e.id && c.text.startsWith("!bash\u0000")); }
+    return e.kind === "user" || e.kind === "tool";
   }
   return false;
 }

@@ -101,6 +101,37 @@ for (const sm of SAMPLES) {
   ok(sm.h + " usage cost", Math.abs(a.cost - sm.cost) < 1e-9, String(a.cost) + " ≠ " + String(sm.cost));
   ok(sm.h + " no pending calls left", a.pend.size === 0, String(a.pend.size));
 }
+// pi busy: decided from the tail's events alone — the head (first 256 KB, parsed after the tail) must not change it
+{
+  let n = 0;
+  const line = (msg: string): string => "{\"type\":\"message\",\"id\":\"m" + String(++n) + "\",\"parentId\":null,\"timestamp\":\"2026-09-29T13:30:00.000Z\",\"message\":" + msg + "}";
+  const USER = "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"go\"}]}";
+  const IMG = "{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"data\":\"AAAA\",\"mimeType\":\"image/png\"}]}";
+  const CALL = "{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"c1\",\"name\":\"bash\",\"arguments\":{\"command\":\"ls\"}}],\"stopReason\":\"toolUse\"}";
+  const RES = "{\"role\":\"toolResult\",\"toolCallId\":\"c1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"" + "x".repeat(300000) + "\"}],\"isError\":false}";
+  const STOP = "{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"stopReason\":\"stop\"}";
+  const ABORT = "{\"role\":\"assistant\",\"content\":[],\"stopReason\":\"aborted\",\"errorMessage\":\"Request was aborted\"}";
+  const BASH = "{\"role\":\"bashExecution\",\"command\":\"ls\",\"output\":\"a\",\"exitCode\":0,\"cancelled\":false,\"truncated\":false,\"timestamp\":1}";
+  const piBusy = (tail: string[], head: string[]): boolean => {
+    const s = newSess("pi", "PB" + String(n), "/tmp/agentglass-check/pb" + String(n) + ".jsonl", false);
+    const evs: Ev[] = []; for (const m of tail) parseEvents("pi", line(m), evs, s);
+    s.evs = evs; // loadTail, then render → loadHead
+    const hv: Ev[] = []; for (const m of head) parseEvents("pi", line(m), hv, s);
+    return busy(s);
+  };
+  ok("pi busy: head after tail keeps a settled turn idle", !piBusy([CALL, RES, STOP], [USER, CALL]), "busy");
+  ok("pi busy: user prompt", piBusy([STOP, USER], []), "idle");
+  ok("pi busy: tool call", piBusy([USER, CALL], []), "idle");
+  ok("pi busy: tool result", piBusy([USER, CALL, RES], [USER, CALL, RES, STOP]), "idle");
+  ok("pi busy: stop", !piBusy([USER, STOP], []), "busy");
+  ok("pi busy: aborted", !piBusy([USER, CALL, ABORT], []), "busy");
+  ok("pi busy: a trailing !bash is not a turn", !piBusy([USER, STOP, BASH], []), "busy");
+  ok("pi busy: !bash then a prompt", piBusy([BASH, USER], []), "idle");
+  ok("pi busy: image-only prompt", piBusy([STOP, IMG], []), "idle");
+  const iv: Ev[] = []; parseEvents("pi", line(IMG), iv, null);
+  ok("pi: image-only prompt is a user event", iv.length === 1 && iv[0].kind === "user" && iv[0].text === "[image]", JSON.stringify(iv));
+  ok("pi busy: no events", !piBusy([], [USER, CALL]), "busy");
+}
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {
   const a = newAcc(); const d = bucket(a, 0, "2026-01-02T10:00:00Z");
