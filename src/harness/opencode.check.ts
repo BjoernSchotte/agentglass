@@ -128,6 +128,26 @@ ok("1.x fork: copied parts add no cost/tokens/tools", Math.abs(fb.cost - 0.25) <
 const pa = useOf(sess(P2));
 ok("the fork's parent keeps its own usage", pa.inTok === a.inTok && pa.tools === a.tools, pa.inTok + "/" + a.inTok);
 
+// ── read budget: rows can be huge (2.x assistant rows embed tool output); one lines() call stops after ~4 MB and the
+// cursor resumes after the last row it returned ──
+const B2 = "ses_big2"; const B1 = "ses_big1"; const MB2 = "hex(randomblob(1048576))"; // 2 MB of text per row
+sql("insert into session_v2 (id,project_id,slug,directory,title,version,time_created,time_updated) values ('" + B2 + "','global','big2','/tmp/agtest-big','big','2.0.19',1790688000000,1790688000000)");
+for (const q2 of [0, 2, 5]) sql("insert into session_message (id,session_id,type,seq,time_created,time_updated,data) values ('big" + String(q2) + "','" + B2 + "','user'," + String(q2) + ",1790688000001,1790688000001,json_object('time',json_object('created',1790688000001),'text'," + MB2 + "))");
+sql("insert into session (id,project_id,slug,directory,title,version,time_created,time_updated) values ('" + B1 + "','global','big1','/tmp/agtest-big','big','1.18.33',1790688000000,1790688000000)");
+sql("insert into message (id,session_id,time_created,time_updated,data) values ('msg_big','" + B1 + "',1790688000001,1790688000001,'{\"role\":\"user\",\"time\":{\"created\":1790688000001}}')");
+for (const q1 of [1, 2, 3]) sql("insert into part (id,message_id,session_id,time_created,time_updated,data) values ('prt_big" + String(q1) + "','msg_big','" + B1 + "',1790688000001,1790688000001,json_object('type','text','text'," + MB2 + "))");
+scan();
+const g2 = src.lines(sess(B2), 0, end(sess(B2)));
+ok("2.x budget: stops after ~4 MB, next = after the last row returned", g2.lines.length === 2 && g2.next === 3, g2.lines.length + " next " + g2.next);
+const g2b = src.lines(sess(B2), g2.next, end(sess(B2)));
+ok("2.x budget: the rest on the next call", g2b.lines.length === 1 && g2b.next === 6 && g2b.lines[0].indexOf("\"seq\":5") > 0, g2b.lines.length + " next " + g2b.next);
+ok("2.x budget: a single huge row still comes back", src.lines(sess(B2), 5, 6).lines.length === 1, "");
+const g1 = src.lines(sess(B1), 0, end(sess(B1)));
+ok("1.x budget: stops after ~4 MB, next = after the last part returned", g1.lines.length === 2 && g1.next === 2, g1.lines.length + " next " + g1.next);
+const g1b = src.lines(sess(B1), g1.next, end(sess(B1)));
+ok("1.x budget: the rest on the next call", g1b.lines.length === 1 && g1b.next === 3, g1b.lines.length + " next " + g1b.next);
+ok("unit ≈ bytes of a row", src.unit >= 8192, String(src.unit));
+
 // ── full text ──
 const se = opencode.search; const found = se ? se("todo") : [];
 ok("search finds the 2.x session", found.indexOf(sess(P2).path) >= 0, found.join(","));

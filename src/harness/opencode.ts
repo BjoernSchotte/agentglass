@@ -125,23 +125,31 @@ function meta(s: Sess): void {
 }
 
 // ── source: records are rows ──
+// rows vary from bytes to hundreds of KB (2.x assistant rows embed tool output): one call returns rows until their data
+// passes max(READ_MIN, span × unit) — always at least one — and the cursor resumes after the last row returned
+const UNIT = 8192; // ≈ bytes per row, for the byte-sized read windows
+const READ_MIN = 4194304;
 function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; next: number } {
   const r = rows.get(s.path);
   const to = r ? Math.min(to0, endOf(r)) : from;
   if (!r || to <= from) return { lines: [], next: from };
+  const budget = String(Math.max(READ_MIN, (to - from) * UNIT));
   // rows a fork copied from its parent are tagged "copied" (usage skips them, the transcript shows them)
   const f = String(r.fork);
-  if (!r.v1) { // every row in [from, to) comes back, gaps included: the cursor moves to `to`
+  if (!r.v1) { // every row in [from, to) comes back, gaps included: the cursor moves to `to` unless the budget cut it short
     const head = r.fork > 0 ? "case when time_created < " + f + " then json_object('type',type,'seq',seq,'copied',1) else json_object('type',type,'seq',seq) end" : "json_object('type',type,'seq',seq)";
-    const res = query(r.db, "select json_patch(" + head + ", data) l from session_message where session_id=" + q(r.id) +
-      " and seq >= " + String(from) + " and seq < " + String(to) + " order by seq");
+    const res = query(r.db, "select json_patch(" + head + ", data) l, seq, c >= " + budget + " cut from (select type, seq, time_created, data, length(data) n," +
+      " sum(length(data)) over (order by seq) c from session_message where session_id=" + q(r.id) +
+      " and seq >= " + String(from) + " and seq < " + String(to) + ") where c - n < " + budget + " order by seq");
     if (!res) return { lines: [], next: from };
     const out: string[] = []; for (const x of res) out.push(str(x["l"]));
-    return { lines: out, next: to };
+    const last = res.length ? res[res.length - 1] : null;
+    return { lines: out, next: last && num(last["cut"]) === 1 ? num(last["seq"]) + 1 : to };
   }
-  const res = query(r.db, "select json_object('v1',1,'role',json_extract(m.data,'$.role'),'model',json_extract(m.data,'$.modelID'),'t',m.time_created,'copied',m.time_created < " + f + ",'part',json(pt.data)) l" +
-    " from part pt join message m on m.id=pt.message_id where pt.session_id=" + q(r.id) +
-    " order by m.time_created, m.id, pt.id limit " + String(to - from) + " offset " + String(from));
+  const res = query(r.db, "select json_object('v1',1,'role',json_extract(md,'$.role'),'model',json_extract(md,'$.modelID'),'t',mt,'copied',mt < " + f + ",'part',json(pd)) l" +
+    " from (select md, mt, pd, k, n, sum(n) over (order by k) c from (select m.data md, m.time_created mt, pt.data pd, length(pt.data) n," +
+    " row_number() over (order by m.time_created, m.id, pt.id) k from part pt join message m on m.id=pt.message_id where pt.session_id=" + q(r.id) + ")" +
+    " where k > " + String(from) + " and k <= " + String(to) + ") where c - n < " + budget + " order by k");
   if (!res) return { lines: [], next: from };
   const out: string[] = []; for (const x of res) out.push(str(x["l"]));
   return { lines: out, next: from + out.length };
@@ -150,7 +158,7 @@ const source: SessionSource = {
   stat: (s: Sess) => { const r = rows.get(s.path); return r ? { size: endOf(r), mtime: r.mtime } : null; },
   align: (s: Sess, at: number) => at, // every cursor value starts a record
   lines: sessionLines,
-  unit: 2048, // ≈ bytes per row, for the byte-sized read windows
+  unit: UNIT,
 };
 
 // ── transcript ──
