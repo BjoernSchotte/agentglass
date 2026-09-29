@@ -90,11 +90,21 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
 }
 
 // ── usage ──
-// Acc.x: [0] prompts seen in the transcript (= index of the current turn + 1), [1] turns already booked from the .json,
-// [2 + i] end time (ms) of turn i. Tool calls are booked on their turn's day; a turn still running counts as now.
-function turnMs(a: Acc): number { const t = numAt(a.x, 0, 0) - 1; return t >= 0 ? numAt(a.x, 2 + t, 0) : 0; }
+// Acc.x layout: [0] prompts seen in the transcript (≈ current turn index + 1), [1] turns booked from the .json,
+// [2] fallback day (ms) for calls we can't date precisely (subagents carry no turn metadata; post-compaction
+// prompts outrun the turn array), [3 + i] end time (ms) of turn i. Tool calls are booked on their turn's day;
+// a turn still running, or any call without a matching turn, counts on the fallback day (session mtime, or now).
+function turnMs(a: Acc): number {
+  const fb = numAt(a.x, 2, 0);
+  const turns = numAt(a.x, 1, 0);
+  let t = numAt(a.x, 0, 0) - 1; // index of the turn this prompt opened
+  if (t < 0) return fb; // a tool call before any prompt (shouldn't happen): fall back
+  if (turns > 0 && t >= turns) t = turns - 1; // compaction drift: prompts outran turns → attribute to the last real turn
+  const end = numAt(a.x, 3 + t, 0);
+  return end > 0 ? end : fb; // no end time yet (turn still running) or subagent (no turns): fall back
+}
 function usage(a: Acc, l: string): void {
-  while (a.x.length < 2) a.x.push(0);
+  while (a.x.length < 3) a.x.push(0);
   if (l.indexOf("\"kind\":\"Prompt\"") >= 0) { a.x[0] = numAt(a.x, 0, 0) + 1; return; }
   const isAsst = l.indexOf("\"kind\":\"AssistantMessage\"") >= 0;
   const isRes = l.indexOf("\"kind\":\"ToolResults\"") >= 0;
@@ -139,7 +149,8 @@ function usageSidecar(s: Sess, a: Acc): void {
   let mt = 0; try { mt = statSync(f).mtimeMs; } catch (e) { return; }
   if (mt === a.xM) return;
   a.xM = mt;
-  while (a.x.length < 2) a.x.push(0);
+  while (a.x.length < 3) a.x.push(0);
+  a.x[2] = mt; // fallback day for calls we can't date to a turn (subagents, post-compaction drift): the file's own mtime
   const o = side(s); const ss = o ? obj(o["session_state"]) : null; const cm = ss ? obj(ss["conversation_metadata"]) : null;
   if (!cm) return;
   const turns = arr(cm["user_turn_metadatas"]);
@@ -147,10 +158,10 @@ function usageSidecar(s: Sess, a: Acc): void {
   for (let i = 0; i < turns.length; i++) {
     const tm = obj(turns[i]); if (!tm) continue;
     const end = num(tm["end_timestamp"]) * 1000;
-    while (a.x.length < 3 + i) a.x.push(0);
-    a.x[2 + i] = end;
+    while (a.x.length < 4 + i) a.x.push(0);
+    a.x[3 + i] = end;
     if (i < numAt(a.x, 1, 0)) continue; // booked on an earlier read
-    const d = bucket(a, end, "");
+    const d = bucket(a, end > 0 ? end : mt, ""); // date the turn's tokens/credits; fall back to the file mtime if the turn has no end time
     const nIn = num(tm["input_token_count"]); const nOut = num(tm["output_token_count"]);
     a.inTok = a.inTok + nIn; a.outTok = a.outTok + nOut; d.inTok = d.inTok + nIn; d.outTok = d.outTok + nOut;
     let cr = 0;
