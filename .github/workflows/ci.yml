@@ -1,0 +1,24 @@
+name: CI
+on:
+  push: { branches: ["**"] }
+  pull_request:
+permissions: { contents: read }
+concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
+jobs:
+  check:
+    name: check ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: { os: [ubuntu-22.04, macos-14] }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm i -g scriptc@0.1.7
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang sqlite3
+      - run: ./build.sh
+      - run: sh scripts/check.sh
+      - run: ./agentglass --version && ./agentglass --version --json && ./agentglass --json --limit 1 >/dev/null
