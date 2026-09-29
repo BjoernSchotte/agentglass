@@ -1,0 +1,45 @@
+#!/bin/sh
+# tests for install.sh against file:// fixture releases: sh scripts/install.test.sh
+set -e
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'chmod -R u+w "$t"; rm -rf "$t"' EXIT
+fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
+os=$(uname -s | tr 'A-Z' 'a-z'); case "$(uname -m)" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; esac
+asset="agentglass-$os-$arch.tar.gz"
+if command -v sha256sum >/dev/null 2>&1; then H="sha256sum"; else H="shasum -a 256"; fi
+rel() { # rel <tag> <version>: fake release dir with a binary printing <version>
+  d="$t/dl/$1"; mkdir -p "$d/x"; printf '#!/bin/sh\necho %s\n' "$2" > "$d/x/agentglass"; chmod 755 "$d/x/agentglass"
+  tar -czf "$d/$asset" -C "$d/x" agentglass; rm -rf "$d/x"; (cd "$d" && $H "$asset" > SHA256SUMS)
+}
+rel v2026.9.2 2026.9.2; rel v2026.9.1 2026.9.1; rel dev-20260930.3.1-a1b2c3d4 2026.9.2-dev.20260930.3+a1b2c3d4; rel dev-20260929.9.1-b1b2c3d4 2026.9.2-dev.20260929.9+b1b2c3d4
+cat > "$t/api.json" <<EOJ
+[
+  {"tag_name": "dev-20260929.9.1-b1b2c3d4", "draft": false, "prerelease": true},
+  {"tag_name": "v2026.10.1", "draft": true, "prerelease": false},
+  {"tag_name": "v2026.9.2", "draft": false, "prerelease": false},
+  {"tag_name": "dev-20260930.3.1-a1b2c3d4", "draft": false, "prerelease": true},
+  {"tag_name": "v2026.9.1", "draft": false, "prerelease": false}
+]
+EOJ
+export AGENTGLASS_RELEASES_API="file://$t/api.json" AGENTGLASS_DOWNLOAD_BASE="file://$t/dl"
+run() { HOME="$t/home" PATH="/usr/bin:/bin" sh "$here/install.sh" "$@" > "$t/out" 2>&1; }
+mkdir -p "$t/home"
+run && eq "stable exit" 0 0 || eq "stable exit" 1 0
+eq "stable version" "$("$t/home/.local/bin/agentglass")" "2026.9.2"
+grep -q '"method":"script"' "$t/home/.agentglass/install.json" && grep -q '"channel":"stable"' "$t/home/.agentglass/install.json" && grep -q "\"path\":\"$t/home/.local/bin/agentglass\"" "$t/home/.agentglass/install.json" && grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL install.json: $(cat "$t/home/.agentglass/install.json")"; fail=1; }
+grep -q "not on your PATH" "$t/out" || { echo "FAIL PATH warning"; fail=1; }
+run --channel dev; eq "dev version" "$("$t/home/.local/bin/agentglass")" "2026.9.2-dev.20260930.3+a1b2c3d4"
+grep -q '"channel":"dev"' "$t/home/.agentglass/install.json" || { echo "FAIL dev channel in install.json"; fail=1; }
+run --version 2026.9.1; eq "pinned version" "$("$t/home/.local/bin/agentglass")" "2026.9.1"
+run --prefix "$t/p2"; eq "prefix" "$("$t/p2/agentglass")" "2026.9.2"
+echo x >> "$t/dl/v2026.9.2/$asset"; rm -f "$t/p3/agentglass"
+if run --prefix "$t/p3"; then echo "FAIL checksum mismatch accepted"; fail=1; fi
+grep -qi "checksum" "$t/out" || { echo "FAIL checksum message: $(cat "$t/out")"; fail=1; }
+[ ! -e "$t/p3/agentglass" ] || { echo "FAIL binary written despite mismatch"; fail=1; }
+mkdir -p "$t/ro" && chmod 555 "$t/ro"
+if run --version 2026.9.1 --prefix "$t/ro"; then echo "FAIL read-only prefix accepted"; fail=1; fi
+grep -qi "cannot write" "$t/out" || { echo "FAIL read-only message: $(cat "$t/out")"; fail=1; }
+if AGENTGLASS_TEST_UNAME_M=riscv64 run --prefix "$t/p4"; then echo "FAIL riscv accepted"; fail=1; fi
+grep -qi "unsupported" "$t/out" || { echo "FAIL unsupported message"; fail=1; }
+if run --channel nightly; then echo "FAIL bad channel accepted"; fail=1; fi
+[ -z "$(ls -A "$t/home/.local/bin" | grep -v '^agentglass$' || true)" ] || { echo "FAIL leftovers in prefix: $(ls -A "$t/home/.local/bin")"; fail=1; }
+[ $fail = 0 ] && echo "install.sh: all tests passed"; exit $fail
