@@ -3,7 +3,7 @@ on:
   push: { tags: ["v*"] }
   workflow_dispatch:
     inputs:
-      tag: { description: "existing tag to (re)build, e.g. v2026.9.1", required: true, type: string }
+      tag: { description: "tag whose release is still a draft (resume a failed run), e.g. v2026.9.1", required: true, type: string }
 permissions: { contents: read }
 concurrency: { group: "release-${{ github.event.inputs.tag || github.ref_name }}", cancel-in-progress: false }
 jobs:
@@ -38,15 +38,10 @@ jobs:
         run: sh scripts/release-assets.sh out stable "$TAG" "$VERSION" "$SHA" && sh scripts/verify-release-assets.sh out
       - uses: actions/attest-build-provenance@v2
         with: { subject-path: "out/agentglass-*.tar.gz" }
-      - name: draft (create or reuse) and upload
+      - name: upload into the draft, publish when every asset is there (a published release is never touched)
         run: |
           . scripts/release-lib.sh; notes_for "$VERSION" > notes.md; [ -s notes.md ] || echo "Release $VERSION" > notes.md
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --verify-tag --title "agentglass $VERSION" --notes-file notes.md
-          gh release upload "$TAG" out/* --clobber
-      - name: publish only when every asset is there
-        run: |
-          mkdir -p check && gh release download "$TAG" -D check && sh scripts/verify-release-assets.sh check
-          gh release edit "$TAG" --draft=false --latest
+          sh scripts/publish-release.sh "$TAG" out notes.md stable "agentglass $VERSION"
   tap:
     needs: [meta, publish]
     runs-on: ubuntu-24.04

@@ -75,4 +75,15 @@ rm -f "$t/home/.agentglass/config.json"
 eq "symlinked install method" "$(HOME="$t/home" "$t/link/bin/agentglass" --version --json | sed -n 's/.*"installMethod":"\([a-z]*\)".*/\1/p')" "script"
 if HOME="$t/home" AGENTGLASS_RELEASES_API="file://$t/good.json" "$t/link/bin/agentglass" update > /dev/null; then r=0; else r=$?; fi; eq "symlinked update" "$r" 0
 grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL symlinked install.json version: $(cat "$t/home/.agentglass/install.json")"; fail=1; }
+# --tag is one-off: installs that release but never changes the saved channel
+printf '{"update":{"channel":"stable"}}' > "$t/home/.agentglass/config.json"
+cp "$t/new" "$t/real/bin/agentglass"
+if HOME="$t/home" AGENTGLASS_RELEASES_API="file://$t/good.json" "$t/real/bin/agentglass" update --tag dev-20260930.3.1-a1b2c3d4 --yes > /dev/null; then r=0; else r=$?; fi
+eq "tag install exit" "$r" 0
+eq "tag installed" "$("$t/real/bin/agentglass" --version)" "2026.9.1-dev.20260930.3+a1b2c3d4"
+grep -q '"channel": *"stable"' "$t/home/.agentglass/config.json" || { echo "FAIL --tag persisted the channel: $(cat "$t/home/.agentglass/config.json")"; fail=1; }
+# status works on Homebrew installs too (it only reads)
+if HOME="$t/home" AGENTGLASS_RELEASES_API="file://$t/good.json" "$t/Cellar/agentglass/2026.9.1/bin/agentglass" update status --json > "$t/st"; then r=0; else r=$?; fi
+eq "brew status" "$r" 0
+grep -q '"installMethod":"homebrew"' "$t/st" && grep -q '"latest":"v2026.9.2"' "$t/st" || { echo "FAIL brew status content: $(cat "$t/st")"; fail=1; }
 [ $fail = 0 ] && echo "update: all e2e tests passed"; exit $fail
