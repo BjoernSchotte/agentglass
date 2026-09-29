@@ -5,6 +5,7 @@ import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { join } from "node:path";
 import { base } from "./util/json.ts";
 import { HOME, CLAUDE, CODEX, FX, run } from "./util/fs.ts";
+import { OS } from "./platform/index.ts";
 import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
@@ -24,6 +25,20 @@ export function targetPid(): number {
   if (S.tab === 1 && S.prevMode !== "transcript" && S.mode !== "transcript") { const p = procAt(S.psel); return p ? p.pid : 0; }
   const s = target(); if (!s || !s.pid) return 0;
   const r = rootOf(s.pid); return r ? r.pid : s.pid;
+}
+// clipboard: the OS's native tools, then tmux → outer terminal, then OSC 52 straight to the terminal (ssh, headless)
+export function copyText(text: string, what: string): void {
+  const tools = OS.clipboardCmds();
+  if (process.env.TMUX) tools.push(["tmux", "load-buffer", "-w", "-"]); // -w: also sets the outer terminal's clipboard
+  for (const t of tools) {
+    try { execFileSync(t[0], t.slice(1), { input: text, stdio: ["pipe", "ignore", "ignore"], timeout: 3000 }); say("ok", "copied " + what); return; } catch (e) { /* next */ }
+  }
+  const b = new TextEncoder().encode(text);
+  if (b.length > 100000) { say("err", "no clipboard tool (wl-copy, xclip, xsel) and too big for OSC 52"); return; }
+  let bin = "";
+  for (let i = 0; i < b.length; i += 8192) bin += String.fromCharCode(...b.subarray(i, i + 8192));
+  process.stdout.write("\x1b]52;c;" + btoa(bin) + "\x07");
+  say("ok", "copied " + what + " via terminal (OSC 52)");
 }
 export function openExternal(cmd: string, path: string): void {
   if (!existsSync(path)) { say("warn", "not found: " + home(path)); return; }

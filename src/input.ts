@@ -1,13 +1,12 @@
 // agentglass — keyboard and mouse: raw input → key names → actions
 // SPDX-License-Identifier: Apache-2.0
-import { execFileSync } from "node:child_process";
 import { run } from "./util/fs.ts";
 import { clean, numAt } from "./util/text.ts";
 import { S, say } from "./state.ts";
 import { H, tabAt } from "./hooks.ts";
 import { buildView, titleOf, parentOf, isOpen, expanded, collapsed, current } from "./model/sessions.ts";
 import { procs, procAt, procSess, tmuxTarget } from "./model/procs.ts";
-import { ask, confirm, target, targetPid, openFileN, pageDetail, sendTmux, owner, sendPrompt, resume, killPid, trash, fullText } from "./actions.ts";
+import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, sendTmux, owner, sendPrompt, resume, killPid, trash, fullText } from "./actions.ts";
 import { openTranscript, moveCur, cycleSub } from "./ui/transcript.ts";
 import { openDetail, stepDetail } from "./ui/detail.ts";
 import { prevKind, prevIdx, prevKids } from "./ui/list.ts";
@@ -123,7 +122,7 @@ export function onInput(k: string): void {
     else if (k === "v") pageDetail();
     else if (k === "z") { S.foldAll = !S.foldAll; S.foldOpen = []; dv.lw = -1; }
     else if (k === "w") { S.wrapCode = !S.wrapCode; dv.lw = -1; say("info", S.wrapCode ? "wrapping long lines" : "cutting long lines at the edge"); }
-    else if (k === "y") { try { execFileSync("pbcopy", [], { input: dv.plain }); say("ok", "copied " + dv.plain.length + " chars"); } catch (err) { say("err", "pbcopy failed"); } }
+    else if (k === "y") copyText(dv.plain, dv.plain.length + " chars");
     else if (k.length === 1 && "123456789".indexOf(k) >= 0) openFileN(Number(k) - 1, false);
     return;
   }
@@ -162,7 +161,7 @@ export function onInput(k: string): void {
     else if (k === "R") { const s = current(); if (s) resume(s); }
     else if (k === "x") { const s = current(); if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
     else if (k === "D") { const s = current(); if (s) { if (s.pid) say("warn", "session is live — stop it first"); else confirm("Move “" + clean(titleOf(s)).slice(0, 40) + "” to ~/.Trash?", "trash"); } }
-    else if (k === "y") { const s = current(); if (s) { try { execFileSync("pbcopy", [], { input: s.id }); say("ok", "copied " + s.id); } catch (e) { say("err", "pbcopy failed"); } } }
+    else if (k === "y") { const s = current(); if (s) copyText(s.id, s.id); }
     S.sel = Math.max(0, Math.min(S.sel, S.view.length - 1));
   } else {
     if (k === "up" || k === "k" || k === "wheelup") S.psel--;

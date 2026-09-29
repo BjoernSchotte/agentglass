@@ -1,8 +1,9 @@
-// agentglass — harness processes (ps/lsof/tmux) and their link to sessions
+// agentglass — harness processes (via the platform adapter, tmux) and their link to sessions
 // SPDX-License-Identifier: Apache-2.0
 import { join } from "node:path";
 import { str, parse, base } from "../util/json.ts";
 import { CLAUDE, readText, listDir, run } from "../util/fs.ts";
+import { OS } from "../platform/index.ts";
 import type { Proc, Sess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
@@ -27,10 +28,8 @@ function harnessOf(args: string): string {
 export function refreshProcs(): void {
   allProcs.clear();
   const kids = new Map<number, number[]>();
-  for (const l of run("ps", ["-axo", "pid=,ppid=,pcpu=,rss=,etime=,tty=,args="]).split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/.exec(l);
-    if (!m) continue;
-    const p: Proc = { pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]), rss: Number(m[4]) * 1024, etime: m[5], tty: m[6], args: m[7], h: "", cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" };
+  for (const r of OS.listProcs()) {
+    const p: Proc = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: "", cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" };
     p.h = harnessOf(p.args);
     allProcs.set(p.pid, p);
     const k = kids.get(p.ppid);
@@ -38,6 +37,7 @@ export function refreshProcs(): void {
   }
   const out: Proc[] = [];
   let total = 0;
+  const now = Date.now();
   for (const p of allProcs.values()) {
     if (!p.h) continue;
     const parent = allProcs.get(p.ppid);
@@ -46,6 +46,7 @@ export function refreshProcs(): void {
     while (stack.length) {
       const q = allProcs.get(stack.pop() as number);
       if (!q) continue;
+      q.cpu = OS.cpuOf(q.pid, q.cpu, now);
       p.tcpu += q.cpu; p.trss += q.rss; if (q !== p) p.kids++;
       for (const c of kids.get(q.pid) ?? []) stack.push(c);
     }
@@ -57,6 +58,7 @@ export function refreshProcs(): void {
     out.push(p);
   }
   for (const k of [...hist.keys()]) if (!allProcs.has(k)) hist.delete(k);
+  OS.prune((pid: number) => allProcs.has(pid));
   cpuHist.push(total); if (cpuHist.length > 240) cpuHist.shift();
   out.sort((a, b) => b.tcpu - a.tcpu || a.pid - b.pid);
   const sp = procAt(S.psel); const selPid = sp ? sp.pid : 0;
@@ -75,21 +77,13 @@ export function refreshProcs(): void {
   linkSessions();
 }
 export function refreshSlow(): void {
-  // cwd + open rollout files of harness procs (lsof), tmux panes
+  // cwd + open rollout files of every harness proc — nested ones too (codex app-server under its daemon holds the rollouts), tmux panes
+  const hp: number[] = [];
+  for (const p of allProcs.values()) if (p.h) hp.push(p.pid);
+  const f = OS.procFiles(hp, (n: string) => n.endsWith(".jsonl") && (n.indexOf("/rollout-") >= 0 || n.indexOf("/.fx/sessions/") >= 0));
   cwdByPid.clear(); codexPidByPath.clear();
-  const pids = procs.map((p) => String(p.pid));
-  if (pids.length) {
-    let pid = 0; let fd = "";
-    for (const l of run("lsof", ["-a", "-p", pids.join(","), "-Fpfn"]).split("\n")) {
-      if (l.startsWith("p")) pid = Number(l.slice(1));
-      else if (l.startsWith("f")) fd = l.slice(1);
-      else if (l.startsWith("n")) {
-        const n = l.slice(1);
-        if (fd === "cwd") cwdByPid.set(pid, n);
-        else if (n.endsWith(".jsonl") && (n.indexOf("/rollout-") >= 0 || n.indexOf("/.fx/sessions/") >= 0)) codexPidByPath.set(n, pid);
-      }
-    }
-  }
+  for (const [k, v] of f.cwd) cwdByPid.set(k, v);
+  for (const [k, v] of f.open) codexPidByPath.set(k, v);
   tmuxByTty.clear();
   for (const l of run("tmux", ["list-panes", "-a", "-F", "#{pane_tty} #{session_name}:#{window_index}.#{pane_index}"]).split("\n")) {
     const i = l.indexOf(" ");
@@ -115,8 +109,8 @@ function linkSessions(): void {
 }
 export function tmuxTarget(pid: number): string {
   const p = allProcs.get(pid);
-  if (!p || p.tty === "??") return "";
-  return tmuxByTty.get("/dev/" + p.tty) ?? "";
+  const dev = p ? OS.ttyDevice(p.tty) : "";
+  return dev ? tmuxByTty.get(dev) ?? "" : "";
 }
 // bounds-checked (see sessAt)
 export function procAt(i: number): Proc | null { return i >= 0 && i < procs.length ? procs[i] : null; }

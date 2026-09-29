@@ -52,7 +52,7 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   duration, calls over time, top shell programs and command lines, most-changed files, the slowest
   calls and latest errors — `↵` on one opens its session at that call.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
-  agentglass rings the bell, sends a macOS notification and marks the row `◆`. `!` jumps there.
+  agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **A live ticker** in the header scrolls what every running agent is doing right now.
@@ -88,6 +88,8 @@ Every screen in this README and the launch video was recorded this way.
 
 ## Install
 
+Runs on macOS and Linux. Building needs Node 24+ and clang (Linux: `apt install clang`).
+
 ```sh
 npm i -g scriptc          # needs Node 24+ to build (not to run)
 git clone https://github.com/BjoernSchotte/agentglass && cd agentglass
@@ -95,6 +97,9 @@ git clone https://github.com/BjoernSchotte/agentglass && cd agentglass
 ln -s "$PWD/agentglass" ~/.local/bin/agentglass
 agentglass
 ```
+
+`y` copies via `pbcopy`, `wl-copy`, `xclip` or `xsel`, else through tmux or the terminal (OSC 52), so it
+works over ssh too.
 
 ## Keys
 
@@ -141,8 +146,8 @@ export AGENTGLASS_FX="fx"
 | | sessions | live detection | subagents | send / resume |
 |---|---|---|---|---|
 | ✻ **Claude Code** | `~/.claude/projects` | session registry | `subagents/` | ✔ |
-| >_ **Codex** | `~/.codex/sessions` | open rollout (`lsof`) | `parent_thread_id` | ✔ |
-| ▲ **fx** | `~/.fx/sessions` | open event log (`lsof`) | `subagent/owner.json` | ✔ |
+| >_ **Codex** | `~/.codex/sessions` | open rollout (`lsof` / `/proc`) | `parent_thread_id` | ✔ |
+| ▲ **fx** | `~/.fx/sessions` | open event log (`lsof` / `/proc`) | `subagent/owner.json` | ✔ |
 
 Gemini, opencode, aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.

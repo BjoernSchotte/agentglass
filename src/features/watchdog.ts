@@ -1,6 +1,6 @@
-// agentglass — watchdog: flags live sessions waiting for you (◆, bell + macOS notification) and stuck ones (⚠)
+// agentglass — watchdog: flags live sessions waiting for you (◆, bell + desktop notification) and stuck ones (⚠)
 // SPDX-License-Identifier: Apache-2.0
-import { spawn } from "node:child_process";
+import { OS } from "../platform/index.ts";
 import { base } from "../util/json.ts";
 import { ago } from "../util/text.ts";
 import type { Ev, Proc, Sess } from "../model/types.ts";
@@ -118,16 +118,13 @@ function observe(s: Sess, kids: Map<number, Proc[]>): Obs {
   return { now: Date.now(), mtime: s.mtime, busy: isBusy(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs };
 }
 function stateOf(s: Sess): St | null { return st.get(s.path) ?? null; }
-function esc(t: string): string { return t.replace(/\\/g, "\\\\").replace(/"/g, "\\\""); }
 function raise(s: Sess, x: St, why: string, note: string): void {
   s.attention = true; x.att = why; x.attAt = Date.now(); x.note = note;
   if (Date.now() - x.bell < 30000) return;
   x.bell = Date.now();
   process.stdout.write("\x07");
-  if (process.platform !== "darwin" || process.env.AGENTGLASS_NOTIFY === "0") return;
-  const msg = (why === "approval?" ? "approval? " : "") + titleOf(s).slice(0, 120);
-  const script = "display notification \"" + esc(msg) + "\" with title \"agentglass\" subtitle \"" + esc(s.h + " · " + (base(s.cwd) || "?")) + "\"";
-  try { const ch = spawn("osascript", ["-e", script], { stdio: "ignore", detached: true }); ch.on("error", (e: Error) => { /* no osascript */ }); ch.unref(); } catch (e) { /* best effort */ }
+  if (process.env.AGENTGLASS_NOTIFY === "0") return;
+  OS.notify("agentglass", s.h + " · " + (base(s.cwd) || "?"), (why === "approval?" ? "approval? " : "") + titleOf(s).slice(0, 120));
 }
 function clear(s: Sess, x: St): void { s.attention = false; x.att = ""; x.note = ""; }
 

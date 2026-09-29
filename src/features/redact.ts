@@ -4,6 +4,7 @@ import { statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { HOME, readText, listDir, run } from "../util/fs.ts";
+import { OS } from "../platform/index.ts";
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { H } from "../hooks.ts";
@@ -363,7 +364,7 @@ function learnPeople(): void {
     for (const v of [n, n.replace(/ö/g, "oe").replace(/ä/g, "ae").replace(/ü/g, "ue").replace(/ß/g, "ss"), n.replace(/ö/g, "o").replace(/ä/g, "a").replace(/ü/g, "u")]) addWord(v, fakePerson(v, first), false);
   };
   add(userInfo().username, true);
-  for (const full of [run("id", ["-F"]), run("git", ["config", "--global", "user.name"])]) {
+  for (const full of [OS.fullName(), run("git", ["config", "--global", "user.name"])]) {
     const parts = full.trim().replace(/([a-z])([A-Z])/g, "$1 $2").split(/[\s._-]+/).filter((p) => p.length > 0);
     for (let i = 0; i < parts.length; i++) add(parts[i] ?? "", i === 0);
   }
