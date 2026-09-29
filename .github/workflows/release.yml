@@ -1,0 +1,55 @@
+name: Release
+on:
+  push: { tags: ["v*"] }
+  workflow_dispatch:
+    inputs:
+      tag: { description: "existing tag to (re)build, e.g. v2026.9.1", required: true, type: string }
+permissions: { contents: read }
+concurrency: { group: "release-${{ github.event.inputs.tag || github.ref_name }}", cancel-in-progress: false }
+jobs:
+  meta:
+    runs-on: ubuntu-22.04
+    outputs: { tag: "${{ steps.m.outputs.tag }}", version: "${{ steps.m.outputs.version }}", sha: "${{ steps.m.outputs.sha }}" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: m
+        env: { TAG: "${{ github.event.inputs.tag || github.ref_name }}" }
+        run: |
+          echo "$TAG" | grep -Eq '^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]*$' || { echo "::error::bad tag $TAG"; exit 1; }
+          sha=$(git rev-list -n1 "$TAG")
+          git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$TAG is not on main"; exit 1; }
+          { echo "tag=$TAG"; echo "version=${TAG#v}"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+  build:
+    needs: meta
+    uses: ./.github/workflows/build-artifacts.yml
+    with: { ref: "${{ needs.meta.outputs.sha }}", version: "${{ needs.meta.outputs.version }}", channel: stable }
+  publish:
+    needs: [meta, build]
+    runs-on: ubuntu-22.04
+    permissions: { contents: write, id-token: write, attestations: write }
+    env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ needs.meta.outputs.tag }}", VERSION: "${{ needs.meta.outputs.version }}", SHA: "${{ needs.meta.outputs.sha }}" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.meta.outputs.sha }}", fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "agentglass-*", path: out, merge-multiple: true }
+      - name: checksums + metadata
+        run: sh scripts/release-assets.sh out stable "$TAG" "$VERSION" "$SHA" && sh scripts/verify-release-assets.sh out
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-path: "out/agentglass-*.tar.gz" }
+      - name: draft (create or reuse) and upload
+        run: |
+          . scripts/release-lib.sh; notes_for "$VERSION" > notes.md; [ -s notes.md ] || echo "Release $VERSION" > notes.md
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --verify-tag --title "agentglass $VERSION" --notes-file notes.md
+          gh release upload "$TAG" out/* --clobber
+      - name: publish only when every asset is there
+        run: |
+          mkdir -p check && gh release download "$TAG" -D check && sh scripts/verify-release-assets.sh check
+          gh release edit "$TAG" --draft=false --latest
+  tap:
+    needs: [meta, publish]
+    runs-on: ubuntu-22.04
+    steps:
+      - env: { GH_TOKEN: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
+        run: gh workflow run update-formula.yml -R BjoernSchotte/homebrew-tap -f formula=agentglass -f tag="${{ needs.meta.outputs.tag }}" -f repository=BjoernSchotte/agentglass
