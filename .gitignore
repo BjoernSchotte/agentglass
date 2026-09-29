@@ -3,3 +3,4 @@ agentglass
 .claude/
 videos/*/renders/
 specs/internals/
+src/build-info.ts

@@ -8,8 +8,8 @@ import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf } from "../harn
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
-
-export const VERSION = "0.1.0";
+import { BUILD } from "../build-info.ts";
+import { versionInfo } from "./version.ts";
 
 // option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
 const CMDS: string[][] = [
@@ -21,7 +21,7 @@ const CMDS: string[][] = [
   ["agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)"],
   ["agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)"],
   ["agentglass --help | -h", "this text"],
-  ["agentglass --version", "print the version"],
+  ["agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)"],
 ];
 const OPTS: string[][] = [
   ["--live", "only sessions with a running agent process"],
@@ -33,7 +33,7 @@ const OPTS: string[][] = [
 function table(rows: string[][], col: number): string { return rows.map((r: string[]) => "  " + (r[0] ?? "").padEnd(col) + (r[1] ?? "")).join("\n"); }
 function usage(): string {
   let col = 0; for (const r of CMDS.concat(OPTS)) col = Math.max(col, (r[0] ?? "").length + 2);
-  return `agentglass ${VERSION} — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})
+  return `agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})
 
 usage:
 ${table(CMDS, col)}
@@ -184,7 +184,7 @@ function watch(o: Opts): void {
 
 H.cli.push((args: string[]): boolean => {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(usage().trimEnd()); return true; }
-  if (args.indexOf("--version") >= 0) { out(VERSION); return true; }
+  if (args.indexOf("--version") >= 0) { out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
   if (args.indexOf("--json") >= 0) { S.cli = true; snapshot(opts(args)); return true; } // no toast line: warnings go to stderr
   if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args)); return true; }
   return false;
