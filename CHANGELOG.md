@@ -1,3 +1,81 @@
 # Changelog
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
+
+## 2026.9.1
+
+### Features
+
+- agentglass update — stable/dev channels, checksum + self-check, atomic swap, rollback (7184fc3)
+- install.sh for stable and dev binaries (34ab58f)
+- **opencode:** OpenCode 2.x/1.x harness adapter via sqlite3 (635b28c)
+- **pi:** pi coding agent harness adapter (40f9489)
+- **prices:** opt-in community price lists (LiteLLM / models.dev), cached locally (cbbe491)
+- **platform:** port/adapter for OS specifics, Linux support (ebcd514)
+- **redact:** privacy mode for screencasts (--redact / AGENTGLASS_REDACT=1) (a92492b)
+- **stats:** per-tool errors, durations and drill-down (shell programs, changed files, slowest calls) (bbb3f8b)
+- **callgraph:** DevTools-style flame chart + call tree per session (c) (477a885)
+- **usage:** persist the ledger to ~/.agentglass/cache so restarts resume instead of re-indexing (bf426aa)
+- **usage:** token/cost ledger, Stats tab, preview usage line, header cost widget (6395b72)
+- **watchdog:** attention alarm and stuck detection (21d4bd6)
+- **ui:** live agent ticker in the header + color themes (4ab140a)
+- **cli:** --json snapshot, --watch JSONL event stream, --help, --version (7e73d82)
+- **replay:** time-lapse playback of a transcript (P) (60b81f8)
+- **hooks:** H.complete for blocking per-session computation used by exports (bad8176)
+- **detail:** syntax highlighting, pretty JSON/YAML, foldable blocks (4620414)
+- event drill-down and full mouse support (1c7fa4e)
+- full keyboard-shortcut popup layer on ? (7533a02)
+- first-class fx (vercel-labs) support (4004499)
+- group subagents under their session with live status and drilldown (cef1ab2)
+- agentglass TUI for browsing and steering coding-agent sessions (ac02f8b)
+
+### Fixes
+
+- **release:** never touch a published release; keep the pinned dev build when the pin can't be read; update/install hardening (c811540)
+- **update:** recognise install.sh installs behind symlinked paths (macOS /var → /private/var) (3cb85c0)
+- **opencode:** bound a read by the bytes of its rows (a920c87)
+- **cli:** warnings to stderr in --json/--watch; sqlite3 note and aligned --help (4059688)
+- **procs:** don't SIGTERM a shared OpenCode daemon (9bd64a4)
+- **opencode:** hold streaming rows without the daemon too (258c32c)
+- **opencode:** skip fork copies in usage (02a02d6)
+- **pi:** busy from events only; !bash is not a turn (59fdcba)
+- **opencode:** bound the read horizon to the current turn; busy only while the daemon lives (535a4c8)
+- **harness:** align reads in 64 KB chunks and never starts mid-record (1fff248)
+- **linux:** keep the last cpu sample when refreshes come < 500 ms apart (1a73648)
+- **build:** find scriptc/Node 24 on PATH or any nvm install, check for clang (dd41b58)
+- **stats:** replace ⟳/✎ with single-width arrows (fallback fonts drew them double-wide) (864eb6b)
+- **ui:** fixed header widgets before the flexible ticker (H.headerFlex), compact stats; feature footer hints first (05acdf1)
+- **detail:** no blank rows from padded output, aligned diff continuations, w toggles wrap/cut (cb41f56)
+- truncate footer to terminal width and disable autowrap while running (b3515b1)
+
+### Refactoring & other
+
+- **install:** keep the riscv64 override out of later runs (bash --posix keeps prefix assignments on functions) (0fd98dd)
+- **install:** report failing install runs instead of aborting silently (d9818d3)
+- drop the temporary build probe (matrix verified: 4/4 green) (96c43d1)
+- daily dev prerelease of green main, keep the newest 14 (9815f3a)
+- stable release on tag push, drafts until every asset is there (d775776)
+- build Linux on 24.04 (glibc >= 2.36), macOS x64 with scriptc's C backend (2d5748d)
+- release-lib, release.sh and CHANGELOG.md (bf3739e)
+- checks on every push; reusable 4-platform build (8aa2ec6)
+- version and channel from the git tag, baked in at build time (c70eded)
+- **harness:** steering gets the session; optional files/search; liveness by cwd; exact cost (41fee0e)
+- **harness:** SessionSource port — readers go through the adapter's source (503300d)
+- **specs:** real pi and OpenCode fixture sessions (26d1822)
+- **harness:** HarnessAdapter port + registry, one file per agent (f8b6056)
+- ignore specs/internals (ee7006d)
+- **redact:** drop built-in project word; user words live in ~/.agentglass/redact.txt (1622b43)
+- split into modules with extension hooks (e532194)
+- ignore scriptc llvm artifacts (8570519)
+
+### Docs
+
+- install via Homebrew or install.sh; releases and channels (7884b5d)
+- **specs:** release management — implementation plan (5625b83)
+- **specs:** release management — CalVer stable + daily dev channel, brew tap, install.sh, agentglass update (e13aa23)
+- pi and OpenCode in the README (019ddfe)
+- **specs:** pi + OpenCode harness adapters — spec and implementation plan (05bf290)
+- embed the launch video player in the README (8dcd74d)
+- launch video (mp4 + webm), redacted screenshots and a README rework for the new features (78a5116)
+- README covers replay, costs/stats, attention, stuck detection, ticker, themes, --json/--watch (b401724)
+- launch-ready README with elevator pitch; license under Apache-2.0 (751f854)
