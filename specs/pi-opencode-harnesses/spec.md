@@ -1,6 +1,6 @@
 # pi + OpenCode harness adapters — spec
 
-Status: **approved** (2026-09-29) — open questions answered below. Plan: [plan.md](plan.md).
+Status: **implemented** (2026-09-29). Plan: [plan.md](plan.md).
 
 ## Goal
 

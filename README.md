@@ -1,7 +1,7 @@
 # ◈ agentglass
 
 **See every coding agent on your machine — live, down to every tool call, diff and dollar.**
-One tiny native TUI for Claude Code, Codex and fx: browse every session you ever ran, watch the running
+One tiny native TUI for Claude Code, Codex, fx, pi and OpenCode: browse every session you ever ran, watch the running
 ones think, drill into any call, see where the time and money went, and get tapped on the shoulder
 when an agent needs you.
 
@@ -21,8 +21,9 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
 
 ## Why it slaps
 
-- **Every agent, one screen.** Claude Code (`~/.claude`), Codex (`~/.codex`) and
-  [fx](https://github.com/vercel-labs/fx) (`~/.fx`) sessions in one searchable list. Live sessions
+- **Every agent, one screen.** Claude Code (`~/.claude`), Codex (`~/.codex`),
+  [fx](https://github.com/vercel-labs/fx) (`~/.fx`), [pi](https://github.com/badlogic/pi-mono) (`~/.pi`) and
+  [OpenCode](https://opencode.ai) sessions in one searchable list. Live sessions
   come first, and all your history is there too.
 - **Live transcripts.** Open a session and it follows the log as the agent works: prompts,
   thinking, tool calls and results as they land.
@@ -36,7 +37,7 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   runaway `find`), and you can SIGTERM or SIGKILL it with a confirm.
 - **Talk back.** Press `s` to send a prompt. If the agent lives in tmux it's typed into its pane,
   otherwise agentglass resumes the session headless (`claude -p --resume`, `codex exec resume`,
-  `fx ask --resume-id`). Press `R` to jump back into a session interactively.
+  `fx ask --resume-id`, `pi -p --session`, `opencode run -s`). Press `R` to jump back into a session interactively.
 - **Search everything.** `/` filters by title, path, id, branch or harness. `F` runs a ripgrep
   full-text search across every transcript you've ever had.
 - **Replay any session as a time-lapse.** Press `P` in a transcript and watch the agent's run play
@@ -165,6 +166,8 @@ export AGENTGLASS_CLAUDE="claude --settings ~/.config/my/claude.json"
 export AGENTGLASS_CODEX="codex --profile work"
 export AGENTGLASS_FX="fx"
 export AGENTGLASS_PI="pi --model sonnet"
+export AGENTGLASS_OPENCODE="opencode"
+export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with the sqlite3 CLI
 ```
 
 ## Supported harnesses
@@ -175,9 +178,21 @@ export AGENTGLASS_PI="pi --model sonnet"
 | >_ **Codex** | `~/.codex/sessions` | open rollout (`lsof` / `/proc`) | `parent_thread_id` | ✔ |
 | ▲ **fx** | `~/.fx/sessions` | open event log (`lsof` / `/proc`) | `subagent/owner.json` | ✔ |
 | π **pi** | `~/.pi/agent/sessions` | process cwd = session cwd | – | ✔ |
+| ▣ **OpenCode** | `~/.local/share/opencode/opencode.db` | `service.json` daemon (v2) · process cwd (1.x) | `parent_id` | ✔ |
 
-Gemini, opencode, aider, amp and friends already show up in the process view. Their session
+Gemini, aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.
+
+Notes:
+
+- **pi**: honors `PI_CODING_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR` and `sessionDir` in pi's `settings.json`.
+  pi has no session registry, so a session is live when a pi process runs in its working directory.
+  Cost comes from pi's own `usage.cost`.
+- **OpenCode** (2.x and 1.2–1.18): sessions are read from the SQLite file with the `sqlite3` CLI
+  (`OPENCODE_DB` picks another file, `AGENTGLASS_SQLITE3` another binary). Without `sqlite3`, OpenCode
+  sessions don't show and a warning appears. Live detection uses the v2 daemon's
+  `~/.local/state/opencode/service.json` plus `time_suspended`, and the process working directory for
+  1.x TUIs. `D` (trash) is not available for OpenCode.
 
 ### Adding a harness
 
@@ -189,6 +204,7 @@ adapter ([`fx.ts`](src/harness/fx.ts)), register it in `HARNESSES`
 
 ```sh
 scriptc build src/harness/harness.check.ts -o hc && ./hc   # registry + golden samples for every adapter
+scriptc build src/harness/opencode.check.ts -o oc && ./oc  # OpenCode: SQLite rows, subagents, live detection
 ```
 
 The list, filters, badges, ticker, Stats rows, `--harness`, help, full-text search, trash and live
