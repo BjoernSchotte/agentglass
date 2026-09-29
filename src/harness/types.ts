@@ -28,7 +28,7 @@ export interface Live { id: string; pid: number; status: string; name: string }
 export interface HarnessAdapter {
   // ── identity & look ──
   id: string; // stable key: Sess.h, --harness, AGENTGLASS_<ID>, cache files; lowercase, no spaces
-  label: string; // human name, ≤ 7 cells ("Claude")
+  label: string; // human name, ≤ 7 cells ("Claude"); ≤ 8 with its own badge ("OpenCode")
   glyph: string; // logo, 1–2 cells (ticker, default badge)
   mark: string; // 1-cell logo for dense tables (stats)
   color: () => string; // theme color as "r;g;b" (a function: themes switch at runtime)

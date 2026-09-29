@@ -12,7 +12,7 @@ import { linkByCwd, type CwdProc } from "./link.ts";
 import { applyMeta } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
-const OTHER = ["gemini", "opencode", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot", "kiro-cli"];
+const OTHER = ["gemini", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot", "kiro-cli"];
 export let procs: Proc[] = [];
 export const allProcs = new Map<number, Proc>();
 export const hist = new Map<number, number[]>();
@@ -102,12 +102,15 @@ function linkSessions(): void {
     applyMeta(s);
   }
   // harnesses with neither registry nor open transcript: process cwd ↔ newest session in that cwd
+  // (registry pids are daemons, not TUIs; subagents never own a TUI)
+  const regPids = new Set<number>();
+  for (const l of registry.values()) regPids.add(l.pid);
   for (const ad of HARNESSES) {
     if (!ad.liveCwd) continue;
     const cp: CwdProc[] = [];
-    for (const p of procs) if (p.h === ad.id && p.cwd) cp.push({ pid: p.pid, h: p.h, cwd: p.cwd });
+    for (const p of procs) if (p.h === ad.id && p.cwd && !regPids.has(p.pid)) cp.push({ pid: p.pid, h: p.h, cwd: p.cwd });
     const ss: { path: string; h: string; cwd: string; mtime: number; pid: number }[] = [];
-    for (const s of sessions.values()) if (s.h === ad.id) ss.push({ path: s.path, h: s.h, cwd: s.cwd, mtime: s.mtime, pid: s.pid });
+    for (const s of sessions.values()) if (s.h === ad.id && !s.parent) ss.push({ path: s.path, h: s.h, cwd: s.cwd, mtime: s.mtime, pid: s.pid });
     for (const [path, pid] of linkByCwd(cp, ss)) {
       const s = sessions.get(path);
       if (s) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; }

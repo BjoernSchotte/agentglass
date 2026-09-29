@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // A new adapter passes the registry checks as soon as it is in HARNESSES; add a SAMPLES entry with a few real
 // log lines (anonymized) and the event kinds and usage they must produce.
+import { existsSync } from "node:fs";
 import { width } from "../util/text.ts";
 import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
@@ -62,7 +63,7 @@ for (const ad of HARNESSES) {
   const n = ad.id;
   ok(n + " id unique", !ids.has(n), n); ids.add(n);
   ok(n + " id shape", /^[a-z][a-z0-9-]*$/.test(n), n);
-  ok(n + " label ≤ 7 cells", ad.label.length > 0 && width(ad.label) <= 7, ad.label);
+  ok(n + " label ≤ 8 cells, ≤ 7 in the default badge", ad.label.length > 0 && width(ad.label) <= 8 && (!!ad.badge || width(ad.label) <= 7), ad.label);
   ok(n + " glyph 1–2 cells", width(ad.glyph) >= 1 && width(ad.glyph) <= 2, ad.glyph);
   ok(n + " mark 1 cell", width(ad.mark) === 1, ad.mark);
   ok(n + " color r;g;b", /^\d+;\d+;\d+$/.test(ad.color()), ad.color());
@@ -70,7 +71,7 @@ for (const ad of HARNESSES) {
   ok(n + " bin", ad.bin.length > 0 && cmdOf(n).length > 0, ad.bin);
   ok(n + " procs", ad.procs.length > 0, String(ad.procs.length));
   ok(n + " headBytes", ad.headBytes >= 4096, String(ad.headBytes));
-  ok(n + " roots", ad.roots().length > 0, String(ad.roots().length));
+  ok(n + " roots or search", ad.roots().length > 0 || !!ad.search, String(ad.roots().length)); // a DB-backed adapter searches itself
   const s = newSess(n, "ID1", "/nonexistent/ID1.jsonl", false);
   const hl = ad.headless; if (hl) { const c = hl(s, "MSG"); ok(n + " headless names the session and message", c.join(" ").indexOf("ID1") >= 0 && c.indexOf("MSG") >= 0, c.join(" ")); }
   const rs = ad.resume; if (rs) ok(n + " resume names the session", rs(s).join(" ").indexOf("ID1") >= 0, rs(s).join(" "));
@@ -112,7 +113,8 @@ for (const sm of SAMPLES) {
   usageExact(c, g, "no-such-model", 10, 5, 0, 0, 0, 0);
   ok("usageExact with cost 0 and unknown model counts unpriced tokens", c.cost === 0 && c.unk === 15, String(c.unk));
 }
-for (const ad of HARNESSES) ok(ad.id + " has SAMPLES", SAMPLES.some((sm: Sample) => sm.h === ad.id), "add a few real log lines above");
+// a DB-backed adapter (own source) has no log lines to sample: its golden coverage is src/harness/<id>.check.ts
+for (const ad of HARNESSES) ok(ad.id + " has SAMPLES", ad.source ? existsSync("src/harness/" + ad.id + ".check.ts") : SAMPLES.some((sm: Sample) => sm.h === ad.id), "add a few real log lines above");
 
 console.log(bad ? bad + " failed" : "harness: all checks passed (" + HARNESSES.length + " adapters)");
 process.exit(bad ? 1 : 0);

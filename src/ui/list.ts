@@ -10,6 +10,7 @@ import { tmuxTarget } from "../model/procs.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, badge, BADGE_W, spin } from "./screen.ts";
 import { evLines } from "./transcript.ts";
+import { sourceOf } from "../harness/index.ts";
 
 // mouse hit map for the preview, rebuilt every frame
 export const prevKind: number[] = []; export const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
@@ -72,7 +73,7 @@ export function renderSessions(): void {
   }
   const s = current();
   const px = wide ? listW : 0; const py = wide ? 1 : 1 + lh; const pw = wide ? W - listW : W; const ph = wide ? bodyH : bodyH - lh;
-  box(px, py, pw, ph, "preview", s ? s.h + " · " + bytes(s.size) : "", false);
+  box(px, py, pw, ph, "preview", s ? s.h + (sourceOf(s.h).unit === 1 ? " · " + bytes(s.size) : "") : "", false); // a row cursor is no size
   const iw2 = pw - 4;
   const lines: string[] = [];
   prevKind.length = 0; prevIdx.length = 0; prevKids.length = 0; S.prevSess = s; S.prevY0 = py + 1; S.prevX0 = px; S.prevX1 = px + pw;

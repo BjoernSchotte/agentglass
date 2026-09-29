@@ -13,4 +13,6 @@ ok("no process, no link", !m.has("c"), "");
 ok("two procs, one cwd: one link each, newest first", linkByCwd([{ pid: 1, h: "pi", cwd: "/x" }, { pid: 2, h: "pi", cwd: "/x" }], [S("p", "/x", 1, 0), S("q", "/x", 2, 0)]).size === 2, "");
 const t = linkByCwd([{ pid: 1, h: "pi", cwd: "/x" }, { pid: 2, h: "pi", cwd: "/x" }], [S("p", "/x", 1, 0), S("q", "/x", 2, 0)]);
 ok("lowest pid gets the newest", t.get("q") === 1 && t.get("p") === 2, show(t));
+const d = linkByCwd([{ pid: 7, h: "pi", cwd: "/y" }], [S("run", "/y", 9, 99), S("prev", "/y", 4, 0)]); // 99 = a daemon running "run"
+ok("the client of an already-live newest session links nothing", d.size === 0, show(d));
 console.log(bad ? bad + " failed" : "link: all checks passed"); process.exit(bad ? 1 : 0);

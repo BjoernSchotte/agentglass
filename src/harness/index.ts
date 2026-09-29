@@ -10,9 +10,10 @@ import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
 import { fx } from "./fx.ts";
 import { pi } from "./pi.ts";
+import { opencode } from "./opencode.ts";
 
 // order = order in filters, stats rows and help
-export const HARNESSES: HarnessAdapter[] = [claude, codex, fx, pi];
+export const HARNESSES: HarnessAdapter[] = [claude, codex, fx, pi, opencode];
 
 const byId = new Map<string, HarnessAdapter>();
 const byProc = new Map<string, string>();
