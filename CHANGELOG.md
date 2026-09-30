@@ -2,6 +2,20 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.9.2
+
+### Features
+
+- **kiro:** kiro-cli harness adapter on the HarnessAdapter port (939cd4d)
+
+### Fixes
+
+- **kiro:** date tool calls by turn, fall back to file mtime (0d88e46)
+
+### Refactoring & other
+
+- **kiro:** subagent and compaction-overflow calls keep their own day (327e581)
+
 ## 2026.9.1
 
 ### Features
