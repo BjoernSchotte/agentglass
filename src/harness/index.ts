@@ -30,6 +30,8 @@ export function harnessOf(id: string): HarnessAdapter {
   return a;
 }
 export function sourceOf(h: string): SessionSource { return harnessOf(h).source ?? FILE_SOURCE; }
+// the source's cursor epoch for s ("" = byte offsets / one meaning only)
+export function epochOf(s: Sess): string { const f = sourceOf(s.h).epoch; return f ? f(s) : ""; }
 // a byte budget as a cursor span for this source
 export function window(src: SessionSource, bytes: number): number { return Math.max(1, Math.round(bytes / src.unit)); }
 export function isHarness(id: string): boolean { return byId.has(id); }

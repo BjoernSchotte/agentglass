@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { firstLine } from "../util/text.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
-import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy } from "../harness/index.ts";
+import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
 import { S } from "../state.ts";
 import { applyMeta } from "../hooks.ts";
 
@@ -18,9 +18,15 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
     sessions.set(path, s);
     const m = harnessOf(h).meta; if (m) m(s);
   }
-  s.mtime = st.mtime; s.size = st.size;
+  restat(s, st.size, st.mtime, epochOf(s));
   applyMeta(s);
   seen.add(path);
+}
+// new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file
+export function restat(s: Sess, size: number, mtime: number, ep: string): void {
+  s.mtime = mtime; s.size = size;
+  if (ep === s.ep) return;
+  s.ep = ep; s.tailSize = -1; s.headDone = false; s.evs = [];
 }
 export function scan(): void {
   const seen = new Set<string>();

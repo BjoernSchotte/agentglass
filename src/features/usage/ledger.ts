@@ -16,7 +16,7 @@ const BUDGET = 4194304; const CHUNK = 1048576; const SLICE_MS = 100;
 
 export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);
-  if (!a || s.size < a.off) { a = newAcc(); ledger.set(s.path, a); } // new or truncated/rewritten
+  if (!a || s.size < a.off || a.ep !== s.ep) { a = newAcc(); a.ep = s.ep; ledger.set(s.path, a); } // new, truncated/rewritten or other cursor epoch
   return a;
 }
 export function pending(s: Sess, a: Acc): boolean { return a.off < s.size && a.stall !== s.size; }

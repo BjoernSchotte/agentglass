@@ -17,6 +17,7 @@ export interface SessionSource {
   align: (s: Sess, at: number) => number; // first whole record at/after `at`
   lines: (s: Sess, from: number, to: number) => { lines: string[]; next: number }; // whole records in [from, to); next = cursor after the last one
   unit: number; // bytes one cursor step stands for (window budgets)
+  epoch?: (s: Sess) => string; // what the cursor means right now (a source with two transports); a change = re-read from 0
 }
 
 // scan() reports each transcript it finds; parent = the parent session's id for subagents known from the
