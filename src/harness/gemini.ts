@@ -1,6 +1,6 @@
 // agentglass — Gemini CLI (~/.gemini) adapter
 // SPDX-License-Identifier: Apache-2.0
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { statSync } from "node:fs";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readBytes, readText, listDir } from "../util/fs.ts";
@@ -20,7 +20,7 @@ import { toolArg, isNoise } from "./common.ts";
 // what appears there first: message fields at the first offset of its id, each tool call at the first offset of its id,
 // tokens at the first offset that carried them. Emission depends on byte offsets only → any window yields each id once.
 interface Ix {
-  at: number; // bytes indexed (a line start)
+  at: number; ino: number; // bytes indexed (a line start); the file it describes
   msg: Map<string, number>; call: Map<string, number>; tok: Map<string, number>; // id → first byte offset (call key: msg id \t call id)
   spawn: Map<string, string>; spawnName: Map<string, string>; // subagent id → the tool call that ran it, its tool name
   drop: Map<number, number>; // offset of a rewind/checkpoint → messages it dropped from the history
@@ -48,7 +48,8 @@ function eachLine(path: string, from: number, to: number, f: (l: string, x: numb
 }
 function seen(ix: Ix, m: Obj, x: number): void {
   const id = str(m["id"]); if (!id) return;
-  if (!ix.msg.has(id)) { ix.msg.set(id, x); if (visible(m)) ix.shown.add(id); }
+  if (!ix.msg.has(id)) ix.msg.set(id, x);
+  if (!ix.shown.has(id) && visible(m)) ix.shown.add(id); // a bare gemini message becomes visible once its calls arrive
   if (obj(m["tokens"]) && !ix.tok.has(id)) ix.tok.set(id, x);
   for (const c of arr(m["toolCalls"])) {
     const co = obj(c); if (!co) continue;
@@ -81,11 +82,12 @@ function record(ix: Ix, l: string, x: number): void {
   seen(ix, o, x);
   if (!ix.liveSet.has(id)) { ix.liveSet.add(id); ix.live.push(id); }
 }
-// the index of path, extended to `to` (a shrunk file starts over)
+// the index of path, extended to `to` (a shrunk or replaced file starts over)
 function indexTo(path: string, to: number): Ix {
   let ix = IX.get(path);
-  if (!ix || statSize(path) < ix.at) {
-    ix = { at: 0, msg: new Map<string, number>(), call: new Map<string, number>(), tok: new Map<string, number>(), spawn: new Map<string, string>(), spawnName: new Map<string, string>(), drop: new Map<number, number>(), live: [], liveSet: new Set<string>(), shown: new Set<string>() };
+  let ino = -1; let size = -1; try { const st = statSync(path); ino = st.ino; size = st.size; } catch (e) { /* gone */ }
+  if (!ix || size < ix.at || ino !== ix.ino) { // new, shrunk or replaced (gemini rewrites a file it could not read via rename)
+    ix = { at: 0, ino, msg: new Map<string, number>(), call: new Map<string, number>(), tok: new Map<string, number>(), spawn: new Map<string, string>(), spawnName: new Map<string, string>(), drop: new Map<number, number>(), live: [], liveSet: new Set<string>(), shown: new Set<string>() };
     IX.set(path, ix);
   }
   const cur = ix;
@@ -155,7 +157,11 @@ function cwdOf(slugDir: string): string {
 function slugOf(path: string): string { const i = path.lastIndexOf("/chats/"); return i >= 0 ? path.slice(0, i) : dirname(path); }
 // the filename carries only id.slice(0, 8): the full id is in the header (first line, cached once read)
 const hdrIds = new Map<string, string>();
-function header(path: string): Obj | null { const h = readText(path, 0, 4096); const nl = h.indexOf("\n"); return nl > 0 ? parseJson(h.slice(0, nl)) : null; }
+function header(path: string): Obj | null {
+  let h = readText(path, 0, 4096); let nl = h.indexOf("\n");
+  if (nl < 0 && h.length >= 4096) { h = readText(path, 0, 1048576); nl = h.indexOf("\n"); } // a migrated legacy header carries the summary
+  return nl > 0 ? parseJson(h.slice(0, nl)) : null;
+}
 function headerId(path: string): string {
   const hit = hdrIds.get(path); if (hit !== undefined) return hit;
   const o = header(path); const id = o ? str(o["sessionId"]) : "";
@@ -164,6 +170,12 @@ function headerId(path: string): string {
 }
 const pathOf = new Map<string, string>(); // session id → its file (spawnOf, subagent kind)
 function scan(add: AddFn): void {
+  const listed = new Set<string>();
+  const add2 = (p: string, id: string, parent: string, ar: boolean): void => { listed.add(p); add(p, id, parent, ar); };
+  scanRoots(add2);
+  for (const k of [...IX.keys()]) if (!listed.has(k)) IX.delete(k); // trashed or expired: forget its index
+}
+function scanRoots(add: AddFn): void {
   for (const root of roots()) for (const slug of listDir(root)) {
     const sd = join(root, slug); if (!cwdOf(sd)) continue;
     const cd = join(sd, "chats"); const names = listDir(cd);
@@ -194,7 +206,8 @@ function meta(s: Sess): void {
 function files(s: Sess): string[] {
   const out = [s.path]; if (s.parent) return out;
   const sd = slugOf(s.path); const cd = join(sd, "chats"); const id8 = "-" + s.id.slice(0, 8) + ".jsonl";
-  for (const f of listDir(cd)) { const p = join(cd, f); if (p !== s.path && f.startsWith("session-") && f.endsWith(id8) && headerId(p) === s.id) out.push(p); }
+  const own = basename(s.path) + "."; // gemini's .unreadable-<ts> backups and .tmp-<pid> leftovers
+  for (const f of listDir(cd)) { const p = join(cd, f); if (f.startsWith(own) || (p !== s.path && f.startsWith("session-") && f.endsWith(id8) && headerId(p) === s.id)) out.push(p); }
   for (const p of [join(cd, s.id), join(sd, "tool-outputs", "session-" + s.id), join(sd, s.id), join(sd, "logs", "session-" + s.id + ".jsonl")]) if (statSize(p) >= 0) out.push(p);
   return out; // never logs.json: every session of the project shares it
 }
@@ -223,9 +236,11 @@ function resultText(c: Obj): string {
 }
 // invoke_agent, list_directory, update_topic, activate_skill name their subject outside the common keys
 function callArg(name: string, a: Obj | null): string { const d = a ? str(a["agent_name"]) || str(a["dir_path"]) || str(a["objective"]) || str(a["title"]) || str(a["name"]) : ""; return d ? d : toolArg(name, a, ""); }
+// does this message (version) become a transcript event? (what parse below emits)
 function visible(m: Obj): boolean {
   const type = str(m["type"]); const c = m["content"];
-  if (type !== "user") return type !== "";
+  if (type === "gemini") return !!partsText(c, false) || !!partsText(c, true) || arr(m["thoughts"]).length > 0 || arr(m["toolCalls"]).length > 0;
+  if (type !== "user") return !!partsText(c, false);
   const t = partsText(c, false);
   return t ? !noise(t) : hasPart(c, "inlineData") || hasPart(c, "fileData");
 }
@@ -271,6 +286,10 @@ function busy(s: Sess): boolean {
 // per message: "<model>>200k" for prompts over 200k tokens, "<model>@2027" from 2027-01-01, where the table has them.
 function priceKey(md: string, input: number, iso: string): string {
   const p = price(md); if (!p) return md;
+  // prefix match prices -lite/-image/-tts variants as their base: only -preview/-latest/-exp/version suffixes share a price
+  let m = md.toLowerCase(); const sl = m.lastIndexOf("/"); if (sl >= 0) m = m.slice(sl + 1);
+  const rest = m.slice(p.p.length);
+  if (p.p.startsWith("gemini-") && rest && !/^-(preview|latest|exp|\d)/.test(rest)) return "?" + md; // unpriced
   let k = p.p; // the table entry the id matched (gemini-3.1-pro-preview → gemini-3.1-pro)
   if (iso >= "2027-01-01" && price(k + "@2027") !== price(k)) k += "@2027";
   if (input > 200000 && price(k + ">200k") !== price(k)) k += ">200k";

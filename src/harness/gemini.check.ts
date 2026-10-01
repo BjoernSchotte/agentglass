@@ -1,6 +1,6 @@
 // agentglass — self-check for the Gemini CLI adapter (normalizing source, scan, parse, usage): scriptc build src/harness/gemini.check.ts -o gc && ./gc
 // SPDX-License-Identifier: Apache-2.0
-import { openSync, writeSync, closeSync, mkdirSync, rmSync, appendFileSync, copyFileSync } from "node:fs";
+import { openSync, writeSync, closeSync, mkdirSync, rmSync, appendFileSync, copyFileSync, renameSync } from "node:fs";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
@@ -128,6 +128,26 @@ for (let k = 0; k <= bytes(FULL); k++) {
   ok("shrunk file re-indexed", sorted(r.k) === "hdr msg:m1", sorted(r.k));
 }
 // stat: bytes and mtime of the file
+// a file replaced by another (atomic rename, not smaller): the index starts over
+{
+  const p = DIR + "/repl.jsonl"; const q = DIR + "/repl.new";
+  write(p, L[0] + "\n" + L[2] + "\n"); const s = sess(p);
+  read(s, 0, bytes(L[0] + "\n" + L[2] + "\n"));
+  const nb = L[0] + "\n" + L[2].split("m1").join("n1") + "\n" + L[9] + "\n"; write(q, nb); renameSync(q, p);
+  const r = read(s, 0, bytes(nb));
+  ok("replaced file re-indexed", sorted(r.k) === "hdr msg:m3 msg:n1", sorted(r.k));
+}
+// drop counts cover messages that become events: an empty info note or a bare gemini message do not, until calls arrive
+{
+  const p = DIR + "/drop.jsonl";
+  const u = (id: string): string => "{\"id\":\"" + id + "\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"user\",\"content\":[{\"text\":\"go\"}]}";
+  const bare = (id: string, calls: string): string => "{\"id\":\"" + id + "\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\",\"content\":\"\",\"thoughts\":[]" + calls + "}";
+  const info = "{\"id\":\"i1\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"info\",\"content\":[{\"inlineData\":{\"data\":\"AA\"}}]}";
+  const t = [L[0], u("v1"), bare("b1", ""), info, "{\"$rewindTo\":\"v1\"}", u("v2"), bare("b2", ""), bare("b2", ",\"toolCalls\":[" + call("k1", "read_file", "{}") + "]"), "{\"$rewindTo\":\"v2\"}"].join("\n") + "\n";
+  write(p, t);
+  const ms = read(sess(p), 0, bytes(t)).k.filter((k: string) => k.startsWith("meta:")).join(" | ");
+  ok("drop counts: hidden messages not counted, a message with calls is", ms === "meta:rewound: 1 message dropped | meta:rewound: 2 messages dropped", ms);
+}
 { const st = src.stat(sess(P)); ok("stat size", !!st && st.size === bytes(FULL + PART + PART2), JSON.stringify(st)); }
 
 // ── scan / meta / spawnOf / files on a temp ~/.gemini (GEMINI_CLI_HOME, as gemini itself honors it) ──
@@ -142,6 +162,9 @@ for (let k = 0; k <= bytes(FULL); k++) {
   write(T + "/app/logs.json", "[]"); write(T + "/app/logs/session-" + A + ".jsonl", "{}\n");
   const spawnCall = "{\"id\":\"g1\",\"timestamp\":\"" + TS + "2.000Z\",\"type\":\"gemini\",\"content\":\"\",\"toolCalls\":[{\"id\":\"invoke_agent__call_1\",\"name\":\"invoke_agent\",\"args\":{\"agent_name\":\"codebase_investigator\",\"prompt\":\"summarize\"},\"status\":\"success\",\"timestamp\":\"" + TS + "8.000Z\",\"agentId\":\"" + SUB + "\"}]}\n";
   write(T + "/app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl", hdr(A, "main") + user + spawnCall);
+  write(T + "/app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl.unreadable-1790000000000", "x"); // gemini's backup of a file it could not read
+  const D = "dddddddd-0000-4000-8000-000000000004"; // a migrated legacy session: summary in a header longer than 4 KB
+  write(T + "/app/chats/session-2026-10-01T12-00-dddddddd.jsonl", "{\"sessionId\":\"" + D + "\",\"projectHash\":\"ab\",\"summary\":\"" + "s".repeat(9000) + "\",\"kind\":\"main\"}\n" + user);
   write(T + "/app/chats/" + A + "/" + SUB + ".jsonl", hdr(SUB, "subagent") + user);
   write(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl", hdr(B, "main") + user + user);
   write(T + "/app-1/chats/session-2026-10-01T11-00-bbbbbbbb.jsonl", hdr(B, "main")); // startup-only copy a resume leaves behind
@@ -154,7 +177,7 @@ for (let k = 0; k <= bytes(FULL); k++) {
   });
   ok("roots", gemini.roots().join(" ") === T, gemini.roots().join(" "));
   ok("scan: one entry per session, cwd dirs only, legacy and copies skipped", found.slice().sort().join(" | ") ===
-    "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl bbbbbbbb  | app/chats/aaaaaaaa-0000-4000-8000-000000000001/cccccccc-0000-4000-8000-000000000003.jsonl cccccccc aaaaaaaa | app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl aaaaaaaa ", found.slice().sort().join(" | "));
+    "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl bbbbbbbb  | app/chats/aaaaaaaa-0000-4000-8000-000000000001/cccccccc-0000-4000-8000-000000000003.jsonl cccccccc aaaaaaaa | app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl aaaaaaaa  | app/chats/session-2026-10-01T12-00-dddddddd.jsonl dddddddd ", found.slice().sort().join(" | "));
   const mA = byPath.get(T + "/app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl"); const mB = byPath.get(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl");
   const sub = byPath.get(T + "/app/chats/" + A + "/" + SUB + ".jsonl");
   const mt = gemini.meta;
@@ -166,7 +189,7 @@ for (let k = 0; k <= bytes(FULL); k++) {
     ok("spawnOf: the call carrying the agent id", !!sp && sp(sub) === "invoke_agent__call_1" && sp(mA) === "", sp ? sp(sub) : "none");
     const fl = gemini.files;
     const fs = fl ? fl(mA).map((f: string) => f.slice(T.length + 1)).sort().join(" ") : "";
-    ok("files: session + subagents + artifacts, never logs.json", fs === "app/" + A + " app/chats/" + A + " app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl app/logs/session-" + A + ".jsonl app/tool-outputs/session-" + A, fs);
+    ok("files: session + subagents + artifacts, never logs.json", fs === "app/" + A + " app/chats/" + A + " app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl.unreadable-1790000000000 app/logs/session-" + A + ".jsonl app/tool-outputs/session-" + A, fs);
     const fb = fl ? fl(mB).map((f: string) => f.slice(T.length + 1)).sort().join(" ") : "";
     ok("files: the startup-only copy goes too", fb === "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl app-1/chats/session-2026-10-01T11-00-bbbbbbbb.jsonl", fb);
     ok("files: a subagent is its file", fl ? fl(sub).join(" ") === sub.path : false, fl ? fl(sub).join(" ") : "");
@@ -235,6 +258,11 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   ok("cost: flash-lite is not priced as flash; -preview ids", near(l.cost, (1000 * 0.3 + 10 * 2.5 + 1000 * 0.5 + 10 * 3) / 1e6), String(l.cost));
   const u = acc([gm("2026-10-01T10:00:00.000Z", "gemini-9-flash", "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
   ok("cost: unknown model → unpriced tokens, not $0", u.cost === 0 && u.unk === 1010, u.cost + "/" + u.unk);
+  const tk = "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}";
+  const v = acc([gm("2026-10-01T10:00:00.000Z", "gemini-3.8-flash-lite", tk, ""), gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash-image", tk, "")]);
+  ok("cost: an unpriced variant is not priced as its base model", v.cost === 0 && v.unk === 2020, v.cost + "/" + v.unk);
+  const w = acc([gm("2026-10-01T10:00:00.000Z", "gemini-3.1-flash-lite-preview-06-17", tk, ""), gm("2026-10-01T10:00:00.000Z", "models/gemini-2.5-pro-001", tk, "")]);
+  ok("cost: -preview / version suffixes keep the base price", near(w.cost, (1000 * 0.25 + 10 * 1.5 + 1000 * 1.25 + 10 * 10) / 1e6) && w.unk === 0, w.cost + "/" + w.unk);
 }
 {
   const sh = "{\"id\":\"k1\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"npm test\"},\"status\":\"error\",\"timestamp\":\"2026-10-01T10:00:02.500Z\",\"result\":[{\"functionResponse\":{\"id\":\"k1\",\"name\":\"run_shell_command\",\"response\":{\"output\":\"fail\"}}}]}";
