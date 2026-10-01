@@ -173,6 +173,9 @@ builds with `git pull && ./build.sh`.
   `CHANGELOG.md` section from Conventional Commits (opens `$EDITOR`), commits, tags `v<version>` and
   pushes; the tag starts `release.yml` (4-platform build → draft → published when every asset is there
   → Homebrew formula). `--dry-run` previews. Fallback without a checkout: the **Release cut** workflow.
+- Notes link each entry's merged PR and end with a **Contributors** section (every commit or PR author
+  except `RELEASE_MAINTAINERS` / `RELEASE_MAINTAINER_NAMES` and bots), looked up with `gh`;
+  offline (`RELEASE_OFFLINE=1`) or without `gh` they fall back to git author names.
 - Dev releases run on their own (`dev-release.yml`, 02:43 UTC) or via *Run workflow*.
 - Secret `HOMEBREW_TAP_TOKEN`: a fine-grained PAT with **Actions: write** on
   `BjoernSchotte/homebrew-tap` (formula updates) and **Contents: write** on this repo (the Release

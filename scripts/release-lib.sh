@@ -20,15 +20,46 @@ last_stable_tag() {
   git tag --merged "${1:-HEAD}" -l 'v*' | grep -E "$_stable_re" | sed 's/^v//' | sort_versions | tail -1 | sed 's/^./v&/'
 }
 
+# who is not credited under Contributors: GitHub logins and git author names (comma-separated); bots ("[bot]") never are
+RELEASE_MAINTAINERS="${RELEASE_MAINTAINERS:-BjoernSchotte}"
+RELEASE_MAINTAINER_NAMES="${RELEASE_MAINTAINER_NAMES:-Björn Schotte}"
+
+# GitHub metadata for the commits in <range>, one line each: "<sha>\t<merged PR> <PR author>\t<commit author login>".
+# Prints nothing offline (RELEASE_OFFLINE=1) or without gh; a failed lookup leaves its fields empty (notes fall back to git names).
+_gh_meta() {
+  [ "${RELEASE_OFFLINE:-0}" = 1 ] && return 0
+  gh="${RELEASE_GH:-gh}"; command -v "$gh" >/dev/null 2>&1 || return 0
+  repo="${RELEASE_REPO:-${GITHUB_REPOSITORY:-BjoernSchotte/agentglass}}"
+  for sha in $(git log --no-merges --format=%H "$1"); do
+    pr=$("$gh" api "repos/$repo/commits/$sha/pulls" --jq 'map(select(.merged_at != null)) | first // empty | "\(.number) \(.user.login)"' 2>/dev/null) || pr=""
+    login=$("$gh" api "repos/$repo/commits/$sha" --jq '.author.login // ""' 2>/dev/null) || login=""
+    printf '%s\t%s\t%s\n' "$sha" "$pr" "$login"
+  done
+}
+
 # Markdown body for the commits in <from>..<to> (from may be empty = all history), grouped by Conventional Commit type.
 # Drops chore(release) and merges; a revert and the commit it reverts both drop out when both are in range.
+# With GitHub metadata, entries link their merged PR and a Contributors section credits everyone but the maintainers.
 changelog() {
   range="$2"; [ -n "$1" ] && range="$1..$2"
   brk=$(git log --no-merges --grep='BREAKING CHANGE' --format=%H "$range" | tr '\n' ' ')
-  git log --no-merges --format='%H%x09%s' "$range" | awk -v brk="$brk" '
+  meta=$(mktemp); _gh_meta "$range" > "$meta"
+  git log --no-merges --format='%H%x09%s%x09%an' "$range" | awk -v brk="$brk" -v meta="$meta" \
+    -v repo="${RELEASE_REPO:-${GITHUB_REPOSITORY:-BjoernSchotte/agentglass}}" -v mlog="$RELEASE_MAINTAINERS" -v mname="$RELEASE_MAINTAINER_NAMES" '
+    function credit(who, n) {
+      if (who == "" || who ~ /\[bot\]/ || (who in M)) return
+      if (!(who in C)) { C[who] = ""; order[++nc] = who }
+      if (n != "" && index(" " C[who] " ", " " n " ") == 0) C[who] = C[who] (C[who] == "" ? "" : " ") n
+    }
+    function key(w) { sub(/^@/, "", w); return tolower(w) } # alphabetical, @ ignored
+    function prlink(n) { return "[#" n "](https://github.com/" repo "/pull/" n ")" }
     BEGIN { FS = "\t"; n = split(brk, b, " "); for (i = 1; i <= n; i++) B[b[i]] = 1
-            name[1] = "Breaking changes"; name[2] = "Features"; name[3] = "Fixes"; name[4] = "Performance"; name[5] = "Refactoring & other"; name[6] = "Docs" }
-    { sha[NR] = $1; s[NR] = $2; seen[$2] = 1
+            n = split(mlog, b, ","); for (i = 1; i <= n; i++) M["@" b[i]] = 1
+            n = split(mname, b, ","); for (i = 1; i <= n; i++) M[b[i]] = 1
+            while ((getline l < meta) > 0) { split(l, f, "\t"); split(f[2], p, " "); PR[f[1]] = p[1]; PA[f[1]] = p[2]; AL[f[1]] = f[3] }
+            name[1] = "Breaking changes"; name[2] = "Features"; name[3] = "Fixes"; name[4] = "Performance"; name[5] = "Build & CI"
+            name[6] = "Refactoring & other"; name[7] = "Docs" }
+    { sha[NR] = $1; s[NR] = $2; an[NR] = $3; seen[$2] = 1
       if ($2 ~ /^Revert "/) { t = $2; sub(/^Revert "/, "", t); sub(/"$/, "", t); reverted[t] = 1; isrev[NR] = t } }
     END {
       for (i = 1; i <= NR; i++) {
@@ -43,13 +74,26 @@ changelog() {
           if (match(head, /\(.*\)/)) { scope = substr(head, RSTART + 1, RLENGTH - 2); head = substr(head, 1, RSTART - 1) }
           type = head
         }
-        sec = (bang || (sha[i] in B)) ? 1 : type == "feat" ? 2 : type == "fix" ? 3 : type == "perf" ? 4 : type == "docs" ? 6 : 5
-        out[sec] = out[sec] "- " (scope != "" ? "**" scope ":** " : "") text " (" substr(sha[i], 1, 7) ")\n"
+        sec = (bang || (sha[i] in B)) ? 1 : type == "feat" ? 2 : type == "fix" ? 3 : type == "perf" ? 4 : (type == "build" || type == "ci") ? 5 : type == "docs" ? 7 : 6
+        pr = PR[sha[i]]
+        out[sec] = out[sec] "- " (scope != "" ? "**" scope ":** " : "") text " (" substr(sha[i], 1, 7) (pr != "" ? ", " prlink(pr) : "") ")\n"
+        credit(AL[sha[i]] != "" ? "@" AL[sha[i]] : an[i], pr)
+        if (PA[sha[i]] != "") credit("@" PA[sha[i]], pr)
       }
       first = 1
-      for (k = 1; k <= 6; k++) if (out[k] != "") { if (!first) printf "\n"; printf "### %s\n\n%s", name[k], out[k]; first = 0 }
+      for (k = 1; k <= 7; k++) if (out[k] != "") { if (!first) printf "\n"; printf "### %s\n\n%s", name[k], out[k]; first = 0 }
       if (first) print "- No changes."
+      if (nc > 0) {
+        printf "\n### Contributors\n\n"
+        for (i = 2; i <= nc; i++) { w = order[i]; for (j = i - 1; j >= 1 && key(order[j]) > key(w); j--) order[j + 1] = order[j]; order[j + 1] = w }
+        for (i = 1; i <= nc; i++) {
+          w = order[i]; ln = ""; m = split(C[w], q, " ")
+          for (j = 1; j <= m; j++) ln = ln (j > 1 ? ", " : "") prlink(q[j])
+          print "- " w (ln != "" ? " (" ln ")" : "")
+        }
+      }
     }'
+  rc=$?; rm -f "$meta"; return $rc
 }
 
 # the "## <version>" section of CHANGELOG.md without its heading (leading/trailing blank lines trimmed)
