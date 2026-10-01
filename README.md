@@ -115,8 +115,8 @@ the next start. Your `prices.json` still wins. `agentglass --update-prices` fetc
 
 ## Install
 
-Prebuilt binaries for macOS (Apple Silicon, Intel) and Linux (x64, arm64; glibc 2.38+, e.g. Ubuntu
-24.04+, Debian 13+, Fedora 39+).
+Prebuilt binaries for macOS (Apple Silicon, Intel) and Linux (x64, arm64; glibc 2.36+, e.g. Debian 12+,
+Ubuntu 24.04+, Fedora 37+).
 
 **Homebrew**
 
