@@ -225,12 +225,12 @@ scan();
 ok("aged without a DB change: 2.x idle, all rows readable", !busy(sess(P2)) && end(sess(P2)) === 103, (busy(sess(P2)) ? "busy " : "idle ") + String(end(sess(P2))));
 ok("aged without a DB change: 1.x idle", !busy(sess(P1)), "busy");
 
-// ── no sqlite3: nothing listed, one warning, fast ──
+// ── no sqlite3 and no daemon: the rows read so far stay for the run (no flicker), one warning, fast ──
 process.env["AGENTGLASS_SQLITE3"] = "/bin/false";
 S.toast = "";
 let t0 = Date.now();
 scan(); scan();
-ok("no sqlite3: no sessions", added === 0, String(added));
+ok("no sqlite3: rows kept", added === 8, String(added));
 ok("no sqlite3: fast", Date.now() - t0 < 500, String(Date.now() - t0) + " ms");
 ok("no sqlite3: one warning", S.toast.indexOf("sqlite3") >= 0, S.toast);
 ok("no sqlite3: records empty", src.lines(sess(P2), 0, 99).lines.length === 0, "");
