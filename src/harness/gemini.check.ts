@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { openSync, writeSync, closeSync, mkdirSync, rmSync, appendFileSync, copyFileSync } from "node:fs";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { type Sess, newSess } from "../model/types.ts";
+import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
 import type { SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
@@ -128,6 +128,88 @@ for (let k = 0; k <= bytes(FULL); k++) {
 }
 // stat: bytes and mtime of the file
 { const st = src.stat(sess(P)); ok("stat size", !!st && st.size === bytes(FULL + PART + PART2), JSON.stringify(st)); }
+
+// ── scan / meta / spawnOf / files on a temp ~/.gemini (GEMINI_CLI_HOME, as gemini itself honors it) ──
+{
+  const HOMED = DIR + "/home"; process.env["GEMINI_CLI_HOME"] = HOMED;
+  const T = HOMED + "/.gemini/tmp";
+  const A = "aaaaaaaa-0000-4000-8000-000000000001"; const B = "bbbbbbbb-0000-4000-8000-000000000002"; const SUB = "cccccccc-0000-4000-8000-000000000003";
+  const hdr = (id: string, kind: string): string => "{\"sessionId\":\"" + id + "\",\"projectHash\":\"ab\",\"startTime\":\"" + TS + "0.000Z\",\"lastUpdated\":\"" + TS + "0.000Z\",\"kind\":\"" + kind + "\"}\n";
+  const user = "{\"id\":\"u1\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"user\",\"content\":[{\"text\":\"hi\"}]}\n";
+  for (const d of ["app/chats/" + A, "app/tool-outputs/session-" + A, "app/" + A + "/plans", "app/logs", "app-1/chats", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/chats", "bin"]) mkdirSync(T + "/" + d, { recursive: true });
+  write(T + "/app/.project_root", "/w/app\n"); write(T + "/app-1/.project_root", "/v/app");
+  write(T + "/app/logs.json", "[]"); write(T + "/app/logs/session-" + A + ".jsonl", "{}\n");
+  const spawnCall = "{\"id\":\"g1\",\"timestamp\":\"" + TS + "2.000Z\",\"type\":\"gemini\",\"content\":\"\",\"toolCalls\":[{\"id\":\"invoke_agent__call_1\",\"name\":\"invoke_agent\",\"args\":{\"agent_name\":\"codebase_investigator\",\"prompt\":\"summarize\"},\"status\":\"success\",\"timestamp\":\"" + TS + "8.000Z\",\"agentId\":\"" + SUB + "\"}]}\n";
+  write(T + "/app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl", hdr(A, "main") + user + spawnCall);
+  write(T + "/app/chats/" + A + "/" + SUB + ".jsonl", hdr(SUB, "subagent") + user);
+  write(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl", hdr(B, "main") + user + user);
+  write(T + "/app-1/chats/session-2026-10-01T11-00-bbbbbbbb.jsonl", hdr(B, "main")); // startup-only copy a resume leaves behind
+  write(T + "/app-1/chats/session-2026-10-01T09-00-bbbbbbbb.json", "{}"); // legacy whole-file JSON: out of scope
+  write(T + "/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl", hdr(A, "main") + user); // pre-0.29 copy
+  const found: string[] = []; const byPath = new Map<string, Sess>();
+  gemini.scan((path: string, id: string, parent: string, archived: boolean) => {
+    found.push(path.slice(T.length + 1) + " " + id.slice(0, 8) + " " + parent.slice(0, 8) + (archived ? " archived" : ""));
+    const se = newSess("gemini", id, path, archived); se.parent = parent; byPath.set(path, se);
+  });
+  ok("roots", gemini.roots().join(" ") === T, gemini.roots().join(" "));
+  ok("scan: one entry per session, cwd dirs only, legacy and copies skipped", found.slice().sort().join(" | ") ===
+    "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl bbbbbbbb  | app/chats/aaaaaaaa-0000-4000-8000-000000000001/cccccccc-0000-4000-8000-000000000003.jsonl cccccccc aaaaaaaa | app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl aaaaaaaa ", found.slice().sort().join(" | "));
+  const mA = byPath.get(T + "/app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl"); const mB = byPath.get(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl");
+  const sub = byPath.get(T + "/app/chats/" + A + "/" + SUB + ".jsonl");
+  const mt = gemini.meta;
+  if (mA && mB && sub && mt) {
+    mt(mA); mt(mB); mt(sub);
+    ok("meta: cwd from .project_root", mA.cwd === "/w/app" && mB.cwd === "/v/app" && sub.cwd === "/w/app", mA.cwd + " " + mB.cwd + " " + sub.cwd);
+    ok("meta: subagent kind = the tool that ran it", sub.kind === "codebase_investigator" && mA.kind === "", sub.kind + "/" + mA.kind);
+    const sp = gemini.spawnOf;
+    ok("spawnOf: the call carrying the agent id", !!sp && sp(sub) === "invoke_agent__call_1" && sp(mA) === "", sp ? sp(sub) : "none");
+    const fl = gemini.files;
+    const fs = fl ? fl(mA).map((f: string) => f.slice(T.length + 1)).sort().join(" ") : "";
+    ok("files: session + subagents + artifacts, never logs.json", fs === "app/" + A + " app/chats/" + A + " app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl app/logs/session-" + A + ".jsonl app/tool-outputs/session-" + A, fs);
+    const fb = fl ? fl(mB).map((f: string) => f.slice(T.length + 1)).sort().join(" ") : "";
+    ok("files: the startup-only copy goes too", fb === "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl app-1/chats/session-2026-10-01T11-00-bbbbbbbb.jsonl", fb);
+    ok("files: a subagent is its file", fl ? fl(sub).join(" ") === sub.path : false, fl ? fl(sub).join(" ") : "");
+  } else ok("scan found the sessions", false, found.join(" | "));
+  delete process.env["GEMINI_CLI_HOME"];
+}
+// ── parse + busy on the normalized stream ──
+function evs(ls: string[], s: Sess | null): Ev[] { const out: Ev[] = []; for (const l of ls) { const o = parseJson(l); if (o) gemini.parse(o, out, s); } return out; }
+{
+  const s = sess(P);
+  const e = evs(src.lines(s, 0, bytes(FULL)).lines, s);
+  const kinds = e.map((v: Ev) => v.kind + (v.kind === "meta" ? "(" + v.text + ")" : "")).join(" ");
+  ok("parse: event kinds", kinds === "user thinking assistant tool result tool result user meta(rewound: 1 message dropped) assistant tool result meta(history rewritten: 6 messages dropped)", kinds);
+  ok("parse: title and model", s.title === "Todo app ✓" && s.model === "gemini-2.5-flash", s.title + "/" + s.model);
+  const u = e[0]; ok("parse: user text", u.text === "build a todo app — schön ✓", u.text);
+  ok("parse: thinking = subject: description", e[1].text === "Plan: two files", e[1].text);
+  const t = e[3]; const r = e[4];
+  ok("parse: tool name\\0arg, paired with its result", t.text === "write_file\u0000a.js" && t.id === "c1" && r.id === "c1" && r.text === "ok ü", t.text + "/" + t.id + " " + r.text + "/" + r.id);
+  ok("parse: shell arg", e[5].text === "run_shell_command\u0000node --check a.js", e[5].text);
+}
+{
+  const g = (extra: string): string => "{\"id\":\"x\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\"" + extra + "}";
+  const lines = [
+    g(",\"content\":[{\"text\":\"hmm\",\"thought\":true},{\"text\":\"Answer\"},{\"functionCall\":{\"name\":\"ls\"}}]"), // checkpoint form
+    "{\"id\":\"y\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"user\",\"content\":\"/rewind\"}",
+    "{\"id\":\"y2\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"user\",\"content\":{\"text\":\"single part\"}}",
+    "{\"id\":\"y3\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"user\",\"content\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"AAAA\"}}]}",
+    "{\"id\":\"z\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"error\",\"content\":\"quota exceeded\"}",
+    "{\"id\":\"z2\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"info\",\"content\":\"Request cancelled.\"}",
+    g(",\"toolCalls\":[{\"id\":\"k\",\"name\":\"read_file\",\"args\":{\"file_path\":\"a\"},\"status\":\"error\",\"result\":[{\"functionResponse\":{\"id\":\"k\",\"name\":\"read_file\",\"response\":{\"error\":\"ENOENT\"}}}]},{\"id\":\"k2\",\"name\":\"list_directory\",\"args\":{\"dir_path\":\"src\"},\"status\":\"cancelled\",\"resultDisplay\":\"stopped\"}]"),
+  ];
+  const e = evs(lines, null);
+  ok("parse: checkpoint content parts, noise, single part, image, error/info, tool status", e.map((v: Ev) => v.kind + ":" + v.text.split("\u0000").join("|")).join(" / ") ===
+    "thinking:hmm / assistant:Answer / user:single part / user:[image] / meta:[error] quota exceeded / meta:Request cancelled. / tool:read_file|a / result:[error] ENOENT / tool:list_directory|src / result:[cancelled] stopped", e.map((v: Ev) => v.kind + ":" + v.text.split("\u0000").join("|")).join(" / "));
+  const ts = sess(P); evs(["{\"$title\":\"{\\n  \\\"ExplorationTrace\\\": []}\"}"], ts);
+  ok("parse: a subagent's JSON report is no title", ts.title === "", ts.title);
+  const bz = (ks: string[]): boolean => { const s = sess(P); s.evs = ks.map((k: string) => ({ kind: k, text: "", ts: "", id: "", full: "" })); const f = gemini.busy; return !!f && f(s); };
+  ok("busy: prompt", bz(["assistant", "user"]), "idle");
+  ok("busy: tool result (the model answers next)", bz(["user", "tool", "result"]), "idle");
+  ok("busy: thinking only (its tool calls are written on completion)", bz(["user", "thinking"]), "idle");
+  ok("busy: answer", !bz(["user", "tool", "result", "assistant"]), "busy");
+  ok("busy: error/cancel", !bz(["user", "meta"]), "busy");
+  ok("busy: nothing", !bz([]), "busy");
+}
 
 rmSync(DIR, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "gemini: all checks passed");
