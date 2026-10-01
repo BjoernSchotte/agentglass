@@ -37,7 +37,8 @@ const rows = new Map<string, Row>(); // path ("<db>#<id>") → row
 let tables = new Set<string>();
 let dbKey = ""; // db + db-wal size/mtime at the last successful query: unchanged → no query
 let failedAt = 0; let warned = false;
-let sqlOk = false; // the last sqlite3 read worked
+let sqlOk = false; // SQLite is the transport: the last read worked, or failed fewer than SQL_FAILS times in a row since one did
+let sqlFails = 0; const SQL_FAILS = 3; // a busy DB fails a read now and then: no reason to re-read every session over HTTP
 let mode = ""; // the transport the rows come from: "seq" (SQLite), "idx" (HTTP); "" = none yet (SessionSource.epoch)
 let daemonUp = false; // the 2.x daemon (service.json pid) is alive: without it a leftover time_suspended means nothing
 let notDaemon = 0; // the service.json pid is alive but, per the process table, no OpenCode process (recycled after a crash)
@@ -179,8 +180,12 @@ function scan(add: AddFn): void {
   if (have && sqliteBin()) { // probe cached
     const k = db + "|" + fileKey(db) + "|" + fileKey(db + "-wal");
     if (k !== dbKey && Date.now() - failedAt > 30000) { // a failed query backs off: never a 3 s stall on every tick
-      sqlOk = load(db);
-      if (sqlOk) dbKey = k; else failedAt = Date.now();
+      if (load(db)) { dbKey = k; sqlOk = true; sqlFails = 0; }
+      else {
+        failedAt = Date.now(); sqlFails++;
+        if (mode !== "seq" || sqlFails >= SQL_FAILS) sqlOk = false;
+        else warnOnce("OpenCode: reading " + db + " with sqlite3 failed");
+      }
     }
     if (sqlOk) m = "seq";
   } else { sqlOk = false; dbKey = ""; }

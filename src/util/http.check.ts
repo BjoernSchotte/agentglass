@@ -16,6 +16,7 @@ const r = getJson("http://127.0.0.1:1/api/info", "opencode", "s3cr\"et\\x");
 ok("body", !!r && r["ok"] === 1, JSON.stringify(r));
 const argv = readFileSync(dir + "/argv", "utf8"); const stdin = readFileSync(dir + "/stdin", "utf8");
 ok("password not in argv", argv.indexOf("s3cr") < 0 && argv.indexOf("-K -") >= 0, argv);
+ok("no ~/.curlrc, no proxy", argv.startsWith("-q ") && argv.indexOf("--noproxy *") >= 0, argv);
 ok("config on stdin, escaped", stdin === "url = \"http://127.0.0.1:1/api/info\"\nuser = \"opencode:s3cr\\\"et\\\\x\"\n", stdin);
 // --fail: an HTTP error exits 22 → null
 const fail = dir + "/curl-fail";

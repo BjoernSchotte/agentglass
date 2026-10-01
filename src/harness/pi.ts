@@ -217,7 +217,7 @@ function usage(a: Acc, l: string): void {
       // MCP (native and pi-mcp-adapter): the result names server and tool → one row per real tool, whatever the call was named;
       // adapter housekeeping (search, describe, status, …) stays under its proxy tool
       const srv = det ? str(det["server"]) : ""; const tl = det ? str(det["tool"]) : ""; const mode = det ? str(det["mode"]) : "";
-      if (srv && tl && (mode === "" || mode === "call")) retool(a, p, "mcp__" + srv + "__" + tl);
+      if (srv && tl && (mode === "" || mode === "call")) retool(a, p, "mcp__" + mcpName(srv) + "__" + mcpName(tl));
       const derr = det ? str(det["error"]) : ""; // adapters < 2.11 leave isError false on failed calls
       done(p, t > 0 && p.t > 0 ? t - p.t : -1, m["isError"] === true || derr === "tool_error" || derr === "call_failed", blockText(m["content"]).length, id, []);
     }
@@ -242,6 +242,8 @@ function usage(a: Acc, l: string): void {
     callStats(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["arguments"]), iso, isoMs(iso));
   }
 }
+// the name pi ≥ 0.99.2 gives the tool (its direct and nested calls already carry it): one row whatever named the call
+function mcpName(n: string): string { return n.replace(/[^A-Za-z0-9_]/g, "_"); }
 // a call nested in a script: status ok | error | unfinished/running/cancelled (no duration); inp null = arguments dropped
 interface Nested { id: string; name: string; inp: Obj | null; ms: number; status: string; error: string }
 // pi ≥ 0.99 message.nestedCalls (any tool using ctx.executeTool), else codemode's own details.calls, else pi-mcp-adapter mcpScript

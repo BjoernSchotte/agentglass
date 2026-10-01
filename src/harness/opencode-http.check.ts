@@ -137,6 +137,13 @@ ok("sqlite3 back: epoch seq", epochOf(sess(P2)) === "seq", epochOf(sess(P2)));
 const sc = cost(sess(P2)); const scc = cost(sess(C2));
 ok("same usage over both transports (parent)", sc.inTok === hc.inTok && sc.outTok === hc.outTok && Math.abs(sc.cost - hc.cost) < 1e-9 && sc.tools === hc.tools && sc.add === hc.add, sc.inTok + "/" + hc.inTok + " " + sc.cost + "/" + hc.cost);
 ok("same usage over both transports (subagent)", scc.inTok === hcc.inTok && Math.abs(scc.cost - hcc.cost) < 1e-9, scc.inTok + "/" + hcc.inTok);
+// one failed sqlite3 read (DB busy) is no reason to switch transport: the SQLite rows stay, nothing is re-read
+const flaky = dir + "/flaky.sh"; writeFileSync(flaky, "#!/bin/sh\n[ \"$1\" = -version ] && exit 0\nexit 1\n"); chmodSync(flaky, 493);
+const nSql = added;
+process.env["AGENTGLASS_SQLITE3"] = flaky;
+execFileSync("touch", [db]);
+scan();
+ok("a failing sqlite3 read keeps SQLite", epochOf(sess(P2)) === "seq" && added === nSql && nSql === 4, epochOf(sess(P2)) + " " + added);
 // and back to HTTP (sqlite3 removed again)
 process.env["AGENTGLASS_SQLITE3"] = "/nonexistent";
 scan();
