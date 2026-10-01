@@ -134,6 +134,12 @@ for (const id of ["P", "K", "C"]) { const s = found.get(id); mt++; if (s && !s.p
 const lk = linkByCwd([{ pid: 42, h: "pi", cwd: "/w" }], live);
 const kp = found.get("K");
 ok("pid goes to the newest unparented session", !!kp && lk.get(kp.path) === 42 && lk.size === 1, String(lk.size));
+// a run whose session.jsonl has no header yet is not listed under a made-up id; it shows up with its own id once written
+mkdirSync(PB + "/r2/run-0", { recursive: true }); writeFileSync(PB + "/r2/run-0/session.jsonl", "");
+const ids2 = (): string[] => { const o: string[] = []; scanM((path: string, id: string, parent: string, archived: boolean) => { if (path.indexOf("/r2/") >= 0) o.push(id + "<" + parent + (archived ? "!" : "")); }); return o; };
+ok("headerless run not listed", ids2().length === 0, ids2().join(","));
+writeFileSync(PB + "/r2/run-0/session.jsonl", hdr("X2", ""));
+ok("listed once its header is written", ids2().join(",") === "X2<P", ids2().join(","));
 
 // ── spawnOf (spec decision 8) ──
 const xs = found.get("X"); const cs = found.get("C"); const ts = found.get("T");

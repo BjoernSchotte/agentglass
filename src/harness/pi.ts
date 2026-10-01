@@ -30,9 +30,11 @@ function header(path: string): Obj | null {
 }
 // subagent files of the pi-subagents packages carry their id only in the header (run-<i>/session.jsonl): read once per path
 const hdrIds = new Map<string, string>();
+// "" = no header yet (not cached: the next scan looks again)
 function headerId(path: string, f: string): string {
-  let id = hdrIds.get(path);
-  if (id === undefined) { const o = header(path); id = (o ? str(o["id"]) : "") || (f ? fileId(f) : path); hdrIds.set(path, id); }
+  const hit = hdrIds.get(path); if (hit !== undefined) return hit;
+  const o = header(path); const id = (o ? str(o["id"]) : "") || (f ? fileId(f) : "");
+  if (id) hdrIds.set(path, id);
   return id;
 }
 // one dir of sessions; a session's sibling dir <base>/ holds its subagents: tasks/*.jsonl (@gotgenes/pi-subagents),
@@ -51,7 +53,7 @@ function scanDir(dir: string, add: AddFn): void {
       for (const r of listDir(ed)) {
         if (!r.startsWith("run-") || listDir(join(ed, r)).indexOf("session.jsonl") < 0) continue;
         const p = join(ed, r, "session.jsonl");
-        add(p, headerId(p, ""), pid, false);
+        const id = headerId(p, ""); if (id) add(p, id, pid, false); // listed under its real id once the header is there
       }
     }
   }
