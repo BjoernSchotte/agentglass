@@ -12,7 +12,7 @@ import { PRICES_SIG } from "./pricing.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-const VERSION = 4; // 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+const VERSION = 5; // 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 const DIR = join(HOME, ".agentglass", "cache");
 const FILE = join(DIR, "ledger.json");
 const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset (a message's lines are adjacent)
@@ -53,7 +53,7 @@ function accOut(a: Acc): Obj {
   const days: Obj = {};
   for (const k of [...a.days.keys()]) { const d = a.days.get(k); if (d) days[k] = dayOut(d); }
   return {
-    off: a.off, skip: a.skip, model: a.model, ids: [...a.ids].slice(-KEEP_IDS), x: a.x, xM: a.xM,
+    off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids].slice(-KEEP_IDS), x: a.x, xM: a.xM,
     t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del], days,
   };
 }
@@ -66,7 +66,7 @@ function accIn(o: Obj): Acc {
   const dd = obj(o["days"]);
   if (dd) for (const k of Object.keys(dd)) { const d = obj(dd[k]); if (d) days.set(k, dayIn(d)); }
   return {
-    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), x: nums(o["x"]), xM: num(o["xM"]),
+    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), ep: str(o["ep"]), x: nums(o["x"]), xM: num(o["xM"]),
     inTok: at(0), outTok: at(1), cr: at(2), cw: at(3), cost: at(4), unk: at(5), tools: at(6), add: at(7), del: at(8),
   };
 }

@@ -4,7 +4,7 @@ export type Harness = string; // a registered adapter id (src/harness/index.ts)
 export interface Ev { kind: string; text: string; ts: string; id: string; full: string } // id pairs tool call ↔ result; full = untruncated detail ("@file:" = load lazily)
 export interface Sess {
   h: Harness; id: string; path: string; cwd: string; title: string; prompt: string; branch: string; model: string;
-  mtime: number; size: number; headDone: boolean; tailSize: number; evs: Ev[]; pid: number; status: string; name: string; archived: boolean;
+  mtime: number; size: number; ep: string; headDone: boolean; tailSize: number; evs: Ev[]; pid: number; status: string; name: string; archived: boolean;
   parent: string; kind: string; // subagents: parent session id + agent type/role ("" for top-level sessions)
   subs: Sess[]; last: number; depth: number; // derived per buildView: children, newest mtime across self + children, tree depth
   // filled by feature modules via H.enrich; cost < 0 = unknown, stuck "" = fine
@@ -18,7 +18,7 @@ export interface Proc {
 
 export function newSess(h: Harness, id: string, path: string, archived: boolean): Sess {
   return {
-    h, id, path, cwd: "", title: "", prompt: "", branch: "", model: "", mtime: 0, size: 0, headDone: false, tailSize: -1, evs: [], pid: 0, status: "", name: "", archived, parent: "", kind: "", subs: [], last: 0, depth: 0,
+    h, id, path, cwd: "", title: "", prompt: "", branch: "", model: "", mtime: 0, size: 0, ep: "", headDone: false, tailSize: -1, evs: [], pid: 0, status: "", name: "", archived, parent: "", kind: "", subs: [], last: 0, depth: 0,
     inTok: 0, outTok: 0, cacheRTok: 0, cacheWTok: 0, cost: -1, tools: 0, linesAdd: 0, linesDel: 0, attention: false, stuck: "",
   };
 }

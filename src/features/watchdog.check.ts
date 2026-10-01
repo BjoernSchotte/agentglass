@@ -49,7 +49,7 @@ tick(); eq("first sight records only", String(fs.attention), "false");
 fs.evs = [ev("meta", "turn started"), ev("assistant", "done"), ev("meta", "turn complete")];
 tick(); eq("turn finished raises", String(fs.attention), "true");
 tick(); eq("stays raised", String(fs.attention), "true");
-S.tv = { s: fs, evs: [], off: 0, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: 0, lexp: false, cur: 0, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+S.tv = { s: fs, evs: [], off: 0, ep: "", scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: 0, lexp: false, cur: 0, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
 tick(); eq("transcript open clears", String(fs.attention), "false");
 S.tv = null;
 fs.evs = [ev("user", "go"), ev("meta", "turn started"), call, call, call];

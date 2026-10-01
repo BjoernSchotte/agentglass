@@ -4,7 +4,7 @@ import { writeSync } from "node:fs";
 import { H, complete, screenOut } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
-import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf } from "../harness/index.ts";
+import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf } from "../harness/index.ts";
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
@@ -132,6 +132,7 @@ function emitEv(s: Sess, e: Ev): void {
 function watch(o: Opts): void {
   discover();
   const off = new Map<string, number>(); // path → next unread byte
+  const eps = new Map<string, string>(); // path → the source's cursor epoch off counts in
   const headed = new Set<string>();
   const live = new Map<string, number>(); // path → pid, to report appear/disappear
   for (const s of sessions.values()) {
@@ -161,8 +162,8 @@ function watch(o: Opts): void {
       const src = sourceOf(s.h);
       const st = src.stat(s);
       if (!st) continue;
-      const size = st.size;
-      if (size < at) { off.set(s.path, size); continue; } // truncated/rewritten: resync at the end
+      const size = st.size; const ep = epochOf(s); const was = eps.get(s.path); eps.set(s.path, ep);
+      if (size < at || (was !== undefined && was !== ep)) { off.set(s.path, size); continue; } // truncated/rewritten/other cursor: resync at the end
       if (size === at) continue;
       if (!headed.has(s.path)) { headed.add(s.path); if (!s.headDone) loadHead(s); loadTail(s); } // title/cwd for the output
       const r = src.lines(s, at, size);

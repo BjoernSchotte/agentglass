@@ -4,7 +4,7 @@ import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home } from "../
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
 import { H } from "../../hooks.ts";
-import { harnessOf, sourceOf, window, parseEvents } from "../../harness/index.ts";
+import { harnessOf, sourceOf, window, parseEvents, epochOf } from "../../harness/index.ts";
 import { titleOf, subActive, current } from "../../model/sessions.ts";
 import { openDetail } from "../../ui/detail.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
@@ -34,7 +34,7 @@ function loadTV(s: Sess): TV {
   const r = src.lines(s, src.align(s, Math.max(0, size - window(src, 6291456))), size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
-  return { s, evs, off: r.next, scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
 }
 // the parent's tool call that spawned subagent s, if the harness records it
 function spawnOf(s: Sess): string { const f = harnessOf(s.h).spawnOf; return f ? f(s) : ""; }
@@ -74,6 +74,7 @@ function refresh(): void {
   G.tick++;
   if (G.tick % 4) return;
   if (r.subs.length !== G.nsubs) { load(r); rebuild(); return; }
+  for (const t of G.tvs) if (epochOf(t.s) !== t.ep) { load(r); rebuild(); return; } // a source switched transport: start over
   let grew = false;
   for (const t of G.tvs) {
     const src = sourceOf(t.s.h);

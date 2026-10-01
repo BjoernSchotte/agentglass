@@ -2,6 +2,8 @@
 import { openSync, writeSync, closeSync, mkdirSync } from "node:fs";
 import { newSess } from "../model/types.ts";
 import { FILE_SOURCE } from "./source.ts";
+import { accOf } from "../features/usage/ledger.ts";
+import { restat } from "../model/sessions.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const dir = "/tmp/agentglass-source-check"; mkdirSync(dir, { recursive: true });
@@ -29,5 +31,16 @@ const s3 = newSess("claude", "w", p3, false);
 ok("align across chunks to EOF", FILE_SOURCE.align(s3, 100) === 70008, String(FILE_SOURCE.align(s3, 100)));
 ok("nothing new", FILE_SOURCE.lines(s, 16, 22).lines.length === 0 && FILE_SOURCE.lines(s, 16, 22).next === 16, "");
 ok("missing file", FILE_SOURCE.stat(newSess("claude", "y", dir + "/nope.jsonl", false)) === null, "");
+// cursor epoch (SessionSource.epoch): same size, other cursor meaning → the ledger and the loaded tail start over
+const se = newSess("opencode", "e", dir + "/e#1", false);
+restat(se, 10, 1, "a"); se.headDone = true; se.tailSize = 10; se.evs.push({ kind: "user", text: "x", ts: "", id: "", full: "" });
+const a1 = accOf(se); a1.off = 10; a1.tools = 3;
+ok("unchanged epoch keeps the account", accOf(se) === a1, "");
+restat(se, 10, 2, "a");
+ok("unchanged epoch keeps the tail", se.tailSize === 10 && se.headDone && se.evs.length === 1, String(se.tailSize));
+restat(se, 10, 3, "b");
+const a2 = accOf(se);
+ok("epoch change: fresh account", a2 !== a1 && a2.off === 0 && a2.tools === 0 && a2.ep === "b", a2.ep);
+ok("epoch change: tail and head reload", se.tailSize === -1 && !se.headDone && se.evs.length === 0, String(se.tailSize));
 console.log(bad ? bad + " failed" : "source: all checks passed");
 process.exit(bad ? 1 : 0);

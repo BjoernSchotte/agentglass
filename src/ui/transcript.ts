@@ -4,8 +4,8 @@ import { width, clean, fit, wrap, fitStyled, fillTo, localHM, bytes, home, numAt
 import type { Ev, Sess } from "../model/types.ts";
 import { S, say, type TV } from "../state.ts";
 import { enrich } from "../hooks.ts";
-import { parseEvents, sourceOf, window } from "../harness/index.ts";
-import { titleOf, parentOf, subActive, activeSubs } from "../model/sessions.ts";
+import { parseEvents, sourceOf, window, epochOf } from "../harness/index.ts";
+import { titleOf, parentOf, subActive, activeSubs, restat } from "../model/sessions.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, spin, scrollbar } from "./screen.ts";
 
@@ -47,7 +47,8 @@ export function renderTranscript(): void {
   enrich(s);
   // incremental read
   const src = sourceOf(s.h);
-  const st = src.stat(s); if (st) { s.size = st.size; s.mtime = st.mtime; } // else gone
+  const st = src.stat(s); if (st) restat(s, st.size, st.mtime, epochOf(s)); // else gone
+  if (s.ep !== t.ep) tvStart(t); // the source switched transport: its cursor means something else now
   if (s.size > t.off) {
     const r = src.lines(s, t.off, Math.min(s.size, t.off + window(src, 16777216)));
     for (const l of r.lines) parseEvents(s.h, l, t.evs, s);
@@ -97,15 +98,20 @@ export function moveCur(t: TV, d: number, vh: number): void {
   if (d > 0 && t.cur === n - 1) t.follow = true;
 }
 export function openTranscript(s: Sess): void {
-  const src = sourceOf(s.h);
-  const start = Math.max(0, s.size - window(src, 6291456));
-  const t: TV = { s, evs: [], off: start, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+  const t: TV = { s, evs: [], off: 0, ep: s.ep, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+  tvStart(t);
   S.tv = t;
+  S.mode = "transcript";
+}
+// (re)start reading at the last 6 MB
+function tvStart(t: TV): void {
+  const s = t.s; const src = sourceOf(s.h);
+  const start = Math.max(0, s.size - window(src, 6291456));
+  t.evs = []; t.off = start; t.ep = s.ep; t.ln = -1;
   if (start > 0) { // skip the partial first line
     t.off = src.align(s, start);
     t.evs.push({ kind: "meta", text: "showing last " + bytes((s.size - start) * src.unit) + " of " + bytes(s.size * src.unit), ts: "", id: "", full: "" });
   }
-  S.mode = "transcript";
 }
 export function cycleSub(dir: number): void {
   const tv = S.tv;
