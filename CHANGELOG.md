@@ -2,6 +2,43 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.2
+
+### Features
+
+- **gemini:** tokens, cost and tool stats; built-in Gemini prices (56071ae, [#8](https://github.com/BjoernSchotte/agentglass/pull/8))
+- **gemini:** sessions, subagents, transcript, busy and trash (b536bbc, [#8](https://github.com/BjoernSchotte/agentglass/pull/8))
+- **gemini:** normalizing source — upserts, rewinds and checkpoints become an append-only stream (1ae13af, [#8](https://github.com/BjoernSchotte/agentglass/pull/8))
+- **gemini:** register the Gemini CLI adapter and detect its processes (6d3d614, [#8](https://github.com/BjoernSchotte/agentglass/pull/8))
+- **opencode:** read sessions over the service daemon's HTTP API when sqlite3 is unavailable (dfb3a51, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **util:** JSON GET through the curl CLI, credentials via stdin (a96557c, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **harness:** SessionSource cursor epoch — readers and ledger reset when it changes (5b7fa59, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **pi:** link subagents to their spawning call, count --no-session subagent cost (045ad52, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **pi:** find subagent sessions of the pi-subagents packages and nest them (e153dbe, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **pi:** transcript shows codemode code, MCP proxy targets and nested calls (93ae4a4, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **pi:** count tool calls nested in codemode and mcpScript (76ad511, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **pi:** MCP calls under mcp__<server>__<tool>, adapter errors count (0d5c36f, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+
+### Fixes
+
+- **procs:** node flags with a separate value are not the script (426e94b, [#9](https://github.com/BjoernSchotte/agentglass/pull/9))
+- **pricing:** a prices.json price replaces the built-in tiers it does not name (fd89fe4, [#9](https://github.com/BjoernSchotte/agentglass/pull/9))
+- **gemini:** review — replaced files re-indexed, unpriced variants, drop counts, trash leftovers (5a5d42c, [#8](https://github.com/BjoernSchotte/agentglass/pull/8))
+- **gemini:** finished subagents idle, drop counts of visible messages, tool subjects (4fcb32c, [#8](https://github.com/BjoernSchotte/agentglass/pull/8))
+- **opencode,pi:** busy set read after the messages, revert-safe refetch, no made-up subagent ids (ae1fc08, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **pi,opencode:** one row per MCP tool, curl ignores curlrc/proxy, sqlite3 hiccups keep SQLite (42cf41c, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+
+### Refactoring & other
+
+- **usage:** retool primitive; pi records calls through one helper (156a75b, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+
+### Docs
+
+- Gemini CLI in the README (aba9f42, [#8](https://github.com/BjoernSchotte/agentglass/pull/8))
+- pi MCP and subagents, OpenCode without sqlite3 (5b7464a, [#7](https://github.com/BjoernSchotte/agentglass/pull/7))
+- **specs:** gemini — observed initial $set.messages and headless trust check; decisions recorded (fcd07ec)
+- **specs:** pi MCP + pi subagents + OpenCode HTTP reader; Gemini CLI harness — specs and implementation plans (a9d3109)
+
 ## 2026.10.1
 
 ### Features
