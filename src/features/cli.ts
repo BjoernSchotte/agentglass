@@ -48,7 +48,8 @@ ${table(OPTS, col)}
   plus live|exit when an agent process appears or disappears
 
 OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
-  without it they are not listed (a warning says so)
+  without it, 2.x sessions come from a running \`opencode service\` over HTTP with curl (AGENTGLASS_CURL); with neither
+  they are not listed (a warning says so)
 `;
 }
 

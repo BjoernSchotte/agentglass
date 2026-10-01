@@ -228,6 +228,7 @@ export AGENTGLASS_FX="fx"
 export AGENTGLASS_PI="pi --model sonnet"
 export AGENTGLASS_OPENCODE="opencode"
 export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with the sqlite3 CLI
+export AGENTGLASS_CURL="/opt/bin/curl"         # … or, without sqlite3, over the OpenCode service's HTTP API with curl
 export AGENTGLASS_KIRO="kiro-cli"
 ```
 
@@ -238,7 +239,7 @@ export AGENTGLASS_KIRO="kiro-cli"
 | ✻ **Claude Code** | `~/.claude/projects` | session registry | `subagents/` | ✔ |
 | >_ **Codex** | `~/.codex/sessions` | open rollout (`lsof` / `/proc`) | `parent_thread_id` | ✔ |
 | ▲ **fx** | `~/.fx/sessions` | open event log (`lsof` / `/proc`) | `subagent/owner.json` | ✔ |
-| π **pi** | `~/.pi/agent/sessions` | process cwd = session cwd | – | ✔ |
+| π **pi** | `~/.pi/agent/sessions` | process cwd = session cwd | pi-subagents packages | ✔ |
 | ▣ **OpenCode** | `~/.local/share/opencode/opencode.db` | `service.json` daemon (v2) · process cwd (1.x) | `parent_id` | ✔ |
 | ◇ **Kiro** | `~/.kiro/sessions/cli` | `<id>.lock` pid | `parent_session_id` | ✔ |
 
@@ -252,10 +253,17 @@ Notes:
 
 - **pi**: honors `PI_CODING_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR` and `sessionDir` in pi's `settings.json`.
   pi has no session registry, so a session is live when a pi process runs in its working directory.
-  Cost comes from pi's own `usage.cost`.
+  Cost comes from pi's own `usage.cost`. MCP calls (pi ≥ 0.99 native MCP, also inside `codemode` scripts, and the
+  `pi-mcp-adapter` extension) show in Stats as `mcp__<server>__<tool>`, grouped per server; tool calls made inside
+  `codemode`/`mcpScript` scripts count like top-level calls (lines, files, shell programs) and show as `↳` lines in the
+  transcript. Subagent sessions of `@tintinweb/pi-subagents`, `pi-subagents` and `@gotgenes/pi-subagents` are nested
+  under their parent and linked to the spawning call in the call graph (not for `@gotgenes`, which keeps that link in
+  memory); a `/fork` stays a session of its own.
 - **OpenCode** (2.x and 1.2–1.18): sessions are read from the SQLite file with the `sqlite3` CLI
-  (`OPENCODE_DB` picks another file, `AGENTGLASS_SQLITE3` another binary). Without `sqlite3`, OpenCode
-  sessions don't show and a warning appears. Live detection uses the v2 daemon's
+  (`OPENCODE_DB` picks another file, `AGENTGLASS_SQLITE3` another binary). Without `sqlite3` (or when it fails),
+  2.x sessions come from the running `opencode service` daemon's HTTP API through `curl` (read-only, found via
+  `service.json`; the password goes to curl on stdin only; agentglass never starts the daemon). Over HTTP, `/`
+  full-text search matches session titles only. With neither, OpenCode sessions don't show and a warning appears. Live detection uses the v2 daemon's
   `~/.local/state/opencode/service.json` plus `time_suspended`, and the process working directory for
   1.x TUIs. `D` (trash) is not available for OpenCode.
 
@@ -270,6 +278,8 @@ adapter ([`fx.ts`](src/harness/fx.ts)), register it in `HARNESSES`
 ```sh
 scriptc build src/harness/harness.check.ts -o hc && ./hc   # registry + golden samples for every adapter
 scriptc build src/harness/opencode.check.ts -o oc && ./oc  # OpenCode: SQLite rows, subagents, live detection
+scriptc build src/harness/opencode-http.check.ts -o och && ./och  # OpenCode over the service HTTP API (fake curl)
+scriptc build src/harness/pi.check.ts -o pc && ./pc        # pi: MCP, nested calls, subagent sessions
 ```
 
 The list, filters, badges, ticker, Stats rows, `--harness`, help, full-text search, trash and live
