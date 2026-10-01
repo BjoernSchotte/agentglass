@@ -23,12 +23,16 @@ const filePid = new Map<string, number>(); // open transcript → pid (HarnessAd
 const registry = new Map<string, Live>(); // "<harness>:<session id>" → entry (HarnessAdapter.liveRegistry)
 const daemonLive = new Map<string, Live[]>(); // harness id → its registry, for harnesses whose registry is a shared daemon
 
+// node flags whose value is the next argument (not the script); -e/-p/--eval/--print run inline code: no script
+const VAL_FLAGS = ["-r", "--require", "--import", "--loader", "--experimental-loader", "--inspect-port", "--title", "--env-file", "-C", "--conditions", "--input-type"];
+const INLINE = ["-e", "--eval", "-p", "--print"];
 // the script after node/bun/deno names the agent; runtime flags come first (gemini relaunches itself with --max-old-space-size=…)
 export function harnessOfArgs(args: string): string {
   const t = args.split(" ");
   let b = base(t[0]);
   if (b === "node" || b === "bun" || b === "deno") {
-    let i = 1; while (i < t.length && t[i].startsWith("-")) i++;
+    let i = 1;
+    while (i < t.length && t[i].startsWith("-")) { if (INLINE.indexOf(t[i]) >= 0) return ""; i += VAL_FLAGS.indexOf(t[i]) >= 0 ? 2 : 1; }
     if (i >= t.length) return "";
     b = base(t[i]).replace(/\.(m?js|ts)$/, "");
   }

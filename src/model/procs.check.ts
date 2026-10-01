@@ -11,6 +11,10 @@ const cases: string[][] = [
   ["node /x/pi.js", "pi"],
   ["node /x/dist/cli.js", ""],
   ["node --inspect", ""], // only flags: nothing to name
+  ["node -r ./hook.js /u/bin/gemini -p hi", "gemini"], // a flag with a separate value is no script
+  ["node --require /x/pi.js --import /y/loader.mjs /u/bin/gemini", "gemini"],
+  ["node --inspect-port 9229 /x/pi.js", "pi"],
+  ["node -e 1", ""], // inline code: no script
   ["/usr/bin/aider --model x", "aider"],
   ["claude --resume abc", "claude"],
 ];
