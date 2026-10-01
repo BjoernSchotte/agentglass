@@ -274,7 +274,9 @@ Notes:
   shown. Gemini rewrites history in place (re-appended messages, `/rewind`, resume and compression checkpoints):
   agentglass shows each message and tool call once, marks rewinds and rewritten history with the number of messages
   dropped, and counts each response's tokens once. No cost in the files: priced with the built-in table (paid-tier
-  API prices; Pro models above 200k prompt tokens at the long-context rate) or your price lists. Helper calls (routing,
+  API prices; Pro models above 200k prompt tokens at the long-context rate, keys `<model>>200k`; dated price changes as
+  `<model>@2027` — a `prices.json` override of a base model needs these keys too) or your price lists. Variants without
+  a price of their own (`-lite`, `-image`, `-tts`) show as unpriced, not at their base model's rate. Helper calls (routing,
   summaries, compression) are not in the transcript, so cost is a slight undercount. Gemini deletes sessions after
   30 days by default (`general.sessionRetention`). A headless send (`s`) runs `gemini --resume <id> -p …` in the
   project root: tools that need approval are denied, and folders not trusted in Gemini are refused (its message is in
