@@ -5,6 +5,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
 import { type Acc, type Day, newAcc } from "../features/usage/record.ts";
+import { applyUserPrices } from "../features/usage/pricing.ts";
 import type { SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
 
@@ -258,6 +259,13 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   ok("cost: flash-lite is not priced as flash; -preview ids", near(l.cost, (1000 * 0.3 + 10 * 2.5 + 1000 * 0.5 + 10 * 3) / 1e6), String(l.cost));
   const u = acc([gm("2026-10-01T10:00:00.000Z", "gemini-9-flash", "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
   ok("cost: unknown model → unpriced tokens, not $0", u.cost === 0 && u.unk === 1010, u.cost + "/" + u.unk);
+  applyUserPrices({ "gemini-2.5-pro": { input: 2, output: 20 } });
+  const ov = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-pro", "{\"input\":250000,\"output\":100,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
+  ok("prices.json override of a base model also covers its >200k tier", near(ov.cost, (250000 * 2 + 100 * 20) / 1e6), String(ov.cost));
+  applyUserPrices({ "gemini-2.5-pro": { input: 2, output: 20 }, "gemini-2.5-pro>200k": { input: 3, output: 30 } });
+  const ov2 = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-pro", "{\"input\":250000,\"output\":100,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
+  ok("prices.json naming the tier keeps it", near(ov2.cost, (250000 * 3 + 100 * 30) / 1e6), String(ov2.cost));
+  applyUserPrices(null);
   const tk = "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}";
   const v = acc([gm("2026-10-01T10:00:00.000Z", "gemini-3.8-flash-lite", tk, ""), gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash-image", tk, "")]);
   ok("cost: an unpriced variant is not priced as its base model", v.cost === 0 && v.unk === 2020, v.cost + "/" + v.unk);
