@@ -36,8 +36,8 @@
 **Files:** `specs/gemini-harness/fixtures/` (anonymized, ≤ 60 lines per file).
 
 - [ ] **Step 1: Worktree** `git worktree add -b feat/gemini-harness ../agentglass-gemini main`; `./build.sh`.
-- [ ] **Step 2: Install** (open question 2): `PATH=$HOME/.nvm/versions/node/v24.12.0/bin:$PATH npm i -g --ignore-scripts @google/gemini-cli && gemini --version`.
-- [ ] **Step 3: Auth** (open question 1): cliproxyapi if it serves Gemini (`GOOGLE_GEMINI_BASE_URL`/`GEMINI_API_KEY` pointing at it), otherwise stop and ask the user.
+- [ ] **Step 2: Installed** already (0.62.0, `~/.nvm/versions/node/v24.12.0/bin/gemini`); check `gemini --version`.
+- [ ] **Step 3: Auth** is set up (API key stored by Gemini CLI). Test dirs are new and untrusted: pass `--skip-trust` in the test commands only (never in agentglass defaults). A probe session already exists in `~/.gemini/tmp/agtest-gemini-probe/` (header + initial `$set.messages`).
 - [ ] **Step 4: Real runs** in `/tmp/agtest-gemini`: "Build a minimal todo web app (index.html + app.js, localStorage), then run `node --check app.js`"; ask it to use the `codebase_investigator` agent once (subagent file); `/rewind` once; then `gemini --resume <id> -p "add a clear-completed button"` headless.
 - [ ] **Step 5: Capture** the session JSONL, one subagent JSONL, `.project_root`, the directory listing of `~/.gemini/tmp/<slug>/`. Anonymize (`$HOME` → `/home/u`, keys/emails), trim tool output to ≤ 200 chars.
 - [ ] **Step 6: Commit** `chore(specs): real Gemini CLI fixture sessions`. If real data contradicts the spec facts: ledger a `Ruling:` and follow the data.

@@ -72,6 +72,8 @@ subagents, live/busy, send/resume, tokens + cost, Stats, `--json`/`--watch`, tra
    Lines that end up empty are dropped. Because emission depends only on first offsets, any window `[from, to)` yields
    each id once, readers never see a duplicate, and the ledger books tokens and calls exactly once. Rewound/compressed
    history stays visible in the transcript with a marker (as it happened), Stats keep what was billed.
+   Observed with 0.62.0: a fresh session starts with header + `{"$set":{"messages":[…]}}` (the initial history), so
+   the `history compressed` marker is emitted only when the checkpoint repeats already-seen ids.
 3. **parse** (on normalized lines): user text (noise filter: `/`, `?`, `<session_context>`, `<hook_context>` prefixes) →
    `user`; thoughts → `thinking` (`subject: description`); gemini text → `assistant`; each tool call → `tool`
    (`name` + `toolArg`) and `result` (`[error] `/`[cancelled] ` prefix for status ≠ success; text = functionResponse
@@ -102,6 +104,9 @@ subagents, live/busy, send/resume, tokens + cost, Stats, `--json`/`--watch`, tra
 10. **Steering**: `headless: ["--resume", s.id, "-p", msg]`, `resume: ["--resume", s.id]`; no approval flag by default
     (like Claude/Codex: tools needing approval are denied in headless runs); users who want more set
     `AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"`. Live sessions go through tmux as for every harness.
+    Observed: headless runs refuse folders not trusted in Gemini (`--skip-trust` or `GEMINI_CLI_TRUST_WORKSPACE=true`
+    bypass it). agentglass does **not** bypass trust by default — trust guards project-level config (hooks, settings);
+    a refused send shows Gemini's message in the headless log. Opt-in via `AGENTGLASS_GEMINI="gemini --skip-trust"`.
 11. **files** (trash): the session file, `chats/<id>/` (its subagents), `tool-outputs/session-<id>/`, `<slug>/<id>/`,
     `logs/session-<id>.jsonl` — what gemini's own delete removes; never `logs.json` (shared by all sessions).
 12. **Real-life test** through cliproxyapi (if it serves the Gemini protocol) or with the user's Google login — open
@@ -121,8 +126,7 @@ subagents, live/busy, send/resume, tokens + cost, Stats, `--json`/`--watch`, tra
 Legacy `.json` sessions, pre-0.29 hash dirs, container sandboxes (sessions inside the container), remote (A2A) agents,
 `/chat save` checkpoint tags, Windows.
 
-## Open questions
-1. Auth for the live test: cliproxyapi (if it proxies Gemini) or your Google login (`gemini` OAuth, free tier)? Or a
-   Gemini API key? Default: try cliproxyapi, else ask.
-2. Install `@google/gemini-cli` globally under nvm Node 24 (`npm i -g --ignore-scripts`)? Default: yes.
-3. Glyph/color: `✦` in Gemini blue OK?
+## Decisions (approved 2026-10-01)
+1. Live tests use the user's Gemini API key (stored by Gemini CLI itself under `~/.gemini/`; agentglass never reads it).
+2. `@google/gemini-cli` 0.62.0 installed globally under nvm Node 24.
+3. Glyph `✦`, own Gemini blue (distinct from Codex).
