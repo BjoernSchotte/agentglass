@@ -25,6 +25,7 @@ interface Ix {
   spawn: Map<string, string>; spawnName: Map<string, string>; // subagent id → the tool call that ran it, its tool name
   drop: Map<number, number>; // offset of a rewind/checkpoint → messages it dropped from the history
   live: string[]; liveSet: Set<string>; // the history as of `at`, in order
+  shown: Set<string>; // ids that become transcript events (not context blocks, not tool-result echoes): what drop counts
 }
 const IX = new Map<string, Ix>();
 const CH = 4194304;
@@ -47,7 +48,7 @@ function eachLine(path: string, from: number, to: number, f: (l: string, x: numb
 }
 function seen(ix: Ix, m: Obj, x: number): void {
   const id = str(m["id"]); if (!id) return;
-  if (!ix.msg.has(id)) ix.msg.set(id, x);
+  if (!ix.msg.has(id)) { ix.msg.set(id, x); if (visible(m)) ix.shown.add(id); }
   if (obj(m["tokens"]) && !ix.tok.has(id)) ix.tok.set(id, x);
   for (const c of arr(m["toolCalls"])) {
     const co = obj(c); if (!co) continue;
@@ -62,8 +63,8 @@ function record(ix: Ix, l: string, x: number): void {
   const rw = o["$rewindTo"];
   if (typeof rw === "string") {
     const i = ix.live.indexOf(rw); if (i < 0) return;
-    for (const g of ix.live.slice(i)) ix.liveSet.delete(g);
-    ix.drop.set(x, ix.live.length - i); ix.live = ix.live.slice(0, i);
+    let n = 0; for (const g of ix.live.slice(i)) { ix.liveSet.delete(g); if (ix.shown.has(g)) n++; }
+    ix.drop.set(x, n); ix.live = ix.live.slice(0, i);
     return;
   }
   const set = obj(o["$set"]);
@@ -71,7 +72,7 @@ function record(ix: Ix, l: string, x: number): void {
     if (!Array.isArray(set["messages"])) return;
     const keep = new Set<string>(); const nl: string[] = [];
     for (const v of arr(set["messages"])) { const m = obj(v); const id = m ? str(m["id"]) : ""; if (!m || !id) continue; seen(ix, m, x); if (!keep.has(id)) { keep.add(id); nl.push(id); } }
-    let n = 0; for (const id of ix.live) if (!keep.has(id)) n++;
+    let n = 0; for (const id of ix.live) if (!keep.has(id) && ix.shown.has(id)) n++;
     if (n > 0) ix.drop.set(x, n);
     ix.live = nl; ix.liveSet = keep;
     return;
@@ -84,7 +85,7 @@ function record(ix: Ix, l: string, x: number): void {
 function indexTo(path: string, to: number): Ix {
   let ix = IX.get(path);
   if (!ix || statSize(path) < ix.at) {
-    ix = { at: 0, msg: new Map<string, number>(), call: new Map<string, number>(), tok: new Map<string, number>(), spawn: new Map<string, string>(), spawnName: new Map<string, string>(), drop: new Map<number, number>(), live: [], liveSet: new Set<string>() };
+    ix = { at: 0, msg: new Map<string, number>(), call: new Map<string, number>(), tok: new Map<string, number>(), spawn: new Map<string, string>(), spawnName: new Map<string, string>(), drop: new Map<number, number>(), live: [], liveSet: new Set<string>(), shown: new Set<string>() };
     IX.set(path, ix);
   }
   const cur = ix;
@@ -220,7 +221,14 @@ function resultText(c: Obj): string {
   }
   return str(c["resultDisplay"]);
 }
-function callArg(name: string, a: Obj | null): string { const d = a ? str(a["agent_name"]) || str(a["dir_path"]) || str(a["objective"]) : ""; return d ? d : toolArg(name, a, ""); }
+// invoke_agent, list_directory, update_topic, activate_skill name their subject outside the common keys
+function callArg(name: string, a: Obj | null): string { const d = a ? str(a["agent_name"]) || str(a["dir_path"]) || str(a["objective"]) || str(a["title"]) || str(a["name"]) : ""; return d ? d : toolArg(name, a, ""); }
+function visible(m: Obj): boolean {
+  const type = str(m["type"]); const c = m["content"];
+  if (type !== "user") return type !== "";
+  const t = partsText(c, false);
+  return t ? !noise(t) : hasPart(c, "inlineData") || hasPart(c, "fileData");
+}
 function parse(o: Obj, out: Ev[], s: Sess | null): void {
   if (o["$title"] !== undefined) { if (s) { const t = str(o["$title"]); if (t && !t.startsWith("{")) s.title = t; } return; } // subagents set their JSON report as summary
   if (o["$meta"] !== undefined) { ev(out, "meta", str(o["$meta"]), "", "", ""); return; }
@@ -251,9 +259,12 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
 }
 // no turn markers: the prompt, a tool result (the model answers next) or bare thoughts (their calls are written when
 // they complete) mean mid-turn; the answer or an error/cancel note end it. Text next to a still-running call reads idle.
+// A subagent ends with the result of its complete_task call.
 function busy(s: Sess): boolean {
-  const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
-  return !!e && (e.kind === "user" || e.kind === "tool" || e.kind === "result" || e.kind === "thinking");
+  const n = s.evs.length; const e = n ? s.evs[n - 1] : null;
+  if (!e) return false;
+  if (e.kind === "result") { const c = n > 1 ? s.evs[n - 2] : null; return !(c && c.kind === "tool" && c.id === e.id && c.text.startsWith("complete_task\u0000")); }
+  return e.kind === "user" || e.kind === "tool" || e.kind === "thinking";
 }
 // ── usage (normalized lines: each message's tokens and each tool call appear once) ──
 // input includes cached; thoughts bill as output; tool-use prompt tokens as input. No cost in the files: priced by table,

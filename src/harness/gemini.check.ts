@@ -74,7 +74,7 @@ function read(s: Sess, from: number, to: number): { k: string[]; next: number } 
 
 // ── full read ──
 const full = read(sess(P), 0, END);
-const WANT = "call:c1 call:c2 call:c3 hdr meta:history rewritten: 6 messages dropped meta:rewound: 1 message dropped msg:e1 msg:m0 msg:m1 msg:m2 msg:m2_response msg:m3 msg:m4 msg:s1 title:Todo app ✓ tok:m2 tok:m4";
+const WANT = "call:c1 call:c2 call:c3 hdr meta:history rewritten: 3 messages dropped meta:rewound: 1 message dropped msg:e1 msg:m0 msg:m1 msg:m2 msg:m2_response msg:m3 msg:m4 msg:s1 title:Todo app ✓ tok:m2 tok:m4";
 ok("full read: every id once", sorted(full.k) === WANT, sorted(full.k));
 ok("full read: stops before the partial last line", full.next === bytes(FULL), String(full.next) + " ≠ " + String(bytes(FULL)));
 ok("full read: stream order", full.k.join(" ").startsWith("hdr msg:m0 msg:m1 msg:m2 tok:m2 call:c1 call:c2 msg:e1 title:Todo app ✓ msg:m3 meta:rewound"), full.k.join(" "));
@@ -179,7 +179,7 @@ function evs(ls: string[], s: Sess | null): Ev[] { const out: Ev[] = []; for (co
   const s = sess(P);
   const e = evs(src.lines(s, 0, bytes(FULL)).lines, s);
   const kinds = e.map((v: Ev) => v.kind + (v.kind === "meta" ? "(" + v.text + ")" : "")).join(" ");
-  ok("parse: event kinds", kinds === "user thinking assistant tool result tool result user meta(rewound: 1 message dropped) assistant tool result meta(history rewritten: 6 messages dropped)", kinds);
+  ok("parse: event kinds", kinds === "user thinking assistant tool result tool result user meta(rewound: 1 message dropped) assistant tool result meta(history rewritten: 3 messages dropped)", kinds);
   ok("parse: title and model", s.title === "Todo app ✓" && s.model === "gemini-2.5-flash", s.title + "/" + s.model);
   const u = e[0]; ok("parse: user text", u.text === "build a todo app — schön ✓", u.text);
   ok("parse: thinking = subject: description", e[1].text === "Plan: two files", e[1].text);
@@ -210,6 +210,10 @@ function evs(ls: string[], s: Sess | null): Ev[] { const out: Ev[] = []; for (co
   ok("busy: answer", !bz(["user", "tool", "result", "assistant"]), "busy");
   ok("busy: error/cancel", !bz(["user", "meta"]), "busy");
   ok("busy: nothing", !bz([]), "busy");
+  const sb = (name: string): boolean => { const s = sess(P); s.evs = [{ kind: "tool", text: name + "\u0000x", ts: "", id: "c9", full: "" }, { kind: "result", text: "done", ts: "", id: "c9", full: "" }]; const f = gemini.busy; return !!f && f(s); };
+  ok("busy: a subagent's complete_task ends it", !sb("complete_task") && sb("read_file"), "");
+  const ua = evs([g(",\"toolCalls\":[{\"id\":\"t1\",\"name\":\"update_topic\",\"args\":{\"title\":\"Todo\",\"summary\":\"long\"},\"status\":\"success\"},{\"id\":\"t2\",\"name\":\"activate_skill\",\"args\":{\"name\":\"ponytail\"},\"status\":\"success\"}]")], null);
+  ok("tool args: update_topic title, activate_skill name", ua.length === 4 && ua[0].text === "update_topic\u0000Todo" && ua[2].text === "activate_skill\u0000ponytail", ua.map((v: Ev) => v.text.split("\u0000").join("|")).join(" / "));
 }
 
 // ── usage (normalized lines) and built-in Gemini prices ──
