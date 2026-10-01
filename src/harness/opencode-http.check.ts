@@ -32,10 +32,12 @@ writeFileSync(fake, [
   "  api/session/active) cat $D/active.json ;;",
   "  api/session\\?*) cat $D/sessions.json ;;",
   "  api/session/*/message*) id=${p#api/session/}; id=${id%%/*}",
+  "    [ -e $D/startturn ] && cp $D/active-busy.json $D/active.json", // a turn starts right after the session list was read
   "    cur=$(printf '%s' \"$p\" | sed -n 's/.*cursor=\\([^&]*\\).*/\\1/p')",
   "    if [ -n \"$cur\" ]; then",
   "      case $(( ${#cur} % 4 )) in 2) cur=\"$cur==\" ;; 3) cur=\"$cur=\" ;; esac",
   "      after=$(printf '%s' \"$cur\" | tr '_-' '/+' | base64 -d | sed 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/')",
+  "      grep -q \"\\\"id\\\":\\\"$after\\\"\" $D/$id.jsonl || exit 22", // the cursor's message is gone (revert): 400
   "      rows=$(sed -n \"/\\\"id\\\":\\\"$after\\\"/,\\$p\" $D/$id.jsonl | tail -n +2)",
   "    else rows=$(cat $D/$id.jsonl); fi",
   "    printf '{\"data\":[%s],\"cursor\":{\"next\":\"x\"}}' \"$(printf '%s\\n' \"$rows\" | grep . | paste -sd, -)\" ;;",
@@ -105,19 +107,26 @@ const T = 1790690000000;
 const newer = "{\"id\":\"msg_z1\",\"type\":\"user\",\"time\":{\"created\":" + String(T) + "},\"text\":\"more\"}\n" +
   "{\"id\":\"msg_z2\",\"type\":\"assistant\",\"time\":{\"created\":" + String(T + 1) + "},\"agent\":\"build\",\"model\":{\"id\":\"claude-sonnet-5-5\"},\"content\":[{\"type\":\"text\",\"text\":\"wor\"}],\"tokens\":{\"input\":1,\"output\":1}}\n";
 writeFileSync(dir + "/" + P2 + ".jsonl", DONE + newer);
-writeFileSync(dir + "/active.json", "{\"data\":{\"" + P2 + "\":{\"type\":\"running\"}}}");
+writeFileSync(dir + "/active-busy.json", "{\"data\":{\"" + P2 + "\":{\"type\":\"running\"}}}");
+writeFileSync(dir + "/startturn", ""); // the active set still says idle when the session list is read
 writeFileSync(dir + "/sessions.json", readFileSync(dir + "/sessions.json", "utf8").split("1790688093697").join(String(T + 1)));
 scan();
 ok("running: busy", busy(sess(P2)), "idle");
 ok("running: end held at the streaming row", end(sess(P2)) === 11, String(end(sess(P2))));
 const settled = DONE + newer.split("\"time\":{\"created\":" + String(T + 1) + "}").join("\"time\":{\"created\":" + String(T + 1) + ",\"completed\":" + String(T + 9) + "}");
 writeFileSync(dir + "/" + P2 + ".jsonl", settled + "{\"id\":\"msg_z3\",\"type\":\"idle\",\"time\":{\"created\":" + String(T + 10) + "},\"outcome\":\"succeeded\"}\n");
-writeFileSync(dir + "/active.json", "{\"data\":{}}");
+rmSync(dir + "/startturn"); writeFileSync(dir + "/active.json", "{\"data\":{}}");
 writeFileSync(dir + "/sessions.json", readFileSync(dir + "/sessions.json", "utf8").split(String(T + 1)).join(String(T + 10)));
 scan();
 ok("settled: idle, end = all", !busy(sess(P2)) && end(sess(P2)) === 13, String(end(sess(P2))));
 const tail = events(sess(P2), 11, 13);
 ok("settled rows readable", tail.length === 2 && tail[0].text === "wor", tail.map((e: Ev) => e.text).join("|"));
+// a revert deleted the message the incremental fetch starts after: the cursor fetch fails, one retry from the start
+writeFileSync(dir + "/" + P2 + ".jsonl", settled + "{\"id\":\"msg_z4\",\"type\":\"user\",\"time\":{\"created\":" + String(T + 20) + "},\"text\":\"after revert\"}\n");
+writeFileSync(dir + "/sessions.json", readFileSync(dir + "/sessions.json", "utf8").split(String(T + 10)).join(String(T + 20)));
+scan();
+const rv = events(sess(P2), 12, 13);
+ok("revert: refetched from the start", end(sess(P2)) === 13 && rv.length === 1 && rv[0].text === "after revert", rv.map((e: Ev) => e.text).join("|"));
 // the daemon goes away mid-run (and there is no sqlite3): the rows stay, the end never moves back
 writeFileSync(dir + "/down", "");
 service(process.pid);

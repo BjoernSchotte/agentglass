@@ -121,32 +121,38 @@ function holdIdx(ms: Obj[]): number {
   for (const m of ms) { if (i > idle && unsettled(m)) return i; i++; }
   return -1;
 }
-function sync(ep: Endpoint, path: string, r: Row): void {
-  let c = hc.get(path);
-  if (!c || c.mt !== r.mtime || r.busy || c.busy) {
-    const base = c ? c.msgs.slice(0, c.settled) : [];
-    const got = messages(ep, r.id, lastId(base));
-    if (got) { const ms = base.concat(got); c = { msgs: ms, settled: settledCount(ms), mt: r.mtime, busy: r.busy }; hc.set(path, c); }
-  }
-  if (!c) return;
-  r.end = c.msgs.length; r.hold = r.busy ? holdIdx(c.msgs) : -1;
+// fetch from the last settled message on (re-fetch from the start when that cursor fails: a revert deleted its message)
+function sync(ep: Endpoint, path: string, r: Row, was: boolean): void {
+  const c = hc.get(path);
+  if (c && c.mt === r.mtime && !was && !c.busy) return;
+  let base = c ? c.msgs.slice(0, c.settled) : [];
+  let got = messages(ep, r.id, lastId(base));
+  if (!got && base.length) { base = []; got = messages(ep, r.id, ""); }
+  if (got) { const ms = base.concat(got); hc.set(path, { msgs: ms, settled: settledCount(ms), mt: r.mtime, busy: was }); }
 }
 function loadHttp(ep: Endpoint, db: string): boolean {
   const list = listSessions(ep); if (!list) return false;
-  const ids = activeSet(ep); if (!ids) return false;
-  const act = new Set<string>(ids);
   const next = new Map<string, Row>();
   for (const o of list) {
     const id = str(o["id"]); if (!id) continue;
     const t = obj(o["time"]); const loc = obj(o["location"]);
     const up = t ? num(t["updated"]) : 0;
     next.set(db + "#" + id, { db, id, parent: str(o["parentID"]), dir: loc ? str(loc["directory"]) : "", title: str(o["title"]), agent: str(o["agent"]), mtime: up, end: 0, hold: -1, floor: 0,
-      busy: act.has(id), act: up, archived: !!t && t["archived"] !== undefined && t["archived"] !== null, v1: false, fork: o["fork"] !== undefined && o["fork"] !== null && t ? num(t["created"]) : 0, http: true });
+      busy: false, act: up, archived: !!t && t["archived"] !== undefined && t["archived"] !== null, v1: false, fork: o["fork"] !== undefined && o["fork"] !== null && t ? num(t["created"]) : 0, http: true });
   }
   const t0 = Date.now();
   for (const [p, r] of [...next.entries()].sort((x, y) => y[1].mtime - x[1].mtime)) {
-    if (Date.now() - t0 < SYNC_MS) sync(ep, p, r);
-    else { const c = hc.get(p); if (c) { r.end = c.msgs.length; r.hold = r.busy ? holdIdx(c.msgs) : -1; } }
+    const old = rows.get(p);
+    if (Date.now() - t0 < SYNC_MS) sync(ep, p, r, !!old && old.busy);
+  }
+  // the active set after the messages: a turn that started in between is busy, and its streaming row (already fetched) held
+  const ids = activeSet(ep); if (!ids) return false;
+  const act = new Set<string>(ids);
+  for (const [p, r] of next) {
+    r.busy = act.has(r.id);
+    const c = hc.get(p); if (!c) continue;
+    if (r.busy) c.busy = true;
+    r.end = c.msgs.length; r.hold = r.busy ? holdIdx(c.msgs) : -1;
   }
   for (const p of [...hc.keys()]) if (!next.has(p)) hc.delete(p);
   keep(next, true);
@@ -246,7 +252,8 @@ const source: SessionSource = {
   align: (s: Sess, at: number) => at, // every cursor value starts a record
   lines: sessionLines,
   unit: UNIT,
-  epoch: (s: Sess) => s.h ? mode : mode, // one transport for every session
+  // one transport for every session; spelled with s: scriptc rejects a zero-parameter arrow for this optional member (SC2003)
+  epoch: (s: Sess) => s.h ? mode : mode,
 };
 
 // ── transcript ──
