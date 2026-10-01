@@ -20,6 +20,13 @@ add("claude-opus-4-1", 15, 75, -1, -1); add("claude-opus-4", 15, 75, -1, -1);
 add("claude-sonnet-5", 2, 10, -1, -1);
 for (const v of ["4-6", "4-5", "4"]) add("claude-sonnet-" + v, 3, 15, -1, -1);
 add("claude-3-7-sonnet", 3, 15, -1, -1); add("claude-haiku-4-5", 1, 5, -1, -1); add("claude-3-5-haiku", 0.8, 4, -1, -1);
+// Gemini, paid tier, text input (ai.google.dev/gemini-api/docs/pricing, 2026-10-01); implicit caching has no write charge.
+// Suffixed keys are looked up by the Gemini adapter: ">200k" = prompts over 200k tokens, "@2027" = from 2027-01-01.
+for (const v of ["3.8", "3.7", "3.6"]) { add("gemini-" + v + "-flash", 0.75, 3.75, 0.075, 0, 0); add("gemini-" + v + "-flash@2027", 1.5, 7.5, 0.15, 0, 0); }
+add("gemini-3.5-flash", 1.5, 9, 0.15, 0, 0); add("gemini-3.5-flash-lite", 0.3, 2.5, 0.03, 0, 0); add("gemini-3.1-flash-lite", 0.25, 1.5, 0.025, 0, 0);
+add("gemini-3.1-pro", 2, 12, 0.2, 0, 0); add("gemini-3.1-pro>200k", 4, 18, 0.4, 0, 0); add("gemini-3-flash", 0.5, 3, 0.05, 0, 0);
+add("gemini-2.5-pro", 1.25, 10, 0.125, 0, 0); add("gemini-2.5-pro>200k", 2.5, 15, 0.25, 0, 0);
+add("gemini-2.5-flash", 0.3, 2.5, 0.03, 0, 0); add("gemini-2.5-flash-lite", 0.1, 0.4, 0.01, 0, 0);
 
 function num(v: unknown, d: number): number { return typeof v === "number" ? (v as number) : d; }
 // opt-in community list, as cached by the last refresh (a refresh during this run applies from the next start)
