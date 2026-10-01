@@ -16,13 +16,14 @@ export function curlBin(): string {
 // curl config-file string: quotes and backslashes escaped
 function cq(s: string): string { return "\"" + s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + "\""; }
 // HTTP Basic GET → JSON object; null = no curl, connection/HTTP error, timeout (3 s), not a JSON object.
-// URL and credentials go through stdin (-K -): never argv (ps) or the child's environment
+// URL and credentials go through stdin (-K -): never argv (ps) or the child's environment; -q (first) skips ~/.curlrc
+// (a --trace there would write the Authorization header), --noproxy keeps the request on loopback
 export function getJson(url: string, user: string, pass: string): Obj | null {
   const b = curlBin();
   if (!b) return null;
   let out = "";
   try {
-    out = execFileSync(b, ["-sS", "--fail", "--max-time", "3", "-K", "-"], { input: "url = " + cq(url) + "\nuser = " + cq(user + ":" + pass) + "\n", encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], timeout: 4000, maxBuffer: 67108864 });
+    out = execFileSync(b, ["-q", "--noproxy", "*", "-sS", "--fail", "--max-time", "3", "-K", "-"], { input: "url = " + cq(url) + "\nuser = " + cq(user + ":" + pass) + "\n", encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], timeout: 4000, maxBuffer: 67108864 });
   } catch (e) { return null; }
   try { return obj(JSON.parse(out)); } catch (e) { return null; }
 }

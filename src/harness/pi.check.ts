@@ -39,7 +39,7 @@ ok("adapter direct tool", rows(dir) === "mcp__everything__echo:1/0", rows(dir));
 const wrap = feed([call("c1", "mcp__everything", "{\"tool\":\"echo\",\"args\":{}}"), result("c1", "mcp__everything", ",\"details\":{\"mode\":\"call\",\"server\":\"everything\",\"tool\":\"echo\"},\"isError\":false")]);
 ok("adapter server wrapper", rows(wrap) === "mcp__everything__echo:1/0", rows(wrap));
 const terr = feed([call("c1", "mcp", "{\"tool\":\"get_sum\",\"server\":\"everything\"}"), result("c1", "mcp", ",\"details\":{\"mode\":\"call\",\"error\":\"tool_error\",\"server\":\"everything\",\"tool\":\"get-sum\"},\"isError\":false")]);
-ok("adapter tool_error counts with isError false", rows(terr) === "mcp__everything__get-sum:1/1", rows(terr));
+ok("adapter tool_error counts with isError false; names cleaned like pi 0.99.2 (- → _)", rows(terr) === "mcp__everything__get_sum:1/1", rows(terr));
 const cf = feed([call("c1", "mcp", "{\"tool\":\"x\"}"), result("c1", "mcp", ",\"details\":{\"mode\":\"call\",\"error\":\"call_failed\",\"server\":\"s\",\"tool\":\"x\"},\"isError\":false")]);
 ok("adapter call_failed counts", rows(cf) === "mcp__s__x:1/1", rows(cf));
 const auth = feed([call("c1", "mcp", "{\"tool\":\"x\"}"), result("c1", "mcp", ",\"details\":{\"mode\":\"call\",\"error\":\"auth_required\",\"server\":\"s\",\"tool\":\"x\"},\"isError\":false")]);
