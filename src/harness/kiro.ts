@@ -8,7 +8,7 @@ import { HOME, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, nlines, num } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, nlines, num, isoMs } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import { userRate } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
@@ -144,6 +144,13 @@ function usage(a: Acc, l: string): void {
 // ~/.agentglass/prices.json (or AGENTGLASS_KIRO_CREDIT_USD); unset = unknown, never a guessed dollar figure.
 // Plan allotments/overage are account-wide (kiro-cli /usage, a network call) and not modelled here.
 function creditUsd(): number { const e = Number(process.env.AGENTGLASS_KIRO_CREDIT_USD ?? ""); return e > 0 ? e : userRate("kiroCreditUsd"); }
+// end_timestamp is an ISO-8601 string ("2026-05-27T08:45:45.575821116Z", nanosecond precision) in current kiro-cli;
+// the runtime's Date rejects >3 fractional digits, so trim to milliseconds. Tolerate a numeric epoch (seconds) too.
+function endMs(v: unknown): number {
+  if (typeof v === "string") { const iso = v.replace(/(\.\d{3})\d+(Z|[+-]\d\d:?\d\d)?$/, "$1$2"); return isoMs(iso); }
+  const n = num(v);
+  return n > 0 ? n * 1000 : 0;
+}
 function usageSidecar(s: Sess, a: Acc): void {
   const f = s.path.slice(0, -6) + ".json";
   let mt = 0; try { mt = statSync(f).mtimeMs; } catch (e) { return; }
@@ -157,7 +164,7 @@ function usageSidecar(s: Sess, a: Acc): void {
   const rate = creditUsd();
   for (let i = 0; i < turns.length; i++) {
     const tm = obj(turns[i]); if (!tm) continue;
-    const end = num(tm["end_timestamp"]) * 1000;
+    const end = endMs(tm["end_timestamp"]); // kiro writes end_timestamp as an ISO-8601 string, occasionally a number
     while (a.x.length < 4 + i) a.x.push(0);
     a.x[3 + i] = end;
     if (i < numAt(a.x, 1, 0)) continue; // booked on an earlier read
