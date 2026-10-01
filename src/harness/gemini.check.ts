@@ -4,6 +4,7 @@ import { openSync, writeSync, closeSync, mkdirSync, rmSync, appendFileSync, copy
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
+import { type Acc, type Day, newAcc } from "../features/usage/record.ts";
 import type { SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
 
@@ -209,6 +210,51 @@ function evs(ls: string[], s: Sess | null): Ev[] { const out: Ev[] = []; for (co
   ok("busy: answer", !bz(["user", "tool", "result", "assistant"]), "busy");
   ok("busy: error/cancel", !bz(["user", "meta"]), "busy");
   ok("busy: nothing", !bz([]), "busy");
+}
+
+// ── usage (normalized lines) and built-in Gemini prices ──
+function acc(ls: string[]): Acc { const a = newAcc(); for (const l of ls) gemini.usage(a, l); return a; }
+function day0(a: Acc): Day | null { let d: Day | null = null; for (const v of a.days.values()) d = v; return d; }
+function near(x: number, y: number): boolean { return Math.abs(x - y) < 1e-12; }
+const gm = (ts: string, model: string, tok: string, calls: string): string => "{\"id\":\"q\",\"timestamp\":\"" + ts + "\",\"type\":\"gemini\",\"model\":\"" + model + "\"" + (tok ? ",\"tokens\":" + tok : "") + (calls ? ",\"toolCalls\":[" + calls + "]" : "") + "}";
+{
+  const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-pro", "{\"input\":1000,\"output\":100,\"cached\":400,\"thoughts\":50,\"tool\":10,\"total\":1160}", "")]);
+  ok("tokens: in = input − cached + tool, out = output + thoughts, cache read = cached", a.inTok === 610 && a.outTok === 150 && a.cr === 400 && a.cw === 0, a.inTok + "/" + a.outTok + "/" + a.cr);
+  ok("cost: gemini-2.5-pro ≤ 200k", near(a.cost, (610 * 1.25 + 150 * 10 + 400 * 0.125) / 1e6) && a.unk === 0, String(a.cost));
+  const b = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-pro", "{\"input\":250000,\"output\":100,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
+  ok("cost: gemini-2.5-pro > 200k", near(b.cost, (250000 * 2.5 + 100 * 15) / 1e6), String(b.cost));
+  const c = acc([gm("2026-10-01T10:00:00.000Z", "gemini-3.1-pro-preview", "{\"input\":300000,\"output\":10,\"cached\":100000,\"thoughts\":0,\"tool\":0}", "")]);
+  ok("cost: gemini-3.1-pro > 200k incl. cache", near(c.cost, (200000 * 4 + 10 * 18 + 100000 * 0.4) / 1e6), String(c.cost));
+  const f = acc([gm("2026-12-31T10:00:00.000Z", "gemini-3.8-flash", "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}", ""), gm("2027-01-02T10:00:00.000Z", "gemini-3.8-flash", "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
+  ok("cost: gemini-3.8-flash before/after its 2027 price change", near(f.cost, (1000 * 0.75 + 10 * 3.75 + 1000 * 1.5 + 10 * 7.5) / 1e6), String(f.cost));
+  const l = acc([gm("2026-10-01T10:00:00.000Z", "gemini-3.5-flash-lite", "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}", ""), gm("2026-10-01T10:00:00.000Z", "gemini-3-flash-preview", "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
+  ok("cost: flash-lite is not priced as flash; -preview ids", near(l.cost, (1000 * 0.3 + 10 * 2.5 + 1000 * 0.5 + 10 * 3) / 1e6), String(l.cost));
+  const u = acc([gm("2026-10-01T10:00:00.000Z", "gemini-9-flash", "{\"input\":1000,\"output\":10,\"cached\":0,\"thoughts\":0,\"tool\":0}", "")]);
+  ok("cost: unknown model → unpriced tokens, not $0", u.cost === 0 && u.unk === 1010, u.cost + "/" + u.unk);
+}
+{
+  const sh = "{\"id\":\"k1\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"npm test\"},\"status\":\"error\",\"timestamp\":\"2026-10-01T10:00:02.500Z\",\"result\":[{\"functionResponse\":{\"id\":\"k1\",\"name\":\"run_shell_command\",\"response\":{\"output\":\"fail\"}}}]}";
+  const rp = "{\"id\":\"k2\",\"name\":\"replace\",\"args\":{\"file_path\":\"a.js\",\"old_string\":\"x\",\"new_string\":\"y\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\",\"resultDisplay\":{\"filePath\":\"/w/a.js\",\"diffStat\":{\"model_added_lines\":3,\"model_removed_lines\":1}}}";
+  const wf = "{\"id\":\"k3\",\"name\":\"write_file\",\"args\":{\"file_path\":\"b.js\",\"content\":\"1\\n2\\n\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\"}";
+  const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash", "", sh + "," + rp + "," + wf)]);
+  const d = day0(a);
+  const row = (k: string): string => { const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err, v.dn, v.ms].join(",") : "none"; };
+  ok("tools: one row each, duration from the message, error from status", a.tools === 3 && row("run_shell_command") === "1,1,1,2500" && row("replace") === "1,0,1,1000", row("run_shell_command") + " " + row("replace"));
+  const progs: string[] = []; if (d) for (const k of d.prog.keys()) progs.push(k);
+  ok("shell program", progs.join("|") === "run_shell_command\tnpm", progs.join("|"));
+  const fs: string[] = []; if (d) for (const [k, v] of d.files) fs.push(k + ":" + String(v.add) + "/" + String(v.del));
+  ok("lines: diffStat preferred, write_file from its content", a.add === 5 && a.del === 1 && fs.sort().join(" ") === "replace\t/w/a.js:3/1 write_file\tb.js:2/0", a.add + "/" + a.del + " " + fs.join(" "));
+  ok("no pending calls", a.pend.size === 0, String(a.pend.size));
+}
+// the ledger reads windows of the normalized stream: any split books the same totals, each message's tokens once
+{
+  const s = sess(P); const end = bytes(FULL);
+  const whole = acc(src.lines(s, 0, end).lines);
+  ok("stream: tokens of m2 and m4 once", whole.inTok === 610 + 2000 && whole.outTok === 150 + 20 && whole.cr === 400 && whole.tools === 3, whole.inTok + "/" + whole.outTok + "/" + whole.tools);
+  for (let i = 1; i < starts.length; i++) {
+    const a = newAcc(); for (const l of src.lines(s, 0, starts[i]).lines) gemini.usage(a, l); for (const l of src.lines(s, starts[i], end).lines) gemini.usage(a, l);
+    ok("stream split " + String(i) + ": same totals", a.inTok === whole.inTok && a.outTok === whole.outTok && near(a.cost, whole.cost) && a.tools === whole.tools && a.add === whole.add, a.inTok + "/" + a.tools);
+  }
 }
 
 rmSync(DIR, { recursive: true, force: true });

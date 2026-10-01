@@ -6,7 +6,9 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readBytes, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import type { Acc } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, nlines, num, isoMs } from "../features/usage/record.ts";
+import { done } from "../features/usage/calls.ts";
+import { price } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
 import { toolArg, isNoise } from "./common.ts";
@@ -253,7 +255,45 @@ function busy(s: Sess): boolean {
   const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
   return !!e && (e.kind === "user" || e.kind === "tool" || e.kind === "result" || e.kind === "thinking");
 }
-function usage(a: Acc, l: string): void { /* Task 4 */ }
+// ── usage (normalized lines: each message's tokens and each tool call appear once) ──
+// input includes cached; thoughts bill as output; tool-use prompt tokens as input. No cost in the files: priced by table,
+// per message: "<model>>200k" for prompts over 200k tokens, "<model>@2027" from 2027-01-01, where the table has them.
+function priceKey(md: string, input: number, iso: string): string {
+  const p = price(md); if (!p) return md;
+  let k = p.p; // the table entry the id matched (gemini-3.1-pro-preview → gemini-3.1-pro)
+  if (iso >= "2027-01-01" && price(k + "@2027") !== price(k)) k += "@2027";
+  if (input > 200000 && price(k + ">200k") !== price(k)) k += ">200k";
+  return k === p.p ? md : k;
+}
+function usage(a: Acc, l: string): void {
+  if (l.indexOf("\"tokens\":{") < 0 && l.indexOf("\"toolCalls\":[") < 0) return;
+  const o = parseJson(l); if (!o || str(o["type"]) !== "gemini") return;
+  const iso = str(o["timestamp"]); const d = bucket(a, 0, iso);
+  const md = str(o["model"]); if (md) a.model = md;
+  const tk = obj(o["tokens"]);
+  if (tk) {
+    const inp = num(tk["input"]); const cached = num(tk["cached"]);
+    tokens(a, d, priceKey(md || a.model, inp, iso), Math.max(0, inp - cached) + num(tk["tool"]), num(tk["output"]) + num(tk["thoughts"]), cached, 0, 0);
+  }
+  const t0 = isoMs(iso);
+  for (const v of arr(o["toolCalls"])) {
+    const c = obj(v); if (!c) continue;
+    const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
+    const st = tool(a, d, name);
+    pend(a, d, st, name, id, t0, iso, callArg(name, args), name === "run_shell_command" && args ? [str(args["command"])] : []);
+    const ok = str(c["status"]) === "success";
+    const p = a.pend.get(id);
+    if (p) { a.pend.delete(id); const t1 = isoMs(str(c["timestamp"])); done(p, t0 > 0 && t1 >= t0 ? t1 - t0 : -1, !ok, resultText(c).length, id, []); } // written complete: start ≈ the message
+    if (!ok || !args) continue; // a failed edit changed nothing
+    const rd = obj(c["resultDisplay"]); const ds = rd ? obj(rd["diffStat"]) : null;
+    let add = 0; let del = 0;
+    if (ds) { add = num(ds["model_added_lines"]); del = num(ds["model_removed_lines"]); }
+    else if (name === "replace") { add = nlines(str(args["new_string"])); del = nlines(str(args["old_string"])); }
+    else if (name === "write_file") add = nlines(str(args["content"]));
+    else continue;
+    lines(a, d, add, del); file(d, name, (rd ? str(rd["filePath"]) : "") || str(args["file_path"]), add, del);
+  }
+}
 
 export const gemini: HarnessAdapter = {
   id: "gemini", label: "Gemini", glyph: "✦", mark: "✦", color: () => C.gemini,

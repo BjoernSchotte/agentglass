@@ -61,6 +61,13 @@ const SAMPLES: Sample[] = [
     "{\"version\":\"v1\",\"kind\":\"ToolResults\",\"data\":{\"content\":[{\"kind\":\"toolResult\",\"data\":{\"toolUseId\":\"t1\",\"status\":\"success\",\"content\":[{\"kind\":\"text\",\"data\":\"a\"}]}}]}}",
     "{\"version\":\"v1\",\"kind\":\"Compaction\",\"data\":{}}",
   ] },
+  // gemini: lines as its normalizing source emits them (src/harness/gemini.check.ts covers the raw upsert stream)
+  { h: "gemini", kinds: "user thinking assistant tool result", tools: 1, inTok: 100, outTok: 15, cost: 0.0000675, lines: [
+    "{\"sessionId\":\"0000aaaa-1111-2222-3333-444455556666\",\"projectHash\":\"ab\",\"startTime\":\"2026-01-02T10:00:00.000Z\",\"lastUpdated\":\"2026-01-02T10:00:00.000Z\",\"kind\":\"main\"}",
+    "{\"id\":\"u1\",\"timestamp\":\"2026-01-02T10:00:01.000Z\",\"type\":\"user\",\"content\":[{\"text\":\"hello\"}]}",
+    "{\"id\":\"g1\",\"timestamp\":\"2026-01-02T10:00:02.000Z\",\"type\":\"gemini\",\"content\":\"hi\",\"thoughts\":[{\"subject\":\"Plan\",\"description\":\"list\",\"timestamp\":\"2026-01-02T10:00:02.000Z\"}],\"model\":\"gemini-2.5-flash\",\"tokens\":{\"input\":100,\"output\":10,\"cached\":0,\"thoughts\":5,\"tool\":0,\"total\":115}}",
+    "{\"id\":\"g1\",\"timestamp\":\"2026-01-02T10:00:02.000Z\",\"type\":\"gemini\",\"toolCalls\":[{\"id\":\"run_shell_command__call_1\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"ls\"},\"result\":[{\"functionResponse\":{\"id\":\"run_shell_command__call_1\",\"name\":\"run_shell_command\",\"response\":{\"output\":\"a\"}}}],\"status\":\"success\",\"timestamp\":\"2026-01-02T10:00:03.000Z\"}]}",
+  ] },
 ];
 
 // ── registry: identity, look, commands ──
