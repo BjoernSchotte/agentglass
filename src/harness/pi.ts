@@ -5,7 +5,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, usageExact, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, file, lines, usageExact, isoMs, nlines, num } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText } from "./common.ts";
@@ -123,19 +123,22 @@ function usage(a: Acc, l: string): void {
   const d = bucket(a, 0, iso);
   for (const b of arr(m["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "toolCall") continue;
-    const name = str(bo["name"]) || "tool"; const st = tool(a, d, name);
-    const inp = obj(bo["arguments"]);
-    pend(a, d, st, name, str(bo["id"]), isoMs(iso), iso, toolArg(name, inp, ""), name === "bash" && inp ? [str(inp["command"])] : []);
-    if (!inp) continue;
-    let add = 0; let del = 0;
-    if (name === "edit") {
-      const es = arr(inp["edits"]);
-      for (const e of es) { const eo = obj(e); if (eo) { add += nlines(str(eo["newText"])); del += nlines(str(eo["oldText"])); } }
-      if (es.length === 0) { add = nlines(str(inp["newText"])); del = nlines(str(inp["oldText"])); } // legacy: top-level oldText/newText
-    } else if (name === "write") add = nlines(str(inp["content"]));
-    else continue;
-    lines(a, d, add, del); file(d, name, str(inp["path"]), add, del);
+    callStats(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["arguments"]), iso, isoMs(iso));
   }
+}
+// one tool call: tool row + pending result, shell programs, edit/write lines and files (inp null = arguments unknown)
+function callStats(a: Acc, d: Day, name: string, id: string, inp: Obj | null, iso: string, t: number): void {
+  const st = tool(a, d, name);
+  pend(a, d, st, name, id, t, iso, toolArg(name, inp, ""), name === "bash" && inp ? [str(inp["command"])] : []);
+  if (!inp) return;
+  let add = 0; let del = 0;
+  if (name === "edit") {
+    const es = arr(inp["edits"]);
+    for (const e of es) { const eo = obj(e); if (eo) { add += nlines(str(eo["newText"])); del += nlines(str(eo["oldText"])); } }
+    if (es.length === 0) { add = nlines(str(inp["newText"])); del = nlines(str(inp["oldText"])); } // legacy: top-level oldText/newText
+  } else if (name === "write") add = nlines(str(inp["content"]));
+  else return;
+  lines(a, d, add, del); file(d, name, str(inp["path"]), add, del);
 }
 
 export const pi: HarnessAdapter = {

@@ -63,6 +63,20 @@ export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
   a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh });
 }
+// the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
+export function retool(a: Acc, p: Pend, name: string): void {
+  const d = bucket(a, p.t, p.ts);
+  let key = ""; let found = false;
+  for (const [k, v] of d.tt) if (v === p.st) { key = k; found = true; break; }
+  if (!found || key === name) return;
+  const h = tsHour; const o = p.st;
+  o.n = o.n - 1; o.h[h] = Math.max(0, (o.h[h] ?? 0) - 1);
+  if (o.n <= 0) d.tt.delete(key);
+  let st = d.tt.get(name);
+  if (!st) { st = newTS(); d.tt.set(name, st); }
+  st.n = st.n + 1; st.h[h] = (st.h[h] ?? 0) + 1;
+  p.st = st;
+}
 export function file(d: Day, name: string, path: string, add: number, del: number): void {
   if (!path) return;
   const c = cnt(d.files, name + "\t" + path);
