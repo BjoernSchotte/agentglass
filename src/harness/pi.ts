@@ -112,16 +112,28 @@ function usage(a: Acc, l: string): void {
   const role = str(m["role"]);
   if (role === "toolResult") {
     book(a, obj(m["usage"]), "", iso);
-    const id = str(m["toolCallId"]); const p = a.pend.get(id); if (!p) return;
-    a.pend.delete(id);
-    const t = isoMs(iso);
-    // MCP (native and pi-mcp-adapter): the result names server and tool → one row per real tool, whatever the call was named;
-    // adapter housekeeping (search, describe, status, …) stays under its proxy tool
+    const id = str(m["toolCallId"]); const p = a.pend.get(id);
     const det = obj(m["details"]);
-    const srv = det ? str(det["server"]) : ""; const tl = det ? str(det["tool"]) : ""; const mode = det ? str(det["mode"]) : "";
-    if (srv && tl && (mode === "" || mode === "call")) retool(a, p, "mcp__" + srv + "__" + tl);
-    const derr = det ? str(det["error"]) : ""; // adapters < 2.11 leave isError false on failed calls
-    done(p, t > 0 && p.t > 0 ? t - p.t : -1, m["isError"] === true || derr === "tool_error" || derr === "call_failed", blockText(m["content"]).length, id, []);
+    if (p) {
+      a.pend.delete(id);
+      const t = isoMs(iso);
+      // MCP (native and pi-mcp-adapter): the result names server and tool → one row per real tool, whatever the call was named;
+      // adapter housekeeping (search, describe, status, …) stays under its proxy tool
+      const srv = det ? str(det["server"]) : ""; const tl = det ? str(det["tool"]) : ""; const mode = det ? str(det["mode"]) : "";
+      if (srv && tl && (mode === "" || mode === "call")) retool(a, p, "mcp__" + srv + "__" + tl);
+      const derr = det ? str(det["error"]) : ""; // adapters < 2.11 leave isError false on failed calls
+      done(p, t > 0 && p.t > 0 ? t - p.t : -1, m["isError"] === true || derr === "tool_error" || derr === "call_failed", blockText(m["content"]).length, id, []);
+    }
+    // calls made inside a codemode/mcpScript script have no messages of their own: they count like top-level calls, at the result's time
+    const ns = nested(m, det, id);
+    if (ns.length === 0) return;
+    const d = bucket(a, 0, iso);
+    for (const c of ns) {
+      callStats(a, d, c.name, c.id, c.inp, iso, 0);
+      const p2 = a.pend.get(c.id); if (!p2) continue;
+      a.pend.delete(c.id);
+      done(p2, c.ms, c.status === "error", 0, c.id, []);
+    }
     return;
   }
   if (role !== "assistant") return;
@@ -131,6 +143,31 @@ function usage(a: Acc, l: string): void {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "toolCall") continue;
     callStats(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["arguments"]), iso, isoMs(iso));
   }
+}
+// a call nested in a script: status ok | error | unfinished/running/cancelled (no duration); inp null = arguments dropped
+interface Nested { id: string; name: string; inp: Obj | null; ms: number; status: string; error: string }
+// pi ≥ 0.99 message.nestedCalls (any tool using ctx.executeTool), else codemode's own details.calls, else pi-mcp-adapter mcpScript
+function nested(m: Obj, det: Obj | null, parent: string): Nested[] {
+  const out: Nested[] = [];
+  const nc = obj(m["nestedCalls"]);
+  const dcs = det ? arr(det["calls"]) : [];
+  const script = !!det && str(det["mode"]) === "script";
+  const src = nc ? arr(nc["calls"]) : dcs;
+  let i = 0;
+  for (const v of src) {
+    const c = obj(v); i++; if (!c) continue;
+    const ms = typeof c["durationMs"] === "number" ? Math.round(num(c["durationMs"])) : -1;
+    if (script && !nc) { // adapter: {operation, path, ok, error, durationMs}; only "call" operations are tool calls
+      if (str(c["operation"]) !== "call") continue;
+      const ok = c["ok"] !== false;
+      out.push({ id: parent + "/" + String(i), name: str(c["path"]) || "tool", inp: null, ms, status: ok ? "ok" : "error", error: str(c["error"]) });
+      continue;
+    }
+    const st = str(c["status"]); if (!str(c["name"])) continue; // some other extension's details.calls
+    const inp = nc ? obj(c["arguments"]) : parseJson(str(c["args"]));
+    out.push({ id: str(c["id"]) || parent + "/" + String(i), name: str(c["name"]), inp, ms: st === "ok" || st === "error" ? ms : -1, status: st, error: str(c["error"]) });
+  }
+  return out;
 }
 // one tool call: tool row + pending result, shell programs, edit/write lines and files (inp null = arguments unknown)
 function callStats(a: Acc, d: Day, name: string, id: string, inp: Obj | null, iso: string, t: number): void {

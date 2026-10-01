@@ -43,5 +43,40 @@ ok("adapter auth_required no error", rows(auth) === "mcp__s__x:1/0", rows(auth))
 const plain = feed([call("c1", "bash", "{\"command\":\"ls\"}"), result("c1", "bash", ",\"isError\":false")]);
 ok("plain tool unchanged", rows(plain) === "bash:1/0", rows(plain));
 
+// ── nested calls (spec decision 3) ──
+function row(a: Acc, k: string): string { const d = day(a); const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err, v.dn, v.ms].join(",") : "none"; }
+function progs(a: Acc): string { const d = day(a); if (!d) return ""; const o: string[] = []; for (const k of d.prog.keys()) o.push(k); return o.sort().join("|"); }
+function files(a: Acc): string { const d = day(a); if (!d) return ""; const o: string[] = []; for (const [k, v] of d.files) o.push(k + ":" + String(v.add) + "/" + String(v.del)); return o.sort().join("|"); }
+const NESTED = "[{\"id\":\"cm/1\",\"name\":\"mcp__everything__echo\",\"status\":\"ok\",\"arguments\":{\"message\":\"hi\"},\"durationMs\":412}," +
+  "{\"id\":\"cm/2\",\"name\":\"bash\",\"status\":\"ok\",\"arguments\":{\"command\":\"wc -l notes.txt\"},\"durationMs\":7}," +
+  "{\"id\":\"cm/3\",\"name\":\"write\",\"status\":\"ok\",\"arguments\":{\"path\":\"notes.txt\",\"content\":\"a\\nb\\n\"},\"durationMs\":1}," +
+  "{\"id\":\"cm/4\",\"name\":\"mcp__everything__add\",\"status\":\"error\",\"arguments\":{\"a\":\"x\"},\"durationMs\":1,\"error\":\"bad\"}," +
+  "{\"id\":\"cm/5\",\"name\":\"edit\",\"status\":\"unfinished\",\"argumentsBytes\":9000}]";
+// codemode details.calls: args is a JSON string, durations are floats
+const DCALLS = "[{\"id\":\"cm/1\",\"name\":\"mcp__everything__echo\",\"args\":\"{\\\"message\\\":\\\"hi\\\"}\",\"status\":\"ok\",\"durationMs\":412.2}," +
+  "{\"id\":\"cm/2\",\"name\":\"bash\",\"args\":\"{\\\"command\\\":\\\"wc -l notes.txt\\\"}\",\"status\":\"ok\",\"durationMs\":7.3}," +
+  "{\"id\":\"cm/3\",\"name\":\"write\",\"args\":\"{\\\"path\\\":\\\"notes.txt\\\",\\\"content\\\":\\\"a\\\\nb\\\\n\\\"}\",\"status\":\"ok\",\"durationMs\":1.2}," +
+  "{\"id\":\"cm/4\",\"name\":\"mcp__everything__add\",\"args\":\"{}\",\"status\":\"error\",\"durationMs\":0.8,\"error\":\"bad\"}," +
+  "{\"id\":\"cm/5\",\"name\":\"edit\",\"args\":\"\",\"status\":\"running\"}]";
+const CODE = "{\"code\":\"const e = await tools.mcp__everything__echo({message:'hi'});\\nreturn e;\"}";
+function nestedCase(w: string, extra: string): void {
+  const a = feed([call("cm", "codemode", CODE), result("cm", "codemode", extra)]);
+  ok(w + ": rows", rows(a) === "bash:1/0 codemode:1/0 edit:1/0 mcp__everything__add:1/1 mcp__everything__echo:1/0 write:1/0", rows(a));
+  ok(w + ": echo duration", row(a, "mcp__everything__echo") === "1,0,1,412", row(a, "mcp__everything__echo"));
+  ok(w + ": edit without arguments, no duration", row(a, "edit") === "1,0,0,0", row(a, "edit"));
+  ok(w + ": shell program", progs(a) === "bash\twc", progs(a));
+  ok(w + ": written lines + file", files(a) === "write\tnotes.txt:2/0" && a.add === 2 && a.del === 0, files(a) + " " + String(a.add));
+  ok(w + ": tools", a.tools === 6, String(a.tools));
+  ok(w + ": nothing left pending", a.pend.size === 0, String(a.pend.size));
+}
+nestedCase("nestedCalls", ",\"details\":{\"calls\":[]},\"isError\":false,\"nestedCalls\":{\"calls\":" + NESTED + ",\"complete\":false}");
+nestedCase("details.calls", ",\"details\":{\"calls\":" + DCALLS + "},\"isError\":false");
+const scr = feed([call("ms", "mcpScript", "{\"code\":\"await mcp.call('echo')\"}"), result("ms", "mcpScript", ",\"details\":{\"mode\":\"script\",\"calls\":[{\"operation\":\"call\",\"path\":\"echo\",\"ok\":true,\"durationMs\":5},{\"operation\":\"search\",\"path\":\"echo\",\"ok\":true,\"durationMs\":1},{\"operation\":\"call\",\"path\":\"add\",\"ok\":false,\"error\":\"nope\",\"durationMs\":2}]},\"isError\":false")]);
+ok("mcpScript calls", rows(scr) === "add:1/1 echo:1/0 mcpScript:1/0", rows(scr));
+ok("mcpScript duration", row(scr, "echo") === "1,0,1,5", row(scr, "echo"));
+// a codemode result whose call line was not seen (pending lost): nested calls still count
+const lost = feed([result("cm", "codemode", ",\"details\":{\"calls\":[]},\"nestedCalls\":{\"calls\":" + NESTED + ",\"complete\":true}")]);
+ok("nested without parent pending", lost.tools === 5, String(lost.tools));
+
 console.log(bad ? bad + " failed" : "pi: all checks passed");
 if (bad) process.exit(1);
