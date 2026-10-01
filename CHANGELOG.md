@@ -2,6 +2,35 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.1
+
+### Features
+
+- **release:** credit contributors and link PRs in release notes (283992e, [#6](https://github.com/BjoernSchotte/agentglass/pull/6))
+
+### Fixes
+
+- **usage:** bump ledger cache to v4 so kiro turns already booked are re-dated (59689e1, [#4](https://github.com/BjoernSchotte/agentglass/pull/4))
+- **kiro:** parse end_timestamp as ISO string, not num() (dbe5f7e, [#4](https://github.com/BjoernSchotte/agentglass/pull/4))
+
+### Build & CI
+
+- drop the temporary build probe (debian:12 matrix verified 4/4) (763cf02, [#5](https://github.com/BjoernSchotte/agentglass/pull/5))
+- **linux:** build in debian:12 so binaries need only glibc 2.36 (1b59c6d, [#5](https://github.com/BjoernSchotte/agentglass/pull/5))
+
+### Refactoring & other
+
+- **kiro:** cover ISO-string end_timestamp in day attribution (44ae6ff, [#4](https://github.com/BjoernSchotte/agentglass/pull/4))
+
+### Docs
+
+- **changelog:** credit @tgitchel-ae for the Kiro harness in 2026.9.2 (5c9dd8e, [#6](https://github.com/BjoernSchotte/agentglass/pull/6))
+- brew trust the tap before installing agentglass-dev (224b30f)
+
+### Contributors
+
+- @tgitchel-ae ([#4](https://github.com/BjoernSchotte/agentglass/pull/4))
+
 ## 2026.9.2
 
 ### Features
