@@ -62,7 +62,7 @@ expected=$(awk -v f="$asset" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1 }'
 [ -n "$expected" ] && [ "$(hash "$tmp/$asset")" = "$expected" ] || die "checksum mismatch for $asset — not installed"
 mkdir -p "$tmp/x" && tar -xzf "$tmp/$asset" -C "$tmp/x" agentglass || die "archive does not contain agentglass"
 chmod 755 "$tmp/x/agentglass"
-"$tmp/x/agentglass" --version >/dev/null 2>&1 || die "the downloaded agentglass does not run here$( [ "$os" = linux ] && echo " — Linux builds need glibc 2.38+ (found: $(ldd --version 2>&1 | head -1))" ); nothing changed — build from source instead"
+"$tmp/x/agentglass" --version >/dev/null 2>&1 || die "the downloaded agentglass does not run here$( [ "$os" = linux ] && echo " — Linux builds need glibc 2.36+ (found: $(ldd --version 2>&1 | head -1))" ); nothing changed — build from source instead"
 
 mkdir -p "$prefix" 2>/dev/null || die "cannot write to $prefix — choose another --prefix"
 prefix=$(cd "$prefix" && pwd -P)   # physical path: agentglass compares it with its resolved executable path

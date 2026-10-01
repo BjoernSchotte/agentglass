@@ -10,24 +10,26 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux: scriptc's runtime needs glibc >= 2.36 (pidfd_open) — 22.04 has 2.35
-          - { target: linux-x64, os: ubuntu-24.04, flags: "" }
-          - { target: linux-arm64, os: ubuntu-24.04-arm, flags: "" }
+          # Linux builds in debian:12 so the binary needs only glibc 2.36 (scriptc's runtime calls pidfd_open,
+          # new in 2.36; building on a newer glibc would also pull in e.g. fmod@GLIBC_2.38)
+          - { target: linux-x64, os: ubuntu-24.04, container: "debian:12", flags: "" }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, container: "debian:12", flags: "" }
           # scriptc 0.1.7 ships no LLVM helper for macOS x64: use its C backend there
-          - { target: darwin-x64, os: macos-15-intel, flags: "--backend c" }
-          - { target: darwin-arm64, os: macos-14, flags: "" }
+          - { target: darwin-x64, os: macos-15-intel, container: "", flags: "--backend c" }
+          - { target: darwin-arm64, os: macos-14, container: "", flags: "" }
     steps:
+      - if: matrix.container != ''
+        run: apt-get update -qq && apt-get install -y -qq clang git curl xz-utils ca-certificates binutils
       - uses: actions/checkout@v4
         with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: npm i -g scriptc@0.1.7
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang
       - run: ./build.sh
         env:
           AGENTGLASS_VERSION: ${{ inputs.version }}
