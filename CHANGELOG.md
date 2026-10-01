@@ -16,6 +16,10 @@ All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases wi
 
 - **kiro:** subagent and compaction-overflow calls keep their own day (327e581)
 
+### Contributors
+
+- @tgitchel-ae (Kiro harness, [#2](https://github.com/BjoernSchotte/agentglass/pull/2))
+
 ## 2026.9.1
 
 ### Features
