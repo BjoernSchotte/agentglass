@@ -5,7 +5,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, type Day, bucket, tool, pend, file, lines, usageExact, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, isoMs, nlines, num } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText } from "./common.ts";
@@ -115,7 +115,13 @@ function usage(a: Acc, l: string): void {
     const id = str(m["toolCallId"]); const p = a.pend.get(id); if (!p) return;
     a.pend.delete(id);
     const t = isoMs(iso);
-    done(p, t > 0 && p.t > 0 ? t - p.t : -1, m["isError"] === true, blockText(m["content"]).length, id, []);
+    // MCP (native and pi-mcp-adapter): the result names server and tool → one row per real tool, whatever the call was named;
+    // adapter housekeeping (search, describe, status, …) stays under its proxy tool
+    const det = obj(m["details"]);
+    const srv = det ? str(det["server"]) : ""; const tl = det ? str(det["tool"]) : ""; const mode = det ? str(det["mode"]) : "";
+    if (srv && tl && (mode === "" || mode === "call")) retool(a, p, "mcp__" + srv + "__" + tl);
+    const derr = det ? str(det["error"]) : ""; // adapters < 2.11 leave isError false on failed calls
+    done(p, t > 0 && p.t > 0 ? t - p.t : -1, m["isError"] === true || derr === "tool_error" || derr === "call_failed", blockText(m["content"]).length, id, []);
     return;
   }
   if (role !== "assistant") return;
