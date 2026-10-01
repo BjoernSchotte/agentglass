@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // 2.x: session_v2 + session_message (one row per message, cursor = seq, which has gaps; assistant rows are updated in place
 // while they stream). 1.x (or a DB migrated from it): session + message + part (cursor = part ordinal).
+// Without a working sqlite3, 2.x sessions come from the service daemon's HTTP API (cursor = index in the message list).
 import { statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
@@ -14,6 +15,7 @@ import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageE
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live, SessionSource } from "./types.ts";
 import { toolArg, blockText } from "./common.ts";
+import { type Endpoint, endpoint, listSessions, activeSet, messages, lastId } from "./opencode-http.ts";
 
 function dbPath(): string {
   const e = process.env["OPENCODE_DB"]; if (e !== undefined && e) return e;
@@ -28,12 +30,15 @@ function statePath(): string {
 // one session as of the last scan query. end = cursor after the last record; hold = first record of the running turn still
 // being written (-1 none), honored only while the turn really runs; floor = the end readers were given (never moves back);
 // busy = a turn is open in the DB (2.x time_suspended, 1.x an assistant message without time.completed); act = its last write;
-// fork = the session's creation time when rows older than it are copies of another session's (0 = none can be)
-interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; hold: number; floor: number; busy: boolean; act: number; archived: boolean; v1: boolean; fork: number }
+// fork = the session's creation time when rows older than it are copies of another session's (0 = none can be);
+// http = read over the daemon's HTTP API (end/hold/floor are message indexes, see hc)
+interface Row { db: string; id: string; parent: string; dir: string; title: string; agent: string; mtime: number; end: number; hold: number; floor: number; busy: boolean; act: number; archived: boolean; v1: boolean; fork: number; http: boolean }
 const rows = new Map<string, Row>(); // path ("<db>#<id>") → row
 let tables = new Set<string>();
 let dbKey = ""; // db + db-wal size/mtime at the last successful query: unchanged → no query
 let failedAt = 0; let warned = false;
+let sqlOk = false; // the last sqlite3 read worked
+let mode = ""; // the transport the rows come from: "seq" (SQLite), "idx" (HTTP); "" = none yet (SessionSource.epoch)
 let daemonUp = false; // the 2.x daemon (service.json pid) is alive: without it a leftover time_suspended means nothing
 let notDaemon = 0; // the service.json pid is alive but, per the process table, no OpenCode process (recycled after a crash)
 const IN_FLIGHT_MS = 1800000; // an open turn nothing vouches for (1.x; 2.x without the daemon) runs for this long after its last write
@@ -65,7 +70,7 @@ function load(db: string): boolean {
     if (!res) return false;
     for (const r of res) {
       const id = str(r["id"]); const e = num(r["e"]); const o = r["o"];
-      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: e, hold: typeof o === "number" ? num(o) : -1, floor: 0, busy: num(r["b"]) === 1, act: num(r["u"]), archived: num(r["x"]) === 1, v1: false, fork: num(r["f"]) });
+      next.set(db + "#" + id, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: num(r["u"]), end: e, hold: typeof o === "number" ? num(o) : -1, floor: 0, busy: num(r["b"]) === 1, act: num(r["u"]), archived: num(r["x"]) === 1, v1: false, fork: num(r["f"]), http: false });
     }
   }
   if (tables.has("session") && tables.has("message") && tables.has("part")) { // 1.x
@@ -84,13 +89,74 @@ function load(db: string): boolean {
       const lu = l ? num(l["u"]) : 0;
       const busy = !!l && str(l["r"]) === "assistant" && (l["c"] === null || l["c"] === undefined);
       const n = num(r["n"]);
-      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: n, hold: busy && l ? n - num(l["n"]) : -1, floor: 0, busy, act: lu, archived: num(r["x"]) === 1, v1: true, fork: num(r["f"]) });
+      next.set(path, { db, id, parent: str(r["p"]), dir: str(r["d"]), title: str(r["t"]), agent: str(r["a"]), mtime: Math.max(num(r["u"]), lu), end: n, hold: busy && l ? n - num(l["n"]) : -1, floor: 0, busy, act: lu, archived: num(r["x"]) === 1, v1: true, fork: num(r["f"]), http: false });
     }
   }
-  // the end never moves back (a row that became unsettled again would otherwise reset every reader)
-  for (const [p, r] of next) { const old = rows.get(p); if (old) r.floor = old.floor; }
-  rows.clear(); for (const [p, r] of next) rows.set(p, r);
+  keep(next, false);
   return true;
+}
+// the end never moves back (a row that became unsettled again would otherwise reset every reader) — within one transport:
+// the other one's cursor means something else
+function keep(next: Map<string, Row>, http: boolean): void {
+  for (const [p, r] of next) { const old = rows.get(p); if (old && old.http === http) r.floor = old.floor; }
+  rows.clear(); for (const [p, r] of next) rows.set(p, r);
+}
+
+// ── HTTP transport: the session list each scan, each session's messages cached and fetched from the last settled one ──
+interface Msgs { msgs: Obj[]; settled: number; mt: number; busy: boolean } // settled = leading messages that no longer change
+const hc = new Map<string, Msgs>(); // path → messages
+const SYNC_MS = 2000; // per scan; sessions left over keep their last known end until the next scan
+// still being written: a streaming assistant (no time.completed yet), a running shell or compaction
+function unsettled(m: Obj): boolean {
+  const t = str(m["type"]);
+  return (t === "assistant" && !tm(m, "completed")) || ((t === "shell" || t === "compaction") && str(m["status"]) === "running");
+}
+function settledCount(ms: Obj[]): number { let i = 0; for (const m of ms) { if (unsettled(m)) return i; i++; } return ms.length; }
+// the SQLite hold rule on fetched rows: the first unsettled message of the turn after the last idle
+function holdIdx(ms: Obj[]): number {
+  let idle = -1; let i = 0;
+  for (const m of ms) { if (str(m["type"]) === "idle") idle = i; i++; }
+  i = 0;
+  for (const m of ms) { if (i > idle && unsettled(m)) return i; i++; }
+  return -1;
+}
+function sync(ep: Endpoint, path: string, r: Row): void {
+  let c = hc.get(path);
+  if (!c || c.mt !== r.mtime || r.busy || c.busy) {
+    const base = c ? c.msgs.slice(0, c.settled) : [];
+    const got = messages(ep, r.id, lastId(base));
+    if (got) { const ms = base.concat(got); c = { msgs: ms, settled: settledCount(ms), mt: r.mtime, busy: r.busy }; hc.set(path, c); }
+  }
+  if (!c) return;
+  r.end = c.msgs.length; r.hold = r.busy ? holdIdx(c.msgs) : -1;
+}
+function loadHttp(ep: Endpoint, db: string): boolean {
+  const list = listSessions(ep); if (!list) return false;
+  const ids = activeSet(ep); if (!ids) return false;
+  const act = new Set<string>(ids);
+  const next = new Map<string, Row>();
+  for (const o of list) {
+    const id = str(o["id"]); if (!id) continue;
+    const t = obj(o["time"]); const loc = obj(o["location"]);
+    const up = t ? num(t["updated"]) : 0;
+    next.set(db + "#" + id, { db, id, parent: str(o["parentID"]), dir: loc ? str(loc["directory"]) : "", title: str(o["title"]), agent: str(o["agent"]), mtime: up, end: 0, hold: -1, floor: 0,
+      busy: act.has(id), act: up, archived: !!t && t["archived"] !== undefined && t["archived"] !== null, v1: false, fork: o["fork"] !== undefined && o["fork"] !== null && t ? num(t["created"]) : 0, http: true });
+  }
+  const t0 = Date.now();
+  for (const [p, r] of [...next.entries()].sort((x, y) => y[1].mtime - x[1].mtime)) {
+    if (Date.now() - t0 < SYNC_MS) sync(ep, p, r);
+    else { const c = hc.get(p); if (c) { r.end = c.msgs.length; r.hold = r.busy ? holdIdx(c.msgs) : -1; } }
+  }
+  for (const p of [...hc.keys()]) if (!next.has(p)) hc.delete(p);
+  keep(next, true);
+  return true;
+}
+// one message as a record line: the SQLite line shape (type, seq first; copied when a fork took it from its parent)
+function httpLine(m: Obj, i: number, fork: number): string {
+  const o: Obj = {}; o["type"] = str(m["type"]); o["seq"] = i;
+  if (fork > 0 && tm(m, "created") < fork) o["copied"] = 1;
+  for (const k of Object.keys(m)) if (k !== "type" && k !== "seq") o[k] = m[k];
+  return JSON.stringify(o);
 }
 
 // mid-turn, decided when asked (the DB is only re-read when it changes): an open 2.x turn while the service daemon lives
@@ -105,16 +171,26 @@ function endOf(r: Row): number {
 function daemonPid(): number { const o = parseJson(readText(statePath(), 0, 8192).trim()); return o ? num(o["pid"]) : 0; }
 function pidAlive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (e) { return false; } } // the daemon is the user's own process
 
+// SQLite first (seq cursor, suspended turns, full-text search, 1.x); the daemon's HTTP API when sqlite3 is missing or fails
 function scan(add: AddFn): void {
-  const db = dbPath();
-  if (!existsSync(db)) { rows.clear(); dbKey = ""; return; }
+  const db = dbPath(); const have = existsSync(db);
   const dp = daemonPid(); daemonUp = dp > 0 && dp !== notDaemon && pidAlive(dp); // before any stat: sizes depend on it
-  if (!sqliteBin()) { warnOnce("OpenCode sessions need the sqlite3 CLI"); rows.clear(); dbKey = ""; return; } // probe cached
-  const k = db + "|" + fileKey(db) + "|" + fileKey(db + "-wal");
-  if (k !== dbKey && Date.now() - failedAt > 30000) { // a failed query backs off: never a 3 s stall on every tick
-    if (load(db)) dbKey = k;
-    else { failedAt = Date.now(); warnOnce("OpenCode: reading " + db + " with sqlite3 failed"); }
+  let m = "";
+  if (have && sqliteBin()) { // probe cached
+    const k = db + "|" + fileKey(db) + "|" + fileKey(db + "-wal");
+    if (k !== dbKey && Date.now() - failedAt > 30000) { // a failed query backs off: never a 3 s stall on every tick
+      sqlOk = load(db);
+      if (sqlOk) dbKey = k; else failedAt = Date.now();
+    }
+    if (sqlOk) m = "seq";
+  } else { sqlOk = false; dbKey = ""; }
+  if (!m) {
+    const ep = daemonUp ? endpoint(statePath()) : null;
+    if (ep && loadHttp(ep, db)) { m = "idx"; dbKey = ""; } // the next SQLite read starts from scratch
   }
+  if (m) { if (m === "seq") hc.clear(); mode = m; }
+  else if (!have && mode !== "idx" && !existsSync(statePath())) { rows.clear(); dbKey = ""; return; } // no OpenCode here
+  else warnOnce(have && sqliteBin() ? "OpenCode: reading " + db + " with sqlite3 failed" : "OpenCode needs the sqlite3 CLI or a running `opencode service`"); // rows kept for the run: no flicker
   for (const [p, r] of rows) add(p, r.id, r.parent, r.archived);
 }
 // liveness links a process to a session by cwd before any head is loaded
@@ -133,6 +209,12 @@ function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; ne
   const r = rows.get(s.path);
   const to = r ? Math.min(to0, endOf(r)) : from;
   if (!r || to <= from) return { lines: [], next: from };
+  if (r.http) { // every message is in memory
+    const c = hc.get(s.path); if (!c) return { lines: [], next: from };
+    const e = Math.min(to, c.msgs.length); const out: string[] = [];
+    let i = from; for (const m of c.msgs.slice(from, e)) { out.push(httpLine(m, i, r.fork)); i++; }
+    return { lines: out, next: Math.max(from, e) };
+  }
   const budget = String(Math.max(READ_MIN, (to - from) * UNIT));
   // rows a fork copied from its parent are tagged "copied" (usage skips them, the transcript shows them)
   const f = String(r.fork);
@@ -159,6 +241,7 @@ const source: SessionSource = {
   align: (s: Sess, at: number) => at, // every cursor value starts a record
   lines: sessionLines,
   unit: UNIT,
+  epoch: (s: Sess) => s.h ? mode : mode, // one transport for every session
 };
 
 // ── transcript ──
@@ -289,6 +372,18 @@ function spawnOf(s: Sess): string {
   const hit = spawnCache.get(s.path); if (hit !== undefined) return hit;
   const r = rows.get(s.path); if (!r || !r.parent) return "";
   const pr = rows.get(r.db + "#" + r.parent); if (!pr) return "";
+  if (pr.http) { // the parent's messages are in memory
+    const c = hc.get(r.db + "#" + r.parent); if (!c) return "";
+    for (const m of c.msgs) {
+      if (str(m["type"]) !== "assistant") continue;
+      for (const b of arr(m["content"])) {
+        const bo = obj(b); const st = bo && str(bo["type"]) === "tool" ? obj(bo["state"]) : null; const md = st ? obj(st["metadata"]) : null;
+        if (!bo || !md || (str(md["sessionID"]) !== r.id && str(md["sessionId"]) !== r.id)) continue;
+        const id = str(bo["id"]); spawnCache.set(s.path, id); return id;
+      }
+    }
+    return "";
+  }
   const like = " like " + q("%" + r.id + "%");
   const res = pr.v1
     ? query(r.db, "select data from part where session_id=" + q(pr.id) + " and data" + like)
@@ -323,6 +418,11 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
 function likeEsc(t: string): string { return t.split("\\").join("\\\\").split("%").join("\\%").split("_").join("\\_"); }
 function search(term: string): string[] {
   const db = dbPath();
+  if (mode === "idx") { // over HTTP the daemon matches titles only
+    const t = term.toLowerCase(); const out: string[] = [];
+    if (t) for (const [p, r] of rows) if (r.title.toLowerCase().indexOf(t) >= 0) out.push(p);
+    return out;
+  }
   if (!term || !rows.size || !existsSync(db)) return [];
   const like = " like " + q("%" + likeEsc(term) + "%") + " escape '\\'";
   const sel: string[] = [];
