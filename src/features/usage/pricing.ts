@@ -2,13 +2,13 @@
 // layers, later wins: built-in table < opt-in community list (./remote.ts, cached) < ~/.agentglass/prices.json
 // SPDX-License-Identifier: Apache-2.0
 import { join } from "node:path";
-import { obj } from "../../util/json.ts";
+import { type Obj, obj } from "../../util/json.ts";
 import { HOME, readText } from "../../util/fs.ts";
 import { remoteCfg, loadCached } from "./remote.ts";
 
 // cr/cw/cw1 < 0 = derive from input (cache read 0.1×, cache write 5m 1.25×, 1h 2×)
 export interface Price { p: string; i: number; o: number; cr: number; cw: number; cw1: number }
-const P: Price[] = [];
+let P: Price[] = [];
 function add(p: string, i: number, o: number, cr: number, cw: number, cw1: number = -1): void {
   for (const x of P) if (x.p === p) { x.i = i; x.o = o; x.cr = cr; x.cw = cw; x.cw1 = cw1; return; }
   P.push({ p, i, o, cr, cw, cw1 });
@@ -29,10 +29,10 @@ add("gemini-2.5-pro", 1.25, 10, 0.125, 0, 0); add("gemini-2.5-pro>200k", 2.5, 15
 add("gemini-2.5-flash", 0.3, 2.5, 0.03, 0, 0); add("gemini-2.5-flash-lite", 0.1, 0.4, 0.01, 0, 0);
 
 function num(v: unknown, d: number): number { return typeof v === "number" ? (v as number) : d; }
+const BUILTIN: Price[] = P.map((x: Price) => ({ p: x.p, i: x.i, o: x.o, cr: x.cr, cw: x.cw, cw1: x.cw1 }));
 // opt-in community list, as cached by the last refresh (a refresh during this run applies from the next start)
 const RC = remoteCfg();
 const remote = RC.source ? loadCached(RC.source) : null;
-if (remote) for (const [k, r] of remote.prices) add(k, r.i, r.o, r.cr, r.cw, r.cw1);
 function hash(s: string): string { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return String(h); }
 function two(n: number): string { return (n < 10 ? "0" : "") + n; }
 function day(ms: number): string { const d = new Date(ms); return d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()); }
@@ -40,11 +40,24 @@ function day(ms: number): string { const d = new Date(ms); return d.getFullYear(
 export const PRICES_FROM = remote ? remote.source + " " + day(remote.fetchedAt) : "built-in";
 // user table: {"<model-prefix>": {"input": n, "output": n, "cacheRead": n, "cacheWrite": n, "cacheWrite1h": n}} — read once, ignored if missing/invalid
 const user = obj((() => { try { return JSON.parse(readText(join(HOME, ".agentglass", "prices.json"), 0, 262144)); } catch (e) { return null; } })());
-if (user) for (const k of Object.keys(user)) {
-  const r = obj(user[k]);
-  if (r && typeof r["input"] === "number") add(k.toLowerCase(), num(r["input"], 0), num(r["output"], 0), num(r["cacheRead"], -1), num(r["cacheWrite"], -1), num(r["cacheWrite1h"], -1));
+const memo = new Map<string, Price | null>();
+// the table: built-ins < community list < user table. A user price for a model also replaces the built-in tiers of that
+// key ("<model>>200k", "<model>@2027") it does not name itself: the user's rate is meant for all of its prompts.
+export function applyUserPrices(u: Obj | null): void {
+  P = BUILTIN.map((x: Price) => ({ p: x.p, i: x.i, o: x.o, cr: x.cr, cw: x.cw, cw1: x.cw1 }));
+  if (remote) for (const [k, r] of remote.prices) add(k, r.i, r.o, r.cr, r.cw, r.cw1);
+  if (u) {
+    const mine = new Set<string>();
+    for (const k0 of Object.keys(u)) {
+      const r = obj(u[k0]); const k = k0.toLowerCase();
+      if (r && typeof r["input"] === "number") { add(k, num(r["input"], 0), num(r["output"], 0), num(r["cacheRead"], -1), num(r["cacheWrite"], -1), num(r["cacheWrite1h"], -1)); mine.add(k); }
+    }
+    P = P.filter((x: Price) => { for (const k of mine) if (!mine.has(x.p) && x.p.length > k.length && x.p.startsWith(k) && (x.p.charAt(k.length) === ">" || x.p.charAt(k.length) === "@")) return false; return true; });
+  }
+  P.sort((a, b) => b.p.length - a.p.length); // longest prefix wins (opus-4-1 before opus-4)
+  memo.clear();
 }
-P.sort((a, b) => b.p.length - a.p.length); // longest prefix wins (opus-4-1 before opus-4)
+applyUserPrices(user);
 // a flat unit rate from prices.json ("kiroCreditUsd": 0.04 → $ per kiro credit), 0 = not configured
 export function userRate(key: string): number { const v = user ? user[key] : undefined; return typeof v === "number" && (v as number) > 0 ? (v as number) : 0; }
 // fingerprint of every price that differs from the built-ins: cached costs are only valid for the prices they were
@@ -58,7 +71,6 @@ function remoteSig(): string {
 }
 export const PRICES_SIG = (user ? JSON.stringify(user) : "") + remoteSig();
 
-const memo = new Map<string, Price | null>();
 export function price(model: string): Price | null {
   const hit = memo.get(model);
   if (hit !== undefined) return hit;
