@@ -21,20 +21,63 @@ function sessionRoot(): string {
   const sd = st ? str(st["sessionDir"]) : "";
   return sd ? tilde(sd) : join(agentDir, "sessions");
 }
-function scan(add: AddFn): void {
-  const root = sessionRoot();
-  for (const d of listDir(root)) {
-    if (d.endsWith(".jsonl")) { add(join(root, d), d.slice(d.indexOf("_") + 1, -6), "", false); continue; }
-    if (!d.startsWith("--")) continue;
-    for (const f of listDir(join(root, d))) if (f.endsWith(".jsonl")) add(join(root, d, f), f.slice(f.indexOf("_") + 1, -6), "", false);
+function fileId(f: string): string { return f.slice(f.indexOf("_") + 1, -6); } // <ts>_<id>.jsonl
+function header(path: string): Obj | null {
+  const h = readText(path, 0, 4096); const nl = h.indexOf("\n");
+  const o = parseJson((nl >= 0 ? h.slice(0, nl) : h).trim());
+  return o && str(o["type"]) === "session" ? o : null;
+}
+// subagent files of the pi-subagents packages carry their id only in the header (run-<i>/session.jsonl): read once per path
+const hdrIds = new Map<string, string>();
+function headerId(path: string, f: string): string {
+  let id = hdrIds.get(path);
+  if (id === undefined) { const o = header(path); id = (o ? str(o["id"]) : "") || (f ? fileId(f) : path); hdrIds.set(path, id); }
+  return id;
+}
+// one dir of sessions; a session's sibling dir <base>/ holds its subagents: tasks/*.jsonl (@gotgenes/pi-subagents),
+// forks/*.jsonl and <runId>/run-<i>/session.jsonl (pi-subagents)
+function scanDir(dir: string, add: AddFn): void {
+  const names = listDir(dir); const has = new Set<string>(names);
+  for (const f of names) {
+    if (!f.endsWith(".jsonl")) continue;
+    const pid = fileId(f);
+    add(join(dir, f), pid, "", false);
+    const base = f.slice(0, -6); if (!has.has(base)) continue;
+    const bd = join(dir, base);
+    for (const e of listDir(bd)) {
+      const ed = join(bd, e);
+      if (e === "tasks" || e === "forks") { for (const c of listDir(ed)) if (c.endsWith(".jsonl")) add(join(ed, c), headerId(join(ed, c), c), pid, false); continue; }
+      for (const r of listDir(ed)) {
+        if (!r.startsWith("run-") || listDir(join(ed, r)).indexOf("session.jsonl") < 0) continue;
+        const p = join(ed, r, "session.jsonl");
+        add(p, headerId(p, ""), pid, false);
+      }
+    }
   }
 }
+function scan(add: AddFn): void {
+  const root = sessionRoot();
+  scanDir(root, add);
+  for (const d of listDir(root)) if (d.startsWith("--")) scanDir(join(root, d), add);
+}
 
+// a @tintinweb/pi-subagents child: same dir as its parent, parentSession set, session_info name "<type>#<8 hex>"
+const SUBNAME = /^[^#\s]+#[0-9a-f]{8}$/;
 // liveness links a process to the session by cwd, before any head is loaded: read the header line (first line, small) once
 function meta(s: Sess): void {
-  const h = readText(s.path, 0, 4096); const nl = h.indexOf("\n");
-  const o = parseJson((nl >= 0 ? h.slice(0, nl) : h).trim());
-  if (o && str(o["type"]) === "session") s.cwd = str(o["cwd"]);
+  const o = header(s.path);
+  if (o) s.cwd = str(o["cwd"]);
+  if (s.parent) { if (!s.kind) s.kind = "subagent"; return; } // found in a parent's subagent dir
+  const ps = o ? str(o["parentSession"]) : ""; if (!ps) return;
+  // parentSession alone is also a /fork, which stays top-level (the user continues in it; it keeps the live pid)
+  for (const l of readText(s.path, 0, 262144).split("\n")) {
+    if (l.indexOf("\"session_info\"") < 0) continue;
+    const io = parseJson(l); const n = io ? str(io["name"]) : "";
+    if (!SUBNAME.test(n)) continue;
+    s.parent = ps.endsWith(".jsonl") ? fileId(ps.slice(ps.lastIndexOf("/") + 1)) : ps;
+    s.kind = n.slice(0, n.indexOf("#"));
+    return;
+  }
 }
 
 function ev(out: Ev[], kind: string, text: string, ts: string, id: string, full: string): void { out.push({ kind, text, ts, id, full }); }
