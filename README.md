@@ -1,7 +1,7 @@
 # ◈ agentglass
 
 **See every coding agent on your machine — live, down to every tool call, diff and dollar.**
-One tiny native TUI for Claude Code, Codex, fx, pi, OpenCode and Kiro: browse every session you ever ran, watch the running
+One tiny native TUI for Claude Code, Codex, fx, pi, OpenCode, Kiro and Gemini CLI: browse every session you ever ran, watch the running
 ones think, drill into any call, see where the time and money went, and get tapped on the shoulder
 when an agent needs you.
 
@@ -22,8 +22,9 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
 ## Why it slaps
 
 - **Every agent, one screen.** Claude Code (`~/.claude`), Codex (`~/.codex`),
-  [fx](https://github.com/vercel-labs/fx) (`~/.fx`), [pi](https://github.com/badlogic/pi-mono) (`~/.pi`) and
-  [OpenCode](https://opencode.ai) sessions in one searchable list. Live sessions
+  [fx](https://github.com/vercel-labs/fx) (`~/.fx`), [pi](https://github.com/badlogic/pi-mono) (`~/.pi`),
+  [OpenCode](https://opencode.ai), Kiro and [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`~/.gemini`)
+  sessions in one searchable list. Live sessions
   come first, and all your history is there too.
 - **Live transcripts.** Open a session and it follows the log as the agent works: prompts,
   thinking, tool calls and results as they land.
@@ -230,6 +231,7 @@ export AGENTGLASS_OPENCODE="opencode"
 export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with the sqlite3 CLI
 export AGENTGLASS_CURL="/opt/bin/curl"         # … or, without sqlite3, over the OpenCode service's HTTP API with curl
 export AGENTGLASS_KIRO="kiro-cli"
+export AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"   # headless sends may edit files
 ```
 
 ## Supported harnesses
@@ -242,11 +244,12 @@ export AGENTGLASS_KIRO="kiro-cli"
 | π **pi** | `~/.pi/agent/sessions` | process cwd = session cwd | pi-subagents packages | ✔ |
 | ▣ **OpenCode** | `~/.local/share/opencode/opencode.db` | `service.json` daemon (v2) · process cwd (1.x) | `parent_id` | ✔ |
 | ◇ **Kiro** | `~/.kiro/sessions/cli` | `<id>.lock` pid | `parent_session_id` | ✔ |
+| ✦ **Gemini CLI** | `~/.gemini/tmp/<project>/chats` | process cwd = project root | `chats/<parent id>/` | ✔ |
 
 Kiro bills in credits, not tokens: set `"kiroCreditUsd"` in `~/.agentglass/prices.json` (or
 `AGENTGLASS_KIRO_CREDIT_USD`) to see its cost; without a rate it shows as unknown.
 
-Gemini, aider, amp and friends already show up in the process view. Their session
+aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.
 
 Notes:
@@ -266,6 +269,17 @@ Notes:
   full-text search matches session titles only. With neither, OpenCode sessions don't show and a warning appears. Live detection uses the v2 daemon's
   `~/.local/state/opencode/service.json` plus `time_suspended`, and the process working directory for
   1.x TUIs. `D` (trash) is not available for OpenCode.
+- **Gemini CLI** (≥ 0.39, JSONL sessions): honors `GEMINI_CLI_HOME`; also reads `~/.cache/.gemini/tmp` (macOS seatbelt
+  sandbox). The cwd comes from each project's `.project_root`; legacy `.json` sessions and pre-0.29 hash dirs are not
+  shown. Gemini rewrites history in place (re-appended messages, `/rewind`, resume and compression checkpoints):
+  agentglass shows each message and tool call once, marks rewinds and rewritten history with the number of messages
+  dropped, and counts each response's tokens once. No cost in the files: priced with the built-in table (paid-tier
+  API prices; Pro models above 200k prompt tokens at the long-context rate) or your price lists. Helper calls (routing,
+  summaries, compression) are not in the transcript, so cost is a slight undercount. Gemini deletes sessions after
+  30 days by default (`general.sessionRetention`). A headless send (`s`) runs `gemini --resume <id> -p …` in the
+  project root: tools that need approval are denied, and folders not trusted in Gemini are refused (its message is in
+  the send log); opt in with `AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"` or `--skip-trust`. On a
+  subagent, `s` and `R` act on its parent session (Gemini cannot resume subagents).
 
 ### Adding a harness
 
@@ -280,6 +294,7 @@ scriptc build src/harness/harness.check.ts -o hc && ./hc   # registry + golden s
 scriptc build src/harness/opencode.check.ts -o oc && ./oc  # OpenCode: SQLite rows, subagents, live detection
 scriptc build src/harness/opencode-http.check.ts -o och && ./och  # OpenCode over the service HTTP API (fake curl)
 scriptc build src/harness/pi.check.ts -o pc && ./pc        # pi: MCP, nested calls, subagent sessions
+scriptc build src/harness/gemini.check.ts -o gc && ./gc    # Gemini: normalizing source (every window split), scan, usage
 ```
 
 The list, filters, badges, ticker, Stats rows, `--harness`, help, full-text search, trash and live
