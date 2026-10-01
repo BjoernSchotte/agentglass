@@ -125,6 +125,9 @@ brew install bjoernschotte/tap/agentglass       # stable
 brew install bjoernschotte/tap/agentglass-dev   # daily dev build (conflicts with stable)
 ```
 
+The dev formula declares a conflict with the stable one, which current Homebrew only resolves for
+trusted taps — once: `brew trust bjoernschotte/tap`.
+
 **Install script** (into `~/.local/bin`, verifies checksums)
 
 ```sh
