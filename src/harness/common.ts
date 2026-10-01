@@ -5,8 +5,13 @@ import type { Sess } from "../model/types.ts";
 
 export function toolArg(name: string, inp: Obj | null, raw: string): string {
   if (inp) {
-    const keys = ["command", "cmd", "file_path", "path", "pattern", "url", "query", "description", "prompt", "skill", "task", "location", "__tool_use_purpose"];
-    for (const k of keys) { const v = str(inp[k]); if (v) return v; }
+    if (name === "mcp" && str(inp["tool"])) { const sv = str(inp["server"]); return (sv ? sv + "/" : "") + str(inp["tool"]); } // pi-mcp-adapter proxy
+    const keys = ["command", "cmd", "file_path", "path", "pattern", "url", "query", "code", "description", "prompt", "skill", "task", "location", "__tool_use_purpose"];
+    for (const k of keys) {
+      const v = str(inp[k]); if (!v) continue;
+      if (k !== "code") return v;
+      for (const ln of v.split("\n")) { const t = ln.trim(); if (t) return t.length > 120 ? t.slice(0, 119) + "…" : t; } // script: its first line
+    }
     const req = obj(inp["request"]);
     if (req) return toolArg(name, req, "");
     return JSON.stringify(inp);
