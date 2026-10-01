@@ -135,5 +135,20 @@ const lk = linkByCwd([{ pid: 42, h: "pi", cwd: "/w" }], live);
 const kp = found.get("K");
 ok("pid goes to the newest unparented session", !!kp && lk.get(kp.path) === 42 && lk.size === 1, String(lk.size));
 
+// ── spawnOf (spec decision 8) ──
+const xs = found.get("X"); const cs = found.get("C"); const ts = found.get("T");
+writeFileSync(PB + ".jsonl", hdr("P", "") +
+  result("call_9", "subagent", ",\"details\":{\"mode\":\"single\",\"results\":[{\"index\":0,\"sessionFile\":\"" + PB + "/r1/run-0/session.jsonl\",\"usage\":{\"input\":1,\"cost\":0.5}}]},\"isError\":false") + "\n" +
+  result("call_7", "Agent", ",\"details\":{\"displayName\":\"Explore\",\"agentId\":\"1b2c3d4e-4211-41e\",\"status\":\"completed\"},\"isError\":false") + "\n");
+const spawn = pi.spawnOf; const sp = (s: Sess | undefined): string => spawn && s ? spawn(s) : "-";
+ok("pi-subagents child → its subagent call", sp(xs) === "call_9", sp(xs));
+ok("tintinweb child → its Agent call", sp(cs) === "call_7", sp(cs));
+ok("gotgenes child: not traced", sp(ts) === "", sp(ts));
+// ── subagent usage booked once (spec decision 9) ──
+const ex = feed([result("call_1", "subagent", ",\"details\":{\"mode\":\"single\",\"results\":[{\"agent\":\"a\",\"usage\":{\"input\":10,\"output\":5,\"cost\":0.01},\"model\":\"m\"}]},\"isError\":false")]);
+ok("--no-session child usage booked on the parent", Math.abs(ex.cost - 0.01) < 1e-9 && ex.inTok === 10 && ex.outTok === 5, String(ex.cost));
+const ex2 = feed([result("call_1", "subagent", ",\"details\":{\"results\":[{\"sessionFile\":\"/x/s.jsonl\",\"usage\":{\"input\":10,\"output\":5,\"cost\":0.01},\"model\":\"m\"}]},\"isError\":false")]);
+ok("child with its own file: not booked twice", ex2.cost === 0 && ex2.inTok === 0, String(ex2.cost));
+
 console.log(bad ? bad + " failed" : "pi: all checks passed");
 if (bad) process.exit(1);
