@@ -12,7 +12,7 @@ import { linkByCwd, daemonWarn, type CwdProc } from "./link.ts";
 import { applyMeta } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
-const OTHER = ["gemini", "aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
+const OTHER = ["aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
 export let procs: Proc[] = [];
 export const allProcs = new Map<number, Proc>();
 export const hist = new Map<number, number[]>();
@@ -23,10 +23,15 @@ const filePid = new Map<string, number>(); // open transcript → pid (HarnessAd
 const registry = new Map<string, Live>(); // "<harness>:<session id>" → entry (HarnessAdapter.liveRegistry)
 const daemonLive = new Map<string, Live[]>(); // harness id → its registry, for harnesses whose registry is a shared daemon
 
-function harnessOf(args: string): string {
+// the script after node/bun/deno names the agent; runtime flags come first (gemini relaunches itself with --max-old-space-size=…)
+export function harnessOfArgs(args: string): string {
   const t = args.split(" ");
   let b = base(t[0]);
-  if ((b === "node" || b === "bun" || b === "deno") && t.length > 1) b = base(t[1]).replace(/\.(m?js|ts)$/, "");
+  if (b === "node" || b === "bun" || b === "deno") {
+    let i = 1; while (i < t.length && t[i].startsWith("-")) i++;
+    if (i >= t.length) return "";
+    b = base(t[i]).replace(/\.(m?js|ts)$/, "");
+  }
   return harnessOfProc(b) || (OTHER.indexOf(b) >= 0 ? b : "");
 }
 export function refreshProcs(): void {
@@ -34,7 +39,7 @@ export function refreshProcs(): void {
   const kids = new Map<number, number[]>();
   for (const r of OS.listProcs()) {
     const p: Proc = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: "", cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" };
-    p.h = harnessOf(p.args);
+    p.h = harnessOfArgs(p.args);
     allProcs.set(p.pid, p);
     const k = kids.get(p.ppid);
     if (k) k.push(p.pid); else kids.set(p.ppid, [p.pid]);
