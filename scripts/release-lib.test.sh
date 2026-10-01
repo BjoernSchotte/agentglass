@@ -4,6 +4,15 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 cd "$t" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git config tag.gpgsign false
 . "$here/release-lib.sh"
+# never reach GitHub from tests: a fake gh answers from $t/ghdata ("<sha>\t<merged PR> <PR author>\t<commit author login>")
+mkdir bin; cat > bin/gh <<'GH'
+#!/bin/sh
+[ -f "$GHFAIL" ] && exit 1
+p="$2"; sha=${p##*/commits/}; k=author; case "$sha" in */pulls) k=pulls; sha=${sha%/pulls};; esac
+[ -f "$GHDATA" ] || exit 0
+awk -F'\t' -v s="$sha" -v k="$k" '$1 == s { print (k == "pulls" ? $2 : $3) }' "$GHDATA"
+GH
+chmod +x bin/gh; export RELEASE_GH="$t/bin/gh" GHDATA="$t/ghdata" GHFAIL="$t/ghfail" RELEASE_REPO=o/r RELEASE_MAINTAINERS=maint RELEASE_MAINTAINER_NAMES=t
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 c() { echo "$1" >> f; git add f; git commit -qm "$1"; }
 c "feat: first"
@@ -34,6 +43,23 @@ if echo "$log" | grep -q 'to be reverted'; then echo "FAIL revert pair leaked"; 
 eq "empty range" "$(changelog HEAD HEAD)" "- No changes."
 b=$(echo "$log" | grep -n '^### Breaking' | cut -d: -f1); fe=$(echo "$log" | grep -n '^### Features' | cut -d: -f1 || true)
 [ -z "$fe" ] || [ "$b" -lt "$fe" ] || { echo "FAIL breaking first"; fail=1; }
+# contributors + PR links (GitHub metadata via gh), Build & CI section
+git tag -a v2026.9.20 -m x
+ca() { n="$1"; shift; echo "$1" >> f; git add f; git -c user.name="$n" -c user.email="$n@x" commit -qm "$1"; git rev-parse HEAD; }
+s1=$(ca "Alice A" "fix(kiro): iso dates"); s2=$(ca t "fix(usage): cache bump"); s3=$(ca "dependabot[bot]" "build(deps): bump x")
+s4=$(ca "Bob B" "ci: faster matrix"); s5=$(ca "Carol C" "feat: reverted later"); git revert --no-edit HEAD >/dev/null
+printf '%s\t5 alice\talice\n%s\t5 alice\tmaint\n%s\t6 dependabot[bot]\tdependabot[bot]\n%s\t\tbob\n%s\t\tcarol\n' "$s1" "$s2" "$s3" "$s4" "$s5" > ghdata
+log=$(changelog v2026.9.20 HEAD)
+echo "$log" | grep -qF -- "- **kiro:** iso dates ($(echo "$s1" | cut -c1-7), [#5](https://github.com/o/r/pull/5))" || { echo "FAIL PR link"; echo "$log"; fail=1; }
+echo "$log" | grep -q '^### Build & CI' && echo "$log" | grep -q 'faster matrix' || { echo "FAIL build & ci section"; echo "$log"; fail=1; }
+eq "contributors" "$(echo "$log" | sed -n '/^### Contributors/,$p' | tr '\n' '|')" "### Contributors||- @alice ([#5](https://github.com/o/r/pull/5))|- @bob|"
+eq "contributors last" "$(echo "$log" | grep '^### ' | tail -1)" "### Contributors"
+touch ghfail; log=$(changelog v2026.9.20 HEAD); rm ghfail
+eq "gh failing: git author names" "$(echo "$log" | sed -n '/^### Contributors/,$p' | tr '\n' '|')" "### Contributors||- Alice A|- Bob B|"
+echo "$log" | grep -q 'pull/5' && { echo "FAIL no PR links without gh"; fail=1; }
+log=$(RELEASE_OFFLINE=1 changelog v2026.9.20 HEAD)
+eq "offline: git author names" "$(echo "$log" | sed -n '/^### Contributors/,$p' | tr '\n' '|')" "### Contributors||- Alice A|- Bob B|"
+eq "only maintainer: no section" "$(RELEASE_OFFLINE=1 changelog "$s1" "$s2" | grep -c '^### Contributors')" "0"
 printf '# Changelog\n\nAll notable changes.\n' > CHANGELOG.md
 prepend_changelog 2026.9.2 "- x"; prepend_changelog 2026.9.3 "- y"
 eq "intro kept" "$(head -3 CHANGELOG.md | tr '\n' '|')" "# Changelog||All notable changes.|"
