@@ -150,6 +150,7 @@ for (const sm of SAMPLES) {
   usageExact(c, g, "no-such-model", 10, 5, 0, 0, 0, 0);
   ok("usageExact with cost 0 and unknown model counts unpriced tokens", c.cost === 0 && c.unk === 15, String(c.unk));
 }
+for (const id of ["claude", "codex", "fx", "pi", "opencode", "kiro", "gemini"]) ok(id + " registered", HARNESSES.some((a) => a.id === id), "missing");
 // a DB-backed adapter (own source) has no log lines to sample: its golden coverage is src/harness/<id>.check.ts
 for (const ad of HARNESSES) ok(ad.id + " has SAMPLES", ad.source ? existsSync("src/harness/" + ad.id + ".check.ts") : SAMPLES.some((sm: Sample) => sm.h === ad.id), "add a few real log lines above");
 
