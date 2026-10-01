@@ -6,7 +6,7 @@ import { HOME, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
 import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, isoMs, nlines, num } from "../features/usage/record.ts";
-import { done } from "../features/usage/calls.ts";
+import { done, fmtMs } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText } from "./common.ts";
 
@@ -65,8 +65,18 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     const stop = str(m["stopReason"]);
     if (stop === "error" || stop === "aborted") ev(out, "meta", "[" + stop + "] " + str(m["errorMessage"]), ts, "", "");
   } else if (role === "toolResult") {
-    const det = obj(m["details"]);
-    ev(out, "result", (m["isError"] === true ? "[error] " : "") + blockText(m["content"]), ts, str(m["toolCallId"]), det ? JSON.stringify(det) : "");
+    const det = obj(m["details"]); const id = str(m["toolCallId"]);
+    ev(out, "result", (m["isError"] === true ? "[error] " : "") + blockText(m["content"]), ts, id, det ? JSON.stringify(det) : "");
+    for (const c of nested(m, det, id)) { // script-nested calls have no events of their own: one line each
+      const st = c.status === "error" ? "[error] " + (c.error.split("\n")[0] ?? "") : c.status || "ok";
+      ev(out, "meta", "\u21b3 " + c.name + " " + st + (c.ms >= 0 ? " " + fmtMs(c.ms) : ""), ts, "", "");
+    }
+  } else if (role === "system") { // pi ≥ 0.99: the MCP servers whose tools are not declared (codemode / tool_search exposure)
+    const sec = obj(m["sections"]); const ms = sec ? sec["mcp_servers"] : undefined;
+    const names: string[] = [];
+    if (typeof ms === "string") { for (const ln of ms.split("\n")) if (ln.startsWith("- ")) { const n = ln.slice(2).split(" ")[0] ?? ""; if (n) names.push(n.startsWith("mcp__") ? n.slice(5) : n); } }
+    else for (const v of arr(ms)) { const vo = obj(v); const n = vo ? str(vo["name"]) : str(v); if (n) names.push(n); }
+    if (names.length > 0) ev(out, "meta", "MCP: " + names.join(", "), ts, "", "");
   } else if (role === "bashExecution") { // the user's own `!cmd`: pi records it outside any turn (while streaming: at agent_end)
     const id = str(o["id"]); const cmd = str(m["command"]);
     ev(out, "tool", "!bash\u0000" + cmd, ts, id, JSON.stringify({ command: cmd }));

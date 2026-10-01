@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Acc, type Day, newAcc } from "../features/usage/record.ts";
 import { pi } from "./pi.ts";
+import type { Ev } from "../model/types.ts";
+import { parse as parseJson } from "../util/json.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -77,6 +79,22 @@ ok("mcpScript duration", row(scr, "echo") === "1,0,1,5", row(scr, "echo"));
 // a codemode result whose call line was not seen (pending lost): nested calls still count
 const lost = feed([result("cm", "codemode", ",\"details\":{\"calls\":[]},\"nestedCalls\":{\"calls\":" + NESTED + ",\"complete\":true}")]);
 ok("nested without parent pending", lost.tools === 5, String(lost.tools));
+
+// ── transcript (spec decision 5) ──
+function evs(ls: string[]): string {
+  const out: Ev[] = [];
+  for (const l of ls) { const o = parseJson(l); if (o) pi.parse(o, out, null); }
+  return out.map((e) => e.kind + ":" + e.text.split("\u0000").join(" ")).join("\n");
+}
+const cmEv = evs([call("cm", "codemode", CODE), result("cm", "codemode", ",\"details\":{\"calls\":[]},\"isError\":false,\"nestedCalls\":{\"calls\":" + NESTED + ",\"complete\":false}")]);
+ok("codemode transcript", cmEv === "tool:codemode const e = await tools.mcp__everything__echo({message:'hi'});\nresult:x\n" +
+  "meta:↳ mcp__everything__echo ok 412ms\nmeta:↳ bash ok 7ms\nmeta:↳ write ok 1ms\nmeta:↳ mcp__everything__add [error] bad 1ms\nmeta:↳ edit unfinished", cmEv);
+ok("adapter proxy target", evs([call("c1", "mcp", "{\"tool\":\"echo\",\"server\":\"everything\",\"args\":{\"message\":\"a\"}}")]) === "tool:mcp everything/echo", evs([call("c1", "mcp", "{\"tool\":\"echo\",\"server\":\"everything\"}")]));
+ok("adapter proxy target without server", evs([call("c1", "mcp", "{\"tool\":\"echo\"}")]) === "tool:mcp echo", "");
+ok("code: first non-empty line", evs([call("c1", "codemode", "{\"code\":\"\\n  \\nreturn 1;\\nx\"}")]) === "tool:codemode return 1;", evs([call("c1", "codemode", "{\"code\":\"\\n  \\nreturn 1;\\nx\"}")]));
+const SYS = "{\"type\":\"message\",\"timestamp\":\"" + T1 + "\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"p\",\"mcp_servers\":\"<mcp_servers>\\nMCP servers whose tools are not declared to you.\\n- mcp__everything (codemode)\\n- mcp__github (direct)\\n</mcp_servers>\"}}}";
+ok("system mcp_servers", evs([SYS]) === "meta:MCP: everything, github", evs([SYS]));
+ok("system without mcp_servers", evs(["{\"type\":\"message\",\"timestamp\":\"" + T1 + "\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"p\"}}}"]) === "", "");
 
 console.log(bad ? bad + " failed" : "pi: all checks passed");
 if (bad) process.exit(1);
