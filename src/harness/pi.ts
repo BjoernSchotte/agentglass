@@ -1,8 +1,9 @@
 // agentglass — pi (~/.pi/agent) adapter
 // SPDX-License-Identifier: Apache-2.0
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
+import { statSync } from "node:fs";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { HOME, readText, listDir } from "../util/fs.ts";
+import { HOME, readText, readLines, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
 import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, isoMs, nlines, num } from "../features/usage/record.ts";
@@ -75,7 +76,7 @@ function meta(s: Sess): void {
     const io = parseJson(l); const n = io ? str(io["name"]) : "";
     if (!SUBNAME.test(n)) continue;
     s.parent = ps.endsWith(".jsonl") ? fileId(ps.slice(ps.lastIndexOf("/") + 1)) : ps;
-    s.kind = n.slice(0, n.indexOf("#"));
+    s.kind = n.slice(0, n.indexOf("#")); subHex.set(s.path, n.slice(n.indexOf("#") + 1));
     return;
   }
 }
@@ -144,8 +145,51 @@ function book(a: Acc, u: Obj | null, model: string, iso: string): void {
   if (!u) return;
   const d = bucket(a, 0, iso);
   const c = obj(u["cost"]); const w1 = num(u["cacheWrite1h"]);
+  const usd = typeof u["cost"] === "number" ? num(u["cost"]) : c && typeof c["total"] === "number" ? num(c["total"]) : -1; // subagent results: a number
   const md = model || a.model; if (md) a.model = md;
-  usageExact(a, d, md, num(u["input"]), num(u["output"]), num(u["cacheRead"]), Math.max(0, num(u["cacheWrite"]) - w1), w1, c && typeof c["total"] === "number" ? num(c["total"]) : -1);
+  usageExact(a, d, md, num(u["input"]), num(u["output"]), num(u["cacheRead"]), Math.max(0, num(u["cacheWrite"]) - w1), w1, usd);
+}
+// subagents run by pi-subagents / the example extension report their usage on the parent's result; a child with its own
+// session file (sessionFile) is counted from that file, one without (--no-session) only here
+function bookSubs(a: Acc, m: Obj, det: Obj | null, iso: string): void {
+  const tn = str(m["toolName"]); if (!det || (tn !== "subagent" && tn !== "Agent")) return;
+  const keep = a.model;
+  for (const v of arr(det["results"])) { const r = obj(v); if (r && !str(r["sessionFile"])) book(a, obj(r["usage"]), str(r["model"]), iso); }
+  a.model = keep; // the child's model is not the parent's
+}
+// the parent's tool call that spawned subagent s: pi-subagents → the result listing its sessionFile;
+// @tintinweb/pi-subagents → the Agent result whose agentId starts with the child's 8 hex. Cached; misses retried when the parent grew
+function statSize(p: string): number { try { return statSync(p).size; } catch (e) { return -1; } }
+const spawnCache = new Map<string, { size: number; id: string }>();
+const subHex = new Map<string, string>(); // tintinweb child path → the 8 hex of its name (meta)
+function spawnCall(s: Sess): string {
+  if (!s.parent) return "";
+  let pp = ""; let needle = ""; let agent = false;
+  const hex = subHex.get(s.path);
+  if (hex) { // same dir as the parent; parentSession names it (its file name, wherever the dir lives now)
+    const ho = header(s.path); const ps = ho ? str(ho["parentSession"]) : ""; if (!ps.endsWith(".jsonl")) return "";
+    pp = join(dirname(s.path), basename(ps)); needle = "\"agentId\":\"" + hex; agent = true;
+  } else {
+    if (basename(dirname(s.path)) === "tasks") return ""; // @gotgenes: the link lives in memory only
+    const up = s.path.endsWith("/session.jsonl") ? dirname(dirname(dirname(s.path))) : dirname(dirname(s.path)); // <base>/<runId>/run-<i>/ | <base>/forks/
+    pp = up + ".jsonl"; needle = s.path.slice(dirname(up).length) + "\""; // "/<base>/…/session.jsonl" — the file may be read through another root
+  }
+  const st = statSize(pp);
+  const hit = spawnCache.get(s.path);
+  if (hit && (hit.id || hit.size === st)) return hit.id;
+  let id = "";
+  let off = 0; let win = 1048576;
+  while (off < st && !id) {
+    const r = readLines(pp, off, Math.min(st, off + win), false);
+    if (r.next === off) { if (off + win >= st) break; win *= 2; continue; } // one line longer than the window
+    for (const l of r.lines) {
+      if (l.indexOf(needle) < 0 || (agent && l.indexOf("\"toolName\":\"Agent\"") < 0) || (!agent && l.indexOf("\"sessionFile\":") < 0)) continue;
+      const m = /"toolCallId":"([^"]+)"/.exec(l); if (m) { id = m[1] ?? ""; break; }
+    }
+    off = r.next;
+  }
+  spawnCache.set(s.path, { size: st, id });
+  return id;
 }
 function usage(a: Acc, l: string): void {
   if (l.startsWith("{\"type\":\"session\"")) { // header: a fork copies its parent's entries verbatim, their usage is not this file's
@@ -178,6 +222,7 @@ function usage(a: Acc, l: string): void {
       done(p, t > 0 && p.t > 0 ? t - p.t : -1, m["isError"] === true || derr === "tool_error" || derr === "call_failed", blockText(m["content"]).length, id, []);
     }
     // calls made inside a codemode/mcpScript script have no messages of their own: they count like top-level calls, at the result's time
+    bookSubs(a, m, det, iso);
     const ns = nested(m, det, id);
     if (ns.length === 0) return;
     const d = bucket(a, 0, iso);
@@ -246,5 +291,5 @@ export const pi: HarnessAdapter = {
   headless: (s: Sess, msg: string) => ["-p", "--session", s.path, "--", msg], // the file path: a bare id outside the cwd's dir prompts to fork
   resume: (s: Sess) => ["--session", s.path],
   files: (s: Sess) => [s.path],
-  usage,
+  usage, spawnOf: (s: Sess) => spawnCall(s),
 };
