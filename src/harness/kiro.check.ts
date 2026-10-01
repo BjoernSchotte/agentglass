@@ -21,6 +21,8 @@ const PROMPT = "{\"version\":\"v1\",\"kind\":\"Prompt\",\"data\":{\"content\":[{
 function call(id: string): string { return "{\"version\":\"v1\",\"kind\":\"AssistantMessage\",\"data\":{\"content\":[{\"kind\":\"toolUse\",\"data\":{\"toolUseId\":\"" + id + "\",\"name\":\"shell\",\"input\":{\"command\":\"ls\"}}}]}}"; }
 const COMPACTION = "{\"version\":\"v1\",\"kind\":\"Compaction\",\"data\":{}}";
 function turn(endMs: number): string { return "{\"end_timestamp\":" + String(endMs / 1000) + ",\"input_token_count\":1,\"output_token_count\":1,\"metering_usage\":[]}"; }
+// real kiro-cli writes end_timestamp as an ISO-8601 string with nanosecond precision, not a number
+function isoTurn(iso: string): string { return "{\"end_timestamp\":\"" + iso + "\",\"input_token_count\":1,\"output_token_count\":1,\"metering_usage\":[]}"; }
 // replay one session the way the ledger does: sidecar first, then every transcript line
 function days(id: string, lines: string[], turns: string[], jsonMtime: number): Map<string, number> {
   const p = dir + "/" + id + ".jsonl";
@@ -47,6 +49,11 @@ const cmp = days("22222222-2222-2222-2222-222222222222", [PROMPT, call("c"), COM
 ok("first turn on its day", cmp.get(dayKey(new Date(SEP15))) === 1, show(cmp));
 ok("overflow booked on the last turn's day", cmp.get(dayKey(new Date(SEP16))) === 2, show(cmp));
 ok("nothing on today", !cmp.has(today), show(cmp));
+
+// real end_timestamp is an ISO-8601 string (nanosecond precision), not a number: calls must still land on the turn's day
+const isoS = days("33333333-3333-3333-3333-333333333333", [PROMPT, call("f"), call("g")], [isoTurn("2026-09-15T12:00:00.123456789Z")], SEP24);
+ok("ISO-string turn dates calls to its day", isoS.get(dayKey(new Date(SEP15))) === 2, show(isoS));
+ok("ISO-string turn not on the .json mtime day", !isoS.has(dayKey(new Date(SEP24))) || dayKey(new Date(SEP15)) === dayKey(new Date(SEP24)), show(isoS));
 
 console.log(bad ? bad + " failed" : "kiro: all checks passed");
 process.exit(bad ? 1 : 0);
