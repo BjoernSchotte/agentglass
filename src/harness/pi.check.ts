@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Acc, type Day, newAcc } from "../features/usage/record.ts";
 import { pi } from "./pi.ts";
-import type { Ev } from "../model/types.ts";
+import { type Ev, type Sess, newSess } from "../model/types.ts";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { linkByCwd } from "../model/link.ts";
 import { parse as parseJson } from "../util/json.ts";
 
 let bad = 0;
@@ -95,6 +97,43 @@ ok("code: first non-empty line", evs([call("c1", "codemode", "{\"code\":\"\\n  \
 const SYS = "{\"type\":\"message\",\"timestamp\":\"" + T1 + "\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"p\",\"mcp_servers\":\"<mcp_servers>\\nMCP servers whose tools are not declared to you.\\n- mcp__everything (codemode)\\n- mcp__github (direct)\\n</mcp_servers>\"}}}";
 ok("system mcp_servers", evs([SYS]) === "meta:MCP: everything, github", evs([SYS]));
 ok("system without mcp_servers", evs(["{\"type\":\"message\",\"timestamp\":\"" + T1 + "\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"p\"}}}"]) === "", "");
+
+// ── subagent discovery (spec decisions 6, 7) ──
+const root = "/tmp/agentglass-pi-check"; rmSync(root, { recursive: true, force: true });
+const cwdDir = root + "/--w--"; const PB = cwdDir + "/2026-10-01T10-00-00-000Z_P";
+for (const d of [PB + "/tasks", PB + "/r1/run-0", PB + "/forks", cwdDir + "/subagent-artifacts"]) mkdirSync(d, { recursive: true });
+function hdr(id: string, ps: string): string { return "{\"type\":\"session\",\"version\":3,\"id\":\"" + id + "\",\"timestamp\":\"" + T1 + "\",\"cwd\":\"/w\"" + (ps ? ",\"parentSession\":\"" + ps + "\"" : "") + "}\n"; }
+function info(name: string): string { return "{\"type\":\"session_info\",\"id\":\"i1\",\"timestamp\":\"" + T1 + "\",\"name\":\"" + name + "\"}\n"; }
+writeFileSync(PB + ".jsonl", hdr("P", ""));
+writeFileSync(PB + "/tasks/2026-10-01T10-00-01-000Z_T.jsonl", hdr("T", "P"));
+writeFileSync(PB + "/r1/run-0/session.jsonl", hdr("X", "") + info("subagent-delegate-r1-1"));
+writeFileSync(PB + "/forks/2026-10-01T10-00-02-000Z_F.jsonl", hdr("F", PB + ".jsonl"));
+writeFileSync(cwdDir + "/2026-10-01T10-00-03-000Z_C.jsonl", hdr("C", PB + ".jsonl") + "{\"type\":\"model_change\",\"id\":\"m\",\"timestamp\":\"" + T1 + "\",\"modelId\":\"m\"}\n" + info("Explore#1b2c3d4e"));
+writeFileSync(cwdDir + "/2026-10-01T10-00-04-000Z_K.jsonl", hdr("K", PB + ".jsonl") + info("my fork"));
+writeFileSync(cwdDir + "/subagent-artifacts/r1_delegate_0_transcript.jsonl", "{}\n");
+process.env["PI_CODING_AGENT_SESSION_DIR"] = root;
+const found = new Map<string, Sess>();
+const scanM = pi.scan;
+scanM((path: string, id: string, parent: string, archived: boolean) => {
+  const s = newSess("pi", id, path, archived); s.parent = parent;
+  const mf = pi.meta; if (mf) mf(s);
+  found.set(id, s);
+});
+function pk(id: string): string { const s = found.get(id); return s ? s.parent + "/" + s.kind : "missing"; }
+ok("six sessions", found.size === 6, [...found.keys()].sort().join(","));
+ok("parent top-level", pk("P") === "/", pk("P"));
+ok("gotgenes task child", pk("T") === "P/subagent", pk("T"));
+ok("nicobailon run child: id from header", pk("X") === "P/subagent", pk("X"));
+ok("nicobailon fork-context child", pk("F") === "P/subagent", pk("F"));
+ok("tintinweb child from session_info name", pk("C") === "P/Explore", pk("C"));
+ok("a /fork stays top-level", pk("K") === "/", pk("K"));
+// liveness: one pi process in the cwd, the tintinweb child newest → never linked to it (procs.ts offers only unparented sessions)
+const live: { path: string; h: string; cwd: string; mtime: number; pid: number }[] = [];
+let mt = 0;
+for (const id of ["P", "K", "C"]) { const s = found.get(id); mt++; if (s && !s.parent) live.push({ path: s.path, h: "pi", cwd: s.cwd, mtime: id === "C" ? 99 : mt, pid: 0 }); }
+const lk = linkByCwd([{ pid: 42, h: "pi", cwd: "/w" }], live);
+const kp = found.get("K");
+ok("pid goes to the newest unparented session", !!kp && lk.get(kp.path) === 42 && lk.size === 1, String(lk.size));
 
 console.log(bad ? bad + " failed" : "pi: all checks passed");
 if (bad) process.exit(1);
