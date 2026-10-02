@@ -9,7 +9,7 @@ import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { ledger, accOf, pending } from "./ledger.ts";
-import { L, todayKey, lastDays, startOfDay } from "./record.ts";
+import { L, todayKey, lastDays, startOfDay, skillUses } from "./record.ts";
 import { PRICES_FROM } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer } from "./calls.ts";
 import "./cache.ts";
@@ -36,7 +36,7 @@ function rj(s: string, w: number): string { const n = width(s); return n >= w ? 
 
 // ── aggregation over a set of local days (cached per ledger version) ────────
 interface HA { h: string; sess: number; tools: number; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
-interface Agg { key: string; ver: number; at: number; rows: HA[]; tot: HA; names: Map<string, Cnt>; hours: number[]; perDay: number[]; dayCost: number[]; busy: Sess | null; busyTools: number; busyCost: number; done: number; total: number }
+interface Agg { key: string; ver: number; at: number; rows: HA[]; tot: HA; names: Map<string, Cnt>; skills: Map<string, Cnt>; hours: number[]; perDay: number[]; dayCost: number[]; busy: Sess | null; busyTools: number; busyCost: number; done: number; total: number }
 function ha(h: string): HA { return { h, sess: 0, tools: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; }
 function zeros(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(0); return a; }
 function addCnt(m: Map<string, Cnt>, k: string, n: number, err: number, add: number, del: number): void {
@@ -51,7 +51,7 @@ function agg(days: string[]): Agg {
   const hit = cache.get(key);
   if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit;
   const rows = HARNESSES.map((ad) => ha(ad.id)); const tot = ha("total");
-  const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0 };
+  const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0 };
   const from = startOfDay() - (days.length - 1) * 86400000; // ±1h around DST: fine for a progress gauge
   for (const s of sessions.values()) {
     const a = ledger.get(s.path);
@@ -66,6 +66,7 @@ function agg(days: string[]): Agg {
       st += d.tools; sc += d.cost;
       g.perDay[i] = numAt(g.perDay, i, 0) + d.tools; g.dayCost[i] = numAt(g.dayCost, i, 0) + d.cost;
       for (const [n, c] of d.tt) addCnt(g.names, n, c.n, c.err, 0, 0);
+      for (const [n, c] of d.skills) addCnt(g.skills, n, c.n, 0, 0, 0);
       for (let hh = 0; hh < 24; hh++) g.hours[hh] = numAt(g.hours, hh, 0) + numAt(d.hours, hh, 0);
     }
     if (any && !s.parent) { r.sess++; tot.sess++; }
@@ -136,7 +137,7 @@ function renderStats(): void {
   if (bh < 5) return;
   const lw2 = Math.max(34, Math.floor(W * 0.42)); const rw = W - lw2;
   box(0, y0, lw2, bh, "top tools", String(g.names.size) + " distinct · ↵ details", false);
-  const rows = toolRows(g); lastRows = rows;
+  const rows = toolRows(g.names, g.skills); lastRows = rows;
   let si = 0; for (const [i, r] of rows.entries()) if (r.key === selKey) si = i;
   const vis = bh - 2;
   if (si < ttop) ttop = si;
@@ -152,8 +153,9 @@ function renderStats(): void {
     const e = i < rows.length ? rows[i] : undefined;
     if (e) {
       const on = i === si;
-      const label = e.server ? (open.has(e.key) ? "▾ ⧉ " : "▸ ⧉ ") + e.label : e.kid ? "   " + e.label : e.label;
-      l = (on ? fg(C.accent) + "▌" + RST + bg(C.sel) : " ") + (e.server ? fg(C.purple) : e.kid ? fg(C.sub) : fg(C.text)) + (on ? CSI + "1m" : "") + fit(label, nw) + RST + " " +
+      const fold = open.has(e.key) ? "▾ " : "▸ ";
+      const label = e.server ? fold + "⧉ " + e.label : e.kid ? "   " + e.label : e.skill ? fold + e.label : e.label;
+      l = (on ? fg(C.accent) + "▌" + RST + bg(C.sel) : " ") + (e.server ? fg(C.purple) : e.kid ? fg(C.sub) : e.skill ? fg(C.cyan) : fg(C.text)) + (on ? CSI + "1m" : "") + fit(label, nw) + RST + " " +
         gauge(e.n / mx, bw) + fg(e.kid ? C.dim : C.sub) + rj(grp(e.n), 7) + RST + errCol(e.n, e.err, 7);
     }
     const f = l || " ";
@@ -171,28 +173,45 @@ function errCol(n: number, err: number, w: number): string {
   return " ".repeat(Math.max(0, w - s.length)) + fg(err === 0 ? C.dim : heat(Math.min(1, r * 5))) + s + RST;
 }
 
-// ── top-tools list: MCP servers grouped (expandable), cursor by key so it survives re-sorting ──
-interface Row { key: string; label: string; n: number; err: number; kid: boolean; server: boolean }
-const open = new Set<string>();
+// ── top-tools list: MCP servers and skills grouped (expandable), cursor by key so it survives re-sorting ──
+// skill rows: the group (key SKILLS) and its kids (key "skill\t<name>"); a tool name never holds a tab, so neither collides
+interface Row { key: string; label: string; n: number; err: number; kid: boolean; server: boolean; skill: boolean }
+const SKILLS = "\tskills";
+export const open = new Set<string>();
 let selKey = ""; let ttop = 0; let lastRows: Row[] = [];
 let listY0 = 0; let listN = 0; let listX1 = 0; // mouse geometry of the list
-function toolRows(g: Agg): Row[] {
+// skills: "<command | model>\t<name>" → one kid per name, "/ n" slash-command uses, "⚙ n" model-invoked ones
+function skillKids(skills: Map<string, Cnt>): Row[] {
+  const by = new Map<string, number[]>();
+  for (const [k, c] of skills) { const i = k.indexOf("\t"); const nm = k.slice(i + 1); const v = by.get(nm) ?? [0, 0]; v[k.startsWith("command\t") ? 0 : 1] = (v[k.startsWith("command\t") ? 0 : 1] ?? 0) + c.n; by.set(nm, v); }
+  const out: Row[] = [];
+  for (const [nm, v] of by) {
+    const cm = v[0] ?? 0; const md = v[1] ?? 0;
+    out.push({ key: "skill\t" + nm, label: nm + "  " + (cm && md ? "/ " + String(cm) + " · ⚙ " + String(md) : cm ? "/" : "⚙"), n: cm + md, err: 0, kid: true, server: false, skill: true });
+  }
+  return out;
+}
+export function toolRows(names: Map<string, Cnt>, skills: Map<string, Cnt>): Row[] {
   const top: Row[] = []; const srv = new Map<string, Row>(); const kids = new Map<string, Row[]>();
-  for (const [name, c] of g.names) {
+  for (const [name, c] of names) {
     const sv = mcpServer(name);
-    if (!sv) { top.push({ key: name, label: name, n: c.n, err: c.err, kid: false, server: false }); continue; }
+    if (!sv) { top.push({ key: name, label: name, n: c.n, err: c.err, kid: false, server: false, skill: false }); continue; }
     const k = "mcp__" + sv;
     let r = srv.get(k);
-    if (!r) { r = { key: k, label: sv, n: 0, err: 0, kid: false, server: true }; srv.set(k, r); top.push(r); kids.set(k, []); }
+    if (!r) { r = { key: k, label: sv, n: 0, err: 0, kid: false, server: true, skill: false }; srv.set(k, r); top.push(r); kids.set(k, []); }
     r.n = r.n + c.n; r.err = r.err + c.err;
-    const ks = kids.get(k); if (ks) ks.push({ key: name, label: name.slice(k.length + 2), n: c.n, err: c.err, kid: true, server: false });
+    const ks = kids.get(k); if (ks) ks.push({ key: name, label: name.slice(k.length + 2), n: c.n, err: c.err, kid: true, server: false, skill: false });
+  }
+  if (skills.size) {
+    const sk = skillKids(skills); let n = 0; for (const r of sk) n += r.n;
+    top.push({ key: SKILLS, label: "✧ skills", n, err: 0, kid: false, server: false, skill: true }); kids.set(SKILLS, sk);
   }
   top.sort((x, y) => y.n - x.n);
   const out: Row[] = [];
   for (const r of top) {
     out.push(r);
     const ks = kids.get(r.key);
-    if (ks && open.has(r.key)) for (const k of ks.sort((x, y) => y.n - x.n)) out.push(k);
+    if (ks && open.has(r.key)) for (const k of ks.sort((x, y) => y.n - x.n || (x.label < y.label ? -1 : 1))) out.push(k);
   }
   return out;
 }
@@ -200,10 +219,10 @@ function selIdx(): number { for (const [i, r] of lastRows.entries()) if (r.key =
 function rowAt(i: number): Row | null { const r = i >= 0 && i < lastRows.length ? lastRows[i] : undefined; return r ? r : null; }
 function selRow(): Row | null { return rowAt(selIdx()); }
 function moveSel(d: number): void { const r = rowAt(Math.max(0, Math.min(lastRows.length - 1, selIdx() + d))); if (r) selKey = r.key; }
-function parentKey(r: Row): string { return "mcp__" + mcpServer(r.key); }
+function parentKey(r: Row): string { return r.skill ? SKILLS : "mcp__" + mcpServer(r.key); }
 function toggle(r: Row, want: number): void { // want: 1 open, 0 close, -1 flip
   const k = r.kid ? parentKey(r) : r.key;
-  if (!r.server && !r.kid) return;
+  if (!r.server && !r.kid && !r.skill) return;
   const isOpen = open.has(k);
   if (want !== 1 && isOpen) { open.delete(k); selKey = k; } else if (want !== 0 && !isOpen) open.add(k);
 }
@@ -251,7 +270,9 @@ function dagg(days: string[]): DA {
   dCache = da;
   return da;
 }
-function openDrill(r: Row): void { dKey = r.key; dServer = r.server; dLabel = r.server ? "⧉ " + r.label : r.key; dsel = 0; dCache = null; }
+function openDrill(r: Row): void {
+  if (r.skill) { if (!r.kid) toggle(r, -1); return; } // no per-skill drill-down: ↵ on the group folds it like ␣
+  dKey = r.key; dServer = r.server; dLabel = r.server ? "⧉ " + r.label : r.key; dsel = 0; dCache = null; }
 function top(m: Map<string, Cnt>, n: number): [string, Cnt][] { return [...m.entries()].sort((x, y) => y[1].n - x[1].n).slice(0, n); }
 // keep the end of long paths: the file name matters more than the root
 function tail(s: string, w: number): string { const a: string[] = []; for (const ch of s) a.push(ch); return a.length <= w ? fit(s, w) : "…" + a.slice(a.length - w + 1).join(""); }
@@ -417,7 +438,7 @@ function key(k: string): boolean {
     return true;
   }
   const r = selRow();
-  const grouped = r !== null && (r.server || r.kid);
+  const grouped = r !== null && (r.server || r.kid || r.skill);
   if (k === "up" || k === "k" || k === "wheelup") moveSel(-1);
   else if (k === "down" || k === "j" || k === "wheeldown") moveSel(1);
   else if (k === "pgup") moveSel(-10);
@@ -426,8 +447,8 @@ function key(k: string): boolean {
   else if (k === "end" || k === "G") moveSel(lastRows.length);
   else if (k === " ") { if (r) toggle(r, -1); }
   else if (k === "enter") { if (r) openDrill(r); }
-  // ←/→ fold an MCP server when one is selected, else switch the period
-  else if (k === "right") { if (r && r.server && !open.has(r.key)) toggle(r, 1); else week = true; }
+  // ←/→ fold an MCP server or the skills group when one is selected, else switch the period
+  else if (k === "right") { if (r && (r.server || (r.skill && !r.kid)) && !open.has(r.key)) toggle(r, 1); else week = true; }
   else if (k === "left") { if (r && grouped && (r.kid || open.has(r.key))) toggle(r, 0); else week = false; }
   else return false;
   return true;
@@ -459,6 +480,9 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   const out = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + money(s.cost, a.unk)) + RST + dot + fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(s.linesAdd, s.linesDel)];
   const d = a.days.get(todayKey());
   if (d && a.days.size > 1 && w > 30) out.push(fg(C.dim) + fit("today", 9) + RST + fg(C.yellow) + (d.cost === 0 && d.unk > 0 ? "cost ?" : money(d.cost, 0)) + RST + dot + fg(C.text) + grp(d.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(d.add, d.del));
+  const sk = new Map<string, number>(); for (const u of skillUses(a, null)) sk.set(u.name, (sk.get(u.name) ?? 0) + u.n); // both sources per name
+  if (sk.size && w > 30) out.push(fg(C.dim) + fit("skills", 9) + RST + [...sk.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).slice(0, 5)
+    .map((e) => fg(C.cyan) + e[0] + RST + (e[1] > 1 ? fg(C.dim) + " ×" + String(e[1]) + RST : "")).join(fg(C.dim) + ", " + RST) + (sk.size > 5 ? fg(C.dim) + " +" + String(sk.size - 5) + RST : ""));
   return out;
 });
 H.headerWidgets.push((w: number): string => {
@@ -476,8 +500,8 @@ H.headerWidgets.push((w: number): string => {
 H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || !mine()) return [];
   if (dKey) return [["↑↓", "call"], ["↵", "open session"], ["esc", "back"], ["d", "today"], ["w", "7 days"]];
-  return [["↑↓", "tool"], ["↵", "details"], ["␣", "expand MCP"], ["d", "today"], ["w", "7 days"]];
+  return [["↑↓", "tool"], ["↵", "details"], ["␣", "expand MCP/skills"], ["d", "today"], ["w", "7 days"]];
 });
-H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server"],
+H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server or the skills group"],
   ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
   ["", "costs ≈ API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"]] });
