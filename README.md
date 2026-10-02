@@ -89,6 +89,13 @@ Every screen in this README and the launch video was recorded this way.
   `agentglass update`, which asks GitHub for releases only when you run it.
 - **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
   is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off.
+- **Light enough to leave open all day.** Refresh follows activity: fast while an agent streams or
+  you type, slower when nothing happens, and at most one frame per second while the terminal is in
+  the background. Alarms (waiting for you, approval, stuck) keep a 1.5 s cadence whenever an agent
+  runs. Frames are only drawn when something changed. `{"refresh": {"mode": "fixed"}}` in
+  `~/.agentglass/config.json` (or `AGENTGLASS_REFRESH=fixed`) restores the old fixed 500 ms tick;
+  `AGENTGLASS_DEBUG_REFRESH=1` shows the activity level and each job's cost in the footer. Inside
+  tmux, `set -g focus-events on` lets agentglass notice that its pane is not in front.
 
 ## Prices
 

@@ -113,8 +113,6 @@ function loop(): void {
   try { turn(); } catch (e) { /* the chain must survive whatever a turn throws */ }
   schedule(sleepFor(sc, Date.now(), live(), armed()));
 }
-// input or focus-in while the loop sleeps at a slower level: overdue jobs run on the next turn, not up to 1 s later
-function wake(): void { const was = sc.lv; relevel(Date.now()); if (sc.lv !== was) schedule(16); }
 
 function onFocus(f: string): void {
   const now = Date.now();
@@ -135,8 +133,10 @@ function onData(d: Uint8Array): void {
     const x = sc.js.get("size"); // a resize usually comes with input: check it, at most every 250 ms
     if (!x || now - x.last >= 250) runJob(sc, "size", termSize, () => Date.now(), warnJob);
   }
+  const was = sc.lv; relevel(now);
+  if (DBG.on) DBG.line = debugLine(sc, live(), armed(), why);
   render(); // typing latency is never capped
-  wake();
+  if (sc.lv !== was) schedule(16); // the loop may sleep at a slower level: overdue jobs run on the next turn, not up to 1 s later
 }
 
 H.helpSections.push({ name: "refresh", ctx: "", keys: [

@@ -122,7 +122,10 @@ export function sleepFor(sc: Sched, now: number, live: boolean, armed: boolean):
 // a frame is built at least this often even when nothing is dirty ("3m ago" texts)
 export function forceMs(lv: Level): number { return lv === "away" ? 5000 : 1000; }
 
-function dur(ms: number): string { return ms < 1000 ? String(Math.round(ms)) + "ms" : String(Math.round(ms / 100) / 10) + "s"; }
+function dur(ms: number): string {
+  if (ms < 10) return String(Math.round(ms * 10) / 10) + "ms";
+  return ms < 1000 ? String(Math.round(ms)) + "ms" : String(Math.round(ms / 100) / 10) + "s";
+}
 export const DBG = { on: false, line: "" }; // AGENTGLASS_DEBUG_REFRESH=1: footer.ts shows line
 // AGENTGLASS_DEBUG_REFRESH footer: lvl hot · procs 18ms/1s · scan 41ms/2s · …
 export function debugLine(sc: Sched, live: boolean, armed: boolean, why: string): string {
