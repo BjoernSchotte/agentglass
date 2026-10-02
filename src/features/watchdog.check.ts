@@ -44,7 +44,8 @@ eq("stuck: fine", stuckOf({ now, mtime: now - 200000, busy: false, evs: [ev("ass
 const fs = newSess("codex", "fake", "/nonexistent/fake.jsonl", false);
 fs.pid = 1; fs.tailSize = 0; fs.mtime = Date.now(); fs.evs = [ev("meta", "turn started")];
 sessions.set(fs.path, fs); S.mode = "transcript";
-const tick = (): void => { for (const f of H.onTick) f(); };
+eq("watchdog not on onTick", String(H.onTick.length), "0");
+const tick = (): void => { for (const f of H.onWatch) f(); };
 tick(); eq("first sight records only", String(fs.attention), "false");
 fs.evs = [ev("meta", "turn started"), ev("assistant", "done"), ev("meta", "turn complete")];
 tick(); eq("turn finished raises", String(fs.attention), "true");

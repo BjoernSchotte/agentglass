@@ -2,7 +2,7 @@
 // (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "./state.ts";
-import { H, tabAt, viewOf, screenOut } from "./hooks.ts";
+import { H, tabAt, viewOf, screenOut, armed } from "./hooks.ts";
 import { scan, buildView } from "./model/sessions.ts";
 import { refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
@@ -70,14 +70,15 @@ function main(): void {
   setInterval(() => {
     tick++; S.frame++;
     termSize();
-    if (tick % 3 === 0) { refreshProcs(); }
+    if (tick % 3 === 0) { refreshProcs(); for (const f of H.onWatch) f(); }
     if (tick % 6 === 0) { scan(); buildView(); }
     if (tick % 10 === 0) refreshSlow();
     if (S.mode === "list" && S.tab === 0) buildView();
     for (const f of H.onTick) f();
     render();
   }, 500);
-  if (H.onFastTick.length) setInterval(() => {
+  setInterval(() => {
+    if (!armed()) return;
     let dirty = false;
     for (const f of H.onFastTick) if (f()) dirty = true;
     if (dirty) render();

@@ -155,7 +155,7 @@ function tick(): void {
     if (x.att && ((cp === s.path && now - selSince > 1000) || (S.tv !== null && S.tv.s === s))) clear(s, x);
   }
 }
-H.onTick.push(tick);
+H.onWatch.push(tick);
 
 H.complete.push((s: Sess) => {
   if (!watched(s)) { s.attention = false; s.stuck = ""; return; }

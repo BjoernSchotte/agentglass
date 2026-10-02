@@ -1,5 +1,6 @@
 // agentglass — self-check for the adaptive refresh scheduler: scriptc build src/sched.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
+import { H, armed } from "./hooks.ts";
 import { type Act, type Job, type Sched, JOBS, levelOf, base, every, due, ran, sleepFor, forceMs, debugLine, refreshMode, newSched } from "./sched.ts";
 
 let bad = 0;
@@ -122,6 +123,13 @@ eq("procs slow", String(debugLine(sc, true, false).indexOf("procs slow") >= 0), 
 eq("procs not slow without live", String(debugLine(sc, false, false).indexOf("procs slow") >= 0), "false");
 const j0: Job = "tick";
 eq("debug shows tick", String(debugLine(sc, false, false).indexOf(j0 + " 0ms/250ms") >= 0), "true");
+
+// ── fast arm seam ──
+eq("nothing armed", String(armed()), "false");
+H.fastArmed.push(() => false); H.fastArmed.push(() => true);
+eq("one armed", String(armed()), "true");
+H.fastArmed.pop();
+eq("disarmed", String(armed()), "false");
 
 console.log(bad ? bad + " failed" : "sched: all checks passed");
 if (bad) process.exit(1);

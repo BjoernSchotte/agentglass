@@ -55,6 +55,7 @@ function cells(i: number, w: number): string {
 }
 
 H.onTick.push(build);
+H.fastArmed.push(() => total > 0 && content > slot); // the marquee only moves when the text overflows
 H.onFastTick.push(() => {
   const n = Math.floor(Date.now() / 150);
   if (n === step) return false;

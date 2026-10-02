@@ -41,6 +41,7 @@ function hms(ts: string): string {
   return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 }
 
+H.fastArmed.push(() => R.on);
 H.onFastTick.push(() => {
   const t = R.tv;
   if (!R.on || !t) return false;
