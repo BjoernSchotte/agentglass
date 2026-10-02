@@ -134,7 +134,7 @@ function renderStats(): void {
     fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST + (t.ms.unk > 0 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
   const l2 = vwidth(l2f(false)) <= W - 4 ? l2f(false) : l2f(true);
   const b = g.busy;
-  const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? money(g.busyCost, asBill(b.bill)) + " " : "") + RST +
+  const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? moneyTag(g.busyCost, asBill(b.bill)) + " " : "") + RST +
     fg(C.text) + clean(titleOf(b)) + RST : fg(C.dim) + "no activity yet" + RST;
   // the projection: after "busiest" when wide, else in its place (busiest stays first in the table order)
   const pj = projLine(); const bst = costNow("").bs.state;
@@ -203,7 +203,7 @@ function renderStats(): void {
   if (!rows.length) put(2, y0 + 1, fg(C.dim) + "no tool calls in this period" + RST);
   const vals = week ? g.perDay : g.hours;
   box(lw2, y0, rw, bh, week ? "activity by day" : "activity by hour", "tool calls", false);
-  chart(lw2 + 1, y0 + 1, rw - 2, bh - 2, vals, days, g.dayCost);
+  chart(lw2 + 1, y0 + 1, rw - 2, bh - 2, vals, days, g.dayCost, single(t.ms) === "api" ? "$" : "≈$");
 }
 // error rate cell, right-aligned in w columns: "·" when clean, else green → red by rate (≥ 20% is full red)
 function errCol(n: number, err: number, w: number): string {
@@ -353,7 +353,7 @@ function renderDrill(days: string[]): void {
   const h1 = Math.max(8, Math.floor(R * 0.45)); const h2 = R - h1;
   const cw = Math.max(wk ? 45 : 38, Math.floor(W * 0.38)); const rw = W - cw; // 7 days need 5 columns per "Mo 21" label
   box(0, y1, cw, h1, wk ? "calls by day" : "calls by hour", "", false);
-  chart(1, y1 + 1, cw - 2, h1 - 2, da.vals, days, zeros(days.length));
+  chart(1, y1 + 1, cw - 2, h1 - 2, da.vals, days, zeros(days.length), "");
   const ih = h1 - 2;
   if (dServer) {
     box(cw, y1, rw, h1, "tools", String(da.kids.size) + " used", false);
@@ -405,7 +405,8 @@ function jump(x: DR): void {
   if (t && x.r.id) { t.focusKind = "tool"; t.focusTs = x.r.ts; t.focusText = x.r.id; } // focusText may name the event id
 }
 // vertical block-bar chart with a heat gradient (green at the bottom → red at the top); dayCost labels the 7-day view
-function chart(x: number, y: number, w: number, h: number, vals: number[], days: string[], dayCost: number[]): void {
+// cur = the per-day cost labels' currency mark: "$" only when every figure is API spend
+function chart(x: number, y: number, w: number, h: number, vals: number[], days: string[], dayCost: number[], cur: string): void {
   const n = vals.length; const ch = h - 2; const axis = 5;
   const cwid = Math.max(1, Math.floor((w - axis - 1) / n));
   let mx = 0; for (const v of vals) if (v > mx) mx = v;
@@ -430,7 +431,9 @@ function chart(x: number, y: number, w: number, h: number, vals: number[], days:
       const d = new Date(startOfDay() + 43200000 - (n - 1 - i) * 86400000); const wd = d.getDay();
       l1 += fg(i === n - 1 ? C.accent : C.sub) + fit(WD.slice(wd * 2, wd * 2 + 2) + " " + d.getDate(), cwid) + RST;
       const c = numAt(dayCost, i, 0);
-      l2 += fg(C.yellow) + fit(c > 0 ? "$" + (c < 100 ? c.toFixed(1) : String(Math.round(c))) : "", cwid) + RST;
+      const cn = c < 100 ? c.toFixed(1) : String(Math.round(c));
+      const cl = cur.length + cn.length < cwid ? cur + cn : cur === "$" ? "$" + cn : "≈" + cn; // keep a gap: "≈2.4" when "≈$2.4" would touch
+      l2 += fg(C.yellow) + fit(c > 0 ? cl : "", cwid) + RST;
     } else {
       const lab = i % (cwid >= 3 ? 2 : 3) === 0 ? String(i) : "";
       l1 += fg(i === nowH ? C.accent : C.dim) + fit(i === nowH ? "▲" + (cwid >= 3 ? String(i) : "") : lab, cwid) + RST;
