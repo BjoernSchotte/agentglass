@@ -58,6 +58,8 @@ for (const r of rows) {
   ok(w + " owner/name", !!g && g.owner === (r[2] ?? "") && g.name === (r[3] ?? ""), g ? g.owner + "|" + g.name : "null");
   const all = g ? g.url + g.host + g.path + g.owner + g.name : "";
   for (const bad of ["ghs_", "pass", "tok", "token=", "corp", "frag"]) ok(w + " leaks " + bad, all.indexOf(bad) < 0, all);
+  const again = g ? scrubRemote(g.url) : null; // Sess.remote holds the scrubbed url; the preview scrubs it again for its label
+  ok(w + " idempotent", !!g && !!again && again.url === g.url && again.owner === g.owner && again.name === g.name, again ? again.url : "null");
 }
 const s = scrubRemote("git@github.com:o/r.git");
 ok("label scp", !!s && remoteLabel(s) === "github.com/o/r", s ? remoteLabel(s) : "null");

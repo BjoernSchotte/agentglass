@@ -29,7 +29,7 @@ export function scrubRemote(raw: string): Remote | null {
     const scheme = (m[1] ?? "").toLowerCase(); if (SCHEMES.indexOf(scheme) < 0) return null;
     let rest = m[2] ?? "";
     const q = rest.search(/[?#]/); if (q >= 0) rest = rest.slice(0, q);
-    if (scheme === "file") return rest.startsWith("/") ? local(rest) : null;
+    if (scheme === "file") return rest.startsWith("/") ? local(rest) : rest.startsWith("~/") ? build("file", "", rest) : null; // ~: our own scrubbed form
     const sl = rest.indexOf("/");
     let auth = sl >= 0 ? rest.slice(0, sl) : rest; const path = sl >= 0 ? rest.slice(sl) : "";
     const at = auth.lastIndexOf("@"); if (at >= 0) auth = auth.slice(at + 1); // last @: a:b@c@host cannot smuggle a host
