@@ -143,7 +143,7 @@ function onData(d: Uint8Array): void {
   }
   const now = Date.now();
   if (user) {
-    act.input = now;
+    act.input = now; sc.unf = false; // a key or click means the user looks, even if the terminal's focus-in got lost
     const x = sc.js.get("size"); // a resize usually comes with input: check it, at most every 250 ms
     if (!x || now - x.last >= 250) runJob(sc, "size", termSize, () => Date.now(), warnJob);
   }
