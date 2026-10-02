@@ -8,7 +8,7 @@ import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, isoMs, nlines, num } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
-import { toolArg, blockText, isNoise } from "./common.ts";
+import { toolArg, blockText, isNoise, leadTag } from "./common.ts";
 
 const PROJECTS = join(CLAUDE, "projects");
 
@@ -37,6 +37,49 @@ function spawnCall(s: Sess): string {
   const m = /"toolUseId":"([^"]+)"/.exec(readText(s.path.slice(0, -6) + ".meta.json", 0, 8192));
   return m ? m[1] ?? "" : "";
 }
+export type UserKind = "human" | "notify" | "peer" | "meta" | "noise";
+const PEER_WRAP = "Another Claude session sent a message"; // + <agent-message from="…">: older transcripts carry no origin
+// known leading tags first, so an origin can never promote hook or command output to a prompt; then origin; then old-transcript fallbacks
+export function classifyUser(o: Obj, text: string): UserKind {
+  const lt = leadTag(text);
+  if (lt === "bash-input" || lt === "command-name" || lt === "command-message") return "meta";
+  if (lt !== "task-notification" && isNoise(text)) return "noise";
+  const og = obj(o["origin"]); const k = og ? str(og["kind"]) : ""; const to = str(o["turnOrigin"]);
+  if (k === "human" || to === "human" || to === "sdk" || to === "scheduled") return "human"; // a person or their script asked
+  if (k === "task-notification" || k === "auto-continuation" || to === "task_notification" || to === "auto_continuation") return "notify";
+  if (k === "peer" || to === "peer") return "peer";
+  if (lt === "task-notification") return "notify";
+  if (text.startsWith(PEER_WRAP) && text.indexOf("<agent-message") >= 0) return "peer";
+  return "human"; // unknown = visible
+}
+function inner(t: string, tag: string): string {
+  const a = t.indexOf("<" + tag + ">"); if (a < 0) return "";
+  const b = t.indexOf("</" + tag + ">", a); return t.slice(a + tag.length + 2, b > a ? b : t.length).trim();
+}
+function firstLine(t: string, n: number): string { for (const ln of t.split("\n")) { const x = ln.trim(); if (x) return x.length > n ? x.slice(0, n - 1) + "…" : x; } return ""; }
+// ⇄ <sender> · <first line of the message>; a subagent hand-back's frame text is skipped up to the report itself
+function peerText(o: Obj, t: string): string {
+  const og = obj(o["origin"]);
+  const at = /<agent-message from="([^"]*)">/.exec(t);
+  const from = (og ? str(og["name"]) || str(og["from"]) : "") || (at ? at[1] ?? "" : "") || "peer";
+  let body = og ? str(og["body"]) : "";
+  if (!body && at) { const a = t.indexOf(at[0] ?? "") + (at[0] ?? "").length; const b = t.indexOf("</agent-message>", a); body = t.slice(a, b > a ? b : t.length); }
+  if (!body) body = t;
+  const rf = body.indexOf("The report follows:"); if (rf >= 0) body = body.slice(rf + 19);
+  return "\u21c4 " + from + " · " + firstLine(body, 120);
+}
+// one user text → its event: prompt, ⟲ notification (id = the spawning call), ⇄ peer message, ! shell input, or nothing
+function userEvs(o: Obj, t: string, ts: string, out: Ev[]): void {
+  const k = classifyUser(o, t);
+  if (k === "human") out.push({ kind: "user", text: t, ts, id: "", full: "" });
+  else if (k === "meta") { if (leadTag(t) === "bash-input") out.push({ kind: "meta", text: "! " + inner(t, "bash-input"), ts, id: "", full: "" }); }
+  else if (k === "peer") out.push({ kind: "meta", text: peerText(o, t), ts, id: "", full: "" });
+  else if (k === "notify") {
+    const st = inner(t, "status"); const sm = inner(t, "summary");
+    const og = obj(o["origin"]); const auto = (og ? str(og["kind"]) : "") === "auto-continuation" || str(o["turnOrigin"]) === "auto_continuation";
+    out.push({ kind: "meta", text: "\u27f2 " + (st || (auto ? "auto-continue" : "resumed")) + (sm ? " · " + sm : ""), ts, id: inner(t, "tool-use-id"), full: "" });
+  }
+}
 const renamed = new Map<string, string[]>(); // path → [custom title ("" = renamed to empty), its timestamp]: /rename wins over the ai-title Claude re-appends after it
 function parse(o: Obj, out: Ev[], s: Sess | null): void {
   const ts = str(o["timestamp"]); const type = str(o["type"]);
@@ -60,14 +103,14 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     const cmd = /<command-name>([^<]*)<\/command-name>/.exec(c);
     const cargs = /<command-args>([^<]*)/.exec(c);
     if (cmd) out.push({ kind: cargs && cargs[1].trim() ? "user" : "meta", text: cmd[1] + (cargs && cargs[1].trim() ? " " + cargs[1].trim() : ""), ts, id: "", full: "" });
-    else if (!isNoise(c)) out.push({ kind: "user", text: c, ts, id: "", full: "" });
+    else userEvs(o, c, ts, out);
     return;
   }
   for (const b of arr(c)) {
     const bo = obj(b);
     if (!bo) continue;
     const bt = str(bo["type"]);
-    if (bt === "text") { const t = str(bo["text"]); if (type === "assistant") out.push({ kind: "assistant", text: t, ts, id: "", full: "" }); else if (!isNoise(t)) out.push({ kind: "user", text: t, ts, id: "", full: "" }); }
+    if (bt === "text") { const t = str(bo["text"]); if (type === "assistant") out.push({ kind: "assistant", text: t, ts, id: "", full: "" }); else userEvs(o, t, ts, out); }
     else if (bt === "thinking") { const t = str(bo["thinking"]); if (t) out.push({ kind: "thinking", text: t, ts, id: "", full: "" }); }
     else if (bt === "tool_use") { const n = str(bo["name"]); const inp = obj(bo["input"]); out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, inp, ""), ts, id: str(bo["id"]), full: inp ? JSON.stringify(inp) : "" }); }
     else if (bt === "tool_result") { const tur = obj(o["toolUseResult"]); out.push({ kind: "result", text: blockText(bo["content"]), ts, id: str(bo["tool_use_id"]), full: tur ? JSON.stringify(tur) : "" }); }

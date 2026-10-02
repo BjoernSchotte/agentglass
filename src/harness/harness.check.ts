@@ -8,6 +8,8 @@ import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
 import { newAcc, bucket, usageExact } from "../features/usage/record.ts";
 import { HARNESSES, harnessOf, parseEvents, cmdOf, busy } from "./index.ts";
+import { NOISE_TAGS, isNoise, leadTag } from "./common.ts";
+import { classifyUser } from "./claude.ts";
 
 let bad = 0;
 function ok(what: string, cond: boolean, got: string): void { if (!cond) { bad++; console.log("FAIL " + what + ": " + got); } }
@@ -162,6 +164,46 @@ for (const sm of SAMPLES) {
   const t4 = title([[ct("Y", "10:05"), ai("B")], [ct("X", "10:00"), ai("A")]]); ok("title: head after tail keeps the newer rename", t4 === "Y", t4);
   const t5 = title([[ct("  ", "10:00")]]); ok("title: blank rename only", t5 === "", t5);
   const t6 = title([[ct("  ", "10:00"), ai("A")]]); ok("title: blank rename then ai", t6 === "A", t6);
+}
+// Claude user lines: prompts vs task notifications (⟲), peer messages (⇄), shell input, hook/command output
+const CU = (extra: string, content: string): string => "{\"type\":\"user\"," + extra + (extra ? "," : "") + "\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"message\":{\"role\":\"user\",\"content\":" + JSON.stringify(content) + "}}";
+const HUMAN = "\"origin\":{\"kind\":\"human\"},\"turnOrigin\":\"human\",\"promptSource\":\"typed\"";
+const NOTE = "<task-notification>\n<task-id>x</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Inventory hook seams\" finished</summary>\n</task-notification>";
+const NOTIFY = "\"origin\":{\"kind\":\"task-notification\"},\"turnOrigin\":\"task_notification\",\"promptSource\":\"system\"";
+const PEER = "\"origin\":{\"kind\":\"peer\",\"from\":\"template-analyst\",\"name\":\"template-analyst\",\"senderTaskId\":\"t1\",\"body\":\"# Inventory of the template\\n\\nmore\"},\"turnOrigin\":\"peer\",\"promptSource\":\"system\"";
+const PEER_TEXT = "Another Claude session sent a message:\n<agent-message from=\"template-analyst\">\n# Inventory of the template\n\nmore\n</agent-message>";
+const HANDBACK = "\"origin\":{\"kind\":\"peer\",\"from\":\"aff8aa7c34737900b\",\"senderTaskId\":\"aff8aa7c34737900b\",\"handback\":true,\"body\":\"[Subagent hand-back] The text below is the final report of a subagent. The report follows:\\n  Report done.\\n  more\"},\"promptSource\":\"system\"";
+function claudeEvs(lines: string[]): Ev[] { const s = newSess("claude", "u", "/x/u.jsonl", false); const evs: Ev[] = []; for (const l of lines) parseEvents("claude", l, evs, s); return evs; }
+function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: Ev) => e.kind + ":" + e.text).join("|"); }
+{
+  const k1 = claudeKinds([CU(HUMAN, "<div>fix this</div>")]); ok("claude: prompt starting with <div>", k1 === "user:<div>fix this</div>", k1);
+  const k2 = claudeKinds([CU("", "<div>fix this</div>")]); ok("claude: <div> prompt without origin", k2 === "user:<div>fix this</div>", k2);
+  for (const ex of [NOTIFY, ""]) {
+    const ev = claudeEvs([CU(ex, NOTE)]);
+    const k = ev.map((e: Ev) => e.kind + ":" + e.text + "#" + e.id).join("|");
+    ok("claude: task notification " + (ex ? "with" : "without") + " origin", k === "meta:⟲ completed · Agent \"Inventory hook seams\" finished#toolu_1", k);
+  }
+  const k3 = claudeKinds([CU("\"origin\":{\"kind\":\"auto-continuation\"},\"turnOrigin\":\"auto_continuation\"", "Continue from where you left off.")]); ok("claude: auto-continuation", k3 === "meta:⟲ auto-continue", k3);
+  const k4 = claudeKinds([CU(PEER, PEER_TEXT)]); ok("claude: peer message", k4 === "meta:⇄ template-analyst · # Inventory of the template", k4);
+  const k5 = claudeKinds([CU("", PEER_TEXT)]); ok("claude: peer message without origin", k5 === "meta:⇄ template-analyst · # Inventory of the template", k5);
+  const k6 = claudeKinds([CU(HANDBACK, "Another Claude session sent a message:\n<agent-message from=\"aff8aa7c34737900b\">\n[Subagent hand-back] …\n</agent-message>")]); ok("claude: subagent hand-back", k6 === "meta:⇄ aff8aa7c34737900b · Report done.", k6);
+  for (const to of ["sdk", "scheduled"]) { const k = claudeKinds([CU("\"turnOrigin\":\"" + to + "\"", "run the report")]); ok("claude: " + to + " origin is a prompt", k === "user:run the report", k); }
+  for (const tag of NOISE_TAGS.concat(["command-message"])) {
+    const k = claudeKinds([CU(HUMAN, "<" + tag + ">x</" + tag + ">")]);
+    ok("claude: <" + tag + "> with a human origin is no prompt", k.indexOf("user:") < 0, k);
+  }
+  const k7 = claudeKinds([CU(HUMAN, "<bash-input>git status</bash-input>")]); ok("claude: shell input", k7 === "meta:! git status", k7);
+  const k8 = claudeKinds([CU("", "<command-name>/compact</command-name>")]); ok("claude: slash command unchanged", k8 === "meta:/compact", k8);
+  const k9 = claudeKinds(["{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<system-reminder>x</system-reminder>\"},{\"type\":\"text\",\"text\":\"<p>real</p>\"}]}}"]);
+  ok("claude: text blocks classified one by one", k9 === "user:<p>real</p>", k9);
+  ok("classifyUser: unknown origin kind is a prompt", classifyUser({ origin: { kind: "something-new" } }, "hi") === "human", classifyUser({ origin: { kind: "something-new" } }, "hi"));
+  ok("isNoise: codex env", isNoise("<environment_context>\n<cwd>/x</cwd>"), "false");
+  ok("isNoise: <div> kept", !isNoise("<div>x"), "true");
+  ok("isNoise: < 3 kept", !isNoise("< 3 apples"), "true");
+  ok("isNoise: AGENTS.md", isNoise("# AGENTS.md instructions"), "false");
+  ok("isNoise: task notification", isNoise("<task-notification>\n<status>x</status>"), "false");
+  ok("isNoise: empty", isNoise("  \n"), "false");
+  ok("leadTag", leadTag("  <skill name=\"x\">") === "skill" && leadTag("<a>") === "a" && leadTag("< a>") === "" && leadTag("x<a>") === "", leadTag("  <skill name=\"x\">"));
 }
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {

@@ -35,9 +35,17 @@ export function blockText(v: unknown): string {
   }
   return parts.join("\n");
 }
+// leading tags the harnesses inject into user messages: never a prompt. Anything else starting with < (<div>, < 3) is one.
+export const NOISE_TAGS = [
+  "local-command-stdout", "local-command-stderr", "local-command-caveat", "system-reminder", "bash-stdout", "bash-stderr", "user-prompt-submit-hook", // claude
+  "environment_context", "recommended_plugins", "user_instructions", "turn_aborted", "skill", "user_shell_command", "collaboration_mode", // codex
+  "session_context", "state_snapshot", // gemini
+];
+// x of a leading <x> or <x attr…>, else ""
+export function leadTag(t: string): string { const m = /^<([A-Za-z][\w-]*)[\s>]/.exec(t.trimStart()); return m ? m[1] ?? "" : ""; }
 export function isNoise(t: string): boolean {
-  const s = t.trimStart();
-  return s.length === 0 || s.startsWith("<") || s.startsWith("# AGENTS.md") || s.startsWith("Caveat:");
+  const s = t.trimStart(); const lt = leadTag(s);
+  return s.length === 0 || NOISE_TAGS.indexOf(lt) >= 0 || lt === "task-notification" || s.startsWith("# AGENTS.md") || s.startsWith("Caveat:");
 }
 // mid-turn? scans back for the last turn marker ("turn started" … "turn complete"/"turn aborted");
 // userStarts: a user event also opens a turn (harnesses that log no start marker)
