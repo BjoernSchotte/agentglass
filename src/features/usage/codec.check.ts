@@ -17,7 +17,7 @@ const o = accOut(a, 64); const js = JSON.stringify(o);
 const back = parse(js);
 const b = accIn(back ?? {});
 const e = b.days.get([...a.days.keys()][0] ?? "");
-ok("version", VERSION >= 6, String(VERSION));
+ok("version", VERSION === 7, String(VERSION)); // 6 is parsing-fixes' (nightly builds from main wrote it without these fields)
 ok("day present", !!e, [...b.days.keys()].join(","));
 if (e) {
   ok("unk", e.unk === d.unk, String(e.unk));
@@ -33,10 +33,6 @@ ok("acc fields", b.uc === 7 && b.bill === "metered" && b.plan === "team" && b.bi
 const old: Obj = {}; for (const k of Object.keys(o)) old[k] = o[k];
 old["t"] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 ok("old t", accIn(old).uc === 0 && accIn(old).del === 9, "");
-// a day written without cp (another build that shares this VERSION): its cost counts under the session's own provider
-const legacy = accIn(parse("{\"t\":[1,2,0,0,4.5,0,0,0,0],\"days\":{\"2026-10-01\":{\"i\":1,\"o\":2,\"c\":4.5}}}") ?? {});
-const ld = legacy.days.get("2026-10-01");
-ok("day without cp", !!ld && (ld.cp.get("") ?? 0) === 4.5 && ld.hc.length === 24, ld ? String(ld.cp.get("") ?? 0) : "none");
 ok("no secret-shaped keys", js.indexOf("\"env\"") < 0 && js.indexOf("\"key\"") < 0 && js.indexOf("\"token\"") < 0, js.slice(0, 200));
 console.log(bad ? bad + " failed" : "codec: all checks passed");
 if (bad) process.exit(1);

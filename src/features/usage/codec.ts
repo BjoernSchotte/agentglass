@@ -5,7 +5,7 @@ import { type Acc, type Day } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 6; // 6: honest-costs — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 7; // 7: honest-costs — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
@@ -43,10 +43,8 @@ function dayIn(o: Obj): Day {
   }
   const hours = padTo(nums(o["h"]), 24);
   const hc = padTo(nums(o["hc"]), 24);
-  const cp = numMapIn(o["cp"]);
-  if (o["cp"] === undefined && num(o["c"]) > 0) cp.set("", num(o["c"])); // written by a build without cp under the same VERSION
   return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
-    um: numMapIn(o["um"]), uc: num(o["uc"]), cp, hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5) };
+    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5) };
 }
 // keepIds: claude dedupe only needs the ids near the resume offset
 export function accOut(a: Acc, keepIds: number): Obj {
