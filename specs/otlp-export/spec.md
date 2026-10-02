@@ -509,7 +509,7 @@ names and ids, so:
    `agentglass.models` (1.3).
 5. gzip in v1? Yes, pure-TS deflate in a gzip container, uncompressed fallback when the backend rejects it (6.5).
 6. Native telemetry policy default? Stays `warn` (3b.2).
-7. 8. gzip without binary file output? Send uncompressed, noted once and in `--status` (6.5).
+7. gzip without binary file output? Send uncompressed, noted once and in `--status` (6.5).
 
 ## Open questions (to verify during implementation)
 1. **Re-export.** Which backends dedupe re-sent spans with the same ids (Tempo, Jaeger with Badger/ES, SigNoz,
