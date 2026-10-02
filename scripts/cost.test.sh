@@ -31,7 +31,7 @@ eq exit "$rc" 3
 eq "bad flag exit" "$rc2" 2
 txt=$(run cost)
 echo "$txt" | grep -q "spend" || { echo "FAIL text has no spend tag"; echo "$txt"; fail=1; }
-echo "$txt" | grep -q "gpt-x-unknown 5.0K" || { echo "FAIL text has no unpriced line"; echo "$txt"; fail=1; }
+echo "$txt" | grep -q "unpriced (month): gpt-x-unknown 5.0K" || { echo "FAIL text has no unpriced line"; echo "$txt"; fail=1; }
 run cost --help | grep -q -- "--check" || { echo "FAIL cost --help"; fail=1; }
 run --help | grep -q "agentglass cost" || { echo "FAIL --help lists cost"; fail=1; }
 # a bad budget value: ignored with one warning on stderr, the run still succeeds

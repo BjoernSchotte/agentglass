@@ -63,9 +63,10 @@ function text(c: CostNow): void {
   let pl = "projected month".padEnd(L);
   for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; const p = c.projByMode[i]; pl += pad(p && p.month >= 0 ? money(p.month, MODES[i] ?? "unknown") : "—", W); }
   out(pl + (c.proj.month < 0 ? "   (needs 3+ days of history)" : "   (total " + money(c.proj.month, cols.length === 1 && cols[0] === 0 ? "api" : "") + ")"));
-  const up = unpricedLine(c.month, 5);
   out("");
-  out("unpriced (month): " + (up || "none"));
+  const uw = unpricedLine(c.week, 5); const um = unpricedLine(c.month, 5);
+  out("unpriced (month): " + (um || "none"));
+  if (uw && uw !== um) out("unpriced (7 days): " + uw);
   const b = c.budget;
   if (b.usd <= 0) { out("budget: none — set budget.monthlyUsd in " + home(CONFIG_FILE)); return; }
   const ap = c.bs.approx ? "≈" : "";
