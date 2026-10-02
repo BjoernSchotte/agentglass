@@ -133,11 +133,13 @@ tagged with how the session is billed:
 Detection, first conclusive source wins: the transcript (Bedrock/Vertex model ids, Codex `plan_type`), the
 live agent process's environment (Linux), then the current config files (`~/.claude.json`,
 `~/.claude/settings.json`, `~/.codex/auth.json` + `config.toml`, `~/.gemini/settings.json`, pi/OpenCode
-`auth.json`). Transcript and process results are stored with the session, so history keeps the mode it ran
+`auth.json`). pi and OpenCode resolve each provider on its own: one with its own endpoint (`baseUrl` in
+`~/.pi/agent/models.json`, `provider.<id>.options.baseURL` in `~/.config/opencode/opencode.json`) is a gateway
+whatever key it uses. Transcript and process results are stored with the session, so history keeps the mode it ran
 with; sessions only covered by config show the current mode as assumed (`*`, dim). **Privacy:** only variable
 *names* are read from the environment (values only for the on/off switches `CLAUDE_CODE_USE_BEDROCK`,
 `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `GOOGLE_GENAI_USE_VERTEXAI`), auth files only for their
-type fields, `~/.claude.json` only for the plan fields of `oauthAccount` and the usage cache below. No secret
+type fields (provider configs only for whether an endpoint is set), `~/.claude.json` only for the plan fields of `oauthAccount` and the usage cache below. No secret
 is read, stored or exported; `--redact` keeps the tags and replaces plan names that are not plain type words.
 
 Usage without a price is listed instead of hidden: `unpriced  gpt-x 900K · custom 300K · +2 models ·
