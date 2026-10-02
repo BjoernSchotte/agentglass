@@ -1,7 +1,7 @@
 // agentglass — cost by billing mode: sums, mode-aware money format, the unpriced breakdown, projection and budget (pure)
 // SPDX-License-Identifier: Apache-2.0
 import { type Bill, MODES, tag } from "./billing.ts";
-import { type Day } from "./record.ts";
+import { type Day, dayKey } from "./record.ts";
 
 export function kfmt(n: number): string {
   if (n < 1000) return String(Math.round(n));
@@ -58,4 +58,43 @@ export function unpricedLine(m: ModeSum, top: number): string {
   if (rest > 0) parts.push("+" + String(rest) + (rest === 1 ? " model" : " models"));
   if (m.uc > 0) parts.push("kiro " + kfmt(m.uc) + " credits (set kiroCreditUsd)");
   return parts.join(" · ");
+}
+
+// ── projection ──
+// one local day summed over sessions (for one mode or a set of modes): its cost and cost per local hour
+export interface DayCost { key: string; cost: number; hc: number[] }
+const MIN_DAYS = 3;
+// today: spent so far + the 14-day hourly profile for the hours still ahead; the current hour adds what its profile
+// has left beyond what it already spent. hist = the days before today (oldest first); -1 = not enough history
+export function projectToday(hist: DayCost[], today: DayCost, hour: number): number {
+  const act = hist.filter((d) => d.cost > 0);
+  if (act.length < MIN_DAYS) return -1;
+  const h0 = Math.max(0, Math.min(23, Math.floor(hour)));
+  const prof = (h: number): number => { let t = 0; for (const d of act) t += d.hc[h] ?? 0; return t / act.length; };
+  let r = today.cost;
+  for (let h = h0 + 1; h < 24; h++) r += prof(h);
+  return r + Math.max(0, prof(h0) - (today.hc[h0] ?? 0));
+}
+// month: month-to-date + today's projected remainder + days left × the mean daily cost since the first day with data in
+// hist (the last complete days, oldest first; leading empty days do not dilute the mean); -1 = not enough history
+export function projectMonth(hist: DayCost[], mtd: number, todayProj: number, todaySpent: number, daysLeft: number): number {
+  let first = -1; let act = 0;
+  for (let i = 0; i < hist.length; i++) { const d = hist[i]; if (d && d.cost > 0) { if (first < 0) first = i; act++; } }
+  if (act < MIN_DAYS) return -1;
+  let sum = 0; for (let i = first; i < hist.length; i++) sum += hist[i]?.cost ?? 0;
+  const mean = sum / (hist.length - first);
+  return mtd + (todayProj >= 0 ? Math.max(0, todayProj - todaySpent) : 0) + daysLeft * mean;
+}
+function noonOf(now: number): number { const t = new Date(now); return now - ((t.getHours() * 60 + t.getMinutes()) * 60 + t.getSeconds()) * 1000 - t.getMilliseconds() + 43200000; }
+// days after today in this local month (noon steps: DST shifts can't skip or repeat a day)
+export function daysLeftInMonth(now: number): number {
+  const noon = noonOf(now); const mo = dayKey(new Date(noon)).slice(0, 7);
+  let n = 0; while (n < 31 && dayKey(new Date(noon + (n + 1) * 86400000)).slice(0, 7) === mo) n++;
+  return n;
+}
+// day keys from the 1st of this local month through today
+export function monthStart(now: number): string[] {
+  const noon = noonOf(now); const mo = dayKey(new Date(noon)).slice(0, 7); const out: string[] = [];
+  for (let i = 0; i < 31; i++) { const k = dayKey(new Date(noon - i * 86400000)); if (k.slice(0, 7) !== mo) break; out.push(k); }
+  return out.reverse();
 }
