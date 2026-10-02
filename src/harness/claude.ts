@@ -172,9 +172,9 @@ function usage(a: Acc, l: string): void {
     if (l.indexOf("\"tool_use_id\":\"") >= 0) { if (a.pend.size) claudeResult(a, l); return; }
     if (l.indexOf("\"type\":\"user\"") < 0) return;
     userLine(a, l);
-    if (l.indexOf("\"isMeta\":true") >= 0) return; // never a prompt
+    if (a.sub || l.indexOf("\"isMeta\":true") >= 0) return; // never a (human) prompt
     const o = parseJson(l); const n = o ? prompts(parse, o) : 0;
-    if (o && n) turn(bucket(a, 0, str(o["timestamp"])), n);
+    if (o && n) turn(a, 0, str(o["timestamp"]), n);
     return;
   }
   const o = parseJson(l); if (!o || str(o["type"]) !== "assistant") return;

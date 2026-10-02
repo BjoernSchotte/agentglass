@@ -296,7 +296,7 @@ function priceKey(md: string, input: number, iso: string): string {
   return k === p.p ? md : k;
 }
 function usage(a: Acc, l: string): void {
-  if (l.indexOf("\"type\":\"user\"") >= 0) { const o = parseJson(l); const n = o && str(o["type"]) === "user" ? prompts(parse, o) : 0; if (o && n) turn(bucket(a, 0, str(o["timestamp"])), n); return; }
+  if (l.indexOf("\"type\":\"user\"") >= 0) { if (a.sub) return; const o = parseJson(l); const n = o && str(o["type"]) === "user" ? prompts(parse, o) : 0; if (o && n) turn(a, 0, str(o["timestamp"]), n); return; }
   if (l.indexOf("\"tokens\":{") < 0 && l.indexOf("\"toolCalls\":[") < 0) return;
   const o = parseJson(l); if (!o || str(o["type"]) !== "gemini") return;
   const iso = str(o["timestamp"]); const d = bucket(a, 0, iso);

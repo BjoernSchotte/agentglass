@@ -10,6 +10,7 @@ import { type Acc, newAcc, bucket, usageExact } from "../features/usage/record.t
 import { price, cost } from "../features/usage/pricing.ts";
 import { skillUses } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
+import { accOf } from "../features/usage/ledger.ts";
 import { buildGraph, summary } from "../features/callgraph/model.ts";
 import { HARNESSES, harnessOf, parseEvents, cmdOf, busy } from "./index.ts";
 import { NOISE_TAGS, isNoise, leadTag } from "./common.ts";
@@ -126,6 +127,14 @@ for (const sm of SAMPLES) {
   sampleTurns.set(sm.h, (sampleTurns.get(sm.h) ?? 0) + tu);
 }
 for (const [h, n] of sampleTurns) ok(h + " SAMPLES count a turn", n > 0, String(n));
+// a subagent's prompts come from its parent agent, not a person: booked as no turn at all, so no consumer can double count
+for (const [i, sm] of SAMPLES.entries()) {
+  const ss = newSess(sm.h, "S2", "/tmp/agentglass-check/S2-" + String(i) + ".jsonl", false); ss.parent = "S1";
+  const a = accOf(ss); const ad = harnessOf(sm.h);
+  for (const l of sm.lines) ad.usage(a, l);
+  let tu = 0; for (const dd of a.days.values()) tu += dd.turns;
+  ok(sm.h + " subagent books no turns", a.sub && tu === 0 && a.tools === sm.tools, String(tu) + " turns, sub " + String(a.sub) + ", tools " + String(a.tools));
+}
 // pi busy: decided from the tail's events alone — the head (first 256 KB, parsed after the tail) must not change it
 {
   let n = 0;

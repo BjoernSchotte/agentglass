@@ -359,11 +359,11 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
 }
 function usage(a: Acc, l: string): void {
   if (l.startsWith("{\"v1\":")) {
-    const usr = l.indexOf("\"role\":\"user\"") >= 0 && l.indexOf("\"type\":\"text\"") >= 0;
+    const usr = !a.sub && l.indexOf("\"role\":\"user\"") >= 0 && l.indexOf("\"type\":\"text\"") >= 0;
     if (!usr && l.indexOf("\"type\":\"step-finish\"") < 0 && l.indexOf("\"type\":\"tool\"") < 0) return;
     const o = parseJson(l); if (!o || o["copied"] === 1) return; // a fork's copied history is not this session's work
     const p = obj(o["part"]); if (!p) return;
-    if (usr) { const n = prompts(parse, o); if (n) turn(bucket(a, tm(p, "start") || num(o["t"]), ""), n); return; }
+    if (usr) { const n = prompts(parse, o); if (n) turn(a, tm(p, "start") || num(o["t"]), "", n); return; }
     const t = num(o["t"]); const d = bucket(a, t, "");
     const pt = str(p["type"]);
     if (pt === "step-finish") book(a, d, str(o["model"]), obj(p["tokens"]), num(p["cost"]));
@@ -372,7 +372,7 @@ function usage(a: Acc, l: string): void {
   }
   // a skill row is a user activation (the session's skill endpoint, a /skill or mention); the model loads skills with its skill tool
   if (l.startsWith("{\"type\":\"skill\"")) { const o = parseJson(l); if (o && o["copied"] !== 1) skill(bucket(a, tm(o, "created"), ""), "command", str(o["skill"]) || str(o["name"])); return; }
-  if (l.startsWith("{\"type\":\"user\"")) { const o = parseJson(l); const n = o && o["copied"] !== 1 ? prompts(parse, o) : 0; if (o && n) turn(bucket(a, tm(o, "created"), ""), n); return; }
+  if (l.startsWith("{\"type\":\"user\"")) { if (a.sub) return; const o = parseJson(l); const n = o && o["copied"] !== 1 ? prompts(parse, o) : 0; if (o && n) turn(a, tm(o, "created"), "", n); return; }
   if (!l.startsWith("{\"type\":\"assistant\"") && !l.startsWith("{\"type\":\"compaction\"")) return;
   const o = parseJson(l); if (!o || o["copied"] === 1) return;
   const d = bucket(a, tm(o, "created"), "");

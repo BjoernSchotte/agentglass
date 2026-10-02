@@ -107,7 +107,7 @@ function usage(a: Acc, l: string): void {
   while (a.x.length < 3) a.x.push(0);
   if (l.indexOf("\"kind\":\"Prompt\"") >= 0) {
     a.x[0] = numAt(a.x, 0, 0) + 1;
-    const o = parseJson(l); const n = o ? prompts(parse, o) : 0; if (o && n) turn(bucket(a, turnMs(a), ""), n);
+    const o = a.sub ? null : parseJson(l); const n = o ? prompts(parse, o) : 0; if (o && n) turn(a, turnMs(a), "", n);
     return;
   }
   const isAsst = l.indexOf("\"kind\":\"AssistantMessage\"") >= 0;

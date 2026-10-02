@@ -125,7 +125,9 @@ the call graph and OTLP export:
   Claude through `classifyUser` (`human`, which includes `sdk`/`scheduled` per decision 1) on user lines that are not
   tool results; Codex, Kiro, Gemini, pi, OpenCode and fx through their existing user-prompt predicate with the
   narrowed `isNoise`. Notifications, peer messages, meta lines, noise and slash commands do not count. Per day it equals
-  the call graph's turn count for that day's prompts. Shares the one cache bump (2).
+  the call graph's turn count for that day's prompts. Only root sessions book turns: a subagent's prompts come
+  from its parent agent, so `Sess.parent` sessions book none (decided at booking time, so no consumer needs a parent
+  filter to avoid double counting). Shares the one cache bump (2).
 - Risk: a harness-injected tag not on the list would now show as a user prompt. Mitigation: the per-harness fixture
   test lists every leading tag seen in samples; unknown tags are visible, not silently lost.
 

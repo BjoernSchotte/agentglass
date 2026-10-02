@@ -104,7 +104,7 @@ function usage(a: Acc, l: string): void {
       const p = obj(o["payload"]); const m = /<name>([^<]*)<\/name>/.exec(p ? blockText(p["content"]) : "");
       const nm = m ? (m[1] ?? "").trim() : ""; if (nm) skill(bucket(a, 0, iso), "command", nm);
     }
-    const n = prompts(parse, o); if (n) turn(bucket(a, 0, iso), n);
+    const n = a.sub ? 0 : prompts(parse, o); if (n) turn(a, 0, iso, n);
     return;
   }
   if (!tc && !ctx && !call) return;

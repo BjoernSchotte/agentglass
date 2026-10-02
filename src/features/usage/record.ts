@@ -15,6 +15,7 @@ export interface Acc {
   ep: string; // the source's cursor epoch off counts in (SessionSource.epoch)
   x: number[]; xM: number; // the harness adapter's own running state (codex: cumulative token counters; fx: usage snapshot + its mtime)
   pk: string; // claude: "<promptId>\t<command>" of a slash command waiting for its skill base-directory line
+  sub: boolean; // a subagent's log (Sess.parent, set by ledger accOf, not persisted): its prompts come from an agent, never a Day.turn
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
 }
 export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rlPct: -1, rlWin: 0, rlReset: 0, rlAt: 0 }; // rl* = latest Codex primary rate limit
@@ -34,7 +35,7 @@ export function lastDays(n: number): string[] {
 export function nlines(s: string): number { if (!s) return 0; const n = s.split("\n").length; return s.endsWith("\n") ? n - 1 : n; }
 
 export function newAcc(): Acc {
-  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "",
+  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0 };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
@@ -84,8 +85,8 @@ export function file(d: Day, name: string, path: string, add: number, del: numbe
   const c = cnt(d.files, name + "\t" + path);
   c.add = c.add + add; c.del = c.del + del;
 }
-// human prompts (what the transcript shows as user events), on the local day of the prompt
-export function turn(d: Day, n: number): void { d.turns = d.turns + n; }
+// human prompts (what the transcript shows as user events), on the local day of the prompt; root sessions only
+export function turn(a: Acc, ms: number, iso: string, n: number): void { if (n > 0 && !a.sub) { const d = bucket(a, ms, iso); d.turns = d.turns + n; } }
 export function skill(d: Day, source: string, name: string): void { if (name) cnt(d.skills, source + "\t" + name); }
 export interface SkillUse { name: string; source: string; n: number }
 // skill uses over the given local days (null = all), most used first

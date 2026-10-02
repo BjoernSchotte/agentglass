@@ -200,12 +200,12 @@ function usage(a: Acc, l: string): void {
     return;
   }
   const hasU = l.indexOf("\"usage\":{") >= 0; const call = l.indexOf("\"toolCall\"") >= 0; const res = l.indexOf("\"toolCallId\"") >= 0;
-  const usr = l.indexOf("\"role\":\"user\"") >= 0;
+  const usr = !a.sub && l.indexOf("\"role\":\"user\"") >= 0;
   if (!hasU && !call && !res && !usr) return;
   const o = parseJson(l); if (!o) return;
   const iso = str(o["timestamp"]);
   if (a.x.length > 1 && a.x[1] === 1 && isoMs(iso) < a.x[0]) return;
-  if (usr) { const n = prompts(parse, o); if (n) turn(bucket(a, 0, iso), n); }
+  if (usr) { const n = prompts(parse, o); if (n) turn(a, 0, iso, n); }
   const type = str(o["type"]);
   if (type === "usage" || type === "compaction" || type === "branch_summary") { book(a, obj(o["usage"]), str(o["model"]), iso); return; }
   if (type !== "message") return;
