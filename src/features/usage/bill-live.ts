@@ -11,10 +11,9 @@ import { OS } from "../../platform/index.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
 import { type Acc, stamp, startOfDay } from "./record.ts";
-import { type Bill, type Det, type Evid, asBill, newEvid, rule, provRule, configEv, configFiles, envSummary, type Allow, allowanceOf, cutObject } from "./billing.ts";
+import { type Bill, type Det, type Evid, asBill, newEvid, rule, provMode, configEv, configFiles, envSummary, type Allow, allowanceOf, cutObject } from "./billing.ts";
 
 const RECHECK_MS = 60000;
-const NONE: Det = { bill: "unknown", plan: "", why: "", src: "" };
 function mtimes(fs: string[]): string { let t = ""; for (const f of fs) { let m = 0; try { m = statSync(f).mtimeMs; } catch (e) { m = 0; } t += String(m) + ","; } return t; }
 
 // current config evidence per harness + project dir: re-checked at most every 60 s, re-read only when a file's mtime moved
@@ -42,18 +41,17 @@ function multi(h: string): boolean { return h === "pi" || h === "opencode"; }
 function provDet(s: Sess, prov: string): Det {
   if (!multi(s.h) || !prov) return billOf(s);
   const e = s.pid ? envs.get(s.pid) : undefined;
-  if (e) { const d = provRule(s.h, prov, e.ev, "process"); if (d.bill !== "unknown") return d; }
-  const c = provRule(s.h, prov, cfgOf(s.h, s.cwd).ev, "config");
-  return c.bill !== "unknown" ? c : billOf(s);
+  return provMode(s.h, prov, e ? e.ev : null, cfgOf(s.h, s.cwd).ev);
 }
-// the mode a cost booked under provider prov counts as
-export function modeOf(s: Sess, prov: string): Bill { return provDet(s, prov).bill; }
+// the mode a cost booked under provider prov counts as; a pi/OpenCode cost without a provider (usage lines, subagent
+// results) counts as the session's label
+export function modeOf(s: Sess, prov: string): Bill { return multi(s.h) && !prov ? asBill(s.bill) : provDet(s, prov).bill; }
 // one label per session: multi-provider harnesses take the provider with the largest cost (its id as plan)
 export function sessionBill(s: Sess): Det {
   if (!multi(s.h)) return billOf(s);
   const a = ledger.get(s.path); if (!a) return billOf(s);
   const by = new Map<string, number>();
-  for (const d of a.days.values()) for (const [p, c] of d.cp) by.set(p, (by.get(p) ?? 0) + c);
+  for (const d of a.days.values()) for (const [p, c] of d.cp) if (p) by.set(p, (by.get(p) ?? 0) + c);
   let top = ""; let max = 0;
   for (const [p, c] of by) if (c > max) { max = c; top = p; }
   if (!top) return billOf(s);

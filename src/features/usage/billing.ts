@@ -73,9 +73,11 @@ function geminiRule(ev: Evid, src: string): Det {
   if (has(ev, "GEMINI_API_KEY") || has(ev, "GOOGLE_API_KEY")) return det("api", "", has(ev, "GEMINI_API_KEY") ? "GEMINI_API_KEY" : "GOOGLE_API_KEY", src);
   return NONE;
 }
-// pi / OpenCode: per provider — the auth file's type literal, else <PROVIDER>_API_KEY in the environment
+// pi / OpenCode: per provider — a custom endpoint (baseUrl in the provider config) is a gateway whatever key it takes;
+// else the auth file's type literal, else <PROVIDER>_API_KEY in the environment
 export function provRule(h: string, prov: string, ev: Evid, src: string): Det {
   if (!prov) return NONE;
+  if (kv(ev, "base." + prov)) return det("gateway", "", "baseUrl", src);
   const t = kv(ev, "auth." + prov).toLowerCase();
   if (t === "oauth") return det("plan", prov, "auth.json", src);
   if (h === "opencode" && t === "wellknown") return det("gateway", "", "auth.json", src);
@@ -84,17 +86,22 @@ export function provRule(h: string, prov: string, ev: Evid, src: string): Det {
   if (has(ev, env)) return det("api", "", env, src);
   return NONE;
 }
-// the harness's rule table, first match wins; multi-provider harnesses resolve here only when exactly one provider is known
+// one provider's mode from the live process (proc, null = none) and the current config: process evidence beats config,
+// except a configured custom endpoint (gateway) — the key in the environment then authenticates against that gateway
+export function provMode(h: string, prov: string, proc: Evid | null, cfg: Evid): Det {
+  const c = provRule(h, prov, cfg, "config");
+  if (c.bill === "gateway" || !proc) return c;
+  const d = provRule(h, prov, proc, "process");
+  return d.bill !== "unknown" ? d : c;
+}
+// the harness's rule table, first match wins; multi-provider harnesses (pi, OpenCode) resolve per provider (provMode),
+// never session-wide: a provider in the auth file says nothing about which one a session used
 export function rule(h: string, ev: Evid, src: string): Det {
   if (h === "claude") return claudeRule(ev, src);
   if (h === "codex") return codexRule(ev, src);
   if (h === "gemini") return geminiRule(ev, src);
   if (h === "kiro") return det("plan", "", "kiro bills plan credits", src);
-  if (h === "pi" || h === "opencode") {
-    const ps: string[] = []; for (const k of ev.kv.keys()) if (k.startsWith("auth.")) ps.push(k.slice(5));
-    return ps.length === 1 ? provRule(h, ps[0] ?? "", ev, src) : NONE;
-  }
-  return NONE; // fx: no documented auth storage
+  return NONE; // pi / OpenCode: per provider; fx: no documented auth storage
 }
 // transcript evidence: a Bedrock or Vertex model id means the cloud bills it
 export function modelBill(model: string): Bill | "" {
@@ -140,6 +147,15 @@ function authTypes(ev: Evid, p: string): void {
   const o = readObj(p); if (!o) return;
   for (const k of Object.keys(o)) { const v = obj(o[k]); const t = v ? str(v["type"]) : ""; if (t) ev.kv.set("auth." + k, t); }
 }
+// providers with their own endpoint: pi models.json providers.<id>.baseUrl, OpenCode provider.<id>.options.baseURL (presence only)
+function endpoints(ev: Evid, p: string, field: string, inOptions: boolean): void {
+  const o = readObj(p); const ps = o ? obj(o[field]) : null; if (!ps) return;
+  for (const k of Object.keys(ps)) {
+    const v = obj(ps[k]); const op = v && inOptions ? obj(v["options"]) : v;
+    if (op && str(op[inOptions ? "baseURL" : "baseUrl"])) ev.kv.set("base." + k, "1");
+  }
+}
+const OC_CFG = ["opencode.json", "opencode.jsonc", "config.json"]; // OpenCode's global config names (a .jsonc with comments is skipped)
 // the files configEv(h, home, cwd) reads (their mtimes tell a cache when to re-read)
 export function configFiles(h: string, home: string, cwd: string): string[] {
   if (h === "claude") {
@@ -149,8 +165,8 @@ export function configFiles(h: string, home: string, cwd: string): string[] {
   }
   if (h === "codex") return [join(home, ".codex", "auth.json"), join(home, ".codex", "config.toml")];
   if (h === "gemini") return [join(home, ".gemini", "settings.json")];
-  if (h === "pi") return [join(home, ".pi", "agent", "auth.json")];
-  if (h === "opencode") return [join(home, ".local", "share", "opencode", "auth.json")];
+  if (h === "pi") return [join(home, ".pi", "agent", "auth.json"), join(home, ".pi", "agent", "models.json")];
+  if (h === "opencode") return [join(home, ".local", "share", "opencode", "auth.json")].concat(OC_CFG.map((f: string) => join(home, ".config", "opencode", f)));
   return [];
 }
 // current config of harness h under home (cwd: the session's project, for project settings)
@@ -182,8 +198,11 @@ export function configEv(h: string, home: string, cwd: string): Evid {
     const sec = o ? obj(o["security"]) : null; const au = sec ? obj(sec["auth"]) : null;
     const t = (au ? str(au["selectedType"]) : "") || (o ? str(o["selectedAuthType"]) : ""); // older gemini: top-level selectedAuthType
     if (t) ev.kv.set("gemini.selectedType", t);
-  } else if (h === "pi") authTypes(ev, join(home, ".pi", "agent", "auth.json"));
-  else if (h === "opencode") authTypes(ev, join(home, ".local", "share", "opencode", "auth.json"));
+  } else if (h === "pi") { authTypes(ev, join(home, ".pi", "agent", "auth.json")); endpoints(ev, join(home, ".pi", "agent", "models.json"), "providers", false); }
+  else if (h === "opencode") {
+    authTypes(ev, join(home, ".local", "share", "opencode", "auth.json"));
+    for (const f of OC_CFG) endpoints(ev, join(home, ".config", "opencode", f), "provider", true);
+  }
   return ev;
 }
 // --redact: plan names are type words (team, pro, max_5x); anything else could be an organisation's name

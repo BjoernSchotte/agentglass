@@ -3,7 +3,7 @@
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
 import { newAcc, stamp } from "./record.ts";
 import { type Obj, parse } from "../../util/json.ts";
-import { type Evid, type Bill, allowanceOf, rule, provRule, modelBill, envSummary, configEv, planLabel, tag, MODES } from "./billing.ts";
+import { type Evid, type Bill, allowanceOf, rule, provRule, provMode, modelBill, envSummary, configEv, planLabel, tag, MODES } from "./billing.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -42,6 +42,15 @@ ok("opencode api", provRule("opencode", "openai", E([], [], [["auth.openai", "ap
 ok("pi env key", provRule("pi", "open-router", E(["OPEN_ROUTER_API_KEY"], [], []), "process").bill === "api", "");
 ok("pi api-key type", provRule("pi", "openai", E([], [], [["auth.openai", "api_key"]]), "config").bill === "api", "");
 ok("pi unknown provider", provRule("pi", "x", E([], [], [["auth.openai", "oauth"]]), "config").bill === "unknown", "");
+ok("custom endpoint = gateway", provRule("pi", "cliproxy", E([], [], [["base.cliproxy", "1"], ["auth.cliproxy", "api_key"]]), "config").bill === "gateway", "");
+// pi / OpenCode resolve per provider: a configured custom endpoint beats a key in the process environment (it authenticates
+// against the gateway); otherwise process evidence beats config
+const gw = provMode("pi", "cliproxy", E(["CLIPROXY_API_KEY"], [], []), E([], [], [["base.cliproxy", "1"]]));
+ok("gateway beats env key", gw.bill === "gateway" && gw.src === "config", gw.bill + "/" + gw.src);
+const pk = provMode("pi", "openai", E(["OPENAI_API_KEY"], [], []), E([], [], [["auth.openai", "oauth"]]));
+ok("process beats config", pk.bill === "api" && pk.src === "process", pk.bill + "/" + pk.src);
+ok("config when the process says nothing", provMode("opencode", "anthropic", E(["PATH"], [], []), E([], [], [["auth.anthropic", "oauth"]])).bill === "plan", "");
+ok("multi-provider harness: no session-wide guess", rule("opencode", E([], [], [["auth.anthropic", "oauth"]]), "config").bill === "unknown" && rule("pi", E([], [], [["auth.anthropic", "oauth"]]), "config").bill === "unknown", "");
 ok("bedrock id", modelBill("us.anthropic.claude-sonnet-4-5-20250929-v1:0") === "metered" && modelBill("claude-opus-4@20250514") === "metered" && modelBill("claude-opus-4") === "" && modelBill("arn:aws:bedrock:us-east-1:1:x/y") === "metered", "");
 // environ: names only, secrets never kept
 const raw = new TextEncoder().encode("ANTHROPIC_API_KEY=sk-ant-SECRET\0CLAUDE_CODE_USE_VERTEX=1\0CLAUDE_CODE_USE_BEDROCK=0\0GOOGLE_GENAI_USE_VERTEXAI=False\0PATH=/usr/bin\0");
@@ -56,6 +65,8 @@ write(HOMED + "/.codex/config.toml", "model = \"gpt-5\"\nmodel_provider = \"azur
 write(HOMED + "/.gemini/settings.json", "{not json");
 write(HOMED + "/.pi/agent/auth.json", "{\"anthropic\":{\"type\":\"oauth\",\"refresh\":\"r-SECRET\"},\"openai\":{\"type\":\"api_key\",\"key\":\"sk-SECRET\"}}");
 write(HOMED + "/.local/share/opencode/auth.json", "{\"anthropic\":{\"type\":\"oauth\",\"access\":\"SECRET\"}}");
+write(HOMED + "/.pi/agent/models.json", "{\"providers\":{\"cliproxy\":{\"baseUrl\":\"http://127.0.0.1:8317\",\"apiKey\":\"SECRET\",\"models\":[]},\"openai\":{\"models\":[]}}}");
+write(HOMED + "/.config/opencode/opencode.json", "{\"provider\":{\"cliproxy\":{\"npm\":\"@ai-sdk/openai-compatible\",\"options\":{\"baseURL\":\"http://127.0.0.1:8317/v1\",\"apiKey\":\"SECRET\"}},\"google\":{\"models\":{}}}}");
 write(ROOT + "/proj/.claude/settings.local.json", "{\"env\":{\"CLAUDE_CODE_USE_BEDROCK\":\"1\",\"AWS_PROFILE\":\"SECRET\"}}");
 const ce = configEv("claude", HOMED, "/nonexistent");
 const cr = rule("claude", ce, "config");
@@ -71,7 +82,9 @@ ok("malformed gemini = unknown", rule("gemini", configEv("gemini", HOMED, ""), "
 ok("missing files = unknown", rule("pi", configEv("pi", HOMED + "/none", ""), "config").bill === "unknown", "");
 const pie = configEv("pi", HOMED, "");
 ok("pi per provider", provRule("pi", "anthropic", pie, "config").bill === "plan" && provRule("pi", "openai", pie, "config").bill === "api" && kvs(pie).indexOf("SECRET") < 0, kvs(pie));
-ok("opencode single provider", rule("opencode", configEv("opencode", HOMED, ""), "config").bill === "plan", "");
+const oce = configEv("opencode", HOMED, "");
+ok("opencode gateway from config", provRule("opencode", "cliproxy", oce, "config").bill === "gateway" && provRule("opencode", "google", oce, "config").bill === "unknown" && provRule("opencode", "anthropic", oce, "config").bill === "plan" && kvs(oce).indexOf("SECRET") < 0 && kvs(oce).indexOf("8317") < 0, kvs(oce));
+ok("pi gateway from models.json", provRule("pi", "cliproxy", pie, "config").bill === "gateway" && provRule("pi", "openai", pie, "config").bill === "api" && kvs(pie).indexOf("8317") < 0, kvs(pie));
 ok("redact plan", planLabel("", true) === "" && planLabel("team", true) === "team" && planLabel("Acme Corp", true) === "plan" && planLabel("Acme Corp", false) === "Acme Corp", "");
 rmSync(ROOT, { recursive: true, force: true });
 // stamp precedence: config never stamps; process fills an empty stamp; session evidence replaces process, never the reverse
