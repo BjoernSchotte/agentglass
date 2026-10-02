@@ -10,8 +10,9 @@ export const JOBS: Job[] = ["size", "procs", "scan", "slow", "probe", "tick", "w
 // input/focusOut/grow: timestamps in ms, 0 = never
 export interface Act { now: number; input: number; focusOut: number; replay: boolean; grow: number; indexing: boolean; live: boolean }
 export interface JS { last: number; ew: number } // last run, EWMA of its duration (ms)
-// unf: focus-out reported and no focus-in since (render capped at 1/s)
-export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; js: Map<string, JS> }
+// unf: focus-out reported and no focus-in since (render capped at 1/s); burst: ledger indexing pending, its tick keeps
+// the level's cadence (the 100 ms slice per tick is the one intentional burst, not a cost to stretch away)
+export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; burst: boolean; js: Map<string, JS> }
 
 const LV: Level[] = ["hot", "warm", "idle", "away"];
 const JUMP = 600000; // a job last run more than 10 min ago (suspend) or in the future (clock went back) runs now
@@ -37,6 +38,15 @@ function fixedMs(j: Job): number {
   return 500; // render, tick, watch, size
 }
 
+// what makes the level hot, for the debug footer
+export function hotWhy(a: Act): string {
+  const w: string[] = [];
+  if (a.input > 0 && a.now - a.input < 3000) w.push("input");
+  if (a.replay) w.push("replay");
+  if (a.grow > 0 && a.now - a.grow < 5000) w.push("grow");
+  if (a.indexing) w.push("index");
+  return w.join("+");
+}
 export function levelOf(a: Act): Level {
   if ((a.input > 0 && a.now - a.input < 3000) || a.replay || (a.grow > 0 && a.now - a.grow < 5000) || a.indexing) return "hot";
   if (a.focusOut > 0 && a.input < a.focusOut) return "away"; // only focus-out makes away, never inactivity alone
@@ -47,7 +57,7 @@ export function levelOf(a: Act): Level {
 export function newSched(fixed: boolean, winch: boolean, now: number): Sched {
   const js = new Map<string, JS>();
   for (const j of JOBS) js.set(j, { last: now, ew: 0 });
-  return { fixed, winch, lv: "warm", unf: false, js };
+  return { fixed, winch, lv: "warm", unf: false, burst: false, js };
 }
 
 export function base(j: Job, lv: Level, live: boolean, fixed: boolean, winch: boolean): number {
@@ -64,7 +74,7 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
   if (b < 0 || (j === "fast" && !armed)) return -1;
   if (sc.fixed) return b;
   const x = sc.js.get(j);
-  let e = x ? Math.max(b, 20 * x.ew) : b;
+  let e = x && !(j === "tick" && sc.burst) ? Math.max(b, 20 * x.ew) : b;
   if (j === "render" && sc.unf) e = Math.max(e, 1000); // unfocused: draw ≤ 1/s, ingest and alarms keep their cadence
   return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
 }
@@ -84,8 +94,18 @@ export function due(sc: Sched, now: number, live: boolean, armed: boolean): Job[
 
 export function ran(sc: Sched, j: Job, now: number, dur: number): void {
   const x = sc.js.get(j);
-  if (!x) { sc.js.set(j, { last: now, ew: dur }); return; }
-  x.last = now; x.ew = x.ew === 0 ? dur : 0.7 * x.ew + 0.3 * dur;
+  if (!x) { sc.js.set(j, { last: now, ew: 0.3 * Math.min(dur, 50) }); return; }
+  // one sample counts at most 4× the current average (≥ 50 ms): a rare burst inside a job (the first ledger pass at startup,
+  // the cache save every 30 s in tick) must not stretch it for the next half minute; a lasting cost converges in a few runs
+  x.last = now; x.ew = 0.7 * x.ew + 0.3 * Math.min(dur, Math.max(4 * x.ew, 50));
+}
+
+const failed = new Set<string>();
+// one job, timed; a throw is caught (the loop must keep rescheduling) and reported once per job name
+export function runJob(sc: Sched, j: Job, f: () => void, now: () => number, warn: (msg: string) => void): void {
+  const t0 = now();
+  try { f(); } catch (e) { if (!failed.has(j)) { failed.add(j); warn("refresh " + j + " failed: " + String(e)); } }
+  ran(sc, j, t0, Math.max(0, now() - t0));
 }
 
 // until the earliest due job; ≥ 16 ms, ≤ 1 s so level changes apply promptly
@@ -103,9 +123,10 @@ export function sleepFor(sc: Sched, now: number, live: boolean, armed: boolean):
 export function forceMs(lv: Level): number { return lv === "away" ? 5000 : 1000; }
 
 function dur(ms: number): string { return ms < 1000 ? String(Math.round(ms)) + "ms" : String(Math.round(ms / 100) / 10) + "s"; }
+export const DBG = { on: false, line: "" }; // AGENTGLASS_DEBUG_REFRESH=1: footer.ts shows line
 // AGENTGLASS_DEBUG_REFRESH footer: lvl hot · procs 18ms/1s · scan 41ms/2s · …
-export function debugLine(sc: Sched, live: boolean, armed: boolean): string {
-  const parts = ["lvl " + sc.lv + (sc.unf ? " unfocused" : "") + (sc.fixed ? " fixed" : "")];
+export function debugLine(sc: Sched, live: boolean, armed: boolean, why: string): string {
+  const parts = ["lvl " + sc.lv + (why ? " (" + why + ")" : "") + (sc.unf ? " unfocused" : "") + (sc.fixed ? " fixed" : "")];
   for (const j of JOBS) {
     const e = every(sc, j, live, armed); if (e < 0) continue;
     const x = sc.js.get(j);

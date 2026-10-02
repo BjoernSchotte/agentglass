@@ -1,7 +1,7 @@
 // agentglass — self-check for the adaptive refresh scheduler: scriptc build src/sched.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
 import { H, armed } from "./hooks.ts";
-import { type Act, type Job, type Sched, JOBS, levelOf, base, every, due, ran, sleepFor, forceMs, debugLine, refreshMode, newSched } from "./sched.ts";
+import { type Act, type Job, type Sched, JOBS, levelOf, base, every, due, ran, sleepFor, forceMs, debugLine, refreshMode, newSched, runJob, hotWhy } from "./sched.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -41,21 +41,38 @@ eq("fixed scan", String(base("scan", "hot", false, true, false)), "3000");
 eq("fixed probe off", String(base("probe", "hot", false, true, false)), "-1");
 
 // ── budget ──
+// a job's cost in steady state: n runs of dur ms (one sample counts at most 4× the average, so it takes a few runs)
+function cost(s2: Sched, j: Job, dur: number): void { for (let i = 0; i < 80; i++) ran(s2, j, t, dur); }
 let sc = newSched(false, false, t);
 sc.lv = "hot";
 ran(sc, "scan", t, 800);
-eq("scan stretched", String(every(sc, "scan", false, false)), "16000");
-ran(sc, "scan", t, 800);
-eq("ewma steady", String(every(sc, "scan", false, false)), "16000");
+eq("one slow run barely stretches", String(every(sc, "scan", false, false)), "2000");
+cost(sc, "scan", 800);
+eq("scan stretched", String(Math.round(every(sc, "scan", false, false))), "16000");
+const sp = newSched(false, false, t); sp.lv = "hot";
+cost(sp, "tick", 10);
+ran(sp, "tick", t, 900); // a cache save inside the tick
+eq("one burst barely stretches", String(every(sp, "tick", false, false) < 1000), "true");
+for (let i = 0; i < 8; i++) ran(sp, "tick", t, 800);
+eq("a sustained cost converges", String(every(sp, "tick", false, false) > 12000), "true");
 sc.lv = "away";
-ran(sc, "procs", t, 200);
+cost(sc, "procs", 200);
 eq("procs live capped", String(every(sc, "procs", true, false)), "1500");
 eq("procs not live stretched to base", String(every(sc, "procs", false, false)), "5000");
-ran(sc, "watch", t, 500);
+cost(sc, "watch", 500);
 eq("watch live capped", String(every(sc, "watch", true, false)), "1500");
-eq("watch not live stretched", String(every(sc, "watch", false, false)), "10000");
+eq("watch not live stretched", String(Math.round(every(sc, "watch", false, false))), "10000");
+cost(sc, "tick", 100);
+eq("tick stretched", String(every(sc, "tick", false, false)), "5000");
+sc.burst = true;
+eq("indexing burst: tick keeps its cadence", String(every(sc, "tick", false, false)), "5000");
+sc.lv = "hot";
+eq("indexing burst hot", String(every(sc, "tick", false, false)), "250");
+sc.burst = false;
+eq("burst over: stretched", String(Math.round(every(sc, "tick", false, false))), "2000");
+sc.lv = "away";
 const fx = newSched(true, false, t);
-ran(fx, "scan", t, 800);
+cost(fx, "scan", 800);
 eq("fixed ignores ewma", String(every(fx, "scan", false, false)), "3000");
 eq("fixed fast unarmed", String(every(fx, "fast", false, false)), "-1");
 eq("fixed fast armed", String(every(fx, "fast", false, true)), "50");
@@ -117,12 +134,32 @@ eq("invalid", m.mode + "|" + String(m.err.indexOf("fast") >= 0), "adaptive|true"
 
 // ── debug line ──
 sc = newSched(false, false, t); sc.lv = "hot";
-eq("debug starts", debugLine(sc, false, false).slice(0, 7), "lvl hot");
-ran(sc, "procs", t, 200);
-eq("procs slow", String(debugLine(sc, true, false).indexOf("procs slow") >= 0), "true");
-eq("procs not slow without live", String(debugLine(sc, false, false).indexOf("procs slow") >= 0), "false");
+eq("debug starts", debugLine(sc, false, false, "").slice(0, 7), "lvl hot");
+cost(sc, "procs", 200);
+eq("procs slow", String(debugLine(sc, true, false, "").indexOf("procs slow") >= 0), "true");
+eq("procs not slow without live", String(debugLine(sc, false, false, "").indexOf("procs slow") >= 0), "false");
+eq("debug why", debugLine(sc, false, false, "grow").slice(0, 14), "lvl hot (grow)");
+eq("hotWhy", hotWhy(act(t - 1000, 0, false, t - 1000, true, false)), "input+grow+index");
 const j0: Job = "tick";
-eq("debug shows tick", String(debugLine(sc, false, false).indexOf(j0 + " 0ms/250ms") >= 0), "true");
+eq("debug shows tick", String(debugLine(sc, false, false, "").indexOf(j0 + " 0ms/250ms") >= 0), "true");
+
+// ── runJob: a throwing job never escapes, warns once per job, is still recorded ──
+sc = newSched(false, false, t);
+let warns = 0; let clock = t;
+const boom = (): void => { throw new Error("boom"); };
+for (let i = 1; i <= 3; i++) {
+  clock = t + i * 1000;
+  runJob(sc, "tick", boom, () => clock, (msg: string) => { warns++; if (msg.indexOf("tick") < 0 || msg.indexOf("boom") < 0) eq("warn text", msg, "refresh tick failed: Error: boom"); });
+  const x = sc.js.get("tick");
+  eq("throwing job recorded " + String(i), String(x ? x.last : 0), String(clock));
+}
+eq("warned once", String(warns), "1");
+runJob(sc, "scan", boom, () => clock, (msg: string) => { warns++; });
+eq("other job warns too", String(warns), "2");
+const busy = (): void => { const e = Date.now() + 30; while (Date.now() < e) { /* busy */ } };
+runJob(sc, "probe", busy, () => Date.now(), (msg: string) => { warns++; });
+const px = sc.js.get("probe");
+eq("duration measured", String(px ? px.ew >= 9 : false), "true"); // 0.3 × 30
 
 // ── fast arm seam ──
 eq("nothing armed", String(armed()), "false");

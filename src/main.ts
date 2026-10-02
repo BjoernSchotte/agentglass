@@ -1,10 +1,10 @@
 // agentglass — a tiny TUI to browse, watch and steer coding-agent sessions
 // (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
 // SPDX-License-Identifier: Apache-2.0
-import { S } from "./state.ts";
+import { S, say } from "./state.ts";
 import { H, tabAt, viewOf, screenOut, armed } from "./hooks.ts";
-import { scan, buildView } from "./model/sessions.ts";
-import { refreshProcs, refreshSlow } from "./model/procs.ts";
+import { sessions, scan, buildView, probeLive } from "./model/sessions.ts";
+import { procs, refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
 import { buf, put, renderModal } from "./ui/screen.ts";
 import { flush, resetFrame } from "./ui/frame.ts";
@@ -17,6 +17,13 @@ import { renderDetail } from "./ui/detail.ts";
 import { renderHelp } from "./ui/help.ts";
 import { tokens, keyName, onInput, onMouse } from "./input.ts";
 import { enter, quit, termSize, focusOf } from "./term.ts";
+import { type Job, DBG, newSched, levelOf, hotWhy, due, runJob, sleepFor, forceMs, debugLine, refreshMode } from "./sched.ts";
+import { str } from "./util/json.ts";
+import { bytes } from "./util/text.ts";
+import { section } from "./util/config.ts";
+import { L } from "./features/usage/record.ts";
+import { indexing } from "./features/usage/ledger.ts";
+import { replaying } from "./features/replay.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/cli.ts";
@@ -54,8 +61,88 @@ function render(): void {
   flush(buf.join(""), (s: string) => { process.stdout.write(s); });
 }
 
-// focus in: the user looks again; repaint in full (the terminal may have dropped frames)
-function onFocus(f: string): void { if (f === "in") { resetFrame(); S.dirty = true; } }
+// ── adaptive refresh: one self-rescheduling setTimeout loop over named jobs (src/sched.ts decides what is due) ──
+const mode = refreshMode(process.env.AGENTGLASS_REFRESH ?? "", str(section("refresh")["mode"]));
+const sc = newSched(mode.mode === "fixed", false, Date.now()); // SIGWINCH is not delivered by the runtime: size is polled
+const act = { input: 0, focusOut: 0, grow: 0 };
+let lastBuild = 0; let scanSig = ""; let watchSig = ""; let gen = 0;
+
+function live(): boolean { return procs.length > 0; }
+let why = "";
+function relevel(now: number): void {
+  const a = { now, input: act.input, focusOut: act.focusOut, replay: replaying(), grow: act.grow, indexing: indexing(), live: live() };
+  sc.lv = levelOf(a); sc.burst = a.indexing; if (DBG.on) why = sc.lv !== "hot" ? "" : hotWhy(a) + (a.indexing ? " " + bytes(L.total - L.done) + " left" : "");
+}
+function sizeJob(): void { if (termSize()) render(); } // a resize repaints at once, outside the render cap
+function scanSum(): string { let n = 0; let z = 0; for (const s of sessions.values()) { n++; z += s.size; } return n + ":" + z; }
+// attention/stuck of the watched (live) sessions: an alarm that changes must be drawn
+function alarmSig(): string { let o = ""; for (const s of sessions.values()) if (s.pid > 0) o += s.path + (s.attention ? "!" : ".") + s.stuck + "|"; return o; }
+function body(j: Job, now: number): () => void {
+  if (j === "size") return sizeJob;
+  if (j === "procs") return () => { refreshProcs(); S.dirty = true; }; // header CPU graph, Processes tab
+  if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; } };
+  if (j === "slow") return () => { refreshSlow(); S.dirty = true; };
+  if (j === "probe") return () => { if (probeLive()) { act.grow = now; S.dirty = true; } };
+  if (j === "tick") return () => {
+    if (S.mode === "list" && S.tab === 0) buildView();
+    const v = L.ver; for (const f of H.onTick) f();
+    if (L.ver !== v) S.dirty = true;
+  };
+  if (j === "watch") return () => { for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; S.dirty = true; } };
+  if (j === "fast") return () => {
+    let d = false; for (const f of H.onFastTick) if (f()) d = true;
+    if (d && !sc.unf) render(); else if (d) S.dirty = true; // armed animation draws at its own pace; unfocused: the 1/s cap
+  };
+  return () => { // render: build only when something changed, animates, a toast is up, or the clock texts are due
+    const toast = S.toast !== "" && now - S.toastAt < 5500; // includes the frame that removes it
+    if (!(sc.fixed || S.dirty || S.animating || toast || now - lastBuild >= forceMs(sc.lv))) return;
+    lastBuild = now; S.frame++; render();
+  };
+}
+function warnJob(m: string): void { say("err", m); S.dirty = true; }
+function turn(): void {
+  const now = Date.now();
+  relevel(now);
+  for (const j of due(sc, now, live(), armed())) runJob(sc, j, body(j, now), () => Date.now(), warnJob);
+  relevel(Date.now()); // a job may have changed the level (a file grew, indexing finished)
+  if (DBG.on) DBG.line = debugLine(sc, live(), armed(), why);
+}
+// gen: a newer schedule (input woke the loop early) makes the older pending timer a no-op, so one chain runs
+function schedule(ms: number): void { const g = ++gen; setTimeout(() => { if (g === gen) loop(); }, ms); }
+function loop(): void {
+  try { turn(); } catch (e) { /* the chain must survive whatever a turn throws */ }
+  schedule(sleepFor(sc, Date.now(), live(), armed()));
+}
+// input or focus-in while the loop sleeps at a slower level: overdue jobs run on the next turn, not up to 1 s later
+function wake(): void { const was = sc.lv; relevel(Date.now()); if (sc.lv !== was) schedule(16); }
+
+function onFocus(f: string): void {
+  const now = Date.now();
+  if (f === "out") { act.focusOut = now; sc.unf = true; return; }
+  act.focusOut = 0; act.input = now; sc.unf = false; // the user looks again: hot, full repaint (the terminal may have dropped frames)
+  resetFrame(); S.dirty = true;
+}
+function onData(d: Uint8Array): void {
+  let user = false;
+  for (const t of tokens(new TextDecoder("utf-8").decode(d))) {
+    const f = focusOf(t);
+    if (f) onFocus(f);
+    else { user = true; if (t.startsWith("\x1b[<")) onMouse(t); else onInput(keyName(t)); }
+  }
+  const now = Date.now();
+  if (user) {
+    act.input = now;
+    const x = sc.js.get("size"); // a resize usually comes with input: check it, at most every 250 ms
+    if (!x || now - x.last >= 250) runJob(sc, "size", termSize, () => Date.now(), warnJob);
+  }
+  render(); // typing latency is never capped
+  wake();
+}
+
+H.helpSections.push({ name: "refresh", ctx: "", keys: [
+  ["now", "adaptive: fast if busy, slow if idle, 1 fps hidden"], ["config.json", '"refresh": {"mode": "fixed"}: fixed 500 ms tick'],
+  ["REFRESH=", "AGENTGLASS_REFRESH=adaptive|fixed (wins)"], ["DEBUG=1", "AGENTGLASS_DEBUG_REFRESH=1: level, costs in footer"],
+  ["tmux", "set -g focus-events on: lets it see it is hidden"] ] });
 
 function main(): void {
   const args = process.argv.slice(2);
@@ -63,31 +150,11 @@ function main(): void {
   if (!process.stdin.isTTY) { console.error("agentglass needs an interactive terminal"); process.exit(1); }
   enter();
   scan(); refreshProcs(); refreshSlow(); buildView();
-  render();
-  process.stdin.on("data", (d: Uint8Array) => {
-    for (const t of tokens(new TextDecoder("utf-8").decode(d))) {
-      const f = focusOf(t);
-      if (f) onFocus(f); else if (t.startsWith("\x1b[<")) onMouse(t); else onInput(keyName(t));
-    }
-    render();
-  });
+  if (mode.err) say("warn", mode.err);
+  DBG.on = process.env.AGENTGLASS_DEBUG_REFRESH === "1";
+  render(); lastBuild = Date.now(); scanSig = scanSum();
+  process.stdin.on("data", onData);
   process.on("SIGTERM", () => quit());
-  let tick = 0;
-  setInterval(() => {
-    tick++; S.frame++;
-    termSize();
-    if (tick % 3 === 0) { refreshProcs(); for (const f of H.onWatch) f(); }
-    if (tick % 6 === 0) { scan(); buildView(); }
-    if (tick % 10 === 0) refreshSlow();
-    if (S.mode === "list" && S.tab === 0) buildView();
-    for (const f of H.onTick) f();
-    render();
-  }, 500);
-  setInterval(() => {
-    if (!armed()) return;
-    let dirty = false;
-    for (const f of H.onFastTick) if (f()) dirty = true;
-    if (dirty) render();
-  }, 50);
+  loop();
 }
 main();
