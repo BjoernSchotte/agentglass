@@ -76,22 +76,22 @@ export function allowance(): Allow | null {
 function label(s: Sess): void { const b = sessionBill(s); s.bill = b.bill; s.plan = b.plan; s.billSrc = b.src; }
 
 // the live process's environment, at most once a minute per pid (Linux /proc only; empty elsewhere)
+function probeOne(s: Sess, now: number): void {
+  if (s.pid <= 0) return;
+  const a = ledger.get(s.path);
+  if (a && a.billSrc === "session") return;
+  const e = envs.get(s.pid);
+  if (e && now - e.at < RECHECK_MS) return;
+  const sm = envSummary(OS.envOf(s.pid));
+  const ev = newEvid(); ev.names = sm.names; ev.on = sm.on;
+  envs.set(s.pid, { at: now, ev });
+  if (!a || !sm.names.length) return;
+  const d = rule(s.h, ev, "process");
+  if (d.bill !== "unknown") stamp(a, d.bill, d.plan, "process");
+}
 function probe(): void {
   const now = Date.now(); const live = new Set<number>();
-  for (const s of sessions.values()) {
-    if (s.pid <= 0) continue;
-    live.add(s.pid);
-    const a = ledger.get(s.path);
-    if (a && a.billSrc === "session") continue;
-    const e = envs.get(s.pid);
-    if (e && now - e.at < RECHECK_MS) continue;
-    const sm = envSummary(OS.envOf(s.pid));
-    const ev = newEvid(); ev.names = sm.names; ev.on = sm.on;
-    envs.set(s.pid, { at: now, ev });
-    if (!a || !sm.names.length) continue;
-    const d = rule(s.h, ev, "process");
-    if (d.bill !== "unknown") stamp(a, d.bill, d.plan, "process");
-  }
+  for (const s of sessions.values()) { if (s.pid > 0) live.add(s.pid); probeOne(s, now); }
   for (const p of [...envs.keys()]) if (!live.has(p)) envs.delete(p);
 }
 let lastProbe = 0;
@@ -100,4 +100,5 @@ H.onTick.push(() => {
   if (now - lastProbe >= 2000) { lastProbe = now; probe(); }
   for (const s of sessions.values()) label(s);
 });
-H.complete.push(label); // after the ledger's own complete (registered first): --json carries billing
+// after the ledger's own complete (registered first): --json and `cost` carry billing, incl. the live process's evidence
+H.complete.push((s: Sess): void => { probeOne(s, Date.now()); label(s); });
