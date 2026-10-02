@@ -11,6 +11,7 @@ import { type Acc, L, bucket, tool, pend, tokens, turn, skill, isoMs, num, patch
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
+import { scrubRemote } from "../util/giturl.ts";
 
 // ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl (+ archived_sessions/, flat)
 const titles = new Map<string, string>(); // thread names from session_index.jsonl
@@ -52,7 +53,7 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   if (!p) return;
   const pt = str(p["type"]);
   if (type === "session_meta" || type === "turn_context") {
-    if (s) { const c = str(p["cwd"]); if (c) s.cwd = c; const md = str(p["model"]); if (md) s.model = md; const g = obj(p["git"]); if (g) { const br = str(g["branch"]); if (br) s.branch = br; } }
+    if (s) { const c = str(p["cwd"]); if (c) s.cwd = c; const md = str(p["model"]); if (md) s.model = md; const g = obj(p["git"]); if (g) { const br = str(g["branch"]); if (br) s.branch = br; const ru = str(g["repository_url"]); if (ru) { const r = scrubRemote(ru); s.remote = r ? r.url : ""; } } } // the raw url may carry a token: never stored
     return;
   }
   if (type === "compacted") { out.push({ kind: "meta", text: "context compacted", ts, id: "", full: "" }); return; }

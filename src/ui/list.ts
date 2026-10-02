@@ -11,6 +11,7 @@ import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, badge, BADGE_W, spin } from "./screen.ts";
 import { evLines } from "./transcript.ts";
 import { sourceOf } from "../harness/index.ts";
+import { scrubRemote, remoteLabel } from "../util/giturl.ts";
 
 // mouse hit map for the preview, rebuilt every frame
 export const prevKind: number[] = []; export const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
@@ -87,6 +88,7 @@ export function renderSessions(): void {
     kv("id", s.id, C.sub);
     kv("cwd", home(s.cwd), C.purple);
     if (s.branch) kv("branch", s.branch, C.green);
+    if (s.remote) { const r = scrubRemote(s.remote); if (r) kv("remote", remoteLabel(r), C.green); }
     if (s.model) kv("model", s.model, C.cyan);
     kv("updated", ago(s.mtime) + " ago · " + new Date(s.mtime).toISOString().slice(0, 10) + " " + localHM(new Date(s.mtime).toISOString()), C.sub);
     if (s.pid) { const t = tmuxTarget(s.pid); kv("process", "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : "") + (t ? " · tmux " + t : ""), C.green); }

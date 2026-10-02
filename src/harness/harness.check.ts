@@ -296,6 +296,20 @@ function skills(lines: string[], resumeAt: number): string {
   const ou = skillUses(o, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
   ok("opencode: skill row is a model skill use, a fork's copy is not", ou === "model\tbrainstorming=1", ou);
 }
+// Codex remote: scrubbed at parse time, the raw repository_url is never stored
+{
+  const rem = (u: string): string => {
+    const s = newSess("codex", "r", "/x/r.jsonl", false); const evs: Ev[] = [];
+    parseEvents("codex", "{\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/w\",\"git\":{\"branch\":\"main\"" + (u ? ",\"repository_url\":" + JSON.stringify(u) : "") + "}}}", evs, s);
+    ok("codex remote: no credential in the session (" + u + ")", JSON.stringify(s).indexOf("ghs_") < 0, JSON.stringify(s));
+    return s.remote;
+  };
+  const r1 = rem("https://x-access-token:ghs_abc123@github.com/o/r.git"); ok("codex remote: token in userinfo", r1 === "https://github.com/o/r", r1);
+  const r2 = rem("https://host/o/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"); ok("codex remote: hash-like repo kept", r2 === "https://host/o/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8", r2);
+  const r3 = rem("https://host/o/r?token=ghs_x"); ok("codex remote: token in query", r3 === "https://host/o/r", r3);
+  const r4 = rem(""); ok("codex remote: none", r4 === "", r4);
+  const r5 = rem("https://host/o%40ghs_x/r"); ok("codex remote: suspicious → dropped", r5 === "", r5);
+}
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {
   const a = newAcc(); const d = bucket(a, 0, "2026-01-02T10:00:00Z");
