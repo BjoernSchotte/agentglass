@@ -207,6 +207,47 @@ opts in.
 
    No `user.*` attributes are sent. A user who wants them adds them as extra attributes (4.4).
 
+### 3b. Coexistence with the harnesses' built-in telemetry
+
+No harness exports OTLP by default, but four can be switched on (checked 2026-10-02 in their sources or binaries):
+
+| Harness | Built in | Default | Switched on by |
+|---|---|---|---|
+| Claude Code | metrics, events (logs), traces (beta), names `claude_code.*` | off | `CLAUDE_CODE_ENABLE_TELEMETRY=1` (+ `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` for traces) and `OTEL_EXPORTER_OTLP_*`, in the process env or the `env` block of `~/.claude/settings.json` |
+| Codex | logs, traces, metrics, names `codex.*` | logs/traces `none`, metrics to Statsig | `[otel]` in `~/.codex/config.toml`: `exporter` / `trace_exporter` = `otlp-http` or `otlp-grpc` |
+| Gemini CLI | telemetry with an OTLP exporter | off (`telemetry.enabled ?? false`, gemini-cli `packages/core/src/config/config.ts:1094`) | `telemetry.enabled: true` in `~/.gemini/settings.json` or the project's `.gemini/settings.json`; default endpoint `http://localhost:4317` (gRPC) |
+| OpenCode 2.x | logs, traces | off | `OTEL_EXPORTER_OTLP_ENDPOINT` set in the daemon's / TUI's env (opencode `packages/util/src/observability/otlp.ts:64,75`) |
+| pi, fx, Kiro | none found (Kiro: binary strings only, uncertain) | – | – |
+
+The built-in exports are **live only** (nothing from before they were switched on, nothing buffered across network
+loss), **differ per harness** (own names, not consistently GenAI semconv) and carry signals the transcripts lack (API
+retries, Claude's `tool.blocked_on_user`, Codex SSE events). agentglass's export is the complement: history and
+backfill, every harness in one schema. Sending both to the same backend shows the same turn twice under different
+names and ids, so:
+
+1. **Detection** (`src/features/otlp/native.ts`, re-checked once per export run and every 60 s in live mode): per
+   harness, a boolean `nativeOn` and where it came from (`config <path>` or `env of pid <n>`). Sources, in order:
+   the live agent processes' environment (variable **names and the on/off value** of the switches above only, via the
+   same reader as honest-costs' billing detection; endpoint values and headers are never read), then the config
+   files in the table. A parse failure counts as "unknown", never as "on".
+2. **Policy** `otlp.native: "warn" | "skip" | "include"` (config, default `"warn"`; CLI `--native warn|skip|include`):
+   - `warn`: export everything; print once per run and harness `codex: its own OTLP export is on (~/.codex/config.toml) — turns may appear twice in the backend; --native skip exports only what it does not send`.
+   - `skip`: for a harness with `nativeOn`, export only turns that **started before** the first time agentglass saw
+     its native export on. That moment is stored per harness in the export state file (section 4, item 3) as
+     `nativeSince`, so history stays exportable and live data is left to the harness. Switching the native export off
+     again clears `nativeSince` from the next run on (with a one-line notice); turns between the two moments are not
+     back-filled automatically (`--native include --since <t>` does that).
+   - `include`: export everything, no notice.
+3. **Correlation attributes**, so a backend can join both sources: the `chat` span also carries the harness's own
+   session key under the name that harness uses in its telemetry — `session.id` (Claude Code), `conversation.id`
+   (Codex), `session.id` (Gemini CLI, uncertain), `session.id` (OpenCode, uncertain) — next to
+   `gen_ai.conversation.id`. `service.name` stays the harness name of section 3, item 8; the instrumentation scope
+   (`agentglass`) and the resource attribute `agentglass.source = "transcript"` tell the two sources apart.
+4. **`agentglass export --status`** lists, per harness, `nativeOn`, its source, `nativeSince` and the active policy,
+   so the user can see why turns were skipped.
+5. **Never touched:** agentglass does not change any harness's telemetry settings and does not read their endpoint,
+   headers or tokens.
+
 ### 4. Deterministic ids, idempotence and state
 1. **Ids.** `H(x)` = SHA-256 of the UTF-8 string `"agentglass/otlp/v1|" + x`, written as hex.
    - Root key `R = h + "|" + rootSessionId`.
@@ -250,6 +291,8 @@ opts in.
    - `--harness <id>`, `--session <id>` (repeatable), `--filter '<expr>'` (filter-language session clauses select
      sessions; call/day clauses are rejected with a message), `--subagents` (default on: subagents travel with their
      root session; `--no-subagents` drops them).
+   - `--native warn|skip|include` (3b; default from config, else `warn`), `--status` (per-harness built-in telemetry
+     state, `nativeSince`, last export; no network).
    - `--content`, `--resend`, `--dry-run` (print the OTLP/JSON requests to stdout, one per line, no network, no state
      change), `--batch <n>` (spans per request, default 512, max request body 4 MB).
    - Output: a summary on stderr: `exported 1234 spans in 87 turns from 12 sessions (3 requests)`. With `--json`, the
@@ -349,6 +392,10 @@ opts in.
 - **cli-agent-mode:** `export --json` follows `--format`. Agent mode never starts a live export implicitly.
 
 ## Testing
+- **Built-in telemetry detection (3b):** fixture homes with `~/.codex/config.toml` `[otel] trace_exporter = "otlp-http"`,
+  `~/.claude/settings.json` `env.CLAUDE_CODE_ENABLE_TELEMETRY = "1"`, `~/.gemini/settings.json` `telemetry.enabled`,
+  a malformed file (→ unknown, not on); `--native skip` exports only turns before `nativeSince`; `warn` prints once
+  per harness; no endpoint/header value is ever read (assert on the reader's accessed keys).
 - **Golden spans** (`src/features/otlp/otlp.check.ts`): fixed fixture sessions → `--dry-run` JSON compared
   byte-for-byte with `testdata/otlp/golden-<harness>.json`. Fixtures:
   - Claude with a subagent and an MCP call;
@@ -403,3 +450,5 @@ opts in.
    permission"? If it does, live approval waits become exact instead of estimated. Not verified.
 7. **fx and Kiro token semantics.** Are fx's `input_tokens` exclusive of cache? Kiro has no cache split at all. Both
    need a real capture.
+8. **Built-in telemetry (3b).** Is `warn` the right default, or should `skip` be default once a harness exports
+   itself? Which session key do Gemini CLI and OpenCode put on their own spans (`session.id` is assumed)?
