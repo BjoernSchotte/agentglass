@@ -56,10 +56,11 @@ export function fitStyled(s: string, w: number): string {
   }
   return out + RST;
 }
+// the visible width of a styled string (escape sequences take no columns)
+export function vwidth(styled: string): number { return width(styled.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")); }
 // pad a styled line (already ≤ w visible) to width w using its visible width
 export function fillTo(styled: string, w: number): string {
-  const vis = styled.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
-  const n = width(vis);
+  const n = vwidth(styled);
   return n < w ? " ".repeat(w - n) : "";
 }
 export function firstLine(s: string, n: number): string {

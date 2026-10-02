@@ -1,6 +1,6 @@
 // agentglass — Stats tab, preview usage line and header cost widget, all read from the usage ledger
 // SPDX-License-Identifier: Apache-2.0
-import { fit, fitStyled, fillTo, width, clean, numAt, home, bytes } from "../../util/text.ts";
+import { fit, fitStyled, fillTo, width, vwidth, clean, numAt, home, bytes } from "../../util/text.ts";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, type Tab, display } from "../../hooks.ts";
@@ -75,7 +75,7 @@ const BLK = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 const WD = "SuMoTuWeThFrSa";
 
 // "Claude plan (team)" per harness with sessions in the period; "mixed" for more than one mode, assumed ones dim with *
-function billingOf(rows: HA[]): string {
+function billingOf(rows: HA[]): string[] {
   const out: string[] = [];
   for (const r of rows) {
     if (!r.modes.length) continue;
@@ -85,7 +85,16 @@ function billingOf(rows: HA[]): string {
     const word = one ? (one === "unknown" ? "unknown" : one === "gateway" ? "gateway" : tag(one)) + (one === "plan" && plan ? " (" + planLabel(plan, REDACT) + ")" : "") : "mixed";
     out.push((assumed ? fg(C.dim) : fg(C.sub)) + harnessOf(r.h).label + " " + word + (assumed ? "*" : "") + RST);
   }
-  return out.join(fg(C.dim) + " · " + RST);
+  return out;
+}
+// line 1's tail within w columns: prices + billing; narrow drops the price source first, then trailing harnesses ("+2")
+function sourcesOf(rows: HA[], w: number): string {
+  const pr = fg(C.dim) + "   prices: " + PRICES_FROM + RST; const bs = billingOf(rows);
+  const bl = (n: number, lead: string): string => !bs.length ? "" : fg(C.dim) + lead + "billing: " + RST + bs.slice(0, n).join(fg(C.dim) + " · " + RST) + (n < bs.length ? fg(C.dim) + " +" + String(bs.length - n) + RST : "");
+  if (vwidth(pr + bl(bs.length, " · ")) <= w) return pr + bl(bs.length, " · ");
+  if (!bs.length) return pr;
+  for (let n = bs.length; n > 0; n--) if (vwidth(bl(n, "   ")) <= w) return bl(n, "   ");
+  return "";
 }
 // one cost cell: the figure with its tag, "≈$x mixed" over several modes, "?" when only unpriced usage exists
 function cellOf(x: HA): string {
@@ -116,11 +125,14 @@ function renderStats(): void {
   const frac = g.total > 0 ? g.done / g.total : 1;
   const idx = frac < 0.999 ? fg(C.yellow) + spin() + " indexing " + RST + gauge(frac, 12) + fg(C.text) + " " + Math.floor(frac * 100) + "%" + RST
     : fg(C.green) + "✔ indexed" + RST;
-  const l1 = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx + fg(C.dim) + "   prices: " + PRICES_FROM + RST + (t.sess ? fg(C.dim) + " · billing: " + RST + billingOf(g.rows) : "");
+  const l1h = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx;
+  const l1 = l1h + sourcesOf(t.sess ? g.rows : [], W - 4 - vwidth(l1h));
   const wide = W >= 130; const sp = wide ? " " : "";
-  const l2 = fg(C.yellow) + CSI + "1m" + split(t.ms, false) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
+  // the split figure ("$3.10 spend + ≈$9.20 plan"), or the ≈ total when the line would not fit (the table keeps the tags)
+  const l2f = (narrow: boolean): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
     fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
     fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST + (t.ms.unk > 0 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
+  const l2 = vwidth(l2f(false)) <= W - 4 ? l2f(false) : l2f(true);
   const b = g.busy;
   const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? money(g.busyCost, asBill(b.bill)) + " " : "") + RST +
     fg(C.text) + clean(titleOf(b)) + RST : fg(C.dim) + "no activity yet" + RST;
@@ -529,8 +541,8 @@ H.headerWidgets.push((w: number): string => {
     if (al.d7) ws.push(["7d", String(al.d7.pct), al.hi === "7d" ? "1" : ""]);
     const build = (xs: string[][]): string => { let t = fg(C.dim) + " · cc" + RST; for (const x of xs) t += " " + part(x[0] ?? "", Number(x[1] ?? "0"), x[2] === "1"); return t; };
     let g = build(ws);
-    if (n + width(g) > w) g = build(ws.filter((x: string[]) => x[2] === "1"));
-    if (n + width(g) <= w) { s += g; n += width(g); }
+    if (n + vwidth(g) > w) g = build(ws.filter((x: string[]) => x[2] === "1"));
+    if (n + vwidth(g) <= w) { s += g; n += vwidth(g); }
   }
   return n <= w ? s : "";
 });
