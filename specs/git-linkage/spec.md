@@ -1,7 +1,7 @@
 # Git linkage (commits, PRs, issues per session) — spec
 
-Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 5 (depends on parsing-fixes: `scrubRemote`;
-uses repo-view's project identity).
+Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 5 (depends on parsing-fixes: `scrubRemote`, and
+on repo-view: `Ident` incl. `gitdir`, `Day.act`).
 
 ## Goal
 For every session, show which commits it produced, which PRs/MRs and issues it created or referenced, and what that
@@ -29,21 +29,25 @@ transcripts, the repository's own files, and at most a few `git` invocations. Th
 - The transcript can jump to a call by id (`focusText`, used by Stats `jump()`, `src/features/usage/stats.ts:359-365`).
 - Process helper: `run(cmd, args)`, sync, 4 s timeout, stderr ignored (`src/util/fs.ts:35-37`).
 - Redaction rewrites display text through `H.display` kinds (`src/hooks.ts:31`, `src/features/redact.ts:358`).
-- repo-view (phase 5) adds `Ident {key, top, common, worktree, …}` per cwd. This spec adds `gitdir` (the per-worktree
-  git dir) to it.
+- repo-view (phase 5) adds `Ident {key, label, kind, top, common, worktree, gitdir, remote, via, gone, unread}` per
+  cwd; `gitdir` is the per-worktree git dir this spec reads.
 
 ## Design
 
 ### 1. Sources, in order of trust
-1. **Commit banners in tool output** (`observed`, ✓): `git commit`, `git merge`, `git cherry-pick` and `git revert`
-   print `[<branch> <sha>] <subject>`, also `[<branch> (root-commit) <sha>]` and `[detached HEAD <sha>]`.
+1. **Commit banners in tool output** (`observed`, ✓): `git commit`, `git cherry-pick` and `git revert` print
+   `[<branch> <sha>] <subject>`, also `[<branch> (root-commit) <sha>]` and `[detached HEAD <sha>]`. `git merge` prints
+   no banner (git 2.51: `Merge made by the 'ort' strategy.`); merge commits come from the reflog (`merge <x>:`) or
+   `git log`, and count as ✓ only through the session's own git-call span (4). A merge concluded with `git commit`
+   after conflicts prints a normal commit banner.
 2. **The worktree's HEAD reflog** (`reflog`, ≈): `<gitdir>/logs/HEAD` is a plain file with one line per HEAD move:
    `<old> <new> <name> <<email>> <epoch> <tz>\t<message>`. Read it directly; no spawn. Lines whose message starts with
-   `commit:`, `commit (initial):`, `commit (amend):`, `commit (merge):`, `merge `, `cherry-pick:` or `revert:` are new
+   `commit:`, `commit (initial):`, `commit (amend):`, `commit (merge):`, `commit (cherry-pick):`, `merge `,
+   `cherry-pick:` or `revert:` are new
    commits *made in this worktree*, with exact times. `checkout: moving from A to B` lines track the branch at each
    point. This gives, without `git log`, the commits made in the session's worktree while the session was active.
-3. **PR/MR, issue and commit URLs in tool output** (`created` or `mentioned`), scraped (decision 3).
-4. **`git log` for enrichment only** (decision 5): diff size and whether a sha still exists. Never used to decide
+3. **PR/MR, issue and commit URLs in tool output** (`created` or `mentioned`), scraped (section 2).
+4. **`git log` for enrichment only** (section 5): diff size and whether a sha still exists. Never used to decide
    attribution.
 
 A plain "`git log` in the session's time window" is not the primary source. It cannot tell which worktree or clone
@@ -64,7 +68,7 @@ made a commit, and a rebase rewrites committer dates. The reflog can tell both.
   - Accept a banner only when the command is known and contains `git` plus one of `commit`, `merge`, `cherry-pick`,
     `revert`. This keeps `cat`, `git log` or `git show` output from counting.
   - The regex is anchored to a line start: `^\[(detached HEAD|[^\]\s]+)(?: \(root-commit\))? ([0-9a-f]{7,40})\] (.*)$`.
-  - Store the sha as printed (short). Decision 5 expands it.
+  - Store the sha as printed (short). Section 5 expands it.
 - URL rules (case-insensitive host, trailing punctuation and `)`/`]`/`>`/`.`/`,` stripped):
 
   | kind | patterns → canonical |
@@ -80,14 +84,15 @@ made a commit, and a rebase rewrites committer dates. The reflog can tell both.
   `git push` hint `…/pull/new/<branch>` is not a PR.
 - **Git command spans**: when the producing command is known and contains `git` plus `commit`, `merge`,
   `cherry-pick`, `revert`, `am` or `rebase`, the call is also recorded as `k:"gcall"` with its start and result
-  times (`v` = `"<t0>-<t1>"`), banner or not. Decision 4 uses these to recognise the session's own quiet commits.
+  times (`v` = `"<t0>-<t1>"`), banner or not. Section 4 uses these to recognise the session's own quiet commits.
 - **Record**: `Acc.vcs: VRef[]`, with `VRef { k:"commit"|"pr"|"issue"|"gcall", v, t, how:"observed"|"created"|"mentioned",
   br, subj, call, ts }`. `v` is the sha or the canonical URL; `subj` is ≤ 80 chars; `call`/`ts` locate the event.
   Refs are deduplicated by `(k, v)`: the first sighting wins, and `created` upgrades `mentioned`. At most 200 per
   session; when full, drop the oldest `mentioned` first.
 - `Pend` gains `name` (in memory, not persisted).
-- Persisted in the ledger as `v` (an array of tuples). Ledger `VERSION` bump: share the single phase-5 bump with
-  repo-view (6 → 7), so there is one re-index.
+- Persisted in the ledger as `v` (an array of tuples). Ledger `VERSION` bump: the next free number at implementation
+  time; when this spec ships in the same release as repo-view, both share repo-view's one bump, so there is one
+  re-index.
 - **Uncertain**: Kiro and fx result lines and whether they carry the call id. If not, their banners are found only
   through the same-line command, or not at all. Task 0 of the plan checks real files.
 
@@ -98,10 +103,10 @@ made a commit, and a rebase rewrites committer dates. The reflog can tell both.
   `branch` comes from replaying `checkout: moving from A to B`. Before the first checkout, the branch is the current
   `HEAD` symbolic ref (`<gitdir>/HEAD`, `ref: refs/heads/<b>`).
 - `amend` replaces `old` → `new`: the old sha is marked `amended` and the commit counts once.
-- `rebase (finish)`, `pull` and `reset` are not new work. They only change which shas still exist, which decision 5
+- `rebase (finish)`, `pull` and `reset` are not new work. They only change which shas still exist, which section 5
   reports.
 - No reflog (deleted, `core.logAllRefUpdates=false`, expired after `gc.reflogExpire`, default 90 days): use the
-  **window `git log` fallback**. One spawn per session, cached like decision 5:
+  **window `git log` fallback**. One spawn per session, cached like section 5:
   `git -C <top> log <rev> --since=@<t0> --until=@<t1> --author=<email> --format=…`.
   - `<rev>` = `refs/heads/<s.branch>` if the session has a branch and it exists, else `--branches`.
   - `<email>` = `git -C <top> config user.email`: one spawn per repo, cached. If it is unset, there is no author
@@ -125,7 +130,7 @@ For each session with a git identity:
 - A commit observed by session A in worktree X never appears as ≈ or `? shared` for session B.
 
 ### 5. Enrichment via `git` (lazy, budgeted)
-- One spawn per session view, only when the git panel (decision 6) or `--json --git` needs it:
+- One spawn per session view, only when the git panel (section 6) or `--json --git` needs it:
   `git -C <top> log --no-walk=unsorted --ignore-missing --format=%H%x1f%P%x1f%ct%x1f%s%x1e --shortstat <sha…>`
   (≤ 100 shas) → full sha, merge flag, `+add −del`, files changed. A sha that is not returned gets status
   `missing` (rewritten, squashed, or only in another clone).
@@ -155,12 +160,12 @@ For each session with a git identity:
 - `--json` adds `git: {commits:[{sha, branch, subject, at, how:"observed"|"reflog"|"shared", counted, status:"present"|"missing"|"amended"|"unknown", add, del}],
   prs:[{url, number, how}], issues:[{url, number, how}], links:[…], costPerCommit}`. Refs and reflog are always
   included because they need no spawn. `status`, `add` and `del` are filled only with `--git`, which allows the
-  spawns of decision 5.
+  spawns of section 5.
 - `agentglass --json --repos` (repo-view) gains `commits`, `costPerCommit`, `spendWithoutCommits`.
 
 ### 8. Privacy
 - Local only: transcript bytes, `.git` files, the local `git` binary. Never `fetch`, `ls-remote` or any forge API.
-- URLs are scrubbed (decision 2). Committer names and emails from the reflog are parsed but never stored, shown or
+- URLs are scrubbed (section 2). Committer names and emails from the reflog are parsed but never stored, shown or
   exported.
 - Commit subjects and URLs are user content. Under `--redact` they go through `display()` kind `vcs`. Redact fakes
   subjects from its title pool and replaces `owner/repo` in URLs with the fake project name, keeping numbers and shas.
@@ -172,12 +177,12 @@ For each session with a git identity:
 - Commits by sub-agents: their own session gets the banner. Parent totals include sub-agent commits, as cost does.
 - Rebased or squashed later: ✓ commits get `missing`. They still count as produced (the work happened), flagged.
 - Commits in a different repo than the session's cwd (`git -C ../other commit`): the banner is recorded. If its sha
-  is not in the session's repo (decision 5), it is listed as `elsewhere` and not counted for this project.
+  is not in the session's repo (section 5), it is listed as `elsewhere` and not counted for this project.
 - Non-git sessions: no git section.
 
 ## Interactions with other specs
 - **parsing-fixes**: `scrubRemote()` (`src/util/giturl.ts`).
-- **repo-view**: `Ident` (adds `gitdir`), `Day.act` windows, the shared ledger version bump, the project and branch
+- **repo-view**: `Ident` (incl. `gitdir`, provided by repo-view), `Day.act` windows, the shared ledger version bump, the project and branch
   boxes.
 - **related-events**: banner and reflog commits are events on the related timeline.
 - **otlp-export**: can stamp the session's branch and HEAD sha, and the scraped PR, issue and commit URLs, on tool
@@ -211,6 +216,12 @@ For each session with a git identity:
    observed includes the session's own quiet commits matched to its git calls (4, 6).
 3. Tail pad? 10 min, configurable (`git.tailPadMin`) (4).
 4. Quiet agent commits seen only in the reflog? Counted as observed when they fall inside the session's own `git commit/merge/…` call; other reflog-only commits listed ≈, not counted.
+5. Ledger version? No reserved number: the next free one at implementation time, shared with repo-view's bump when
+   both ship together (2).
+6. `Ident.gitdir`? Provided by repo-view's `Ident`; this spec only reads it (3).
+7. git 2.51 output: `git merge` prints no `[branch sha]` banner, so merges come from the reflog or `git log` and
+   count only through the session's git-call span; reflog messages `commit (cherry-pick):` are recognised as new
+   commits (1, 3).
 
 ## Open questions (to verify during implementation)
-1. Kiro and fx result-line shapes (decision 2, uncertain).
+1. Kiro and fx result-line shapes (section 2, uncertain).

@@ -1,7 +1,7 @@
 # OTLP export (OpenTelemetry GenAI traces) — spec
 
 Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 3 (depends on parsing-fixes: turn
-boundaries and remote scrub; filter-language: export selection).
+boundaries and remote scrub; filter-language: export selection; honest-costs: billing mode and cost basis).
 
 ## Goal
 `agentglass export --otlp <url>` sends coding-agent sessions to any OTLP/HTTP backend (Jaeger, Grafana Tempo, SigNoz,
@@ -148,7 +148,8 @@ opts in.
      session's last exported turn as `agentglass.usage.session_total = true`, together with the totals.
 2. **Small additions to the usage port:**
    - `Acc.rs`, the reasoning tokens (a subset of `out`), set by a new `reasoning(a, d, n)` helper. Called by Gemini
-     (`thoughts`), OpenCode (`reasoning`) and Codex (`reasoning_output_tokens`, when present).
+     (`thoughts`), OpenCode (`reasoning`) and Codex (`reasoning_output_tokens`, when present). Persisted in the ledger
+     cache: one `VERSION` bump, to the next free number at implementation time (no number reserved).
    - A call tap in `calls.ts`, `let tap: ((id, ms, err, codes) => void) | null`, invoked by `done()`. With it, the
      exporter takes each span's duration and error from the adapter's exact data and falls back to the `isErr`
      heuristic only when there is no tap record. Pi's `retool` reports the real MCP name through the same tap.
@@ -166,6 +167,7 @@ opts in.
 | chat, invoke_agent | `gen_ai.operation.name` | `chat` / `invoke_agent` |
 | chat | `gen_ai.request.model` | the request's own model, raw id as logged |
 | chat | `gen_ai.response.model` | answering model when the record names a different one (pi `responseModel`) |
+| chat | `agentglass.billing.mode` | `api`, `plan`, `metered`, `gateway` or `unknown` (honest-costs), resolved per request: pi/OpenCode by that request's provider, other harnesses by the session's mode; next to `agentglass.usage.cost`, present also when the cost is unknown |
 | chat | `gen_ai.response.id` | the request key when it is a provider message id (Claude `message.id`, OpenCode/Gemini/pi message ids) |
 | invoke_agent | `gen_ai.request.model` | model of the last request in the turn (or subagent piece); omitted when unknown (Kiro) |
 | invoke_agent | `agentglass.models` | string array of distinct request models, order of first use (1.3) |
@@ -191,8 +193,10 @@ opts in.
    - `agentglass.usage.cost`: USD list-equivalent or real spend; per request on `chat` only (1.4).
    - `agentglass.chat.superseded = true`: a Claude fallback iteration that was not the answering attempt.
    - `agentglass.models`: see 1.3.
-   - `agentglass.usage.cost_basis`: the billing-mode label from honest-costs. Omitted when the cost is unknown
-     (`unk > 0` and cost 0). It is never sent as 0.
+   - `agentglass.billing.mode`: the billing mode from honest-costs (`api|plan|metered|gateway|unknown`), on every
+     `chat` span next to `agentglass.usage.cost`, resolved per request (pi/OpenCode: per provider). It replaces the
+     earlier `agentglass.usage.cost_basis` label (same value, one key). `agentglass.usage.cost` stays omitted when the
+     cost is unknown (`unk > 0` and cost 0); it is never sent as 0.
    - `agentglass.mcp.server.name`: semconv has none. `server.address` is a network address, not a server's
      configured name.
    - `agentglass.timing.estimated = true` on spans whose position was spread (`est`).
@@ -441,7 +445,8 @@ names and ids, so:
 - **filter-language:** `--filter` session clauses select sessions for export and for live export.
 - **repo-view:** project identity provides `vcs.*` without spawning git. `realCwd(s)` is not used: under `--redact`
   the export sends the fake cwd.
-- **honest-costs:** the `agentglass.usage.cost_basis` label. Unpriced turns carry no cost attribute.
+- **honest-costs:** `agentglass.billing.mode` per `chat` span (`modeOf(s, prov)`) and the cost basis of
+  `agentglass.usage.cost`. Unpriced requests carry no cost attribute.
 - **command-palette:** `agentglass open <trace-id|span-id>` resolves the deterministic ids of 4.1, and the
   `agentglass://` link form can be built from `gen_ai.conversation.id` and `gen_ai.tool.call.id`.
 - **rules-config:** the approval-wait estimate comes from the watchdog. If rules-config changes its thresholds, the
@@ -456,6 +461,7 @@ names and ids, so:
 - **Golden spans** (`src/features/otlp/otlp.check.ts`): fixed fixture sessions → `--dry-run` JSON compared
   byte-for-byte with `testdata/otlp/golden-<harness>.json`. Every golden checks the tree `invoke_agent` root →
   `chat` per request + `execute_tool` siblings, and that no `invoke_agent` span carries usage attributes (the turn total = the sum over its `chat` spans).
+  Every `chat` span carries `agentglass.billing.mode`; no other span kind does.
   Fixtures:
   - Claude with a subagent, an MCP call, three streamed lines of one `message.id` (one `chat` span) and a two-iteration
     fallback (two `chat` spans, models differ, first `superseded`);
@@ -510,6 +516,11 @@ names and ids, so:
 5. gzip in v1? Yes, pure-TS deflate in a gzip container, uncompressed fallback when the backend rejects it (6.5).
 6. Native telemetry policy default? Stays `warn` (3b.2).
 7. gzip without binary file output? Send uncompressed, noted once and in `--status` (6.5).
+8. Billing mode on spans? `agentglass.billing.mode` (`api|plan|metered|gateway|unknown`, from honest-costs) on every
+   `chat` span next to `agentglass.usage.cost`, per request's provider; replaces `agentglass.usage.cost_basis`.
+   honest-costs becomes a dependency (3.3, 3.4).
+9. Ledger version for `Acc.rs`? The next free number at implementation time; `rs` takes the next free index of the
+   cached `t` array after honest-costs' `uc` (3.2).
 
 ## Open questions (to verify during implementation)
 1. **Re-export.** Which backends dedupe re-sent spans with the same ids (Tempo, Jaeger with Badger/ES, SigNoz,

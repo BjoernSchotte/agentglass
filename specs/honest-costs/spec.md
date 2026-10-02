@@ -33,8 +33,8 @@ Every dollar figure agentglass shows says what it is:
   (`src/features/usage/cache.ts:40,50`, `VERSION = 5` at `cache.ts:15`). No per-model breakdown exists.
 - Display: `money()` → `≈$x` / `≈$x+?` / `cost ?` (`src/features/usage/stats.ts:30-33`); Stats summary line
   `stats.ts:98-102` with the subtitle "≈ API list price · <source>"; per-harness table cost column `stats.ts:114,124-125`;
-  session preview `stats.ts:455-462`; header widget "≈$x today" plus the Codex rate-limit gauge `stats.ts:464-475`;
-  help text `stats.ts:484-485`. `--json` emits `costUsd` per session, `null` when unknown (`src/features/cli.ts:61,108`;
+  session preview `stats.ts:454-463`; header widget "≈$x today" plus the Codex rate-limit gauge `stats.ts:464-475`;
+  help text `stats.ts:481-483`. `--json` emits `costUsd` per session, `null` when unknown (`src/features/cli.ts:61,108`;
   `s.cost = -1` when only unpriced usage exists, `src/features/usage/ledger.ts:59`).
 - Codex `rate_limits.primary` is parsed into `L.rlPct/rlWin/rlReset` (`src/harness/codex.ts:145-149`, `record.ts:19`);
   `plan_type` next to it (seen locally: `"plan_type":"pro"`) is ignored.
@@ -83,7 +83,7 @@ Per-harness rules (env names are presence checks unless marked *switch*):
 | claude | *switch* `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY` → `metered` · `ANTHROPIC_AUTH_TOKEN` → `gateway` · `ANTHROPIC_API_KEY` → `api` · `apiKeyHelper` key present in `~/.claude/settings.json` / project `.claude/settings{,.local}.json` → `api` · `~/.claude.json` `oauthAccount.billingType` present (e.g. `stripe_subscription`) → `plan`, plan name from `seatTier` / `organizationType` / `claudeMaxTier` (e.g. `team_tier_1`, `claude_team`) · else `unknown`. The `env` blocks of the settings files count like the process environment (names/switches only). |
 | codex | rollout `plan_type` (session evidence) · `~/.codex/auth.json` `auth_mode`: `chatgpt` → `plan`, `apikey` → `api` (the `OPENAI_API_KEY` field: presence only) · env `OPENAI_API_KEY`/`CODEX_API_KEY` → `api` · `~/.codex/config.toml` `model_provider` other than `openai` (line-scan for the key, no TOML parser): `azure` → `metered`, anything else → `gateway`. |
 | gemini | *switch* `GOOGLE_GENAI_USE_VERTEXAI` → `metered` · `~/.gemini/settings.json` `security.auth.selectedType`: `gemini-api-key` → `api`, `vertex-ai` / `compute-default-credentials` / `cloud-shell` → `metered`, `oauth-personal` → `plan` · env `GEMINI_API_KEY` / `GOOGLE_API_KEY` → `api`. |
-| pi | per provider: `~/.pi/agent/auth.json` `{<provider>: {type}}` — `oauth` → `plan`, an API-key type → `api`; env `<PROVIDER>_API_KEY` → `api`. Mode is resolved per provider of each assistant message (see 4). |
+| pi | per provider: `~/.pi/agent/auth.json` `{<provider>: {type}}` — `oauth` → `plan`, an API-key type → `api`; env `<PROVIDER>_API_KEY` → `api`. Mode is resolved per provider of each assistant message (see 4); the session's single label is the mode of its provider with the largest cost (see 4). |
 | opencode | per provider: `~/.local/share/opencode/auth.json` `{<providerID>: {type: "oauth"|"api"|"wellknown"}}` → `plan` / `api` / `gateway`. |
 | kiro | always `plan` (Kiro bills plan credits); with `kiroCreditUsd` set the figure is credit-equivalent, still `plan`. |
 | fx | `unknown` until its auth storage is documented (open question). |
@@ -99,13 +99,18 @@ named fields are copied out; the parsed object is dropped right away; nothing el
   - `uc: number` — Kiro credits without a rate;
   - `cp: Map<string, number>` — cost per provider key (`""` for single-provider harnesses; pi/OpenCode pass the
     message's provider id) so the mode can be resolved per provider at display time;
-  - `hc: number[24]` — cost per local hour (for the projection, 7).
+  - `hc: number[24]` — cost per local hour (for the projection, 7);
+  - `mt: Map<string, number[]>` — per-model day bucket: model → `[in, out, cacheRead, cacheWrite, costUsd]`, key = the
+    model as booked with a leading `?` removed (`"unknown"` when empty), filled by every booking path (`tokens()`,
+    `usageExact()`, Kiro credits with a rate, fx priced deltas). Unpriced tokens of a model stay in `um` under the same
+    key. Read through `modelUses(a, days)` (tokens, cost and unpriced tokens per model); session-compare's models
+    section and cli-agent-mode's `cost --by model` consume it, no other spec adds per-model buckets.
 - `Acc` (`record.ts:11-18`): `unk` same meaning change; `uc`; `bill`, `plan`, `billSrc` (2).
 - fx: the $0-snapshot case books the snapshot's token delta as unpriced tokens under model `a.model || "fx:custom"`
   instead of the `1` marker (`fx.ts:110`).
 - Kiro: credits without a rate go to `uc`, not `unk` (`kiro.ts:177`).
 - `tokens()`/`usageExact()` get an optional trailing `prov = ""` parameter.
-- Cache: `VERSION` bumps once to the next free number at implementation time (`cache.ts:15`; 5 today), new day keys `um`, `uc`, `cp`, `hc`; acc keys `bill`, `plan`, `bs`. A
+- Cache: `VERSION` bumps once to the next free number at implementation time (`cache.ts:15`; 5 today), new day keys `um`, `uc`, `cp`, `hc`, `mt`; acc keys `bill`, `plan`, `bs`. A
   version bump re-indexes everything once (minutes on large histories; the existing indexing gauge shows progress).
 - `price()` (`pricing.ts:74-84`): normalise Bedrock (`[region.]anthropic.` prefix, `-v\d+(:\d+)?` suffix) and Vertex
   (`@\d{8}` suffix) ids before the prefix lookup, so metered usage is priced at list instead of falling into unpriced.
@@ -114,6 +119,9 @@ named fields are copied out; the parsed object is dropped right away; nothing el
 `agg()` (`stats.ts:49`) additionally sums cost per mode: for each session/day, every `cp` entry is resolved through
 `modeOf(session, prov)` (per-provider rule for pi/OpenCode, otherwise the session's stamped or assumed mode). Result:
 `byMode: Record<Bill, number>`, `unk`, `um` (merged, top 5 + rest), `uc`. Cached like today (`L.ver`, 5 s).
+Sums always resolve per provider at display time. Where one label per session is needed (preview, `--json` `billing`,
+table cell) a multi-provider harness (pi, OpenCode) shows the mode of the provider with the largest cost (`cp` summed over
+the session's days), with that provider id as `plan`; single-provider harnesses use the session's stamped or assumed mode.
 
 ### 5. Display
 - **Money format**: `money(c, unk)` becomes `money(c, bill)`; `api` without `≈`, everything else with `≈`. The `+?`
@@ -128,9 +136,9 @@ named fields are copied out; the parsed object is dropped right away; nothing el
 - **Projection**: appended to Stats line 3 after "busiest" when `W ≥ 130`, else it replaces the "busiest" text on line 3
   (busiest stays visible in the per-harness table order):
   `→ today ≈$14 · month ≈$310` and, with a budget, `of $200 (155%)`. Shown in both Today and 7-days views.
-- **Session preview** (`stats.ts:455-462`): `$1.20 spend` or `≈$1.20 plan (team)`; `+ 340K tok unpriced (gpt-x)`
+- **Session preview** (`stats.ts:454-463`): `$1.20 spend` or `≈$1.20 plan (team)`; `+ 340K tok unpriced (gpt-x)`
   when > 0; `billing assumed from current config` when `billSrc = config`.
-- **Help** (`stats.ts:484-485`): the "costs ≈ API list price" line explains the tags.
+- **Help** (`stats.ts:481-483`): the "costs ≈ API list price" line explains the tags.
 
 ### 6. CLI
 - `--json` per session (`cli.ts:59-61,108`): add `billing: {mode, plan, source}`, `unpricedTokens`,
@@ -146,8 +154,11 @@ named fields are copied out; the parsed object is dropped right away; nothing el
 - **Today**: `spent_so_far + Σ_{h > now} profile[h]`, where `profile[h]` = mean cost in local hour `h` over the last
   14 days that had any cost (from `Day.hc`). The current hour contributes `max(0, profile[h] − spent_this_hour)`.
   Needs ≥ 3 such days, else shown as `—` with "not enough history".
-- **Month**: `month_to_date + remaining_days × mean daily cost of the last 14 complete days` (weekends included, they
-  are part of the pattern). Needs ≥ 3 complete days with data.
+- **Month**: `month_to_date + max(0, today_projected − spent_today) + remaining_days × mean`, where `remaining_days` =
+  days after today in this month and `mean` = mean daily cost over the days from the first day with data in the last 14
+  complete days through yesterday (weekends included, they are part of the pattern; days before the first day with data
+  do not dilute the mean). Today's remainder counts only when the today projection exists. Needs ≥ 3 complete days
+  with data, else `—`.
 - Projections are per mode; the budget (8) uses the sum over its counted modes.
 - Limits stated in the help: history is what is still on disk (Claude and Gemini delete old sessions after ~30 days by
   default); a new session pattern makes the first days noisy. No smoothing beyond the mean (YAGNI).
@@ -170,11 +181,13 @@ named fields are copied out; the parsed object is dropped right away; nothing el
 
 ### 9. Plan allowance (Claude), best effort
 For `plan` Claude sessions, `~/.claude.json` `cachedUsageUtilization.utilization.{five_hour,seven_day}.{utilization,resets_at}`
-gives an allowance gauge like the Codex one (`stats.ts:469-473`): header `· cc 7d 71%`. Undocumented cache written by
+gives an allowance gauge like the Codex one (`stats.ts:469-473`). Both windows are shown: header `· cc 5h 15% 7d 71%`;
+the fuller window is highlighted (heat colour, bold), the other dim; either window alone is shown when only it passes
+the guard; narrow widths drop the dim one first. Undocumented cache written by
 Claude Code, so it ships behind a guard:
 - **Staleness**: hidden when `fetchedAtMs` is older than 1 h.
 - **Shape check**: `allowanceOf(obj)` accepts only the exact path above with `utilization` a number in 0–100 (or
-  0–1, scaled) and `resets_at` a parseable timestamp; anything else → gauge hidden, no toast, one debug-log line.
+  0–1, scaled) and `resets_at` a parseable timestamp, checked per window; anything else → that window hidden, no toast, one debug-log line.
 - **Drop rule** (maintenance policy, not runtime): the check pins the shape seen at implementation. If Claude Code
   changes the shape once, the check is updated to the new shape; a second change removes the gauge and this section
   instead of chasing it. The fixture test (Testing) is what notices the change.
@@ -194,8 +207,11 @@ personal), and replaces the plan name when it contains an organisation name (it 
 
 ## Interactions with other specs
 - **parsing-fixes**: L2 (fallback iterations) changes Claude token totals; land it before or with the cache bump here so
-  only one re-index happens (both bump `VERSION` — merge into one bump if they ship together).
+  only one re-index happens (both bump `VERSION` — merge into one bump if they ship together). parsing-fixes also
+  adds `Day.turns` under that same bump.
 - **otlp-export**: exports `billing.mode` and `plan` as span attributes, `unknown` when undetermined.
+- **session-compare / cli-agent-mode**: read the per-model day buckets (`mt` + `um`, via `modelUses`) for the compare
+  models section and `cost --by model`.
 - **filter-language**: `billing is plan`, `unpriced > 0` become filter keys over the same fields.
 - **repo-view / session-compare**: reuse `byMode` aggregation and `money(c, bill)`.
 - **rules-config**: budget states may later become rules; this spec keeps the fixed thresholds.
@@ -204,14 +220,15 @@ personal), and replaces the plan name when it contains an organisation name (it 
 - `billing.check.ts`: precedence tables per harness from fixture env-name sets and fixture config files (fake
   `HOME`), incl. malformed JSON, missing files, switches set to `0`/`false`, Bedrock/Vertex model ids.
 - `/proc` environ parser: values never retained (assert the returned structure has names only).
-- `record.check.ts`: unpriced per model, Kiro credits into `uc`, fx $0 snapshot as tokens, `cp` per provider, `hc`.
+- `record.check.ts`: unpriced per model, Kiro credits into `uc`, fx $0 snapshot as tokens, `cp` per provider, `hc`,
+  `mt` per model (tokens and cost sum to the day totals).
 - `pricing`: Bedrock/Vertex id normalisation hits the right row.
 - Projection: synthetic `Day` sets (0, 2, 3, 14 days; current hour partially spent; month boundary; DST day).
 - Budget: state transitions and once-per-day notify; `approx` set iff a counted metered/gateway amount > 0; default
   `counts` includes `metered`.
-- Allowance: `allowanceOf` accepts the pinned fixture shape, rejects renamed/missing fields, out-of-range values and
-  stale `fetchedAtMs`.
-- Cache: v5 file discarded and re-indexed; v6 round-trip.
+- Allowance: `allowanceOf` accepts the pinned fixture shape (both windows, and each window alone), rejects renamed/missing
+  fields, out-of-range values and stale `fetchedAtMs`; the fuller window is the highlighted one.
+- Cache: a file with the previous `VERSION` is discarded and re-indexed; round-trip under the new number (incl. `mt`).
 - Manual: header/Stats at 80, 120, 200 columns, mixed and single mode.
 
 ## Out of scope
@@ -223,6 +240,13 @@ personal), and replaces the plan name when it contains an organisation name (it 
 1. Metered toward the default budget? Yes; budget figures carry the `≈` approximate marker (8).
 2. Claude allowance gauge on an undocumented cache? Ships behind the staleness/shape guard; dropped if the shape
    changes twice (9).
+3. Per-model day buckets (tokens + cost per model per day) are owned here (`Day.mt`, next to `um`); session-compare
+   and cli-agent-mode consume them and add none of their own (3).
+4. Allowance gauge shows both the 5h and 7d windows; the fuller one is highlighted (9).
+5. Session billing label for multi-provider harnesses (pi, OpenCode): the provider with the largest cost, sums resolved
+   per provider at display time (4).
+6. Month projection = month-to-date + today's projected remainder + remaining days × mean daily cost since the first day
+   with data in the last 14 complete days (7).
 
 ## Open questions (to verify during implementation)
 1. fx billing: where does fx store its auth/provider config? Until known, `unknown`.

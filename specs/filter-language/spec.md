@@ -139,8 +139,9 @@ Each view has a row entity. A clause on another entity is **lifted**:
 Per-call filtering needs per-call data. The ledger gets a compact call table next to the `Day` buckets:
 ```ts
 // one tool call; string columns are ids into ledger-wide dictionaries (tool, model, program, command, file)
-interface Call { t: number; tool: number; model: number /* -1 unknown */; mq: 0 | 1 | 2 /* model exact per message | per turn | per session */; progs: number[]; cmds: number[]; files: number[]; ms: number; err: number /* -1 unknown, 0, 1 */; out: number }
+interface Call { t: number; tool: number; model: number /* -1 unknown */; mq: 0 | 1 | 2 /* model exact per message | per turn | per session */; progs: number[]; cmds: number[]; files: number[]; ms: number; err: number /* -1 unknown, 0, 1 */; out: number; cid: string /* harness call id, "" none */ }
 Acc.calls: Call[]   // in call order; Acc.lastCall = index of the newest row
+Acc.t0: number      // first activity of the session (epoch ms), 0 unknown
 ```
 1. `tool(a, d, name, model, mq)` (`record.ts:50`) appends a row (`t`, `tool`, `model`, `mq`); the caller passes the
    model of the **assistant message that issued the call** — never `a.model` ("latest seen"), which can belong to a
@@ -163,11 +164,15 @@ Acc.calls: Call[]   // in call order; Acc.lastCall = index of the newest row
    when its tool name matches (every adapter records files right after `tool()` on the same line:
    `claude.ts:122`, `codex.ts:118-128`, `fx.ts:92-93`, `gemini.ts:324`, `pi.ts:286`, `opencode.ts:355-357`,
    `kiro.ts:138`). The `Day`/`TS`/`Cnt` aggregates stay as they are: they are the fast path for unfiltered Stats.
-2. **Persistence**: per-session files `~/.agentglass/cache/calls/<sha1(path)[:16]>.json`, columnar
-   (`{v, path, off, dict…, t:[…], tool:[…], …}`), written only for sessions whose rows changed, atomically like
+2. **Persistence**: per-session files `~/.agentglass/cache/calls/<key>.json`, `key` = 16 hex chars from two
+   32-bit FNV-1a hashes of the session path (pure TS: scriptc has no `node:crypto`), columnar
+   (`{v, path, off, dict…, t:[…], tool:[…], …}`). Each file stores its own `path`: a file whose `path` differs
+   (hash collision) or whose `off` differs counts as missing, so only that session re-indexes, written only for sessions whose rows changed, atomically like
    `cache.ts:88-94`, in the same save tick. Each file stores the ledger `off` it is consistent with; at load, a session
    whose calls file is missing or has another `off` gets its `Acc` dropped and is re-indexed (only that session).
    `cache.ts` `VERSION` bumps once to the next free number at implementation time (forces one re-index). Deleted sessions' files are removed on save.
+   `cid` lets triage and the Stats drill-down jump to the call; `t0` gives triage the session start hour and compare
+   its wall time and "previous session" (both persisted under the same bump).
 3. **Retention**: rows older than `filter.callDays` days (config `"filter": {"callDays": 90}`, integer ≥ 1, default
    90; invalid → default with one startup toast) are pruned at save; day buckets are kept forever as today. Rows are
    loaded eagerly at start (no lazy per-session loading). Call clauses over older days see no rows: the chip shows
@@ -321,6 +326,10 @@ come with cli-agent-mode).
 4. `repo` before repo-view? The simple `.git` walk until repo-view refines `projectOf()` (2).
 5. Model of a call? Exactly the model of the assistant message that issued it, per harness record granularity; no
    "latest seen" (4.1).
+6. Calls-cache file names? Two 32-bit FNV-1a hashes of the path in pure TS (no crypto in scriptc); each file stores
+   its path, a collision re-indexes only that session (4.2).
+7. `Call.cid` and `Acc.t0` in the data model? Yes — call jumps (triage, Stats drill-down) and session start/wall time
+   (triage, compare); persisted under this spec's one `VERSION` bump (4).
 
 ## Open questions (to verify during implementation)
 None.

@@ -37,9 +37,9 @@ When two agents write the same file close together, the rows are highlighted as 
 - Jumping into a transcript at a given event: `openTranscript()` plus `focusKind`/`focusTs`/`focusText`
   (`src/ui/transcript.ts:100`, `src/features/usage/stats.ts:359-365`).
 - Per-session activity by day is in the ledger. repo-view adds `Day.act` minute intervals and the project identity
-  `Ident {key, top, gitdir, worktree}` per cwd.
+  `Ident` per cwd; this spec reads its `key`, `top`, `gitdir` and `worktree` fields.
 - Full-screen feature views: `H.views` + `S.mode = "view"` (`src/hooks.ts:10, 28, 40`). The call graph is one example; it
-  handles `esc` back to where it came from (`src/features/callgraph/view.ts:344-353`).
+  handles `esc` back to where it came from (`src/features/callgraph/view.ts:344-357`).
 
 ## Design
 
@@ -166,10 +166,10 @@ Everything is local. Events go through `parseEvents()`, so `--redact` rewrites c
 rebuilt on demand.
 
 ## Interactions with other specs
-- **repo-view**: `Ident` (key, top, worktree), `Day.act` for picking candidates.
+- **repo-view**: `Ident` (`key`, `top`, `gitdir`, `worktree`), `identOfCwd`, `realCwd`, `Day.act` for picking candidates.
 - **git-linkage**: commit events (banner and reflog), including commits by the person.
 - **rules-config**: the alert log ring (approval waits, waiting, stuck) as `alert` rows. A future rule metric
-  `file_conflicts` could reuse decision 5 to alarm live. Not part of this spec.
+  `file_conflicts` could reuse section 5 to alarm live. Not part of this spec.
 - **filter-language**: `/` filter over event attributes.
 - **command-palette**: may offer "related events" for the selected event, and a deep link
   `agentglass open <session>#<event>` can land on the anchor, then `r`.
@@ -198,6 +198,8 @@ rebuilt on demand.
 1. Parent/subagent exemption? Exempt unless the parent writes during the subagent's active interval; that true race
    is flagged (5).
 2. N and C? Both 10 min, both configurable (`related.minutes`, `related.conflictMinutes`) (2, 5).
+3. Project identity fields? Exactly repo-view's `Ident` names: `key`, `top`, `gitdir` (provided by repo-view), `worktree`;
+   section references instead of decision numbers where sections are meant (Today, Interactions).
 
 ## Open questions (to verify during implementation)
-1. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (decision 4, uncertain).
+1. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (section 4, uncertain).
