@@ -62,6 +62,8 @@ agentglass (`AGENTGLASS_DEBUG_REFRESH=1`, isolated HOME overlay with a warm cach
 - Alarm latency, "turn finished" of pi (◆ on its row after the pane stopped "Working", 0.1 s polling): focused
   new 1.51 s / old 1.51 s; focus-out but agents streaming (level `hot`, render 1/s) new 0.93 s / old 1.95 s.
 - Gemini waiting on its tool-approval dialog never got ◆ "approval?" — in both binaries (pre-existing, not refresh).
+- (Review: a key now also clears the unfocused cap; Gemini's approval dialog now raises ◆ "turn finished" within
+  0.1–0.9 s — see the review section.)
 
 ## Rulings during implementation
 - Ruling: the first sample of a job, and any later sample, counts at most max(4 × average, 50 ms) in the EWMA. A single
