@@ -5,9 +5,9 @@
 import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 
-// one local day of one session; unk = tokens (or fx turns) whose price is unknown
+// one local day of one session; unk = tokens (or fx turns) whose price is unknown; turns = human prompts
 // tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"; skills "<command | model>\t<skill name>"
-export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; skills: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
+export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Set<string>; days: Map<string, Day>; model: string;
@@ -45,7 +45,7 @@ export function bucket(a: Acc, ms: number, iso: string): Day {
     if (k !== tsKey) { const d = new Date(iso); tsKey = k; tsDay = dayKey(d); tsHour = d.getHours(); }
   } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); }
   let d = a.days.get(tsDay);
-  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
+  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), turns: 0, hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
   return d;
 }
 export function tool(a: Acc, d: Day, name: string): TS {
@@ -84,6 +84,8 @@ export function file(d: Day, name: string, path: string, add: number, del: numbe
   const c = cnt(d.files, name + "\t" + path);
   c.add = c.add + add; c.del = c.del + del;
 }
+// human prompts (what the transcript shows as user events), on the local day of the prompt
+export function turn(d: Day, n: number): void { d.turns = d.turns + n; }
 export function skill(d: Day, source: string, name: string): void { if (name) cnt(d.skills, source + "\t" + name); }
 export interface SkillUse { name: string; source: string; n: number }
 // skill uses over the given local days (null = all), most used first

@@ -125,6 +125,12 @@ ok("2.x fork: copied rows add no cost/tokens/tools/lines", Math.abs(fa.cost - 0.
 ok("2.x fork: the transcript still shows the copied rows", events(sess(F2), 0, end(sess(F2))).length > events(sess(F2), 91, end(sess(F2))).length, "");
 const fb = useOf(sess(F1));
 ok("1.x fork: copied parts add no cost/tokens/tools", Math.abs(fb.cost - 0.25) < 1e-9 && fb.inTok === 7 && fb.tools === 0, fb.cost + " in " + fb.inTok + " tools " + fb.tools);
+// turns: one per prompt the transcript shows; a fork's copied prompts are the parent's
+function turnsOf(u: Acc): number { let n = 0; for (const d of u.days.values()) n += d.turns; return n; }
+const users = (s: Sess): number => events(s, 0, end(s)).filter((e: Ev) => e.kind === "user").length;
+ok("2.x turns = user events", turnsOf(a) === users(sess(P2)) && turnsOf(a) > 0, turnsOf(a) + "/" + users(sess(P2)));
+ok("1.x turns = user events", turnsOf(b) === users(sess(P1)) && turnsOf(b) > 0, turnsOf(b) + "/" + users(sess(P1)));
+ok("forks: copied prompts are no turns", turnsOf(fa) === 0 && turnsOf(fb) === 0, turnsOf(fa) + "/" + turnsOf(fb));
 const pa = useOf(sess(P2));
 ok("the fork's parent keeps its own usage", pa.inTok === a.inTok && pa.tools === a.tools, pa.inTok + "/" + a.inTok);
 

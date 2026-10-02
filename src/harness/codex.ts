@@ -7,10 +7,10 @@ import { CODEX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
-import { type Acc, L, bucket, tool, pend, tokens, isoMs, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, L, bucket, tool, pend, tokens, turn, isoMs, num, patchLines } from "../features/usage/record.ts";
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
-import { toolArg, blockText, isNoise } from "./common.ts";
+import { toolArg, blockText, isNoise, prompts } from "./common.ts";
 
 // ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl (+ archived_sessions/, flat)
 const titles = new Map<string, string>(); // thread names from session_index.jsonl
@@ -94,6 +94,11 @@ function usage(a: Acc, l: string): void {
     const tm = /"timestamp":"([^"]+)"/.exec(h); const t = tm ? isoMs(tm[1] ?? "") : 0;
     const codes = exitCodes(l);
     done(p, t > 0 && p.t > 0 ? t - p.t : -1, codexFailed(l, codes), l.length, id, codes);
+    return;
+  }
+  if (h.indexOf("\"type\":\"response_item\"") >= 0 && h.indexOf("\"role\":\"user\"") >= 0) { // prompts (injected context is noise)
+    const o = parseJson(l); const n = o ? prompts(parse, o) : 0;
+    if (o && n) turn(bucket(a, 0, str(o["timestamp"])), n);
     return;
   }
   if (!tc && !ctx && !call) return;

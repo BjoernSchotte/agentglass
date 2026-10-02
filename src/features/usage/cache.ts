@@ -37,7 +37,7 @@ function padTo(a: number[], n: number): number[] { while (a.length < n) a.push(0
 function dayOut(d: Day): Obj {
   const tt: Obj = {};
   for (const [k, s] of d.tt) tt[k] = { n: s.n, e: s.err, dn: s.dn, ms: s.ms, mx: s.max, o: s.out, hi: s.hist, h: s.h, s: recsOut(s.slow), x: recsOut(s.errs) };
-  return { t: d.tools, tt, p: cntsOut(d.prog), m: cntsOut(d.cmds), f: cntsOut(d.files), k: cntsOut(d.skills), h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del };
+  return { t: d.tools, tt, p: cntsOut(d.prog), m: cntsOut(d.cmds), f: cntsOut(d.files), k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del };
 }
 function dayIn(o: Obj): Day {
   const tt = new Map<string, TS>();
@@ -47,7 +47,7 @@ function dayIn(o: Obj): Day {
     tt.set(k, { n: num(s["n"]), err: num(s["e"]), dn: num(s["dn"]), ms: num(s["ms"]), max: num(s["mx"]), out: num(s["o"]), hist: padTo(nums(s["hi"]), HB), h: padTo(nums(s["h"]), 24), slow: recsIn(s["s"]), errs: recsIn(s["x"]) });
   }
   const hours = padTo(nums(o["h"]), 24);
-  return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), skills: cntsIn(o["k"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]) };
+  return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), skills: cntsIn(o["k"]), turns: num(o["tu"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]) };
 }
 export function accOut(a: Acc): Obj {
   const days: Obj = {};

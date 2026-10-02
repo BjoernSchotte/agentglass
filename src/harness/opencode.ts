@@ -11,10 +11,10 @@ import { query, q, sqliteBin } from "../util/sqlite.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { say } from "../state.ts";
-import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, nlines, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, turn, nlines, num, patchLines } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live, SessionSource } from "./types.ts";
-import { toolArg, blockText } from "./common.ts";
+import { toolArg, blockText, prompts } from "./common.ts";
 import { type Endpoint, endpoint, listSessions, activeSet, messages, lastId } from "./opencode-http.ts";
 
 function dbPath(): string {
@@ -358,15 +358,18 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
 }
 function usage(a: Acc, l: string): void {
   if (l.startsWith("{\"v1\":")) {
-    if (l.indexOf("\"type\":\"step-finish\"") < 0 && l.indexOf("\"type\":\"tool\"") < 0) return;
-    const o = parseJson(l); if (!o || o["copied"] === 1) return;
+    const usr = l.indexOf("\"role\":\"user\"") >= 0 && l.indexOf("\"type\":\"text\"") >= 0;
+    if (!usr && l.indexOf("\"type\":\"step-finish\"") < 0 && l.indexOf("\"type\":\"tool\"") < 0) return;
+    const o = parseJson(l); if (!o || o["copied"] === 1) return; // a fork's copied history is not this session's work
     const p = obj(o["part"]); if (!p) return;
+    if (usr) { const n = prompts(parse, o); if (n) turn(bucket(a, tm(p, "start") || num(o["t"]), ""), n); return; }
     const t = num(o["t"]); const d = bucket(a, t, "");
     const pt = str(p["type"]);
     if (pt === "step-finish") book(a, d, str(o["model"]), obj(p["tokens"]), num(p["cost"]));
     else if (pt === "tool") { const st = obj(p["state"]); useTool(a, d, str(p["tool"]) || "tool", str(p["callID"]), st, tm(st, "start"), tm(st, "end")); }
     return;
   }
+  if (l.startsWith("{\"type\":\"user\"")) { const o = parseJson(l); const n = o && o["copied"] !== 1 ? prompts(parse, o) : 0; if (o && n) turn(bucket(a, tm(o, "created"), ""), n); return; }
   if (!l.startsWith("{\"type\":\"assistant\"") && !l.startsWith("{\"type\":\"compaction\"")) return;
   const o = parseJson(l); if (!o || o["copied"] === 1) return;
   const d = bucket(a, tm(o, "created"), "");

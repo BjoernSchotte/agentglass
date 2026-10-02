@@ -10,6 +10,7 @@ import { type Acc, newAcc, bucket, usageExact } from "../features/usage/record.t
 import { price, cost } from "../features/usage/pricing.ts";
 import { skillUses } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
+import { buildGraph, summary } from "../features/callgraph/model.ts";
 import { HARNESSES, harnessOf, parseEvents, cmdOf, busy } from "./index.ts";
 import { NOISE_TAGS, isNoise, leadTag } from "./common.ts";
 import { classifyUser } from "./claude.ts";
@@ -103,6 +104,7 @@ for (const ad of HARNESSES) {
 }
 
 // ── golden samples: events and usage ──
+const sampleTurns = new Map<string, number>();
 for (const sm of SAMPLES) {
   const ad = harnessOf(sm.h);
   const s = newSess(sm.h, "S1", "/tmp/agentglass-check/S1.jsonl", false);
@@ -118,7 +120,12 @@ for (const sm of SAMPLES) {
   ok(sm.h + " usage tokens", a.inTok === sm.inTok && a.outTok === sm.outTok, a.inTok + "/" + a.outTok);
   ok(sm.h + " usage cost", Math.abs(a.cost - sm.cost) < 1e-9, String(a.cost) + " ≠ " + String(sm.cost));
   ok(sm.h + " no pending calls left", a.pend.size === 0, String(a.pend.size));
+  let tu = 0; for (const dd of a.days.values()) tu += dd.turns;
+  const gt = buildGraph([{ evs, live: false, kind: "", spawn: "" }], Date.now()).spans.filter((x) => x.kind === 0 && x.ev >= 0).length; // turns with a prompt, not "earlier turn"
+  ok(sm.h + " turns = call graph turns", tu === gt, String(tu) + " ≠ " + String(gt));
+  sampleTurns.set(sm.h, (sampleTurns.get(sm.h) ?? 0) + tu);
 }
+for (const [h, n] of sampleTurns) ok(h + " SAMPLES count a turn", n > 0, String(n));
 // pi busy: decided from the tail's events alone — the head (first 256 KB, parsed after the tail) must not change it
 {
   let n = 0;
@@ -257,6 +264,21 @@ function skills(lines: string[], resumeAt: number): string {
   const s7 = skills([skCmd("p6", "x:a"), skMeta("p6", "a", "", false)], 1); ok("skill: ledger resumed between command and meta", s7 === "command\tx:a=1", s7);
   const s8 = skills([skCmd("p7", "x:a"), "{\"type\":\"user\",\"promptId\":\"p8\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":\"next prompt\"}}", skMeta("p7", "a", "", false)], -1);
   ok("skill: a later prompt clears the pending command", s8 === "", s8);
+}
+// Day.turns: Claude counts typed, sdk and scheduled prompts — not notifications, peer messages, slash commands or hook output
+{
+  const TL = [CU(HUMAN, "fix the bug"), CU(NOTIFY, NOTE), CU("", NOTE), CU(PEER, PEER_TEXT), CU("", "<command-name>/compact</command-name>"),
+    CU(HUMAN, "<system-reminder>x</system-reminder>"), CU("\"turnOrigin\":\"sdk\"", "run it"), CU("\"turnOrigin\":\"scheduled\"", "nightly"),
+    "{\"type\":\"user\",\"isMeta\":true," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":\"meta text\"}}"];
+  const count = (resumeAt: number): number => {
+    let a = newAcc();
+    for (let i = 0; i < TL.length; i++) { if (i === resumeAt) a = accIn(JSON.parse(JSON.stringify(accOut(a)))); harnessOf("claude").usage(a, TL[i] ?? ""); }
+    let n = 0; for (const d of a.days.values()) n += d.turns; return n;
+  };
+  ok("claude turns", count(-1) === 3, String(count(-1)));
+  ok("claude turns across a ledger resume", count(4) === 3, String(count(4)));
+  const gt = summary(buildGraph([{ evs: claudeEvs(TL), live: false, kind: "", spawn: "" }], Date.now())).turns;
+  ok("claude turns = call graph turns", gt === 3, String(gt));
 }
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {

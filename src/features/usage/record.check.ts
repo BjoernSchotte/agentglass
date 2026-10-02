@@ -1,6 +1,6 @@
 // agentglass — self-check for the usage record primitives: scriptc build src/features/usage/record.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
-import { newAcc, bucket, tool, pend, retool, skill, skillUses } from "./record.ts";
+import { newAcc, bucket, tool, pend, retool, skill, skillUses, turn } from "./record.ts";
 import { accOut, accIn } from "./cache.ts";
 
 let bad = 0;
@@ -41,13 +41,13 @@ ok("same name no-op", !!nw2 && nw2.n === 2, nw2 ? String(nw2.n) : "none");
   ok("skillUses", u === "a:b/command/2,a:b/model/1", u);
   const u1 = skillUses(k, ["2026-10-02"]).map((x) => x.name + "/" + x.source + "/" + String(x.n)).join(",");
   ok("skillUses by day", u1 === "a:b/command/1", u1);
-  k.pk = "p1\tx:y";
+  k.pk = "p1\tx:y"; turn(kd, 4);
   const r = accIn(JSON.parse(JSON.stringify(accOut(k))));
   const ru = skillUses(r, null).map((x) => x.name + "/" + x.source + "/" + String(x.n)).join(",");
   const rd = r.days.get("2026-10-01");
-  ok("cache round trip: skills, pk", ru === u && r.pk === "p1\tx:y" && !!rd, ru + " " + r.pk);
+  ok("cache round trip: skills, pk, turns", ru === u && r.pk === "p1\tx:y" && !!rd && rd.turns === 4, ru + " " + r.pk + " " + (rd ? String(rd.turns) : "-"));
   const old = accIn({ off: 1, days: { "2026-10-01": { t: 1 } } }); const od = old.days.get("2026-10-01");
-  ok("cache: old day without k", !!od && od.skills.size === 0 && old.pk === "", od ? String(od.skills.size) : "-");
+  ok("cache: old day without k/tu", !!od && od.skills.size === 0 && od.turns === 0 && old.pk === "", od ? String(od.turns) : "-");
 }
 console.log(bad ? bad + " failed" : "usage record: all checks passed");
 if (bad) process.exit(1);

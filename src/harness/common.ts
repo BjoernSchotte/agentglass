@@ -1,7 +1,7 @@
 // agentglass — event-parsing helpers shared by the harness parsers
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr, parse } from "../util/json.ts";
-import type { Sess } from "../model/types.ts";
+import type { Ev, Sess } from "../model/types.ts";
 
 export function toolArg(name: string, inp: Obj | null, raw: string): string {
   if (inp) {
@@ -46,6 +46,12 @@ export function leadTag(t: string): string { const m = /^<([A-Za-z][\w-]*)[\s>]/
 export function isNoise(t: string): boolean {
   const s = t.trimStart(); const lt = leadTag(s);
   return s.length === 0 || NOISE_TAGS.indexOf(lt) >= 0 || lt === "task-notification" || s.startsWith("# AGENTS.md") || s.startsWith("Caveat:");
+}
+// user events parse() makes of one line: usage() books these as turns, so the ledger and the transcript never disagree
+export function prompts(parse: (o: Obj, out: Ev[], s: Sess | null) => void, o: Obj): number {
+  const ev: Ev[] = []; parse(o, ev, null);
+  let n = 0; for (const e of ev) if (e.kind === "user") n++;
+  return n;
 }
 // mid-turn? scans back for the last turn marker ("turn started" … "turn complete"/"turn aborted");
 // userStarts: a user event also opens a turn (harnesses that log no start marker)

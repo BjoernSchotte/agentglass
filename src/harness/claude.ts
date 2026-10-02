@@ -5,10 +5,10 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { CLAUDE, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, skill, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
-import { toolArg, blockText, isNoise, leadTag } from "./common.ts";
+import { toolArg, blockText, isNoise, leadTag, prompts } from "./common.ts";
 
 const PROJECTS = join(CLAUDE, "projects");
 
@@ -170,7 +170,11 @@ function userLine(a: Acc, l: string): void {
 function usage(a: Acc, l: string): void {
   if (l.indexOf("\"type\":\"assistant\"") < 0) {
     if (l.indexOf("\"tool_use_id\":\"") >= 0) { if (a.pend.size) claudeResult(a, l); return; }
-    if (l.indexOf("\"type\":\"user\"") >= 0) userLine(a, l);
+    if (l.indexOf("\"type\":\"user\"") < 0) return;
+    userLine(a, l);
+    if (l.indexOf("\"isMeta\":true") >= 0) return; // never a prompt
+    const o = parseJson(l); const n = o ? prompts(parse, o) : 0;
+    if (o && n) turn(bucket(a, 0, str(o["timestamp"])), n);
     return;
   }
   const o = parseJson(l); if (!o || str(o["type"]) !== "assistant") return;
