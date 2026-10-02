@@ -55,6 +55,8 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   calls and latest errors — `↵` on one opens its session at that call.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
+  Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux
+  (elsewhere it shows as a finished turn).
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **A live ticker** in the header scrolls what every running agent is doing right now.

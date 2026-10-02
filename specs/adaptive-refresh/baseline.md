@@ -135,6 +135,13 @@ Three lags added up before: the probe (≤ 1 s; the tail only follows a new stat
 - Ruling: the watch job probes first and draws a changed alarm at once at every level, unfocused included (Decision 3
   caps drawing; a changed ◆ is rare and is the point of the alarm). A new prompt in the tail while idle raises "turn
   finished" even when the watchdog never saw the session busy.
+- Gemini approval dialog (pre-existing, both binaries): Gemini writes the reply text at once but the tool call only after
+  it ran (same message id again, with `toolCalls`), so while its dialog is open the log looks like a finished turn and
+  `approvalNote` never fired. Its terminal title says "✋  Action Required (<dir>)"; tmux keeps it as the pane title.
+  Ruling: `HarnessAdapter.approvalTitle` (Gemini: ✋ / "Action Required"); the watchdog reads pane titles once per look
+  while such an agent is live, and approval wins over "turn finished". Live, unfocused: dialog → ◆ "approval? · approval
+  dialog open" in 0.54 / 1.45 / 1.06 / 0.88 / 1.16 s; main raised nothing within 20 s. Outside tmux the dialog still
+  shows as ◆ "turn finished" (0.1–0.9 s, above).
 - Flaky `opencode.check` "aged without a DB change": two suite runs at once (several worktrees) shared
   `/tmp/agentglass-oc-check/opencode.db`; reproduced by starting two check binaries 1.2 s apart. Every check with a
   fixed `/tmp` dir now uses a per-process one.
