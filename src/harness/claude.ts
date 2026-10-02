@@ -154,9 +154,19 @@ function usage(a: Acc, l: string): void {
   if (u && !(id && a.ids.has(id))) { // one API message is split over several lines carrying the same id + usage
     if (id) a.ids.add(id);
     const model = str(m["model"]) || a.model; if (model) a.model = model;
-    const cw = num(u["cache_creation_input_tokens"]); const cc = obj(u["cache_creation"]);
-    const w1 = cc ? num(cc["ephemeral_1h_input_tokens"]) : 0;
-    if (model !== "<synthetic>") tokens(a, d, model, num(u["input_tokens"]), num(u["output_tokens"]), num(u["cache_read_input_tokens"]), Math.max(0, cw - w1), w1);
+    const its = arr(u["iterations"]);
+    if (its.length >= 2) { // fallback retries: each attempt billed on its own model; the top level mirrors only the last one
+      for (const x of its) {
+        const it = obj(x); if (!it) continue;
+        const md = str(it["model"]) || model; if (md === "<synthetic>") continue;
+        const ic = obj(it["cache_creation"]);
+        tokens(a, d, md, num(it["input_tokens"]), num(it["output_tokens"]), num(it["cache_read_input_tokens"]), ic ? num(ic["ephemeral_5m_input_tokens"]) : num(it["cache_creation_input_tokens"]), ic ? num(ic["ephemeral_1h_input_tokens"]) : 0);
+      }
+    } else {
+      const cw = num(u["cache_creation_input_tokens"]); const cc = obj(u["cache_creation"]);
+      const w1 = cc ? num(cc["ephemeral_1h_input_tokens"]) : 0;
+      if (model !== "<synthetic>") tokens(a, d, model, num(u["input_tokens"]), num(u["output_tokens"]), num(u["cache_read_input_tokens"]), Math.max(0, cw - w1), w1);
+    }
   }
   for (const b of arr(m["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "tool_use") continue;

@@ -6,7 +6,8 @@ import { existsSync } from "node:fs";
 import { width } from "../util/text.ts";
 import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
-import { newAcc, bucket, usageExact } from "../features/usage/record.ts";
+import { type Acc, newAcc, bucket, usageExact } from "../features/usage/record.ts";
+import { price, cost } from "../features/usage/pricing.ts";
 import { HARNESSES, harnessOf, parseEvents, cmdOf, busy } from "./index.ts";
 import { NOISE_TAGS, isNoise, leadTag } from "./common.ts";
 import { classifyUser } from "./claude.ts";
@@ -204,6 +205,27 @@ function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: 
   ok("isNoise: task notification", isNoise("<task-notification>\n<status>x</status>"), "false");
   ok("isNoise: empty", isNoise("  \n"), "false");
   ok("leadTag", leadTag("  <skill name=\"x\">") === "skill" && leadTag("<a>") === "a" && leadTag("< a>") === "" && leadTag("x<a>") === "", leadTag("  <skill name=\"x\">"));
+}
+// Claude fallback: a message with two usage.iterations books each attempt with its own model and tokens, once per message id
+{
+  const IT = "[{\"type\":\"message\",\"model\":\"claude-fable-5\",\"input_tokens\":3,\"output_tokens\":477,\"cache_read_input_tokens\":938889,\"cache_creation_input_tokens\":1200,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":1200}},"
+    + "{\"type\":\"fallback_message\",\"model\":\"claude-opus-4-8\",\"input_tokens\":3,\"output_tokens\":350,\"cache_read_input_tokens\":938889,\"cache_creation_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0}}]";
+  const msg = (id: string, its: string, blk: string): string => "{\"type\":\"assistant\",\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"message\":{\"id\":\"" + id + "\",\"model\":\"claude-opus-4-8\",\"content\":[" + blk + "],"
+    + "\"usage\":{\"input_tokens\":3,\"output_tokens\":350,\"cache_read_input_tokens\":938889,\"cache_creation_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":1200}" + (its ? ",\"iterations\":" + its : "") + "}}}";
+  const L3 = [msg("m2", IT, "{\"type\":\"thinking\",\"thinking\":\"\"}"), msg("m2", IT, "{\"type\":\"text\",\"text\":\"ok\"}"), msg("m2", IT, "{\"type\":\"tool_use\",\"id\":\"t9\",\"name\":\"Read\",\"input\":{\"file_path\":\"/x\"}}")];
+  const pf = price("claude-fable-5"); const po = price("claude-opus-4-8");
+  const want = (pf ? cost(pf, 3, 477, 938889, 0, 1200) : 0) + (po ? cost(po, 3, 350, 938889, 0, 0) : 0);
+  const wantUnk = (pf ? 0 : 3 + 477 + 938889 + 1200) + (po ? 0 : 3 + 350 + 938889);
+  const feed = (a: Acc, ls: string[]): void => { for (const l of ls) harnessOf("claude").usage(a, l); };
+  const same = (w: string, a: Acc): void => ok("fallback: " + w, a.outTok === 827 && a.cr === 1877778 && a.cw === 1200 && a.inTok === 6 && Math.abs(a.cost - want) < 1e-9 && a.unk === wantUnk && a.model === "claude-opus-4-8",
+    [a.inTok, a.outTok, a.cr, a.cw, a.cost, want, a.unk, wantUnk, a.model].join(" "));
+  const a = newAcc(); feed(a, L3); same("both attempts booked", a);
+  feed(a, L3); same("lines read again: booked once", a);
+  const r = newAcc(); feed(r, L3.slice(1)); same("resumed mid-message: booked once", r);
+  const one = newAcc(); feed(one, [msg("m3", "[{\"type\":\"message\",\"model\":\"claude-opus-4-8\",\"input_tokens\":3,\"output_tokens\":350,\"cache_read_input_tokens\":938889}]", "")]);
+  ok("fallback: one iteration books the top level", one.outTok === 350 && one.cw === 1200 && one.cr === 938889, one.outTok + " " + one.cw);
+  const syn = newAcc(); feed(syn, [msg("m4", "[{\"model\":\"<synthetic>\",\"output_tokens\":5},{\"model\":\"claude-opus-4-8\",\"input_tokens\":1,\"output_tokens\":2}]", "")]);
+  ok("fallback: <synthetic> attempt skipped", syn.outTok === 2 && syn.inTok === 1, syn.outTok + " " + syn.inTok);
 }
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {

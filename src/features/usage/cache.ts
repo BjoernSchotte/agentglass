@@ -12,7 +12,7 @@ import { PRICES_SIG } from "./pricing.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-const VERSION = 5; // 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+const VERSION = 6; // 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 const DIR = join(HOME, ".agentglass", "cache");
 const FILE = join(DIR, "ledger.json");
 const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset (a message's lines are adjacent)
