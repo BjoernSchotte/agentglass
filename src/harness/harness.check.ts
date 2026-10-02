@@ -145,6 +145,24 @@ for (const sm of SAMPLES) {
   ok("pi: image-only prompt is a user event", iv.length === 1 && iv[0].kind === "user" && iv[0].text === "[image]", JSON.stringify(iv));
   ok("pi busy: no events", !piBusy([], [USER, CALL]), "busy");
 }
+// Claude titles: /rename (custom-title) beats the ai-title Claude re-appends right after it
+{
+  let n = 0;
+  const ct = (t: string, at: string): string => "{\"type\":\"custom-title\",\"customTitle\":" + JSON.stringify(t) + ",\"sessionId\":\"t\",\"timestamp\":\"2026-10-01T" + at + ":00.000Z\"}";
+  const ai = (t: string): string => "{\"type\":\"ai-title\",\"aiTitle\":" + JSON.stringify(t) + ",\"sessionId\":\"t\"}";
+  const title = (runs: string[][]): string => {
+    const s = newSess("claude", "t", "/x/t-" + String(++n) + ".jsonl", false);
+    for (const ls of runs) { const evs: Ev[] = []; for (const l of ls) parseEvents("claude", l, evs, s); } // each run = one read window
+    return s.title;
+  };
+  ok("title: ai only", title([[ai("A")]]) === "A", title([[ai("A")]]));
+  const t1 = title([[ct("X", "10:00"), ai("A")]]); ok("title: custom then ai", t1 === "X", t1);
+  const t2 = title([[ct("X", "10:00"), ai("A"), ct("Y", "10:05"), ai("B")]]); ok("title: latest rename", t2 === "Y", t2);
+  const t3 = title([[ct("X", "10:00"), ct("", "10:01"), ai("B")]]); ok("title: renamed to empty", t3 === "B", t3);
+  const t4 = title([[ct("Y", "10:05"), ai("B")], [ct("X", "10:00"), ai("A")]]); ok("title: head after tail keeps the newer rename", t4 === "Y", t4);
+  const t5 = title([[ct("  ", "10:00")]]); ok("title: blank rename only", t5 === "", t5);
+  const t6 = title([[ct("  ", "10:00"), ai("A")]]); ok("title: blank rename then ai", t6 === "A", t6);
+}
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {
   const a = newAcc(); const d = bucket(a, 0, "2026-01-02T10:00:00Z");

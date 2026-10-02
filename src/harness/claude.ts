@@ -37,9 +37,17 @@ function spawnCall(s: Sess): string {
   const m = /"toolUseId":"([^"]+)"/.exec(readText(s.path.slice(0, -6) + ".meta.json", 0, 8192));
   return m ? m[1] ?? "" : "";
 }
+const renamed = new Map<string, string[]>(); // path → [custom title ("" = renamed to empty), its timestamp]: /rename wins over the ai-title Claude re-appends after it
 function parse(o: Obj, out: Ev[], s: Sess | null): void {
   const ts = str(o["timestamp"]); const type = str(o["type"]);
-  if (type === "ai-title") { if (s) s.title = str(o["aiTitle"]); return; }
+  if (type === "custom-title") {
+    if (!s) return;
+    const t = str(o["customTitle"]).trim(); const prev = renamed.get(s.path);
+    if (prev && ts && (prev[1] ?? "") > ts) return; // an older rename (head read after tail) never rolls back a newer one
+    renamed.set(s.path, [t, ts]); if (t) s.title = t;
+    return;
+  }
+  if (type === "ai-title") { if (s) { const r = renamed.get(s.path); const t = r ? r[0] ?? "" : ""; s.title = t || str(o["aiTitle"]); } return; }
   if (type === "summary") { out.push({ kind: "meta", text: "summary: " + str(o["summary"]), ts, id: "", full: "" }); return; }
   if (type !== "user" && type !== "assistant") return;
   if (o["isMeta"] === true) return;
