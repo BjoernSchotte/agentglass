@@ -1,11 +1,11 @@
 // agentglass — self-check for the curl JSON GET: scriptc build src/util/http.check.ts -o hc && ./hc
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
 import { curlBin, getJson } from "./http.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
-const dir = "/tmp/agentglass-http-check"; mkdirSync(dir, { recursive: true });
+const dir = "/tmp/agentglass-http-check-" + String(process.pid); mkdirSync(dir, { recursive: true });
 // a fake curl: -V answers the probe; otherwise argv and stdin are recorded, the body is printed
 const fake = dir + "/curl";
 writeFileSync(fake, "#!/bin/sh\n[ \"$1\" = -V ] && { echo curl 8; exit 0; }\necho \"$@\" > " + dir + "/argv\ncat > " + dir + "/stdin\necho '{\"ok\":1}'\n");
@@ -30,5 +30,6 @@ process.env["AGENTGLASS_CURL"] = arrF;
 ok("non-object → null", getJson("http://x/", "u", "p") === null, "");
 process.env["AGENTGLASS_CURL"] = "/nonexistent";
 ok("no curl", curlBin() === "" && getJson("http://x/", "u", "p") === null, curlBin());
+rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "http: all checks passed");
 if (bad) process.exit(1);

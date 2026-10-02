@@ -11,7 +11,7 @@ import { FILE_SOURCE } from "./source.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
-const DIR = "/tmp/agentglass-gemini-check";
+const DIR = "/tmp/agentglass-gemini-check-" + String(process.pid);
 rmSync(DIR, { recursive: true, force: true }); mkdirSync(DIR, { recursive: true });
 function write(p: string, t: string): void { const fd = openSync(p, "w"); writeSync(fd, t); closeSync(fd); }
 function bytes(t: string): number { return new TextEncoder().encode(t).length; }
