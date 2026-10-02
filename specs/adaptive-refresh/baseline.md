@@ -52,6 +52,17 @@ session data. Bound by cadence. Before: watchdog every 0.5 s, CPU samples (`proc
 `procs` every 1.5 s at every level while an agent is live (`sched.check.ts` covers the bound under budget pressure),
 so approval/stuck latency is unchanged and "turn finished" can take up to 1 s longer (spec Decision 2).
 
+## Live test (active pi, OpenCode, Gemini sessions)
+pi (cliproxy Sonnet 5.5), OpenCode and Gemini (`gemini-3.5-flash-lite`) built a todo app in `/tmp/agtest-adaptive-refresh-*`,
+agentglass (`AGENTGLASS_DEBUG_REFRESH=1`, isolated HOME overlay with a warm cache) and the old binary side by side in tmux:
+- Levels: `hot (grow)` ↔ `warm` while they streamed; focus-out (`ESC[O`) → `away unfocused` with render every 5 s,
+  `watch`/`procs` at 1.5 s; a key while unfocused → `hot (input+grow) unfocused` with render capped at 1 s (spinner
+  stepped ~1/s), `probe` 250 ms; focus-in → render 250 ms (spinner ~4/s). Replay (`P`): `hot (replay)`, `fast` 50 ms.
+  Resize to 120×35: full redraw within the 2 s size poll.
+- Alarm latency, "turn finished" of pi (◆ on its row after the pane stopped "Working", 0.1 s polling): focused
+  new 1.51 s / old 1.51 s; focus-out but agents streaming (level `hot`, render 1/s) new 0.93 s / old 1.95 s.
+- Gemini waiting on its tool-approval dialog never got ◆ "approval?" — in both binaries (pre-existing, not refresh).
+
 ## Rulings during implementation
 - Ruling: the first sample of a job, and any later sample, counts at most max(4 × average, 50 ms) in the EWMA. A single
   slow run (startup ledger pass, the 30 s cache save inside `tick`) otherwise stretched `tick` to 5–9 s for half a
