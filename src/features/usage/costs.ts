@@ -1,6 +1,7 @@
 // agentglass — cost by billing mode: sums, mode-aware money format, the unpriced breakdown, projection and budget (pure)
 // SPDX-License-Identifier: Apache-2.0
 import { type Bill, MODES, tag } from "./billing.ts";
+import { type Obj, arr } from "../../util/json.ts";
 import { type Day, dayKey } from "./record.ts";
 
 export function kfmt(n: number): string {
@@ -97,4 +98,59 @@ export function monthStart(now: number): string[] {
   const noon = noonOf(now); const mo = dayKey(new Date(noon)).slice(0, 7); const out: string[] = [];
   for (let i = 0; i < 31; i++) { const k = dayKey(new Date(noon - i * 86400000)); if (k.slice(0, 7) !== mo) break; out.push(k); }
   return out.reverse();
+}
+
+// ── budget ──
+// usd 0 = no budget; bad = the config fields that were invalid and ignored (comma-separated)
+export interface Budget { usd: number; counts: Bill[]; warnAt: number; bad: string }
+export const DEFAULT_COUNTS: Bill[] = ["api", "metered", "gateway"]; // real or possibly real spend
+export function parseBudget(o: Obj): Budget {
+  const bad: string[] = [];
+  const u = o["monthlyUsd"]; let usd = 0;
+  if (u !== undefined) { if (typeof u === "number" && (u as number) > 0) usd = u as number; else bad.push("monthlyUsd"); }
+  let counts = DEFAULT_COUNTS.slice();
+  if (o["counts"] !== undefined) {
+    const cs = arr(o["counts"]); const got: Bill[] = []; let okc = Array.isArray(o["counts"]) && cs.length > 0;
+    for (const c of cs) {
+      if (c === "all") { for (const m of MODES) if (got.indexOf(m) < 0) got.push(m); }
+      else if (typeof c === "string" && MODES.indexOf(c as Bill) >= 0) { const m = MODES[MODES.indexOf(c as Bill)] ?? "unknown"; if (got.indexOf(m) < 0) got.push(m); }
+      else okc = false;
+    }
+    if (okc) counts = got; else bad.push("counts");
+  }
+  const w = o["warnAt"]; let warnAt = 0.8;
+  if (w !== undefined) { if (typeof w === "number" && (w as number) > 0 && (w as number) < 1) warnAt = w as number; else bad.push("warnAt"); }
+  return { usd, counts, warnAt, bad: bad.join(",") };
+}
+// state "" (no budget) | "ok" | "watch" (projected over, or used ≥ warnAt) | "over"; projected -1 = unknown;
+// approx: a counted amount is a list-price estimate (cloud, gateway, plan or unknown mode)
+export interface BState { state: string; used: number; projected: number; approx: boolean }
+export function budgetState(b: Budget, month: ModeSum, projByMode: number[]): BState {
+  let used = 0; let proj = 0; let approx = false;
+  for (const m of b.counts) {
+    const i = MODES.indexOf(m); const c = month.by[i] ?? 0; const p = projByMode[i] ?? 0;
+    used += c;
+    if (proj >= 0) proj = p < 0 ? -1 : proj + p;
+    if (m !== "api" && (c > 0 || p > 0)) approx = true;
+  }
+  if (b.usd <= 0) return { state: "", used, projected: proj, approx };
+  const state = used >= b.usd ? "over" : (proj >= 0 && proj > b.usd) || used >= b.warnAt * b.usd ? "watch" : "ok";
+  return { state, used, projected: proj, approx };
+}
+// the over-budget message, at most once per calendar day (kept in memory: a restart may repeat it the same day)
+let notified = "";
+export function notifyOnce(bs: BState, day: string, send: (msg: string) => void): boolean {
+  if (bs.state !== "over" || notified === day) return false;
+  notified = day;
+  send("budget exceeded: " + (bs.approx ? "≈" : "") + "$" + whole(bs.used) + " used this month");
+  return true;
+}
+function whole(c: number): string { return c >= 10 ? grp(c) : c.toFixed(2); }
+// Stats line 3: "→ today ≈$14 · month ≈$310 of $200 (155%)"; allApi = every counted mode is API spend
+export function projText(today: number, month: number, b: Budget, bs: BState, allApi: boolean): string {
+  if (today < 0 && month < 0) return "→ — not enough history";
+  const ap = bs.approx || !allApi ? "≈$" : "$";
+  const t = today >= 0 ? ap + whole(today) : "—"; const m = month >= 0 ? ap + whole(month) : "—";
+  const of = b.usd > 0 && month >= 0 ? " of $" + whole(b.usd) + " (" + String(Math.round((month / b.usd) * 100)) + "%)" : "";
+  return "→ today " + t + " · month " + m + of;
 }

@@ -14,6 +14,7 @@ import { PRICES_FROM } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer } from "./calls.ts";
 import "./cache.ts";
 import "./bill-live.ts";
+import "./summary.ts";
 import { kfmt, grp } from "./costs.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
 

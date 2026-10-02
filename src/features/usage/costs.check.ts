@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Bill } from "./billing.ts";
 import { newDay, isoMs } from "./record.ts";
-import { newSum, addDay, total, single, money, moneyTag, split, unpricedLine, type DayCost, projectToday, projectMonth, daysLeftInMonth, monthStart } from "./costs.ts";
+import { newSum, addDay, total, single, money, moneyTag, split, unpricedLine, type DayCost, projectToday, projectMonth, daysLeftInMonth, monthStart, parseBudget, budgetState, notifyOnce, projText } from "./costs.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -52,6 +52,42 @@ ok("month start mid-month", monthStart(isoMs("2026-10-03T12:00:00Z")).join() ===
 // DST: 2026-10-25 (Europe) has 25 local hours — must not throw, no hour index ≥ 24
 ok("dst", projectToday(three, dc("2026-10-25", 1, [2]), 23) >= 1, "");
 ok("dst month start", monthStart(isoMs("2026-10-26T12:00:00Z")).length === 26, String(monthStart(isoMs("2026-10-26T12:00:00Z")).length));
+
+// ── budget ──
+const b1 = parseBudget({ monthlyUsd: 200 });
+ok("defaults", b1.usd === 200 && b1.counts.join() === "api,metered,gateway" && b1.warnAt === 0.8 && b1.bad === "", JSON.stringify(b1));
+ok("string usd ignored", parseBudget({ monthlyUsd: "200" }).usd === 0 && parseBudget({ monthlyUsd: "200" }).bad === "monthlyUsd", "");
+ok("negative usd ignored", parseBudget({ monthlyUsd: -5 }).usd === 0 && parseBudget({ monthlyUsd: -5 }).bad === "monthlyUsd", "");
+ok("warnAt 1.5 ignored", parseBudget({ monthlyUsd: 10, warnAt: 1.5 }).warnAt === 0.8 && parseBudget({ monthlyUsd: 10, warnAt: 1.5 }).bad === "warnAt", "");
+ok("all", parseBudget({ monthlyUsd: 10, counts: ["all"] }).counts.length === 5, "");
+ok("bad counts", parseBudget({ monthlyUsd: 10, counts: ["api", "cash"] }).counts.join() === "api,metered,gateway" && parseBudget({ monthlyUsd: 10, counts: ["api", "cash"] }).bad === "counts", "");
+ok("no budget", parseBudget({}).usd === 0 && parseBudget({}).bad === "", "");
+const mo = newSum(); mo.by[0] = 165; mo.by[1] = 900; // api 165, plan 900 (not counted)
+const st1 = budgetState(b1, mo, [170, 1000, 0, 0, 0]);
+ok("watch by warnAt", st1.state === "watch" && st1.used === 165 && !st1.approx && st1.projected === 170, JSON.stringify(st1));
+const st0 = budgetState(b1, (() => { const x = newSum(); x.by[0] = 10; return x; })(), [250, 0, 0, 0, 0]);
+ok("watch by projection", st0.state === "watch", JSON.stringify(st0));
+mo.by[2] = 60; // metered counted
+const st2 = budgetState(b1, mo, [170, 1000, 70, 0, 0]);
+ok("over + approx", st2.state === "over" && st2.approx && st2.used === 225, JSON.stringify(st2));
+ok("ok", budgetState(parseBudget({ monthlyUsd: 1000 }), mo, [170, 0, 70, 0, 0]).state === "ok", "");
+ok("unknown projection", budgetState(b1, mo, [-1, 0, 70, 0, 0]).projected === -1, "");
+ok("plan counted = approx", budgetState(parseBudget({ monthlyUsd: 5000, counts: ["plan"] }), mo, [0, 0, 0, 0, 0]).approx, "");
+ok("no budget state", budgetState(parseBudget({}), mo, [0, 0, 0, 0, 0]).state === "", "");
+let sent = 0; const snd = (m: string): void => { sent++; };
+const over = budgetState(b1, mo, [0, 0, 0, 0, 0]);
+notifyOnce(over, "2026-10-01", snd); notifyOnce(over, "2026-10-01", snd);
+ok("once a day", sent === 1, String(sent));
+notifyOnce(over, "2026-10-02", snd);
+ok("next day again", sent === 2, String(sent));
+notifyOnce(st1, "2026-10-03", snd);
+ok("not over: never", sent === 2, String(sent));
+// ── projection text ──
+const wb = { state: "watch", used: 0, projected: 310, approx: false };
+ok("proj text", projText(14.2, 310, b1, wb, true) === "→ today $14 · month $310 of $200 (155%)", projText(14.2, 310, b1, wb, true));
+ok("proj text approx", projText(14.2, 310, b1, { state: "watch", used: 0, projected: 310, approx: true }, true) === "→ today ≈$14 · month ≈$310 of $200 (155%)", "");
+ok("proj text plan", projText(4.25, 31, parseBudget({}), { state: "", used: 0, projected: -1, approx: false }, false) === "→ today ≈$4.25 · month ≈$31", projText(4.25, 31, parseBudget({}), { state: "", used: 0, projected: -1, approx: false }, false));
+ok("proj none", projText(-1, -1, b1, wb, true) === "→ — not enough history", projText(-1, -1, b1, wb, true));
 
 console.log(bad ? bad + " failed" : "costs: all checks passed");
 if (bad) process.exit(1);
