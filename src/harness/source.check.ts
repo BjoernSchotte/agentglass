@@ -1,12 +1,12 @@
 // agentglass — self-check for the file session source: scriptc build src/harness/source.check.ts -o sc && ./sc
-import { openSync, writeSync, closeSync, mkdirSync } from "node:fs";
+import { openSync, writeSync, closeSync, mkdirSync, rmSync } from "node:fs";
 import { newSess } from "../model/types.ts";
 import { FILE_SOURCE } from "./source.ts";
 import { accOf } from "../features/usage/ledger.ts";
 import { restat } from "../model/sessions.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
-const dir = "/tmp/agentglass-source-check"; mkdirSync(dir, { recursive: true });
+const dir = "/tmp/agentglass-source-check-" + String(process.pid); mkdirSync(dir, { recursive: true });
 const p = dir + "/s.jsonl";
 const fd = openSync(p, "w"); writeSync(fd, "{\"a\":1}\n{\"b\":2}\n{\"c\":3"); closeSync(fd); // last line still being written
 const s = newSess("claude", "x", p, false);
@@ -42,5 +42,6 @@ restat(se, 10, 3, "b");
 const a2 = accOf(se);
 ok("epoch change: fresh account", a2 !== a1 && a2.off === 0 && a2.tools === 0 && a2.ep === "b", a2.ep);
 ok("epoch change: tail and head reload", se.tailSize === -1 && !se.headDone && se.evs.length === 0, String(se.tailSize));
+rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "source: all checks passed");
 process.exit(bad ? 1 : 0);

@@ -99,7 +99,7 @@ ok("system mcp_servers", evs([SYS]) === "meta:MCP: everything, github", evs([SYS
 ok("system without mcp_servers", evs(["{\"type\":\"message\",\"timestamp\":\"" + T1 + "\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"p\"}}}"]) === "", "");
 
 // ── subagent discovery (spec decisions 6, 7) ──
-const root = "/tmp/agentglass-pi-check"; rmSync(root, { recursive: true, force: true });
+const root = "/tmp/agentglass-pi-check-" + String(process.pid); rmSync(root, { recursive: true, force: true });
 const cwdDir = root + "/--w--"; const PB = cwdDir + "/2026-10-01T10-00-00-000Z_P";
 for (const d of [PB + "/tasks", PB + "/r1/run-0", PB + "/forks", cwdDir + "/subagent-artifacts"]) mkdirSync(d, { recursive: true });
 function hdr(id: string, ps: string): string { return "{\"type\":\"session\",\"version\":3,\"id\":\"" + id + "\",\"timestamp\":\"" + T1 + "\",\"cwd\":\"/w\"" + (ps ? ",\"parentSession\":\"" + ps + "\"" : "") + "}\n"; }
@@ -156,5 +156,6 @@ ok("--no-session child usage booked on the parent", Math.abs(ex.cost - 0.01) < 1
 const ex2 = feed([result("call_1", "subagent", ",\"details\":{\"results\":[{\"sessionFile\":\"/x/s.jsonl\",\"usage\":{\"input\":10,\"output\":5,\"cost\":0.01},\"model\":\"m\"}]},\"isError\":false")]);
 ok("child with its own file: not booked twice", ex2.cost === 0 && ex2.inTok === 0, String(ex2.cost));
 
+rmSync(root, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "pi: all checks passed");
 if (bad) process.exit(1);

@@ -13,7 +13,7 @@ import { b64url } from "./opencode-http.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
-const dir = "/tmp/agentglass-och-check"; rmSync(dir, { recursive: true, force: true }); mkdirSync(dir + "/state/opencode", { recursive: true });
+const dir = "/tmp/agentglass-och-check-" + String(process.pid); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir + "/state/opencode", { recursive: true });
 const FX = "specs/pi-opencode-depth/fixtures/oc-http";
 const P2 = "ses_f12acb259ffeoToIvxeAjWIeys"; const C2 = "ses_f12ac8b5bffe043s7U74AHb6nX";
 for (const f of ["sessions.json", "active.json", P2 + ".jsonl", C2 + ".jsonl"]) copyFileSync(FX + "/" + f, dir + "/" + f);
@@ -164,5 +164,6 @@ ok("password not in curl's argv", argv.length > 0 && argv.indexOf("keepme") < 0,
 ok("password on stdin", readFileSync(dir + "/stdin.log", "utf8").indexOf("keepme-secret") >= 0, "");
 ok("password not in the toast", S.toast.indexOf("keepme") < 0, S.toast);
 
+rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "opencode http: all checks passed");
 process.exit(bad ? 1 : 0);

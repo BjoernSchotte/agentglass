@@ -13,7 +13,7 @@ import { daemonWarn } from "../model/link.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
-const dir = "/tmp/agentglass-oc-check"; mkdirSync(dir, { recursive: true });
+const dir = "/tmp/agentglass-oc-check-" + String(process.pid); mkdirSync(dir, { recursive: true });
 const db = dir + "/opencode.db";
 for (const f of [db, db + "-wal", db + "-shm", db + "-journal"]) { try { unlinkSync(f); } catch (e) { /* none */ } }
 execFileSync("sqlite3", [db], { input: readFileSync("specs/pi-opencode-harnesses/fixtures/opencode.sql", "utf8"), stdio: ["pipe", "ignore", "inherit"] });
@@ -243,5 +243,6 @@ t0 = Date.now(); scan(); const second = Date.now() - t0;
 ok("hung query: bounded by the 3 s limit", first >= 2500 && first < 4500, String(first) + " ms");
 ok("hung query: next scan backs off", second < 500, String(second) + " ms");
 
+rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "opencode: all checks passed");
 process.exit(bad ? 1 : 0);
