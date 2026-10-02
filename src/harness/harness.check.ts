@@ -289,6 +289,15 @@ function skills(lines: string[], resumeAt: number): string {
   const gt = summary(buildGraph([{ evs: claudeEvs(TL), live: false, kind: "", spawn: "" }], Date.now())).turns;
   ok("claude turns = call graph turns", gt === 3, String(gt));
 }
+// a nested object that merely looks like a prompt (tool args) never hides the line's own usage
+{
+  const g = newAcc();
+  harnessOf("gemini").usage(g, "{\"id\":\"g9\",\"timestamp\":\"2026-01-02T10:00:02.000Z\",\"type\":\"gemini\",\"toolCalls\":[{\"id\":\"c9\",\"name\":\"mcp_x\",\"args\":{\"msg\":{\"type\":\"user\"}},\"status\":\"success\",\"timestamp\":\"2026-01-02T10:00:03.000Z\"}]}");
+  ok("gemini: nested \"type\":\"user\" in args keeps the call", g.tools === 1, String(g.tools));
+  const o = newAcc();
+  harnessOf("opencode").usage(o, "{\"v1\":1,\"role\":\"assistant\",\"t\":1790688000000,\"part\":{\"type\":\"tool\",\"tool\":\"http\",\"callID\":\"k1\",\"state\":{\"status\":\"completed\",\"input\":{\"body\":{\"role\":\"user\",\"type\":\"text\"}},\"time\":{\"start\":1790688000000,\"end\":1790688001000}}}}");
+  ok("opencode: nested role user in tool input keeps the call", o.tools === 1, String(o.tools));
+}
 // Codex skills: Codex injects <skill> only for an explicit $name mention (codex-rs skills/injection.rs) → command; OpenCode skill rows → model
 {
   const cx = (t: string, at: string): string => "{\"timestamp\":\"2026-10-01T10:00:0" + at + ".000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":" + JSON.stringify(t) + "}]}}";

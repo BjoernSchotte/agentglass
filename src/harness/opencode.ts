@@ -363,7 +363,7 @@ function usage(a: Acc, l: string): void {
     if (!usr && l.indexOf("\"type\":\"step-finish\"") < 0 && l.indexOf("\"type\":\"tool\"") < 0) return;
     const o = parseJson(l); if (!o || o["copied"] === 1) return; // a fork's copied history is not this session's work
     const p = obj(o["part"]); if (!p) return;
-    if (usr) { const n = prompts(parse, o); if (n) turn(a, tm(p, "start") || num(o["t"]), "", n); return; }
+    if (usr && str(o["role"]) === "user" && str(p["type"]) === "text") { turn(a, tm(p, "start") || num(o["t"]), "", prompts(parse, o)); return; }
     const t = num(o["t"]); const d = bucket(a, t, "");
     const pt = str(p["type"]);
     if (pt === "step-finish") book(a, d, str(o["model"]), obj(p["tokens"]), num(p["cost"]));

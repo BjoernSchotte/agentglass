@@ -67,7 +67,10 @@ function meta(s: Sess): void {
   if (own) { s.parent = str(own["parent_id"]); if (!s.kind) s.kind = "subagent"; }
 }
 function usage(a: Acc, l: string): void {
-  if (l.indexOf("\"user\":{") >= 0) { if (a.sub) return; const o = parseJson(l); const n = o ? prompts(parse, o) : 0; if (o && n) turn(a, num(o["timestamp_ms"]), "", n); return; }
+  if (l.indexOf("\"user\":{") >= 0) { // the prompt event itself, not a lookalike nested in another event
+    const o = parseJson(l); const e = o ? obj(o["event"]) : null;
+    if (o && e && obj(e["user"])) { if (!a.sub) turn(a, num(o["timestamp_ms"]), "", prompts(parse, o)); return; }
+  }
   const res = l.indexOf("\"tool_result\"") >= 0;
   if (!res && l.indexOf("\"tool_call\"") < 0) return;
   const o = parseJson(l); if (!o) return;
