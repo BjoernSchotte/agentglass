@@ -5,7 +5,8 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { CLAUDE, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
+import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise } from "./common.ts";
@@ -105,6 +106,7 @@ function usage(a: Acc, l: string): void {
     const model = str(m["model"]) || a.model; if (model) a.model = model;
     const cw = num(u["cache_creation_input_tokens"]); const cc = obj(u["cache_creation"]);
     const w1 = cc ? num(cc["ephemeral_1h_input_tokens"]) : 0;
+    const mb = modelBill(model); if (mb) stamp(a, mb, "", "session");
     if (model !== "<synthetic>") tokens(a, d, model, num(u["input_tokens"]), num(u["output_tokens"]), num(u["cache_read_input_tokens"]), Math.max(0, cw - w1), w1);
   }
   for (const b of arr(m["content"])) {

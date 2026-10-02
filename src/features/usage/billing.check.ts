@@ -1,6 +1,7 @@
 // agentglass — self-check for billing-mode detection (rules, environ names, config readers): scriptc build src/features/usage/billing.check.ts -o bc && ./bc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
+import { newAcc, stamp } from "./record.ts";
 import { type Evid, type Bill, rule, provRule, modelBill, envSummary, configEv, planLabel, tag, MODES } from "./billing.ts";
 
 let bad = 0;
@@ -72,5 +73,12 @@ ok("pi per provider", provRule("pi", "anthropic", pie, "config").bill === "plan"
 ok("opencode single provider", rule("opencode", configEv("opencode", HOMED, ""), "config").bill === "plan", "");
 ok("redact plan", planLabel("team", true) === "team" && planLabel("Acme Corp", true) === "plan" && planLabel("Acme Corp", false) === "Acme Corp", "");
 rmSync(ROOT, { recursive: true, force: true });
+// stamp precedence: config never stamps; process fills an empty stamp; session evidence replaces process, never the reverse
+const sa = newAcc();
+stamp(sa, "plan", "team", "config"); ok("config never stamps", sa.billSrc === "" && sa.bill === "", sa.bill);
+stamp(sa, "api", "", "process"); ok("process stamps", sa.bill === "api" && sa.billSrc === "process", sa.bill);
+stamp(sa, "metered", "", "session"); ok("session beats process", sa.bill === "metered" && sa.billSrc === "session", sa.bill);
+stamp(sa, "api", "", "process"); ok("process never beats session", sa.bill === "metered" && sa.billSrc === "session", sa.bill);
+stamp(sa, "plan", "pro", "session"); ok("first session evidence stays", sa.bill === "metered", sa.bill);
 console.log(bad ? bad + " failed" : "billing: all checks passed");
 if (bad) process.exit(1);

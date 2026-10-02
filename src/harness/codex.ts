@@ -7,7 +7,7 @@ import { CODEX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
-import { type Acc, L, bucket, tool, pend, tokens, isoMs, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, L, bucket, tool, pend, tokens, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise } from "./common.ts";
@@ -143,6 +143,7 @@ function usage(a: Acc, l: string): void {
     a.x = cur;
   }
   const rl = obj(p["rate_limits"]); const pr = rl ? obj(rl["primary"]) : null;
+  const pt = rl ? str(rl["plan_type"]) : ""; if (pt) stamp(a, "plan", pt, "session"); // a ChatGPT plan's rate limits name it
   if (pr) {
     const at = new Date(iso).getTime();
     if (at >= L.rlAt) { L.rlAt = at; L.rlPct = num(pr["used_percent"]); L.rlWin = num(pr["window_minutes"]); L.rlReset = num(pr["resets_at"]); }

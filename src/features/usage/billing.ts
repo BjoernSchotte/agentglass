@@ -140,6 +140,19 @@ function authTypes(ev: Evid, p: string): void {
   const o = readObj(p); if (!o) return;
   for (const k of Object.keys(o)) { const v = obj(o[k]); const t = v ? str(v["type"]) : ""; if (t) ev.kv.set("auth." + k, t); }
 }
+// the files configEv(h, home, cwd) reads (their mtimes tell a cache when to re-read)
+export function configFiles(h: string, home: string, cwd: string): string[] {
+  if (h === "claude") {
+    const fs = [join(home, ".claude", "settings.json"), join(home, ".claude.json")];
+    if (cwd) { fs.push(join(cwd, ".claude", "settings.json")); fs.push(join(cwd, ".claude", "settings.local.json")); }
+    return fs;
+  }
+  if (h === "codex") return [join(home, ".codex", "auth.json"), join(home, ".codex", "config.toml")];
+  if (h === "gemini") return [join(home, ".gemini", "settings.json")];
+  if (h === "pi") return [join(home, ".pi", "agent", "auth.json")];
+  if (h === "opencode") return [join(home, ".local", "share", "opencode", "auth.json")];
+  return [];
+}
 // current config of harness h under home (cwd: the session's project, for project settings)
 export function configEv(h: string, home: string, cwd: string): Evid {
   const ev = newEvid();

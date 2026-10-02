@@ -43,6 +43,12 @@ export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "" };
 }
+// billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
+// stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
+export function stamp(a: Acc, bill: string, plan: string, src: string): void {
+  if (src === "config" || !bill) return;
+  if (a.billSrc === "" || (src === "session" && a.billSrc !== "session")) { a.bill = bill; a.plan = plan; a.billSrc = src; }
+}
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
   return { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
