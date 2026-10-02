@@ -7,6 +7,7 @@ import { scan, buildView } from "./model/sessions.ts";
 import { refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
 import { buf, put, renderModal } from "./ui/screen.ts";
+import { flush } from "./ui/frame.ts";
 import { renderHeader } from "./ui/header.ts";
 import { renderFooter } from "./ui/footer.ts";
 import { renderSessions } from "./ui/list.ts";
@@ -29,6 +30,7 @@ import "./features/prices.ts";
 import "./features/update.ts";
 
 function render(): void {
+  S.dirty = false; S.animating = false; // spin() sets animating again while something on screen turns
   buf.length = 0;
   buf.push("\x1b[?2026h");
   renderHeader();
@@ -49,7 +51,7 @@ function render(): void {
   if (mode === "help") renderHelp();
   buf.push("\x1b[?2026l");
   if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
-  process.stdout.write(buf.join(""));
+  flush(buf.join(""), (s: string) => { process.stdout.write(s); });
 }
 
 function main(): void {
