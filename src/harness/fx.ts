@@ -7,7 +7,7 @@ import { FX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, nlines, num } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, nlines, num, modelTok, addCost, unpriced } from "../features/usage/record.ts";
 import { done, patchFiles } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, turnBusy } from "./common.ts";
@@ -106,8 +106,10 @@ function usageSidecar(s: Sess, a: Acc): void {
   const d = bucket(a, mt, "");
   const inp = dl[0] ?? 0; const out = dl[1] ?? 0; const cr = dl[2] ?? 0; const cw = dl[3] ?? 0; const c = dl[4] ?? 0;
   a.inTok += inp; a.outTok += out; a.cr += cr; a.cw += cw; d.inTok += inp; d.outTok += out; d.cr += cr; d.cw += cw;
-  if (c > 0) { a.cost += c; d.cost += c; }
-  else if ((cur[4] ?? 0) === 0 && a.unk === 0) { a.unk = 1; d.unk += 1; } // custom model connections report $0 → unknown
+  const md = a.model || "fx:custom"; const nt = inp + out + cr + cw;
+  if (nt > 0) modelTok(d, md, inp, out, cr, cw);
+  if (c > 0) addCost(a, d, c, "", md);
+  else if ((cur[4] ?? 0) === 0 && nt > 0) unpriced(a, d, md, nt); // custom model connections report $0: their tokens are unpriced
   lines(a, d, dl[5] ?? 0, dl[6] ?? 0);
 }
 

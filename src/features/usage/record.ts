@@ -5,9 +5,14 @@
 import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 
-// one local day of one session; unk = tokens (or fx turns) whose price is unknown
+// one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro)
 // tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"
-export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
+// cp = cost per provider ("" = the session's single provider), hc = cost per local hour,
+// mt = per model [in, out, cacheRead, cacheWrite, costUsd] (same model key as um)
+export interface Day {
+  tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
+  um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>;
+}
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Set<string>; days: Map<string, Day>; model: string;
@@ -15,6 +20,8 @@ export interface Acc {
   ep: string; // the source's cursor epoch off counts in (SessionSource.epoch)
   x: number[]; xM: number; // the harness adapter's own running state (codex: cumulative token counters; fx: usage snapshot + its mtime)
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
+  uc: number; // credits without a rate (kiro)
+  bill: string; plan: string; billSrc: string; // billing mode stamped from evidence ("" = not stamped; billSrc "session" | "process")
 }
 export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rlPct: -1, rlWin: 0, rlReset: 0, rlAt: 0 }; // rl* = latest Codex primary rate limit
 
@@ -34,7 +41,12 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0 };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "" };
+}
+export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
+export function newDay(): Day {
+  return { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
+    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>() };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
 let tsKey = ""; let tsDay = ""; let tsHour = 0;
@@ -44,7 +56,7 @@ export function bucket(a: Acc, ms: number, iso: string): Day {
     if (k !== tsKey) { const d = new Date(iso); tsKey = k; tsDay = dayKey(d); tsHour = d.getHours(); }
   } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); }
   let d = a.days.get(tsDay);
-  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
+  if (!d) { d = newDay(); a.days.set(tsDay, d); }
   return d;
 }
 export function tool(a: Acc, d: Day, name: string): TS {
@@ -99,17 +111,60 @@ function count(a: Acc, d: Day, nIn: number, nOut: number, nCr: number, w5: numbe
   a.inTok = a.inTok + nIn; a.outTok = a.outTok + nOut; a.cr = a.cr + nCr; a.cw = a.cw + w5 + w1;
   d.inTok = d.inTok + nIn; d.outTok = d.outTok + nOut; d.cr = d.cr + nCr; d.cw = d.cw + w5 + w1;
 }
-// the harness reports its own cost (OpenCode, pi): booked as is; usd <= 0 = unknown (0 for models it has no price for) → priced like tokens()
-export function usageExact(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number): void {
-  if (usd <= 0) { tokens(a, d, model, nIn, nOut, nCr, w5, w1); return; }
-  count(a, d, nIn, nOut, nCr, w5, w1);
-  a.cost += usd; d.cost += usd;
+// the per-model key of um/mt: the model as booked without gemini's leading "?" (its unpriced marker)
+function mkey(model: string): string { const m = model.startsWith("?") ? model.slice(1) : model; return m || "unknown"; }
+function slot(d: Day, model: string): number[] {
+  const k = mkey(model); let r = d.mt.get(k);
+  if (!r) { r = [0, 0, 0, 0, 0]; d.mt.set(k, r); }
+  return r;
 }
-export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number): void {
+// tokens into the day's per-model bucket (totals are count()'s or the adapter's own business)
+export function modelTok(d: Day, model: string, nIn: number, nOut: number, nCr: number, nCw: number): void {
+  const r = slot(d, model);
+  r[0] = (r[0] ?? 0) + nIn; r[1] = (r[1] ?? 0) + nOut; r[2] = (r[2] ?? 0) + nCr; r[3] = (r[3] ?? 0) + nCw;
+}
+// a priced amount: session + day totals, the provider's share, the local hour of the last bucket() call, the model's bucket
+export function addCost(a: Acc, d: Day, usd: number, prov: string, model: string): void {
+  a.cost = a.cost + usd; d.cost = d.cost + usd; // spelled out: SC1043
+  d.cp.set(prov, (d.cp.get(prov) ?? 0) + usd);
+  d.hc[tsHour] = (d.hc[tsHour] ?? 0) + usd;
+  const r = slot(d, model); r[4] = (r[4] ?? 0) + usd;
+}
+// tokens without a price, per model
+export function unpriced(a: Acc, d: Day, model: string, n: number): void {
+  a.unk = a.unk + n; d.unk = d.unk + n;
+  const k = mkey(model); d.um.set(k, (d.um.get(k) ?? 0) + n);
+}
+// credits without a $ rate (kiro): a unit of their own, never mixed into tokens
+export function credits(a: Acc, d: Day, n: number): void { a.uc = a.uc + n; d.uc = d.uc + n; }
+// the harness reports its own cost (OpenCode, pi): booked as is; usd <= 0 = unknown (0 for models it has no price for) → priced like tokens()
+export function usageExact(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number, prov = ""): void {
+  if (usd <= 0) { tokens(a, d, model, nIn, nOut, nCr, w5, w1, prov); return; }
   count(a, d, nIn, nOut, nCr, w5, w1);
+  modelTok(d, model, nIn, nOut, nCr, w5 + w1);
+  addCost(a, d, usd, prov, model);
+}
+export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, prov = ""): void {
+  count(a, d, nIn, nOut, nCr, w5, w1);
+  modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   const p = price(model);
-  if (p) { const c = cost(p, nIn, nOut, nCr, w5, w1); a.cost += c; d.cost += c; }
-  else { const t = nIn + nOut + nCr + w5 + w1; a.unk += t; d.unk += t; }
+  if (p) addCost(a, d, cost(p, nIn, nOut, nCr, w5, w1), prov, model);
+  else unpriced(a, d, model, nIn + nOut + nCr + w5 + w1);
+}
+
+export interface ModelUse { model: string; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number } // unk = unpriced tokens (um)
+// per-model tokens/cost/unpriced over the given local days (null = all): cost desc, then tokens desc, then model
+export function modelUses(a: Acc, days: string[] | null): ModelUse[] {
+  const by = new Map<string, ModelUse>();
+  const use = (k: string): ModelUse => { let u = by.get(k); if (!u) { u = { model: k, inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0 }; by.set(k, u); } return u; };
+  for (const [k, d] of a.days) {
+    if (days && days.indexOf(k) < 0) continue;
+    for (const [m, r] of d.mt) { const u = use(m); u.inTok += r[0] ?? 0; u.outTok += r[1] ?? 0; u.cr += r[2] ?? 0; u.cw += r[3] ?? 0; u.cost += r[4] ?? 0; }
+    for (const [m, n] of d.um) { const u = use(m); u.unk += n; }
+  }
+  const out = [...by.values()];
+  out.sort((x, y) => y.cost - x.cost || (y.inTok + y.outTok) - (x.inTok + x.outTok) || (x.model < y.model ? -1 : x.model > y.model ? 1 : 0));
+  return out;
 }
 
 // every file an apply_patch-style patch touches: lines and per-file counts

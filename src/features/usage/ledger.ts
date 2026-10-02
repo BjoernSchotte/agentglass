@@ -56,7 +56,8 @@ function step(s: Sess, a: Acc): number {
 }
 function apply(s: Sess, a: Acc): void {
   s.inTok = a.inTok; s.outTok = a.outTok; s.cacheRTok = a.cr; s.cacheWTok = a.cw;
-  s.cost = a.unk > 0 && a.cost === 0 ? -1 : a.cost;
+  s.unkTok = a.unk; s.unkCr = a.uc;
+  s.cost = (a.unk > 0 || a.uc > 0) && a.cost === 0 ? -1 : a.cost;
   s.tools = a.tools; s.linesAdd = a.add; s.linesDel = a.del;
 }
 function rank(s: Sess, sod: number): number {

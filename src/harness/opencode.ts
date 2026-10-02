@@ -239,7 +239,7 @@ function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; ne
     const last = res.length ? res[res.length - 1] : null;
     return { lines: out, next: last && num(last["cut"]) === 1 ? num(last["seq"]) + 1 : to };
   }
-  const res = query(r.db, "select json_object('v1',1,'role',json_extract(md,'$.role'),'model',json_extract(md,'$.modelID'),'t',mt,'copied',mt < " + f + ",'part',json(pd)) l" +
+  const res = query(r.db, "select json_object('v1',1,'role',json_extract(md,'$.role'),'model',json_extract(md,'$.modelID'),'prov',json_extract(md,'$.providerID'),'t',mt,'copied',mt < " + f + ",'part',json(pd)) l" +
     " from (select md, mt, pd, k, n, sum(n) over (order by k) c from (select m.data md, m.time_created mt, pt.data pd, length(pt.data) n," +
     " row_number() over (order by m.time_created, m.id, pt.id) k from part pt join message m on m.id=pt.message_id where pt.session_id=" + q(r.id) + ")" +
     " where k > " + String(from) + " and k <= " + String(to) + ") where c - n < " + budget + " order by k");
@@ -326,11 +326,11 @@ function parse1(o: Obj, out: Ev[], s: Sess | null): void {
 function parse(o: Obj, out: Ev[], s: Sess | null): void { if (o["v1"] !== undefined) parse1(o, out, s); else parse2(o, out, s); }
 
 // ── usage: 2.x assistant rows carry cost + tokens; 1.x books the step-finish parts (one per assistant message) ──
-function book(a: Acc, d: Day, model: string, tk: Obj | null, usd: number): void {
+function book(a: Acc, d: Day, model: string, tk: Obj | null, usd: number, prov: string): void {
   if (!tk) return;
   const c = obj(tk["cache"]);
   if (model) a.model = model;
-  usageExact(a, d, model || a.model, num(tk["input"]), num(tk["output"]) + num(tk["reasoning"]), c ? num(c["read"]) : 0, c ? num(c["write"]) : 0, 0, usd);
+  usageExact(a, d, model || a.model, num(tk["input"]), num(tk["output"]) + num(tk["reasoning"]), c ? num(c["read"]) : 0, c ? num(c["write"]) : 0, 0, usd, prov);
 }
 function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: number, t1: number): void {
   const ts = tool(a, d, name);
@@ -363,7 +363,7 @@ function usage(a: Acc, l: string): void {
     const p = obj(o["part"]); if (!p) return;
     const t = num(o["t"]); const d = bucket(a, t, "");
     const pt = str(p["type"]);
-    if (pt === "step-finish") book(a, d, str(o["model"]), obj(p["tokens"]), num(p["cost"]));
+    if (pt === "step-finish") book(a, d, str(o["model"]), obj(p["tokens"]), num(p["cost"]), str(o["prov"]));
     else if (pt === "tool") { const st = obj(p["state"]); useTool(a, d, str(p["tool"]) || "tool", str(p["callID"]), st, tm(st, "start"), tm(st, "end")); }
     return;
   }
@@ -371,7 +371,7 @@ function usage(a: Acc, l: string): void {
   const o = parseJson(l); if (!o || o["copied"] === 1) return;
   const d = bucket(a, tm(o, "created"), "");
   const m = obj(o["model"]);
-  book(a, d, m ? str(m["id"]) : "", obj(o["tokens"]), num(o["cost"]));
+  book(a, d, m ? str(m["id"]) : "", obj(o["tokens"]), num(o["cost"]), m ? str(m["providerID"]) : "");
   for (const b of arr(o["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "tool") continue;
     useTool(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["state"]), tm(bo, "ran") || tm(bo, "created"), tm(bo, "completed"));

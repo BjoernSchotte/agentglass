@@ -7,7 +7,7 @@ import { HOME, readText } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
-import { L, type Acc, type Day } from "./record.ts";
+import { L, type Acc, type Day, zeros } from "./record.ts";
 import { PRICES_SIG } from "./pricing.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
@@ -48,7 +48,8 @@ function dayIn(o: Obj): Day {
     tt.set(k, { n: num(s["n"]), err: num(s["e"]), dn: num(s["dn"]), ms: num(s["ms"]), max: num(s["mx"]), out: num(s["o"]), hist: padTo(nums(s["hi"]), HB), h: padTo(nums(s["h"]), 24), slow: recsIn(s["s"]), errs: recsIn(s["x"]) });
   }
   const hours = padTo(nums(o["h"]), 24);
-  return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]) };
+  return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
+    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>() };
 }
 function accOut(a: Acc): Obj {
   const days: Obj = {};
@@ -68,7 +69,7 @@ function accIn(o: Obj): Acc {
   if (dd) for (const k of Object.keys(dd)) { const d = obj(dd[k]); if (d) days.set(k, dayIn(d)); }
   return {
     off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), ep: str(o["ep"]), x: nums(o["x"]), xM: num(o["xM"]),
-    inTok: at(0), outTok: at(1), cr: at(2), cw: at(3), cost: at(4), unk: at(5), tools: at(6), add: at(7), del: at(8),
+    inTok: at(0), outTok: at(1), cr: at(2), cw: at(3), cost: at(4), unk: at(5), tools: at(6), add: at(7), del: at(8), uc: 0, bill: "", plan: "", billSrc: "",
   };
 }
 
