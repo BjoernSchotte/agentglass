@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
 import { newAcc, stamp } from "./record.ts";
-import { type Evid, type Bill, rule, provRule, modelBill, envSummary, configEv, planLabel, tag, MODES } from "./billing.ts";
+import { type Obj, parse } from "../../util/json.ts";
+import { type Evid, type Bill, allowanceOf, rule, provRule, modelBill, envSummary, configEv, planLabel, tag, MODES } from "./billing.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -80,5 +81,26 @@ stamp(sa, "api", "", "process"); ok("process stamps", sa.bill === "api" && sa.bi
 stamp(sa, "metered", "", "session"); ok("session beats process", sa.bill === "metered" && sa.billSrc === "session", sa.bill);
 stamp(sa, "api", "", "process"); ok("process never beats session", sa.bill === "metered" && sa.billSrc === "session", sa.bill);
 stamp(sa, "plan", "pro", "session"); ok("first session evidence stays", sa.bill === "metered", sa.bill);
+// Claude plan allowance: pinned cache shape, staleness and per-window guards
+const NOW = Date.now();
+const iso = (ms: number): string => new Date(ms).toISOString();
+const cu = (fetched: number, h5: string, d7: string): Obj | null => parse("{\"cachedUsageUtilization\":{\"fetchedAtMs\":" + String(fetched) + ",\"utilization\":{" + [h5 ? "\"five_hour\":" + h5 : "", d7 ? "\"seven_day\":" + d7 : ""].filter((x: string) => x !== "").join(",") + "}}}");
+const win = (u: string, r: string): string => "{\"utilization\":" + u + ",\"resets_at\":\"" + r + "\"}";
+const in1h = iso(NOW + 3600000); const in3d = iso(NOW + 3 * 86400000);
+const al = allowanceOf(cu(NOW - 60000, win("15", in1h), win("71", in3d)), NOW);
+ok("allowance both", !!al && !!al.h5 && !!al.d7 && al.h5.pct === 15 && al.d7.pct === 71 && al.hi === "7d", JSON.stringify(al));
+const a2 = allowanceOf(cu(NOW - 60000, win("80", in1h), win("71", in3d)), NOW);
+ok("allowance 5h fuller", !!a2 && a2.hi === "5h", JSON.stringify(a2));
+const at = allowanceOf(cu(NOW - 60000, win("50", in1h), win("50", in3d)), NOW);
+ok("allowance tie → 7d", !!at && at.hi === "7d", "");
+ok("allowance stale", allowanceOf(cu(NOW - 7200000, win("15", in1h), win("71", in3d)), NOW) === null, "");
+ok("allowance renamed field", allowanceOf(parse("{\"cachedUsageUtilization\":{\"fetchedAtMs\":" + String(NOW) + ",\"utilization\":{\"five_hour\":{\"util\":15,\"resets_at\":\"" + in1h + "\"},\"seven_day\":{\"util\":71,\"resets_at\":\"" + in3d + "\"}}}}"), NOW) === null, "");
+const a3 = allowanceOf(cu(NOW - 60000, win("15", in1h), win("140", in3d)), NOW);
+ok("allowance out of range window", !!a3 && !!a3.h5 && a3.d7 === null && a3.hi === "5h", JSON.stringify(a3));
+const a4 = allowanceOf(cu(NOW - 60000, win("0.42", in1h), ""), NOW);
+ok("allowance fraction scaled", !!a4 && !!a4.h5 && a4.h5.pct === 42 && a4.d7 === null && a4.hi === "5h", JSON.stringify(a4));
+ok("allowance bad resets", allowanceOf(cu(NOW - 60000, win("15", "soon"), win("71", "soon")), NOW) === null, "");
+ok("allowance past reset", allowanceOf(cu(NOW - 60000, win("15", iso(NOW - 1000)), ""), NOW) === null, "");
+ok("allowance no block", allowanceOf(parse("{\"x\":1}"), NOW) === null && allowanceOf(null, NOW) === null, "");
 console.log(bad ? bad + " failed" : "billing: all checks passed");
 if (bad) process.exit(1);

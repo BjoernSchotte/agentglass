@@ -188,3 +188,27 @@ export function configEv(h: string, home: string, cwd: string): Evid {
 }
 // --redact: plan names are type words (team, pro, max_5x); anything else could be an organisation's name
 export function planLabel(plan: string, redact: boolean): string { return redact && !/^[a-z0-9_]+$/.test(plan) ? "plan" : plan; }
+
+// ── Claude plan allowance (~/.claude.json cachedUsageUtilization): undocumented, so behind a staleness + shape guard ──
+// Pinned shape: {fetchedAtMs, utilization: {five_hour|seven_day: {utilization 0–100, resets_at ISO}}}. If Claude Code
+// changes it once, update this check; a second change removes the gauge instead of chasing it.
+export interface Win { pct: number; reset: number }
+export interface Allow { h5: Win | null; d7: Win | null; hi: string } // hi = the fuller window, "5h" | "7d"
+function winOf(v: unknown, now: number): Win | null {
+  const o = obj(v); if (!o) return null;
+  const u = o["utilization"]; if (typeof u !== "number") return null;
+  let pct = u as number;
+  if (pct > 0 && pct < 1 && Math.floor(pct) !== pct) pct = pct * 100; // a 0–1 fraction
+  if (!(pct >= 0 && pct <= 100)) return null;
+  const r = str(o["resets_at"]); const t = r ? new Date(r).getTime() : 0;
+  if (!(t > now)) return null;
+  return { pct: Math.round(pct), reset: t };
+}
+export function allowanceOf(o: Obj | null, now: number): Allow | null {
+  const c = o ? obj(o["cachedUsageUtilization"]) : null; if (!c) return null;
+  const f = c["fetchedAtMs"]; if (typeof f !== "number" || now - (f as number) > 3600000) return null;
+  const u = obj(c["utilization"]); if (!u) return null;
+  const h5 = winOf(u["five_hour"], now); const d7 = winOf(u["seven_day"], now);
+  if (!h5 && !d7) return null;
+  return { h5, d7, hi: h5 && (!d7 || h5.pct > d7.pct) ? "5h" : "7d" };
+}
