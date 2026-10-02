@@ -4,7 +4,7 @@ import { openSync, writeSync, closeSync, mkdirSync, rmSync, appendFileSync, copy
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
-import { type Acc, type Day, newAcc } from "../features/usage/record.ts";
+import { type Acc, type Day, newAcc, skillUses } from "../features/usage/record.ts";
 import { applyUserPrices } from "../features/usage/pricing.ts";
 import type { SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
@@ -286,6 +286,12 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   ok("lines: diffStat preferred, write_file from its content", a.add === 5 && a.del === 1 && fs.sort().join(" ") === "replace\t/w/a.js:3/1 write_file\tb.js:2/0", a.add + "/" + a.del + " " + fs.join(" "));
   ok("no pending calls", a.pend.size === 0, String(a.pend.size));
 }
+{
+  const sk = "{\"id\":\"k9\",\"name\":\"activate_skill\",\"args\":{\"name\":\"ponytail\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\"}";
+  const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash", "", sk)]);
+  const u = skillUses(a, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
+  ok("activate_skill: a model skill use", u === "model\tponytail=1" && a.tools === 1, u);
+}
 // the ledger reads windows of the normalized stream: any split books the same totals, each message's tokens once
 {
   const s = sess(P); const end = bytes(FULL);
@@ -293,6 +299,8 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   ok("stream: tokens of m2 and m4 once", whole.inTok === 610 + 2000 && whole.outTok === 150 + 20 && whole.cr === 400 && whole.tools === 3, whole.inTok + "/" + whole.outTok + "/" + whole.tools);
   for (let i = 1; i < starts.length; i++) {
     const a = newAcc(); for (const l of src.lines(s, 0, starts[i]).lines) gemini.usage(a, l); for (const l of src.lines(s, starts[i], end).lines) gemini.usage(a, l);
+    let ta = 0; for (const d of a.days.values()) ta += d.turns; let tw = 0; for (const d of whole.days.values()) tw += d.turns;
+    ok("stream split " + String(i) + ": same turns", ta === tw && tw > 0, String(ta) + "/" + String(tw));
     ok("stream split " + String(i) + ": same totals", a.inTok === whole.inTok && a.outTok === whole.outTok && near(a.cost, whole.cost) && a.tools === whole.tools && a.add === whole.add, a.inTok + "/" + a.tools);
   }
 }

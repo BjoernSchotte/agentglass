@@ -6,7 +6,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readBytes, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, turn, nlines, num, isoMs } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, turn, skill, nlines, num, isoMs } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import { price } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
@@ -311,6 +311,7 @@ function usage(a: Acc, l: string): void {
     const c = obj(v); if (!c) continue;
     const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
     const st = tool(a, d, name);
+    if (name === "activate_skill" && args) skill(d, "model", str(args["name"]));
     pend(a, d, st, name, id, t0, iso, callArg(name, args), name === "run_shell_command" && args ? [str(args["command"])] : []);
     const ok = str(c["status"]) === "success";
     const p = a.pend.get(id);

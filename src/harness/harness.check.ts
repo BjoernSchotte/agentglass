@@ -280,6 +280,22 @@ function skills(lines: string[], resumeAt: number): string {
   const gt = summary(buildGraph([{ evs: claudeEvs(TL), live: false, kind: "", spawn: "" }], Date.now())).turns;
   ok("claude turns = call graph turns", gt === 3, String(gt));
 }
+// Codex skills: Codex injects <skill> only for an explicit $name mention (codex-rs skills/injection.rs) → command; OpenCode skill rows → model
+{
+  const cx = (t: string, at: string): string => "{\"timestamp\":\"2026-10-01T10:00:0" + at + ".000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":" + JSON.stringify(t) + "}]}}";
+  const a = newAcc(); const ad = harnessOf("codex");
+  for (const l of [cx("use $agtest-hello", "1"), cx("<skill>\n<name>agtest-hello</name>\n<path>/h/.codex/skills/agtest-hello/SKILL.md</path>\nAnswer hello\n</skill>", "2"), cx("<environment_context>x</environment_context>", "3")]) ad.usage(a, l);
+  const u = skillUses(a, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
+  let tu = 0; for (const d of a.days.values()) tu += d.turns;
+  ok("codex: <skill> message is a command skill use, not a turn", u === "command\tagtest-hello=1" && tu === 1, u + " turns " + String(tu));
+  const evs: Ev[] = []; parseEvents("codex", cx("<skill>\n<name>x</name>\n</skill>", "4"), evs, null);
+  ok("codex: <skill> message stays out of the transcript", evs.length === 0, JSON.stringify(evs));
+  const o = newAcc();
+  harnessOf("opencode").usage(o, "{\"type\":\"skill\",\"seq\":4,\"name\":\"brainstorming\",\"time\":{\"created\":1790688000000}}");
+  harnessOf("opencode").usage(o, "{\"type\":\"skill\",\"seq\":5,\"name\":\"brainstorming\",\"copied\":1,\"time\":{\"created\":1790688000000}}");
+  const ou = skillUses(o, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
+  ok("opencode: skill row is a model skill use, a fork's copy is not", ou === "model\tbrainstorming=1", ou);
+}
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {
   const a = newAcc(); const d = bucket(a, 0, "2026-01-02T10:00:00Z");

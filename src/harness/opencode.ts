@@ -11,7 +11,7 @@ import { query, q, sqliteBin } from "../util/sqlite.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { say } from "../state.ts";
-import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, turn, nlines, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, turn, skill, nlines, num, patchLines } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live, SessionSource } from "./types.ts";
 import { toolArg, blockText, prompts } from "./common.ts";
@@ -369,6 +369,7 @@ function usage(a: Acc, l: string): void {
     else if (pt === "tool") { const st = obj(p["state"]); useTool(a, d, str(p["tool"]) || "tool", str(p["callID"]), st, tm(st, "start"), tm(st, "end")); }
     return;
   }
+  if (l.startsWith("{\"type\":\"skill\"")) { const o = parseJson(l); if (o && o["copied"] !== 1) skill(bucket(a, tm(o, "created"), ""), "model", str(o["name"])); return; }
   if (l.startsWith("{\"type\":\"user\"")) { const o = parseJson(l); const n = o && o["copied"] !== 1 ? prompts(parse, o) : 0; if (o && n) turn(bucket(a, tm(o, "created"), ""), n); return; }
   if (!l.startsWith("{\"type\":\"assistant\"") && !l.startsWith("{\"type\":\"compaction\"")) return;
   const o = parseJson(l); if (!o || o["copied"] === 1) return;

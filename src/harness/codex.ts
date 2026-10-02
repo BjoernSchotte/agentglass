@@ -7,7 +7,7 @@ import { CODEX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
-import { type Acc, L, bucket, tool, pend, tokens, turn, isoMs, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, L, bucket, tool, pend, tokens, turn, skill, isoMs, num, patchLines } from "../features/usage/record.ts";
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
@@ -97,8 +97,13 @@ function usage(a: Acc, l: string): void {
     return;
   }
   if (h.indexOf("\"type\":\"response_item\"") >= 0 && h.indexOf("\"role\":\"user\"") >= 0) { // prompts (injected context is noise)
-    const o = parseJson(l); const n = o ? prompts(parse, o) : 0;
-    if (o && n) turn(bucket(a, 0, str(o["timestamp"])), n);
+    const o = parseJson(l); if (!o) return;
+    const iso = str(o["timestamp"]);
+    if (h.indexOf("\"text\":\"<skill>") >= 0) { // Codex injects a skill's SKILL.md only for an explicit $name mention: a command use
+      const p = obj(o["payload"]); const m = /<name>([^<]*)<\/name>/.exec(p ? blockText(p["content"]) : "");
+      const nm = m ? (m[1] ?? "").trim() : ""; if (nm) skill(bucket(a, 0, iso), "command", nm);
+    }
+    const n = prompts(parse, o); if (n) turn(bucket(a, 0, iso), n);
     return;
   }
   if (!tc && !ctx && !call) return;
