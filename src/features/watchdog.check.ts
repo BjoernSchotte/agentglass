@@ -5,7 +5,7 @@ import { newSess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
 import { S } from "../state.ts";
 import { H } from "../hooks.ts";
-import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, stuckOf } from "./watchdog.ts";
+import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, stuckOf, alarmOf } from "./watchdog.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -33,6 +33,17 @@ const now = 1000000000;
 const base: Obs = { now, mtime: now - 45000, busy: true, evs: [ev("user", "x"), call], cpu: flat(10, 0.2), cmds: [], subsActive: false };
 eq("approval", approvalNote(base).slice(0, 12), "Bash pending");
 eq("approval: idle", approvalNote({ now, mtime: base.mtime, busy: false, evs: base.evs, cpu: base.cpu, cmds: [], subsActive: false }), "");
+// the agent's terminal says so (Gemini's tmux pane title "✋ Action Required"): Gemini logs the reply text but the tool
+// call only once it ran, so the log looks like a finished turn and no tool is pending; idle, busy CPU, at once
+eq("approval: title, at once", approvalNote({ now, mtime: now, busy: false, evs: [ev("assistant", "I will run mkdir x")], cpu: [], cmds: [], subsActive: false, asks: true }), "approval dialog open");
+eq("approval: no title", approvalNote({ now, mtime: now, busy: false, evs: [ev("assistant", "I will run mkdir x")], cpu: [], cmds: [], subsActive: false, asks: false }), "");
+// which alarm a look raises: approval wins over the turn that only looks finished
+eq("alarm: approval over turn finished", alarmOf(true, false, true, true), "approval?");
+eq("alarm: busy → idle", alarmOf(true, false, false, false), "turn finished");
+eq("alarm: turn between looks", alarmOf(false, false, true, false), "turn finished");
+eq("alarm: nothing new", alarmOf(false, false, false, false), "");
+eq("alarm: still busy", alarmOf(true, true, true, false), "");
+eq("alarm: approval while busy-looking", alarmOf(false, true, false, true), "approval?");
 eq("approval: fresh cmd runs", approvalNote({ now, mtime: base.mtime, busy: true, evs: base.evs, cpu: base.cpu, cmds: [{ age: 30, name: "sleep" }], subsActive: false }), "");
 eq("approval: too soon", approvalNote({ now, mtime: now - 5000, busy: true, evs: base.evs, cpu: base.cpu, cmds: [], subsActive: false }), "");
 eq("stuck: long cmd", stuckOf({ now, mtime: base.mtime, busy: true, evs: base.evs, cpu: base.cpu, cmds: cmds, subsActive: false })[0] ?? "", "long cmd");
