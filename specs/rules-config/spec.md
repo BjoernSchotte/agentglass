@@ -87,7 +87,7 @@ All of this is in `src/features/watchdog.ts`:
   | `params` | object | per metric | metric tuning, e.g. `{"cpu_below": 2}` |
   | `ack` | `"look"` \| `"none"` | `"none"` | `look`: the alert is acknowledged when the session is selected > 1 s or its transcript is open |
   | `notify` | bool | `true` | bell, desktop and command on transitions (decision 5) |
-  | `message` | template | per metric | placeholders `{value} {threshold} {severity} {rule} {tool} {title} {project} {harness}` |
+  | `message` | template | per metric | placeholders `{value} {threshold} {severity} {rule} {tool} {title} {project} {harness} {cpu} {cmd}` (`{cpu}`: the process CPU % of the latest sample, `{cmd}`: the running command; empty for metrics without them) |
   | `labels` | `{string: string}`, ≤ 16 | `{}` | passed through to the preview, JSON, `--watch` and the command |
   | `enabled` | bool | `true` | |
 
@@ -148,6 +148,12 @@ spinning  spinning       op >   critical 3m               notify false  message 
   must repeat `ack`/`notify`/`message` it wants, because only same-`id` rules merge.
 - First sight records only, because `turn_done` needs a transition this run. `--json` therefore reports `attention`
   only for a current `approval_wait`, as `watchdog.ts:168` does.
+- **One-shot `--json` snapshot** (no tick history): every enabled rule in scope is evaluated once on the current state.
+  `for` is judged from the session's recorded timestamps, not from ticks: a duration metric has held its threshold for
+  `value − threshold`; any other metric since the recorded timestamp of the newest record behind its value (call row
+  `t`, else `s.last`) — a lower bound, so a snapshot never fires earlier than the TUI would. `turn_done` with threshold 0 (the built-in `waiting`)
+  stays absent (it needs a transition); a `turn_done` rule with a threshold > 0 gets `now − last recorded activity`
+  when the session is idle. A snapshot never rings the bell, notifies or runs the command, and acknowledges nothing.
 - One visible difference: the preview lists **every** firing alert. With the built-ins, a second ⚠ line can appear
   only when `loop` fires together with `long-cmd`, `stalled` or `spinning`.
 - `watchdog.check.ts` keeps its cases. A new equivalence check runs the old helpers and the rule engine over the
@@ -161,7 +167,8 @@ spinning  spinning       op >   critical 3m               notify false  message 
   3. a level fires once it has held continuously for `for`;
   4. emit transitions `fire` (0 → n), `escalate` (1 → 2), `deescalate` (2 → 1) and `resolve` (n → 0).
 - A session that stops being watched resolves all its alerts silently, as today's `watchdog.ts:138`.
-- The watchdog tick calls the engine. The TUI parts of `watchdog.ts` (badges, preview, header, `!`, help) read engine
+- The watchdog tick (`H.onTick`, 500 ms) calls the engine. When adaptive-refresh lands, the call moves to its
+  `H.onWatch` alarm job (1.5 s while agents are live); whichever of the two specs merges second does the move. The TUI parts of `watchdog.ts` (badges, preview, header, `!`, help) read engine
   state instead of `St`.
 - An alert log: an in-memory ring of the last 500 transitions `{at, session, rule, from, to, value}`. The help
   popup's rules section shows the newest. related-events reads it.
@@ -265,6 +272,12 @@ fakes titles and projects in all outputs, including the command's stdin and env.
 1. `turn_done` with a threshold > 0: ring at the transition or at the threshold? At the threshold (3).
 2. Per-harness `turn_done`? Via `where: "harness is …"` copies; no override block (3, 8).
 3. Notify command for alerts already acknowledged by looking? Yes, it runs on state transitions regardless (5).
+
+4. Placeholders `{cpu}` and `{cmd}`? Yes — the built-in messages use them; empty where a metric has none (1).
+5. `for` and `turn_done` in a one-shot `--json` snapshot? Current state is evaluated, `for` from recorded timestamps,
+   threshold-0 `turn_done` absent, no bell/desktop/command (3).
+6. Tick source? The watchdog tick until adaptive-refresh's `H.onWatch` exists; the second of the two to merge moves it
+   (4).
 
 ## Open questions (to verify during implementation)
 1. Does scriptc's `JSON.parse` error text carry a position (7)? If not, the position scanner is required.

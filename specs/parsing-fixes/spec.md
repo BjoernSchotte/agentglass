@@ -33,7 +33,7 @@ periodically, **`ai-title` right after `custom-title`** (local session: 33 pairs
 
 **L2 iterations — not handled.** `usage()` books the top-level `message.usage` once per `message.id`
 (`claude.ts:96-109`, dedupe at `:103`). Real shape (local):
-`usage.iterations: [{…tokens, cache_creation{ephemeral_5m,1h}, type:"message", model:"claude-fable-5"},
+`usage.iterations: [{…tokens, cache_creation:{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}, type:"message", model:"claude-fable-5"},
 {…, type:"fallback_message", model:"claude-opus-4-8"}]`, `message.model = "claude-opus-4-8"`; the top-level usage
 mirrors only the last attempt (and inconsistently keeps the first attempt's `ephemeral_1h_input_tokens` while
 `cache_creation_input_tokens` is 0). Every streamed line of the message carries the same `iterations`. 178,906 local
@@ -88,7 +88,8 @@ checked 2026-09-27 — keep first-line dedupe.
 ### 2. Claude fallback iterations (L2)
 In `usage()` after the id dedupe: `its = arr(u["iterations"])`. If `its.length >= 2`, book **each** iteration via
 `tokens()` with its own `model` (fallback `message.model`), its own `input/output/cache_read`, and its own
-`cache_creation.ephemeral_{5m,1h}` split (fallback: all of `cache_creation_input_tokens` as 5 m); skip the top-level
+`cache_creation.ephemeral_5m_input_tokens` / `cache_creation.ephemeral_1h_input_tokens` split (fallback: all of
+`cache_creation_input_tokens` as 5 m); skip the top-level
 numbers. `<synthetic>` iterations are skipped like today. One or zero iterations: unchanged. The session's `a.model`
 stays `message.model` (the model that answered). Stats per model show the failed attempt under its own model. Ledger
 cache `VERSION` bump so existing sessions re-index (shared bump with honest-costs if both ship together).
@@ -96,11 +97,14 @@ cache `VERSION` bump so existing sessions re-index (shared bump with honest-cost
 ### 3. Turn boundaries and prompt noise (L9)
 New `classifyUser(o, text): "human" | "notify" | "peer" | "meta" | "noise"` in `src/harness/claude.ts`, exported for
 the call graph and OTLP export:
+0. **Known tags first**, before any origin: a leading noise tag (the list in 2) → `noise`; `<bash-input>` → `meta`;
+   `<command-name>`/`<command-message>` → the command path. Hook or command output that carries `origin.kind:"human"`
+   therefore never becomes a prompt or opens a turn.
 1. `origin.kind` if present: `human` → `human`; `task-notification`, `auto-continuation` → `notify`; `peer` → `peer`.
    `turnOrigin` the same (`human` / `task_notification`, `auto_continuation`, `peer`, `scheduled`, `sdk`). `sdk` and
    `scheduled` count as **human** turns (a person or their script asked): they open a turn, count in turn totals and
    are a turn root in OTLP export, exactly like typed prompts.
-2. Fallback for older transcripts — known leading tags only: `<task-notification>` → `notify`;
+2. Fallback for older transcripts (no origin) — known leading tags only: `<task-notification>` → `notify`;
    `<command-name>`/`<command-message>` → handled by the existing command path (`claude.ts:52-54`);
    `<local-command-stdout>`, `<local-command-caveat>`, `<system-reminder>`, `<bash-stdout>`, `<bash-stderr>`,
    `<user-prompt-submit-hook>` → `noise`; `<bash-input>` → `meta` (`! <cmd>`).
@@ -116,6 +120,12 @@ the call graph and OTLP export:
   `Caveat:` prefixes) and stays the shared fallback for Codex, Kiro and Gemini. Codex keeps dropping `<environment_context>`,
   `<recommended_plugins>`, `<user_instructions>`, `<turn_aborted>` and `<skill>` (local rollouts: 53, 54 and 6 hits for the first, second and fourth) (list maintained in `common.ts`, checked against a fixture
   per harness).
+- **Turn counter.** `Day` gets `turns: number` (persisted, ledger key `tu`): real human turns booked on the local day
+  of the user line. Every adapter's `usage()` counts exactly the lines its `parse()` turns into `kind:"user"` events —
+  Claude through `classifyUser` (`human`, which includes `sdk`/`scheduled` per decision 1) on user lines that are not
+  tool results; Codex, Kiro, Gemini, pi, OpenCode and fx through their existing user-prompt predicate with the
+  narrowed `isNoise`. Notifications, peer messages, meta lines, noise and slash commands do not count. Per day it equals
+  the call graph's turn count for that day's prompts. Shares the one cache bump (2).
 - Risk: a harness-injected tag not on the list would now show as a user prompt. Mitigation: the per-harness fixture
   test lists every leading tag seen in samples; unknown tags are visible, not silently lost.
 
@@ -156,9 +166,10 @@ export function scrubRemote(raw: string): Remote | null;  // null = dropped
    `[user@]host:path`, local paths and `file://` (returned as `file://` + path with `$HOME` → `~`, no host).
 3. Remove userinfo (everything up to the **last** `@` in the authority, so `a:b@c@host` cannot smuggle), query and
    fragment. scp-like keeps no user (`git@github.com:o/r` → `ssh://github.com/o/r`).
-4. Still suspicious → `null`: an `@`, `?`, `#` or `%40`/`%3A` left in host or path; a path segment matching
-   `^(ghp|gho|ghs|ghu|github_pat)_`, `^glpat-`, `x-access-token`, `oauth2`, or any segment ≥ 32 chars of only
-   `[A-Za-z0-9_\-]` with digits and letters mixed (token-shaped).
+4. Still suspicious → `null`: an `@`, `?`, `#` or `%40`/`%3A` left in host or path (structural check). The
+   token-shaped rule — `^(ghp|gho|ghs|ghu|github_pat)_`, `^glpat-`, `x-access-token`, `oauth2`, or any value ≥ 32 chars
+   of only `[A-Za-z0-9_\-]` with digits and letters mixed — applies only to userinfo, query and fragment, which step 3
+   removes whole. Path segments (owner/repo) are never dropped as tokens: a repo named like a hash stays.
 5. `path` drops a trailing `.git`; `owner`/`name` = last two segments (`""` when fewer).
 
 Consumers in this spec: Codex `session_meta.git.repository_url` → new `Sess.remote` (scrubbed at parse time, the raw
@@ -168,6 +179,8 @@ git-linkage, otlp-export) must call `scrubRemote` on every remote they read from
 
 ## Interactions with other specs
 - **honest-costs**: same ledger cache version bump; iterations change token and cost totals.
+- **session-compare**: `Day.turns` feeds the turn rows (turns, cost/tokens/calls per turn).
+- **filter-language**: the `turns` key reads `Day.turns`.
 - **otlp-export**: uses `classifyUser` for turn segmentation, the skills map for skill attributes, `scrubRemote`
   for repository attributes.
 - **repo-view / git-linkage**: `scrubRemote` + `Remote.owner/name` for project identity.
@@ -179,12 +192,13 @@ git-linkage, otlp-export) must call `scrubRemote` on every remote they read from
   `/compact` + output; a human prompt starting with `<div>`.
 - `harness.check.ts`: titles (rename, rename to empty, ai-title after custom); iteration booking per model; turn
   count in `callgraph/model.check.ts` unchanged by notifications and peer messages, plus the `⟲` and `⇄` meta
-  events; `sdk`/`scheduled` origins open a turn.
+  events; `sdk`/`scheduled` origins open a turn. `Day.turns` per SAMPLES harness equals the call graph's turn count;
+  notifications, peer messages and slash commands do not count; a ledger resume does not count a turn twice.
 - Codex: capture one real rollout with a `$skill` mention and one model-chosen skill before implementing (Task 0).
 - `giturl.check.ts`: table of ≥ 25 inputs — tokens in userinfo, `user:pass@`, double `@`, query tokens, fragments,
   percent-encoded `@`, scp-like, ssh with port, GitLab subgroups, `file://`, local path, garbage → expected
   `Remote | null`.
-- Ledger cache round-trip with `skills` and `pk`.
+- Ledger cache round-trip with `skills`, `turns` and `pk`.
 
 ## Out of scope
 - Streaming-safety guard "max output_tokens per message id" (checked, not needed today).
@@ -195,6 +209,14 @@ git-linkage, otlp-export) must call `scrubRemote` on every remote they read from
 ## Decisions (review 2026-10-02)
 1. `sdk`/`scheduled` turn origins as human turns? Yes — they open and count as turns (3).
 2. Own glyph for `peer` (agent-to-agent) messages? Yes — `⇄`, distinct from `⟲`; no new turn (3).
+3. Per-day human-turn counter `Day.turns` (human per `classifyUser`, incl. `sdk`/`scheduled`), shared cache bump;
+   session-compare's turn rows read it (3).
+4. Remote scrub: the token-shaped rule applies only to userinfo, query and fragment; path segments (owner/repo) are
+   never dropped as tokens (5).
+5. `classifyUser` checks known noise/command tags before `origin`, so an origin can never promote hook or command
+   output (3).
+6. Fallback iterations read the real cache keys `cache_creation.ephemeral_5m_input_tokens` /
+   `ephemeral_1h_input_tokens` (2).
 
 ## Open questions (to verify during implementation)
 1. Codex `<skill>` message shape and `$name` rule — confirm with a captured rollout; if Codex marks injected messages

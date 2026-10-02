@@ -51,7 +51,8 @@ remote are one project. Directories that are not git repos are grouped by path. 
 
 ### 1. Project identity (`src/model/project.ts`, pure apart from fs reads)
 Input: the **real** cwd of a session. Under `--redact`, redact.ts exports `realCwd(s)`, which returns `Rec.real`;
-otherwise it returns `s.cwd`. Output: `Ident { key, label, kind, top, common, worktree, remote }`.
+otherwise it returns `s.cwd`. Output: `Ident { key, label, kind, top, common, gitdir, worktree, remote }`. `gitdir` is the per-worktree git dir
+(`<top>/.git`, or the target of a `.git` file); git-linkage reads its reflog and related-events groups by it.
 
 Resolution uses the filesystem only. The default path spawns no git process:
 1. `cwd` is empty → `kind:"none"`, key `none`, label `(no project)`.
@@ -64,7 +65,7 @@ Resolution uses the filesystem only. The default path spawns no git process:
 4. Remote: parse `<common>/config` (≤ 256 KB) with a minimal INI reader: `[remote "<name>"]` sections, key `url`.
    Pick `origin`; else `upstream`; else the first remote in file order (a single remote is the first). Mark the
    choice so the UI can show "(remote: upstream)".
-5. Normalize the remote URL. `scrubRemote()` (decision 3) already parses the forms and drops userinfo, query,
+5. Normalize the remote URL. `scrubRemote()` (section 3) already parses the forms and drops userinfo, query,
    fragment and `.git`, so normalization works on its `host` and `path`:
    - `scheme://[user[:pw]@]host[:port]/path`, `ssh://git@host:22/path` and scp form `git@host:path` all become
      `host/path`;
@@ -80,7 +81,7 @@ Resolution uses the filesystem only. The default path spawns no git process:
    - no remote at all → key `gitdir:<realpath(common)>`. Worktrees of one local repo still merge; clones without a
      remote do not.
 6. Non-git → key `path:<realpath(cwd)>`, label `~/…` (shortened). A cwd that no longer exists keeps its cached
-   identity (decision 2). If it was never resolved, the key is `path:<cwd>` and the label gets a `(gone)` suffix.
+   identity (section 2). If it was never resolved, the key is `path:<cwd>` and the label gets a `(gone)` suffix.
 7. `worktree` = `basename(top)` when `top` is not the main worktree (main = `dirname(common)` when `common` ends in
    `/.git`), else `""`.
 
@@ -92,7 +93,7 @@ is not the top.
 
 ### 2. Cost and caching
 - In memory: `Map<cwd, Ident>`. The disk cache is `~/.agentglass/cache/projects.json`:
-  `{v:1, cwds:{<cwd>:{key,label,kind,top,common,worktree,remote,cfgMtime,checked}}, sess:{<session path>:<cwd>}}`,
+  `{v:1, cwds:{<cwd>:{key,label,kind,top,common,gitdir,worktree,remote,cfgMtime,checked}}, sess:{<session path>:<cwd>}}`,
   written atomically like the ledger (`cache.ts:83-96`), every 30 s when dirty and on quit.
 - `sess` keeps the cwd of each session. After a restart, Claude and Codex sessions get their project without
   re-reading log heads. Entries for sessions that no longer exist are dropped on save.
@@ -114,7 +115,7 @@ key.
 
 ### 4. Active time (ledger addition)
 - `Day` gains `act: number[]`: flat, sorted, merged minute-of-day intervals `[s0,e0,s1,e1,…]` (local minutes, `e`
-  exclusive), persisted as key `k`.
+  exclusive), persisted as day key `ak` (`k` is taken by parsing-fixes' `skills`).
 - Recording: `bucket()` (`record.ts:41`) knows each line's timestamp. It extends the session's open interval when the
   new minute is no more than the idle gap after the interval's end, and starts a new interval otherwise. The gap is
   config `repo.idleGapMin` (`~/.agentglass/config.json`, integer minutes 1–60, default 5; invalid → 5 with one
@@ -129,11 +130,12 @@ key.
 - This differs from the call tree's "active" (span union, `callgraph/model.ts:211`) on purpose: the ledger does not
   keep spans. The help text says so.
 - Ledger format `VERSION` bumps once to the next free number at implementation time (`cache.ts:15`). This means one full re-index. git-linkage
-  shares the same bump, so ship both phase-5 specs in one release.
+  (`Acc.vcs`) shares the same bump when both phase-5 specs ship in one release; otherwise each takes the next free
+  number when it lands.
 
 ### 5. Aggregation (`src/features/repos/agg.ts`)
-For a period (a list of day keys, like `stats.ts:80`) and an optional filter (decision 8):
-- `RepoAgg { key, label, kind, worktrees:Set, sessions, live, last, cost, unk, inTok, outTok, tools, err,
+For a period (a list of day keys, like `stats.ts:80`) and an optional filter (section 8):
+- `RepoAgg { key, label, kind, worktrees:Set, sessions, live, last, cost, unk, inTok, outTok, calls, err,
   act:number[], agentMin, files:Map<relpath, Cnt & {by:Set<harness>}>, tools:Map<name, Cnt>,
   byHarness:Map<h, {sess, cost, unk}>, branches:Map<branch, {sess, cost}> }`.
 - Walk sessions and their ledger days, as `agg()` does. Each session's project comes from its own cwd. A subagent
@@ -159,7 +161,7 @@ List (one row per project, sorted by cost by default):
   (`stats.ts:30, 84`).
 - A worktree count shows as a dim `⑂3` after the label when there is more than one.
 - Keys: `↑↓ jk`, `g/G`, `pgup/pgdn`; `d` today, `w` 7 days, `m` 30 days, `a` all time; `s` cycles the sort (cost,
-  active, sessions, err%, last); `/` filter (decision 8); `enter` or click opens the project detail.
+  active, sessions, err%, last); `/` filter (section 8); `enter` or click opens the project detail.
 
 Project detail (in the same tab; `esc`/`backspace` goes back):
 - Header: label, scrubbed remote, kind, worktrees (name and top), period totals (cost, tokens, active time and
@@ -203,14 +205,14 @@ Project detail (in the same tab; `esc`/`backspace` goes back):
 
 ### 10. Privacy
 Everything is local. No network: the fallback `git remote get-url` reads config only. Remotes are scrubbed
-(decision 3). Under `--redact`, labels, remotes and paths go through `display()` kinds `repo`/`cwd`/`file`, which
+(section 3). Under `--redact`, labels, remotes and paths go through `display()` kinds `repo`/`cwd`/`file`, which
 redact.ts fakes consistently with its fake project names (`redact.ts:106, 358`).
 
 ## Interactions with other specs
 - **filter-language**: provides the grammar, pinning, `--filter` and `projectOf()`. This spec defines the `repo`, `worktree` and
   `project.kind` values.
-- **parsing-fixes**: `scrubRemote()` and `Sess.remote` (decision 3).
-- **git-linkage**: uses `Ident.top`/`common` for `git log`, and adds commits and $/commit to the branches box and a
+- **parsing-fixes**: `scrubRemote()` and `Sess.remote` (section 3).
+- **git-linkage**: uses `Ident.top`/`common` for `git log` and `Ident.gitdir` for the worktree's reflog, and adds commits and $/commit to the branches box and a
   `commits` column.
 - **related-events**: uses `Ident.key` to pick sessions of the same project, and `top` to tell "same file" from "same
   path in another worktree".
@@ -242,6 +244,10 @@ redact.ts fakes consistently with its fake project names (`redact.ts:106, 358`).
 1. Remote choice? `origin`, then `upstream`, then the first in file order (1.4).
 2. Lowercased path keys? Only for the known hosts github.com, gitlab.com, bitbucket.org (1.5).
 3. Idle gap configurable? Yes, `repo.idleGapMin`, default 5 (4).
+4. `Ident.gitdir`? Added here, resolved with the rest of the identity and stored in `projects.json` from `v:1`, so
+   git-linkage and related-events need no identity change of their own (1, 2).
+5. `RepoAgg` call count vs tool map? `calls` is the number (Σ `TS.n`), `tools` the per-name map (5).
+6. Cache key for `Day.act`? `ak` — `k` already holds parsing-fixes' skills (4).
 
 ## Open questions (to verify during implementation)
-1. scriptc `realpathSync` support (decision 2).
+1. scriptc `realpathSync` support (section 2).

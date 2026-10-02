@@ -1,7 +1,8 @@
 # Command palette and deep links — spec
 
-Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 7 (no hard dependency; trace-id links
-need otlp-export's id scheme, project items use repo-view's identity when present).
+Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 7 (depends on cli-agent-mode: `findSession()` in
+`src/model/sessref.ts`, `addCmd()`, `format.ts`; trace-id links need otlp-export's id scheme, project items use
+repo-view's identity).
 
 ## Goal
 1. **Ctrl+K palette.** One fuzzy finder over everything agentglass can do or show: actions (every key binding,
@@ -29,7 +30,7 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
   4. transcript (`:85-106`), detail (`:108-130`) and list (`:133-187`).
 - **Modes:** `Mode` = list | transcript | detail | input | confirm | help | view (`src/state.ts:6`). Overlays remember
   `S.prevMode`.
-- **Help** is a static table of display strings such as `"↑↓  j k"` (`src/ui/help.ts:10-41`), plus
+- **Help** is a static table of display strings such as `"↑↓  j k"` (`src/ui/help.ts:10-39`), plus
   `H.helpSections` from features. These strings name keys for humans and cannot be executed.
 - **Modals:** `renderModal(title, body, color)` draws a centered box (`src/ui/screen.ts:61-69`). The help popup is
   drawn last, over any view (`src/main.ts:49`).
@@ -64,7 +65,7 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
 2. **Built-in actions** (`src/features/palette/actions.ts`) wrap the functions the keys already call:
    `openTranscript`, `ask("filter"…)`, `fullText`, `sendPrompt`/`ask("send")`, `resume`, `confirm("TERM")`, the
    trash confirm, `copyText`, tab switching, harness cycle, the live toggle, clear filters and help. They do not
-   re-implement these functions. Every current binding in `help.ts:10-41` that does something has an action; pure
+   re-implement these functions. Every current binding in `help.ts:10-39` that does something has an action; pure
    movement keys (↑↓, PgUp) do not.
 3. **Feature actions.** Each feature registers its own: the call graph (`c`), replay, theme switching (one action per
    theme: "Theme: nord"), the Stats period and sort, and later the export ("Export this session to OTLP…", only shown
@@ -187,7 +188,7 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
    - Otherwise a new seam `H.start: ((): void)[]` runs once in `main()` after the first `scan()`/`buildView()`, before
      the first render (`main.ts:60-61`). The handler resolves the ref, stores the target, and returns **false**, so the
      TUI starts and `H.start` applies the target: it selects the session's row and opens its transcript with the
-     focus set. The same apply function serves links that arrive over the socket (5b.3).
+     focus set. The same apply function serves links that arrive over the spool or the socket (5b).
    - If the event lies before the 6 MB tail, `openTranscript` gains an optional start cursor. It reads from
      `align(s, cursor − 64 KB)` and puts a meta line "showing from <time> (opened by link)" first. `G` and follow still
      go to the live end.
@@ -224,7 +225,12 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
 7. **Single instance.** A link goes to the agentglass TUI that is already running, if any; only then does a new
    one start. Section 5b specifies it.
 
-### 5b. Single instance (link hand-off over a Unix socket)
+### 5b. Single instance (link hand-off)
+scriptc 0.1.7 has no Unix-domain sockets (probed: `listen(path)` fails to build with SC0001; the runtime opens
+only `AF_INET`/`AF_INET6`). The **spool transport** at the end of this section is therefore the primary hand-off.
+The socket design below stays specified for a runtime that gains `listen(path)`; files, lock, validation, apply
+rules and client exit codes are shared by both transports.
+
 1. **Files.** `~/.agentglass/run/` — created with mode 0700; if it exists it must be a real directory (`lstat`, not a
    symlink), owned by the current uid, with no group/other bits, else single instance is **disabled** for this run
    (one warning; links then start a new TUI as without this section). Inside: `tui.sock` (the socket, mode 0600: the
@@ -276,18 +282,26 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
    - Two TUIs starting at once: the `O_EXCL` lock lets exactly one serve.
    - Foreign or tampered files (wrong owner, symlink, wrong mode): never followed, never unlinked; single instance
      disabled with a warning.
-   - Socket API missing in the runtime (open question 2): single instance disabled silently; links start a new TUI.
+   - Socket API missing in the runtime (scriptc 0.1.7, see the top of this section): the spool transport is used.
 6. **Config.** `"open": {"singleInstance": true}` (default `true`); `false` disables both serving and hand-off.
 
 
-**Fallback without Unix sockets** (decided in review): when the runtime has no Unix-domain sockets, the hand-off
-uses a spool directory `~/.agentglass/run/inbox/` (0700, owner-checked like the socket dir). The second instance
-writes the link as one file `<epoch-ms>-<pid>.link` (0600, created with `O_EXCL` under a temp name, then renamed;
-max 4 KB, same validation as a socket message) and exits. The running TUI scans the inbox on each tick (only while a
-running instance holds `~/.agentglass/run/tui.pid` with a live pid of its own), applies files in name order, and
-deletes them; files older than 60 s or invalid are deleted unread. Without a live `tui.pid` the second instance
-opens the link itself. Latency is one tick instead of immediate; the security properties (owner only, open-only
-links, bounded size) stay the same.
+**Spool transport (primary).** The hand-off uses a spool directory `~/.agentglass/run/inbox/` (0700, owner-checked
+like `run/`). The server is the TUI that holds `tui.lock` (2.1, the same lock as the socket design; there is no
+separate pid file).
+- **Client.** Only when a live `tui.lock` holder exists, the second instance writes the request `open <ref>\n` as
+  one file `<epoch-ms>-<pid>.link` (0600, created with `O_EXCL|O_NOFOLLOW` under a temp name, then renamed), then
+  waits up to **2 s** for the reply file `<epoch-ms>-<pid>.res`: `ok`/`ok palette` → exit 0 (stderr `opened in
+  running agentglass (pid N)`); `err not-found` → exit 3; `err bad-request` → exit 2; `err busy` or no reply within
+  2 s → it removes its `.link` if still there and starts its own TUI (5.3). No live `tui.lock` holder → no file is
+  written; it opens the link itself.
+- **Server.** On each tick (only while it holds `tui.lock`) it scans the inbox, applies files in name order and
+  deletes them after writing the `.res` reply (0600, `O_EXCL`). A spool file is read up to **4 KB**, but its content
+  must pass the same validation as a socket request (3), including the **1024-byte** message limit; anything else →
+  `err bad-request`. Files older than 60 s (or dated in the future) are deleted unread; symlinks, FIFOs and foreign
+  files are never read or unlinked and disable single instance with a warning.
+- Latency is one tick instead of immediate; the security properties (owner only, open-only links, bounded size,
+  rate limit) stay the same.
 ### 6. OSC 8 terminal hyperlinks
 1. **Form:** `ESC ] 8 ; ; <url> ESC \ <text> ESC ] 8 ; ; ESC \`. A new helper `link(url, text)` in `src/util/text.ts`
    returns `text` unchanged when hyperlinks are off.
@@ -321,8 +335,9 @@ links, bounded size) stay the same.
 ## Interactions with other specs
 - **otlp-export:** the trace-id and span-id resolution uses its id scheme (§4.1, `src/util/sha256.ts`) and the shared
   `TurnCursor` for `turn=` anchors. Its export action appears in the palette when an endpoint is configured.
-- **cli-agent-mode:** `open` prints JSON in agent mode. `--format table` uses OSC 8 links when enabled. Both share the
-  `<ref>` grammar with `agentglass session <ref>`.
+- **cli-agent-mode:** `open` prints JSON in agent mode. `--format table` (`src/features/format.ts`) uses OSC 8 links
+  when enabled. Both share the `<ref>` grammar with `agentglass session <ref>` and its resolver `findSession()`
+  (`src/model/sessref.ts`); `open` registers its help record through `addCmd()` and checks `agentHost()`.
 - **filter-language:** the project item applies a `project is X` clause (pinned filters stay). Saved filters could
   become palette items later.
 - **repo-view:** project identity and labels for `#` items. A project item could open the Repos tab instead of a
@@ -358,7 +373,11 @@ links, bounded size) stay the same.
   - no request can reach send/resume/kill/trash/export (the apply function's call graph is checked);
   - client: hand-off → exit 0 and no TUI; `err not-found` → exit 3; server killed mid-request, timeout, foreign
     socket owner → falls back to its own TUI; `--new-instance` never connects; quit unlinks socket and lock;
-  - a `$HOME` long enough to overflow `sun_path` disables single instance with one warning.
+  - a `$HOME` long enough to overflow `sun_path` disables single instance with one warning;
+  - spool (`spool.check.ts`): round trip `.link` → apply → `.res` `ok`; no live `tui.lock` holder → nothing written;
+    a 5000-byte file or a 1025-byte request → `err bad-request`; stale/future names deleted unread; symlink, FIFO or
+    foreign entry → not read, not unlinked, disabled; no reply within 2 s → the client removes its `.link` and starts
+    its own TUI.
 - **Resolver on a fixture HOME:** exact id, prefix, ambiguous prefix (exit 4), a trace id from an otlp-export golden
   file → the right session and turn, a span id → the right call, and an event older than the 6 MB tail is focused.
 - **Width with OSC 8:** `fitStyled`, `fillTo` and `scrubStyled` on strings with links measure the visible width
@@ -380,10 +399,16 @@ links, bounded size) stay the same.
    length-limited `open <link>` requests, view-only effects, stale cleanup, hand-off then exit) (5b).
 3. Turn anchors? The stable key (turn start timestamp) is canonical; the index is accepted as an alias (5.1, 5.2).
 4. No Unix sockets in the runtime? Spool-directory hand-off `~/.agentglass/run/inbox/` (5b).
+5. Spool hand-off details: scriptc 0.1.7 has no Unix-domain sockets (probed), so the spool is the primary
+   transport; the client waits up to 2 s for a `.res` reply (`ok` → exit 0, `err not-found` → exit 3, no reply →
+   own TUI); the server lock is `tui.lock` for both transports (no `tui.pid`); spool files are read up to 4 KB but
+   validated against the 1024-byte message limit (5b).
+6. Depends on cli-agent-mode: `findSession()` (`src/model/sessref.ts`), `agentHost()`, `addCmd()` help records and
+   the `format.ts` table renderer; merge after it.
 
 ## Open questions (to verify during implementation)
 1. **Clicks under mouse reporting.** Which terminals open OSC 8 links on Ctrl/Cmd+click while SGR mouse reporting is
    on? To be checked in kitty, WezTerm, iTerm2, GNOME Terminal, Konsole and Windows Terminal before `auto` is
    considered final.
-2. **Unix sockets in scriptc.** Does the scriptc runtime support `node:net` Unix-domain servers and clients
-   (`listen(path)`, `connect(path)`, `umask`)? If not, 5b uses its spool-directory fallback (decided).
+2. **Unix sockets in scriptc.** Answered for scriptc 0.1.7: no (`listen(path)` → SC0001); the spool transport is
+   primary (5b). Re-probe only when the scriptc version changes.

@@ -61,13 +61,13 @@ earliest due job (min 16 ms, max 1 s so level changes apply promptly).
 
 | job | hot | warm | idle | away | notes |
 |---|---|---|---|---|---|
-| `render` | on change, ≤ 4/s | on change, ≤ 2/s | on change, ≤ 1/s | ≤ 1 per 5 s | see 4 |
+| `render` | on change, ≤ 4/s | on change, ≤ 2/s | on change, ≤ 1/s | ≤ 1 per 5 s | see 4; while unfocused ≤ 1/s at every level (below); keystrokes and resize render at once |
 | `probe` (stat live files) | 250 ms | 1 s | 1 s | 1 s | no spawn; feeds `hot` |
 | `procs` (`refreshProcs`) | 1 s | 1.5 s | 5 s | 5 s | watchdog needs it (approval: CPU quiet); ≤ 1.5 s at every level while any agent is live (below) |
 | `scan` (+ `buildView`) | 2 s | 3 s | 10 s | 15 s | new sessions appear within that |
 | `slow` (`refreshSlow`) | 3 s | 5 s | 15 s | 30 s | cwd/open files/tmux |
 | `tick` (`H.onTick`) | 250 ms | 500 ms | 2 s | 5 s | ledger, ticker, cache, prices, callgraph |
-| `watch` (watchdog / rules, `H.onWatch`) | 1.5 s | 1.5 s | 5 s | 1.5 s / 5 s | 1.5 s while any agent is live, else 5 s (`idle` has no live agent by definition; `away` can) |
+| `watch` (watchdog / rules, `H.onWatch`) | 1.5 s / 5 s | 1.5 s / 5 s | 5 s | 1.5 s / 5 s | 1.5 s while any agent is live, else 5 s, at every level (`idle` has no live agent by definition; `hot` from input alone and `away` can go either way) |
 | `fast` (`H.onFastTick`) | 50 ms | 50 ms | paused | paused | only while armed (5) |
 | `size` (`termSize`) | on input + 2 s | 2 s | 5 s | 10 s | or SIGWINCH (open question 1) |
 
@@ -78,6 +78,11 @@ is live), because approval and stalled detection need fresh CPU samples. So "wai
 alarms keep today's latency (≤ 1.5 s) whenever there is something to alarm about; the saving comes from render,
 scan, slow and tick. Cost accepted: one `ps` spawn per 1.5 s while an agent runs. On level change to `hot` all
 overdue jobs run on the next loop turn.
+
+**Unfocused terminal.** While the terminal has reported focus-out (6) and no focus-in since, `render` is capped at
+1/s even when the level is `hot` (an agent streams in a background pane) or `warm`; `away` keeps its 1 per 5 s.
+Only drawing is capped: `probe`, `scan`, `tick` (ledger ingest), `watch` (watchdog, rules, alarms) and `procs` keep
+the full cadence of the level, so the bell, desktop notifications and the data are as fresh as when focused.
 
 ### 3. Live probe
 Every `probe` interval: `statSync` of each **pid-linked** session file (non-file sources: their `stat()`,
@@ -92,6 +97,9 @@ process are only seen by `scan()`.
   visible (session set, sizes, pids, statuses), `L.ver` changes (ledger), toasts expiring, and spinners — the latter
   only when something on screen animates (`spin()` called during the previous render sets `S.animating`). Clock
   texts ("3m ago") are covered by a forced build at least every 5 s (`away`) / 1 s (others).
+- **Immediate renders, at every level:** a keystroke or mouse event renders at once (as `main.ts:62-67` today), and a
+  terminal resize (a changed `termSize()` result, or SIGWINCH if available) forces a full repaint (`CSI 2J` + write,
+  bypassing the frame compare). Neither waits for the `render` job nor counts against its cap.
 - `S.frame` (spinner phase) advances on the `render` job, not per tick, so spinners keep a steady speed across levels
   (≈ 4 fps hot, 2 warm, 1 idle).
 
@@ -132,15 +140,17 @@ timer exists.
 - `stty` missing/failing: today defaults to 24×80 (`term.ts:11`); unchanged.
 
 ## Interactions with other specs
-- **rules-config**: rule evaluation runs on the `watch` job (1.5 s while agents are live); rules with `for:`
-  durations must use wall time, not tick counts (the interval varies when no agent is live).
+- **rules-config** (phase 6): its engine first runs on the watchdog's `H.onTick` job; it moves to `H.onWatch` (the
+  `watch` job, 1.5 s while agents are live) when this spec lands. Whichever of the two merges second does the move.
+  Rules with `for:` durations must use wall time, not tick counts (the interval varies when no agent is live).
 - **honest-costs**: projection/budget checks run on `tick`; budget notifications stay once per day.
 - **command-palette**: palette open = input activity → `hot`.
 - **otlp-export** `--watch --otlp`: uses the CLI loop, not this scheduler.
 
 ## Testing
 - Pure scheduler module (`src/sched.ts`) with an injected clock: level transitions (no `away` after 10 min without
-  input but with focus; `away` only after focus-out), due-time computation, bounds (`watch` and `procs` ≤ 1.5 s at
+  input but with focus; `away` only after focus-out), due-time computation, the unfocused render cap (≤ 1/s while
+  `hot`, ingest and `watch` unchanged), immediate render on keystroke and forced repaint on resize at every level, bounds (`watch` and `procs` ≤ 1.5 s at
   every level while an agent is live, 5 s otherwise), budget stretching from synthetic durations (never past the
   1.5 s alarm bound — see 7), clock jump handling — `sched.check.ts`.
 - Focus parsing: token stream with interleaved `ESC[I`/`ESC[O`, mouse and keys.
@@ -156,6 +166,13 @@ timer exists.
 ## Decisions (review 2026-10-02)
 1. `away` from input inactivity when focus reporting is unavailable? No; `away` comes only from focus-out (1).
 2. Alarm latency? The watchdog/alarm cadence (and `procs`) stays 1.5 s while any agent is live, 5 s otherwise (2).
+3. Rendering while the terminal is unfocused? Capped at 1/s even when `hot`; ingest, watchdog and alarms keep full
+   speed (2).
+4. `watch` cadence per level? 1.5 s only while an agent is live, else 5 s, at every level; the table matches the rule
+   text (2).
+5. Keystrokes and resize? A keystroke renders immediately and a resize forces a full repaint, regardless of level (4).
+6. rules-config on `H.onWatch`? rules-config (phase 6) runs on the watchdog tick and moves to `H.onWatch` when this
+   spec lands; whichever merges second does the move (Interactions).
 
 ## Open questions (to verify during implementation)
 1. Does the scriptc runtime deliver `SIGWINCH` (`process.on("SIGWINCH")`) or expose `process.stdout.columns/rows`?

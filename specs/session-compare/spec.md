@@ -2,7 +2,7 @@
 
 Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 4 (depends on
 [filter-language](../filter-language/spec.md) for groups and `aggregate()`, and on [triage](../triage/spec.md) for
-distribution scoring; uses turn counts from parsing-fixes when present).
+distribution scoring; turn counts from parsing-fixes and per-model buckets from honest-costs, both phase 1).
 
 ## Goal
 Mark two sessions, or two days/periods, or any two filter expressions, and see a side-by-side diff: cost, turns, tokens,
@@ -12,7 +12,7 @@ last one?" and "did this week go worse than last week?" become one screen.
 ## Why (user value)
 - Users rerun the same task with another model, harness or prompt and want to know what changed. Today that means two
   previews side by side in memory: the preview shows tokens, cost, tools and lines per session
-  (`src/features/usage/stats.ts:454-462`), nothing per tool, no durations, no files.
+  (`src/features/usage/stats.ts:454-463`), nothing per tool, no durations, no files.
 - Period comparison ("this week vs last") is the same question over larger groups.
 - It reuses triage's aggregation: little new machinery, one more answer.
 
@@ -24,8 +24,9 @@ last one?" and "did this week go worse than last week?" become one screen.
   already, for all history (no call rows needed).
 - Percentiles from histograms: `pct()` (`calls.ts:22-29`); formatting `fmtMs`, `money`, `kfmt`, `grp`
   (`calls.ts:32`, `stats.ts:19-33`).
-- No turn count in the ledger (no `turns` field in `Day`/`Acc`, `record.ts:10-18`); parsing-fixes adds turn boundaries.
-- Session list keys in use: `↵ ␣ / F h l esc s R x D y c ! T` (`src/input.ts:141-167`, `callgraph/view.ts:350`,
+- No turn count in the ledger (no `turns` field in `Day`/`Acc`, `record.ts:10-18`); parsing-fixes (phase 1) adds
+  `Day.turns`, and honest-costs (phase 1) adds per-model day buckets (`Day.mt`, `modelUses`).
+- Session list keys in use: `↵ ␣ / F h l esc s R x D y c ! T` (`src/input.ts:141-167`, `callgraph/view.ts:344-357`,
   `watchdog.ts:190`, `themes.ts:102`); `m` and `C` are free. Row badge slot: 2 columns, used by the watchdog
   (`src/ui/list.ts:29-33`, `watchdog.ts:173`).
 
@@ -61,18 +62,18 @@ Groups made only of session/day clauses use the bucket path (all history); a cal
 | row | definition | note |
 |---|---|---|
 | sessions | top-level sessions in the group (subagents counted separately on the next row) | hidden for two single sessions |
-| cost | Σ cost, `+?` when any part is unpriced (`money()`); with honest-costs, its billing label | |
+| cost | Σ cost with honest-costs' billing label per mode (`$3.10 spend + ≈$9.20 plan`), `+?` when any part is unpriced | |
 | wall time | session: first transcript event → last activity; period: n/a | single sessions only |
-| turns | user turns (parsing-fixes' count, stored per `Day` as `turns`); `n/a` for harnesses without it | |
+| turns | human turns: Σ `Day.turns` (parsing-fixes) over the group's top-level sessions and selected days; every harness has it | a subagent's opening prompt comes from its parent agent and is not a turn |
 | tokens in / out / cache read / cache write | Σ, `kfmt` | |
 | cache hit | `cr / (in + cr + cw)` | input is exclusive of cache in the ledger for every harness |
-| cost per turn, tokens per turn | ratio | `n/a` without turns |
+| cost per turn, tokens per turn | ratio | `n/a` when a side has 0 turns |
 | tool calls, calls per turn | Σ `tools` | |
 | errors, error rate | Σ `TS.err`, err/n | |
 | p50 / p95 / max call duration | merged histograms, `pct()` | "timed n/N" shown, fx has no durations |
 | lines + / − | Σ add/del | |
 | files touched | distinct paths in `Day.files` | |
-| models | distinct models (session `model` attribute) | |
+| models | distinct models with tokens or calls on that side (honest-costs' per-model day buckets, call-row models) | |
 | subagents | count and Σ cost | |
 Each row: `A`, `B`, `Δ` (B − A, sign-colored: more cost/errors/duration red, fewer green; neutral rows uncolored),
 and `B/A` (`×2.4`). Unknown values print `n/a` and produce no Δ.
@@ -86,7 +87,9 @@ and `B/A` (`×2.4`). Unknown values print `n/a` and produce no Δ.
 3. **Files**: three lists — only in A, only in B, in both (edits and +/− per side). Paths are shown relative to the
    group's repo root when both sides have one repo (`projectOf`), else with `~`. `enter` opens the file via the
    existing open action (`openFileN` behaviour) when it exists on disk.
-4. **Models**: per model tokens and cost per side (needs call rows' `model` or, for the bucket path, the session model).
+4. **Models**: per model tokens and cost per side from honest-costs' per-model day buckets (`Day.mt` + unpriced
+   `Day.um`, read via `modelUses` over the side's sessions and selected days), plus calls per model from the call rows'
+   `model`. Tokens and cost cover all history; only the calls column is limited by `filter.callDays`.
 5. **Timeline** (two single sessions only): calls per 5-minute slot since each session's start, two sparkline rows,
    to see where one run stalled.
 `enter` on a tool row opens the Stats drill-down for that tool scoped to group A or B (`[`/`]` pick the side); `o`
@@ -105,7 +108,7 @@ too (values only). The bars in the tools table use `gauge()`.
   durations missing on one side: the duration rows say `n/a` for that side.
 - Empty group: the view shows which group matched nothing and its expression.
 - Old sessions beyond `filter.callDays`: everything from buckets still works; only call-level group clauses and the
-  models-by-call section are limited (the section says so).
+  calls column of the models section are limited (the section says so).
 - Session ids: `session is` accepts `<harness>:<id>` or a unique id prefix (≥ 6 chars); ambiguous prefixes are an
   error listing the candidates.
 
@@ -120,7 +123,7 @@ too (values only). The bars in the tools table use `gauge()`.
 ### 8. Computation
 `aggregate()` (filter-language §5) twice with `weight: "count"` and dimensions `tool`, `program`, `command`, `file`,
 `model`, plus the metric sums; the distribution rows reuse triage's `diff`/`lift`/`χ²` functions. No new cache
-format: the `turns` counter comes with parsing-fixes; the `session is` key and the timeline (5-min slots from call rows,
+format: the `turns` counter comes with parsing-fixes, the per-model buckets with honest-costs; the `session is` key and the timeline (5-min slots from call rows,
 or from `TS.h` hours for buckets) are the only additions. Cached per (A, B, subagent toggle, scope, `L.ver`).
 1. **`t` — triage A vs B.** Opens the triage view (triage §5) with selection = group A, baseline mode `group` =
    group B, the compare scope as scope, and entity `call` when both groups have call rows within `filter.callDays`,
@@ -131,7 +134,8 @@ or from `TS.h` hours for buckets) are the only additions. Cached per (A, B, suba
 - **filter-language**: groups, scope, lifting, `aggregate()`, call-row retention; this spec registers `session`.
 - **triage**: share-difference scoring and χ²; compare = triage with two explicit groups. `t` inside compare opens
   triage with A as selection and B as an explicit `group` baseline (8.1; triage registers that baseline mode).
-- **parsing-fixes**: `turns`. **honest-costs**: billing labels and unpriced rows on the cost line.
+- **parsing-fixes**: `Day.turns`. **honest-costs**: billing labels and unpriced rows on the cost line; per-model day
+  buckets (`Day.mt`, `modelUses`) for the models section.
 - **repo-view**: `projectOf()` for relative paths; the Repos tab may offer `C` for two repos later.
 - **git-linkage**: commits per side could become a row once it exists (not in this spec).
 
@@ -156,6 +160,11 @@ More than two groups, diffing transcript content or prompts, cost forecasts, com
 2. `t` inside the compare view? Yes, runs triage A vs B (8.1).
 3. `C` without marks? Compares with the previous session of the same repo + harness, no prompt; the header names the
    pick (2.2).
+4. Turn rows read parsing-fixes' per-day human-turn counter `Day.turns` of top-level sessions; no `n/a` fallback (3).
+5. The models section reads honest-costs' per-model day buckets for tokens and cost (not each session's model); call
+   rows give the calls column only (4.4).
+6. The cost row uses honest-costs' billing-mode format (one mode `$3.10 spend`, mixed `$3.10 spend + ≈$9.20 plan`,
+   `+?` for unpriced parts) (3).
 
 ## Open questions (to verify during implementation)
 None.

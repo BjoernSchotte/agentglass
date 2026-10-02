@@ -1,7 +1,7 @@
 # CLI agent mode — spec
 
-Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 7 (no hard dependency; the `cost`
-query uses filter-language's shared aggregation when present).
+Status: **draft** (2026-10-02). Roadmap: [../ROADMAP.md](../ROADMAP.md) — phase 7 (extends honest-costs' `agentglass cost`
+and reads its per-model day buckets; the `cost` query uses filter-language's shared aggregation when present).
 
 ## Goal
 When a coding agent runs `agentglass` (from its shell tool), agentglass behaves like a well-mannered CLI for machines:
@@ -130,7 +130,8 @@ scope default is decision 3.6.
    Output (one object):
    - the `--json` session fields (`cli.ts:58-62`);
    - `turns`, `wallMs` and `activeMs` (callgraph `summary`, `model.ts:200-218`);
-   - `models: [{model, in, out, cacheRead, cacheWrite, costUsd}]`;
+   - `models: [{model, in, out, cacheRead, cacheWrite, costUsd}]`, from honest-costs' per-model day buckets
+     (`Day.mt`, `Day.um`);
    - `tools: [{name, calls, errors, p50Ms, maxMs}]`, top 15 by calls;
    - `errors: [{ts, tool, arg, text}]`, the last 10. `text` is the first 200 characters of the result, found by call id
      through `sourceOf(h).lines`;
@@ -149,9 +150,22 @@ scope default is decision 3.6.
    - With `<ref>`, only that session (and its subagents). Without it, the scope of 3.6.
    - The source is `TS.errs` (last 10 per tool per day), or filter-language's per-call rows once they exist (complete
      history). The command states which one it used in a `source` field of the JSON envelope.
-4. **`agentglass cost [--since today|7d|30d|YYYY-MM-DD] [--by day|model|harness|project|session]`** returns rows of
-   `{key, in, out, cacheRead, cacheWrite, costUsd, unpricedTokens, sessions}` plus a total row.
-   - It uses the shared aggregation from filter-language (§5), with the Stats day buckets as the fallback.
+4. **`agentglass cost`** exists already (honest-costs, phase 1: `agentglass cost [--json] [--harness h] [--check]`
+   — today / 7 days / month to date per billing mode, unpriced usage, projection, budget; `--check` exits 3 when the
+   budget is over). This spec **extends** that command; it does not define a second one. Added options:
+   `[--since today|7d|30d|YYYY-MM-DD] [--by day|model|harness|project|session] [--format F] [--fields …]`, plus the
+   agent-mode defaults (compact JSON, scope 3.6). `--harness` and `--check` keep working in both forms below.
+   - **Without `--by` and `--since`:** the honest-costs output, unchanged in content: JSON
+     `{today:{byMode,unpriced}, month:{byMode,unpriced,projected}, budget}` (the default in agent mode and with
+     `--json`/`--format json`), or its text table (`--format table`, the default on a TTY outside agent mode).
+     `csv`/`jsonl` need rows → usage error naming `--by`.
+   - **With `--by` (or `--since`; `--since` alone implies `--by day`):** rows of
+     `{key, in, out, cacheRead, cacheWrite, costUsd, unpricedTokens, sessions}` plus a total row, in the envelope of 5
+     for `json`, bare rows for `csv`/`jsonl`/`table`. `--since` defaults to `today`. It uses the shared aggregation
+     from filter-language (§5), with the Stats day buckets as the fallback. `--by model` reads honest-costs'
+     per-model day buckets (`Day.mt` tokens and cost, `Day.um` unpriced tokens); this spec adds no ledger data and no
+     cache version bump.
+   - `--check` in either form: exit 3 when the honest-costs budget state is `over` (output printed first).
    - Unpriced tokens are never shown as $0 (honest-costs).
 5. **Envelope.** In `json` format, list commands print the bare array, the same as `--json` today. `errors` and
    `cost` print `{"rows":[…],"source":"…","scope":"…"}` so an agent can see what it is looking at. CSV, table and
@@ -198,7 +212,8 @@ scope default is decision 3.6.
 ## Interactions with other specs
 - **filter-language:** `--filter`, the per-call rows for full `errors` history, and the shared aggregation for `cost`.
 - **repo-view:** project identity for `last` and for the agent-mode scope.
-- **honest-costs:** `costBasis`, unpriced tokens, and never $0.
+- **honest-costs:** `costBasis`, unpriced tokens, never $0, and the per-model day buckets (`Day.mt`, `Day.um`,
+  `modelUses()`) behind `models` and `cost --by model`.
 - **otlp-export:** `export --json` follows `--format`. Agent mode never starts `--watch --otlp` implicitly.
 - **command-palette:** `agentglass open <ref>` in agent mode prints the resolved target as JSON (the same `<ref>`
   grammar as `session`).
@@ -233,6 +248,11 @@ scope default is decision 3.6.
 ## Decisions (review 2026-10-02)
 1. Bare `agentglass` inside an agent? Prints the compact help (1.5, 4.5).
 2. Agent-mode scope? Current project by default; widened by `--all-projects` or config `agent.scope: "all"` (3.6).
+3. Per-model tokens and cost? Owned by honest-costs (phase 1: `Day.mt` next to `Day.um`); `session` `models` and
+   `cost --by model` read them. No ledger change and no cache version bump in this spec (3.1, 3.4).
+4. `agentglass cost` already exists (honest-costs)? Extended, not redefined: `--since`/`--by`/`--format`/`--fields`
+   and the agent-mode JSON default are added; `--harness`, `--check` and the honest-costs JSON fields stay. Without
+   `--by`/`--since` the honest-costs summary is printed; with them, rows (3.4).
 
 ## Open questions (to verify during implementation)
 1. **Codex session id.** Is `CODEX_THREAD_ID` exported to every shell command (not only unified exec), and does it
