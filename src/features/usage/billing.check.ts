@@ -50,6 +50,8 @@ ok("gateway beats env key", gw.bill === "gateway" && gw.src === "config", gw.bil
 const pk = provMode("pi", "openai", E(["OPENAI_API_KEY"], [], []), E([], [], [["auth.openai", "oauth"]]));
 ok("process beats config", pk.bill === "api" && pk.src === "process", pk.bill + "/" + pk.src);
 ok("config when the process says nothing", provMode("opencode", "anthropic", E(["PATH"], [], []), E([], [], [["auth.anthropic", "oauth"]])).bill === "plan", "");
+const ocCfg = E([], [], [["auth.anthropic", "oauth"]]);
+ok("provider without evidence = unknown", provMode("opencode", "cliproxy", null, ocCfg).bill === "unknown" && provMode("opencode", "cliproxy", E(["PATH"], [], []), ocCfg).bill === "unknown", provMode("opencode", "cliproxy", null, ocCfg).bill);
 ok("multi-provider harness: no session-wide guess", rule("opencode", E([], [], [["auth.anthropic", "oauth"]]), "config").bill === "unknown" && rule("pi", E([], [], [["auth.anthropic", "oauth"]]), "config").bill === "unknown", "");
 ok("bedrock id", modelBill("us.anthropic.claude-sonnet-4-5-20250929-v1:0") === "metered" && modelBill("claude-opus-4@20250514") === "metered" && modelBill("claude-opus-4") === "" && modelBill("arn:aws:bedrock:us-east-1:1:x/y") === "metered", "");
 // environ: names only, secrets never kept
