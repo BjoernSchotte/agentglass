@@ -37,7 +37,7 @@ agents); "A/B" = old and new binary side by side for 120 s on an isolated `HOME`
 | `ps` | 44 | 14 | 14 | 80 | 44 |
 | `tmux` | 14 | 5 | 3 | 24 | 14 |
 
-- Targets: idle/away ≤ 0.3% met. `warm` ≤ 1% and `hot` not worse than today are not met on this host: with 24
+- (Superseded by the review below: hot is now below main.) Targets: idle/away ≤ 0.3% met. `warm` ≤ 1% and `hot` not worse than today are not met on this host: with 24
   agents streaming the level is `hot` almost all the time (a live file grew < 5 s ago), and `hot` runs render, scan
   and slow faster than the old fixed tick (+1.1 points). Per-job CPU (`process.cpuUsage()` around each job, 60 s,
   mostly `warm`): tick 4.1% (of which the 30 s ledger cache save ≈ 2%, `buildView` ≈ 1.6%, ledger ≈ 1.5%), marquee
@@ -47,7 +47,7 @@ agents); "A/B" = old and new binary side by side for 120 s on an isolated `HOME`
   at up to 2× the CPU while it runs, same total work.
 
 ## Alarm latency
-Not measured before or after: driving a real `claude` to an approval prompt from an unattended agent session would create real
+(Measured live in the review below.) Not measured before or after: driving a real `claude` to an approval prompt from an unattended agent session would create real
 session data. Bound by cadence. Before: watchdog every 0.5 s, CPU samples (`procs`) every 1.5 s. After: watchdog and
 `procs` every 1.5 s at every level while an agent is live (`sched.check.ts` covers the bound under budget pressure),
 so approval/stuck latency is unchanged and "turn finished" can take up to 1 s longer (spec Decision 2).
