@@ -103,7 +103,7 @@ export function file(d: Day, name: string, path: string, add: number, del: numbe
 }
 export function isoMs(iso: string): number {
   if (!iso) return 0;
-  const d = new Date(iso); const t = d.getTime();
+  const d = new Date(iso.replace(/(\.\d{3})\d+/, "$1")); const t = d.getTime(); // the runtime's Date rejects more than 3 fraction digits
   return t > 0 ? t : 0;
 }
 export function lines(a: Acc, d: Day, nAdd: number, nDel: number): void {

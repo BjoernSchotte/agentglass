@@ -5,6 +5,7 @@
 // oauthAccount plan fields (cut out of the text, never parsed whole). Nothing here keeps a secret or a personal value.
 import { join } from "node:path";
 import { readText } from "../../util/fs.ts";
+import { isoMs } from "./record.ts";
 import { type Obj, obj, str } from "../../util/json.ts";
 
 export type Bill = "api" | "plan" | "metered" | "gateway" | "unknown";
@@ -219,7 +220,7 @@ function winOf(v: unknown, now: number): Win | null {
   let pct = u as number;
   if (pct > 0 && pct < 1 && Math.floor(pct) !== pct) pct = pct * 100; // a 0–1 fraction
   if (!(pct >= 0 && pct <= 100)) return null;
-  const r = str(o["resets_at"]); const t = r ? new Date(r).getTime() : 0;
+  const t = isoMs(str(o["resets_at"]));
   if (!(t > now)) return null;
   return { pct: Math.round(pct), reset: t };
 }

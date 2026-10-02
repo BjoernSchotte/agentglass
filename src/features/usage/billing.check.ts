@@ -112,6 +112,10 @@ const a3 = allowanceOf(cu(NOW - 60000, win("15", in1h), win("140", in3d)), NOW);
 ok("allowance out of range window", !!a3 && !!a3.h5 && a3.d7 === null && a3.hi === "5h", JSON.stringify(a3));
 const a4 = allowanceOf(cu(NOW - 60000, win("0.42", in1h), ""), NOW);
 ok("allowance fraction scaled", !!a4 && !!a4.h5 && a4.h5.pct === 42 && a4.d7 === null && a4.hi === "5h", JSON.stringify(a4));
+// Claude Code writes resets_at with microseconds and an offset ("…:00.102345+00:00"): the runtime's Date rejects those as is
+const us = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + ".102345+00:00";
+const a5 = allowanceOf(cu(NOW - 60000, win("15", us(NOW + 3600000)), win("71", us(NOW + 3 * 86400000))), NOW);
+ok("allowance microsecond resets_at", !!a5 && !!a5.h5 && !!a5.d7 && a5.h5.reset > NOW, JSON.stringify(a5));
 ok("allowance bad resets", allowanceOf(cu(NOW - 60000, win("15", "soon"), win("71", "soon")), NOW) === null, "");
 ok("allowance past reset", allowanceOf(cu(NOW - 60000, win("15", iso(NOW - 1000)), ""), NOW) === null, "");
 ok("allowance no block", allowanceOf(parse("{\"x\":1}"), NOW) === null && allowanceOf(null, NOW) === null, "");
