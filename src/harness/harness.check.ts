@@ -8,6 +8,8 @@ import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
 import { type Acc, newAcc, bucket, usageExact } from "../features/usage/record.ts";
 import { price, cost } from "../features/usage/pricing.ts";
+import { skillUses } from "../features/usage/record.ts";
+import { accOut, accIn } from "../features/usage/cache.ts";
 import { HARNESSES, harnessOf, parseEvents, cmdOf, busy } from "./index.ts";
 import { NOISE_TAGS, isNoise, leadTag } from "./common.ts";
 import { classifyUser } from "./claude.ts";
@@ -226,6 +228,35 @@ function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: 
   ok("fallback: one iteration books the top level", one.outTok === 350 && one.cw === 1200 && one.cr === 938889, one.outTok + " " + one.cw);
   const syn = newAcc(); feed(syn, [msg("m4", "[{\"model\":\"<synthetic>\",\"output_tokens\":5},{\"model\":\"claude-opus-4-8\",\"input_tokens\":1,\"output_tokens\":2}]", "")]);
   ok("fallback: <synthetic> attempt skipped", syn.outTok === 2 && syn.inTok === 1, syn.outTok + " " + syn.inTok);
+}
+// Claude skills: a slash command paired with its base-directory meta line (same promptId) = command; a Skill tool call = model
+const SK_T = "\"timestamp\":\"2026-10-01T10:00:00.000Z\"";
+const skCmd = (pid: string, name: string): string => "{\"type\":\"user\",\"promptId\":\"" + pid + "\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":" + JSON.stringify("<command-message>" + name + "</command-message>\n<command-name>/" + name + "</command-name>") + "}}";
+const skMeta = (pid: string, dir: string, src: string, asStr: boolean): string => {
+  const t = "Base directory for this skill: /h/.claude/plugins/x/skills/" + dir + "\n\n# Skill body";
+  return "{\"type\":\"user\",\"isMeta\":true,\"promptId\":\"" + pid + "\"," + (src ? "\"sourceToolUseID\":\"" + src + "\"," : "") + SK_T + ",\"message\":{\"role\":\"user\",\"content\":" + (asStr ? JSON.stringify(t) : "[{\"type\":\"text\",\"text\":" + JSON.stringify(t) + "}]") + "}}";
+};
+function skills(lines: string[], resumeAt: number): string {
+  let a = newAcc();
+  for (let i = 0; i < lines.length; i++) { if (i === resumeAt) a = accIn(JSON.parse(JSON.stringify(accOut(a)))); harnessOf("claude").usage(a, lines[i] ?? ""); }
+  return skillUses(a, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
+}
+{
+  const s1 = skills([skCmd("p1", "skill-codex:codex"), skMeta("p1", "codex", "", false)], -1); ok("skill: slash command", s1 === "command\tskill-codex:codex=1", s1);
+  const s2 = skills([skCmd("p1", "codex"), skMeta("p1", "codex", "", true)], -1); ok("skill: slash command, string meta", s2 === "command\tcodex=1", s2);
+  const call = "{\"type\":\"assistant\"," + SK_T + ",\"message\":{\"id\":\"ms\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"Skill\",\"input\":{\"skill\":\"superpowers:brainstorming\"}}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}";
+  const res = "{\"type\":\"user\",\"promptId\":\"p2\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu1\",\"content\":\"Launching skill\"}]}}";
+  const ma = newAcc(); for (const l of [skCmd("p0", "other:thing"), call, res, skMeta("p2", "brainstorming", "tu1", false)]) harnessOf("claude").usage(ma, l);
+  const s3 = skillUses(ma, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
+  let skRow = 0; for (const d of ma.days.values()) { const t = d.tt.get("Skill"); if (t) skRow += t.n; }
+  ok("skill: model-invoked", s3 === "model\tsuperpowers:brainstorming=1" && skRow === 1, s3 + " Skill row " + String(skRow));
+  const local = "{\"type\":\"user\",\"promptId\":\"p3\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":\"<local-command-stdout>Compacted</local-command-stdout>\"}}";
+  const s4 = skills([skCmd("p3", "compact"), local], -1); ok("skill: /compact is none", s4 === "", s4);
+  const s5 = skills([skCmd("p4", "x:a"), skMeta("p5", "a", "", false)], -1); ok("skill: other promptId is none", s5 === "", s5);
+  const s6 = skills([skCmd("p4", "x:a"), skMeta("p4", "b", "", false)], -1); ok("skill: other directory is none", s6 === "", s6);
+  const s7 = skills([skCmd("p6", "x:a"), skMeta("p6", "a", "", false)], 1); ok("skill: ledger resumed between command and meta", s7 === "command\tx:a=1", s7);
+  const s8 = skills([skCmd("p7", "x:a"), "{\"type\":\"user\",\"promptId\":\"p8\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":\"next prompt\"}}", skMeta("p7", "a", "", false)], -1);
+  ok("skill: a later prompt clears the pending command", s8 === "", s8);
 }
 // usageExact: the harness's own cost is booked as is; 0 (unknown model) falls back to the price table
 {

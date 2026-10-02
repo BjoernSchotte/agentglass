@@ -6,14 +6,15 @@ import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 
 // one local day of one session; unk = tokens (or fx turns) whose price is unknown
-// tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"
-export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
+// tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"; skills "<command | model>\t<skill name>"
+export interface Day { tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; skills: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Set<string>; days: Map<string, Day>; model: string;
   pend: Map<string, Pend>; // calls waiting for their result, by call id (not persisted: a restart loses their duration)
   ep: string; // the source's cursor epoch off counts in (SessionSource.epoch)
   x: number[]; xM: number; // the harness adapter's own running state (codex: cumulative token counters; fx: usage snapshot + its mtime)
+  pk: string; // claude: "<promptId>\t<command>" of a slash command waiting for its skill base-directory line
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
 }
 export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rlPct: -1, rlWin: 0, rlReset: 0, rlAt: 0 }; // rl* = latest Codex primary rate limit
@@ -33,7 +34,7 @@ export function lastDays(n: number): string[] {
 export function nlines(s: string): number { if (!s) return 0; const n = s.split("\n").length; return s.endsWith("\n") ? n - 1 : n; }
 
 export function newAcc(): Acc {
-  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0,
+  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "",
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0 };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
@@ -44,7 +45,7 @@ export function bucket(a: Acc, ms: number, iso: string): Day {
     if (k !== tsKey) { const d = new Date(iso); tsKey = k; tsDay = dayKey(d); tsHour = d.getHours(); }
   } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); }
   let d = a.days.get(tsDay);
-  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
+  if (!d) { d = { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: [], inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; for (let i = 0; i < 24; i++) d.hours.push(0); a.days.set(tsDay, d); }
   return d;
 }
 export function tool(a: Acc, d: Day, name: string): TS {
@@ -82,6 +83,16 @@ export function file(d: Day, name: string, path: string, add: number, del: numbe
   if (!path) return;
   const c = cnt(d.files, name + "\t" + path);
   c.add = c.add + add; c.del = c.del + del;
+}
+export function skill(d: Day, source: string, name: string): void { if (name) cnt(d.skills, source + "\t" + name); }
+export interface SkillUse { name: string; source: string; n: number }
+// skill uses over the given local days (null = all), most used first
+export function skillUses(a: Acc, days: string[] | null): SkillUse[] {
+  const m = new Map<string, number>();
+  for (const [k, d] of a.days) { if (days && days.indexOf(k) < 0) continue; for (const [sk, c] of d.skills) m.set(sk, (m.get(sk) ?? 0) + c.n); }
+  const out: SkillUse[] = [];
+  for (const [sk, n] of m) { const i = sk.indexOf("\t"); out.push({ name: sk.slice(i + 1), source: sk.slice(0, i), n }); }
+  return out.sort((x, y) => y.n - x.n || (x.name < y.name ? -1 : x.name > y.name ? 1 : x.source < y.source ? -1 : 1));
 }
 export function isoMs(iso: string): number {
   if (!iso) return 0;

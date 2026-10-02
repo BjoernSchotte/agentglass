@@ -37,7 +37,7 @@ function padTo(a: number[], n: number): number[] { while (a.length < n) a.push(0
 function dayOut(d: Day): Obj {
   const tt: Obj = {};
   for (const [k, s] of d.tt) tt[k] = { n: s.n, e: s.err, dn: s.dn, ms: s.ms, mx: s.max, o: s.out, hi: s.hist, h: s.h, s: recsOut(s.slow), x: recsOut(s.errs) };
-  return { t: d.tools, tt, p: cntsOut(d.prog), m: cntsOut(d.cmds), f: cntsOut(d.files), h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del };
+  return { t: d.tools, tt, p: cntsOut(d.prog), m: cntsOut(d.cmds), f: cntsOut(d.files), k: cntsOut(d.skills), h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del };
 }
 function dayIn(o: Obj): Day {
   const tt = new Map<string, TS>();
@@ -47,17 +47,17 @@ function dayIn(o: Obj): Day {
     tt.set(k, { n: num(s["n"]), err: num(s["e"]), dn: num(s["dn"]), ms: num(s["ms"]), max: num(s["mx"]), out: num(s["o"]), hist: padTo(nums(s["hi"]), HB), h: padTo(nums(s["h"]), 24), slow: recsIn(s["s"]), errs: recsIn(s["x"]) });
   }
   const hours = padTo(nums(o["h"]), 24);
-  return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]) };
+  return { tools: num(o["t"]), tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]), skills: cntsIn(o["k"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]) };
 }
-function accOut(a: Acc): Obj {
+export function accOut(a: Acc): Obj {
   const days: Obj = {};
   for (const k of [...a.days.keys()]) { const d = a.days.get(k); if (d) days[k] = dayOut(d); }
   return {
-    off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids].slice(-KEEP_IDS), x: a.x, xM: a.xM,
+    off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids].slice(-KEEP_IDS), x: a.x, xM: a.xM, pk: a.pk,
     t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del], days,
   };
 }
-function accIn(o: Obj): Acc {
+export function accIn(o: Obj): Acc {
   const t = nums(o["t"]);
   const at = (i: number): number => { let v = 0; for (const x of t.slice(i, i + 1)) v = x; return v; };
   const ids = new Set<string>();
@@ -66,7 +66,7 @@ function accIn(o: Obj): Acc {
   const dd = obj(o["days"]);
   if (dd) for (const k of Object.keys(dd)) { const d = obj(dd[k]); if (d) days.set(k, dayIn(d)); }
   return {
-    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), ep: str(o["ep"]), x: nums(o["x"]), xM: num(o["xM"]),
+    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), ep: str(o["ep"]), x: nums(o["x"]), xM: num(o["xM"]), pk: str(o["pk"]),
     inTok: at(0), outTok: at(1), cr: at(2), cw: at(3), cost: at(4), unk: at(5), tools: at(6), add: at(7), del: at(8),
   };
 }

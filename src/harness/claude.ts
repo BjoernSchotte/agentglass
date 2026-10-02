@@ -5,7 +5,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { CLAUDE, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, skill, isoMs, nlines, num } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise, leadTag } from "./common.ts";
@@ -144,8 +144,35 @@ function claudeResult(a: Acc, l: string): void {
   const s0 = tr >= 0 && tr < at ? tr : at; const end = l.indexOf("]},\"uuid\":\"", at); // result block ≈ up to the end of the message (JSON-escaped size)
   done(p, t > 0 && p.t > 0 ? t - p.t : -1, l.indexOf("\"is_error\":true") >= 0, end > s0 ? end - s0 : 0, id, []);
 }
+function userText(o: Obj): string { const m = obj(o["message"]); const c = m ? m["content"] : null; return typeof c === "string" ? c : blockText(c); }
+// slash-command skills: the command line, then an isMeta line "Base directory for this skill: …/skills/<name>" with the same
+// promptId and no sourceToolUseID (a model's Skill call has one). /compact & co. never get that line.
+function userLine(a: Acc, l: string): void {
+  if (l.indexOf("<command-name>/") >= 0) {
+    const o = parseJson(l); if (!o) return;
+    const cm = /<command-name>\/([^<]*)<\/command-name>/.exec(userText(o));
+    a.pk = cm ? str(o["promptId"]) + "\t" + (cm[1] ?? "").trim() : "";
+    return;
+  }
+  if (!a.pk) return;
+  const tab = a.pk.indexOf("\t"); const pid = a.pk.slice(0, tab); const name = a.pk.slice(tab + 1);
+  if (l.indexOf("Base directory for this skill:") >= 0 && l.indexOf("\"isMeta\":true") >= 0) {
+    a.pk = "";
+    const o = parseJson(l); if (!o || str(o["sourceToolUseID"]) || !pid || str(o["promptId"]) !== pid) return;
+    const bd = /Base directory for this skill:[ \t]*([^\n]*)/.exec(userText(o));
+    const dir = bd ? (bd[1] ?? "").trim().replace(/[\/\\]+$/, "") : "";
+    if (dir && dir.slice(Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\")) + 1) === name.slice(name.lastIndexOf(":") + 1)) skill(bucket(a, 0, str(o["timestamp"])), "command", name);
+    return;
+  }
+  const pm = /"promptId":"([^"]+)"/.exec(l);
+  if (!pm || (pm[1] ?? "") !== pid) a.pk = ""; // another prompt: that command had no skill directory
+}
 function usage(a: Acc, l: string): void {
-  if (l.indexOf("\"type\":\"assistant\"") < 0) { if (a.pend.size && l.indexOf("\"tool_use_id\":\"") >= 0) claudeResult(a, l); return; }
+  if (l.indexOf("\"type\":\"assistant\"") < 0) {
+    if (l.indexOf("\"tool_use_id\":\"") >= 0) { if (a.pend.size) claudeResult(a, l); return; }
+    if (l.indexOf("\"type\":\"user\"") >= 0) userLine(a, l);
+    return;
+  }
   const o = parseJson(l); if (!o || str(o["type"]) !== "assistant") return;
   const m = obj(o["message"]); if (!m) return;
   const iso = str(o["timestamp"]);
@@ -172,6 +199,7 @@ function usage(a: Acc, l: string): void {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "tool_use") continue;
     const name = str(bo["name"]) || "tool"; const st = tool(a, d, name);
     const inp = obj(bo["input"]);
+    if (name === "Skill" && inp) skill(d, "model", str(inp["skill"]));
     pend(a, d, st, name, str(bo["id"]), isoMs(iso), iso, toolArg(name, inp, ""), name === "Bash" && inp ? [str(inp["command"])] : []);
     if (!inp) continue;
     let add = 0; let del = 0;
