@@ -7,7 +7,7 @@ import { scan, buildView } from "./model/sessions.ts";
 import { refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
 import { buf, put, renderModal } from "./ui/screen.ts";
-import { flush } from "./ui/frame.ts";
+import { flush, resetFrame } from "./ui/frame.ts";
 import { renderHeader } from "./ui/header.ts";
 import { renderFooter } from "./ui/footer.ts";
 import { renderSessions } from "./ui/list.ts";
@@ -16,7 +16,7 @@ import { renderTranscript } from "./ui/transcript.ts";
 import { renderDetail } from "./ui/detail.ts";
 import { renderHelp } from "./ui/help.ts";
 import { tokens, keyName, onInput, onMouse } from "./input.ts";
-import { enter, quit, termSize } from "./term.ts";
+import { enter, quit, termSize, focusOf } from "./term.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/cli.ts";
@@ -54,6 +54,9 @@ function render(): void {
   flush(buf.join(""), (s: string) => { process.stdout.write(s); });
 }
 
+// focus in: the user looks again; repaint in full (the terminal may have dropped frames)
+function onFocus(f: string): void { if (f === "in") { resetFrame(); S.dirty = true; } }
+
 function main(): void {
   const args = process.argv.slice(2);
   for (const f of H.cli) if (f(args)) return;
@@ -63,7 +66,8 @@ function main(): void {
   render();
   process.stdin.on("data", (d: Uint8Array) => {
     for (const t of tokens(new TextDecoder("utf-8").decode(d))) {
-      if (t.startsWith("\x1b[<")) onMouse(t); else onInput(keyName(t));
+      const f = focusOf(t);
+      if (f) onFocus(f); else if (t.startsWith("\x1b[<")) onMouse(t); else onInput(keyName(t));
     }
     render();
   });
