@@ -11,7 +11,7 @@ export interface View { name: string; render: () => void }
 
 export const H = {
   cli: [] as ((args: string[]) => boolean)[], // before the TUI starts, with argv[2..]; true = handled, the TUI does not start
-  onTick: [] as (() => void)[], // ledger, ticker, cache, prices, callgraph: cadence follows the activity level (250 ms … 5 s), before render
+  onTick: [] as (() => void)[], // ledger, ticker, cache, prices, callgraph: cadence follows the activity level (500 ms … 5 s; 250 ms while the ledger indexes), before render
   onWatch: [] as (() => void)[], // alarms (watchdog, rules): 1.5 s while any agent is live, else 5 s, at every level
   onQuit: [] as (() => void)[], // right before the TUI exits (flush caches); keep it fast
   onFastTick: [] as (() => boolean)[], // every 50ms while any fastArmed source is armed (and the user is around); true = re-render
