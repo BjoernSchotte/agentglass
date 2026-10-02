@@ -26,6 +26,8 @@ export interface Platform {
   trash(path: string): void;
   // SHA-256 of a file as lowercase hex, "" when it cannot be read
   sha256File(path: string): string;
+  // a process's raw environment block (NAME=value\0…), empty when unreadable or unsupported; callers keep names only (billing.ts envSummary)
+  envOf(pid: number): Uint8Array;
   // where trash() puts things, for messages ("~/.Trash")
   trashName: string;
 }

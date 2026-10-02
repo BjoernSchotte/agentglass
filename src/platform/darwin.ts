@@ -21,4 +21,5 @@ export const darwin: Platform = {
   sha256File: (path: string) => (run("shasum", ["-a", "256", path]).split(" ")[0] ?? "").trim(),
   trash: (path: string) => { moveInto(join(HOME, ".Trash"), path); },
   trashName: "~/.Trash",
+  envOf: (pid: number) => new Uint8Array(0), // ps -E truncates and SIP hides it: config files only
 };
