@@ -211,12 +211,18 @@ function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: 
     const k = claudeKinds([CU(HUMAN, "<" + tag + ">x</" + tag + ">")]);
     ok("claude: <" + tag + "> with a human origin is no prompt", k.indexOf("user:") < 0, k);
   }
+  // Claude agent teams: the lead's message to a teammate (no origin) is a peer message, sender = teammate_id, text = summary
+  const TM = "<teammate-message teammate_id=\"team-lead\" summary=\"Review PR 12\">\nRead the brief and follow it.\n</teammate-message>";
+  const k10 = claudeKinds([CU("", TM)]); ok("claude: teammate message", k10 === "meta:⇄ team-lead · Review PR 12", k10);
+  const k11 = claudeKinds([CU("", "<teammate-message teammate_id=\"lead\">\nfirst line\nsecond\n</teammate-message>")]); ok("claude: teammate message without summary", k11 === "meta:⇄ lead · first line", k11);
   const k7 = claudeKinds([CU(HUMAN, "<bash-input>git status</bash-input>")]); ok("claude: shell input", k7 === "meta:! git status", k7);
   const k8 = claudeKinds([CU("", "<command-name>/compact</command-name>")]); ok("claude: slash command unchanged", k8 === "meta:/compact", k8);
   const k9 = claudeKinds(["{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<system-reminder>x</system-reminder>\"},{\"type\":\"text\",\"text\":\"<p>real</p>\"}]}}"]);
   ok("claude: text blocks classified one by one", k9 === "user:<p>real</p>", k9);
   ok("classifyUser: unknown origin kind is a prompt", classifyUser({ origin: { kind: "something-new" } }, "hi") === "human", classifyUser({ origin: { kind: "something-new" } }, "hi"));
   ok("isNoise: codex env", isNoise("<environment_context>\n<cwd>/x</cwd>"), "false");
+  // Codex-injected user messages seen in local rollouts (goal continuation, subagent results, /review output, hooks)
+  for (const t of ["<codex_internal_context source=\"goal\">\nContinue working", "<subagent_notification>\n{}", "<user_action>\n  <context>x", "<hook_prompt hook_run_id=\"stop:2\">x"]) ok("isNoise: codex " + t.slice(0, 22), isNoise(t), "false");
   ok("isNoise: <div> kept", !isNoise("<div>x"), "true");
   ok("isNoise: < 3 kept", !isNoise("< 3 apples"), "true");
   ok("isNoise: AGENTS.md", isNoise("# AGENTS.md instructions"), "false");

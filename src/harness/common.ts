@@ -38,7 +38,8 @@ export function blockText(v: unknown): string {
 // leading tags the harnesses inject into user messages: never a prompt. Anything else starting with < (<div>, < 3) is one.
 export const NOISE_TAGS = [
   "local-command-stdout", "local-command-stderr", "local-command-caveat", "system-reminder", "bash-stdout", "bash-stderr", "user-prompt-submit-hook", // claude
-  "environment_context", "recommended_plugins", "user_instructions", "turn_aborted", "skill", "user_shell_command", "collaboration_mode", // codex
+  "environment_context", "recommended_plugins", "user_instructions", "turn_aborted", "skill", "user_shell_command", "collaboration_mode",
+  "codex_internal_context", "subagent_notification", "user_action", "hook_prompt", // codex
   "session_context", "state_snapshot", // gemini
 ];
 // x of a leading <x> or <x attr…>, else ""

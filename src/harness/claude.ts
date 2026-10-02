@@ -50,6 +50,7 @@ export function classifyUser(o: Obj, text: string): UserKind {
   if (k === "peer" || to === "peer") return "peer";
   if (lt === "task-notification") return "notify";
   if (text.startsWith(PEER_WRAP) && text.indexOf("<agent-message") >= 0) return "peer";
+  if (lt === "teammate-message") return "peer"; // agent teams: the lead (or a teammate) writing to this agent
   return "human"; // unknown = visible
 }
 function inner(t: string, tag: string): string {
@@ -60,6 +61,8 @@ function firstLine(t: string, n: number): string { for (const ln of t.split("\n"
 // ⇄ <sender> · <first line of the message>; a subagent hand-back's frame text is skipped up to the report itself
 function peerText(o: Obj, t: string): string {
   const og = obj(o["origin"]);
+  const tm = /^\s*<teammate-message teammate_id="([^"]*)"(?: summary="([^"]*)")?[^>]*>/.exec(t);
+  if (tm) return "\u21c4 " + ((tm[1] ?? "") || "peer") + " · " + ((tm[2] ?? "") || firstLine(t.slice((tm[0] ?? "").length).split("</teammate-message>")[0] ?? "", 120));
   const at = /<agent-message from="([^"]*)">/.exec(t);
   const from = (og ? str(og["name"]) || str(og["from"]) : "") || (at ? at[1] ?? "" : "") || "peer";
   let body = og ? str(og["body"]) : "";
