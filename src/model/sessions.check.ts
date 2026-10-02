@@ -6,7 +6,7 @@ import { sessions, probeLive } from "./sessions.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
-const dir = "/tmp/agtest-probe";
+const dir = "/tmp/agentglass-probe-check-" + String(process.pid); // per process: concurrent suite runs
 rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
 const pa = dir + "/a.jsonl"; const pb = dir + "/b.jsonl";
 writeFileSync(pa, "{\"x\":1}\n"); writeFileSync(pb, "{\"x\":1}\n");
