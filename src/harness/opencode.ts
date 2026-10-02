@@ -347,6 +347,7 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
     done(p, t0 > 0 && t1 >= t0 ? t1 - t0 : -1, status === "error" || (codes.length > 0 && codes[0] !== 0), body.length, id, codes);
   }
   if (!inp) return;
+  if (name === "skill") { skill(d, "model", str(inp["id"]) || str(inp["name"])); return; } // 2.x {id}, 1.x {name}
   const path = str(inp["filePath"]) || str(inp["path"]);
   let add = 0; let del = 0;
   if (name === "edit") { add = nlines(str(inp["newString"])); del = nlines(str(inp["oldString"])); }
@@ -369,7 +370,8 @@ function usage(a: Acc, l: string): void {
     else if (pt === "tool") { const st = obj(p["state"]); useTool(a, d, str(p["tool"]) || "tool", str(p["callID"]), st, tm(st, "start"), tm(st, "end")); }
     return;
   }
-  if (l.startsWith("{\"type\":\"skill\"")) { const o = parseJson(l); if (o && o["copied"] !== 1) skill(bucket(a, tm(o, "created"), ""), "model", str(o["name"])); return; }
+  // a skill row is a user activation (the session's skill endpoint, a /skill or mention); the model loads skills with its skill tool
+  if (l.startsWith("{\"type\":\"skill\"")) { const o = parseJson(l); if (o && o["copied"] !== 1) skill(bucket(a, tm(o, "created"), ""), "command", str(o["skill"]) || str(o["name"])); return; }
   if (l.startsWith("{\"type\":\"user\"")) { const o = parseJson(l); const n = o && o["copied"] !== 1 ? prompts(parse, o) : 0; if (o && n) turn(bucket(a, tm(o, "created"), ""), n); return; }
   if (!l.startsWith("{\"type\":\"assistant\"") && !l.startsWith("{\"type\":\"compaction\"")) return;
   const o = parseJson(l); if (!o || o["copied"] === 1) return;

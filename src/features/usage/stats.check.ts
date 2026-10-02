@@ -1,4 +1,4 @@
-// agentglass — self-check for the Stats top-tools list: scriptc build src/features/usage/stats.check.ts -o sc && ./sc
+// agentglass — self-check for the Stats top-tools list (skill markers lead: a long name is cut, they are not): scriptc build src/features/usage/stats.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
 import { toolRows, open } from "./stats.ts";
 import { type Cnt, newCnt } from "./calls.ts";
@@ -14,11 +14,11 @@ const c1 = show(); ok("collapsed: skills group sorted by uses", c1 === "✧ skil
 const g = toolRows(names, skills).find((r) => r.skill && !r.kid);
 ok("group row: a skill group, not a server", !!g && !g.server && g.err === 0, g ? g.key : "none");
 open.add(g ? g.key : "");
-const c2 = show(); ok("expanded: kids by uses, sources marked", c2 === "✧ skills 9 | codex  / 3 · ⚙ 5 8 | brainstorming  ⚙ 1 | Bash 5 | s 2", c2);
+const c2 = show(); ok("expanded: kids by uses, sources marked", c2 === "✧ skills 9 | /3 ⚙5 codex 8 | ⚙ brainstorming 1 | Bash 5 | s 2", c2);
 const kid = toolRows(names, skills).find((r) => r.skill && r.kid);
 ok("kid row: a skill kid", !!kid && kid.key === "skill\tcodex", kid ? kid.key : "none");
 const c3 = toolRows(names, m([["command\tx", 2]])).map((r) => r.label + " " + String(r.n)).join(" | ");
-ok("command-only kid", c3 === "Bash 5 | s 2 | ✧ skills 2 | x  / 2", c3);
+ok("command-only kid", c3 === "Bash 5 | s 2 | ✧ skills 2 | / x 2", c3);
 const c4 = toolRows(names, new Map<string, Cnt>()).map((r) => r.label).join(" | ");
 ok("no skills: no group row", c4 === "Bash | s", c4);
 console.log(bad ? bad + " failed" : "stats: all checks passed");

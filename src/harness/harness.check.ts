@@ -291,10 +291,12 @@ function skills(lines: string[], resumeAt: number): string {
   const evs: Ev[] = []; parseEvents("codex", cx("<skill>\n<name>x</name>\n</skill>", "4"), evs, null);
   ok("codex: <skill> message stays out of the transcript", evs.length === 0, JSON.stringify(evs));
   const o = newAcc();
-  harnessOf("opencode").usage(o, "{\"type\":\"skill\",\"seq\":4,\"name\":\"brainstorming\",\"time\":{\"created\":1790688000000}}");
+  harnessOf("opencode").usage(o, "{\"type\":\"skill\",\"seq\":4,\"skill\":\"brainstorming\",\"name\":\"Brainstorming\",\"time\":{\"created\":1790688000000}}");
   harnessOf("opencode").usage(o, "{\"type\":\"skill\",\"seq\":5,\"name\":\"brainstorming\",\"copied\":1,\"time\":{\"created\":1790688000000}}");
+  harnessOf("opencode").usage(o, "{\"type\":\"assistant\",\"seq\":6,\"time\":{\"created\":1790688000000},\"model\":{\"id\":\"claude-sonnet-5-5\"},\"content\":[{\"type\":\"tool\",\"id\":\"ts1\",\"name\":\"skill\",\"state\":{\"status\":\"completed\",\"input\":{\"id\":\"agtest-hello\"}},\"time\":{\"created\":1790688000000}}]}");
+  harnessOf("opencode").usage(o, "{\"v1\":1,\"role\":\"assistant\",\"t\":1790688000000,\"part\":{\"type\":\"tool\",\"tool\":\"skill\",\"callID\":\"ts2\",\"state\":{\"status\":\"completed\",\"input\":{\"name\":\"agtest-hello\"}}}}");
   const ou = skillUses(o, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
-  ok("opencode: skill row is a model skill use, a fork's copy is not", ou === "model\tbrainstorming=1", ou);
+  ok("opencode: skill row = command (user activation), skill tool = model (2.x id, 1.x name), a fork's copy is none", ou === "model\tagtest-hello=2,command\tbrainstorming=1", ou);
 }
 // Codex remote: scrubbed at parse time, the raw repository_url is never stored
 {

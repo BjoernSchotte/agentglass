@@ -52,8 +52,8 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
 - **Know what it costs.** Tokens (in/out/cache) and API-equivalent cost per session and per day,
   with Claude list prices built in and your own rates via `~/.agentglass/prices.json`. A **Stats**
   tab shows today and the last 7 days: per-harness totals, busiest session, top tools, activity by hour.
-  Top tools carry error rates (MCP servers and the `✧ skills` you used grouped, `␣` expands; a skill shows `/ n`
-  for slash-command uses and `⚙ n` for ones the agent chose); `↵` drills into one: p50/p95/max
+  Top tools carry error rates (MCP servers and the `✧ skills` you used grouped, `␣` expands; a skill is marked `/`
+  for slash-command uses, `⚙` for ones the agent chose, `/3 ⚙5` for both); `↵` drills into one: p50/p95/max
   duration, calls over time, top shell programs and command lines, most-changed files, the slowest
   calls and latest errors — `↵` on one opens its session at that call.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
@@ -263,7 +263,8 @@ Notes:
   skill's base-directory line) and as model uses (`Skill` tool calls).
 - **Codex**: the preview and `--json` show the session's git remote (`remote`) with credentials, query and fragment
   removed; a remote that still looks suspicious is not shown. Skills you mention with `$name` count as command uses.
-  OpenCode `skill` parts and Gemini `activate_skill` calls count as model uses; pi skills are not counted yet.
+  OpenCode skills you activate count as command uses, its `skill` tool and Gemini `activate_skill` calls as model uses;
+  pi skills are not counted yet.
 - **pi**: honors `PI_CODING_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR` and `sessionDir` in pi's `settings.json`.
   pi has no session registry, so a session is live when a pi process runs in its working directory.
   Cost comes from pi's own `usage.cost`. MCP calls (pi ≥ 0.99 native MCP, also inside `codemode` scripts, and the

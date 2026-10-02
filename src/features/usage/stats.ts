@@ -180,14 +180,15 @@ const SKILLS = "\tskills";
 export const open = new Set<string>();
 let selKey = ""; let ttop = 0; let lastRows: Row[] = [];
 let listY0 = 0; let listN = 0; let listX1 = 0; // mouse geometry of the list
-// skills: "<command | model>\t<name>" → one kid per name, "/ n" slash-command uses, "⚙ n" model-invoked ones
+// skills: "<command | model>\t<name>" → one kid per name: "/" slash-command uses, "⚙" model-invoked, "/3 ⚙5" both
 function skillKids(skills: Map<string, Cnt>): Row[] {
   const by = new Map<string, number[]>();
   for (const [k, c] of skills) { const i = k.indexOf("\t"); const nm = k.slice(i + 1); const v = by.get(nm) ?? [0, 0]; v[k.startsWith("command\t") ? 0 : 1] = (v[k.startsWith("command\t") ? 0 : 1] ?? 0) + c.n; by.set(nm, v); }
   const out: Row[] = [];
   for (const [nm, v] of by) {
     const cm = v[0] ?? 0; const md = v[1] ?? 0;
-    out.push({ key: "skill\t" + nm, label: nm + "  " + (cm && md ? "/ " + String(cm) + " · ⚙ " + String(md) : cm ? "/" : "⚙"), n: cm + md, err: 0, kid: true, server: false, skill: true });
+    // markers first: at 80 columns a long skill name is cut, its source must not be
+    out.push({ key: "skill\t" + nm, label: (cm && md ? "/" + String(cm) + " ⚙" + String(md) : cm ? "/" : "⚙") + " " + nm, n: cm + md, err: 0, kid: true, server: false, skill: true });
   }
   return out;
 }
@@ -211,7 +212,7 @@ export function toolRows(names: Map<string, Cnt>, skills: Map<string, Cnt>): Row
   for (const r of top) {
     out.push(r);
     const ks = kids.get(r.key);
-    if (ks && open.has(r.key)) for (const k of ks.sort((x, y) => y.n - x.n || (x.label < y.label ? -1 : 1))) out.push(k);
+    if (ks && open.has(r.key)) for (const k of ks.sort((x, y) => y.n - x.n || (x.key < y.key ? -1 : 1))) out.push(k);
   }
   return out;
 }
