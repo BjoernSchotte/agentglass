@@ -86,18 +86,21 @@ function sizeJob(): void { if (termSize()) render(); } // a resize repaints at o
 function scanSum(): string { let n = 0; let z = 0; for (const s of sessions.values()) { n++; z += s.size; } return n + ":" + z; }
 // attention/stuck of the watched (live) sessions: an alarm that changes must be drawn
 function alarmSig(): string { let o = ""; for (const s of sessions.values()) if (s.pid > 0) o += s.path + (s.attention ? "!" : ".") + s.stuck + "|"; return o; }
+function probe(): void { if (probeLive()) { act.grow = Date.now(); S.dirty = true; } }
 function body(j: Job, now: number): () => void {
   if (j === "size") return sizeJob;
   if (j === "procs") return () => { refreshProcs(); S.dirty = true; }; // header CPU graph, Processes tab
   if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; } };
   if (j === "slow") return () => { refreshSlow(); S.dirty = true; };
-  if (j === "probe") return () => { if (probeLive()) { act.grow = now; S.dirty = true; } };
+  if (j === "probe") return probe;
   if (j === "tick") return () => {
     if (S.mode === "list" && S.tab === 0) buildView();
     const v = L.ver; for (const f of H.onTick) f();
     if (L.ver !== v) S.dirty = true;
   };
-  if (j === "watch") return () => { for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; S.dirty = true; } };
+  // alarm latency = the watch interval: probe first (the probe may sleep up to 1 s, the tail follows the stat), and a
+  // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap)
+  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } };
   if (j === "fast") return () => {
     let d = false; for (const f of H.onFastTick) if (f()) d = true;
     let hd = false; for (const f of H.onHeaderTick) if (f()) hd = true;
@@ -151,7 +154,7 @@ function onData(d: Uint8Array): void {
 }
 
 H.helpSections.push({ name: "refresh", ctx: "", keys: [
-  ["now", "adaptive: fast if busy, slow if idle, 1 fps hidden"], ["config.json", '"refresh": {"mode": "fixed"}: fixed 500 ms tick'],
+  ["mode", "adaptive: fast if busy, slow if idle, 1 fps hidden"], ["config.json", '"refresh": {"mode": "fixed"}: fixed 500 ms tick'],
   ["REFRESH=", "AGENTGLASS_REFRESH=adaptive|fixed (wins)"], ["DEBUG=1", "AGENTGLASS_DEBUG_REFRESH=1: level, costs in footer"],
   ["tmux", "set -g focus-events on: lets it see it is hidden"] ] });
 

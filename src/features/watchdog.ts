@@ -101,10 +101,12 @@ export function stuckOf(o: Obs): string[] {
 }
 
 // ── live state ────────────────────────────────────────────────────────────────
-interface St { busy: boolean; att: string; attAt: number; note: string; appr: boolean; bell: number; stuckNote: string }
+interface St { busy: boolean; att: string; attAt: number; note: string; appr: boolean; bell: number; stuckNote: string; prompt: string } // prompt: newest user prompt seen in the tail
 const st = new Map<string, St>();
 let selPath = ""; let selSince = 0;
 
+// the newest user prompt in the tail window (ts + text), "" when none is in it
+function lastPrompt(evs: Ev[]): string { for (let i = evs.length - 1; i >= 0; i--) { const e = evs[i]; if (e.kind === "user") return e.ts + "\u0000" + e.text; } return ""; }
 function watched(s: Sess): boolean { return s.pid !== 0 && !s.parent; }
 function isBusy(s: Sess): boolean { return working(s); }
 function kidsMap(): Map<number, Proc[]> {
@@ -141,11 +143,13 @@ function tick(): void {
     const r = stuckOf(o);
     s.stuck = r[0] ?? "";
     let x = stateOf(s);
-    if (!x) { x = { busy: o.busy, att: "", attAt: 0, note: "", appr: false, bell: 0, stuckNote: "" }; st.set(s.path, x); } // first sight: record only
+    const pr = lastPrompt(s.evs);
+    if (!x) { x = { busy: o.busy, att: "", attAt: 0, note: "", appr: false, bell: 0, stuckNote: "", prompt: pr }; st.set(s.path, x); } // first sight: record only
     x.stuckNote = r[1] ?? "";
-    if (x.busy && !o.busy) raise(s, x, "turn finished", "");
+    // busy → idle, or a whole turn between two looks (never seen busy: a new prompt in the log and idle now)
+    if (!o.busy && (x.busy || (pr !== "" && pr !== x.prompt))) raise(s, x, "turn finished", "");
     else if (!x.busy && o.busy && x.att) clear(s, x);
-    x.busy = o.busy;
+    x.busy = o.busy; if (pr) x.prompt = pr;
     const a = approvalNote(o);
     if (a && !x.appr) raise(s, x, "approval?", a);
     else if (a && x.att === "approval?") x.note = a;
