@@ -1,7 +1,7 @@
 // agentglass — self-check for the frame diff: scriptc build src/ui/frame.check.ts -o fc && ./fc
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../state.ts";
-import { flush, resetFrame } from "./frame.ts";
+import { flush, resetFrame, partial } from "./frame.ts";
 import { spin } from "./screen.ts";
 
 let bad = 0;
@@ -17,6 +17,11 @@ eq("repaint writes identical", String(flush("B", w)) + " " + String(n) + " " + S
 eq("after repaint skipped again", String(flush("B", w)), "false");
 resetFrame();
 eq("reset writes", String(flush("B", w)) + " " + String(n), "true 4");
+// a header-only write (marquee step) leaves the screen differing from the last full frame: the next one is written
+flush("C", w); partial("hdr", w);
+eq("partial written", String(n) + " " + out, "6 hdr");
+eq("full frame after partial written", String(flush("C", w)) + " " + String(n) + " " + out, "true 7 C");
+eq("then skipped again", String(flush("C", w)), "false");
 S.animating = false; spin();
 eq("spin marks animating", String(S.animating), "true");
 eq("dirty defaults true", String(S.dirty), "true");

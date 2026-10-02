@@ -7,7 +7,7 @@ import { sessions, scan, buildView, probeLive } from "./model/sessions.ts";
 import { procs, refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
 import { buf, put, renderModal } from "./ui/screen.ts";
-import { flush, resetFrame } from "./ui/frame.ts";
+import { flush, resetFrame, partial } from "./ui/frame.ts";
 import { renderHeader } from "./ui/header.ts";
 import { renderFooter } from "./ui/footer.ts";
 import { renderSessions } from "./ui/list.ts";
@@ -17,7 +17,7 @@ import { renderDetail } from "./ui/detail.ts";
 import { renderHelp } from "./ui/help.ts";
 import { tokens, keyName, onInput, onMouse } from "./input.ts";
 import { enter, quit, termSize, focusOf } from "./term.ts";
-import { type Job, DBG, newSched, levelOf, hotWhy, due, runJob, sleepFor, forceMs, debugLine, refreshMode } from "./sched.ts";
+import { type Job, DBG, fastDraw, newSched, levelOf, hotWhy, due, runJob, sleepFor, forceMs, debugLine, refreshMode } from "./sched.ts";
 import { str } from "./util/json.ts";
 import { bytes } from "./util/text.ts";
 import { section } from "./util/config.ts";
@@ -60,6 +60,15 @@ function render(): void {
   if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
   flush(buf.join(""), (s: string) => { process.stdout.write(s); });
 }
+// the header row alone (a marquee step): a full frame costs ~3× more to build, and the marquee moves ~6 times a second
+function renderTop(): void {
+  buf.length = 0;
+  buf.push("\x1b[?2026h");
+  renderHeader();
+  buf.push("\x1b[?2026l");
+  if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
+  partial(buf.join(""), (s: string) => { process.stdout.write(s); });
+}
 
 // ── adaptive refresh: one self-rescheduling setTimeout loop over named jobs (src/sched.ts decides what is due) ──
 const mode = refreshMode(process.env.AGENTGLASS_REFRESH ?? "", str(section("refresh")["mode"]));
@@ -91,7 +100,9 @@ function body(j: Job, now: number): () => void {
   if (j === "watch") return () => { for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; S.dirty = true; } };
   if (j === "fast") return () => {
     let d = false; for (const f of H.onFastTick) if (f()) d = true;
-    if (d && !sc.unf) render(); else if (d) S.dirty = true; // armed animation draws at its own pace; unfocused: the 1/s cap
+    let hd = false; for (const f of H.onHeaderTick) if (f()) hd = true;
+    const w = fastDraw(d, hd, sc.unf); // armed animation draws at its own pace; unfocused: the 1/s cap
+    if (w === "full") render(); else if (w === "header") renderTop(); else if (w === "dirty") S.dirty = true;
   };
   return () => { // render: build only when something changed, animates, a toast is up, or the clock texts are due
     const toast = S.toast !== "" && now - S.toastAt < 5500; // includes the frame that removes it

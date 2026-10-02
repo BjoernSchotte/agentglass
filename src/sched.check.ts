@@ -1,7 +1,7 @@
 // agentglass — self-check for the adaptive refresh scheduler: scriptc build src/sched.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
 import { H, armed } from "./hooks.ts";
-import { type Act, type Job, type Sched, JOBS, levelOf, base, every, due, ran, sleepFor, forceMs, debugLine, refreshMode, newSched, runJob, hotWhy } from "./sched.ts";
+import { type Act, type Job, type Sched, JOBS, fastDraw, levelOf, base, every, due, ran, sleepFor, forceMs, debugLine, refreshMode, newSched, runJob, hotWhy } from "./sched.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -26,7 +26,15 @@ eq("focus-out, live: away", levelOf(act(0, t - 1000, false, 0, false, true)), "a
 eq("scan idle", String(base("scan", "idle", false, false, false)), "10000");
 eq("procs idle live", String(base("procs", "idle", true, false, false)), "1500");
 eq("procs idle", String(base("procs", "idle", false, false, false)), "5000");
-eq("procs hot live", String(base("procs", "hot", true, false, false)), "1000");
+eq("procs hot live", String(base("procs", "hot", true, false, false)), "1500");
+// hot is never busier than the old fixed loop for data jobs (an agent streaming keeps the level hot all day):
+// procs 1.5 s, scan 3 s, slow 5 s, tick 500 ms; only render (on change) and the stat-only probe are faster
+for (const j of ["procs", "scan", "slow", "tick"]) {
+  const jj: Job = j === "procs" ? "procs" : j === "scan" ? "scan" : j === "slow" ? "slow" : "tick";
+  eq("hot " + j + " = fixed", String(base(jj, "hot", false, false, false)), String(base(jj, "hot", false, true, false)));
+}
+eq("hot render", String(base("render", "hot", false, false, false)), "250");
+eq("hot probe", String(base("probe", "hot", false, false, false)), "250");
 for (const lv of ["hot", "warm", "idle", "away"]) {
   const l = lv === "hot" ? "hot" : lv === "warm" ? "warm" : lv === "idle" ? "idle" : "away";
   eq("watch live " + lv, String(base("watch", l, true, false, false)), "1500");
@@ -46,7 +54,7 @@ function cost(s2: Sched, j: Job, dur: number): void { for (let i = 0; i < 80; i+
 let sc = newSched(false, false, t);
 sc.lv = "hot";
 ran(sc, "scan", t, 800);
-eq("one slow run barely stretches", String(every(sc, "scan", false, false)), "2000");
+eq("one slow run barely stretches", String(every(sc, "scan", false, false)), "3000");
 cost(sc, "scan", 800);
 eq("scan stretched", String(Math.round(every(sc, "scan", false, false))), "16000");
 const sp = newSched(false, false, t); sp.lv = "hot";
@@ -88,7 +96,7 @@ eq("fast armed idle", String(every(sc, "fast", false, true)), "-1");
 // ── unfocused cap ──
 sc = newSched(false, false, t); sc.lv = "hot"; sc.unf = true;
 eq("unf render hot", String(every(sc, "render", false, false)), "1000");
-eq("unf tick hot", String(every(sc, "tick", false, false)), "250");
+eq("unf tick hot", String(every(sc, "tick", false, false)), "500");
 eq("unf probe hot", String(every(sc, "probe", false, false)), "250");
 eq("unf watch live", String(every(sc, "watch", true, false)), "1500");
 sc.lv = "away";
@@ -98,9 +106,10 @@ eq("focused render hot", String(every(sc, "render", false, false)), "250");
 
 // ── due ──
 sc = newSched(false, false, t); sc.lv = "hot";
-eq("tick not due at 249", String(due(sc, t + 249, false, false).indexOf("tick")), "-1");
+eq("tick not due at 499", String(due(sc, t + 499, false, false).indexOf("tick")), "-1");
 const d250 = due(sc, t + 250, false, false);
-eq("tick due at 250", String(d250.indexOf("tick") >= 0 && d250.indexOf("probe") >= 0), "true");
+eq("probe due at 250", String(d250.indexOf("probe") >= 0 && d250.indexOf("tick") < 0), "true");
+eq("tick due at 500", String(due(sc, t + 500, false, false).indexOf("tick") >= 0), "true");
 function all(sc2: Sched, last: number): string {
   for (const j of JOBS) ran(sc2, j, last, 0);
   return due(sc2, t, false, false).join(",");
@@ -141,7 +150,7 @@ eq("procs not slow without live", String(debugLine(sc, false, false, "").indexOf
 eq("debug why", debugLine(sc, false, false, "grow").slice(0, 14), "lvl hot (grow)");
 eq("hotWhy", hotWhy(act(t - 1000, 0, false, t - 1000, true, false)), "input+grow+index");
 const j0: Job = "tick";
-eq("debug shows tick", String(debugLine(sc, false, false, "").indexOf(j0 + " 0ms/250ms") >= 0), "true");
+eq("debug shows tick", String(debugLine(sc, false, false, "").indexOf(j0 + " 0ms/500ms") >= 0), "true");
 
 // ── runJob: a throwing job never escapes, warns once per job, is still recorded ──
 sc = newSched(false, false, t);
@@ -160,6 +169,13 @@ const busy = (): void => { const e = Date.now() + 30; while (Date.now() < e) { /
 runJob(sc, "probe", busy, () => Date.now(), (msg: string) => { warns++; });
 const px = sc.js.get("probe");
 eq("duration measured", String(px ? px.ew >= 9 : false), "true"); // 0.3 × 30
+
+// ── fast frames: a marquee step redraws the header row only; body changes (replay) the whole frame; unfocused: mark dirty ──
+eq("fast nothing", fastDraw(false, false, false), "");
+eq("fast header", fastDraw(false, true, false), "header");
+eq("fast full", fastDraw(true, true, false), "full");
+eq("fast unfocused header", fastDraw(false, true, true), "dirty");
+eq("fast unfocused full", fastDraw(true, false, true), "dirty");
 
 // ── fast arm seam ──
 eq("nothing armed", String(armed()), "false");

@@ -15,6 +15,7 @@ export const H = {
   onWatch: [] as (() => void)[], // alarms (watchdog, rules): 1.5 s while any agent is live, else 5 s, at every level
   onQuit: [] as (() => void)[], // right before the TUI exits (flush caches); keep it fast
   onFastTick: [] as (() => boolean)[], // every 50ms while any fastArmed source is armed (and the user is around); true = re-render
+  onHeaderTick: [] as (() => boolean)[], // like onFastTick, but true = only the header row changed (marquee): redraws that row alone
   fastArmed: [] as (() => boolean)[], // true = this source needs 50ms frames now (marquee overflows, replay plays)
   keys: [] as ((mode: string, key: string) => boolean)[], // list/transcript/detail/view modes, before built-in keys; true = handled
   mouse: [] as ((mode: string, b: number, x: number, y: number, press: boolean) => boolean)[], // raw SGR mouse (b 0 left, 2 right, 64/65 wheel; 0-based x/y) before built-ins; true = handled

@@ -17,14 +17,16 @@ export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean
 const LV: Level[] = ["hot", "warm", "idle", "away"];
 const JUMP = 600000; // a job last run more than 10 min ago (suspend) or in the future (clock went back) runs now
 const ALARM = 1500; // watch and procs while an agent is live: alarm latency wins over the budget
-// base intervals hot / warm / idle / away; -1 = not scheduled at that level
+// base intervals hot / warm / idle / away; -1 = not scheduled at that level. hot never polls data faster than the old
+// fixed loop (procs 1.5 s, scan 3 s, slow 5 s, tick 500 ms): with agents streaming the level is hot nearly all day, and
+// faster polling there cost more than the old loop. hot is faster only where it is cheap: stat-only probe, render on change
 function row(j: Job): number[] {
   if (j === "render") return [250, 500, 1000, 5000];
   if (j === "probe") return [250, 1000, 1000, 1000];
-  if (j === "procs") return [1000, 1500, 5000, 5000];
-  if (j === "scan") return [2000, 3000, 10000, 15000];
-  if (j === "slow") return [3000, 5000, 15000, 30000];
-  if (j === "tick") return [250, 500, 2000, 5000];
+  if (j === "procs") return [1500, 1500, 5000, 5000];
+  if (j === "scan") return [3000, 3000, 10000, 15000];
+  if (j === "slow") return [5000, 5000, 15000, 30000];
+  if (j === "tick") return [500, 500, 2000, 5000];
   if (j === "fast") return [50, 50, -1, -1];
   return [2000, 2000, 5000, 10000]; // size
 }
@@ -74,7 +76,8 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
   if (b < 0 || (j === "fast" && !armed)) return -1;
   if (sc.fixed) return b;
   const x = sc.js.get(j);
-  let e = x && !(j === "tick" && sc.burst) ? Math.max(b, 20 * x.ew) : b;
+  if (j === "tick" && sc.burst) return sc.lv === "hot" ? 250 : b; // ledger indexing: 100 ms slices at 250 ms while hot, no stretch
+  let e = x ? Math.max(b, 20 * x.ew) : b;
   if (j === "render" && sc.unf) e = Math.max(e, 1000); // unfocused: draw ≤ 1/s, ingest and alarms keep their cadence
   return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
 }
@@ -119,6 +122,13 @@ export function sleepFor(sc: Sched, now: number, live: boolean, armed: boolean):
   return Math.max(16, Math.min(1000, w));
 }
 
+// what a fast-job turn draws: full = an armed source changed the body (replay), header = only the header row moved
+// (marquee: one row instead of a whole frame, ~6 steps/s), dirty = unfocused, left to the 1/s render cap
+export function fastDraw(full: boolean, header: boolean, unf: boolean): string {
+  if (!full && !header) return "";
+  if (unf) return "dirty";
+  return full ? "full" : "header";
+}
 // a frame is built at least this often even when nothing is dirty ("3m ago" texts)
 export function forceMs(lv: Level): number { return lv === "away" ? 5000 : 1000; }
 
