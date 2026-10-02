@@ -19,6 +19,7 @@ import { enter, quit, termSize } from "./term.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/cli.ts";
+import "./features/cost-cli.ts";
 import "./features/themes.ts";
 import "./features/ticker.ts";
 import "./features/watchdog.ts";

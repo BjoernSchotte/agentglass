@@ -10,6 +10,8 @@ import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { BUILD } from "../build-info.ts";
 import { versionInfo } from "./version.ts";
+import { planLabel } from "./usage/billing.ts";
+import { REDACT } from "./redact-on.ts";
 
 // option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
 const CMDS: string[][] = [
@@ -19,6 +21,8 @@ const CMDS: string[][] = [
   ["", "(also AGENTGLASS_REDACT=1; combinable with --json / --watch)"],
   ["agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit"],
   ["agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)"],
+  ["agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget"],
+  ["", "(--harness h: one harness; --check: exit 3 when over budget)"],
   ["agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)"],
   ["agentglass --help | -h", "this text"],
   ["agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)"],
@@ -43,7 +47,10 @@ options for --json / --watch:
 ${table(OPTS, col)}
 
 --json fields: id harness title cwd branch model path updated bytes live pid status parent kind subagents
-  activity tokens{in,out,cacheRead,cacheWrite} costUsd tools linesAdded linesRemoved attention stuck
+  activity tokens{in,out,cacheRead,cacheWrite} costUsd billing{mode,plan,source} unpricedTokens unpricedCredits
+  tools linesAdded linesRemoved attention stuck
+  (costUsd = API list price, null when only unpriced usage exists; billing.mode = api|plan|metered|gateway|unknown,
+  source = session|process|config — config = assumed from the current config files)
 --watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears
 
@@ -55,10 +62,11 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 
 interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean }
 interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
+interface JBill { mode: string; plan: string; source: string }
 interface JSess {
   id: string; harness: string; title: string; cwd: string; branch: string; model: string; path: string; updated: string; bytes: number;
   live: boolean; pid: number; status: string; parent: string | null; kind: string; subagents: number; activity: string; tokens: JTok;
-  costUsd: number | null; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null;
+  costUsd: number | null; billing: JBill; unpricedTokens: number; unpricedCredits: number; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null;
 }
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
 
@@ -90,7 +98,7 @@ function wanted(s: Sess, o: Opts): boolean {
   if (o.harness && s.h !== o.harness) return false;
   return !o.live || livePid(s) > 0;
 }
-function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
+export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
 
 function snapshot(o: Opts): void {
   discover();
@@ -105,7 +113,8 @@ function snapshot(o: Opts): void {
       updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
       parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
       tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
-      costUsd: s.cost < 0 ? null : s.cost, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
+      costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
+      unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
       attention: s.attention, stuck: s.stuck ? s.stuck : null,
     });
   }

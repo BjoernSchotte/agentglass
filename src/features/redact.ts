@@ -11,9 +11,9 @@ import type { Ev, Sess } from "../model/types.ts";
 import { H } from "../hooks.ts";
 import { isErr } from "./callgraph/model.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
+import { REDACT } from "./redact-on.ts";
 
-const envOn = process.env.AGENTGLASS_REDACT;
-export const REDACT = process.argv.indexOf("--redact") >= 0 || (envOn !== undefined && envOn !== "" && envOn !== "0");
+export { REDACT };
 const envKeep = process.env.AGENTGLASS_REDACT_KEEP;
 const KEEP = (envKeep !== undefined ? envKeep : "").split(",").map((x) => x.trim()).filter((x) => x.length > 0);
 

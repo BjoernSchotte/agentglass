@@ -17,7 +17,7 @@ import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag
 import { type Bill, MODES, tag, asBill, planLabel } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
 import { costNow, budget } from "./summary.ts";
-import { REDACT } from "../redact.ts";
+import { REDACT } from "../redact-on.ts";
 import { CONFIG_FILE } from "../../util/config.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
 
