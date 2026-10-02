@@ -9,16 +9,18 @@ import { ledger } from "./ledger.ts";
 import { L, todayKey, lastDays } from "./record.ts";
 import { type Bill, MODES } from "./billing.ts";
 import { modeOf } from "./bill-live.ts";
-import { type ModeSum, type DayCost, type Budget, type BState, newSum, addDay, parseBudget, budgetState, notifyOnce, projectToday, projectMonth, daysLeftInMonth, monthStart } from "./costs.ts";
+import { type ModeSum, type DayCost, type Budget, type BState, newSum, addDay, parseBudget, budgetState, stateOf, notifyOnce, projectToday, projectMonth, daysLeftInMonth, monthStart } from "./costs.ts";
 
 export const budget: Budget = parseBudget(section("budget"));
 
+// cached sums stay valid ≤ 5 s, and while indexing bumps the ledger version every tick they are rebuilt at most every 2 s
+function fresh(ver: number, at: number): boolean { const age = Date.now() - at; return ver >= 0 && age < 5000 && (ver === L.ver || age < 2000); }
 // cost/unpriced by mode over the given local days, harness "" = all (cached per ledger version, ≤ 5 s)
 const sums = new Map<string, { ver: number; at: number; m: ModeSum }>();
 export function sumDays(days: string[], harness: string): ModeSum {
   const key = harness + "|" + days.join(",");
   const hit = sums.get(key);
-  if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit.m;
+  if (hit && fresh(hit.ver, hit.at)) return hit.m;
   const m = newSum();
   for (const s of sessions.values()) {
     if (harness && s.h !== harness) continue;
@@ -58,24 +60,30 @@ function project(series: DayCost[], mtd: number, hour: number, left: number): Pr
   const pt = projectToday(hist, today, hour);
   return { today: pt, month: projectMonth(hist, mtd, pt, today.cost, left) };
 }
-// Σ of per-mode projections over the picked modes; -1 as soon as one of them is unknown
-function sumProj(ps: Proj[], pick: (i: number) => boolean): Proj {
-  let t = 0; let m = 0;
-  for (let i = 0; i < ps.length; i++) {
-    if (!pick(i)) continue; const p = ps[i];
-    t = t < 0 || p.today < 0 ? -1 : t + p.today; m = m < 0 || p.month < 0 ? -1 : m + p.month;
+// the given modes' rows summed into one series (one DayCost per day)
+function sumRows(rows: DayCost[][], pick: (i: number) => boolean): DayCost[] {
+  const out: DayCost[] = [];
+  const n = rows.length ? rows[0].length : 0;
+  for (let j = 0; j < n; j++) {
+    const dc: DayCost = { key: rows[0][j].key, cost: 0, hc: zeros24() };
+    for (let i = 0; i < rows.length; i++) {
+      if (!pick(i)) continue;
+      const r = rows[i]; if (j >= r.length) continue; const x = r[j];
+      dc.cost += x.cost; for (let h = 0; h < 24; h++) dc.hc[h] = (dc.hc[h] ?? 0) + (x.hc[h] ?? 0);
+    }
+    out.push(dc);
   }
-  return { today: t, month: m };
+  return out;
 }
 export interface CostNow {
   today: ModeSum; week: ModeSum; month: ModeSum;
-  projByMode: Proj[]; proj: Proj; projCounted: Proj; // per mode; summed over all modes / over the budget's counted modes
+  projByMode: Proj[]; proj: Proj; projCounted: Proj; // per mode; of the summed series over all modes / the budget's counted modes
   budget: Budget; bs: BState;
 }
 const nows = new Map<string, { ver: number; at: number; c: CostNow }>();
 export function costNow(harness: string): CostNow {
   const hit = nows.get(harness);
-  if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit.c;
+  if (hit && fresh(hit.ver, hit.at)) return hit.c;
   const now = Date.now(); const hour = new Date(now).getHours(); const left = daysLeftInMonth(now);
   const d15 = lastDays(15); const mk = monthStart(now);
   const month = sumDays(mk, harness);
@@ -83,9 +91,14 @@ export function costNow(harness: string): CostNow {
   const projByMode: Proj[] = [];
   for (let i = 0; i < MODES.length; i++) projByMode.push(project(rows[i] ?? [], month.by[i] ?? 0, hour, left));
   const counted = (i: number): boolean => budget.counts.indexOf(MODES[i] ?? "unknown") >= 0;
+  let mtdAll = 0; let mtdCounted = 0;
+  for (let i = 0; i < MODES.length; i++) { mtdAll += month.by[i] ?? 0; if (counted(i)) mtdCounted += month.by[i] ?? 0; }
+  // sums project the summed series: one mode with a short history does not blank the total
+  const projCounted = project(sumRows(rows, counted), mtdCounted, hour, left);
+  const bs = budgetState(budget, month, projByMode.map((p: Proj) => p.month));
+  bs.projected = projCounted.month; bs.state = stateOf(budget, bs.used, bs.projected);
   const c: CostNow = { today: sumDays([todayKey()], harness), week: sumDays(lastDays(7), harness), month, projByMode,
-    proj: sumProj(projByMode, (i: number) => true), projCounted: sumProj(projByMode, counted), budget,
-    bs: budgetState(budget, month, projByMode.map((p: Proj) => p.month)) };
+    proj: project(sumRows(rows, (i: number) => true), mtdAll, hour, left), projCounted, budget, bs };
   nows.set(harness, { ver: L.ver, at: now, c });
   return c;
 }

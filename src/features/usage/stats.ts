@@ -13,24 +13,24 @@ import { L, todayKey, lastDays, startOfDay } from "./record.ts";
 import { PRICES_FROM } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer } from "./calls.ts";
 import "./cache.ts";
-import "./bill-live.ts";
-import "./summary.ts";
-import { kfmt, grp } from "./costs.ts";
+import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText } from "./costs.ts";
+import { type Bill, MODES, tag, asBill, planLabel } from "./billing.ts";
+import { modeOf, allowance } from "./bill-live.ts";
+import { costNow, budget } from "./summary.ts";
+import { REDACT } from "../redact.ts";
+import { CONFIG_FILE } from "../../util/config.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export { kfmt, grp };
-export function money(c: number, unk: number): string {
-  if (c === 0 && unk > 0) return "cost ?";
-  return "≈$" + (c < 1000 ? c.toFixed(2) : grp(c)) + (unk > 0 ? "+?" : "");
-}
 const dot = fg(C.dim) + " · " + RST;
 function rj(s: string, w: number): string { const n = width(s); return n >= w ? fit(s, w) : " ".repeat(w - n) + s; }
 
 // ── aggregation over a set of local days (cached per ledger version) ────────
-interface HA { h: string; sess: number; tools: number; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number }
+// ms = cost by billing mode + unpriced; modes = each session's label with whether it is assumed from config ("plan\tteam\t*")
+interface HA { h: string; sess: number; tools: number; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number; ms: ModeSum; modes: string[] }
 interface Agg { key: string; ver: number; at: number; rows: HA[]; tot: HA; names: Map<string, Cnt>; hours: number[]; perDay: number[]; dayCost: number[]; busy: Sess | null; busyTools: number; busyCost: number; done: number; total: number }
-function ha(h: string): HA { return { h, sess: 0, tools: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0 }; }
+function ha(h: string): HA { return { h, sess: 0, tools: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0, ms: newSum(), modes: [] }; }
 function zeros(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(0); return a; }
 function addCnt(m: Map<string, Cnt>, k: string, n: number, err: number, add: number, del: number): void {
   let c = m.get(k);
@@ -55,13 +55,13 @@ function agg(days: string[]): Agg {
     for (let i = 0; i < days.length; i++) {
       const d = a.days.get(days[i] ?? ""); if (!d) continue;
       any = true;
-      for (const x of [r, tot]) { x.tools += d.tools; x.inTok += d.inTok; x.outTok += d.outTok; x.cr += d.cr; x.cw += d.cw; x.cost += d.cost; x.unk += d.unk; x.add += d.add; x.del += d.del; }
+      for (const x of [r, tot]) { x.tools += d.tools; x.inTok += d.inTok; x.outTok += d.outTok; x.cr += d.cr; x.cw += d.cw; x.cost += d.cost; x.unk += d.unk; x.add += d.add; x.del += d.del; addDay(x.ms, d, (p: string): Bill => modeOf(s, p)); }
       st += d.tools; sc += d.cost;
       g.perDay[i] = numAt(g.perDay, i, 0) + d.tools; g.dayCost[i] = numAt(g.dayCost, i, 0) + d.cost;
       for (const [n, c] of d.tt) addCnt(g.names, n, c.n, c.err, 0, 0);
       for (let hh = 0; hh < 24; hh++) g.hours[hh] = numAt(g.hours, hh, 0) + numAt(d.hours, hh, 0);
     }
-    if (any && !s.parent) { r.sess++; tot.sess++; }
+    if (any && !s.parent) { r.sess++; tot.sess++; const mk = s.bill + "\t" + s.plan + "\t" + (s.billSrc === "config" ? "*" : ""); if (r.modes.indexOf(mk) < 0) r.modes.push(mk); }
     if (st > g.busyTools) { g.busyTools = st; g.busyCost = sc; g.busy = s; }
   }
   cache.set(key, g);
@@ -74,7 +74,35 @@ function period(): string[] { return week ? lastDays(7) : [todayKey()]; }
 const BLK = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 const WD = "SuMoTuWeThFrSa";
 
-function costStr(x: HA): string { return x.cost === 0 && x.unk > 0 ? fg(C.dim) + "?" + RST : fg(C.yellow) + money(x.cost, x.unk) + RST; }
+// "Claude plan (team)" per harness with sessions in the period; "mixed" for more than one mode, assumed ones dim with *
+function billingOf(rows: HA[]): string {
+  const out: string[] = [];
+  for (const r of rows) {
+    if (!r.modes.length) continue;
+    const bs: string[] = []; let plan = ""; let assumed = false;
+    for (const m of r.modes) { const f = m.split("\t"); const b = f[0] || "unknown"; if (bs.indexOf(b) < 0) bs.push(b); if (f[1]) plan = f[1]; if (f[2]) assumed = true; }
+    const one = bs.length === 1 ? asBill(bs[0] ?? "") : null;
+    const word = one ? (one === "unknown" ? "unknown" : one === "gateway" ? "gateway" : tag(one)) + (one === "plan" && plan ? " (" + planLabel(plan, REDACT) + ")" : "") : "mixed";
+    out.push((assumed ? fg(C.dim) : fg(C.sub)) + harnessOf(r.h).label + " " + word + (assumed ? "*" : "") + RST);
+  }
+  return out.join(fg(C.dim) + " · " + RST);
+}
+// one cost cell: the figure with its tag, "≈$x mixed" over several modes, "?" when only unpriced usage exists
+function cellOf(x: HA): string {
+  if (x.cost === 0 && (x.unk > 0 || x.ms.uc > 0)) return "?";
+  const one = single(x.ms);
+  return one ? moneyTag(total(x.ms), one) : total(x.ms) > 0 ? money(total(x.ms), "") + " mixed" : money(0, "");
+}
+// modes whose cost counts (budget.counts, or all without a budget) are all API spend: figures without ≈
+function allApi(): boolean {
+  const c = costNow("");
+  for (let i = 1; i < MODES.length; i++) {
+    if (budget.usd > 0 && budget.counts.indexOf(MODES[i] ?? "unknown") < 0) continue;
+    if ((c.month.by[i] ?? 0) > 0 || (c.projByMode[i]?.month ?? 0) > 0) return false;
+  }
+  return true;
+}
+function projLine(): string { const c = costNow(""); const p = budget.usd > 0 ? c.projCounted : c.proj; return projText(p.today, p.month, budget, c.bs, allApi()); }
 function linesStr(add: number, del: number): string { return fg(C.green) + "+" + grp(add) + RST + " " + fg(C.red) + "−" + grp(del) + RST; }
 
 function renderStats(): void {
@@ -88,44 +116,52 @@ function renderStats(): void {
   const frac = g.total > 0 ? g.done / g.total : 1;
   const idx = frac < 0.999 ? fg(C.yellow) + spin() + " indexing " + RST + gauge(frac, 12) + fg(C.text) + " " + Math.floor(frac * 100) + "%" + RST
     : fg(C.green) + "✔ indexed" + RST;
-  const l1 = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx + fg(C.dim) + "   ≈ API list price · " + PRICES_FROM + RST;
+  const l1 = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx + fg(C.dim) + "   prices: " + PRICES_FROM + RST + (t.sess ? fg(C.dim) + " · billing: " + RST + billingOf(g.rows) : "");
   const wide = W >= 130; const sp = wide ? " " : "";
-  const l2 = fg(C.yellow) + CSI + "1m" + money(t.cost, t.unk) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
+  const l2 = fg(C.yellow) + CSI + "1m" + split(t.ms, false) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
     fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
-    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST;
+    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST + (t.ms.unk > 0 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
   const b = g.busy;
-  const l3 = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? money(g.busyCost, 0) + " " : "") + RST +
+  const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? money(g.busyCost, asBill(b.bill)) + " " : "") + RST +
     fg(C.text) + clean(titleOf(b)) + RST : fg(C.dim) + "no activity yet" + RST;
+  // the projection: after "busiest" when wide, else in its place (busiest stays first in the table order)
+  const pj = projLine(); const bst = costNow("").bs.state;
+  const pjs = (bst === "over" ? fg(C.red) : bst === "watch" ? fg(C.yellow) : fg(C.sub)) + pj + RST;
+  const l3 = wide ? (b ? busiest + dot : "") + pjs : pjs;
   for (const [i, l] of [l1, l2, l3].entries()) put(1, 2 + i, " " + fitStyled(l, W - 4) + fillTo(fitStyled(l, W - 4), W - 4) + " ");
   // per-harness table
-  const cols = [10, 9, 11, 8, 8, 9, 9, 12]; // harness sessions tools in out cache-r cache-w cost, then lines
+  // harness sessions tools in out cache-r cache-w cost (with its billing tag), then lines; narrow: slimmer count columns so the tag fits
+  const tight = W - 4 < 79;
+  const cols = tight ? [10, 8, 7, 8, 8, 9, 9, 15] : [10, 9, 11, 8, 8, 9, 9, 15];
   let used = 0; for (const c of cols) used += c;
-  const lw = Math.min(18, Math.max(0, W - 4 - used));
+  const lw0 = Math.min(18, Math.max(0, W - 4 - used)); const lw = lw0 >= 9 ? lw0 : 0; // no room for "+12 −3": leave lines out
   const shareW = Math.max(0, W - 4 - used - lw - 2);
   const nh = HARNESSES.length;
-  box(0, 6, W, nh + 5, "by harness", "", false);
-  const hdr = ["harness", "sessions", "tool calls", "in", "out", "cache r", "cache w", "≈cost"];
+  const up = unpricedLine(t.ms, 2);
+  box(0, 6, W, nh + (up ? 6 : 5), "by harness", "", false);
+  const hdr = ["harness", "sessions", tight ? "tools" : "tool calls", "in", "out", "cache r", "cache w", "cost"];
   let hl = fg(C.dim);
   for (let i = 0; i < hdr.length; i++) hl += i === 0 ? fit(hdr[i] ?? "", numAt(cols, i, 0)) : rj(hdr[i] ?? "", numAt(cols, i, 0));
-  hl += rj("lines ±", lw) + (shareW >= 6 ? "  " + fit("share of tool calls", shareW) : "") + RST;
+  hl += (lw ? rj("lines ±", lw) : "") + (shareW >= 6 ? "  " + fit("share of tool calls", shareW) : "") + RST;
   put(1, 7, " " + fitStyled(hl, W - 4) + " ");
   const row = (x: HA, y: number, label: string): void => {
     const lead = label ? fg(C.text) + CSI + "1m" + fit(label, 10) + RST : badge(x.h);
     const quiet = x.tools === 0 && x.inTok + x.outTok + x.cr === 0;
     const c = quiet ? fg(C.dim) : fg(C.text);
-    let s = lead + c + rj(String(x.sess), 9) + rj(grp(x.tools), 11) + rj(kfmt(x.inTok), 8) + rj(kfmt(x.outTok), 8) + rj(kfmt(x.cr), 9) + rj(kfmt(x.cw), 9) + RST;
-    const cs = x.cost === 0 && x.unk > 0 ? "?" : money(x.cost, x.unk);
-    s += (x.cost === 0 && x.unk > 0 ? fg(C.dim) : fg(C.yellow)) + rj(cs, 12) + RST;
+    let s = lead + c + rj(String(x.sess), numAt(cols, 1, 9)) + rj(grp(x.tools), numAt(cols, 2, 11)) + rj(kfmt(x.inTok), 8) + rj(kfmt(x.outTok), 8) + rj(kfmt(x.cr), 9) + rj(kfmt(x.cw), 9) + RST;
+    const cs = cellOf(x);
+    s += (cs === "?" ? fg(C.dim) : fg(C.yellow)) + rj(cs, 15) + RST;
     const ls = "+" + grp(x.add) + " −" + grp(x.del);
-    s += " ".repeat(Math.max(0, lw - width(ls))) + linesStr(x.add, x.del);
+    if (lw) s += " ".repeat(Math.max(0, lw - width(ls))) + linesStr(x.add, x.del);
     if (shareW >= 6 && !label) s += "  " + gauge(t.tools ? x.tools / t.tools : 0, shareW - 5) + fg(C.sub) + rj(t.tools ? Math.round((x.tools / t.tools) * 100) + "%" : "", 5) + RST;
     put(1, y, " " + fitStyled(s, W - 4) + fillTo(fitStyled(s, W - 4), W - 4) + " ");
   };
   for (let i = 0; i < nh; i++) row(i < g.rows.length ? g.rows[i] : ha(""), 8 + i, "");
   put(1, 8 + nh, " " + fg(C.line) + "─".repeat(W - 4) + RST + " ");
   row(t, 9 + nh, "Σ total");
+  if (up) { const ul = fg(C.dim) + fit("unpriced", 10) + RST + fg(C.sub) + up + RST; put(1, 10 + nh, " " + fitStyled(ul, W - 4) + fillTo(fitStyled(ul, W - 4), W - 4) + " "); }
   // bottom: top tools | activity
-  const y0 = 11 + nh; const bh = Ht - 1 - y0;
+  const y0 = 11 + nh + (up ? 1 : 0); const bh = Ht - 1 - y0;
   if (bh < 5) return;
   const lw2 = Math.max(34, Math.floor(W * 0.42)); const rw = W - lw2;
   box(0, y0, lw2, bh, "top tools", String(g.names.size) + " distinct · ↵ details", false);
@@ -394,7 +430,14 @@ function chart(x: number, y: number, w: number, h: number, vals: number[], days:
   }
   put(x, y + ch, " " + fitStyled(l1, w - 1)); put(x, y + ch + 1, " " + fitStyled(l2, w - 1));
 }
+function budgetInfo(): void {
+  if (budget.usd <= 0) { say("info", "no budget — set budget.monthlyUsd in " + home(CONFIG_FILE)); return; }
+  const c = costNow(""); const ap = c.bs.approx ? "≈" : "";
+  const pr = c.bs.projected >= 0 ? " · projected " + ap + "$" + grp(c.bs.projected) : "";
+  say(c.bs.state === "over" ? "warn" : "info", "budget $" + grp(budget.usd) + "/month (counts " + budget.counts.join(", ") + "): " + c.bs.state + " · used " + ap + "$" + c.bs.used.toFixed(2) + pr + " · " + home(CONFIG_FILE));
+}
 function key(k: string): boolean {
+  if (k === "B") { budgetInfo(); return true; }
   if (k === "d") { week = false; return true; }
   if (k === "w") { week = true; return true; }
   if (dKey) {
@@ -449,28 +492,56 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   const k = fg(C.dim) + fit("usage", 9) + RST;
   if (pending(s, a) && a.off < s.size * 0.98) return [k + fg(C.yellow) + spin() + " indexing " + Math.floor((a.off / Math.max(1, s.size)) * 100) + "%" + RST];
   const tok = fg(C.cyan) + "↑" + kfmt(s.inTok) + " " + RST + fg(C.purple) + "↓" + kfmt(s.outTok) + " " + RST + fg(C.accent) + "↻" + kfmt(s.cacheRTok + s.cacheWTok) + RST;
-  const out = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + money(s.cost, a.unk)) + RST + dot + fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(s.linesAdd, s.linesDel)];
+  const bill = asBill(s.bill); const pl = bill === "plan" && s.plan ? fg(C.sub) + " (" + planLabel(s.plan, REDACT) + ")" + RST : "";
+  const out = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill)) + RST + pl + dot + fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(s.linesAdd, s.linesDel)];
+  const pad = fit("", 9);
+  if (s.unkTok > 0 || s.unkCr > 0) {
+    let top = ""; let tn = 0; const um = new Map<string, number>();
+    for (const dd of a.days.values()) for (const [m, n] of dd.um) { const v = (um.get(m) ?? 0) + n; um.set(m, v); if (v > tn) { tn = v; top = m; } }
+    const parts: string[] = [];
+    if (s.unkTok > 0) parts.push("+ " + kfmt(s.unkTok) + " tok unpriced" + (top ? " (" + top + (um.size > 1 ? " +" + String(um.size - 1) : "") + ")" : ""));
+    if (s.unkCr > 0) parts.push("+ " + kfmt(s.unkCr) + " credits (set kiroCreditUsd)");
+    out.push(pad + fg(C.sub) + parts.join(" · ") + RST);
+  }
+  if (s.billSrc === "config") out.push(pad + fg(C.dim) + "billing assumed from current config" + RST);
   const d = a.days.get(todayKey());
-  if (d && a.days.size > 1 && w > 30) out.push(fg(C.dim) + fit("today", 9) + RST + fg(C.yellow) + (d.cost === 0 && d.unk > 0 ? "cost ?" : money(d.cost, 0)) + RST + dot + fg(C.text) + grp(d.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(d.add, d.del));
+  if (d && a.days.size > 1 && w > 30) out.push(fg(C.dim) + fit("today", 9) + RST + fg(C.yellow) + (d.cost === 0 && (d.unk > 0 || d.uc > 0) ? "cost ?" : moneyTag(d.cost, bill)) + RST + dot + fg(C.text) + grp(d.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(d.add, d.del));
   return out;
 });
 H.headerWidgets.push((w: number): string => {
   if (w < 14) return "";
-  const t = agg([todayKey()]).tot;
-  const c = t.cost < 100 ? t.cost.toFixed(2) : grp(t.cost);
-  let s = fg(C.yellow) + "≈$" + c + RST + fg(C.dim) + " today" + RST; let n = 9 + c.length;
+  const cn = costNow(""); const st = cn.bs.state;
+  const col = st === "over" ? fg(C.red) + CSI + "1m" : st === "watch" ? fg(C.yellow) + CSI + "1m" : fg(C.yellow);
+  let fig = split(cn.today, w < 40);
+  if (width(fig) + 6 > w) fig = split(cn.today, true); // a mixed split that does not fit shrinks to the ≈ total
+  let s = col + fig + RST + fg(C.dim) + " today" + RST; let n = width(fig) + 6;
   if (L.rlPct >= 0 && L.rlReset * 1000 > Date.now()) {
     const win = L.rlWin >= 1440 ? Math.round(L.rlWin / 1440) + "d" : Math.round(L.rlWin / 60) + "h";
     const pc = Math.round(L.rlPct) + "%";
     if (n + 9 + win.length + pc.length <= w) { s += fg(C.dim) + " · cx " + win + " " + RST + fg(heat(L.rlPct / 100)) + pc + RST; n += 9; }
+  }
+  // Claude plan allowance: both windows, the fuller one in heat colour + bold; narrow drops the dim one, then the gauge
+  const al = allowance();
+  if (al) {
+    const part = (lbl: string, pct: number, hi: boolean): string => hi ? fg(heat(pct / 100)) + CSI + "1m" + lbl + " " + String(pct) + "%" + RST : fg(C.dim) + lbl + " " + String(pct) + "%" + RST;
+    const ws: string[][] = []; // [label, pct, hi]
+    if (al.h5) ws.push(["5h", String(al.h5.pct), al.hi === "5h" ? "1" : ""]);
+    if (al.d7) ws.push(["7d", String(al.d7.pct), al.hi === "7d" ? "1" : ""]);
+    const build = (xs: string[][]): string => { let t = fg(C.dim) + " · cc" + RST; for (const x of xs) t += " " + part(x[0] ?? "", Number(x[1] ?? "0"), x[2] === "1"); return t; };
+    let g = build(ws);
+    if (n + width(g) > w) g = build(ws.filter((x: string[]) => x[2] === "1"));
+    if (n + width(g) <= w) { s += g; n += width(g); }
   }
   return n <= w ? s : "";
 });
 H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || !mine()) return [];
   if (dKey) return [["↑↓", "call"], ["↵", "open session"], ["esc", "back"], ["d", "today"], ["w", "7 days"]];
-  return [["↑↓", "tool"], ["↵", "details"], ["␣", "expand MCP"], ["d", "today"], ["w", "7 days"]];
+  return [["↑↓", "tool"], ["↵", "details"], ["␣", "expand MCP"], ["d", "today"], ["w", "7 days"], ["B", "budget"]];
 });
 H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server"],
   ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
-  ["", "costs ≈ API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"]] });
+  ["B", "budget: current state and the config path"],
+  ["", "costs = API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"],
+  ["", "cost tags: spend = API key (real), plan = list-price equivalent, cloud = Bedrock/Vertex/Foundry, gw = gateway, ? = unknown; * = assumed from current config"],
+  ["", "projection: today from the 14-day hourly profile, month from the 14-day mean; history = what is still on disk"]] });

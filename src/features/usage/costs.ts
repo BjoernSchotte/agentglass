@@ -133,9 +133,11 @@ export function budgetState(b: Budget, month: ModeSum, projByMode: number[]): BS
     if (proj >= 0) proj = p < 0 ? -1 : proj + p;
     if (m !== "api" && (c > 0 || p > 0)) approx = true;
   }
-  if (b.usd <= 0) return { state: "", used, projected: proj, approx };
-  const state = used >= b.usd ? "over" : (proj >= 0 && proj > b.usd) || used >= b.warnAt * b.usd ? "watch" : "ok";
-  return { state, used, projected: proj, approx };
+  return { state: stateOf(b, used, proj), used, projected: proj, approx };
+}
+export function stateOf(b: Budget, used: number, projected: number): string {
+  if (b.usd <= 0) return "";
+  return used >= b.usd ? "over" : (projected >= 0 && projected > b.usd) || used >= b.warnAt * b.usd ? "watch" : "ok";
 }
 // the over-budget message, at most once per calendar day (kept in memory: a restart may repeat it the same day)
 let notified = "";
