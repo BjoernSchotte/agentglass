@@ -14,20 +14,11 @@ import { PRICES_FROM } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer } from "./calls.ts";
 import "./cache.ts";
 import "./bill-live.ts";
+import { kfmt, grp } from "./costs.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
-export function kfmt(n: number): string {
-  if (n < 1000) return String(Math.round(n));
-  if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + "K";
-  if (n < 1e9) return (n / 1e6).toFixed(n < 1e8 ? 1 : 0) + "M";
-  return (n / 1e9).toFixed(1) + "B";
-}
-export function grp(n: number): string {
-  const s = String(Math.round(n)); let out = "";
-  for (let i = 0; i < s.length; i++) { if (i > 0 && (s.length - i) % 3 === 0) out += ","; out += s.charAt(i); }
-  return out;
-}
+export { kfmt, grp };
 export function money(c: number, unk: number): string {
   if (c === 0 && unk > 0) return "cost ?";
   return "≈$" + (c < 1000 ? c.toFixed(2) : grp(c)) + (unk > 0 ? "+?" : "");
