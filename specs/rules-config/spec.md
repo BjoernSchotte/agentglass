@@ -139,6 +139,13 @@ spinning  spinning       op >   critical 3m               notify false  message 
 - `ack: look` reproduces `clear()` on look. An acknowledged alert loses its badge and is not counted. It stays
   acknowledged until it resolves; the next firing shows again.
 - `waiting` resolves on busy, because `turn_done` becomes absent. `approval` resolves when its value becomes absent.
+- **Threshold > 0 on `turn_done`** (`{"id":"waiting","degraded":"5m"}`): ◆, the bell and the desktop notification
+  all come when the threshold is reached (the `fire` transition), not at the busy → idle transition. With the
+  built-in `0s` both moments coincide, so today's behaviour is unchanged.
+- **Per-harness tuning** is done only with copies that carry a `where`, never with an override block inside a rule:
+  restrict the built-in (`{"id":"waiting","where":"harness is_not codex"}`) and add a copy with its own id
+  (`{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}`). A copy
+  must repeat `ack`/`notify`/`message` it wants, because only same-`id` rules merge.
 - First sight records only, because `turn_done` needs a transition this run. `--json` therefore reports `attention`
   only for a current `approval_wait`, as `watchdog.ts:168` does.
 - One visible difference: the preview lists **every** firing alert. With the built-ins, a second ⚠ line can appear
@@ -173,6 +180,9 @@ spinning  spinning       op >   critical 3m               notify false  message 
     run at once; extra ones are dropped with a warning toast.
   - Runs for the states in `notify.on` (default `fire`, `escalate`; `resolve` and `deescalate` are opt-in).
   - It is not subject to the bell throttle, but each transition runs at most once.
+  - It runs on every transition in `notify.on` **regardless of acknowledgement**: an `ack: look` alert the user has
+    already looked at still runs the command on its later `escalate`/`resolve` (if listed). Acknowledgement only
+    hides the badge and silences bell/desktop for the current firing.
   - Honoured only if `rules.json` belongs to the user and is not group- or world-writable. Otherwise the command is
     ignored with a validation error, the same check ssh does.
 - **`--json`**: adds `alerts: [{rule, severity, value, threshold, since, message, labels, acked}]` per session.
@@ -220,6 +230,7 @@ fakes titles and projects in all outputs, including the command's stdin and env.
 | only nag after 5 min of waiting | `{"id":"waiting","degraded":"5m"}` |
 | long test suites are fine | `{"id":"long-cmd","critical":"45m"}` |
 | Codex sessions only | `"where":"harness is codex"` on any rule |
+| wait 5 min for Codex, keep the default for the rest | `{"id":"waiting","where":"harness is_not codex"}` + `{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}` |
 
 ## Interactions with other specs
 - **filter-language**: the `where` grammar, attribute entities, per-call rows (`Acc.calls`), parse errors with
@@ -235,7 +246,9 @@ fakes titles and projects in all outputs, including the command's stdin and env.
 - `watchdog.check.ts` stays green: the helpers keep their exports, now wrapping the numeric metrics.
 - `rules/engine.check.ts`: the built-in equivalence table over `Obs` fixtures (each old outcome gives the same
   badge/stuck/attention); `for` pending and reset; escalate/deescalate/resolve; ack and re-fire; merge of a user
-  override into a built-in; `builtins:false`; unwatching resolves silently; the throttle.
+  override into a built-in; `builtins:false`; unwatching resolves silently; the throttle; `turn_done` with
+  `degraded: 5m` rings at the threshold, not at the transition; a per-harness copy and the restricted built-in never
+  both fire for one session; the notify command runs for an acknowledged alert's later transition.
 - `rules/config.check.ts`: every validation error with line:col; unit mismatch; unknown field warning; hot reload
   keeps the old set on a broken file; the permission check for `command`.
 - Call metrics: windowed error rate from `Acc.calls`; `min_calls` gate; `where` on `tool` and `program`.
@@ -248,10 +261,10 @@ fakes titles and projects in all outputs, including the command's stdin and env.
 - Alerting backends (Slack, PagerDuty). The notify command is the integration point.
 - Rules on non-live sessions.
 
-## Open questions
-1. `turn_done` with a degraded threshold > 0 changes when ◆ appears. Should the bell still ring at the transition
-   (today's behaviour), or only when the threshold is reached? The proposal: at the threshold.
-2. Should `turn_done`/`waiting` also be configurable per harness? It already is, through `where: "harness is …"` on a
-   copy of the rule. Is that enough?
-3. Should `notify.command` also run in the TUI for `ack: look` rules that the user has already acknowledged by
-   looking? The proposal: yes, because transitions are independent of acknowledgement.
+## Decisions (review 2026-10-02)
+1. `turn_done` with a threshold > 0: ring at the transition or at the threshold? At the threshold (3).
+2. Per-harness `turn_done`? Via `where: "harness is …"` copies; no override block (3, 8).
+3. Notify command for alerts already acknowledged by looking? Yes, it runs on state transitions regardless (5).
+
+## Open questions (to verify during implementation)
+1. Does scriptc's `JSON.parse` error text carry a position (7)? If not, the position scanner is required.

@@ -94,11 +94,12 @@ stays `message.model` (the model that answered). Stats per model show the failed
 cache `VERSION` bump so existing sessions re-index (shared bump with honest-costs if both ship together).
 
 ### 3. Turn boundaries and prompt noise (L9)
-New `classifyUser(o, text): "human" | "notify" | "meta" | "noise"` in `src/harness/claude.ts`, exported for the
-call graph and OTLP export:
-1. `origin.kind` if present: `human` → `human`; `task-notification`, `auto-continuation`, `peer` → `notify`.
+New `classifyUser(o, text): "human" | "notify" | "peer" | "meta" | "noise"` in `src/harness/claude.ts`, exported for
+the call graph and OTLP export:
+1. `origin.kind` if present: `human` → `human`; `task-notification`, `auto-continuation` → `notify`; `peer` → `peer`.
    `turnOrigin` the same (`human` / `task_notification`, `auto_continuation`, `peer`, `scheduled`, `sdk`). `sdk` and
-   `scheduled` count as **human** (a person or their script asked).
+   `scheduled` count as **human** turns (a person or their script asked): they open a turn, count in turn totals and
+   are a turn root in OTLP export, exactly like typed prompts.
 2. Fallback for older transcripts — known leading tags only: `<task-notification>` → `notify`;
    `<command-name>`/`<command-message>` → handled by the existing command path (`claude.ts:52-54`);
    `<local-command-stdout>`, `<local-command-caveat>`, `<system-reminder>`, `<bash-stdout>`, `<bash-stderr>`,
@@ -107,6 +108,10 @@ call graph and OTLP export:
 - `notify` emits a meta event `⟲ <status> · <summary>` from `<status>` / `<summary>` (e.g. `⟲ completed · Agent
   "Inventory hook seams" finished`), with `id` = `<tool-use-id>` so the call graph can attach it to the spawning call.
   It does **not** open a turn: `callgraph/model.ts:60` already opens turns on `kind === "user"` only.
+- `peer` (a message from another agent) emits a meta event with its own glyph **`⇄`**: `⇄ <from> · <first line>`,
+  `<from>` = the sender name when the origin carries one, else `peer`; first line truncated to the row width. It does
+  not open a turn either (no human asked); the agent's reaction joins the current turn behind the `⇄` marker. `⟲`
+  stays reserved for task notifications and auto-continuations, so the two are never confused in the transcript.
 - `isNoise()` (`common.ts:38-41`) is narrowed to the same known-tag list (plus the existing `# AGENTS.md` and
   `Caveat:` prefixes) and stays the shared fallback for Codex, Kiro and Gemini. Codex keeps dropping `<environment_context>`,
   `<recommended_plugins>`, `<user_instructions>`, `<turn_aborted>` and `<skill>` (local rollouts: 53, 54 and 6 hits for the first, second and fourth) (list maintained in `common.ts`, checked against a fixture
@@ -170,10 +175,11 @@ git-linkage, otlp-export) must call `scrubRemote` on every remote they read from
 
 ## Testing
 - Fixtures (sanitised from real local lines): custom-title/ai-title interleaving; two-iteration fallback message
-  (3 streamed lines, same id); task-notification with and without `origin`; slash skill pair; `Skill` tool_use + meta;
+  (3 streamed lines, same id); task-notification with and without `origin`; `peer`, `sdk` and `scheduled` origins; slash skill pair; `Skill` tool_use + meta;
   `/compact` + output; a human prompt starting with `<div>`.
 - `harness.check.ts`: titles (rename, rename to empty, ai-title after custom); iteration booking per model; turn
-  count in `callgraph/model.check.ts` unchanged by notifications, plus the `⟲` meta event.
+  count in `callgraph/model.check.ts` unchanged by notifications and peer messages, plus the `⟲` and `⇄` meta
+  events; `sdk`/`scheduled` origins open a turn.
 - Codex: capture one real rollout with a `$skill` mention and one model-chosen skill before implementing (Task 0).
 - `giturl.check.ts`: table of ≥ 25 inputs — tokens in userinfo, `user:pass@`, double `@`, query tokens, fragments,
   percent-encoded `@`, scp-like, ssh with port, GitLab subgroups, `file://`, local path, garbage → expected
@@ -186,9 +192,12 @@ git-linkage, otlp-export) must call `scrubRemote` on every remote they read from
 - Codex subagent result notifications (no on-disk sample).
 - A skills drill-down (sessions per skill) — filter-language covers it later.
 
-## Open questions
+## Decisions (review 2026-10-02)
+1. `sdk`/`scheduled` turn origins as human turns? Yes — they open and count as turns (3).
+2. Own glyph for `peer` (agent-to-agent) messages? Yes — `⇄`, distinct from `⟲`; no new turn (3).
+
+## Open questions (to verify during implementation)
 1. Codex `<skill>` message shape and `$name` rule — confirm with a captured rollout; if Codex marks injected messages
    explicitly, prefer that marker.
 2. pi skills: does pi record skill loads in the session file (and how)? Until known, not counted.
-3. Should `sdk`/`scheduled` turn origins count as human turns? Proposed yes; revisit with otlp-export.
-4. Should `peer` messages (agent-to-agent) get their own meta glyph instead of `⟲`?
+3. Claude `peer` origin: which field carries the sender name — confirm on a captured agent-to-agent message.

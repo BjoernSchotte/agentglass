@@ -62,16 +62,17 @@ Resolution uses the filesystem only. The default path spawns no git process:
 3. `common` = `<gitdir>/commondir` resolved against `gitdir` if that file exists (linked worktree), else `gitdir`.
    Submodules (`gitdir` under `<super>/.git/modules/<name>`, no `commondir`) are their own repo, which is correct.
 4. Remote: parse `<common>/config` (≤ 256 KB) with a minimal INI reader: `[remote "<name>"]` sections, key `url`.
-   Pick `origin`; else the only remote; else the first remote in file order. Mark the choice so the UI can show
-   "(remote: upstream)".
+   Pick `origin`; else `upstream`; else the first remote in file order (a single remote is the first). Mark the
+   choice so the UI can show "(remote: upstream)".
 5. Normalize the remote URL. `scrubRemote()` (decision 3) already parses the forms and drops userinfo, query,
    fragment and `.git`, so normalization works on its `host` and `path`:
    - `scheme://[user[:pw]@]host[:port]/path`, `ssh://git@host:22/path` and scp form `git@host:path` all become
      `host/path`;
    - lowercase the host, drop a default port (22, 443, 80) and keep any other port as `host:port`, strip a trailing
      `/` and `.git`, collapse `//`;
-   - comparison key `git:<host>/<path>`, lowercased (GitHub, GitLab and Bitbucket treat paths as case-insensitive);
-     the label keeps the original case;
+   - comparison key `git:<host>/<path>`; the path is lowercased **only** for the known case-insensitive hosts
+     `github.com`, `gitlab.com`, `bitbucket.org` (exact host match after lowercasing, no subdomains); every other
+     host — self-hosted GitLab, Gitea, plain ssh servers — keeps the path's case. The label keeps the original case;
    - local paths as remotes (`/srv/git/x.git`, `file://…`) → `git:file/<realpath>`;
    - a URL with no recognizable host (for example an `insteadOf` alias like `gh:owner/repo`, or the file has `[include]` /
      `[includeIf]`) → **one** fallback `git -C <top> remote get-url <name>` through `run()`. Its result is cached
@@ -115,7 +116,10 @@ key.
 - `Day` gains `act: number[]`: flat, sorted, merged minute-of-day intervals `[s0,e0,s1,e1,…]` (local minutes, `e`
   exclusive), persisted as key `k`.
 - Recording: `bucket()` (`record.ts:41`) knows each line's timestamp. It extends the session's open interval when the
-  new minute is no more than `IDLE_GAP` = 5 min after the interval's end, and starts a new interval otherwise.
+  new minute is no more than the idle gap after the interval's end, and starts a new interval otherwise. The gap is
+  config `repo.idleGapMin` (`~/.agentglass/config.json`, integer minutes 1–60, default 5; invalid → 5 with one
+  startup toast). Intervals are built at index time, so a changed gap applies to newly indexed lines only; the help
+  text says so (a full re-index happens with the next `VERSION` bump).
   `done()` (`calls.ts:54`) also covers `[call t, call t + ms]`, so a 20-minute test run counts as active even if no
   line was written during it.
 - At most 200 intervals per day. When over, merge the pair with the smallest gap. Intervals are split at midnight,
@@ -217,11 +221,12 @@ redact.ts fakes consistently with its fake project names (`redact.ts:106, 358`).
 - `src/model/project.check.ts` with temp directories: plain repo; subdirectory cwd; linked worktree (`.git` file +
   `commondir`); submodule; two clones with https / ssh / scp remotes of the same repo → same key; `.git` suffix,
   trailing slash, default and custom port; userinfo token scrubbed; no remote → `gitdir:`; worktrees of a remote-less
-  repo merge; multiple remotes without `origin`; non-git dir; deleted cwd keeps its cached identity; alias remote
+  repo merge; multiple remotes without `origin` (`upstream` wins, else first in file order); `GitHub.com/Me/X` and
+  `github.com/me/x` → same key, `git.example.com/Me/X` and `…/me/x` → different keys; non-git dir; deleted cwd keeps its cached identity; alias remote
   calls the fallback (stub `run`) exactly once; label collision gets the host prefix.
 - A normalization table test (input URL → key, label).
-- `record.check.ts`: active intervals: gap ≤ 5 min joins, > 5 min splits, tool duration fills, midnight split, the
-  200-interval cap, persistence round trip.
+- `record.check.ts`: active intervals: gap ≤ 5 min joins, > 5 min splits, `repo.idleGapMin` = 15 changes both,
+  invalid value → 5, tool duration fills, midnight split, the 200-interval cap, persistence round trip.
 - `repos/agg.check.ts`: synthetic ledgers: subagent attribution, top-level session count, union vs agent-minutes,
   repo-relative file merge across worktrees, outside-repo group, err% hidden under 10 calls, filter applied before
   grouping.
@@ -233,10 +238,10 @@ redact.ts fakes consistently with its fake project names (`redact.ts:106, 358`).
 - Merging forks or renamed remotes into one project.
 - A Sankey or other chart beyond the mix bar.
 
-## Open questions
-1. Remote choice without `origin`: is "the first in file order" right, or should `upstream` win? Forks usually
-   have `origin` = the fork, which is what we want.
-2. Case-insensitive path keys are wrong for self-hosted servers with case-sensitive paths. Should only known hosts
-   (github.com, gitlab.com, bitbucket.org) be lowercased?
-3. scriptc `realpathSync` support (decision 2).
-4. Should `IDLE_GAP` (5 min) be configurable in `config.json`? Default: no, until someone asks.
+## Decisions (review 2026-10-02)
+1. Remote choice? `origin`, then `upstream`, then the first in file order (1.4).
+2. Lowercased path keys? Only for the known hosts github.com, gitlab.com, bitbucket.org (1.5).
+3. Idle gap configurable? Yes, `repo.idleGapMin`, default 5 (4).
+
+## Open questions (to verify during implementation)
+1. scriptc `realpathSync` support (decision 2).

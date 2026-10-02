@@ -48,7 +48,7 @@ day next to the agents it watches. Alarm latency (waiting-for-you, approval, stu
 | level | when (first match) |
 |---|---|
 | `hot` | input (key, mouse, wheel) within 3 s · replay running · a live session's file grew within 5 s · ledger indexing pending |
-| `away` | terminal reported focus-out (6) and no input since |
+| `away` | terminal reported focus-out (6) and no input since — **only** from focus-out; input inactivity alone never makes `away` |
 | `warm` | input within 60 s · any live agent process (busy or not) |
 | `idle` | otherwise |
 
@@ -63,16 +63,21 @@ earliest due job (min 16 ms, max 1 s so level changes apply promptly).
 |---|---|---|---|---|---|
 | `render` | on change, ≤ 4/s | on change, ≤ 2/s | on change, ≤ 1/s | ≤ 1 per 5 s | see 4 |
 | `probe` (stat live files) | 250 ms | 1 s | 1 s | 1 s | no spawn; feeds `hot` |
-| `procs` (`refreshProcs`) | 1 s | 2 s | 5 s | 5 s | watchdog needs it (approval: CPU quiet) |
+| `procs` (`refreshProcs`) | 1 s | 1.5 s | 5 s | 5 s | watchdog needs it (approval: CPU quiet); ≤ 1.5 s at every level while any agent is live (below) |
 | `scan` (+ `buildView`) | 2 s | 3 s | 10 s | 15 s | new sessions appear within that |
 | `slow` (`refreshSlow`) | 3 s | 5 s | 15 s | 30 s | cwd/open files/tmux |
-| `tick` (`H.onTick`) | 250 ms | 500 ms | 2 s | 5 s | ledger, watchdog, ticker, cache, prices, callgraph |
+| `tick` (`H.onTick`) | 250 ms | 500 ms | 2 s | 5 s | ledger, ticker, cache, prices, callgraph |
+| `watch` (watchdog / rules, `H.onWatch`) | 1.5 s | 1.5 s | 5 s | 1.5 s / 5 s | 1.5 s while any agent is live, else 5 s (`idle` has no live agent by definition; `away` can) |
 | `fast` (`H.onFastTick`) | 50 ms | 50 ms | paused | paused | only while armed (5) |
 | `size` (`termSize`) | on input + 2 s | 2 s | 5 s | 10 s | or SIGWINCH (open question 1) |
 
-Bounds that never relax: the watchdog runs at least every 5 s and `procs` at least every 5 s, so "waiting for you" /
-approval / stuck alarms are at most ~5 s later than today in the worst case (today ≤ 1.5 s). On level change to
-`hot` all overdue jobs run on the next loop turn.
+**Alarm cadence does not relax while agents run.** The watchdog (and rules-config's engine) moves from `H.onTick` to
+its own job `watch` (new seam `H.onWatch`, same signature): every **1.5 s while any agent process is live**, at every
+level including `idle` and `away`, and every 5 s when none is. `procs` follows the same bound (≤ 1.5 s while an agent
+is live), because approval and stalled detection need fresh CPU samples. So "waiting for you" / approval / stuck
+alarms keep today's latency (≤ 1.5 s) whenever there is something to alarm about; the saving comes from render,
+scan, slow and tick. Cost accepted: one `ps` spawn per 1.5 s while an agent runs. On level change to `hot` all
+overdue jobs run on the next loop turn.
 
 ### 3. Live probe
 Every `probe` interval: `statSync` of each **pid-linked** session file (non-file sources: their `stat()`,
@@ -105,12 +110,14 @@ timer exists.
 
 ### 7. CPU budget
 - Each job's run time is measured (`Date.now()` around the call). Its effective interval becomes
-  `max(base, 20 × ewma(duration))` — no single job may use more than ~5% of one core on average. Example: `ps` taking
+  `max(base, 20 × ewma(duration))` — no single job may use more than ~5% of one core on average. Exception: `watch`
+  and `procs` while an agent is live are capped at 1.5 s whatever they cost (alarm latency wins over the budget); a
+  host where `ps` alone exceeds the budget shows `procs slow` in the debug footer (8). Example: `ps` taking
   60 ms on a host with 3,000 processes stretches `procs` to ≥ 1.2 s even in `hot`.
 - The ledger keeps its own 100 ms slice (`ledger.ts:15`) — indexing is the one intentional burst and is visible as a
   progress gauge; during indexing the level is `hot`, so the UI stays responsive between slices.
 - Targets (Task 0 measures today's baseline first): `idle`/`away` with no live agent ≤ 0.3% of one core averaged over
-  60 s; `warm` ≤ 1%; `hot` not worse than today.
+  60 s; `warm` ≤ 1% (with live agents, the 1.5 s `ps` cadence is included in this budget); `hot` not worse than today.
 
 ### 8. Configuration
 - `~/.agentglass/config.json` `{"refresh": {"mode": "adaptive" | "fixed"}}`, default `adaptive`; `fixed` restores
@@ -125,15 +132,17 @@ timer exists.
 - `stty` missing/failing: today defaults to 24×80 (`term.ts:11`); unchanged.
 
 ## Interactions with other specs
-- **rules-config**: rule evaluation runs on the `tick` job; rules with `for:` durations must use wall time, not tick
-  counts (the tick interval now varies).
+- **rules-config**: rule evaluation runs on the `watch` job (1.5 s while agents are live); rules with `for:`
+  durations must use wall time, not tick counts (the interval varies when no agent is live).
 - **honest-costs**: projection/budget checks run on `tick`; budget notifications stay once per day.
 - **command-palette**: palette open = input activity → `hot`.
 - **otlp-export** `--watch --otlp`: uses the CLI loop, not this scheduler.
 
 ## Testing
-- Pure scheduler module (`src/sched.ts`) with an injected clock: level transitions, due-time computation, bounds
-  (watchdog ≤ 5 s at every level), budget stretching from synthetic durations, clock jump handling — `sched.check.ts`.
+- Pure scheduler module (`src/sched.ts`) with an injected clock: level transitions (no `away` after 10 min without
+  input but with focus; `away` only after focus-out), due-time computation, bounds (`watch` and `procs` ≤ 1.5 s at
+  every level while an agent is live, 5 s otherwise), budget stretching from synthetic durations (never past the
+  1.5 s alarm bound — see 7), clock jump handling — `sched.check.ts`.
 - Focus parsing: token stream with interleaved `ESC[I`/`ESC[O`, mouse and keys.
 - Render diff: identical frame → no write (stub `process.stdout.write`).
 - Manual/perf: Task 0 baseline and after, on Linux and macOS, with 0 and 5 live agents: `pidstat -p <pid> 60 1` /
@@ -144,10 +153,10 @@ timer exists.
 - `--watch` cadence; file-system notification APIs (inotify/FSEvents — not available to the runtime today).
 - Reducing per-scan cost itself (incremental directory scans); this spec only schedules it less often.
 
-## Open questions
+## Decisions (review 2026-10-02)
+1. `away` from input inactivity when focus reporting is unavailable? No; `away` comes only from focus-out (1).
+2. Alarm latency? The watchdog/alarm cadence (and `procs`) stays 1.5 s while any agent is live, 5 s otherwise (2).
+
+## Open questions (to verify during implementation)
 1. Does the scriptc runtime deliver `SIGWINCH` (`process.on("SIGWINCH")`) or expose `process.stdout.columns/rows`?
    If yes, drop `stty` polling entirely; if not, keep the polling table above.
-2. Should `away` also follow "no input for 10 min" when focus reporting is unavailable? Proposed no: a user may watch
-   without touching the keyboard; `idle` already slows down.
-3. Is 5 s worst-case alarm latency acceptable, or should the watchdog stay at 1.5 s while any agent is live? (Cost:
-   one `ps` spawn per 1.5 s.)

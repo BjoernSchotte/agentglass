@@ -154,7 +154,9 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
    ref     = [harness ":"] sessref ["#" anchor] | url | traceid ["/" spanid]
    url     = "agentglass://open/" [harness "/"] session-id ["#" anchor]
    sessref = session-id | prefix (≥ 6 chars)
-   anchor  = "turn=" n | "call=" tool-call-id | "ts=" iso-8601 | "span=" spanid
+   anchor  = "turn=" turnkey | "call=" tool-call-id | "ts=" iso-8601 | "span=" spanid
+   turnkey = iso-8601 ["~" k] | n       -- stable key (turn start timestamp, k = ordinal among turns sharing it);
+                                        -- a bare number is the 1-based turn index, accepted as an alias
    traceid = 32 lowercase hex; spanid = 16 lowercase hex
    ```
    - URL components are percent-decoded once.
@@ -168,18 +170,24 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
       title` lines on stderr. In the TUI the palette opens prefilled with `@<prefix>` instead.
    3. Trace ids (otlp-export §4.1): hash the first half `H("s|" + h + "|" + id)` for every top-level session; the
       index is built on demand and costs about 1 ms per 1,000 sessions. The second half selects the turn by hashing
-      that session's turn keys (one parse via the shared `TurnCursor`). A span id resolves to a chat (turn), a tool
-      (call) or an `invoke_agent` (subagent session) span.
-   4. Anchors: `turn=n` → the turn's first event. `call=id` → the tool event with that id. `ts=` → the first event at
-      or after that time.
+      that session's turn keys (one parse via the shared `TurnCursor`). A span id resolves to the turn's root
+      `invoke_agent` span (the turn's first event), a `chat` span (the assistant message of that request), a tool
+      span (the call) or a subagent `invoke_agent` span (that subagent session, at the hosting turn's piece).
+   4. Anchors: `turn=<ts>[~k]` → the turn whose start timestamp (as logged) is `<ts>`, the k-th of those sharing it
+      (the turn key `T` of otlp-export §4.1, with `~k` for its `#k`); this survives a Gemini rewind removing earlier
+      turns. `turn=<n>` → the n-th turn (alias; may point elsewhere after a rewind). A key that no longer exists falls
+      back to the first turn starting at or after `<ts>` with a warning. Kiro turns without a timestamp only have the
+      index form. `call=id` → the tool event with that id. `ts=` → the first event at or after that time.
 
    The resolver returns `{s, cursor, ev: {kind, ts, id, text}}`, where `cursor` is the source position of the
    record that holds the event.
 3. **`agentglass open <ref>`** (TUI):
-   - A new seam `H.start: ((): void)[]` runs once in `main()` after the first `scan()`/`buildView()`, before the
-     first render (`main.ts:60-61`). The `open` CLI handler parses and resolves the ref, stores the target, and
-     returns **false**, so the TUI starts and `H.start` applies the target: it selects the session's row and opens its
-     transcript with the focus set.
+   - The `open` CLI handler parses the ref first (bad ref → exit 2, nothing contacted). Then it tries the hand-off
+     to a running instance (5b.4); on success it exits there.
+   - Otherwise a new seam `H.start: ((): void)[]` runs once in `main()` after the first `scan()`/`buildView()`, before
+     the first render (`main.ts:60-61`). The handler resolves the ref, stores the target, and returns **false**, so the
+     TUI starts and `H.start` applies the target: it selects the session's row and opens its transcript with the
+     focus set. The same apply function serves links that arrive over the socket (5b.3).
    - If the event lies before the 6 MB tail, `openTranscript` gains an optional start cursor. It reads from
      `align(s, cursor − 64 KB)` and puts a meta line "showing from <time> (opened by link)" first. `G` and follow still
      go to the live end.
@@ -189,7 +197,8 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
 4. **Without a TUI** (stdout not a TTY, `--print`, or agent mode from cli-agent-mode): print the resolution as JSON
    `{harness, id, path, title, cwd, anchor: {kind, turn, ts, callId}, url}` and exit 0. Scripts and agents can then
    resolve links without a screen.
-5. **Canonical URL:** `agentglass://open/<harness>/<session-id>[#call=<id> | #turn=<n>]`.
+5. **Canonical URL:** `agentglass://open/<harness>/<session-id>[#call=<id> | #turn=<start ts>[~k]]` — links always
+   carry the stable turn key, never the index.
    - `Y` copies it in the list (session) and in the transcript (cursor event: `call=` for a tool or result event,
      else `ts=`) through `copyText` (`actions.ts:29-41`). `y` keeps copying the bare id.
    - `agentglass open --print-url <ref>` prints the canonical form.
@@ -205,13 +214,80 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
      present. `--uninstall-handler` reverses this.
    - Terminal choice: `open.terminal` in config, else `$TERMINAL`, else `x-terminal-emulator`. If none exists the
      command refuses and says so.
-   - macOS needs an app bundle that declares `CFBundleURLTypes` (open question 1); until then macOS users run
-     `agentglass open '<url>'`.
+   - **macOS is deferred** (Linux first). A scheme handler there needs an app bundle that declares
+     `CFBundleURLTypes`, with signing and quarantine questions. Instead the README documents the URL-router route: any
+     URL-router utility that maps a scheme to a shell command can be pointed at
+     `agentglass open "<url>"` in a terminal; plain `agentglass open '<url>'` always works.
    - **Security:** any web page can trigger a scheme link. `open` only reads and shows: it never sends, resumes,
      kills or exports. A link can do nothing more than open a viewer on an existing session. The strict grammar
      (5.1) rejects everything else.
-7. **No IPC.** A link always starts a new agentglass. Handing a link to a running instance is out of scope.
+7. **Single instance.** A link goes to the agentglass TUI that is already running, if any; only then does a new
+   one start. Section 5b specifies it.
 
+### 5b. Single instance (link hand-off over a Unix socket)
+1. **Files.** `~/.agentglass/run/` — created with mode 0700; if it exists it must be a real directory (`lstat`, not a
+   symlink), owned by the current uid, with no group/other bits, else single instance is **disabled** for this run
+   (one warning; links then start a new TUI as without this section). Inside: `tui.sock` (the socket, mode 0600: the
+   server sets `umask(0o077)` around `listen()` and `chmod`s to 0600 after) and `tui.lock` (the server lock, created
+   with `O_EXCL`, holding the pid). The directory permission is the access control: only the user (and root) can
+   reach the socket.
+2. **Server (the TUI).** Every TUI tries to become the server at start and, if it is not, again every 10 s on tick:
+   1. take `tui.lock` with `O_EXCL`; an existing lock whose pid is alive (and is an agentglass process) → not the
+      server, stop; a stale lock (dead pid) is taken over (unlink, retry once);
+   2. holding the lock: if `tui.sock` exists, `lstat` it — it must be a socket owned by the uid (anything else: leave
+      it, disable, warn); try to connect: refused/`ENOENT` → **stale**, unlink it; a live answer → another server
+      exists (lock lost to a race), release the lock and stop;
+   3. `listen()` on `tui.sock`; on `EADDRINUSE` retry step 2 once, then give up quietly.
+   - The socket path must fit `sun_path` (≤ 104 bytes on macOS, 108 on Linux); a longer `$HOME` disables single
+     instance with one warning.
+   - On quit (`H.onQuit`, also the SIGTERM path, `main.ts:68`, and SIGINT/SIGHUP) the server closes the socket and
+     unlinks `tui.sock` and `tui.lock`. After a crash both are stale and the next server cleans them (steps 1–2).
+   - Plain `agentglass` runs (no link) with a live server still start their own TUI (two windows are fine); they just
+     do not serve. Only links are handed off.
+3. **Protocol.** One request per connection, client → server: `open <ref>\n`, UTF-8, at most **1024 bytes** including
+   the newline (refs are ≤ 512, 5.1). The server:
+   - reads until `\n`, 1024 bytes or **1 s**, whichever comes first; over the limit or no newline in time →
+     `err bad-request\n`, close;
+   - accepts only the verb `open` followed by one space and a ref without control characters; any other verb or shape
+     → `err bad-request`;
+   - re-parses and resolves the ref with the strict grammar (5.1) **itself** — the client's parse is never trusted;
+   - answers `ok\n`, `ok palette\n` (ambiguous prefix: the palette opens prefilled with `@<prefix>`),
+     `err not-found\n` or `err busy\n`, then closes;
+   - limits: at most 4 open connections (more are closed at once) and 10 applied links per minute (more → `err busy`).
+
+   **A link can only open views**: the apply function selects a row, opens a transcript/palette and sets the focus.
+   It has no path to send, resume, kill, trash, export or any confirm dialog. If the TUI is in `input` or `confirm`
+   mode (the user is typing a prompt or answering a dialog), the link is **queued** (only the newest is kept), a
+   toast says `link received: <title> — applies when you leave this prompt`, and it is applied when the mode returns
+   to list/transcript/detail/view; it never closes or answers the dialog. On apply the TUI rings the bell (unless
+   `AGENTGLASS_NOTIFY=0`) so the user finds the window. Under `--redact` the toast shows the fake title.
+4. **Client (`agentglass open <ref>`, also from the URL handler).** After the local parse (5.3):
+   - `--new-instance`, agent mode or `--print`/non-TTY output (5.4) skip the hand-off entirely;
+   - check `run/` and `tui.sock` as in 5b.1 (`lstat`: real dir 0700 and a socket, both owned by the uid, socket 0600);
+     any mismatch → skip the hand-off and warn;
+   - connect with a **500 ms** timeout, send the request, wait up to 2 s for the answer;
+   - `ok`/`ok palette` → print `opened in running agentglass (pid N)` to stderr, exit 0. `err not-found` → exit 3.
+     `err bad-request` → exit 2. `err busy`, refused, `ENOENT`, timeout or a malformed answer → **fall back** to
+     starting its own TUI (5.3), which then tries to become the server.
+5. **Failure modes.**
+   - Stale socket or lock after a crash: cleaned by the next server (2.1–2.2); a client meanwhile falls back.
+   - Server hangs (stuck tick): the client's timeouts fall back to a new TUI; the hung server keeps the lock, so the
+     new TUI does not serve until it is gone.
+   - Two TUIs starting at once: the `O_EXCL` lock lets exactly one serve.
+   - Foreign or tampered files (wrong owner, symlink, wrong mode): never followed, never unlinked; single instance
+     disabled with a warning.
+   - Socket API missing in the runtime (open question 2): single instance disabled silently; links start a new TUI.
+6. **Config.** `"open": {"singleInstance": true}` (default `true`); `false` disables both serving and hand-off.
+
+
+**Fallback without Unix sockets** (decided in review): when the runtime has no Unix-domain sockets, the hand-off
+uses a spool directory `~/.agentglass/run/inbox/` (0700, owner-checked like the socket dir). The second instance
+writes the link as one file `<epoch-ms>-<pid>.link` (0600, created with `O_EXCL` under a temp name, then renamed;
+max 4 KB, same validation as a socket message) and exits. The running TUI scans the inbox on each tick (only while a
+running instance holds `~/.agentglass/run/tui.pid` with a live pid of its own), applies files in name order, and
+deletes them; files older than 60 s or invalid are deleted unread. Without a live `tui.pid` the second instance
+opens the link itself. Latency is one tick instead of immediate; the security properties (owner only, open-only
+links, bounded size) stay the same.
 ### 6. OSC 8 terminal hyperlinks
 1. **Form:** `ESC ] 8 ; ; <url> ESC \ <text> ESC ] 8 ; ; ESC \`. A new helper `link(url, text)` in `src/util/text.ts`
    returns `text` unchanged when hyperlinks are off.
@@ -232,7 +308,7 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
    link (`ESC ] 8 ; ; ESC \`) before `RST`, so the hyperlink cannot spill into the next cell.
 5. **Mouse.** agentglass enables SGR mouse reporting, so a plain click goes to agentglass. Whether Ctrl/Cmd+click
    still opens hyperlinks under mouse reporting depends on the terminal (kitty, WezTerm and iTerm2 are reported to
-   allow it; to verify, open question 3). Links stay a convenience; every target is also reachable with keys.
+   allow it; to verify, open question 1). Links stay a convenience; every target is also reachable with keys.
 
 ### 7. Failure modes and privacy
 - **Empty results:** "no match — tab to change scope". With 0 sessions, the session scope says so.
@@ -267,30 +343,47 @@ need otlp-export's id scheme, project items use repo-view's identity when presen
 - **Key handling:** `\x0b` → `ctrl-k` opens from list, transcript, detail and the call-graph view; ignored in input
   and confirm; Esc restores mode, tab, selection and scroll exactly.
 - **Ref parser:** table tests for every grammar form, percent-decoding, length and charset limits, unknown anchors,
-  and rejection of `../` and absolute paths.
+  and rejection of `../` and absolute paths; `turn=<ts>`, `turn=<ts>~1` and the index alias `turn=<n>`.
+- **Turn anchors:** after a fixture Gemini rewind removes turn 2, `turn=<ts of turn 3>` still lands on the same turn,
+  `turn=3` on the next; a vanished key falls back with a warning; `Y` copies the timestamp form.
+- **Single instance** (`run.check.ts`, temp `HOME`):
+  - `run/` created 0700 and `tui.sock` 0600; a pre-existing `run/` with group bits, another owner (simulated by a
+    stubbed `lstat`) or a symlink → disabled, nothing unlinked;
+  - stale socket (no listener) and stale lock (dead pid) are cleaned and the new server serves; a live server is
+    never displaced; two servers started concurrently → exactly one serves;
+  - protocol: a valid `open <ref>` → `ok` and the transcript opens at the anchor; > 1024 bytes, no newline within
+    1 s, a control character, a verb other than `open`, a ref the grammar rejects → `err bad-request`; the 5th
+    concurrent connection and the 11th link in a minute are refused;
+  - a link received in `input`/`confirm` mode is queued, the dialog stays untouched, the link applies after esc;
+  - no request can reach send/resume/kill/trash/export (the apply function's call graph is checked);
+  - client: hand-off → exit 0 and no TUI; `err not-found` → exit 3; server killed mid-request, timeout, foreign
+    socket owner → falls back to its own TUI; `--new-instance` never connects; quit unlinks socket and lock;
+  - a `$HOME` long enough to overflow `sun_path` disables single instance with one warning.
 - **Resolver on a fixture HOME:** exact id, prefix, ambiguous prefix (exit 4), a trace id from an otlp-export golden
   file → the right session and turn, a span id → the right call, and an event older than the 6 MB tail is focused.
 - **Width with OSC 8:** `fitStyled`, `fillTo` and `scrubStyled` on strings with links measure the visible width
   only; a cut inside a link closes it.
-- **Manual:** the Linux handler install and uninstall on GNOME (VTE) and KDE (Konsole); a link from a browser opens a
-  terminal with the transcript.
+- **Manual:** the Linux handler install and uninstall on GNOME (VTE) and KDE (Konsole); a link from a browser with
+  no agentglass running opens a terminal with the transcript; with one running, the running TUI shows it and the
+  handler's terminal exits.
 
 ## Out of scope
-- Handing a link to an already running instance (IPC, single-instance mode).
-- A macOS app bundle and a Windows protocol handler.
+- Any socket request other than `open` (no remote control of the TUI).
+- A macOS app bundle (deferred, 5.6) and a Windows protocol handler.
 - User-defined palette commands or macros.
 - Fuzzy matching inside transcript content (that is `F` full-text search).
 - Changing existing key bindings.
 
-## Open questions
-1. **macOS handler.** Ship a minimal `.app` wrapper (an `Info.plist` with `CFBundleURLTypes` plus a launcher script
-   that opens Terminal or iTerm with `agentglass open`), or document a third-party URL router? The wrapper adds
-   signing and quarantine questions.
-2. **Single instance.** When an agentglass TUI is already running, should a link focus it (through a small Unix
-   socket under `~/.agentglass/run/`) instead of starting a second one? The value is real, but so is the attack
-   surface.
-3. **Clicks under mouse reporting.** Which terminals open OSC 8 links on Ctrl/Cmd+click while SGR mouse reporting is
+## Decisions (review 2026-10-02)
+1. macOS URL handler? Deferred; Linux first, the README documents a URL router for macOS (5.6).
+2. Single instance? Yes, a Unix socket under `~/.agentglass/run/` (dir 0700, socket 0600, owner checks, only
+   length-limited `open <link>` requests, view-only effects, stale cleanup, hand-off then exit) (5b).
+3. Turn anchors? The stable key (turn start timestamp) is canonical; the index is accepted as an alias (5.1, 5.2).
+4. No Unix sockets in the runtime? Spool-directory hand-off `~/.agentglass/run/inbox/` (5b).
+
+## Open questions (to verify during implementation)
+1. **Clicks under mouse reporting.** Which terminals open OSC 8 links on Ctrl/Cmd+click while SGR mouse reporting is
    on? To be checked in kitty, WezTerm, iTerm2, GNOME Terminal, Konsole and Windows Terminal before `auto` is
    considered final.
-4. **Turn anchors.** Should `turn=n` use the stable turn key (start timestamp) instead of the index? Then a link stays
-   valid when a Gemini rewind removes earlier turns. The trade-off is less readable URLs: `turn=2026-10-02T09:14:03.120Z`.
+2. **Unix sockets in scriptc.** Does the scriptc runtime support `node:net` Unix-domain servers and clients
+   (`listen(path)`, `connect(path)`, `umask`)? If not, 5b uses its spool-directory fallback (decided).

@@ -7,7 +7,7 @@ triage, session-compare, repo-view, rules-config and otlp-export selection).
 One filter grammar, written the same way everywhere: the session list, the Stats tab, `--json`, `--watch` and every later
 view (Triage, Compare, Repos). Examples: `repo is agentglass`, `tool is_one_of Bash Edit`, `cost > 2`, `model ~ opus`,
 `status is error`, `harness is pi`, `not live is true`. Filters can be **pinned** so they follow the user across tabs
-(and, opt-in, across runs). Two `is` filters on the same key merge into `is_one_of`. The spec also defines the
+and across runs (remembered by default, visible on start, can be turned off). Two `is` filters on the same key merge into `is_one_of`. The spec also defines the
 **attribute catalogue** (which attributes exist on which entity) and the **fact/aggregation model** that triage and
 session-compare reuse.
 
@@ -42,7 +42,11 @@ session-compare reuse.
   per hour, top-10 slow and top-10 error `Rec`s) and `Cnt` maps keyed `"<tool>\t<program|command|path>"`
   (`src/features/usage/calls.ts:6-12`, `record.ts:10`). Combinations such as "Bash errors with model X at 14:00"
   cannot be answered from it. The session model is the last one seen (`Acc.model`, `record.ts:13`; set e.g. at
-  `src/harness/claude.ts:105`).
+  `src/harness/claude.ts:105`). `tool()` (`record.ts:50`) takes no model; every adapter has the issuing message's model
+  at hand where it calls `tool()`: Claude `message.model` (`claude.ts:105,112`), Gemini `o.model` (`gemini.ts:302,312`),
+  pi `responseModel || model` (`pi.ts:240-244`), OpenCode the message's `modelID` per part row (`opencode.ts:242,366-367`)
+  or `o.model.id` (`opencode.ts:373`); Codex only per turn (`turn_context`, `codex.ts:103`); fx only per session
+  (`fx.ts:63`); Kiro logs no model at all.
 - Size on a real machine (2026-10-02): 1058 sessions, 124,080 tool calls, `ledger.json` 15.5 MB.
 - Config: `~/.agentglass/config.json`, `section()` / `setConfig()` (`src/util/config.ts:13-24`).
 
@@ -87,7 +91,7 @@ its session's. Multi-valued attributes (`m`) match when any value matches (`is_n
 | `repo` (`project`) | session | text | `projectOf(cwd)`: nearest dir with `.git` walking up from cwd (a worktree's `.git` file resolves to its main repo), else basename(cwd); cached per cwd; repo-view may refine the identity behind the same function |
 | `cwd` | session | path | `Sess.cwd`, `~` expanded |
 | `branch` | session | text | `Sess.branch` |
-| `model` | session m / call | text | session: `Sess.model` ∪ models of its calls; call: the model active when the call was made |
+| `model` | session m / call | text | session: `Sess.model` ∪ models of its calls; call: the model of the assistant message that issued the call (4.1); `unknown` when the harness records none |
 | `title`, `id` | session | text | `titleOf(s)`, `Sess.id` |
 | `agent` | session | text | subagent type `Sess.kind` ("" for top-level) |
 | `subagent`, `live`, `archived` | session | bool | `parent !== ""`; own or parent pid (`cli.ts:84-88`); `Sess.archived` |
@@ -135,10 +139,25 @@ Each view has a row entity. A clause on another entity is **lifted**:
 Per-call filtering needs per-call data. The ledger gets a compact call table next to the `Day` buckets:
 ```ts
 // one tool call; string columns are ids into ledger-wide dictionaries (tool, model, program, command, file)
-interface Call { t: number; tool: number; model: number; progs: number[]; cmds: number[]; files: number[]; ms: number; err: number /* -1 unknown, 0, 1 */; out: number }
+interface Call { t: number; tool: number; model: number /* -1 unknown */; mq: 0 | 1 | 2 /* model exact per message | per turn | per session */; progs: number[]; cmds: number[]; files: number[]; ms: number; err: number /* -1 unknown, 0, 1 */; out: number }
 Acc.calls: Call[]   // in call order; Acc.lastCall = index of the newest row
 ```
-1. `tool()` (`record.ts:50`) appends a row (`t`, `tool`, `model = a.model`); `pend()` (`record.ts:60`) adds programs and
+1. `tool(a, d, name, model, mq)` (`record.ts:50`) appends a row (`t`, `tool`, `model`, `mq`); the caller passes the
+   model of the **assistant message that issued the call** — never `a.model` ("latest seen"), which can belong to a
+   later message or another attempt. Per harness:
+
+   | harness | model source for the row | `mq` |
+   |---|---|---|
+   | claude | `message.model` of the assistant line holding the `tool_use` (`claude.ts:105,112`); with fallback iterations (parsing-fixes 2) the answering model, which is `message.model`; `<synthetic>` → unknown | message |
+   | gemini | `o.model` of the `gemini` record carrying `toolCalls` (`gemini.ts:302,312`) | message |
+   | pi | `responseModel || model` of the assistant message carrying the `toolCall` (`pi.ts:240-244`); nested calls inherit the row of their parent call id | message |
+   | opencode | the part row's message `modelID` (`opencode.ts:242,366-367`); JSON export: the message's `model.id` (`opencode.ts:373`) | message |
+   | codex | model of the latest `turn_context` (`codex.ts:103`) — Codex fixes the model per turn, so this is exact per its records | turn |
+   | fx | session model from the meta line (`fx.ts:63`) | session |
+   | kiro | none recorded → `-1` (`model is unknown`) | session |
+
+   `a.model` keeps its current meaning (session's latest model, for the list and cost booking). The session-level
+   `model` attribute is `Sess.model` ∪ the row models. `pend()` (`record.ts:60`) adds programs and
    commands and keeps the row index in `Pend`; `done()` (`calls.ts:54`) sets `ms`, `err`, `out`; `retool()`
    (`record.ts:68`) renames the row's tool. `file()` and `patchLines()` take `a` and attach the path to `a.lastCall`
    when its tool name matches (every adapter records files right after `tool()` on the same line:
@@ -149,11 +168,13 @@ Acc.calls: Call[]   // in call order; Acc.lastCall = index of the newest row
    `cache.ts:88-94`, in the same save tick. Each file stores the ledger `off` it is consistent with; at load, a session
    whose calls file is missing or has another `off` gets its `Acc` dropped and is re-indexed (only that session).
    `cache.ts` `VERSION` bumps once to the next free number at implementation time (forces one re-index). Deleted sessions' files are removed on save.
-3. **Retention**: rows older than `filter.callDays` days (config, default 90) are pruned at save; day buckets are
-   kept forever as today. Call clauses over older days see no rows: the chip shows `calls ≤ 90 d` when a filter with
-   call clauses covers older data.
-4. Size estimate: ~40 bytes per row on disk → ~5 MB for the 124k calls above; in memory ~100 B per row. To be measured
-   on real data in the implementation plan (open question 1).
+3. **Retention**: rows older than `filter.callDays` days (config `"filter": {"callDays": 90}`, integer ≥ 1, default
+   90; invalid → default with one startup toast) are pruned at save; day buckets are kept forever as today. Rows are
+   loaded eagerly at start (no lazy per-session loading). Call clauses over older days see no rows: the chip shows
+   `calls ≤ <callDays> d` when a filter with call clauses covers older data. Raising `callDays` does not bring pruned
+   rows back until those sessions re-index.
+4. Size estimate: ~40 bytes per row on disk → ~5 MB for the 124k calls above; in memory ~100 B per row. Measured on
+   real data in the implementation plan (Testing, "Real life").
 
 ### 5. Evaluation and aggregation (shared by Stats, triage, compare, repo-view)
 Module `src/features/query/` (names indicative): `parse.ts` (tokenizer, parser, printer, errors), `attrs.ts`
@@ -187,9 +208,16 @@ function aggregate(f: Compiled, entity: "session" | "call", days: string[], dims
 3. **Pins vs local**: a local equality clause on a key overrides a pinned equality clause on the same key for that
    tab (the pinned chip is shown struck through); range and `~` clauses always AND. Rationale: union would widen the
    pinned context, intersection of two `is` values is always empty.
-4. **Persistence across runs** (opt-in): `config.json` `"filter": {"remember": "true"}` saves the canonical pinned
-   expression with `setConfig("filter", "pinned", expr)` on every change and restores it at start. Default off: a
-   hidden filter on start-up would make sessions look missing. An unparsable saved value is dropped with a warning.
+4. **Persistence across runs** (default on): the canonical pinned expression is saved with
+   `setConfig("filter", "pinned", expr)` on every change and restored at start. `config.json`
+   `"filter": {"remember": false}` turns it off (nothing saved, a saved value is ignored). An unparsable saved value
+   is dropped with a warning. So a restored pin never looks like missing sessions:
+   - **On start** with restored pins: a toast for 6 s `pinned: repo is agentglass · harness is pi — P edits, P then
+     enter on empty unpins`, and the chip bar (7.6) shows the pinned chips from the first frame.
+   - **Hidden count**: while pins hide sessions, the Sessions box title ends with `· pins hide N` (N = sessions the
+     pins alone exclude), and an empty list says `no sessions match — N hidden by pins (P edits)` instead of the
+     plain empty state.
+   - The Stats subtitle and every other tab that honors pins carry the same pinned chips.
 
 ### 7. TUI
 1. `/` (Sessions, Stats): input prefilled with the tab's local expression in canonical form. Live re-filter while the
@@ -198,7 +226,7 @@ function aggregate(f: Compiled, entity: "session" | "call", days: string[], dims
    (restores the previous local filter — today esc clears it, `input.ts:54`).
 2. `tab` in the filter input completes: keys, then operators valid for that key's type, then values (enums; for text
    attributes the most frequent values in the data: tools, repos, models, programs, extensions). Repeated `tab` cycles.
-3. `p` pins the tab's local clauses (merge rules apply; local is emptied). `P` (list mode) edits the pinned expression
+3. `p` pins **all** of the tab's local clauses (merge rules apply; local is emptied; no per-chip selection). `P` (list mode) edits the pinned expression
    (empty = unpin all). `P` in transcript mode stays replay (`replay.ts:58`).
 4. `h` and `l` stay as shortcuts: `h` cycles the local `harness is …` clause (all → each id); if harness is pinned it
    says "harness is pinned — P edits pins". `l` toggles local `live is true`.
@@ -244,8 +272,8 @@ Parse errors carry a column and print the input with a caret (CLI: stderr, exit 
   a live process table → "state needs process info; run without --json or use live".
 
 ### 11. Privacy and failure modes
-- Filtering is local and reads only what is already read. Pins persisted to `config.json` only on opt-in; they may
-  contain repo names and paths; `setConfig` writes with the default umask today (`config.ts:20-23`), so the
+- Filtering is local and reads only what is already read. Pins are persisted to `config.json` unless
+  `filter.remember` is false; they may contain repo names and paths; `setConfig` writes with the default umask today (`config.ts:20-23`), so the
   implementation should create `config.json` as 0600 when it does not exist yet.
 - A corrupt or missing calls cache file costs one re-index of that session, never wrong numbers (4.2).
 - Unknown values (`cost` −1, untimed calls) never satisfy comparisons; `is unknown` finds them.
@@ -265,6 +293,12 @@ Parse errors carry a column and print the input with a caret (CLI: stderr, exit 
   exact error message + column; `parse(print(x)) = x` for every valid case; units, quoting, `is_one_of` termination,
   bare-word compatibility with today's `/` behaviour.
 - Merge rules: each pair in 6.2/6.3 → expected clause list and toast text.
+- Pins: restored at start by default, not with `remember: false`; start toast and `pins hide N` count; unparsable
+  saved value dropped.
+- Per-message model: a fixture per harness with a model switch between two tool-calling messages (pi `model_change`,
+  OpenCode `model-switched`, Claude fallback iteration, Gemini, Codex across two `turn_context`s) → each row carries
+  its issuing message's model and `mq`; Kiro rows are `unknown`; `model is X` matches only the calls X issued.
+- Retention: `filter.callDays` honored, invalid value → 90.
 - Evaluation over a fixture ledger (two harnesses, subagent, priced and unpriced models, errored and untimed calls,
   two days): list lifting (same-call semantics), Stats totals per path (bucket vs calls give equal results when both
   apply), retention cut-off, `unknown`.
@@ -279,11 +313,14 @@ Parentheses and general OR, regex operator, saved named filters, sorting by attr
 views, PromQL/SQL, a filter on process attributes beyond the four in 3, copying the filter as a shell command (could
 come with cli-agent-mode).
 
-## Open questions
-1. Calls cache size and load time on large histories: is 90 days the right default, or should rows be loaded lazily
-   per session on first use of a call clause?
-2. Should `p` pin only the selected chip (needs chip navigation) instead of all local clauses?
-3. Remembered pins default off (6.4) — revisit after use.
-4. `repo` before repo-view: is the `.git` walk enough, or do worktrees need remote-URL merging from the start?
-5. `model` for harnesses that switch model mid-turn (pi, OpenCode per message): the call row takes the latest model
-   seen before the call; good enough?
+## Decisions (review 2026-10-02)
+1. Per-call row retention? 90 days, configurable (`filter.callDays`), loaded eagerly (4.3).
+2. `p` pins the selected chip or all local clauses? All local clauses (7.3).
+3. Remembered pins default? On; persisted across restarts, `filter.remember: false` turns it off; restored pins are
+   announced and counted on start (6.4).
+4. `repo` before repo-view? The simple `.git` walk until repo-view refines `projectOf()` (2).
+5. Model of a call? Exactly the model of the assistant message that issued it, per harness record granularity; no
+   "latest seen" (4.1).
+
+## Open questions (to verify during implementation)
+None.

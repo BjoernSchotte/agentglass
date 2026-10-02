@@ -137,7 +137,8 @@ named fields are copied out; the parsed object is dropped right away; nothing el
   `unpricedCredits`. `costUsd` keeps its meaning (list-price figure; `null` when only unpriced usage exists).
 - New `agentglass cost [--json] [--harness h]`: today, last 7 days, month-to-date, per mode, unpriced breakdown,
   projection, budget state. Text output is a small table; `--json`:
-  `{today:{byMode,unpriced}, month:{byMode,unpriced,projected}, budget:{monthlyUsd,counts,used,projected,state}}`.
+  `{today:{byMode,unpriced}, month:{byMode,unpriced,projected}, budget:{monthlyUsd,counts,used,projected,state,approx}}`
+  (`approx` per 8).
   Runs the blocking `complete()` path like `--json` (`ledger.ts:91-96`). Exit code 0; `3` when the budget is exceeded
   and `--check` is given (for shell prompts / cron).
 
@@ -157,7 +158,10 @@ named fields are copied out; the parsed object is dropped right away; nothing el
 { "budget": { "monthlyUsd": 200, "counts": ["api", "metered", "gateway"], "warnAt": 0.8 } }
 ```
 - `monthlyUsd` (number > 0; absent = no budget). `counts`: modes that count; default `["api","metered","gateway"]` —
-  real or possibly real spend. A plan user who wants a soft cap on list-equivalent sets `["plan"]` or `["all"]`.
+  real or possibly real spend. `metered` counts by default although cloud discounts/commitments make its list-price
+  figure approximate: whenever a counted `metered` or `gateway` amount is > 0, the budget figures carry an approximate
+  marker — `≈` before used/projected (`≈$170 of $200`), and `budget.approx: true` in `agentglass cost --json`. A plan
+  user who wants a soft cap on list-equivalent sets `["plan"]` or `["all"]` (then `≈` too).
   `warnAt`: 0 < x < 1, default 0.8. Invalid values → ignored with one startup toast.
 - States: `ok`; `watch` (projected month > budget, or used ≥ `warnAt`) → header figure yellow; `over` (used ≥ budget)
   → red, a toast once per calendar day and `OS.notify` once per day (respects `AGENTGLASS_NOTIFY=0`). Last notified
@@ -167,7 +171,13 @@ named fields are copied out; the parsed object is dropped right away; nothing el
 ### 9. Plan allowance (Claude), best effort
 For `plan` Claude sessions, `~/.claude.json` `cachedUsageUtilization.utilization.{five_hour,seven_day}.{utilization,resets_at}`
 gives an allowance gauge like the Codex one (`stats.ts:469-473`): header `· cc 7d 71%`. Undocumented cache written by
-Claude Code: read only those fields, hide the gauge when `fetchedAtMs` is older than 1 h or the shape differs.
+Claude Code, so it ships behind a guard:
+- **Staleness**: hidden when `fetchedAtMs` is older than 1 h.
+- **Shape check**: `allowanceOf(obj)` accepts only the exact path above with `utilization` a number in 0–100 (or
+  0–1, scaled) and `resets_at` a parseable timestamp; anything else → gauge hidden, no toast, one debug-log line.
+- **Drop rule** (maintenance policy, not runtime): the check pins the shape seen at implementation. If Claude Code
+  changes the shape once, the check is updated to the new shape; a second change removes the gauge and this section
+  instead of chasing it. The fixture test (Testing) is what notices the change.
 
 ### Failure modes
 - Unreadable/malformed config → that rule is skipped, mode falls through; never an error toast for missing files.
@@ -197,7 +207,10 @@ personal), and replaces the plan name when it contains an organisation name (it 
 - `record.check.ts`: unpriced per model, Kiro credits into `uc`, fx $0 snapshot as tokens, `cp` per provider, `hc`.
 - `pricing`: Bedrock/Vertex id normalisation hits the right row.
 - Projection: synthetic `Day` sets (0, 2, 3, 14 days; current hour partially spent; month boundary; DST day).
-- Budget: state transitions and once-per-day notify.
+- Budget: state transitions and once-per-day notify; `approx` set iff a counted metered/gateway amount > 0; default
+  `counts` includes `metered`.
+- Allowance: `allowanceOf` accepts the pinned fixture shape, rejects renamed/missing fields, out-of-range values and
+  stale `fetchedAtMs`.
 - Cache: v5 file discarded and re-indexed; v6 round-trip.
 - Manual: header/Stats at 80, 120, 200 columns, mixed and single mode.
 
@@ -206,11 +219,12 @@ personal), and replaces the plan name when it contains an organisation name (it 
 - Per-request mode switching inside one session; team/org budgets; currency other than USD.
 - Credit balance (`rate_limits.credits.balance`) display.
 
-## Open questions
+## Decisions (review 2026-10-02)
+1. Metered toward the default budget? Yes; budget figures carry the `≈` approximate marker (8).
+2. Claude allowance gauge on an undocumented cache? Ships behind the staleness/shape guard; dropped if the shape
+   changes twice (9).
+
+## Open questions (to verify during implementation)
 1. fx billing: where does fx store its auth/provider config? Until known, `unknown`.
 2. Codex `auth_mode` values beyond `chatgpt` (seen) and `apikey` (expected) — verify on an API-key login.
 3. pi `auth.json` type literal for API keys (`api_key`?) — verify against pi source.
-4. Should `metered` count toward the default budget? Proposed yes (it is real spend), but cloud discounts make the
-   figure approximate.
-5. Is the Claude allowance gauge (9) worth depending on an undocumented cache? Proposed: ship behind the same
-   staleness guard, drop if the shape changes twice.
