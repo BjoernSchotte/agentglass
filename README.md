@@ -232,6 +232,7 @@ export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with
 export AGENTGLASS_CURL="/opt/bin/curl"         # … or, without sqlite3, over the OpenCode service's HTTP API with curl
 export AGENTGLASS_KIRO="kiro-cli"
 export AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"   # headless sends may edit files
+export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (default ~/.agentglass/cache)
 ```
 
 ## Supported harnesses
