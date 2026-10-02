@@ -187,7 +187,7 @@ export function configEv(h: string, home: string, cwd: string): Evid {
   return ev;
 }
 // --redact: plan names are type words (team, pro, max_5x); anything else could be an organisation's name
-export function planLabel(plan: string, redact: boolean): string { return redact && !/^[a-z0-9_]+$/.test(plan) ? "plan" : plan; }
+export function planLabel(plan: string, redact: boolean): string { return redact && plan && !/^[a-z0-9_]+$/.test(plan) ? "plan" : plan; }
 
 // ── Claude plan allowance (~/.claude.json cachedUsageUtilization): undocumented, so behind a staleness + shape guard ──
 // Pinned shape: {fetchedAtMs, utilization: {five_hour|seven_day: {utilization 0–100, resets_at ISO}}}. If Claude Code

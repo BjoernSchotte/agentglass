@@ -72,7 +72,7 @@ ok("missing files = unknown", rule("pi", configEv("pi", HOMED + "/none", ""), "c
 const pie = configEv("pi", HOMED, "");
 ok("pi per provider", provRule("pi", "anthropic", pie, "config").bill === "plan" && provRule("pi", "openai", pie, "config").bill === "api" && kvs(pie).indexOf("SECRET") < 0, kvs(pie));
 ok("opencode single provider", rule("opencode", configEv("opencode", HOMED, ""), "config").bill === "plan", "");
-ok("redact plan", planLabel("team", true) === "team" && planLabel("Acme Corp", true) === "plan" && planLabel("Acme Corp", false) === "Acme Corp", "");
+ok("redact plan", planLabel("", true) === "" && planLabel("team", true) === "team" && planLabel("Acme Corp", true) === "plan" && planLabel("Acme Corp", false) === "Acme Corp", "");
 rmSync(ROOT, { recursive: true, force: true });
 // stamp precedence: config never stamps; process fills an empty stamp; session evidence replaces process, never the reverse
 const sa = newAcc();

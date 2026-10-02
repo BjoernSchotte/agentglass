@@ -47,8 +47,11 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   the DevTools Performance panel: a zoomable flame chart of turns › tool calls › subagents › their
   tools, colored by tool kind, and a sortable call tree with total/self time, counts and errors.
   `↵` on any bar opens that call's detail.
-- **Know what it costs.** Tokens (in/out/cache) and API-equivalent cost per session and per day,
-  with Claude list prices built in and your own rates via `~/.agentglass/prices.json`. A **Stats**
+- **Know what it costs — and what kind of cost it is.** Tokens (in/out/cache) and API-equivalent cost per
+  session and per day, with Claude list prices built in and your own rates via `~/.agentglass/prices.json`.
+  Every figure says how it is billed: `$4.20 spend` (API key), `≈$4.20 plan` (subscription, list-price
+  equivalent), `cloud` (Bedrock/Vertex), `gw` (gateway) or `?`. Usage without a price is spelled out per
+  model, today and this month are projected, and an optional monthly budget warns. A **Stats**
   tab shows today and the last 7 days: per-harness totals, busiest session, top tools, activity by hour.
   Top tools carry error rates (MCP servers grouped, `␣` expands); `↵` drills into one: p50/p95/max
   duration, calls over time, top shell programs and command lines, most-changed files, the slowest
@@ -113,6 +116,58 @@ writes) or [`models.dev`](https://models.dev). agentglass then fetches that publ
 host sees your IP — keeps only first-party model prices in `~/.agentglass/cache/`, and uses them from
 the next start. Your `prices.json` still wins. `agentglass --update-prices` fetches now,
 `AGENTGLASS_OFFLINE=1` stops fetching. The Stats tab shows which prices are in use.
+
+## Billing modes, projection, budget
+
+A list-price figure means different things on an API key and on a Max/Team/ChatGPT plan, so each one is
+tagged with how the session is billed:
+
+| tag | mode | meaning |
+|---|---|---|
+| `$4.20 spend` | `api` | API key: the list price is what you pay (the only figure without `≈`) |
+| `≈$4.20 plan` | `plan` | subscription (Claude Pro/Max/Team, ChatGPT plans, Gemini OAuth, Kiro): what the API would have charged |
+| `≈$4.20 cloud` | `metered` | Bedrock, Vertex, Foundry, Azure: real spend, the cloud price may differ from list |
+| `≈$4.20 gw` | `gateway` | a proxy/gateway with its own auth (LiteLLM, corporate proxy, CLIProxyAPI): spend unknown to agentglass |
+| `≈$4.20 ?` | `unknown` | nothing conclusive (fx; pi/OpenCode providers without an auth entry) |
+
+Detection, first conclusive source wins: the transcript (Bedrock/Vertex model ids, Codex `plan_type`), the
+live agent process's environment (Linux), then the current config files (`~/.claude.json`,
+`~/.claude/settings.json`, `~/.codex/auth.json` + `config.toml`, `~/.gemini/settings.json`, pi/OpenCode
+`auth.json`). Transcript and process results are stored with the session, so history keeps the mode it ran
+with; sessions only covered by config show the current mode as assumed (`*`, dim). **Privacy:** only variable
+*names* are read from the environment (values only for the on/off switches `CLAUDE_CODE_USE_BEDROCK`,
+`CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `GOOGLE_GENAI_USE_VERTEXAI`), auth files only for their
+type fields, `~/.claude.json` only for the plan fields of `oauthAccount` and the usage cache below. No secret
+is read, stored or exported; `--redact` keeps the tags and replaces plan names that are not plain type words.
+
+Usage without a price is listed instead of hidden: `unpriced  gpt-x 900K · custom 300K · +2 models ·
+kiro 120 credits (set kiroCreditUsd)`.
+
+**Projection** (Stats line 3, `agentglass cost`): today = spent so far + the mean cost of each remaining hour
+over the last 14 days with any cost; month = month-to-date + today's remainder + days left × the mean daily
+cost since the first day with data in the last 14 days. Both need 3+ days of history (else `—`); history is
+what is still on disk (Claude Code and Gemini CLI delete old sessions after ~30 days by default).
+
+**Budget** (optional) in `~/.agentglass/config.json`:
+
+```json
+{ "budget": { "monthlyUsd": 200, "counts": ["api", "metered", "gateway"], "warnAt": 0.8 } }
+```
+
+`counts` are the modes that count (default: real or possibly real spend; `["all"]` or `["plan"]` for a soft cap
+on list-equivalent). The header figure turns yellow when the projected month exceeds the budget or `warnAt` of
+it is used, red when it is used up — then a toast and a desktop notification once a day
+(`AGENTGLASS_NOTIFY=0` keeps it quiet). Figures that include cloud, gateway or plan amounts carry `≈`. `B` in
+Stats shows the current state. Invalid values are ignored with one warning.
+
+For Claude plan sessions the header also shows the plan allowance from Claude Code's own cache, `· cc 5h 15%
+7d 71%` (the fuller window highlighted); it hides itself when that cache is older than an hour or changes shape.
+
+```sh
+agentglass cost                 # today / 7 days / month by mode, unpriced usage, projection, budget
+agentglass cost --json | jq .   # {today, week, month{…, projected}, budget{monthlyUsd, used, projected, state, approx}}
+agentglass cost --check         # exit 3 when the month is over budget (prompts, cron)
+```
 
 ## Install
 
@@ -207,6 +262,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `!` | jump to the next agent waiting for you |
 | `T` | cycle themes |
 | `Tab` `1` `2` `3` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) |
+| `B` | in Stats: budget state and the config path |
 
 ## Scriptable
 
@@ -248,7 +304,7 @@ export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (d
 | ✦ **Gemini CLI** | `~/.gemini/tmp/<project>/chats` | process cwd = project root | `chats/<parent id>/` | ✔ |
 
 Kiro bills in credits, not tokens: set `"kiroCreditUsd"` in `~/.agentglass/prices.json` (or
-`AGENTGLASS_KIRO_CREDIT_USD`) to see its cost; without a rate it shows as unknown.
+`AGENTGLASS_KIRO_CREDIT_USD`) to see its cost (tagged `plan`); without a rate its credits are listed as unpriced.
 
 aider, amp and friends already show up in the process view. Their session
 browsers are next, and PRs are welcome.
