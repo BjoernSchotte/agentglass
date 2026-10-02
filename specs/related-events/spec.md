@@ -53,8 +53,9 @@ When two agents write the same file close together, the rows are highlighted as 
 ### 2. Scope
 - **Project**: the anchor session's `Ident.key` (repo-view): every session of the same project, whatever harness,
   worktree or clone. For `kind:"none"` (no cwd), fall back to sessions with the same cwd, and say so in the header.
-- **Window**: `[t − N, t + N]`. N defaults to 10 min (`config.json` `{"related":{"minutes":10}}`). It cycles with
-  `+`/`-` through 2, 5, 10, 30, 60.
+- **Window**: `[t − N, t + N]`. N defaults to 10 min, configurable (`config.json` `{"related":{"minutes":10}}`,
+  integer 1–240; invalid → 10 with one toast). It cycles with `+`/`-` through 2, 5, 10, 30, 60 (the configured value
+  is added to the cycle when it is not one of them).
 - **Candidate sessions**: same project, whose activity intersects the window. Check it in memory: ledger day keys of
   the window, then `Day.act` intervals. Sessions not indexed yet: `mtime ≥ t − N` and a head timestamp ≤ `t + N`.
   Subagents are their own sessions.
@@ -103,8 +104,11 @@ When two agents write the same file close together, the rows are highlighted as 
 ### 5. Conflicts
 For each file `(top, rel)`, take the `write` events in the whole loaded range, by session:
 - **conflict** (red `‼`): writes to the **same physical file** (same `top` and `rel`) by two different sessions
-  within `C` minutes of each other (default 10, `related.conflictMinutes`). A parent session and its own subagent are
-  exempt (delegation, not a race). Sibling subagents are not exempt.
+  within `C` minutes of each other (default 10, configurable `related.conflictMinutes`, integer 1–240; invalid → 10).
+  A parent session and its own subagent are exempt (delegation, not a race) — **unless** the parent's write falls
+  inside the subagent's active interval: then both edit at the same time, a true race, flagged `‼` with the note
+  `parent wrote while its subagent ran`. The active interval is the spawning call's start → its result (`id` pair);
+  without a paired result, the subagent session's first → last event. Sibling subagents are never exempt.
 - **overlap** (yellow `≈`): the same `rel` in **different** worktrees or clones of the project, within `C`. There is
   no clash on disk, but it is a likely merge conflict.
 - **clobber** (red `‼`): a `shell` event in one session runs a workspace-wide git command that can discard others'
@@ -176,8 +180,9 @@ rebuilt on demand.
 - `related/model.check.ts`:
   - kinds and folding of results into their calls;
   - `FileRef` normalization across two worktrees;
-  - conflict vs overlap vs clobber; the parent/subagent exemption; siblings flagged;
-  - the C-minute boundary;
+  - conflict vs overlap vs clobber; the parent/subagent exemption outside the subagent's active interval, and the
+    race flag for a parent write inside it (with and without a paired spawn result); siblings flagged;
+  - the C-minute boundary; `related.minutes`/`related.conflictMinutes` from config, invalid values → 10;
   - `commit (no session)` from a reflog fixture.
 - Fixture project: three harness transcripts (Claude, Codex, pi) in two worktrees of one remote, editing
   `src/a.ts`. The view lists them interleaved, with the right markers.
@@ -189,8 +194,10 @@ rebuilt on demand.
 - Events from outside agent transcripts (editor saves, CI).
 - Cross-project correlation.
 
-## Open questions
-1. Should the parent/subagent exemption also apply when the parent writes while its subagent is still running
-   (a true race)? The proposal: exempt only when the parent's write is outside the subagent's active interval.
-2. Default N = 10 min and C = 10 min: are they too wide for busy multi-agent setups?
-3. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (decision 4, uncertain).
+## Decisions (review 2026-10-02)
+1. Parent/subagent exemption? Exempt unless the parent writes during the subagent's active interval; that true race
+   is flagged (5).
+2. N and C? Both 10 min, both configurable (`related.minutes`, `related.conflictMinutes`) (2, 5).
+
+## Open questions (to verify during implementation)
+1. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (decision 4, uncertain).

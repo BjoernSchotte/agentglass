@@ -85,8 +85,8 @@ export function agentHost(): AgentHost; // computed once, cached
    to ancestry with a warning. Subagent shells report the subagent's own session if the harness sets one; `session
    current --root` goes up to the root session.
 5. **Effects of agent mode:**
-   - The TUI never starts. Bare `agentglass` prints the structured help (decision 4) and exits 0. Any command that
-     would start the TUI (`--theme`, `open`) prints its JSON equivalent instead.
+   - The TUI never starts. Bare `agentglass` prints the **compact help** (4.5) and exits 0. Any command that would
+     start the TUI (`--theme`, `open`) prints its JSON equivalent instead.
    - The default `--format` is `json`, compact (no pretty-printing, even on a PTY).
    - `NO_COLOR` is implied. No OSC escape sequences are printed (hyperlinks, OSC 52 clipboard).
    - Nothing reads stdin for confirmation. `update` without `--yes` refuses a downgrade with exit 2 and the hint "use
@@ -158,8 +158,11 @@ scope default is decision 3.6.
    JSONL print only the rows.
 6. **Privacy scope.** Agent-mode output enters the agent's context and goes to its model provider. By default,
    **agent-mode queries only see sessions of the current project**: the cwd's project identity from repo-view, or the
-   exact cwd before repo-view exists. `--all-projects` widens the scope explicitly. Outside agent mode the default
-   scope is everything, as today.
+   exact cwd before repo-view exists. Two ways widen it: `--all-projects` per command, or the config default
+   `~/.agentglass/config.json` `{"agent": {"scope": "all"}}` (values `project` (default) | `all`; anything else →
+   `project` with a stderr warning). `--project-only` overrides a configured `all` for one command. The JSON envelope's
+   `scope` field and the help's `agentMode.scope` state the effective scope. Outside agent mode the default scope is
+   everything, as today.
    - `--redact` applies unchanged: fake titles, cwd and content.
    - Error `text` is cut to 200 characters and passes `scrubText` when redaction is on.
 7. **Exit codes** (all commands): 0 ok (an empty result is ok), 1 runtime failure, 2 usage error, 3 not found (no
@@ -171,12 +174,15 @@ scope default is decision 3.6.
    `export` (otlp-export) and `open` (command-palette) register theirs the same way. The text help is rendered from
    these records, so the two forms cannot drift.
 2. `agentglass --help --format json` (the default in agent mode) prints
-   `{name, version, agentMode: {on, harness, session, via}, commands: […], formats: […], exitCodes: {…}, examples: […]}`.
+   `{name, version, agentMode: {on, harness, session, via, scope}, commands: […], formats: […], exitCodes: {…}, examples: […]}`.
    `agentglass <cmd> --help` prints only that command.
 3. `examples` holds the five queries an agent most likely needs, for example
    `agentglass session current --fields costUsd,tools,errors`. Keep them short: they cost the agent tokens.
 4. The README gets a paragraph for `CLAUDE.md`/`AGENTS.md`: "Run `agentglass session current` to see this session's
    cost and failed tool calls."
+5. **Compact help** (bare `agentglass` in agent mode): one compact JSON object, target ≤ 1 KB, rendered from the
+   same records — `{name, version, agentMode: {harness, session, scope}, commands: [{cmd, summary}], examples: [3
+   most useful], more: "agentglass --help"}`. No option tables, no field lists; `--help` gives the full form (4.2).
 
 ### 5. Failure modes
 - No current session (the shell is not under an agent, or the link failed): exit 3 with
@@ -202,7 +208,9 @@ scope default is decision 3.6.
   `agentHost().on/harness/session/via`. Ancestry runs on a synthetic `allProcs` map: nested agents, a wrapper binary,
   a missing `ps`.
 - **No TUI in an agent:** run the binary under `script -qc` (PTY) with `CLAUDECODE=1`. Bare `agentglass` must exit 0
-  within 2 s and print JSON. `agentglass update --tag <older>` must exit 2 without reading stdin.
+  within 2 s and print the compact help (valid JSON, ≤ 1 KB, no option tables).
+- **Scope:** agent mode defaults to the current project; `--all-projects` and `agent.scope: "all"` widen it;
+  `--project-only` narrows a configured `all`; an invalid `agent.scope` warns and uses `project`. `agentglass update --tag <older>` must exit 2 without reading stdin.
 - **Format golden tests:** the same rows in json, jsonl, csv (quoting, formula guard, flattening) and table (CJK and
   emoji widths, cutting). `--fields` order and unknown-field errors.
 - **Queries on fixture homes** (a temp `HOME` with Claude, Codex and Gemini sessions):
@@ -222,12 +230,11 @@ scope default is decision 3.6.
 - Detecting Cursor and other harnesses agentglass does not read.
 - Localized output.
 
-## Open questions
+## Decisions (review 2026-10-02)
+1. Bare `agentglass` inside an agent? Prints the compact help (1.5, 4.5).
+2. Agent-mode scope? Current project by default; widened by `--all-projects` or config `agent.scope: "all"` (3.6).
+
+## Open questions (to verify during implementation)
 1. **Codex session id.** Is `CODEX_THREAD_ID` exported to every shell command (not only unified exec), and does it
    equal the rollout's session id? To be confirmed with one `codex exec 'env'` run.
 2. **Kiro.** Does Kiro CLI set `KIRO_SESSION_ID`, or any marker at all, for shell tool commands?
-3. **Bare `agentglass` in an agent.** Should it print help (as specified) or `session current`? Help is safer: it
-   costs few tokens and teaches the agent the commands.
-4. **Cross-project default.** Is limiting agent-mode scope to the current project too strict for users who run one
-   agent session to review all their work? `--all-projects` exists. An alternative is a config default
-   (`"agent": {"scope": "all"}`).

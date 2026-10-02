@@ -78,7 +78,10 @@ made a commit, and a rebase rewrites committer dates. The reflog can tell both.
   `glab mr create`, `hub pull-request`, `tea pr(s) create`, `gh issue create`, `glab issue create`, or when the tool
   name matches `/create_(pull_request|merge_request|issue)/` (MCP forge servers). Anything else is `mentioned`. The
   `git push` hint `…/pull/new/<branch>` is not a PR.
-- **Record**: `Acc.vcs: VRef[]`, with `VRef { k:"commit"|"pr"|"issue", v, t, how:"observed"|"created"|"mentioned",
+- **Git command spans**: when the producing command is known and contains `git` plus `commit`, `merge`,
+  `cherry-pick`, `revert`, `am` or `rebase`, the call is also recorded as `k:"gcall"` with its start and result
+  times (`v` = `"<t0>-<t1>"`), banner or not. Decision 4 uses these to recognise the session's own quiet commits.
+- **Record**: `Acc.vcs: VRef[]`, with `VRef { k:"commit"|"pr"|"issue"|"gcall", v, t, how:"observed"|"created"|"mentioned",
   br, subj, call, ts }`. `v` is the sha or the canonical URL; `subj` is ≤ 80 chars; `call`/`ts` locate the event.
   Refs are deduplicated by `(k, v)`: the first sighting wins, and `created` upgrades `mentioned`. At most 200 per
   session; when full, drop the oldest `mentioned` first.
@@ -108,17 +111,18 @@ made a commit, and a rebase rewrites committer dates. The reflog can tell both.
 
 ### 4. Attribution
 For each session with a git identity:
-- **window** = `[first activity − 2 min, last activity + 10 min]`. Activity comes from repo-view's `Day.act`
-  intervals; a live session's window ends now.
-- **observed** commits: the banner shas of this session.
-- **reflog** commits: entries in the window, in the **same worktree** (same `gitdir`), whose sha is not observed by
-  any session.
-- Other sessions whose window covers the entry and that share the gitdir: if none, the entry is attributed to this
-  session (≈). If several (two agents, or a human, in one worktree), it is `shared`: listed on each with `?` and not
-  counted in totals.
-- A commit observed by session A in worktree X never appears as ≈ for session B.
-- Commits made by the person in the same worktree while an agent ran are indistinguishable from the agent's.
-  That is why they show as ≈ and never as ✓, and the help text says so.
+- **window** = `[first activity − 2 min, last activity + tail pad]`. The tail pad is config `git.tailPadMin`
+  (`~/.agentglass/config.json`, integer minutes 0–120, default 10; invalid → 10 with one startup toast); it covers
+  agents that commit after a long final test run. Activity comes from repo-view's `Day.act` intervals; a live
+  session's window ends now.
+- **observed** commits (✓, counted): the banner shas of this session, plus reflog commits in the same gitdir whose
+  time falls inside one of this session's `gcall` spans (`[t0, t1 + 5 s]`) — a `git commit --quiet` the agent ran.
+- **reflog** commits (≈): entries in the window, in the **same worktree** (same `gitdir`), not observed by any
+  session. A commit the person makes in that worktree while an agent runs looks exactly like this, so ≈ commits are
+  **listed but not counted**: they never enter commits produced, $/commit or per-branch totals. The help text says so.
+- **shared**: a ≈ entry whose window is covered by more than one session sharing the gitdir (two agents, or two
+  sessions and the person) is shown on each as `? shared` and is likewise not counted in any per-session total.
+- A commit observed by session A in worktree X never appears as ≈ or `? shared` for session B.
 
 ### 5. Enrichment via `git` (lazy, budgeted)
 - One spawn per session view, only when the git panel (decision 6) or `--json --git` needs it:
@@ -131,23 +135,24 @@ For each session with a git identity:
   unavailable" and the commits keep their short shas without stats.
 
 ### 6. Metrics and UI
-- **Commits produced** = ✓ + ≈ (not shared or amended-away). Merge commits are listed but not counted unless the
-  session created the merge.
+- **Commits produced** = ✓ only (amended-away commits count once). ≈ and `? shared` commits are listed with their
+  own counts but never added. Merge commits are listed but not counted unless the session created the merge (✓).
 - **$/commit (session)** = session cost / commits produced. Shown only when ≥ 1 commit. Unpriced cost gives `?`.
 - **Branch**: the commits' branch (banner or reflog). A session with commits on two branches splits its cost by
   commit count. $/branch = Σ attributed cost / Σ commits.
 - **Project** (repo-view): `commits` column, plus "spend without commits" = Σ cost of the project's sessions that
   produced none in the period.
-- Preview section (`H.previewSections`): `git      ✓3 ≈1 commits · PR #142 (created) · $0.84/commit`.
+- Preview section (`H.previewSections`): `git      3 commits (✓3 · ≈1 · ?1 shared not counted) · PR #142 (created) · $0.84/commit`.
 - Session git view (full-screen `H.views` entry `git`), opened with `V` in the Sessions tab and in the transcript:
-  - commits: `✓/≈/?`, short sha, time, branch, `+a −d`, subject, status;
+  - commits: `✓` / `≈` / `? shared`, short sha, time, branch, `+a −d`, subject, status; ≈ and shared rows dim with
+    "not counted";
   - PRs/MRs, issues, other commit links: `created` first, then `mentioned`;
   - `enter` on an entry with a `call` opens the transcript focused on that tool call (as `stats.ts:359-365`); `y`
     copies the sha or URL; `esc` goes back.
 - Repos detail: the branches box gains `commits`, `$/commit`, and created PR links.
 
 ### 7. CLI
-- `--json` adds `git: {commits:[{sha, branch, subject, at, how:"observed"|"reflog", status:"present"|"missing"|"amended"|"unknown", add, del}],
+- `--json` adds `git: {commits:[{sha, branch, subject, at, how:"observed"|"reflog"|"shared", counted, status:"present"|"missing"|"amended"|"unknown", add, del}],
   prs:[{url, number, how}], issues:[{url, number, how}], links:[…], costPerCommit}`. Refs and reflog are always
   included because they need no spawn. `status`, `add` and `del` are filled only with `--git`, which allows the
   spawns of decision 5.
@@ -162,7 +167,8 @@ For each session with a git identity:
 - `vcs.json` and the ledger hold subjects; they are as private as the transcripts they come from.
 
 ### 9. Edge cases
-- `git commit --quiet` prints no banner → reflog only (≈).
+- `git commit --quiet` prints no banner → matched to the session's `gcall` span → ✓. Without a matching span
+  (e.g. a git alias the command check does not recognise) → ≈, listed, not counted.
 - Commits by sub-agents: their own session gets the banner. Parent totals include sub-agent commits, as cost does.
 - Rebased or squashed later: ✓ commits get `missing`. They still count as produced (the work happened), flagged.
 - Commits in a different repo than the session's cwd (`git -C ../other commit`): the banner is recorded. If its sha
@@ -186,7 +192,9 @@ For each session with a git identity:
   JSON.
 - `reflog.check.ts`: fixture `logs/HEAD` with commits, amend, checkout branch tracking, rebase, the 8 MB tail
   alignment.
-- Attribution: two sessions in one worktree (shared), two worktrees (separate), observed beats reflog.
+- Attribution: two sessions in one worktree (`? shared`, not counted in either), two worktrees (separate), observed
+  beats reflog; a quiet commit inside a `gcall` span → ✓; a reflog commit outside any span → ≈, not counted;
+  `git.tailPadMin` 0 and 30 change which reflog commits fall in the window.
 - Enrichment: stub `run()` output with a missing sha; git absent.
 - A fixture transcript per harness with one `git commit` call (real captures where they exist; Kiro and fx after
   Task 0).
@@ -197,9 +205,12 @@ For each session with a git identity:
 - Attributing commits made outside any session's worktree.
 - A `--watch` event for new commits (could follow later as `kind:"commit"`).
 
-## Open questions
-1. Should `shared` commits split credit 1/k instead of being left out of the totals?
-2. Should merges the person makes count when an agent session is active in that worktree? Current answer: listed
-   ≈, counted only if observed.
-3. Kiro and fx result-line shapes (decision 2, uncertain).
-4. Is the 10-minute tail pad on the window right for agents that commit after a long final test run?
+## Decisions (review 2026-10-02)
+1. `shared` commits? Listed as `? shared`, not counted in per-session totals (4).
+2. Commits the person makes while an agent runs? Listed ≈, counted only if observed — so ≈ is never counted, and
+   observed includes the session's own quiet commits matched to its git calls (4, 6).
+3. Tail pad? 10 min, configurable (`git.tailPadMin`) (4).
+4. Quiet agent commits seen only in the reflog? Counted as observed when they fall inside the session's own `git commit/merge/…` call; other reflog-only commits listed ≈, not counted.
+
+## Open questions (to verify during implementation)
+1. Kiro and fx result-line shapes (decision 2, uncertain).

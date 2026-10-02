@@ -37,7 +37,8 @@ A triage run is `(entity, scope, selection, baseline, period, weight)`:
   selection, see 4).
 - **selection**: a filter expression, or the special selection `slow` (2).
 - **baseline**: `rest` = scope ∧ ¬selection in the same period; `previous` = scope ∧ selection in the preceding period
-  of equal length (when the selection is empty, "scope this period vs scope last period").
+  of equal length (when the selection is empty, "scope this period vs scope last period").; `group` = an explicit
+  expression (scope ∧ that expression, same period) — set only when opened from session-compare's `t` (A vs B).
 - **period**: today, 7 days, 30 days (default: the Stats period when opened from Stats, else 7 days).
 - **weight**: `count` (default); `cost` or `tokens` for sessions; `duration` (time spent) for calls.
 
@@ -66,7 +67,7 @@ Counted for every row, multi-valued ones once per distinct value (shares may the
   as "main"), `hour`, `weekday`, `branch`, `status` (only when the selection does not fix it), `file` (high
   cardinality: only shown with support ≥ 5).
 - session: `harness`, `repo`, `model`, `agent`, `branch`, `tool` (tools used), `program`, `ext`, `weekday` and `hour`
-  of the session start, `state`, `subagent`.
+  of the session **start** (local time of its first event; not the busiest hour), `state`, `subagent`.
 - Dimensions with one value in both groups are skipped (e.g. `tool` when the scope says `tool is Bash`).
 
 ### 4. Scoring and statistics
@@ -76,9 +77,10 @@ For dimension d and value v: `a` = selection rows with v, `A` = selection rows; 
 2. **Significance**: 2×2 chi-square with Yates correction,
    `χ² = N(|ad − bc| − N/2)² / ((a+b)(c+d)(a+c)(b+d))` with `c = A − a`, `d = B − b`, `N = A + B` — only
    multiplication and division, no `sqrt`/`log`. Significant if `χ² ≥ 6.63` (p < 0.01; stricter than 0.05 because many
-   values are tested at once). Non-significant values are shown dimmed, after significant ones.
-3. **Ranking**: significant values by `diff` descending; per dimension at most 3 values in the overview so one
-   high-cardinality attribute (files) cannot fill the screen. `u` flips to under-represented values (most negative
+   values are tested at once). Significance only **marks** a row, it never hides or reorders it: significant rows
+   carry `●` before the χ² value, the others show their χ² without the mark (`significant: false` in `--json`).
+3. **Ranking**: all values that pass minimum support, significant or not, in one list by `diff` descending; per
+   dimension at most 3 values in the overview so one high-cardinality attribute (files) cannot fill the screen. `u` flips to under-represented values (most negative
    `diff`), e.g. "errors almost never happen in `Read`".
 4. **Weights**: with `cost`/`tokens`/`duration`, `pS`/`pB` are weight shares (share of cost in the selection vs the
    baseline); support still counts rows; chi-square is not computed (it is a count test) and the column says
@@ -90,7 +92,8 @@ For dimension d and value v: `a` = selection rows with v, `A` = selection rows; 
      tab are not changed); `R` removes them from the origin tab/pins for real.
    - Empty selection: "No errored calls in scope for 7 days." with `w`/`m` to widen the period.
    - Small groups: `A < 20` or `B < 20` → banner "small sample: N rows, percentages are unreliable"; significance is
-     still computed (the test handles small N poorly; Yates is conservative).
+     still computed and marked (the test handles small N poorly; Yates is conservative), so on small periods (one day)
+   most rows are simply unmarked.
    - `previous` baseline older than `filter.callDays` for entity call → "call details are kept for 90 days".
    - Ledger still indexing → spinner + "partial" as in Stats (`stats.ts:95-97`); results refresh every 2 s.
 6. **Selection inside the scope** (opening from a tab): local clauses of the origin tab become the selection, pins stay
@@ -104,16 +107,18 @@ different about this tool's errors"). esc returns to the origin.
 ```
  triage · errored calls (812) vs rest (41,377) · 7 days · scope: repo is agentglass            b rest · e calls · c count
  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- attribute  value            selection              baseline              lift   χ²
- program    npm              ███████▏      34.2%    █▍            6.1%    ×5.6   412
- ext        ts               ████▌         22.0%    █▊            8.8%    ×2.5    96
- hour       14               ██▌           12.4%    ▉             4.1%    ×3.0    71
- harness    codex            ████████      39.0%    ████▉        24.0%    ×1.6    54
+ attribute  value            selection              baseline              lift     χ²
+ program    npm              ███████▏      34.2%    █▍            6.1%    ×5.6   ● 412
+ harness    codex            ████████      39.0%    ████▉        24.0%    ×1.6   ●  54
+ ext        ts               ████▌         22.0%    █▊            8.8%    ×2.5   ●  96
+ hour       14               ██▌           12.4%    ▉             4.1%    ×3.0   ●  71
+ branch     wip              ▋              3.1%    ▏             0.9%    ×3.4      4.2
  model      gpt-5-codex      …
 ```
 Keys: `↑↓` select; `enter` expands the selected attribute to all its values; `+` includes (`attr is value` into the
-origin tab's local filter; merge rules from filter-language §6.2), `-` excludes (`attr is_not value`), `p` pins it;
-after `+`/`-` the triage re-runs in the narrowed scope. `o` opens the matching rows: the Sessions list filtered to
+**origin tab's** local filter — it stays there after leaving triage; merge rules from filter-language §6.2), `-`
+excludes (`attr is_not value`, same place), `p` pins it; after `+`/`-` the triage re-runs in the narrowed scope and
+a toast names the tab that changed (`Sessions filter: + program is npm`). `o` opens the matching rows: the Sessions list filtered to
 scope ∧ selection ∧ `attr is value` (call entity: lifted, "sessions with such calls"); for calls, `enter` on the
 expanded value list shows the newest 10 matching calls and `enter` there jumps to the transcript at that call (as
 `jump()` in `stats.ts:359-365`). `b` cycles baseline, `e` entity, `c` weight, `u` over/under, `s` selection picker,
@@ -140,17 +145,19 @@ grows. The `slow` selection needs per-tool p90 first: one extra pass using the d
 - **filter-language**: all expressions, lifting rules, merge rules, `aggregate()`, the call-row retention. Triage adds no
   attributes of its own except the `slow` selection.
 - **session-compare**: reuses scoring (diff, lift, χ²) for its tool-mix and program tables when both groups are large
-  enough; compare is triage with two explicit groups and no "rest".
+  enough; compare is triage with two explicit groups and no "rest". Its `t` opens triage with the `group` baseline (1).
 - **honest-costs**: cost weights use the same priced/unpriced split; unpriced sessions are counted with weight 0 and
   the header shows "+N unpriced".
 - **rules-config** may later point an alert at "open triage for this rule's selection".
 
 ## Testing
 - Scoring check: hand-computed 2×2 tables (including a = b, b = 0, B = 0, tiny N) → exact `diff`, `lift`, `χ²`,
-  significance flag; ordering and the 3-per-dimension cap.
+  significance flag; ordering by `diff` over significant and non-significant rows alike, the `●` mark, and the
+  3-per-dimension cap.
 - Fixture ledger (from the filter-language checks) with a planted pattern: 30% of errors are `npm` vs 5% overall →
   `program npm` ranks first; no planted pattern → no significant row (guards against false positives at 6.63).
 - Guards: pinned `status is error` + preset 1 → empty-baseline guard, `r` lifts it locally only.
+- `+`/`-` write into the origin tab's local filter and survive leaving triage; session `hour` = start hour.
 - Multi-valued dimensions: a call with programs {git, npm} counts in both, totals unchanged.
 - CLI JSON shape and exit codes; text table without TTY has no ANSI.
 - Real life: on the developer's ledger, preset 1 and 6 over 7 days, check the top rows by drilling in via `o`.
@@ -159,8 +166,11 @@ grows. The `slow` selection needs per-tool p90 first: one extra pass using the d
 Heatmap or chart box-select (awkward in a TUI; selection is a filter or a preset), multi-attribute combinations
 ("program npm **and** hour 14" as one row), the "all" baseline mode, automatic triage on alerts, LLM explanations.
 
-## Open questions
-1. Is χ² ≥ 6.63 too strict for single-day periods (few hundred calls)? Alternative: rank by diff only and show χ² as
-   a column.
-2. Should `+` include into the origin tab (current design) or into the triage scope only until the user leaves?
-3. Session-entity `hour`: start hour or the hour with most activity?
+## Decisions (review 2026-10-02)
+1. χ² ≥ 6.63 too strict for small periods? Rank all values by share difference; χ² only marks the rows that pass
+   (`●`), non-significant rows stay visible (4.2, 4.3).
+2. Where does `+` include? Into the origin tab's filter (5).
+3. Session-level `hour`? The session's start hour (3).
+
+## Open questions (to verify during implementation)
+None.

@@ -34,8 +34,9 @@ last one?" and "did this week go worse than last week?" become one screen.
 ### 1. Groups
 A comparison is two **groups**, A and B, each a filter-language expression evaluated inside the same scope (pins only;
 local clauses of the origin tab are not applied — the groups are explicit). Presets create the expressions:
-- **two sessions**: `session is <harness>:<id>` (new exact key registered by this spec: matches the session and, unless
-  `S` toggles it off, its subagents — their cost and calls are part of the run);
+- **two sessions**: `session is <harness>:<id>` (new exact key registered by this spec: matches the session and, by
+  default, its subagents — their cost and calls are part of the run; `S` inside the view toggles subagents off/on
+  for both groups, the header shows `subagents incl.`/`excl.`, CLI `--no-subagents`);
 - **two periods**: `day >= -6d` vs `day >= -13d and day < -6d` (this week vs last), `day is today` vs `day is yesterday`;
 - **anything**: `model ~ opus` vs `model ~ sonnet`, `harness is claude` vs `harness is codex`.
 Groups made only of session/day clauses use the bucket path (all history); a call clause switches to call rows
@@ -46,11 +47,15 @@ Groups made only of session/day clauses use the bucket path (all history); a cal
    Marked rows show `A`/`B` in the title prefix (not the badge slot, which the watchdog owns). esc in the list keeps
    marks; `m` on a marked row unmarks.
 2. `C` opens the compare view: with two marks → A vs B; with one mark → the mark vs the selected session; with none →
-   the selected session vs the previous session of the same harness and repo (the "rerun" case), or a toast if there
-   is none.
+   the selected session (B) vs the previous session of the same harness and repo (A: the newest top-level session of
+   that harness and `projectOf()` repo that started before B) — the "rerun" case. No prompt: the view opens at once
+   and its header names the pick, `A: previous <harness> session in <repo> · <title> · <start>`, so a wrong guess is
+   visible and `a` or marks fix it. With no such session, a toast `no earlier <harness> session in <repo> — mark
+   two with m`.
 3. Stats tab: `C` compares the current period with the previous one of the same length (today vs yesterday, 7 days vs
    the 7 before), in the Stats filter scope.
-4. Inside the view `a` / `b` edit a group's expression (filter-language input with completion), `x` swaps A and B.
+4. Inside the view `a` / `b` edit a group's expression (filter-language input with completion), `x` swaps A and B,
+   `S` toggles subagents, `t` runs triage A vs B (8.1).
 
 ### 3. Metrics (summary section)
 | row | definition | note |
@@ -116,12 +121,16 @@ too (values only). The bars in the tools table use `gauge()`.
 `aggregate()` (filter-language §5) twice with `weight: "count"` and dimensions `tool`, `program`, `command`, `file`,
 `model`, plus the metric sums; the distribution rows reuse triage's `diff`/`lift`/`χ²` functions. No new cache
 format: the `turns` counter comes with parsing-fixes; the `session is` key and the timeline (5-min slots from call rows,
-or from `TS.h` hours for buckets) are the only additions. Cached per (A, B, scope, `L.ver`).
+or from `TS.h` hours for buckets) are the only additions. Cached per (A, B, subagent toggle, scope, `L.ver`).
+1. **`t` — triage A vs B.** Opens the triage view (triage §5) with selection = group A, baseline mode `group` =
+   group B, the compare scope as scope, and entity `call` when both groups have call rows within `filter.callDays`,
+   else `session`. Triage's `b` cycles `group` → `rest` → `previous`; `+`/`-` there edit group A's expression (the
+   origin is the compare view). esc returns to the compare view with its state.
 
 ## Interactions with other specs
 - **filter-language**: groups, scope, lifting, `aggregate()`, call-row retention; this spec registers `session`.
-- **triage**: share-difference scoring and χ²; compare = triage with two explicit groups. A key `t` inside compare
-  could open triage with A as selection and B as baseline (cheap, listed as open question 2).
+- **triage**: share-difference scoring and χ²; compare = triage with two explicit groups. `t` inside compare opens
+  triage with A as selection and B as an explicit `group` baseline (8.1; triage registers that baseline mode).
 - **parsing-fixes**: `turns`. **honest-costs**: billing labels and unpriced rows on the cost line.
 - **repo-view**: `projectOf()` for relative paths; the Repos tab may offer `C` for two repos later.
 - **git-linkage**: commits per side could become a row once it exists (not in this spec).
@@ -131,7 +140,10 @@ or from `TS.h` hours for buckets) are the only additions. Cached per (A, B, scop
   every summary row, Δ, ratio and the three file lists exact; MCP grouping in the tools section.
 - Periods: two days of fixtures, `day is today` vs `day is yesterday` → sums equal Stats' per-day numbers
   (`stats.ts:62-70`) for the same days.
-- Subagents included/excluded (`S`), unpriced side (`+?`, no Δ), untimed side (`n/a`), A = B guard, ambiguous id.
+- Subagents included by default, excluded with `S`/`--no-subagents`; unpriced side (`+?`, no Δ), untimed side
+  (`n/a`), A = B guard, ambiguous id.
+- `C` without marks picks the newest earlier top-level session of the same harness + repo and the header names it;
+  none → toast. `t` opens triage with selection A and baseline B; esc returns to compare.
 - CLI JSON shape; text output without ANSI when not a TTY.
 - Real life: rerun a small task with two models, compare, check the numbers against both previews.
 
@@ -139,7 +151,11 @@ or from `TS.h` hours for buckets) are the only additions. Cached per (A, B, scop
 More than two groups, diffing transcript content or prompts, cost forecasts, compare across machines, automatic
 "rerun" detection beyond same harness + repo.
 
-## Open questions
-1. Default for subagents: included (current design) — or excluded, since the parent's tool mix then reads cleaner?
-2. Add `t` (triage A vs B) inside the compare view?
-3. Is "previous session of the same harness and repo" a good enough default for `C` without marks, or should it ask?
+## Decisions (review 2026-10-02)
+1. Subagents in session groups? Included by default, `S` toggles (1).
+2. `t` inside the compare view? Yes, runs triage A vs B (8.1).
+3. `C` without marks? Compares with the previous session of the same repo + harness, no prompt; the header names the
+   pick (2.2).
+
+## Open questions (to verify during implementation)
+None.

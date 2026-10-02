@@ -60,25 +60,52 @@ opts in.
 ## Design
 
 ### 1. Trace shape
-1. **One trace per turn.** The root span is `chat {gen_ai.request.model}` (kind `INTERNAL`). It runs from the turn's
+1. **One trace per turn.** The root span is `invoke_agent {harness}` (kind `INTERNAL`,
+   `gen_ai.operation.name = invoke_agent`, `gen_ai.agent.name` = harness product name, 3.3). It runs from the turn's
    first event to its last event (or to `turn complete`).
    - All turns of a session share `gen_ai.conversation.id` = the root session id. agentglass does not create a session
      root span; a session is the set of its turns.
-   - Children: `execute_tool {gen_ai.tool.name}` (kind `INTERNAL`) for each tool call.
+   - Children of the root, siblings in time order (the semconv agent-span layout):
+     - `chat {gen_ai.request.model}` (kind `CLIENT`), one per **API request** wherever the harness records per-request
+       usage (table below);
+     - `execute_tool {gen_ai.tool.name}` (kind `INTERNAL`), one per tool call. A tool span is a sibling of the `chat`
+       span whose response issued it, not its child (the call runs after the response ended).
    - A subagent becomes `invoke_agent {agent type}` (kind `INTERNAL`). Its parent is the spawning tool span (the
-     `Agent`/`Task`/`spawn` call). The subagent's own tool calls are children of its `invoke_agent` span. A subagent's
-     prompt does not open a turn (same rule as `model.ts:77-81`).
-   - Spawn host resolution reuses `hostOf`. If no spawning call is found, the `invoke_agent` span hangs under the chat
-     span.
-   - Codex can reuse a subagent across turns. Its whole session hangs under the first spawning call; later reuses
-     appear only as their own `execute_tool` spans (known limitation, open question 3).
-2. **Semconv fit.** The semconv inference span stands for one model call. Here one `chat` span aggregates every model
-   call of a turn: its usage attributes are the turn's sums. Transcripts do not record per-request boundaries for every
-   harness, so this is the honest grain. The deviation is documented in the README.
-3. **Shell refinement.** A shell tool call (`catOf` = shell, `model.ts:25`) is named
+     `Agent`/`Task`/`spawn` call). The subagent's own `chat` and `execute_tool` spans are its children, with the same
+     per-request grain as its harness. A subagent's prompt does not open a turn (same rule as `model.ts:77-81`).
+   - Spawn host resolution reuses `hostOf`. If no spawning call is found, the subagent's `invoke_agent` span hangs
+     under the turn's root.
+   - **Codex subagents reused across turns** get one `invoke_agent` span **per hosting turn**: the subagent's events
+     are split by the host turns' windows `[start, next turn's start)`; events before the first host turn go to the
+     first, events in a gap to the preceding one. Each piece's parent is the spawning or messaging call of that host
+     turn (via `hostOf`), else that turn's root. A host turn whose window holds none of the subagent's events gets no
+     span for it.
+2. **Request grain per harness** (`chat` spans):
+
+| Harness | One `chat` span per | Request key (ids, 4.1) | Start → end |
+|---|---|---|---|
+| claude | assistant `message.id` (streamed lines merged); with ≥ 2 `usage.iterations` (parsing-fixes 2) one span per iteration | `message.id` (+ `/i<n>` per iteration) | previous event of the same (sub)session (prompt, tool result, earlier response) → last line of the message; iterations split the message's window evenly, marked `est` |
+| codex | `token_count` event (one per model response; usage = the cumulative delta, `codex.ts:133-142`) | the event's `timestamp` + `#k` | previous event → the `token_count` line |
+| gemini | `gemini` record with `tokens` | message `id` | previous event → record `timestamp` |
+| opencode | assistant message (its `step-finish` part) | message id | first part start → `step-finish` time |
+| pi | assistant message | entry `id` | previous event → message timestamp |
+| kiro, fx | **turn** (no per-request records): one `chat` span covering the turn under the root | `turn:` + T | turn start → turn end, `est` |
+
+   Request start times are reconstructed (the harness's own queueing and the network are inside the span); this is
+   stated in the README. The span name and `gen_ai.request.model` come from the request's own model.
+3. **Multiple models in a turn.** Each `chat` span carries its own model (`gen_ai.request.model`, and
+   `gen_ai.response.model` when the record names an answering model that differs, e.g. pi `responseModel`). The root
+   carries `gen_ai.request.model` = the model of the turn's last request and `agentglass.models` = the distinct models
+   of the turn's own requests, in order of first use (string array).
+4. **Usage placement.** Usage (`gen_ai.usage.*`, `agentglass.usage.cost`) lives **only on `chat` spans** — one per
+   request (3.6). `invoke_agent` spans (turn roots and subagents) carry **no** usage attributes, so a backend can sum
+   tokens and cost over all spans without double counting and without filtering on the operation name. Turn-level
+   facts on the root are the models used (item 3), duration and status. Kiro/fx: the single `chat` span under the
+   root carries the turn totals.
+5. **Shell refinement.** A shell tool call (`catOf` = shell, `model.ts:25`) is named
    `execute_tool {tool} {process.executable.name}`, for example `execute_tool Bash git`. The program comes from
    `program(norm(cmd))` (`calls.ts:81-83`). This follows the semconv command-execution refinement.
-4. **Approval wait is never a child span.** A child `execute_tool` span would be counted as a tool. See 3.5.
+6. **Approval wait is never a child span.** A child `execute_tool` span would be counted as a tool. See 3.5.
 
 ### 2. Turn segmentation (shared with the call graph)
 1. Extract the turn rules from `sessionSpans` into `src/features/callgraph/turns.ts`:
@@ -113,12 +140,12 @@ opts in.
    - `parseEvents`, which feeds the `TurnCursor` and the span builder;
    - the adapter's `usage(a, line)` on one fresh `Acc` per session.
 
-   After each line, the change in `a.inTok/outTok/cr/cw/cost/unk` and in the new `a.rs` (decision 3.2) is added to the
-   current turn. The turn's model is the last model that booked tokens in it; the other models seen are kept for
-   `gen_ai.response.model` (open question 4).
-   - Kiro: the per-turn sidecar totals map by turn index.
-   - fx: no per-turn usage. Turns carry no `gen_ai.usage.*`. The session total goes on the session's last exported
-     turn as `agentglass.usage.session_total = true`, together with the totals.
+   After each line, the change in `a.inTok/outTok/cr/cw/cost/unk` and in the new `a.rs` (3.2) is added to the
+   **current request** — the `chat` span whose request key (1.2) the line carries — together with the model that
+   line booked. Turn roots carry no usage (1.4).
+   - Kiro: the per-turn sidecar totals map by turn index onto the turn's single `chat` span.
+   - fx: no per-turn usage. Its `chat` spans carry no `gen_ai.usage.*`. The session total goes on the root of the
+     session's last exported turn as `agentglass.usage.session_total = true`, together with the totals.
 2. **Small additions to the usage port:**
    - `Acc.rs`, the reasoning tokens (a subset of `out`), set by a new `reasoning(a, d, n)` helper. Called by Gemini
      (`thoughts`), OpenCode (`reasoning`) and Codex (`reasoning_output_tokens`, when present).
@@ -137,13 +164,17 @@ opts in.
 | all | `process.working_directory` | session cwd (real, or faked under `--redact`) |
 | all | `vcs.repository.url.full`, `vcs.repository.name`, `vcs.owner.name`, `vcs.provider.name`, `vcs.ref.head.name`, `vcs.ref.head.type` | from repo-view's project identity (no git process) and `s.branch`; the URL goes through the parsing-fixes `scrubRemote` and is dropped if the scrub drops it; all `vcs.*` omitted under `--redact` |
 | chat, invoke_agent | `gen_ai.operation.name` | `chat` / `invoke_agent` |
-| chat, invoke_agent | `gen_ai.request.model` | raw model id as logged |
-| chat, invoke_agent | `gen_ai.usage.input_tokens` | see 3.6 |
-| chat, invoke_agent | `gen_ai.usage.output_tokens` | `out` (reasoning included) |
+| chat | `gen_ai.request.model` | the request's own model, raw id as logged |
+| chat | `gen_ai.response.model` | answering model when the record names a different one (pi `responseModel`) |
+| chat | `gen_ai.response.id` | the request key when it is a provider message id (Claude `message.id`, OpenCode/Gemini/pi message ids) |
+| invoke_agent | `gen_ai.request.model` | model of the last request in the turn (or subagent piece); omitted when unknown (Kiro) |
+| invoke_agent | `agentglass.models` | string array of distinct request models, order of first use (1.3) |
+| chat, invoke_agent | `gen_ai.usage.input_tokens` | see 3.6; `chat` spans only — `invoke_agent` spans carry no usage (1.4) |
+| chat, invoke_agent | `gen_ai.usage.output_tokens` | `out` (reasoning included), same placement |
 | chat, invoke_agent | `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens` | `cr`, `cw` (omitted when 0 and the harness never reports them: Kiro) |
 | chat, invoke_agent | `gen_ai.usage.reasoning.output_tokens` | `rs`, only when > 0 |
-| chat | `gen_ai.conversation.compacted` | `true` only if a compaction/summary marker fell inside the turn |
-| chat | `gen_ai.skill.name` | slash-command skill of the turn's prompt (parsing-fixes L6), when known |
+| invoke_agent (root) | `gen_ai.conversation.compacted` | `true` only if a compaction/summary marker fell inside the turn |
+| invoke_agent (root) | `gen_ai.skill.name` | slash-command skill of the turn's prompt (parsing-fixes L6), when known |
 | execute_tool | `gen_ai.operation.name` | `execute_tool` |
 | execute_tool | `gen_ai.tool.name` | MCP: the tool part of `mcp__<server>__<tool>`; else the raw name |
 | execute_tool | `gen_ai.tool.call.id` | call id when logged |
@@ -151,13 +182,15 @@ opts in.
 | execute_tool | `mcp.method.name` | `tools/call` for MCP calls (one span per call, not a second MCP span) |
 | execute_tool | `process.executable.name`, `process.exit.code` | shell calls: program; exit code when the adapter reports it (`codes` from the tap) |
 | execute_tool | `gen_ai.skill.name` | `Skill` tool calls (model-chosen skills) |
-| execute_tool, chat | `error.type` + status `ERROR` | `tool_error`, `rejected` (user denied), `cancelled`, `timeout`, `interrupted`; status description only with `--content` |
-| chat, tool | `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` | only with `--content` (3.7) |
+| execute_tool, chat, invoke_agent | `error.type` + status `ERROR` | `tool_error`, `rejected` (user denied), `cancelled`, `timeout`, `interrupted` (root); status description only with `--content` |
+| invoke_agent, chat, tool | `gen_ai.input.messages` (root: the turn's prompt), `gen_ai.output.messages` (chat: that response's text; root: the final text), `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` | only with `--content` (3.7) |
 
 4. **`agentglass.*` attributes** (no semconv equivalent; each can be renamed or dropped, 4.4):
    - `agentglass.session.id`: the subagent's own session id, on `invoke_agent`.
-   - `agentglass.turn.index`: 1-based turn index on `chat`.
-   - `agentglass.usage.cost`: USD list-equivalent or real spend.
+   - `agentglass.turn.index`: 1-based turn index on the root `invoke_agent`.
+   - `agentglass.usage.cost`: USD list-equivalent or real spend; per request on `chat` only (1.4).
+   - `agentglass.chat.superseded = true`: a Claude fallback iteration that was not the answering attempt.
+   - `agentglass.models`: see 1.3.
    - `agentglass.usage.cost_basis`: the billing-mode label from honest-costs. Omitted when the cost is unknown
      (`unk > 0` and cost 0). It is never sent as 0.
    - `agentglass.mcp.server.name`: semconv has none. `server.address` is a network address, not a server's
@@ -190,8 +223,10 @@ opts in.
    - Off: no prompts, completions, tool arguments, tool results, titles or status descriptions.
    - Always sent: tool names, program names, MCP server names, model, counts, durations, cwd and VCS fields (each can
      be dropped, 4.4).
-   - `--content` (or `otlp.content: true`) adds `gen_ai.input.messages` (the turn's prompt), `gen_ai.output.messages`
-     (the final assistant text), `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`. Messages use the semconv
+   - `--content` (or `otlp.content: true`) adds `gen_ai.input.messages` (the turn's prompt, on the root),
+     `gen_ai.output.messages` (per `chat` span its response text; on the root the final assistant text),
+     `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`. Per-request inputs (the full context) are not
+     reconstructed. Messages use the semconv
      JSON shape `[{"role":…,"parts":[{"type":"text","content":…}]}]`. Each value is truncated to `otlp.contentMax`
      (default 16 KB).
    - Under `--redact`, the export reads the same fake or scrubbed events and identity the screen shows (the
@@ -230,7 +265,8 @@ names and ids, so:
    the live agent processes' environment (variable **names and the on/off value** of the switches above only, via the
    same reader as honest-costs' billing detection; endpoint values and headers are never read), then the config
    files in the table. A parse failure counts as "unknown", never as "on".
-2. **Policy** `otlp.native: "warn" | "skip" | "include"` (config, default `"warn"`; CLI `--native warn|skip|include`):
+2. **Policy** `otlp.native: "warn" | "skip" | "include"` (config, default `"warn"` — also when a harness exports
+   itself; CLI `--native warn|skip|include`):
    - `warn`: export everything; print once per run and harness `codex: its own OTLP export is on (~/.codex/config.toml) — turns may appear twice in the backend; --native skip exports only what it does not send`.
    - `skip`: for a harness with `nativeOn`, export only turns that **started before** the first time agentglass saw
      its native export on. That moment is stored per harness in the export state file (section 4, item 3) as
@@ -238,7 +274,7 @@ names and ids, so:
      again clears `nativeSince` from the next run on (with a one-line notice); turns between the two moments are not
      back-filled automatically (`--native include --since <t>` does that).
    - `include`: export everything, no notice.
-3. **Correlation attributes**, so a backend can join both sources: the `chat` span also carries the harness's own
+3. **Correlation attributes**, so a backend can join both sources: the root `invoke_agent` span also carries the harness's own
    session key under the name that harness uses in its telemetry — `session.id` (Claude Code), `conversation.id`
    (Codex), `session.id` (Gemini CLI, uncertain), `session.id` (OpenCode, uncertain) — next to
    `gen_ai.conversation.id`. `service.name` stays the harness name of section 3, item 8; the instrumentation scope
@@ -256,10 +292,13 @@ names and ids, so:
      loading windows; indexes do not.
    - `traceId = H("s|" + R)[0:16] + H("t|" + R + "|" + T)[0:16]`. The first 8 bytes identify the session, so
      `agentglass open <trace-id>` (command-palette spec) can find the session by hashing only session ids.
-   - `chat` span id: `H("c|" + R + "|" + T)[0:16]`.
+   - Root `invoke_agent` span id: `H("r|" + R + "|" + T)[0:16]`.
+   - `chat` span id: `H("c|" + R + "|" + requestSessionId + "|" + Q)[0:16]`, with `Q` the request key of 1.2 and
+     `requestSessionId` the (sub)session that made the request. Kiro/fx: `Q = "turn:" + T`.
    - Tool span id: `H("x|" + R + "|" + callerSessionId + "|" + callId)[0:16]`. A call without an id uses
      `"anon:" + T + ":" + ordinal`.
-   - `invoke_agent` span id: `H("a|" + R + "|" + subSessionId)[0:16]`.
+   - Subagent `invoke_agent` span id: `H("a|" + R + "|" + subSessionId + "|" + T)[0:16]`, T = the hosting turn's key,
+     so a Codex subagent reused across turns gets one stable id per hosting turn (1.1).
    - An all-zero id (invalid in OTLP) sets its last byte to 1.
    - The `v1` prefix is part of the contract. Changing the scheme needs a new prefix and a changelog entry.
 2. **SHA-256 in pure TS** (`src/util/sha256.ts`, about 80 lines, FIPS 180-4 on a `number[]` of 32-bit words using
@@ -273,13 +312,13 @@ names and ids, so:
    written atomically (tmp + rename):
 
    ```json
-   {"v":1,"endpoint":"https://otel.example/v1/traces","sessions":{"<path>":{"h":"claude","id":"…","ep":"","turns":{"<T>":1}}}}
+   {"v":1,"endpoint":"https://otel.example/v1/traces","gzip":true,"sessions":{"<path>":{"h":"claude","id":"…","ep":"","turns":{"<T>":1}}}}
    ```
 
    - A turn is marked only after a 2xx response, or a partial success that does not reject its spans.
    - A later run skips marked turns, so re-runs send nothing twice. Deterministic ids also make a deliberate resend
      (`--resend`) land on the same trace and span ids. Whether the backend merges or duplicates them is the backend's
-     business; the README lists which backends dedupe (open question 2).
+     business; the README lists which backends dedupe (open question 1).
    - A changed cursor epoch (`epochOf`) or a truncated file keeps the marks. The ids do not depend on offsets.
    - The endpoint key ignores the query string and userinfo.
 4. **Lock.** `state-….lock` is created with `O_EXCL` and holds the pid. A live pid makes a second exporter to the same
@@ -294,7 +333,7 @@ names and ids, so:
    - `--native warn|skip|include` (3b; default from config, else `warn`), `--status` (per-harness built-in telemetry
      state, `nativeSince`, last export; no network).
    - `--content`, `--resend`, `--dry-run` (print the OTLP/JSON requests to stdout, one per line, no network, no state
-     change), `--batch <n>` (spans per request, default 512, max request body 4 MB).
+     change), `--batch <n>` (spans per request, default 512, max request body 4 MB), `--compression gzip|none` (6.5).
    - Output: a summary on stderr: `exported 1234 spans in 87 turns from 12 sessions (3 requests)`. With `--json`, the
      summary is a JSON object on stdout.
    - Exit codes: 0 = all sent; 1 = some batches failed (state keeps the rest); 2 = usage error; 3 = locked.
@@ -337,13 +376,31 @@ names and ids, so:
    transcript deleted (trash, Gemini retention) before a successful send is lost.
 4. **OTLP/JSON encoding** (the protobuf JSON mapping):
    - `traceId`/`spanId` are lowercase hex.
-   - `kind: 1` (INTERNAL).
    - `startTimeUnixNano`/`endTimeUnixNano` are **decimal strings built as `String(ms) + "000000"`**. Epoch nanoseconds
      exceed 2^53, so a JS number would lose precision.
    - `intValue` is a string. Doubles are numbers.
    - Status `code: 2` (ERROR), plus `message` only with `--content`.
-   - Each request is one `ExportTraceServiceRequest` with `Content-Type: application/json`. No gzip in v1 (open
-     question 5).
+   - `kind`: `1` (INTERNAL) for `invoke_agent` and `execute_tool`, `3` (CLIENT) for `chat`.
+   - Each request is one `ExportTraceServiceRequest` with `Content-Type: application/json`, gzip-compressed (6.5).
+
+5. **gzip** (`src/util/gzip.ts`, pure TS, no dependency):
+   - DEFLATE (RFC 1951) with LZ77 over a 32 KB window, a 3-byte hash table with hash chains (chain length capped at
+     32, no lazy matching) and **fixed Huffman** blocks (BTYPE 01) — no dynamic tables; OTLP/JSON is repetitive
+     enough that fixed codes reach a large part of the gain. Wrapped in the gzip container (RFC 1952: 10-byte header,
+     CRC-32 from a 256-entry table, ISIZE). Sent with `Content-Encoding: gzip`; the body file is written as bytes and
+     posted with `--data-binary @file` (curl does not compress request bodies itself).
+   - **No binary output:** if the runtime cannot write the compressed bytes to a file unchanged (checked once per run
+     with a gzip round-trip of a fixed probe), the run sends uncompressed, notes it once and in `--status`; export
+     never fails because of compression.
+   - **Limits:** only bodies ≥ 1 KB are compressed; the input is at most one batch body (4 MB, 5.1). Work is bounded by
+     the chain cap (≤ 32 candidate matches per position, O(n)). Target ≥ 20 MB/s in the native build, i.e. ≤ 200 ms
+     for a maximal batch; if one compression takes > 1 s, the run sends the rest uncompressed and says so once. If the
+     output is not smaller than the input, the batch goes uncompressed.
+   - **Fallback:** config `otlp.compression: "gzip" | "none"` (default `gzip`), CLI `--compression gzip|none`. When a
+     gzip request gets 415, or 400, the same batch is resent once uncompressed. If that succeeds, the endpoint is
+     recorded as `"gzip": false` in the export state file (4.3) and later runs send plain JSON to it (one notice;
+     `--compression gzip` retries it). If the plain resend fails too, it is a normal batch failure and nothing is
+     recorded.
 
 ### 7. Configuration (`~/.agentglass/config.json`, section `otlp`)
 ```json
@@ -353,7 +410,7 @@ names and ids, so:
   "headersFile": "~/.agentglass/otlp-headers",
   "content": false, "contentMax": 16384, "inputTokens": "inclusive", "hostName": false,
   "attributes": {"extra": {"deployment.environment.name": "laptop"}, "rename": {"agentglass.usage.cost": "my.cost"}, "drop": ["process.working_directory"]},
-  "batch": 512, "timeoutSeconds": 10, "insecure": false
+  "batch": 512, "timeoutSeconds": 10, "insecure": false, "compression": "gzip"
 }}
 ```
 1. **Header values.** `${env:NAME}` is expanded at send time. `headersFile` holds `Key: Value` lines; it is read only
@@ -397,19 +454,28 @@ names and ids, so:
   a malformed file (→ unknown, not on); `--native skip` exports only turns before `nativeSince`; `warn` prints once
   per harness; no endpoint/header value is ever read (assert on the reader's accessed keys).
 - **Golden spans** (`src/features/otlp/otlp.check.ts`): fixed fixture sessions → `--dry-run` JSON compared
-  byte-for-byte with `testdata/otlp/golden-<harness>.json`. Fixtures:
-  - Claude with a subagent and an MCP call;
-  - Codex with `turn aborted` and cumulative tokens;
-  - Gemini with a rewind;
-  - OpenCode SQLite rows;
-  - Kiro sidecar turns;
-  - fx `turn complete · Ns`.
+  byte-for-byte with `testdata/otlp/golden-<harness>.json`. Every golden checks the tree `invoke_agent` root →
+  `chat` per request + `execute_tool` siblings, and that no `invoke_agent` span carries usage attributes (the turn total = the sum over its `chat` spans).
+  Fixtures:
+  - Claude with a subagent, an MCP call, three streamed lines of one `message.id` (one `chat` span) and a two-iteration
+    fallback (two `chat` spans, models differ, first `superseded`);
+  - Codex with `turn aborted`, cumulative tokens (one `chat` per `token_count`) and a subagent reused in two turns
+    (two `invoke_agent` pieces, events split by window, distinct stable ids);
+  - Gemini with a rewind and a model switch inside a turn (root `agentglass.models` lists both, `request.model` = last);
+  - OpenCode SQLite rows (one `chat` per assistant message);
+  - pi with `responseModel` ≠ `model`;
+  - Kiro sidecar turns and fx `turn complete · Ns` (one `chat` per turn, `est`).
 
   Timestamps are fixed, ids deterministic, and the output stable across runs.
 - **Ids:** the same session exported twice gives identical ids. Appending a turn leaves earlier ids unchanged. A
-  Gemini rewind that removes turn 3 leaves turns 1–2 and the replacement turn with distinct, stable ids. No id is
-  all zeros.
+  Gemini rewind that removes turn 3 leaves turns 1–2 and the replacement turn with distinct, stable ids. Appending
+  a request to the open turn leaves the root's and earlier `chat` spans' ids unchanged. No id is all zeros.
 - **SHA-256:** NIST vectors, plus a 1,000-file comparison with `sha256sum`.
+- **gzip:** CRC-32 check values; round trip through `gzip -dc` for empty input, 1 byte, highly repetitive, random
+  (incompressible → sent uncompressed), a real 4 MB batch, and inputs with matches across the 32 KB window edge;
+  header bytes per RFC 1952; throughput benchmark against the 20 MB/s target; bodies < 1 KB not compressed. Mock
+  server: `Content-Encoding: gzip` arrives and decodes; 415 → plain resend succeeds → `gzip: false` stored and used
+  by the next run; 400 on both → batch failure, nothing stored; `--compression none` sends plain JSON.
 - **Token semantics:** a table test per harness and mode (`inclusive`, `provider`) on fixture lines. The fixture
   totals equal the Stats totals for the same files.
 - **Transport:** a local mock OTLP server (scriptc `node:http`, or `nc` in the check harness) checks:
@@ -428,27 +494,34 @@ names and ids, so:
 ## Out of scope
 - gRPC, protobuf encoding, OTLP metrics and logs. Backends derive token and duration metrics from spans.
 - A local OTLP receiver.
-- Per-request `chat` spans inside a turn (open question 1).
 - `user.*` identity and team attributes.
 - Windows.
 - Exporting raw transcripts or files.
 
-## Open questions
-1. **Turn root.** Should a turn root be `invoke_agent {harness}` with one child `chat` span per API request (closer to
-   semconv) once per-request records are available for every harness? Claude, Codex, Gemini and OpenCode log
-   per-request usage; Kiro and fx do not. v1 keeps `chat` per turn as specified.
-2. **Re-export.** Which backends dedupe re-sent spans with the same ids (Tempo, Jaeger with Badger/ES, SigNoz,
+## Decisions (review 2026-10-02)
+1. Turn root? `invoke_agent {harness}` with one `chat {model}` child per API request where per-request usage exists
+   (Claude, Codex, Gemini, OpenCode, pi); Kiro and fx fall back to one `chat` span per turn (1.1, 1.2).
+2. Usage on the root? No (review follow-up) — usage only on `chat` spans; `invoke_agent` spans carry none, so backend
+   sums never double-count (1.4).
+3. Codex subagent reused across turns? One `invoke_agent` span per hosting turn, events split by the host turn's
+   window (1.1, ids 4.1).
+4. Several models in a turn? Each `chat` span carries its own model; the root carries the last model plus
+   `agentglass.models` (1.3).
+5. gzip in v1? Yes, pure-TS deflate in a gzip container, uncompressed fallback when the backend rejects it (6.5).
+6. Native telemetry policy default? Stays `warn` (3b.2).
+7. 8. gzip without binary file output? Send uncompressed, noted once and in `--status` (6.5).
+
+## Open questions (to verify during implementation)
+1. **Re-export.** Which backends dedupe re-sent spans with the same ids (Tempo, Jaeger with Badger/ES, SigNoz,
    Honeycomb)? This needs a test matrix before the README claims anything. Until then `--resend` is documented as
    "may duplicate".
-3. **Reused Codex subagents.** Should a Codex subagent reused across turns get one `invoke_agent` span per hosting
-   turn, splitting its events by the host turn's time window?
-4. **Turns with several models.** `gen_ai.request.model` takes the last model. Should the turn instead be split into
-   one `chat` span per model?
-5. **gzip.** `curl --data-binary` cannot compress the body. Is compressing in TS (deflate in pure TS) worth it for
-   large backfills?
-6. **Claude approval status.** Does Claude's `~/.claude/sessions/<pid>.json` `status` take a value for "waiting for
-   permission"? If it does, live approval waits become exact instead of estimated. Not verified.
-7. **fx and Kiro token semantics.** Are fx's `input_tokens` exclusive of cache? Kiro has no cache split at all. Both
+2. **Claude approval status.** Does Claude's `~/.claude/sessions/<pid>.json` `status` take a value for "waiting for
+   permission"? If it does, live approval waits become exact instead of estimated.
+3. **fx and Kiro token semantics.** Are fx's `input_tokens` exclusive of cache? Kiro has no cache split at all. Both
    need a real capture.
-8. **Built-in telemetry (3b).** Is `warn` the right default, or should `skip` be default once a harness exports
-   itself? Which session key do Gemini CLI and OpenCode put on their own spans (`session.id` is assumed)?
+4. **Native session keys.** Which session key do Gemini CLI and OpenCode put on their own spans (`session.id` is
+   assumed, 3b.3)?
+5. **Binary body file.** Does scriptc's `writeFileSync` accept a `Uint8Array` (gzip body, 6.5)? Else write through
+   the platform layer.
+6. **Codex request grain.** Confirm on a real rollout that Codex writes exactly one `token_count` per model response
+   (1.2); if it batches, a `chat` span covers several requests.
