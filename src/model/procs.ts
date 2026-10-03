@@ -13,6 +13,8 @@ import { H, applyMeta } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
 const OTHER = ["aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
+// per process tree CPU history length: max(120, the largest `samples` of an enabled rule) (rules/state.ts sets it)
+export const HIST = { cap: 120 };
 export let procs: Proc[] = [];
 export let procView: Proc[] = []; // the rows the Processes tab shows: procs passing H.procFilter (liveness code keeps reading procs)
 export const allProcs = new Map<number, Proc>();
@@ -65,7 +67,7 @@ export function refreshProcs(): void {
       for (const c of kids.get(q.pid) ?? []) stack.push(c);
     }
     const hh = hist.get(p.pid) ?? [];
-    hh.push(p.tcpu); if (hh.length > 120) hh.shift();
+    hh.push(p.tcpu); while (hh.length > HIST.cap) hh.shift();
     hist.set(p.pid, hh);
     p.cwd = cwdByPid.get(p.pid) ?? "";
     total += p.tcpu;
