@@ -1,7 +1,7 @@
 // agentglass — single instance, the spool transport (scriptc 0.1.7 has no Unix-domain sockets): a client drops
 // "open <ref>\n" as inbox/<epoch-ms>-<pid>.link (0600, O_EXCL under a temp name, then renamed) and waits ≤ 2 s for
-// <epoch-ms>-<pid>.res (also written under a temp name, then renamed); the TUI holding tui.lock answers on its tick. Entries that are not regular files of ours
-// (symlinks, FIFOs, foreign) are never read or unlinked: single instance is disabled instead.
+// <epoch-ms>-<pid>.res, which the TUI holding tui.lock writes the same way on its tick. Entries that are not regular
+// files of ours (symlinks, FIFOs, foreign) are never read or unlinked: single instance is disabled instead.
 // SPDX-License-Identifier: Apache-2.0
 import { lstatSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
