@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { run } from "../util/fs.ts";
-import { iniRemotes, hasInclude, pickRemote, normRemote, type Ident, resolveCwd, subOf, real, cfgMtime } from "./project.ts";
+import { readFileSync } from "node:fs";
+import { iniRemotes, hasInclude, pickRemote, normRemote, type Ident, resolveCwd, subOf, real, cfgMtime,
+  P, identOfCwd, resolveTick, labelOf, rememberSess, cwdOfSess, loadProjects, saveProjects, resetProjects } from "./project.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -106,6 +108,59 @@ const ur = R("ur"); const root = ur.unread === false && ur.kind === "git"; eq("u
 chmodSync(T + "/ur/.git", 0o644);
 // symlinked cwd
 run("ln", ["-s", T + "/r1", T + "/link"]); eq("symlink same key", R("link/src").key, r1.key); eq("symlink top real", R("link").top, T + "/r1");
+
+// ── cache, budget, revalidation, projects.json, labels ──
+resetProjects();
+for (let i = 0; i < 100; i++) dir("many/c" + String(i));
+for (let i = 0; i < 100; i++) identOfCwd(T + "/many/c" + String(i));
+eq("queued", String(P.todo), "100");
+let tk = 0; const clock = (): number => tk++;
+const n1 = resolveTick(20, 25, clock, stub); eq("budget ≤ 25", n1 <= 25 ? "ok" : String(n1), "ok");
+tk = 0; let fast = 0; const slowClock = (): number => { fast += 7; return fast; };
+const n2 = resolveTick(20, 25, slowClock, stub); eq("budget stops at 20 ms", n2 <= 3 ? "ok" : String(n2), "ok");
+for (let i = 0; i < 20 && P.todo > 0; i++) { tk = 0; resolveTick(20, 25, clock, stub); }
+eq("converges", String(P.todo), "0");
+resetProjects();
+eq("unknown → null", identOfCwd(T + "/r1") === null ? "null" : "x", "null");
+const v0 = P.ver; resolveTick(1e9, 1e9, nowF, stub);
+const c1 = identOfCwd(T + "/r1"); eq("after tick", c1 ? c1.key : "", "git:github.com/me/x"); eq("ver +1", String(P.ver - v0), "1");
+eq("empty cwd never queued", identOfCwd("") ? "none" : "null", "none");
+// revalidation: origin changed + mtime bumped, checked > 10 min ago
+mk("r1/.git/config", cfg("origin", "https://github.com/me/renamed")); run("touch", ["-d", "+5 seconds", T + "/r1/.git/config"]);
+resolveTick(1e9, 1e9, nowF, stub); const c2 = identOfCwd(T + "/r1"); eq("not revalidated before 10 min", c2 ? c2.key : "", "git:github.com/me/x");
+const later = (): number => Date.now() + 11 * 60000;
+function nowF(): number { return Date.now(); }
+resolveTick(1e9, 1e9, later, stub); const c3 = identOfCwd(T + "/r1"); eq("revalidated", c3 ? c3.key : "", "git:github.com/me/renamed");
+// a cwd that disappears keeps its identity
+dir("tmpc"); mk("tmpc/.git/config", cfg("origin", "https://github.com/me/tmp")); identOfCwd(T + "/tmpc"); resolveTick(1e9, 1e9, nowF, stub);
+rmSync(T + "/tmpc", { recursive: true, force: true });
+resolveTick(1e9, 1e9, (): number => Date.now() + 22 * 60000, stub); const tc = identOfCwd(T + "/tmpc"); eq("deleted cwd keeps identity", tc ? tc.key + (tc.gone ? " gone" : "") : "", "git:github.com/me/tmp");
+// a worktree whose main repo was deleted keeps the cached git identity
+mk("main9/.git/config", cfg("origin", "https://github.com/me/nine")); mk("wt9/.git", "gitdir: " + T + "/main9/.git/worktrees/wt9"); mk("main9/.git/worktrees/wt9/commondir", "../..");
+identOfCwd(T + "/wt9"); resolveTick(1e9, 1e9, nowF, stub);
+rmSync(T + "/main9", { recursive: true, force: true });
+resolveTick(1e9, 1e9, (): number => Date.now() + 33 * 60000, stub); const w9 = identOfCwd(T + "/wt9"); eq("broken worktree keeps git key", w9 ? w9.key : "", "git:github.com/me/nine");
+// projects.json round trip
+identOfCwd(T + "/r7"); identOfCwd(T + "/w1"); resolveTick(1e9, 1e9, nowF, stub);
+rememberSess("/logs/a.jsonl", T + "/w1"); rememberSess("/logs/dead.jsonl", T + "/r7");
+const PF = T + "/cache/projects.json";
+eq("save", saveProjects(PF, new Set<string>(["/logs/a.jsonl"])) ? "y" : "n", "y");
+const text = readFileSync(PF, "utf8");
+eq("no token on disk", text.indexOf("ghs_") >= 0 ? "leak" : "ok", "ok");
+eq("not dirty: no second write", saveProjects(PF, new Set<string>(["/logs/a.jsonl"])) ? "y" : "n", "y");
+const before = JSON.stringify([identOfCwd(T + "/w1"), identOfCwd(T + "/r7"), identOfCwd(T + "/wt9")]);
+resetProjects(); eq("reset", identOfCwd(T + "/w1") === null ? "null" : "x", "null");
+resetProjects(); loadProjects(PF);
+eq("round trip idents", JSON.stringify([identOfCwd(T + "/w1"), identOfCwd(T + "/r7"), identOfCwd(T + "/wt9")]), before);
+eq("sess kept", cwdOfSess("/logs/a.jsonl"), T + "/w1"); eq("sess dropped", cwdOfSess("/logs/dead.jsonl"), "");
+rememberSess("/logs/b.jsonl", T + "/w1"); eq("read-only target", saveProjects("/proc/nope/projects.json", new Set<string>()) ? "y" : "n", "n");
+// label collisions get the host prefix
+resetProjects();
+mk("ga/.git/config", cfg("origin", "https://github.com/a/x")); mk("gl/.git/config", cfg("origin", "https://gitlab.com/a/x")); mk("gy/.git/config", cfg("origin", "https://github.com/a/y"));
+for (const d of ["ga", "gl", "gy"]) identOfCwd(T + "/" + d);
+resolveTick(1e9, 1e9, nowF, stub);
+const ga = identOfCwd(T + "/ga"); const gl = identOfCwd(T + "/gl"); const gy = identOfCwd(T + "/gy");
+eq("collision github", ga ? labelOf(ga) : "", "github.com/a/x"); eq("collision gitlab", gl ? labelOf(gl) : "", "gitlab.com/a/x"); eq("lone label", gy ? labelOf(gy) : "", "a/y");
 rmSync(T, { recursive: true, force: true });
 
 console.log(bad ? bad + " failed" : "project ok");
