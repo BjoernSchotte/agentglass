@@ -282,6 +282,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `B` | in Stats: budget state and the config path |
 | `@` | in Sessions: open the selected session's project in the Repos tab |
 | `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
+| `r` | in a transcript, event detail or call graph: everything around that event in the same project (see [Related events](#related-events)) |
 
 ## Repos
 
@@ -380,6 +381,51 @@ agentglass triage --preset period --entity session --weight cost --json | jq '.r
 ```
 Guards are answers (exit 0, `"guard": "empty-baseline" | "empty-selection" | "small-sample" | "retention"`); a bad
 expression or option exits 2.
+
+## Related events
+
+"Why did my test suddenly fail?" Often another agent edited the file a minute earlier, and one agent's transcript
+cannot show that. Press `r` on an event (transcript cursor, event detail, or the selected span in the call graph) for
+a timeline of everything within ±10 minutes in the same project: every session and harness, every worktree and clone
+of the repo, interleaved by time.
+
+```
+ related · acme/shop · ±10m around 14:06:43 · 3 sessions · 9 events · ‼ 2
+   -04:12 14:02:31 ✻ fix-auth-flow     ✎ Edit   src/auth/login.ts             +12 −3
+   -00:40 14:06:03 › add-tests  …-wt2  $ shell  npm test -- login             ✗
+ ▶  00:00 14:06:43 ✻ fix-auth-flow     ✎ Edit   src/auth/login.ts             +4 −1
+ ‼ +01:10 14:07:53 π refactor-api      ✎ edit   src/auth/login.ts             also edited by ✻ fix-auth-flow 1m10s earlier
+   +03:30 14:10:13 ✻ fix-auth-flow     ● commit 3f2a91c fix login redirect
+```
+
+- Rows: prompts, writes, shell commands, subagent spawns, alerts from the rules engine (this run), and commits:
+  `[branch sha]` banners in the sessions' output, plus reflog commits of the project's worktrees no session printed
+  (`commit (no session)`, usually your own). `k` adds reads, web and MCP calls, or shows writes only.
+- `‼` **conflict**: two sessions wrote the same file (same worktree) within 10 minutes. A parent and its own subagent
+  are exempt, unless the parent wrote while the subagent ran (`parent wrote while its subagent ran`).
+  `≈` **overlap**: the same repo-relative file in another worktree or clone (no clash on disk, a likely merge
+  conflict). `‼` **clobber**: `git stash`, `git checkout .` / `-- .`, `git restore .`, `git reset --hard`,
+  `git clean -f`, or `git switch` / `git checkout <branch>` after another session wrote in the same worktree.
+  The note says with whom and how far apart; the bottom line shows the selected row in full.
+- `↵` opens that session's transcript at the event (`esc` comes back), `+` `-` window 2 / 5 / 10 / 30 / 60 min,
+  `f` only events touching the anchor's files, `o` own session on/off, `n` `N` next / previous flagged row,
+  `/` a filter (`tool is Bash`, `harness is codex`, `file ~ src/`: call keys match tool rows, session keys the
+  row's session), `esc` back. When the window reaches into the future and an agent runs, new events stream in.
+- It reads only the window of each session (a time bisect over the log), at most 40 sessions and 16 MB per build,
+  in slices that keep the UI responsive; nothing is stored.
+- Limits: writes through shell commands (`sed -i`, redirects, formatters) are not seen as writes. Only Claude Code
+  records a denied tool call (`denied <tool>` row); Codex, OpenCode, Gemini, Kiro and fx denials are not shown
+  (approval waits still come in through the alert rules). Logs without timestamps (Kiro) are read from their tail and
+  their events cannot be placed. Under `--redact` the content is synthetic, so conflicts are rarely flagged.
+- Config: `"related": {"minutes": 10, "conflictMinutes": 10}` (integers 1–240).
+
+```sh
+agentglass --json --related 3f2a91 --at 2026-09-30T14:06:43Z    # around a time
+agentglass --json --related current --event toolu_01abc --minutes 30 | jq '.events[] | select(.conflict)'
+```
+`--related` takes a session reference like `agentglass session` (`current`, `last`, an id prefix ≥ 6,
+`<harness>:<id>`); without `--event` / `--at` it anchors on the session's last event. An unknown session or event
+exits 3, an ambiguous prefix 4, a bad option 2.
 
 ## Alert rules
 
