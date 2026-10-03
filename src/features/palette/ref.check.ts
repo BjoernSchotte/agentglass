@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { appendFileSync, statSync, rmSync } from "node:fs";
 import { type Ref, parseRef, resolve, canonicalUrl } from "./ref.ts";
+import { rootKey, traceId, rootSpanId, toolSpanId } from "../otlp/ids.ts";
 import { tmpDir, addSess, convo, userLine, toolLine, resultLine, textLine } from "./fixture.ts";
 
 let bad = 0;
@@ -72,6 +73,48 @@ const odd = addSess(dir, "odd#id%x", "odd", convo(5), 500, "");
 const u = canonicalUrl(odd, "ts", "2026-09-30T10:00:00.000Z");
 ok("canonical encodes # and %", u === "agentglass://open/claude/odd%23id%25x#ts=2026-09-30T10:00:00.000Z", u);
 ok("round trip", f(parseRef(canonicalUrl(c, "call", "toolu_03"))) === "claude|cccccc-0003|call|toolu_03|", f(parseRef(canonicalUrl(c, "call", "toolu_03"))));
+// turn=, span= and trace ids (otlp-export ids)
+function g3(r: Ref): string { return r.ok ? [r.sess, r.trace, r.span, r.akey, r.aval, String(r.ak)].join("|") : "ERR"; }
+const TT: string[][] = [
+  ["abc123#turn=2026-09-30T10:00:00.000Z", "abc123|||turn|2026-09-30T10:00:00.000Z|0"], ["abc123#turn=2026-09-30T10:00:00.000Z~1", "abc123|||turn|2026-09-30T10:00:00.000Z|1"],
+  ["abc123#turn=3", "abc123|||turn|3|0"], ["abc123#turn=0", "ERR"], ["abc123#turn=yesterday", "ERR"], ["abc123#turn=2026-09-30T10:00:00Z~x", "ERR"],
+  ["agentglass://open/claude/abc123#turn=2026-09-30T10:00:00.000%2B02:00~2", "abc123|||turn|2026-09-30T10:00:00.000+02:00|2"],
+  ["abc123#span=0123456789abcdef", "abc123|||span|0123456789abcdef|0"], ["abc123#span=0123456789ABCDEF", "ERR"], ["abc123#span=0123", "ERR"],
+  ["0123456789abcdef0123456789abcdef", "|0123456789abcdef0123456789abcdef||||0"], ["0123456789abcdef0123456789abcdef/fedcba9876543210", "|0123456789abcdef0123456789abcdef|fedcba9876543210|||0"],
+  ["0123456789abcdef0123456789abcdef/fedcba98", "ERR"], ["0123456789abcdef0123456789abcdef/../x", "ERR"],
+];
+for (const c of TT) { const got = g3(parseRef(c[0] ?? "")); ok("parse " + JSON.stringify(c[0] ?? ""), got === c[1], got); }
+// turn anchors on a log that lost a turn (a rewind / rewritten history): the stable key keeps its turn, the index moves,
+// a vanished key falls back to the next turn with a warning; two turns sharing a start time are ~0 and ~1
+const TS = (n: number): string => "2026-09-30T11:00:0" + String(n) + ".000Z";
+const turnsLog = (skip2: boolean): string[] => {
+  const o: string[] = [];
+  for (const n of [1, 2, 3, 3]) { if (skip2 && n === 2) continue; o.push(userLine(TS(n), "prompt " + String(n) + "-" + String(o.length))); o.push(textLine(TS(n), "m" + String(o.length), "ok")); }
+  return o;
+};
+const tw = addSess(dir, "tttttt-0009", "turns", turnsLog(false), 900, "");
+function tr(ref: string): string { const t = resolve(parseRef(ref)); return String(t.turn) + "|" + t.ts + "|" + (t.warn ? "warn" : "") + "|" + t.ukey + "=" + t.uval; }
+ok("turn=<ts> → that turn", tr("tttttt-0009#turn=" + TS(3)) === "3|" + TS(3) + "||turn=" + TS(3), tr("tttttt-0009#turn=" + TS(3)));
+ok("turn=<ts>~1 → the 2nd turn sharing it", tr("tttttt-0009#turn=" + TS(3) + "~1") === "4|" + TS(3) + "||turn=" + TS(3) + "~1", tr("tttttt-0009#turn=" + TS(3) + "~1"));
+ok("turn=<n> → the canonical key", tr("tttttt-0009#turn=2") === "2|" + TS(2) + "||turn=" + TS(2), tr("tttttt-0009#turn=2"));
+addSess(dir, "tttttt-0009", "turns", turnsLog(true), 901, ""); // turn 2 gone
+ok("after: turn=<ts> keeps its turn", tr("tttttt-0009#turn=" + TS(3)) === "2|" + TS(3) + "||turn=" + TS(3), tr("tttttt-0009#turn=" + TS(3)));
+ok("after: turn=3 is the next one", tr("tttttt-0009#turn=3") === "3|" + TS(3) + "||turn=" + TS(3) + "~1", tr("tttttt-0009#turn=3"));
+ok("after: a vanished key → the next turn + warn", tr("tttttt-0009#turn=" + TS(2)) === "2|" + TS(3) + "|warn|turn=" + TS(3), tr("tttttt-0009#turn=" + TS(2)));
+ok("turn=9 → warn, the end", tr("tttttt-0009#turn=9").startsWith("-1||warn"), tr("tttttt-0009#turn=9"));
+// trace and span ids exactly as the exporter derives them (the goldens of all harnesses: scripts/open-trace.test.sh)
+const R = rootKey("claude", "tttttt-0009");
+const tid = traceId(R, TS(3) + "#1");
+const t4 = resolve(parseRef(tid));
+ok("trace → session and turn", t4.s?.id === tw.id && t4.turn === 3 && t4.ukey === "turn" && t4.uval === TS(3) + "~1", String(t4.turn) + " " + t4.uval);
+const ts1 = resolve(parseRef(tid + "/" + rootSpanId(R, TS(1) + "#0")));
+ok("trace/root span → that span's turn", ts1.turn === 1 && !ts1.warn, String(ts1.turn) + " " + ts1.warn);
+const tsp = resolve(parseRef("cccccc-0003#span=" + toolSpanId(rootKey("claude", "cccccc-0003"), "cccccc-0003", "toolu_03")));
+ok("span= a tool span → that call", tsp.kind === "tool" && tsp.id === "toolu_03" && tsp.ukey === "call" && !tsp.warn, tsp.kind + " " + tsp.id + " " + tsp.warn);
+const tx = resolve(parseRef("ffffffffffffffff0000000000000000"));
+ok("unknown trace → not found", tx.code === 3, String(tx.code));
+const tn = resolve(parseRef(traceId(R, "nope#0")));
+ok("trace of a session but no turn → the session + warn", tn.s?.id === tw.id && tn.warn !== "", tn.warn);
 console.log(bad ? bad + " failed" : "ref: all checks passed (" + String(T.length) + " grammar cases)");
 rmSync(dir, { recursive: true, force: true });
 process.exit(bad ? 1 : 0);

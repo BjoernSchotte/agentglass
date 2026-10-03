@@ -503,7 +503,17 @@ agentglass open 'claude:5f1e…#call=toolu_01Abc'          # …at a tool call (
 agentglass open 'agentglass://open/codex/019a2c…#call=c1' # the URL form (Y copies it)
 agentglass open 019a2c --print                          # resolve only: {harness,id,path,title,cwd,anchor,url} (pipes and agents too)
 agentglass open 019a2c --print-url                      # the canonical agentglass://open/<harness>/<id> link
+agentglass open '019a2c#turn=2026-09-30T10:00:00.000Z'  # a turn by its start time as logged (~1: the 2nd turn starting then; #turn=3: the 3rd)
+agentglass open 4bf92f3577b34da6a3ce929d0e0e4736         # an OTLP trace id from `agentglass export` → that session and turn
+agentglass open 4bf92f3577b34da6a3ce929d0e0e4736/00f067aa0ba902b7  # …and a span in it: the call, request or subagent
 ```
+
+The turn's start time is the stable form (`Y` and `--print-url` use it): it still names the same turn after a Gemini
+rewind or a compaction drops earlier turns, where the number may move on. Trace and span ids are the ones `agentglass
+export` sends (they are derived from session ids and turn keys, so they need no lookup table). In Grafana (Tempo) add a
+data link on spans to `agentglass://open/${__span.tags["gen_ai.conversation.id"]}#span=${__span.spanId}`; in Jaeger a
+link pattern on the span tag `gen_ai.tool.call.id` such as `agentglass://open/#{gen_ai.conversation.id}#call=#{gen_ai.tool.call.id}`.
+With the handler below installed, clicking one opens the call in agentglass.
 
 A link only ever opens a view: it selects the session, opens its transcript (from the event, also when it is older
 than the 6 MB the transcript normally reads) and puts the cursor on it. It never sends, resumes, kills, trashes or

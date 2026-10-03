@@ -47,7 +47,7 @@ export function targetObj(t: Target, r: Ref): Obj {
   return {
     harness: s.h, id: s.id, path: s.path, title: titleOf(s), cwd: s.cwd,
     anchor: t.kind ? { kind: t.kind, turn: t.turn >= 0 ? t.turn : null, ts: t.ts || null, callId: t.kind === "tool" || t.kind === "result" ? t.id || null : null } : null,
-    url: canonicalUrl(s, r.akey, r.aval),
+    url: canonicalUrl(s, t.ukey, t.uval),
   };
 }
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
@@ -77,7 +77,7 @@ export function openArgs(args: string[]): OpenArgs {
   return o;
 }
 
-addCmd({ cmd: "open", usage: "agentglass open <ref>", summary: "start the TUI on a session and event (a running agentglass shows it instead)\n(<ref> = <id> | <id prefix ≥ 6> | <harness>:<id> [#call=<id> | #ts=<iso>] | agentglass://open/[<harness>/]<id>[#…])", options: [
+addCmd({ cmd: "open", usage: "agentglass open <ref>", summary: "start the TUI on a session and event (a running agentglass shows it instead)\n(<ref> = <id> | <id prefix ≥ 6> | <harness>:<id> [#call=<id> | #ts=<iso> | #turn=<start ts>[~k] | #turn=<n> | #span=<span id>] | agentglass://open/[<harness>/]<id>[#…] | <OTLP trace id>[/<span id>])", options: [
   opt("--print", "", "print the resolution as JSON instead of opening it (also in pipes and inside an agent)", "", []),
   opt("--print-url", "", "print the canonical agentglass:// link", "", []),
   opt("--new-instance", "", "always start a new TUI, never hand the link to a running one", "", []),
@@ -99,7 +99,7 @@ H.cli.unshift((args: string[]): boolean => {
     if (!t.s) failTarget(t);
     const s = t.s as Sess; loadHead(s); loadTail(s); // title, cwd and branch come from the log
     if (t.warn) errLine("agentglass", "warning", t.warn, "");
-    out(o.printUrl ? canonicalUrl(t.s as Sess, r.akey, r.aval) : JSON.stringify(targetObj(t, r)));
+    out(o.printUrl ? canonicalUrl(t.s as Sess, t.ukey, t.uval) : JSON.stringify(targetObj(t, r)));
     process.exit(0);
   }
   if (o.newInstance || !singleInstance() || !handOff(o.ref)) ownTui(r);
