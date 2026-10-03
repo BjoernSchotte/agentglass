@@ -163,8 +163,9 @@ function header(st: RState, w: number): string {
   const b = st.b;
   const n = new Set<string>(); for (const r of b.rows) if (r.sess) n.add(r.sess);
   const ev = String(st.vis.length) + (st.vis.length === b.rows.length ? "" : "/" + String(b.rows.length));
-  const make = (short: boolean): string => {
-    const parts = [fg(C.accent) + "related" + RST, b.scope === "cwd" ? "(same cwd: no project)" : b.label || "(project unknown)",
+  const label = b.scope === "cwd" ? "(same cwd: no project)" : b.label || "(project unknown)";
+  const make = (short: boolean, lab: string): string => {
+    const parts = [fg(C.accent) + "related" + RST, lab,
       "±" + String(st.minutes) + "m " + (short ? "@ " : "around ") + clock(b.anchor.t), String(n.size) + (short ? " sess" : " sessions"), ev + (short ? " ev" : " events")];
     if (b.flagged) parts.push(fg(C.red) + "‼ " + String(b.flagged) + RST);
     if (building(st)) parts.push(fg(C.yellow) + spin() + (short ? " " : " loading ") + String(b.next) + "/" + String(b.cands.length) + RST);
@@ -173,7 +174,9 @@ function header(st: RState, w: number): string {
     if (b.live) parts.push(fg(C.green) + "● live" + RST);
     return " " + parts.join(fg(C.dim) + " · " + RST);
   };
-  const l = make(false); return vwidth(l) <= w ? l : make(true);
+  const l = make(false, label); if (vwidth(l) <= w) return l;
+  const s = make(true, label); if (vwidth(s) <= w) return s;
+  return make(true, fit(label, Math.max(6, width(label) - (vwidth(s) - w)))); // the label gives way: counts and flags stay
 }
 function chips(st: RState): string {
   const c: string[] = [KIND_NAMES[st.kset] ?? ""];
@@ -182,7 +185,8 @@ function chips(st: RState): string {
   if (st.b.tsMissing) c.push("some logs carry no timestamps: tail only");
   return " " + fg(C.dim) + c.join(" · ") + RST;
 }
-function line(st: RState, r: RelEv, w: number, on: boolean): string {
+// slot = the worktree tag's width on every row (0 = one worktree only): the columns after it stay aligned
+function line(st: RState, r: RelEv, w: number, on: boolean, slot: number): string {
   const a = isAnchor(st.b, r);
   const mk = a ? fg(C.accent) + "▶" : r.mark === "overlap" ? fg(C.yellow) + "≈" : flagged(r) ? fg(C.red) + "‼" : " ";
   const tint = r.sess === st.b.anchor.sess || !r.h ? C.text : harnessOf(r.h).color();
@@ -190,7 +194,7 @@ function line(st: RState, r: RelEv, w: number, on: boolean): string {
   const ttl = s ? harnessOf(s.h).mark + " " + fit(clean(titleOf(s)), 16) : fit(r.sess ? "(gone)" : "(no session)", 18);
   const wt = r.sess && r.sess !== st.b.anchor.sess ? worktree(r.sess) : "";
   const aw = worktree(st.b.anchor.sess);
-  const wtag = wt && wt !== aw ? tailFit(wt, 6) + " " : "";
+  const wtag = slot ? (wt && wt !== aw ? tailFit(wt, slot - 1) : " ".repeat(slot - 1)) + " " : "";
   const k = (GLYPH[r.kind] ?? "·") + " " + fit(r.tool || r.kind, w >= 100 ? 10 : 6);
   const nt = note(st, r); const stt = status(r);
   const left = mk + RST + " " + fg(C.dim) + off(r.t - st.b.anchor.t) + " " + (w >= 70 ? clock(r.t) + " " : "") + RST + fg(tint) + ttl + RST + " " + fg(C.dim) + wtag + RST + fg(tint) + k + RST + " ";
@@ -208,10 +212,11 @@ export function viewLines(st: RState, w: number, h: number): string[] {
   sync(st, h - 3); clampSel(st, h - 3);
   const L: string[] = [fitStyled(header(st, w), w), fitStyled(chips(st), w)];
   const rh = h - 3;
+  let slot = 0; let t0 = ""; for (const t of st.b.tops.values()) { if (t0 && t !== t0) slot = 7; t0 = t; }
   for (let y = 0; y < rh; y++) {
     const r = rowAt(st, st.top + y);
     if (!r) { L.push(y === 1 && !st.vis.length ? fitStyled("  " + fg(C.dim) + (building(st) ? "reading sessions…" : "nothing in this window — + widens it, k shows more kinds") + RST, w) : ""); continue; }
-    L.push(line(st, r, w, st.top + y === st.sel));
+    L.push(line(st, r, w, st.top + y === st.sel, slot));
   }
   const r = rowAt(st, st.sel);
   let info = "";

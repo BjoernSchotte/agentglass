@@ -137,6 +137,27 @@ eq("graph → view", S.mode + " " + S.fview, "view related");
 const st5 = relState();
 eq("anchored on the span's event", st5 && ga ? String(st5.b.anchor.evId === (ga.evs[ga.i]?.id ?? "?") || st5.b.anchor.evText === (ga.evs[ga.i]?.text ?? "?")) : "", "true");
 onInput("esc"); eq("esc → call graph", S.mode + " " + S.fview, "view call graph");
+// ── two worktrees at 80 columns: the worktree tag keeps the columns aligned; a long label never hides the counts ──
+S.mode = "list"; S.fview = "";
+const M2 = D + "/keepme-a-really-long-project-name-x"; const W2 = D + "/keepme-wt-two";
+mkdirSync(M2 + "/.git/worktrees/wt2", { recursive: true }); writeFileSync(M2 + "/.git/config", "[core]\n"); writeFileSync(M2 + "/.git/HEAD", "ref: refs/heads/main\n");
+writeFileSync(M2 + "/.git/worktrees/wt2/commondir", "../..\n"); writeFileSync(M2 + "/.git/worktrees/wt2/HEAD", "ref: refs/heads/wt2\n"); writeFileSync(M2 + "/.git/worktrees/wt2/gitdir", W2 + "/.git\n");
+mkdirSync(W2, { recursive: true }); writeFileSync(W2 + "/.git", "gitdir: " + M2 + "/.git/worktrees/wt2\n");
+function sessAt(h: string, id: string, cwd: string, lines: string[]): Sess { const x = sess(h, id, lines); x.cwd = cwd; return x; }
+const e2 = (dir: string, s: number, id: string): string => call(s, id, "Edit", "{\"file_path\":\"" + dir + "/src/a.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}");
+const sm = sessAt("claude", "mmm", M2, [user(1000, "main side"), e2(M2, 1010, "w1"), res(1011, "w1", "ok")]);
+sessAt("claude", "www", W2, [user(1005, "wt side"), e2(W2, 1020, "w2"), res(1021, "w2", "ok"), call(1030, "w3", "Bash", "{\"command\":\"npm test\"}")]);
+openTranscript(sm); const t6 = S.tv;
+if (t6) { t6.evs.length = 0; for (const l of [user(1000, "main side"), e2(M2, 1010, "w1"), res(1011, "w1", "ok")]) parseEvents("claude", l, t6.evs, sm); t6.cur = 1; }
+onInput("r"); done();
+const st6 = relState();
+const L6 = st6 ? viewLines(st6, 80, 22) : [];
+const plain = (l: string): string => l.replace(/\x1b\[[0-9;]*m/g, "");
+const kindCol = (l: string): number => { const c = Array.from(plain(l)); for (let i = 0; i < c.length; i++) if (c[i] === "✎" || c[i] === "$" || c[i] === "❯") return i; return -1; };
+const cols = new Set<number>(); for (const l of L6.slice(2, -1)) { const k = kindCol(l); if (k >= 0) cols.add(k); }
+eq("one kind column with and without a worktree tag", String(cols.size) + " " + String(L6.some((l: string) => plain(l).indexOf("wt-two") >= 0)), "1 true");
+eq("long label at 80: counts and flags stay", (L6[0] ?? "").indexOf("‼ ") >= 0 && plain(L6[0] ?? "").indexOf(" ev") >= 0 ? "ok" : plain(L6[0] ?? ""), "ok");
+onInput("esc");
 rmSync(D, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "related view: all checks passed");
 process.exit(bad ? 1 : 0);
