@@ -18,7 +18,7 @@ import { type CliFilter, cliFilter, cliSelect } from "./query/cli.ts";
 import { type Rec, type TS, newTS, HB, pct } from "./usage/calls.ts";
 import { sessionBill } from "./usage/bill-live.ts";
 import { type Src, buildGraph, summary } from "./callgraph/model.ts";
-import { loopRuns } from "./watchdog.ts";
+import { loopRuns } from "./detect.ts";
 import { scrubText } from "./redact.ts";
 import { REDACT } from "./redact-on.ts";
 import { jsonSess, discover, JSON_FIELDS } from "./cli.ts";

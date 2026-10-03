@@ -19,6 +19,11 @@ import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
 import { livePid } from "./query/eval.ts";
+import { type Alert, stateOf, render, severityOf } from "./rules/engine.ts";
+import { rules } from "./rules/state.ts";
+import { onTrans } from "./rules/notify.ts";
+import { complete as ledgerComplete } from "./usage/ledger.ts";
+import { watched, looker, observeWith, watchStep, forgetSession, ruleOf, ledgerRule, alertsOf } from "./watchdog.ts";
 
 const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
 const LIVE_OPT = opt("--live", "", "only sessions with a running agent process", "", []);
@@ -31,33 +36,40 @@ const ALLP_OPT = opt("--all-projects", "", "inside an agent: every project (defa
 const PONLY_OPT = opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", []);
 export const FILTER_OPT = opt("--filter", "'<expr>'", "only what matches, e.g. 'repo is x and cost > 2', 'tool is Bash and status is error' (repeatable)", "", []);
 const PINNED_OPT = opt("--pinned", "", "also apply the filter pinned in the TUI (P); without it pins are ignored", "", []);
+const NOALERTS_OPT = opt("--no-alerts", "", "--watch: no alert lines (the rules engine does not run)", "", []);
+const NOTIFY_OPT = opt("--notify", "", "--watch: also run rules.json's notify command on alert transitions", "", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
 const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
 export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
-  "activity", "tokens", "costUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills"];
+  "activity", "tokens", "costUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "alerts"];
 function cmd(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
 function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.arg ? " " + o.arg : ""), summary: o.summary, options: [], fields: [], group: "opt" }; }
 addCmd(cmd("", "agentglass", "interactive TUI", [], []));
 addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
 addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
 addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, ALLP_OPT, PONLY_OPT], JSON_FIELDS));
-addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT], []));
+addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, NOALERTS_OPT, NOTIFY_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT], []));
 addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
+addCmd(cmd("triage", "agentglass triage [opts]", "what is different about a selection (errored calls, $5+ sessions, …) vs the rest or last period\n(--preset errors|slow|long|expensive|failing|period or --select '<expr>'; see agentglass triage --help)", [], []));
+addCmd(cmd("rules check", "agentglass rules check [--json]", "validate ~/.agentglass/rules.json (alert rules): effective rules + line:col problems", [], []));
+addCmd(cmd("rules defaults", "agentglass rules defaults [--examples]", "print the built-in alert rules as a ready-to-edit rules.json", [], []));
 addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
 addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
 addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
 addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
-for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT]) addCmd(optRow(o));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, NOALERTS_OPT, NOTIFY_OPT, FORMAT_OPT, FIELDS_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT]) addCmd(optRow(o));
 function usage(): string {
   return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
     `--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
   activity tokens{in,out,cacheRead,cacheWrite} costUsd billing{mode,plan,source} unpricedTokens unpricedCredits
   tools linesAdded linesRemoved attention stuck skills[{name,source,n}]
+  alerts[{rule,severity,value,unit,threshold,since,message,labels,acked}] (live sessions; durations s, ratios 0–1, USD)
   (costUsd = API list price, null when only unpriced usage exists; billing.mode = api|plan|metered|gateway|unknown,
   source = session|process|config — config = assumed from the current config files;
   skills source = command: a slash command / $mention, model: the agent chose it)
 --watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
-  plus live|exit when an agent process appears or disappears
+  plus live|exit when an agent process appears or disappears, and alert (rules.json transitions: an alert object
+  {rule,severity,state,value,threshold,labels}; state = fire|escalate|deescalate|resolve; off with --no-alerts)
 
 filter: key op value [and …]; op = is = is_not != is_one_of is_not_one_of ~ !~ > >= < <=; not / - negates; bare words
   search title, path, id; --json lists sessions with a matching call or day; --watch filters events (event is tool|result|…)
@@ -69,7 +81,15 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 `);
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope; filters: string[]; pinned: boolean; cf: CliFilter | null }
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null }
+interface JAl { rule: string; severity: string; value: number; unit: string; threshold: number; since: string; message: string; labels: { [k: string]: string }; acked: boolean }
+interface WAl { rule: string; severity: string; state: string; value: number; threshold: number; labels: { [k: string]: string } }
+interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: null; text: string; alert: WAl }
+function jalerts(as: Alert[]): JAl[] {
+  const o: JAl[] = [];
+  for (const a of as) { const l: { [k: string]: string } = {}; for (const [k, v] of a.labels) l[k] = v; o.push({ rule: a.rule, severity: a.severity, value: a.value, unit: a.unit, threshold: a.threshold, since: new Date(a.since).toISOString(), message: a.message, labels: l, acked: a.acked }); }
+  return o;
+}
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
@@ -79,7 +99,7 @@ function out(line: string): void {
 export function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args), filters: [], pinned: false, cf: null };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args), filters: [], pinned: false, alerts: true, notify: false, cf: null };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -91,6 +111,8 @@ function opts(args: string[]): Opts {
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
     else if (a === "--filter") { if (i + 1 >= args.length) fail("--filter needs an expression, e.g. --filter 'harness is codex'"); o.filters.push(args[i + 1] ?? ""); i++; }
     else if (a === "--pinned") o.pinned = true;
+    else if (a === "--no-alerts") o.alerts = false;
+    else if (a === "--notify") o.notify = true;
   }
   o.cf = cliFilter(o.filters, o.harness, o.live, o.pinned, args.indexOf("--watch") >= 0);
   return o;
@@ -108,7 +130,7 @@ export function jsonSess(s: Sess): Obj {
     tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
     costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
     unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null),
+    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null), alerts: jalerts(alertsOf(s)),
   };
 }
 // table columns of a session list (project = the cwd's last part)
@@ -205,14 +227,34 @@ function watch(o: Opts): void {
       for (const e of evs) emitEv(s, e, o.cf);
     }
   };
+  // the alert rules on every live top-level session, after each process refresh; transitions become alert lines
+  const ledAt = new Map<string, number>();
+  const alerts = (): void => {
+    const rs = rules(); const lk = looker(); const now = Date.now(); const led = ledgerRule(rs);
+    for (const s of sessions.values()) {
+      if (!watched(s) || !wanted(s, o)) { forgetSession(s.path); continue; }
+      if (led && now - (ledAt.get(s.path) ?? 0) >= 10000) { ledAt.set(s.path, now); ledgerComplete(s); } // cost, tokens, call rows
+      loadTail(s);
+      for (const t of watchStep(s, observeWith(s, lk), rs, now)) {
+        const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
+        const msg = render(r, a.v, t.to || t.from, s);
+        const l: { [k: string]: string } = {}; for (const [k, v] of r.labels) l[k] = v;
+        const w: WAlert = { ts: new Date(t.at).toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind: "alert", tool: null,
+          text: oneLine(msg), alert: { rule: r.id, severity: severityOf(t.to || t.from), state: t.state, value: t.v, threshold: t.thr, labels: l } };
+        out(JSON.stringify(w)); lastOut = Date.now();
+        onTrans(s, r, t, a.acked, true, o.notify, rs.notify, a.v, msg, a.lvAt); // --watch: never bell/desktop; the command with --notify
+      }
+    }
+  };
   poll();
+  if (o.alerts) { refreshProcs(); alerts(); }
   let tick = 0;
   setInterval(() => {
     tick++;
     const now = Date.now();
     if ((o.forMs > 0 && now - t0 >= o.forMs) || (o.idle && now - lastOut >= IDLE_MS)) process.exit(0);
     if (tick % 4 === 0) scan();
-    if (tick % 3 === 0) { refreshProcs(); liveDiff(); }
+    if (tick % 3 === 0) { refreshProcs(); liveDiff(); if (o.alerts) alerts(); }
     if (tick % 10 === 0) { refreshSlow(); liveDiff(); }
     poll();
   }, 500);

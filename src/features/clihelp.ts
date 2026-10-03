@@ -66,7 +66,7 @@ export function jsonHelp(cmd: string, agent: Obj): string {
   return JSON.stringify({ name: "agentglass", version: BUILD.version, agentMode: agent, commands: cs, formats: FORMATS, exitCodes: EXIT_CODES, examples: ex });
 }
 // TUI-only and maintenance commands: --help lists them
-const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--update-prices", "update"];
+const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--update-prices", "update", "rules check", "rules defaults"];
 // the summary's first clause (before a parenthesis or semicolon), at most 70 characters
 function brief(s: string): string { const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); return t.length > 70 ? t.slice(0, 69) + "…" : t; }
 // bare agentglass inside an agent: what exists and three examples, no option tables (target ≤ 1 KB: it costs the agent tokens)

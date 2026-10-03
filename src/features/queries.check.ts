@@ -15,7 +15,7 @@ import { totals } from "./query/agg.ts";
 import { setCallDaysForTest } from "./usage/callcache.ts";
 import { scopeOf } from "./agentenv.ts";
 import { startOfDay } from "./usage/record.ts";
-import { loopRuns } from "./watchdog.ts";
+import { loopRuns } from "./detect.ts";
 
 let bad = 0;
 setCallDaysForTest(100000); // the fixtures carry fixed dates: keep their call rows whatever day the suite runs

@@ -29,6 +29,7 @@ import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
 import { compactHelp } from "./features/clihelp.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
+import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
 import "./features/cli.ts";
 import "./features/cost-cli.ts";
 import "./features/queries.ts";
@@ -39,6 +40,8 @@ import "./features/usage/cache.ts";
 import "./features/usage/stats.ts";
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
+import "./features/triage/cli.ts";
+import "./features/triage/view.ts";
 import "./features/redact.ts";
 import "./features/prices.ts";
 import "./features/update.ts";
@@ -166,10 +169,10 @@ H.helpSections.push({ name: "refresh", ctx: "", keys: [
   ["tmux", "set -g focus-events on: lets it see it is hidden"] ] });
 
 function main(): void {
-  // flags of every command go last, so handlers find their command at args[0] (agentglass --no-agent cost)
+  // flags of every command (read from process.argv where they act): handlers never see them, so they find their command at
+  // args[0] (agentglass --no-agent cost) and no command rejects them as unknown (triage --redact)
   const GLOBAL = ["--agent", "--no-agent", "--redact"];
-  const raw = process.argv.slice(2);
-  const args = raw.filter((a: string) => GLOBAL.indexOf(a) < 0).concat(raw.filter((a: string) => GLOBAL.indexOf(a) >= 0));
+  const args = process.argv.slice(2).filter((a: string) => GLOBAL.indexOf(a) < 0);
   agentHost(); // decided before any handler can warn (warnings are JSON lines inside an agent)
   for (const f of H.cli) if (f(args)) return;
   // inside a coding agent the TUI would hang its tool call (PTY shells pass the TTY check): what exists, as compact JSON

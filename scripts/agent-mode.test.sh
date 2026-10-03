@@ -100,6 +100,9 @@ eq "sessions --filter" "$(agent sessions --filter 'harness is codex' | jq -r 'ma
 eq "cost --filter (rows by day)" "$(agent cost --filter 'harness is codex' | jq -r '.rows[-1].sessions')" 0
 set +e; agent errors --filter 'tol is Bash' > "$t/o" 2> "$t/e"; rc=$?; set -e
 eq "bad filter: JSON error" "$rc|$(jq -r '.error.code' < "$t/e")|$(cat "$t/o")" "2|filter|"
+# triage inside an agent: JSON by default, the current repo only (no p2 / gemini rows)
+tj=$(agent triage --preset errors --entity session)
+eq "triage: JSON, project scope" "$(printf '%s' "$tj" | jq -r 'has("rows")')|$(printf '%s' "$tj" | grep -c 'gemini\|"p2"')" "true|0"
 c=$(agent cost --by model --format csv)
 eq "cost csv header" "$(printf "%s\n" "$c" | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions"
 eq "cost csv rows" "$(printf "%s\n" "$c" | tail -n +2 | cut -d, -f1 | tr '\n' ' ')" "claude-sonnet-4-5 total "
