@@ -91,6 +91,26 @@ function step2(): void {
   ok("symlinked inbox → disabled", spoolPoll(run, now, uid, info, { at: [] }, apply) === -1 && existsSync(other + "/" + String(now) + "-34.link") && applied.length === 0, spoolWarn());
   ok("client refuses a symlinked inbox", spoolSend(run, "open abc123\n", 7, now + 50, uid, info, live, ours) === "", "");
   rmSync(inbox); secureDir(inbox, uid, info, true);
+  // review: a rename (.tmp → .link) that leaves the inbox's mtime and entry count as they were is still seen
+  clear();
+  const pin = (): void => { execFileSync("touch", ["-m", "-d", "@1700000000", inbox]); };
+  writeFileSync(inbox + "/.tmp-" + String(now) + "-41", "open abc123\n"); chmodSync(inbox + "/.tmp-" + String(now) + "-41", 0o600); pin();
+  ok("tmp only → nothing applied", spoolPoll(run, now + 5, uid, info, { at: [] }, apply) === 0, ls());
+  execFileSync("mv", [inbox + "/.tmp-" + String(now) + "-41", inbox + "/" + String(now) + "-41.link"]); pin();
+  ok("renamed at the same mtime and count → applied", spoolPoll(run, now + 6, uid, info, { at: [] }, apply) === 1 && applied.join() === "abc123", ls());
+  clear();
+  // two clients in the same millisecond: both applied, each gets its own reply
+  const pa = spoolSend(run, "open abc121\n", 51, now, uid, info, live, ours); const pb = spoolSend(run, "open abc122\n", 52, now, uid, info, live, ours);
+  ok("two senders, two links", pa !== "" && pb !== "" && pa !== pb, pa + " " + pb);
+  spoolPoll(run, now + 10, uid, info, { at: [] }, apply);
+  ok("both applied, both answered", applied.join() === "abc121,abc122" && existsSync(inbox + "/" + String(now) + "-51.res") && existsSync(inbox + "/" + String(now) + "-52.res"), applied.join() + " " + ls());
+  clear();
+  // a reply that is not a regular file of ours: not read, not unlinked, the client falls back
+  const pr = spoolSend(run, "open abc123\n", 53, now, uid, info, live, ours);
+  execFileSync("ln", ["-s", "/etc/hostname", inbox + "/" + String(now) + "-53.res"]);
+  let gr = "-"; spoolAwait(pr, 2000, uid, info, (r: string) => { gr = r; });
+  ok("symlinked .res → \"\" and left alone", gr === "" && OS.fileInfo(inbox + "/" + String(now) + "-53.res")?.kind === "link", gr + " " + ls());
+  clear();
   // a hung server: our .link removed after the timeout, done("") → the client falls back
   const hp = spoolSend(run, "open abc123\n", 40, now + 100, uid, info, live, ours);
   const t0 = Date.now();

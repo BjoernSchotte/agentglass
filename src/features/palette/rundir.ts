@@ -79,6 +79,9 @@ export function releaseLock(dir: string, pid: number): void {
 function infoNative(p: string): FInfo | null {
   try { const st = fs.lstatSync(p); return { uid: myUid(), mode: 0o600, kind: st.isSymbolicLink() ? "link" : st.isFile() ? "file" : st.isDirectory() ? "dir" : "other" }; } catch (e) { return null; }
 }
+// the lock still names this pid (two TUIs that judged the same stale lock at once: the one whose lock was replaced
+// learns it here and stops serving)
+export function holdsLock(dir: string, pid: number, uid: number, info: InfoFn): boolean { return lockPid(dir, uid, info) === pid; }
 // the live server's pid, 0 = none
 export function lockHolder(dir: string, uid: number, info: InfoFn, alive: (pid: number) => boolean, isOurs: (pid: number) => boolean): number {
   const h = lockPid(dir, uid, info);

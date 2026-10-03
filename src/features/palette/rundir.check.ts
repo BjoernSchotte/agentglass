@@ -3,7 +3,7 @@
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { OS } from "../../platform/index.ts";
-import { type FInfo, type InfoFn, myUid, secureDir, takeLock, releaseLock, lockHolder } from "./rundir.ts";
+import { type FInfo, type InfoFn, myUid, secureDir, takeLock, releaseLock, lockHolder, holdsLock } from "./rundir.ts";
 
 const info: InfoFn = (p: string): FInfo | null => OS.fileInfo(p);
 const yes = (pid: number): boolean => true; const no = (pid: number): boolean => false;
@@ -65,6 +65,7 @@ ok("dead holder → no holder", lockHolder(run, uid, info, alive, yes) === 0, ""
 ok("stale takeover → 1", takeLock(run, process.pid, uid, info, alive, yes) === 1 && readFileSync(run + "/tui.lock", "utf8").trim() === String(process.pid), "");
 // alive but not agentglass → takeover
 ok("alive, not ours → takeover", takeLock(run, 4242, uid, info, alive, no) === 1 && readFileSync(run + "/tui.lock", "utf8").trim() === "4242", "");
+ok("holdsLock: replaced by 4242 → we do not", !holdsLock(run, process.pid, uid, info) && holdsLock(run, 4242, uid, info), "");
 // releaseLock only with our pid in the file
 releaseLock(run, process.pid); ok("release with another pid in the file → stays", existsSync(run + "/tui.lock"), "");
 releaseLock(run, 4242); ok("release with ours → gone", !existsSync(run + "/tui.lock"), "");

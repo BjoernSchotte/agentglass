@@ -7,14 +7,14 @@ import { dirname, join } from "node:path";
 import { S, say } from "../../state.ts";
 import { H } from "../../hooks.ts";
 import { OS } from "../../platform/index.ts";
-import { type FInfo, type InfoFn, RUN_DIR, myUid, secureDir, takeLock, releaseLock } from "./rundir.ts";
+import { type FInfo, type InfoFn, RUN_DIR, myUid, secureDir, takeLock, releaseLock, holdsLock } from "./rundir.ts";
 import { type Rate } from "./handoff.ts";
 import { spoolPoll, spoolWarn } from "./spool.ts";
 import { applyLink, flushQueued } from "./apply.ts";
 import { singleInstance, isAlive, isOurs } from "./instance.ts";
 
 const info: InfoFn = (p: string): FInfo | null => OS.fileInfo(p);
-const st = { on: false, off: false, tried: 0, rate: { at: [] } as Rate };
+const st = { on: false, off: false, tried: 0, checked: 0, rate: { at: [] } as Rate };
 function off(why: string): void { st.off = true; if (st.on) releaseLock(RUN_DIR, process.pid); st.on = false; say("warn", why); }
 function become(now: number): void {
   st.tried = now;
@@ -41,6 +41,7 @@ H.onTick.push(() => {
   const was = S.mode;
   flushQueued(); // a link that waited for a dialog
   if (S.mode !== was) S.dirty = true;
+  if (st.on && Date.now() - st.checked >= 10000) { st.checked = Date.now(); if (!holdsLock(RUN_DIR, process.pid, myUid(), info)) { st.on = false; st.tried = Date.now(); } } // lost a takeover race: stop serving
   if (!st.off && !st.on && Date.now() - st.tried >= 10000) become(Date.now());
 });
 H.onQuit.push(() => { if (st.on) releaseLock(RUN_DIR, process.pid); st.on = false; });
