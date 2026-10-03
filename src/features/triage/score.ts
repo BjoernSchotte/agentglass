@@ -45,3 +45,4 @@ export function rank(rows: TRow[], under: boolean, cap: number, minSupport: numb
 }
 export function fmtLift(s: Score): string { return s.lift < 0 ? "new" : "×" + s.lift.toFixed(1); }
 export function fmtPct(p: number): string { return (p * 100).toFixed(1) + "%"; }
+export function chiStr(x: number): string { return x < 10 ? x.toFixed(1) : String(Math.round(x)); }

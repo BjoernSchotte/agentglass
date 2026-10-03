@@ -49,6 +49,8 @@ export function parseTriageCfg(o: Obj): TriageCfg {
   return { longCall, expensiveUsd, minSupport, warn: ks.length ? "config " + ks.join(", ") + " invalid — using defaults" : "" };
 }
 let cfg: TriageCfg | null = null;
+// checks: a fixed config instead of ~/.agentglass/config.json
+export function useTriageCfg(c: TriageCfg): void { cfg = c; }
 export function triageCfg(): TriageCfg {
   const c = cfg; if (c) return c;
   const n = parseTriageCfg(section("triage")); cfg = n;
@@ -96,7 +98,7 @@ export function dimsFor(r: Run): string[] {
 export function periodOf(days: number, previous: boolean): string[] { return previous ? lastDays(days * 2).slice(0, days) : lastDays(days); }
 export function periodLabel(days: number): string { return days === 1 ? "today" : String(days) + " days"; }
 
-function without(cs: Clause[], drop: Clause[]): Clause[] {
+export function without(cs: Clause[], drop: Clause[]): Clause[] {
   const o: Clause[] = [];
   for (const c of cs) { let d = false; for (const x of drop) if (sameClause(c, x)) d = true; if (!d) o.push(c); }
   return o;
@@ -123,16 +125,21 @@ function groups(r: Run, dims: string[]): Groups {
   if (r.base === "previous") return { sel: group(r, scopeF, r.sel, days, dims), base: group(r, scopeF, r.sel, periodOf(r.days, true), dims) };
   if (r.base === "group") return { sel: group(r, scopeF, r.sel, days, dims), base: group(r, scopeF, r.group, days, dims) };
   if (r.slow && r.entity === "call") {
-    // per tool: 30 s is normal for Bash and alarming for Read; untimed calls (fx, kiro, unfinished) are in neither group
-    const p90 = new Map<string, number>();
-    for (const d of aggregate(scopeF, "call", days, ["tool"], "count")) for (const [t, b] of d.vals) if (histN(b) > 0) p90.set(t, pct(b.hist, 0.9, b.max));
+    // untimed calls (fx, kiro, unfinished) are in neither group
+    const slow = slowKeep(r);
     const timed = aggregateWhere(scopeF, days, dims, r.weight, (s: Sess, c: Call) => c.ms >= 0);
-    const slow = aggregateWhere(scopeF, days, dims, r.weight, (s: Sess, c: Call) => c.ms >= 0 && c.ms >= (p90.get(nameOf(DICT.tool, c.tool)) ?? Infinity));
-    return { sel: slow, base: minus(timed, slow) };
+    const sel = aggregateWhere(scopeF, days, dims, r.weight, slow);
+    return { sel, base: minus(timed, sel) };
   }
   const all = aggregate(scopeF, r.entity, days, dims, r.weight);
   const sel = group(r, scopeF, r.sel, days, dims);
   return { sel, base: minus(all, sel) };
+}
+// the slow test: duration ≥ the p90 of the same tool over scope and period (30 s is normal for Bash and alarming for Read)
+export function slowKeep(r: Run): (s: Sess, c: Call) => boolean {
+  const p90 = new Map<string, number>();
+  for (const d of aggregate(F(without(r.scope, r.dropped)), "call", periodOf(r.days, false), ["tool"], "count")) for (const [t, b] of d.vals) if (histN(b) > 0) p90.set(t, pct(b.hist, 0.9, b.max));
+  return (s: Sess, c: Call): boolean => c.ms >= 0 && c.ms >= (p90.get(nameOf(DICT.tool, c.tool)) ?? Infinity);
 }
 function histN(b: Bin): number { let n = 0; for (const x of b.hist) n += x; return n; }
 

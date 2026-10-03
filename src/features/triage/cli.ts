@@ -17,7 +17,7 @@ import { addAll } from "../query/scope.ts";
 import { sessMatches } from "../query/eval.ts";
 import { cliFilter } from "../query/cli.ts";
 import type { Weight } from "../query/agg.ts";
-import { type TRow, rank, fmtLift, fmtPct } from "./score.ts";
+import { type TRow, rank, fmtLift, fmtPct, chiStr } from "./score.ts";
 import { type Run, type Result, type Base, PRESETS, newRun, runTriage, triageCfg, periodLabel, guardText, shown } from "./run.ts";
 
 const NAMES = ["errors", "slow", "long", "expensive", "failing", "period"]; // --preset words, PRESETS 1..6
@@ -102,7 +102,6 @@ export function toJson(r: Run, res: Result, rows: TRow[]): Obj {
     rows: rs, guard: guardOut(res),
   };
 }
-export function chiStr(x: number): string { return x < 10 ? x.toFixed(1) : String(Math.round(x)); }
 function rpad(s: string, w: number): string { const n = width(s); return n >= w ? s : " ".repeat(w - n) + s; }
 function lpad(s: string, w: number): string { const n = width(s); return n >= w ? s : s + " ".repeat(w - n); }
 function text(r: Run, res: Result, rows: TRow[], tty: boolean): void {
