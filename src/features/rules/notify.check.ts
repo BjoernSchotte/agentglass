@@ -7,7 +7,7 @@ import { readText, run } from "../../util/fs.ts";
 import { absent } from "../detect.ts";
 import { type NotifyCfg, loadRules, defaultNotify } from "./config.ts";
 import type { Trans } from "./engine.ts";
-import { CMD, IO, alertJson, argvFor, cmdSubs, runCommand, onTrans } from "./notify.ts";
+import { CMD, IO, alertJson, argvFor, cmdSubs, cmdEnv, runCommand, onTrans } from "./notify.ts";
 import { fileSafe, withSafety } from "./state.ts";
 import { applyMeta } from "../../hooks.ts";
 import "../redact.ts"; // --redact (the check env) fakes titles and projects in the session model
@@ -31,8 +31,15 @@ eq("alert json", j.rule + " " + j.severity + " " + j.state + " " + String(j.valu
 eq("redacted title", String(j.title.indexOf("real title") < 0), "true");
 eq("redacted project", String(j.project !== "secret-project"), "true");
 
+// the command's environment: the notifier basics + AGENTGLASS_*, never agentglass's own secrets
+process.env.SECRET_TOKEN = "hunter2"; process.env.ANTHROPIC_API_KEY = "sk-check";
+eq("env set for the check", String(process.env.SECRET_TOKEN), "hunter2");
+const ce = cmdEnv(j);
+eq("cmdEnv: no secrets", String(ce["SECRET_TOKEN"] === undefined && ce["ANTHROPIC_API_KEY"] === undefined), "true");
+eq("cmdEnv: PATH kept", String(ce["PATH"] === process.env.PATH), "true");
+eq("cmdEnv: rule", ce["AGENTGLASS_RULE"] ?? "", "approval");
 // stdin + env
-const hook = script("hook", "cat > " + dir + "/in.json; env | grep '^AGENTGLASS_' | sort > " + dir + "/env.txt");
+const hook = script("hook", "cat > " + dir + "/in.json; env | grep '^AGENTGLASS_' | sort > " + dir + "/env.txt; env > " + dir + "/env-all.txt");
 eq("start", runCommand(cfg(["sh", hook], ["fire", "escalate"]), j, cmdSubs(ap, v, tr("fire"), s)), "");
 // not configured for the state
 eq("not on resolve", runCommand(cfg(["sh", hook], ["fire"]), alertJson(s, ap, tr("resolve"), "", 0), cmdSubs(ap, v, tr("resolve"), s)), "not configured for resolve");
@@ -44,8 +51,8 @@ onTrans(s, ap, tr("resolve"), false, false, true, cfg(["sh", counter], ["resolve
 onTrans(s, ap, tr("fire"), false, false, true, cfg(["sh", counter], ["resolve"]), v, "m", 0); // fire not listed
 onTrans(s, ap, tr("fire"), false, true, false, cfg(["sh", counter], ["fire"]), v, "m", 0); // --watch without --notify
 // ≤ 4 at once: the fifth is dropped
-CMD.killMs = 1500;
-const slp = script("sleep", "sleep 60");
+CMD.killMs = 1500; CMD.graceMs = 500;
+const slp = script("sleep", "trap '' TERM; while :; do sleep 0.2; done"); // ignores SIGTERM: SIGKILL ends it
 const c4 = cfg(["sh", slp], ["fire"]);
 const started = CMD.running;
 let drop = "";
@@ -67,6 +74,8 @@ setTimeout(() => {
   eq("env rule", String(env.indexOf("AGENTGLASS_RULE=approval") >= 0), "true");
   eq("env state", String(env.indexOf("AGENTGLASS_STATE=fire") >= 0), "true");
   eq("env value", String(env.indexOf("AGENTGLASS_VALUE=42") >= 0), "true");
+  const all = readText(dir + "/env-all.txt", 0, 262144);
+  eq("child env: no secrets", String(all.indexOf("hunter2") < 0 && all.indexOf("sk-check") < 0 && all.indexOf("PATH=") >= 0), "true");
   eq("stdin redacted", String(inp.indexOf("real title") < 0), "true");
   eq("count: escalate (acked) + resolve", readText(dir + "/count.txt", 0, 100), "x\nx\n");
   eq("toasts: none", toasts.join("|"), "");
@@ -74,8 +83,8 @@ setTimeout(() => {
 // the sleeps are killed after killMs: all slots free again
 setTimeout(() => {
   eq("killed: slots free", String(CMD.running), "0");
-  eq("killed in time", String(Date.now() - t0 < 4000), "true");
+  eq("killed in time", String(Date.now() - t0 < 4500), "true");
   run("rm", ["-rf", dir]);
   console.log(bad ? bad + " failed" : "rules notify: all checks passed");
-  if (bad) process.exit(1);
-}, 2500);
+  process.exit(bad ? 1 : 0);
+}, 3000);

@@ -21,7 +21,19 @@ export const IO = {
   toast: (msg: string): void => { say("warn", msg); },
 };
 const lastBell = new Map<string, number>(); // path → last bell/notification (shared throttle)
-export const CMD = { running: 0, max: 4, killMs: 10000 };
+export const CMD = { running: 0, max: 4, killMs: 10000, graceMs: 2000 }; // SIGTERM at killMs, SIGKILL graceMs later
+// the command's environment: what a notifier needs (PATH, locale, desktop bus, proxy) — never the rest of agentglass's
+// own environment, which can hold API keys and tokens
+const ENV_KEEP = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
+  "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
+  "http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "all_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR"];
+export function cmdEnv(j: JAlert): { [k: string]: string } {
+  const env: { [k: string]: string } = {};
+  for (const k of Object.keys(process.env)) { const v = process.env[k]; if (v !== undefined && (ENV_KEEP.indexOf(k) >= 0 || k.startsWith("LC_"))) env[k] = v; }
+  env["AGENTGLASS_RULE"] = j.rule; env["AGENTGLASS_SEVERITY"] = j.severity; env["AGENTGLASS_STATE"] = j.state;
+  env["AGENTGLASS_SESSION"] = screenOut(j.session); env["AGENTGLASS_HARNESS"] = j.harness; env["AGENTGLASS_VALUE"] = String(j.value);
+  return env;
+}
 
 // the alert object of a transition (text fields as the screen shows them: --redact fakes titles and projects)
 export function alertJson(s: Sess, r: Rule, t: Trans, message: string, since: number): JAlert {
@@ -42,16 +54,14 @@ export function runCommand(cfg: NotifyCfg, j: JAlert, subs: Map<string, string>)
   if (!cfg.command.length || cfg.on.indexOf(j.state) < 0) return "not configured for " + j.state;
   if (CMD.running >= CMD.max) return String(CMD.max) + " notify commands running — dropped";
   const argv = argvFor(cfg.command, subs);
-  const env: { [k: string]: string } = {};
-  for (const k of Object.keys(process.env)) { const v = process.env[k]; if (v !== undefined) env[k] = v; }
-  env["AGENTGLASS_RULE"] = j.rule; env["AGENTGLASS_SEVERITY"] = j.severity; env["AGENTGLASS_STATE"] = j.state;
-  env["AGENTGLASS_SESSION"] = screenOut(j.session); env["AGENTGLASS_HARNESS"] = j.harness; env["AGENTGLASS_VALUE"] = String(j.value);
+  const env = cmdEnv(j);
   let done = false;
   try {
     const ch = spawn(argv[0] ?? "", argv.slice(1), { stdio: ["pipe", "ignore", "ignore"], env });
     CMD.running++;
     const end = (): void => { if (done) return; done = true; CMD.running--; clearTimeout(k); };
-    const k = setTimeout(() => { ch.kill(); }, CMD.killMs);
+    // SIGTERM first; a command that ignores it is killed for good, so it cannot hold a slot forever
+    const k = setTimeout(() => { ch.kill(); setTimeout(() => { if (!done) ch.kill("SIGKILL"); }, CMD.graceMs); }, CMD.killMs);
     ch.on("exit", (c: number | null) => { end(); });
     ch.on("error", (e: Error) => { end(); });
     const w = ch.stdin;
