@@ -78,9 +78,16 @@ eq "--watch --all-projects" "$(agent --watch --from-start --for 2s --all-project
 set +e; (cd "$p2" && agent session abcdef > /dev/null 2> "$t/e"); rc=$?; set -e
 eq "prefix of other projects" "$rc|$(jq -r '.error.code' < "$t/e")|$(grep -c "$CX" < "$t/e")" "3|out_of_scope|0"
 e=$(agent errors)
-eq "errors: project scope" "$(printf "%s" "$e" | jq -c '[.scope, .source, (.rows | map(.harness))]')" '["project","recent",["claude"]]'
+eq "errors: project scope" "$(printf "%s" "$e" | jq -c '[.scope, .source, (.rows | map(.harness))]')" '["project","calls",["claude"]]'
 eq "errors: text by call id" "$(printf "%s" "$e" | jq -r '.rows[0].text' | head -1)" "Exit code 1"
 eq "errors --all-projects" "$(agent errors --all-projects | jq -c '[.scope, (.rows | map(.harness))]')" '["all",["gemini","claude"]]'
+# --filter on the queries: call clauses on errors, session clauses on sessions and cost rows; a bad one is a JSON error
+eq "errors --filter" "$(agent errors --filter 'tool is Bash' | jq -r '.rows | length')|$(agent errors --filter 'tool is Edit' | jq -r '.rows | length')" "1|0"
+eq "errors: arg from the rows" "$(agent errors | jq -r '.rows[0].arg')" "npm test"
+eq "sessions --filter" "$(agent sessions --filter 'harness is codex' | jq -r 'map(.id) | join(",")')" "$CX"
+eq "cost --filter (rows by day)" "$(agent cost --filter 'harness is codex' | jq -r '.rows[-1].sessions')" 0
+set +e; agent errors --filter 'tol is Bash' > "$t/o" 2> "$t/e"; rc=$?; set -e
+eq "bad filter: JSON error" "$rc|$(jq -r '.error.code' < "$t/e")|$(cat "$t/o")" "2|filter|"
 c=$(agent cost --by model --format csv)
 eq "cost csv header" "$(printf "%s\n" "$c" | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions"
 eq "cost csv rows" "$(printf "%s\n" "$c" | tail -n +2 | cut -d, -f1 | tr '\n' ' ')" "claude-sonnet-4-5 total "

@@ -265,18 +265,56 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 |---|---|
 | `↵` / click | open live transcript · drill into an event |
 | `j` `k` | move · in a transcript: previous / next event |
-| `/` `F` | filter · full-text search |
+| `/` `F` | filter (`repo is x and cost > 2`, see [Filters](#filters)) · full-text search |
+| `p` `P` | pin the filter (every tab, remembered) · edit the pins |
 | `␣` | fold / unfold subagents |
 | `n` `u` | next subagent · up to parent |
 | `s` `R` | send a prompt · resume interactively |
 | `x` `X` | SIGTERM / SIGKILL the agent |
 | `1`–`9` `e` | open a referenced file in `$PAGER` / `$EDITOR` |
-| `P` | replay the open transcript |
+| `P` (transcript) | replay the open transcript |
 | `c` | call graph (flame chart ⇄ call tree with `Tab`) |
 | `!` | jump to the next agent waiting for you |
 | `T` | cycle themes |
 | `Tab` `1` `2` `3` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) |
 | `B` | in Stats: budget state and the config path |
+
+## Filters
+
+One grammar for the Sessions list, Stats, `--json` and `--watch`:
+
+```
+repo is agentglass                      tool is_one_of Bash Edit             cost > 2
+model ~ opus and tool is Bash           tool is Bash and status is error     not live is true
+harness is pi, day >= -7d               duration > 30s                       content ~ "npm test"
+```
+
+- `key op value`; terms are ANDed (`and`, `,` or just a blank). Operators: `is` `=` `is_not` `!=` `is_one_of`
+  `is_not_one_of` `~` (contains) `!~` `>` `>=` `<` `<=`. `not` / `-` negates. Bare words search title, path, id,
+  harness and branch, as `/` always did. OR exists only as `is_one_of`; no parentheses.
+- Values: `$0.50`, `40k`, `1.5M`, `100KB`, `500ms`, `30s`, `2m`, `1h`, `3d`, `20%`, `today`, `yesterday`, `-7d`,
+  weekdays `mo`…`su`; `unknown` finds unpriced cost and untimed calls (`cost is unknown`). Paths take `*` globs.
+- Keys (`--help` and `?` list them): session `harness repo cwd branch model title id agent subagent live archived
+  state cost tokens tokens.in/out/cache_read/cache_write tools errors error_rate lines lines.added/removed age text
+  content`, day `day weekday day.cost day.tokens day.tools`, call `tool server program command file ext status
+  duration out hour`, `event` (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the
+  same call), day clauses "has a day matching all of them". `model` of a call is the model of the message that issued
+  it (Codex: per turn; fx: per session; Kiro: unknown).
+- In the TUI, `/` parses as you type; the last valid filter stays while the text does not parse, the error shows
+  next to it, `tab` completes keys, operators and values, `esc` restores the previous filter. `p` pins the tab's
+  filter: pins apply on every tab and are remembered (`~/.agentglass/config.json` `"filter": {"pinned": …}`); on
+  start a toast names them and the list says `pins hide N`. `P` edits them; empty + `↵` unpins.
+  `"filter": {"remember": false}` keeps pins for one run only.
+- Per-call rows live in `~/.agentglass/cache/calls/` (one file per session) for `"filter": {"callDays": 90}` days;
+  day totals stay forever, so call clauses (`tool`, `status`, …) see only that window (`calls ≤ 90 d` in the bar).
+
+```sh
+agentglass --json --filter 'tool is Bash and status is error' | jq '.[].title'   # sessions with a failed Bash call
+agentglass --json --filter 'repo is agentglass' --filter 'cost > 2'           # --filter repeats (AND)
+agentglass --json --pinned                                                     # also apply the TUI's pins
+agentglass --watch --filter 'harness is pi and event is_one_of tool result'    # only pi's calls and results
+```
+A bad expression exits 2 with the message and a caret under the column.
 
 ## Scriptable
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
 import { H, complete, screenOut } from "../hooks.ts";
-import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
+import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf } from "../harness/index.ts";
 import { type Obj, base } from "../util/json.ts";
@@ -17,6 +17,8 @@ import { type SkillUse, skillUses } from "./usage/record.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
+import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
+import { livePid } from "./query/eval.ts";
 
 const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
 const LIVE_OPT = opt("--live", "", "only sessions with a running agent process", "", []);
@@ -27,6 +29,8 @@ export const FORMAT_OPT = opt("--format", "json|jsonl|csv|table", "--json: outpu
 export const FIELDS_OPT = opt("--fields", "a,b,c", "--json: only these fields, in this order (tokens_in for nested ones)", "", []);
 const ALLP_OPT = opt("--all-projects", "", "inside an agent: every project (default: the current one only)", "", []);
 const PONLY_OPT = opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", []);
+export const FILTER_OPT = opt("--filter", "'<expr>'", "only what matches, e.g. 'repo is x and cost > 2', 'tool is Bash and status is error' (repeatable)", "", []);
+const PINNED_OPT = opt("--pinned", "", "also apply the filter pinned in the TUI (P); without it pins are ignored", "", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
 const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
 export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
@@ -36,14 +40,14 @@ function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.ar
 addCmd(cmd("", "agentglass", "interactive TUI", [], []));
 addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
 addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
-addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT, ALLP_OPT, PONLY_OPT], JSON_FIELDS));
-addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT], []));
+addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, ALLP_OPT, PONLY_OPT], JSON_FIELDS));
+addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT], []));
 addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
 addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
 addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
 addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
 addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
-for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT]) addCmd(optRow(o));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT]) addCmd(optRow(o));
 function usage(): string {
   return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
     `--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
@@ -55,13 +59,17 @@ function usage(): string {
 --watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears
 
+filter: key op value [and …]; op = is = is_not != is_one_of is_not_one_of ~ !~ > >= < <=; not / - negates; bare words
+  search title, path, id; --json lists sessions with a matching call or day; --watch filters events (event is tool|result|…)
+${filterKeysHelp()}
+
 OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
   without it, 2.x sessions come from a running \`opencode service\` over HTTP with curl (AGENTGLASS_CURL); with neither
   they are not listed (a warning says so)
 `);
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope }
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope; filters: string[]; pinned: boolean; cf: CliFilter | null }
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
@@ -71,7 +79,7 @@ function out(line: string): void {
 export function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args) };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args), filters: [], pinned: false, cf: null };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -81,18 +89,15 @@ function opts(args: string[]): Opts {
     else if (a === "--for") { o.forMs = parseDur(args[i + 1] ?? ""); i++; if (!(o.forMs > 0)) fail("--for needs a duration like 30s, 5m or 1h"); }
     else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (!isHarness(o.harness)) fail("--harness must be one of " + harnessIds().join(", ")); }
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
+    else if (a === "--filter") { if (i + 1 >= args.length) fail("--filter needs an expression, e.g. --filter 'harness is codex'"); o.filters.push(args[i + 1] ?? ""); i++; }
+    else if (a === "--pinned") o.pinned = true;
   }
+  o.cf = cliFilter(o.filters, o.harness, o.live, o.pinned, args.indexOf("--watch") >= 0);
   return o;
 }
-// subagents have no process of their own: they are live while their parent is
-function livePid(s: Sess): number {
-  if (s.pid) return s.pid;
-  const p = parentOf(s);
-  return p ? p.pid : 0;
-}
-// inside an agent only the current project (unless widened): titles, paths and events go to the agent's model provider
-function shown(s: Sess, o: Opts): boolean { return (!o.harness || s.h === o.harness) && visible(s, o.sc); }
-function wanted(s: Sess, o: Opts): boolean { return shown(s, o) && (!o.live || livePid(s) > 0); }
+// the filter (with --harness / --live as clauses); inside an agent also only the current project unless widened: titles,
+// paths and events go to the agent's model provider
+function wanted(s: Sess, o: Opts): boolean { const cf = o.cf; return (!cf || cliWatchSession(cf, s)) && visible(s, o.sc); }
 export { usage };
 // the --json fields of one session (key order is the output order)
 export function jsonSess(s: Sess): Obj {
@@ -113,11 +118,13 @@ export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildV
 function snapshot(o: Opts): void {
   discover();
   const list: Sess[] = [];
-  for (const s of sessions.values()) if ((o.subs || s.depth === 0) && wanted(s, o)) list.push(s);
+  const cands: Sess[] = []; for (const s of sessions.values()) if ((o.subs || s.depth === 0) && visible(s, o.sc)) cands.push(s);
+  const cf = o.cf; for (const s of cf ? cliSelect(cf, cands) : cands) list.push(s);
   list.sort((a, b) => b.mtime - a.mtime);
   const res: Obj[] = [];
   for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) { loadHead(s); loadTail(s); complete(s); res.push(jsonSess(s)); }
   out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS, o.json));
+  if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run
   process.exit(0);
 }
 
@@ -134,10 +141,17 @@ function emit(s: Sess, kind: string, tool: string | null, text: string, ts: stri
   out(JSON.stringify(w));
   lastOut = Date.now();
 }
-function emitEv(s: Sess, e: Ev): void {
-  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts); return; }
+// a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run
+const calls = new Map<string, string[]>();
+function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const i = e.text.indexOf("\u0000");
-  emit(s, "tool", i >= 0 ? e.text.slice(0, i) : e.text, i >= 0 ? e.text.slice(i + 1) : "", e.ts);
+  const tool = e.kind === "tool" ? (i >= 0 ? e.text.slice(0, i) : e.text) : "";
+  const args = e.kind === "tool" && i >= 0 ? e.text.slice(i + 1) : "";
+  if (e.kind === "tool" && e.id) { if (calls.size > 20000) calls.clear(); calls.set(s.path + "\t" + e.id, [tool, args]); }
+  const pc = e.kind === "result" && e.id ? calls.get(s.path + "\t" + e.id) : undefined;
+  if (cf && !cliWatchEvent(cf, s, e.kind, pc ? pc[0] ?? "" : tool, pc ? pc[1] ?? "" : args)) return;
+  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts); return; }
+  emit(s, "tool", tool, args, e.ts);
 }
 
 const IDLE_MS = 10000;
@@ -159,22 +173,22 @@ function watch(o: Opts): void {
   process.on("SIGINT", quit); process.on("SIGTERM", quit);
   const liveDiff = (): void => {
     for (const s of sessions.values()) {
-      if (!s.pid || live.get(s.path) === s.pid || !shown(s, o)) continue;
+      if (!s.pid || live.get(s.path) === s.pid) continue;
       live.set(s.path, s.pid);
-      emit(s, "live", null, "pid " + s.pid, "");
+      if (wanted(s, o) && (!o.cf || cliWatchEvent(o.cf, s, "live", "", ""))) emit(s, "live", null, "pid " + s.pid, "");
     }
     for (const [p, pid] of [...live.entries()]) {
       const s = sessions.get(p);
       if (s && s.pid === pid) continue;
       live.delete(p);
-      if (s && shown(s, o)) emit(s, "exit", null, "pid " + pid, "");
+      if (s && visible(s, o.sc) && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "");
     }
   };
   const poll = (): void => {
     for (const s of sessions.values()) {
       let at = off.get(s.path);
       if (at === undefined) { at = 0; off.set(s.path, 0); } // appeared after start: read it whole
-      if ((o.harness && s.h !== o.harness) || (o.live && !(livePid(s) > 0))) continue;
+      if (o.cf && !cliWatchSession(o.cf, s)) continue;
       const src = sourceOf(s.h);
       const st = src.stat(s);
       if (!st) continue;
@@ -188,7 +202,7 @@ function watch(o: Opts): void {
       off.set(s.path, r.next);
       const evs: Ev[] = [];
       for (const l of r.lines) parseEvents(s.h, l, evs, s);
-      for (const e of evs) emitEv(s, e);
+      for (const e of evs) emitEv(s, e, o.cf);
     }
   };
   poll();

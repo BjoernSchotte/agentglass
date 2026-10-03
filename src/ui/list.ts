@@ -4,7 +4,7 @@ import { base } from "../util/json.ts";
 import { width, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM } from "../util/text.ts";
 import type { Sess } from "../model/types.ts";
 import { S } from "../state.ts";
-import { H, BADGE_SLOT, enrich } from "../hooks.ts";
+import { H, BADGE_SLOT, enrich, boxChips, emptyText } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current } from "../model/sessions.ts";
 import { tmuxTarget } from "../model/procs.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
@@ -40,8 +40,9 @@ export function renderSessions(): void {
   const lh = wide ? bodyH : Math.max(6, Math.floor(bodyH * 0.55));
   S.listX = 0; S.listY = 2; S.listH = lh - 2;
   const listH = S.listH; const listW = S.listW;
-  const chips = (S.hfilter ? S.hfilter + " · " : "") + (S.liveOnly ? "live · " : "") + (S.filter ? "/" + S.filter + " · " : "") + (S.fullq ? "F:" + S.fullq + " · " : "");
-  box(0, 1, listW, lh, "sessions", chips + (S.view.length ? S.sel + 1 : 0) + "/" + S.view.length, S.mode === "list");
+  const count = (S.view.length ? S.sel + 1 : 0) + "/" + S.view.length;
+  const chips = boxChips("sessions", Math.max(8, listW - 16 - count.length));
+  box(0, 1, listW, lh, "sessions", chips ? chips + " " + fg(C.dim) + count + RST : count, S.mode === "list");
   if (S.sel < S.top) S.top = S.sel;
   if (S.sel >= S.top + listH) S.top = S.sel - listH + 1;
   const top = S.top;
@@ -50,7 +51,7 @@ export function renderSessions(): void {
   let pending = 0;
   for (let r = 0; r < listH; r++) {
     const s = sessAt(top + r);
-    if (!s) { put(1, 2 + r, " ".repeat(iw)); continue; }
+    if (!s) { const e = r === 0 && !S.view.length ? emptyText("sessions") : ""; put(1, 2 + r, e ? " " + fitStyled(e, iw - 1) + fillTo(fitStyled(e, iw - 1), iw - 1) : " ".repeat(iw)); continue; }
     if (!s.headDone && pending < 40) { loadHead(s); pending++; }
     const on = top + r === S.sel;
     const b = on ? bg(C.sel) : "";

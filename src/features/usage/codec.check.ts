@@ -12,12 +12,12 @@ tokens(a, d, "claude-sonnet-4-5", 1000, 100, 0, 0, 0);
 tokens(a, d, "gpt-x-unknown", 900, 0, 0, 0, 0);
 usageExact(a, d, "whatever", 10, 0, 0, 0, 0, 0.5, "openrouter");
 credits(a, d, 7);
-a.bill = "metered"; a.plan = "team"; a.billSrc = "session";
+a.bill = "metered"; a.plan = "team"; a.billSrc = "session"; a.t0 = 1759312800000;
 const o = accOut(a, 64); const js = JSON.stringify(o);
 const back = parse(js);
 const b = accIn(back ?? {});
 const e = b.days.get([...a.days.keys()][0] ?? "");
-ok("version", VERSION === 7, String(VERSION)); // 6 is parsing-fixes' (nightly builds from main wrote it without these fields)
+ok("version", VERSION === 8, String(VERSION)); // 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
 ok("day present", !!e, [...b.days.keys()].join(","));
 if (e) {
   ok("unk", e.unk === d.unk, String(e.unk));
@@ -28,7 +28,7 @@ if (e) {
   const m0 = d.mt.get("claude-sonnet-4-5") ?? []; const m1 = e.mt.get("claude-sonnet-4-5") ?? [];
   ok("mt", m1.length === 5 && m1.join() === m0.join() && e.mt.size === d.mt.size, m1.join());
 }
-ok("acc fields", b.uc === 7 && b.bill === "metered" && b.plan === "team" && b.billSrc === "session" && b.unk === a.unk && b.cost === a.cost, JSON.stringify(o["t"]));
+ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan === "team" && b.billSrc === "session" && b.unk === a.unk && b.cost === a.cost, JSON.stringify(o["t"]));
 // an older 9-element t: uc defaults to 0
 const old: Obj = {}; for (const k of Object.keys(o)) old[k] = o[k];
 old["t"] = [1, 2, 3, 4, 5, 6, 7, 8, 9];

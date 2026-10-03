@@ -9,12 +9,18 @@ import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node
 import type { Ev } from "../model/types.ts";
 import type { Obj } from "../util/json.ts";
 import { arr, obj, str } from "../util/json.ts";
-import { modelRows, sessionObj, errorRows, parseSince, midnightOf, costRows } from "./queries.ts";
+import { modelRows, sessionObj, errorRows, parseSince, midnightOf, costRows, daysFrom } from "./queries.ts";
+import { type CliFilter, cliFilter } from "./query/cli.ts";
+import { totals } from "./query/agg.ts";
+import { setCallDaysForTest } from "./usage/callcache.ts";
 import { scopeOf } from "./agentenv.ts";
 import { startOfDay } from "./usage/record.ts";
 import { loopRuns } from "./watchdog.ts";
 
 let bad = 0;
+setCallDaysForTest(100000); // the fixtures carry fixed dates: keep their call rows whatever day the suite runs
+const NOF = cliFilter([], "", false, false, false);
+function fl(exprs: string[], harness: string): CliFilter { return cliFilter(exprs, harness, false, false, false); }
 function dayKeyOf(ms: number): string { return dayKey(new Date(ms)); }
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 const dir = "/tmp/agentglass-queries-keepme-" + String(process.pid); // keepme: the suite's AGENTGLASS_REDACT_KEEP, content stays real
@@ -97,14 +103,19 @@ const o2 = real("claude", SID2, p2, ""); o2.cwd = dir + "/p2";
 appendFileSync(sp, [call(50, "t2", "Bash", "{\"command\":\"npm run lint\"}"), res(51, "t2", "Exit code 2\nlint failed", true)].join("\n") + "\n");
 const st1 = statSync(sp); cs.size = st1.size; cs.mtime = st1.mtimeMs;
 const sc1 = scopeOf(true, [], "", dir + "/p1");
-const er = errorRows("", 0, 0, sc1, "");
-eq("errors: source", er.source, "recent");
+const er = errorRows("", 0, 0, sc1, NOF);
+eq("errors: source = the call rows", er.source, "calls");
 eq("errors: only the project's, newest first", er.rows.map((r) => str(r["arg"])).join(","), "npm run lint,npm test");
 eq("errors: text by call id", er.rows.map((r) => str(r["text"])).join("|"), "Exit code 2\nlint failed|Exit code 1\nnpm ERR! missing script: test");
-eq("errors: limit", String(errorRows("", 0, 1, sc1, "").rows.length), "1");
-eq("errors: --all-projects", String(errorRows("", 0, 0, scopeOf(true, ["--all-projects"], "", dir + "/p1"), "").rows.length), "3");
-eq("errors: since drops older", String(errorRows("", Date.parse(T(45)), 0, sc1, "").rows.length), "1");
-eq("errors: harness", String(errorRows("", 0, 0, sc1, "codex").rows.length), "0");
+eq("errors: limit", String(errorRows("", 0, 1, sc1, NOF).rows.length), "1");
+eq("errors: --all-projects", String(errorRows("", 0, 0, scopeOf(true, ["--all-projects"], "", dir + "/p1"), NOF).rows.length), "3");
+eq("errors: since drops older", String(errorRows("", Date.parse(T(45)), 0, sc1, NOF).rows.length), "1");
+eq("errors: harness", String(errorRows("", 0, 0, sc1, fl([], "codex")).rows.length), "0");
+// --filter: call clauses test each failed call, session clauses its session
+eq("errors: --filter tool", errorRows("", 0, 0, sc1, fl(["tool is Edit"], "")).rows.length + "|" + errorRows("", 0, 0, sc1, fl(["tool is Bash"], "")).rows.length, "0|2");
+eq("errors: --filter session clause", String(errorRows("", 0, 0, scopeOf(true, ["--all-projects"], "", dir + "/p1"), fl(["id ~ 99999999"], "")).rows.length), "1");
+eq("errors: durations from the rows", String(er.rows.every((r) => r["durationMs"] === null || num(r["durationMs"]) >= 0)), "true");
+eq("daysFrom", daysFrom(Date.parse("2026-09-29T12:00:00.000Z"), Date.parse("2026-10-01T12:00:00.000Z")).join(","), [dayKeyOf(Date.parse("2026-09-29T12:00:00.000Z")), dayKeyOf(Date.parse("2026-09-30T12:00:00.000Z")), dayKeyOf(Date.parse("2026-10-01T12:00:00.000Z"))].join(","));
 
 // ── cost rows: two days, two models (one unpriced), two harnesses, three projects ──
 const cx = put("codex", "cx-9", dir + "/p1"); const ax = accOf(cx);
@@ -112,23 +123,32 @@ tokens(ax, bucket(ax, 0, D2), "gpt-x", 0, 50, 0, 0, 0);
 tokens(ax, bucket(ax, 0, D2), "claude-sonnet-4-5", 1000, 0, 0, 0, 0);
 const all = scopeOf(true, ["--all-projects"], "", dir + "/p1");
 function keyed(rows: Obj[]): Map<string, Obj> { const m = new Map<string, Obj>(); for (const r of rows) m.set(str(r["key"]), r); return m; }
-function totalOf(by: string): string { const t = keyed(costRows("2026-09-01", by, all, "")).get("total"); return t ? [t["in"], t["out"], t["cacheRead"], t["cacheWrite"], t["costUsd"], t["unpricedTokens"], t["sessions"]].map((v) => String(v)).join(",") : "-"; }
+function totalOf(by: string): string { const t = keyed(costRows("2026-09-01", by, all, NOF)).get("total"); return t ? [t["in"], t["out"], t["cacheRead"], t["cacheWrite"], t["costUsd"], t["unpricedTokens"], t["sessions"]].map((v) => String(v)).join(",") : "-"; }
 const tm = totalOf("model");
 eq("cost: by model total = by harness total", tm, totalOf("harness"));
 eq("cost: by day total = by session total", totalOf("day"), totalOf("session"));
 eq("cost: by project total", totalOf("project"), tm);
-const bm = costRows("2026-09-01", "model", all, "");
+const bm = costRows("2026-09-01", "model", all, NOF);
 let sumIn = 0; let sumCost = 0; for (const r of bm) if (str(r["key"]) !== "total") { sumIn += num(r["in"]); sumCost += num(r["costUsd"]); }
 const tr = keyed(bm).get("total");
 eq("cost: model rows add up to the total", String(sumIn) + "|" + String(Math.round(sumCost * 1e6)), tr ? String(tr["in"]) + "|" + String(Math.round(num(tr["costUsd"]) * 1e6)) : "-");
 const gxr = keyed(bm).get("gpt-x");
 eq("cost: unpriced model row", gxr ? String(gxr["costUsd"]) + "|" + String(gxr["unpricedTokens"]) : "-", "null|150");
-const bd = costRows("2026-09-01", "day", all, "");
+const bd = costRows("2026-09-01", "day", all, NOF);
 eq("cost: one row per day + total", bd.map((r) => str(r["key"])).join(","), [dayKey(new Date(D1)), dayKey(new Date(D2)), "total"].filter((k: string, i: number, a: string[]) => a.indexOf(k) === i).join(","));
-eq("cost: since drops older days", String(keyed(costRows(dayKey(new Date(D2)), "day", all, "")).has(dayKey(new Date(D1)))), "false");
-const bh = keyed(costRows("2026-09-01", "harness", all, "codex"));
+eq("cost: since drops older days", String(keyed(costRows(dayKey(new Date(D2)), "day", all, NOF)).has(dayKey(new Date(D1)))), "false");
+const bh = keyed(costRows("2026-09-01", "harness", all, fl([], "codex")));
 eq("cost: --harness", [...bh.keys()].join(","), "codex,total");
-const pj = keyed(costRows("2026-09-01", "session", scopeOf(true, [], "", dir + "/p1"), ""));
+const pj = keyed(costRows("2026-09-01", "session", scopeOf(true, [], "", dir + "/p1"), NOF));
+// the rows' total is the shared aggregation's total for the same days and filter (what the Stats tab shows)
+const days = daysFrom(midnightOf("2026-09-01"), Date.now());
+function aggTotal(exprs: string[]): string { const t = totals(fl(exprs, "").f, days); return String(t.inTok) + "," + String(t.outTok) + "," + String(Math.round(t.cost * 1e6)); }
+function rowTotal(exprs: string[]): string { const t = keyed(costRows("2026-09-01", "day", all, fl(exprs, ""))).get("total"); return t ? String(t["in"]) + "," + String(t["out"]) + "," + String(Math.round(num(t["costUsd"]) * 1e6)) : "-"; }
+eq("cost total = totals()", rowTotal([]), aggTotal([]));
+eq("cost total = totals(), session filter", rowTotal(["harness is codex"]), aggTotal(["harness is codex"]));
+eq("cost total = totals(), call filter", rowTotal(["tool is Edit"]), aggTotal(["tool is Edit"]));
+eq("cost: --filter harness = --harness", JSON.stringify(costRows("2026-09-01", "harness", all, fl(["harness is codex"], ""))), JSON.stringify(costRows("2026-09-01", "harness", all, fl([], "codex"))));
+eq("cost: by project = repo names, not paths", String([...keyed(costRows("2026-09-01", "project", all, NOF)).keys()].every((k: string) => k.indexOf("/") < 0)), "true");
 eq("cost: project scope drops other projects", String(pj.has("claude:" + SID2)) + "|" + String(pj.has("claude:m-1")) + "|" + String(pj.has("codex:cx-9")), "false|false|true");
 
 // ── --since ──

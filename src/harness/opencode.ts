@@ -12,6 +12,7 @@ import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { say } from "../state.ts";
 import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, turn, skill, nlines, num, patchLines } from "../features/usage/record.ts";
+import { MQ_MSG } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live, SessionSource } from "./types.ts";
 import { toolArg, blockText, prompts } from "./common.ts";
@@ -332,8 +333,9 @@ function book(a: Acc, d: Day, model: string, tk: Obj | null, usd: number, prov: 
   if (model) a.model = model;
   usageExact(a, d, model || a.model, num(tk["input"]), num(tk["output"]) + num(tk["reasoning"]), c ? num(c["read"]) : 0, c ? num(c["write"]) : 0, 0, usd, prov);
 }
-function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: number, t1: number): void {
-  const ts = tool(a, d, name);
+// model: the issuing message's model (1.x part row modelID, 2.x the assistant row's model.id)
+function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: number, t1: number, model: string): void {
+  const ts = tool(a, d, name, model, MQ_MSG);
   const inp = st ? obj(st["input"]) : null;
   const shell = name === "shell" || name === "bash";
   pend(a, d, ts, name, id, t0, iso(t0), argOf(name, inp), shell && inp ? [str(inp["command"])] : []);
@@ -355,7 +357,7 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
   else if (name === "multiedit") for (const e of arr(inp["edits"])) { const eo = obj(e); if (eo) { add += nlines(str(eo["newString"])); del += nlines(str(eo["oldString"])); } }
   else if (name === "apply_patch" || name === "patch") { patchLines(a, d, name, str(inp["patchText"])); return; }
   else return;
-  addLines(a, d, add, del); file(d, name, path, add, del);
+  addLines(a, d, add, del); file(a, d, name, path, add, del);
 }
 function usage(a: Acc, l: string): void {
   if (l.startsWith("{\"v1\":")) {
@@ -367,7 +369,7 @@ function usage(a: Acc, l: string): void {
     const t = num(o["t"]); const d = bucket(a, t, "");
     const pt = str(p["type"]);
     if (pt === "step-finish") book(a, d, str(o["model"]), obj(p["tokens"]), num(p["cost"]), str(o["prov"]));
-    else if (pt === "tool") { const st = obj(p["state"]); useTool(a, d, str(p["tool"]) || "tool", str(p["callID"]), st, tm(st, "start"), tm(st, "end")); }
+    else if (pt === "tool") { const st = obj(p["state"]); useTool(a, d, str(p["tool"]) || "tool", str(p["callID"]), st, tm(st, "start"), tm(st, "end"), str(o["model"])); }
     return;
   }
   // a skill row is a user activation (the session's skill endpoint, a /skill or mention); the model loads skills with its skill tool
@@ -380,7 +382,7 @@ function usage(a: Acc, l: string): void {
   book(a, d, m ? str(m["id"]) : "", obj(o["tokens"]), num(o["cost"]), m ? str(m["providerID"]) : "");
   for (const b of arr(o["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "tool") continue;
-    useTool(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["state"]), tm(bo, "ran") || tm(bo, "created"), tm(bo, "completed"));
+    useTool(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["state"]), tm(bo, "ran") || tm(bo, "created"), tm(bo, "completed"), m ? str(m["id"]) : "");
   }
 }
 

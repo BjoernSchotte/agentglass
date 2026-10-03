@@ -1,8 +1,7 @@
 // agentglass — agent mode: is agentglass run by a coding agent (flags, env markers), and which session is "current"
 // SPDX-License-Identifier: Apache-2.0
 // Inside an agent the CLI never starts the TUI, never prompts, prints compact JSON and reports errors as one JSON line.
-import { writeSync, realpathSync, existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { writeSync, realpathSync } from "node:fs";
 import type { Proc, Sess } from "../model/types.ts";
 import { type Obj, str } from "../util/json.ts";
 import { section } from "../util/config.ts";
@@ -10,6 +9,7 @@ import { sessions, parentOf, loadHead } from "../model/sessions.ts";
 import { allProcs } from "../model/procs.ts";
 import { S, say } from "../state.ts";
 import { realCwd } from "../hooks.ts";
+import { projectRoot } from "./query/project.ts";
 
 // via: "flag", "env:<NAME>", "ancestor:pid N", "env:<NAME>+ancestor:pid N" or ""
 export interface AgentHost { on: boolean; harness: string; session: string; via: string }
@@ -132,14 +132,14 @@ export function cliError(code: string, msg: string, hint: string, exit: number):
 // ── agent-mode scope: what an agent may see (its output goes to the agent's model provider) ──
 export interface Scope { name: string; key: string; cwd: string; warn: string }
 export function realDir(d: string): string { try { return realpathSync(d); } catch (e) { return d; } }
-// TODO(filter-language): replace with projectOf() (repo-view's Ident later); until then the nearest directory holding .git, else the path
+// the project of a directory: the filter language's repo root (a worktree counts as its main repo), else the real path itself
 const keys = new Map<string, string>();
 export function projectKey(dir: string): string {
   if (!dir) return "";
   const hit = keys.get(dir); if (hit !== undefined) return hit;
-  const r = realDir(dir); let d = r; let k = "";
-  for (let i = 0; i < 64 && !k; i++) { if (existsSync(d + "/.git")) k = "git:" + d; else { const up = dirname(d); if (up === d) break; d = up; } }
-  if (!k) k = "path:" + r;
+  const r = realDir(dir); const root = projectRoot(r);
+  const k = root ? "git:" + root : "path:" + r;
+  if (keys.size > 4096) keys.clear();
   keys.set(dir, k);
   return k;
 }

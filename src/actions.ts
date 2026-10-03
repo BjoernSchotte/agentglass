@@ -1,7 +1,7 @@
 // agentglass — side effects: send prompts, resume, kill, trash, full-text search, external pager/editor
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, openSync, writeSync, closeSync, mkdirSync } from "node:fs";
-import { execFileSync, spawnSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { join } from "node:path";
 import { HOME, run } from "./util/fs.ts";
 import { OS } from "./platform/index.ts";
@@ -10,7 +10,7 @@ import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
 import { sessions, scan, buildView, parentOf, current } from "./model/sessions.ts";
 import { refreshProcs, rootOf, tmuxTarget, procAt, procSess, sharedDaemon } from "./model/procs.ts";
-import { HARNESSES, harnessOf, cmdOf } from "./harness/index.ts";
+import { harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
 
 export function ask(label: string, action: string, init: string): void { S.prevMode = S.mode === "input" ? S.prevMode : S.mode; S.mode = "input"; S.inputLabel = label; S.inputAction = action; S.inputText = init; }
@@ -138,17 +138,4 @@ export function trash(s: Sess): void {
     say("ok", "moved to " + OS.trashName);
   } catch (e) { say("err", "trash failed: " + String(e)); }
   buildView();
-}
-export function fullText(q: string): void {
-  S.fullq = q;
-  if (!q) { S.useFull = false; buildView(); return; }
-  const dirs: string[] = [];
-  for (const ad of HARNESSES) for (const d of ad.roots()) if (existsSync(d)) dirs.push(d);
-  const r = spawnSync("rg", ["-l", "-i", "-F", "--glob", "*.jsonl", "--", q].concat(dirs), { encoding: "utf8", timeout: 30000 });
-  let out = r.stdout;
-  if (r.error) out = run("grep", ["-rilF", "--include=*.jsonl", "--", q].concat(dirs));
-  S.fulltext = new Set<string>(out.split("\n").filter((l) => l.length > 0)); S.useFull = true;
-  for (const ad of HARNESSES) { const se = ad.search; if (se) for (const p of se(q)) S.fulltext.add(p); }
-  S.sel = 0; buildView();
-  say("info", S.fulltext.size + " sessions contain “" + q + "”");
 }

@@ -9,6 +9,7 @@ import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, isoMs, modelTok, addCost, credits } from "../features/usage/record.ts";
+import { MQ_SESS } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import { userRate } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
@@ -130,7 +131,7 @@ function usage(a: Acc, l: string): void {
     const bo = obj(b); if (!bo || str(bo["kind"]) !== "toolUse") continue;
     const u = obj(bo["data"]); if (!u) continue;
     const name = str(u["name"]) || "tool";
-    const st = tool(a, d, name);
+    const st = tool(a, d, name, "", MQ_SESS); // kiro logs no model
     const inp = obj(u["input"]);
     const cmd = (name === "shell" || name === "execute_bash") && inp ? str(inp["command"]) : "";
     pend(a, d, st, name, str(u["toolUseId"]), 0, "", toolArg(name, inp, ""), cmd ? [cmd] : []);
@@ -139,7 +140,7 @@ function usage(a: Acc, l: string): void {
     const path = str(inp["path"]) || str(inp["file_path"]);
     if (path && (inp["content"] !== undefined || inp["newStr"] !== undefined || inp["oldStr"] !== undefined)) {
       const add = nlines(str(inp["newStr"]) || str(inp["content"])); const del = nlines(str(inp["oldStr"]));
-      lines(a, d, add, del); file(d, name, path, add, del);
+      lines(a, d, add, del); file(a, d, name, path, add, del);
     }
   }
 }

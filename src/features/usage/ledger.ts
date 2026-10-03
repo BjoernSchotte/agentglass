@@ -55,7 +55,7 @@ function step(s: Sess, a: Acc): number {
   a.off += z + 1;
   return z + 1;
 }
-function apply(s: Sess, a: Acc): void {
+export function applyAcc(s: Sess, a: Acc): void { // the ledger's totals onto the session (fixtures use the real code)
   s.inTok = a.inTok; s.outTok = a.outTok; s.cacheRTok = a.cr; s.cacheWTok = a.cw;
   s.unkTok = a.unk; s.unkCr = a.uc;
   s.cost = (a.unk > 0 || a.uc > 0) && a.cost === 0 ? -1 : a.cost;
@@ -75,14 +75,14 @@ function tick(): void {
     const a = accOf(s);
     sidecar(s, a);
     if (pending(s, a)) q.push(s);
-    apply(s, a);
+    applyAcc(s, a);
   }
   q.sort((x, y) => rank(x, sod) - rank(y, sod) || y.mtime - x.mtime);
   let budget = BUDGET;
   for (const s of q) {
     const a = accOf(s);
     while (budget > 0 && Date.now() - t0 < SLICE_MS) { const n = step(s, a); if (!n) break; budget -= n; }
-    apply(s, a);
+    applyAcc(s, a);
     if (budget <= 0 || Date.now() - t0 >= SLICE_MS) break;
   }
   if (budget < BUDGET) L.ver++;
@@ -96,7 +96,7 @@ export function complete(s: Sess): void {
   const a = accOf(s);
   sidecar(s, a); // first: some adapters date log lines from it (kiro turn times)
   while (step(s, a) > 0) { /* next chunk */ }
-  apply(s, a);
+  applyAcc(s, a);
 }
 
 H.onTick.push(tick);

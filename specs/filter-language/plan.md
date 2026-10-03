@@ -249,8 +249,8 @@ Add one block per remaining harness in the same style:
 ```ts
 // src/features/usage/callcache.ts
 export function pathKey(path: string): string;  // 16 lowercase hex chars, two FNV-1a 32-bit hashes (offset bases 2166136261 and 3735928559)
-export function encodeCalls(path: string, a: Acc): string;   // {"v":1,"path","off","tool":[names],"model":[…],"prog":[…],"cmd":[…],"file":[…],"t":[…],"to":[…],"mo":[…],"mq":[…],"pg":[[…]],"cm":[[…]],"fi":[[…]],"ms":[…],"er":[…],"ou":[…],"ci":[…]} — local dictionaries, ids remapped
-export function decodeCalls(body: string, path: string, off: number): Call[] | null; // null = missing/corrupt/other path/other off → caller re-indexes the session
+export function encodeCalls(path: string, a: Acc): string;   // {"v":2,"path","off","tool","model","prog":[names],"cmd"/"file":[refs],"cmdp"/"filep":[prefix lengths],"cmdl"/"filel":[rests],"cp":id prefix,"t":[deltas],"to","mo","mq","pg":[[…]],"cm":[[…]],"fi":[[…]],"ms","er","ou","ci":[id suffixes]} — local dictionaries; command/file texts as FNV-1a hashes of the session's Day.cmds/Day.files keys (ref ≥ 0), else front-coded literals (ref = -1 - index) (review: 41% smaller)
+export function decodeCalls(body: string, path: string, a: Acc): Call[] | null; // a = the session's ledger entry (off + day counters the refs resolve against); null = missing/corrupt/other path/other off/unresolvable ref → caller re-indexes the session
 export function prune(a: Acc, cutoff: number): boolean;      // drops rows with t < cutoff, fixes a.lastCall (-1 if the newest went); true = rows removed
 export function callDays(): number;                           // intSetting("filter", "callDays", 1, 0, 90)
 export const CALLS_DIR: string;                               // ~/.agentglass/cache/calls

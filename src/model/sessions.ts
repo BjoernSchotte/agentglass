@@ -4,7 +4,7 @@ import { firstLine } from "../util/text.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
 import { S } from "../state.ts";
-import { applyMeta } from "../hooks.ts";
+import { H, applyMeta } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
 
@@ -92,19 +92,15 @@ export function isOpen(s: Sess): boolean {
   if (collapsed.has(s.path)) return false;
   return expanded.has(s.path) || activeSubs(s) > 0; // auto-expand while subagents work
 }
-function matches(s: Sess, q: string): boolean {
-  if (S.useFull && !S.fulltext.has(s.path)) return false;
-  if (!q) return true;
-  return (titleOf(s) + " " + s.cwd + " " + s.id + " " + s.h + " " + s.name + " " + s.branch + " " + s.kind).toLowerCase().indexOf(q) >= 0;
-}
+// every H.listFilter passes (the filter language's Sessions filter)
+function matches(s: Sess): boolean { for (const f of H.listFilter) if (!f(s)) return false; return true; }
 export function parentOf(s: Sess): Sess | null {
   if (!s.parent) return null;
   for (const p of sessions.values()) if (!p.parent && p.h === s.h && p.id === s.parent) return p;
   return null;
 }
 export function buildView(): void {
-  const q = S.filter.toLowerCase();
-  const filtering = q !== "" || S.useFull;
+  let filtering = false; for (const f of H.listFiltering) if (f()) filtering = true;
   const roots = new Map<string, Sess>();
   for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; if (!s.parent) roots.set(s.h + ":" + s.id, s); }
   for (const s of sessions.values()) {
@@ -117,9 +113,7 @@ export function buildView(): void {
   const tops: Sess[] = [];
   for (const s of sessions.values()) {
     if (s.depth !== 0) continue;
-    if (S.hfilter && s.h !== S.hfilter) continue;
-    if (S.liveOnly && !s.pid && activeSubs(s) === 0) continue;
-    if (!matches(s, q) && !(filtering && s.subs.some((c) => matches(c, q)))) continue;
+    if (!matches(s) && !(filtering && s.subs.some((c: Sess) => matches(c)))) continue;
     tops.push(s);
   }
   tops.sort((a, b) => (b.pid ? 1 : 0) - (a.pid ? 1 : 0) || b.last - a.last);
@@ -127,7 +121,7 @@ export function buildView(): void {
   for (const t of tops) {
     out.push(t);
     if (!t.subs.length || collapsed.has(t.path) || !(filtering || isOpen(t))) continue;
-    const kids = filtering ? t.subs.filter((c) => matches(c, q)) : t.subs.slice();
+    const kids = filtering ? t.subs.filter((c: Sess) => matches(c)) : t.subs.slice();
     kids.sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime);
     const n = filtering || expanded.has(t.path) ? kids.length : Math.max(AUTO_KIDS, activeSubs(t));
     for (const c of kids.slice(0, n)) out.push(c);

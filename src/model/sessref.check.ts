@@ -1,6 +1,6 @@
 // agentglass — self-check for session references and the agent-mode scope: scriptc build src/model/sessref.check.ts -o sr && ./sr
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import type { Sess } from "./types.ts";
 import { newSess } from "./types.ts";
 import { sessions } from "./sessions.ts";
@@ -55,6 +55,8 @@ eq("no current", String(nc.code) + "|" + nc.err, "3|no_current_session");
 
 // scope
 eq("project key: git root", projectKey(dir + "/p1/sub"), "git:" + dir + "/p1");
+mkdirSync(dir + "/wt", { recursive: true }); writeFileSync(dir + "/wt/.git", "gitdir: " + dir + "/p1/.git/worktrees/wt\n");
+eq("project key: a worktree is its main repo", projectKey(dir + "/wt"), "git:" + dir + "/p1");
 eq("project key: plain dir", projectKey(dir + "/loose"), "path:" + dir + "/loose");
 const sc = scopeOf(true, [], "", dir + "/p1");
 eq("agent default: project", sc.name + "|" + sc.key, "project|git:" + dir + "/p1");

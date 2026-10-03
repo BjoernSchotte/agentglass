@@ -5,15 +5,15 @@ import { clean, numAt } from "./util/text.ts";
 import { S, say } from "./state.ts";
 import { H, tabAt } from "./hooks.ts";
 import { buildView, titleOf, parentOf, isOpen, expanded, collapsed, current } from "./model/sessions.ts";
-import { procs, procAt, procSess, tmuxTarget, sharedDaemon } from "./model/procs.ts";
-import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, sendTmux, owner, sendPrompt, resume, killPid, trash, fullText } from "./actions.ts";
+import { procView, procAt, procSess, tmuxTarget, sharedDaemon } from "./model/procs.ts";
+import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, sendTmux, owner, sendPrompt, resume, killPid, trash } from "./actions.ts";
 import { openTranscript, moveCur, cycleSub } from "./ui/transcript.ts";
 import { openDetail, stepDetail } from "./ui/detail.ts";
 import { prevKind, prevIdx, prevKids } from "./ui/list.ts";
 import { footX0, footX1, footKey } from "./ui/footer.ts";
 import { tabX0, tabX1 } from "./ui/header.ts";
 import { quit } from "./term.ts";
-import { harnessIds, harnessOf } from "./harness/index.ts";
+import { harnessOf } from "./harness/index.ts";
 import { OS } from "./platform/index.ts";
 
 export function tokens(s: string): string[] {
@@ -42,21 +42,25 @@ export function keyName(k: string): string {
   };
   return m[k] ?? k;
 }
+// the input line's feature handlers (H.input): true = one of them asks to keep the line open
+function inputEv(ev: string): boolean { let keep = false; for (const f of H.input) if (f(S.inputAction, ev, S.inputText)) keep = true; return keep; }
 export function onInput(k: string): void {
   if (S.mode === "input") {
+    const was = S.inputText;
     if (k === "enter") {
-      S.mode = S.prevMode;
-      const v = S.inputText;
-      if (S.inputAction === "filter") { S.filter = v; S.sel = 0; buildView(); }
-      else if (S.inputAction === "fulltext") fullText(v.trim());
-      else if (S.inputAction === "send") { const s = target(); if (s && v.trim()) sendPrompt(s, v); }
-      else if (S.inputAction === "sendpane") { const p = procAt(S.psel); const t = p ? tmuxTarget(p.pid) : ""; if (t && v.trim()) sendTmux(t, v); }
-    } else if (k === "esc") { S.mode = S.prevMode; if (S.inputAction === "filter") { S.filter = ""; buildView(); } }
+      if (!inputEv("enter")) { // true: invalid input stays open, the error shows after the text
+        S.mode = S.prevMode; S.inputErr = "";
+        const v = S.inputText;
+        if (S.inputAction === "send") { const s = target(); if (s && v.trim()) sendPrompt(s, v); }
+        else if (S.inputAction === "sendpane") { const p = procAt(S.psel); const t = p ? tmuxTarget(p.pid) : ""; if (t && v.trim()) sendTmux(t, v); }
+      }
+    } else if (k === "esc") { S.mode = S.prevMode; inputEv("esc"); S.inputErr = ""; }
+    else if (k === "tab") inputEv("tab");
     else if (k === "bs") S.inputText = Array.from(S.inputText).slice(0, -1).join("");
     else if (k === "ctrl-u") S.inputText = "";
     else if (k === "ctrl-w") S.inputText = S.inputText.replace(/\S*\s*$/, "");
     else if (k.length <= 2 && k.charCodeAt(0) >= 32) S.inputText += k;
-    if (S.inputAction === "filter" && S.mode === "input") { S.filter = S.inputText; S.sel = 0; buildView(); }
+    if (S.mode === "input" && k !== "tab" && S.inputText !== was) inputEv("change"); // tab reports its own change
     return;
   }
   if (S.mode === "confirm") {
@@ -154,11 +158,6 @@ export function onInput(k: string): void {
         buildView(); const i = S.view.indexOf(root); if (i >= 0 && cur !== root && !isOpen(root)) S.sel = i;
       }
     }
-    else if (k === "/") ask("filter", "filter", S.filter);
-    else if (k === "F") ask("full-text", "fulltext", S.fullq);
-    else if (k === "h") { const ids = [""].concat(harnessIds()); S.hfilter = ids[(ids.indexOf(S.hfilter) + 1) % ids.length] ?? ""; S.sel = 0; buildView(); }
-    else if (k === "l") { S.liveOnly = !S.liveOnly; S.sel = 0; buildView(); }
-    else if (k === "esc") { S.filter = ""; S.hfilter = ""; S.liveOnly = false; S.useFull = false; S.fullq = ""; buildView(); }
     else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }
     else if (k === "R") { const s = current(); if (s) resume(s); }
     else if (k === "x") { const s = current(); const w = s && s.pid ? sharedDaemon(targetPid()) : ""; if (w) say("warn", w); else if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
@@ -169,7 +168,7 @@ export function onInput(k: string): void {
     if (k === "up" || k === "k" || k === "wheelup") S.psel--;
     else if (k === "down" || k === "j" || k === "wheeldown") S.psel++;
     else if (k === "home" || k === "g") S.psel = 0;
-    else if (k === "end" || k === "G") S.psel = procs.length - 1;
+    else if (k === "end" || k === "G") S.psel = procView.length - 1;
     else if (k === "enter" || k === "right") { const p = procAt(S.psel); const s = p ? procSess(p) : null; if (s) openTranscript(s); else say("info", "no session linked to this process"); }
     else if (k === "x" || k === "X") { // a shared daemon (OpenCode 2.x) runs every session: refused, the warning says how to stop it
       const p = procAt(S.psel); const w = p ? sharedDaemon(p.pid) : "";
@@ -183,7 +182,7 @@ export function onInput(k: string): void {
       else say("warn", "no session linked and not in tmux");
     }
     else if (k === "a") { const p = procAt(S.psel); const t = p ? tmuxTarget(p.pid) : ""; if (t && process.env.TMUX) { run("tmux", ["switch-client", "-t", t]); say("ok", "switched to " + t); } else say("warn", t ? "not inside tmux — attach with: tmux a -t " + t : "not running in tmux"); }
-    S.psel = Math.max(0, Math.min(S.psel, procs.length - 1));
+    S.psel = Math.max(0, Math.min(S.psel, procView.length - 1));
   }
 }
 export function onMouse(k: string): void {
@@ -251,5 +250,5 @@ export function onMouse(k: string): void {
   }
   if (x < S.listX || x >= S.listX + S.listW || y < S.listY || y >= S.listY + S.listH) return;
   if (S.tab === 0) { const i = S.top + (y - S.listY); if (i < S.view.length && (i === S.sel || dbl)) { S.sel = i; const s = current(); if (s) openTranscript(s); } else if (i < S.view.length) S.sel = i; }
-  else if (S.tab === 1) { const i = S.ptop + (y - S.listY); if (i < procs.length && (i === S.psel || dbl)) { S.psel = i; onInput("enter"); } else if (i < procs.length) S.psel = i; }
+  else if (S.tab === 1) { const i = S.ptop + (y - S.listY); if (i < procView.length && (i === S.psel || dbl)) { S.psel = i; onInput("enter"); } else if (i < procView.length) S.psel = i; }
 }

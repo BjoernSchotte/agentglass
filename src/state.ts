@@ -1,6 +1,7 @@
 // agentglass — all mutable UI state in one object, so every module (and feature modules) sees the same values
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "./model/types.ts";
+import type { Clause } from "./features/query/types.ts";
 import { screenOut } from "./hooks.ts";
 
 export type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "help" | "view"; // view = a full-screen feature view (S.fview names it)
@@ -20,11 +21,10 @@ interface State {
   tab: number; // 0 sessions, 1 processes, 2+ H.tabs
   mode: Mode; prevMode: Mode; fview: string;
   sel: number; top: number; psel: number; ptop: number;
-  filter: string; hfilter: string; liveOnly: boolean; // hfilter: "" (all) or a harness id
-  fulltext: Set<string>; useFull: boolean; fullq: string;
+  pins: Clause[]; local: Map<string, Clause[]>; // filter scopes: pinned (every tab, remembered) and per tab ("Sessions", "Stats", …)
   view: Sess[];
-  toast: string; toastKind: string; toastAt: number;
-  inputLabel: string; inputText: string; inputAction: string;
+  toast: string; toastKind: string; toastAt: number; toastMs: number; // toastMs: how long the current toast shows
+  inputLabel: string; inputText: string; inputAction: string; inputErr: string; // inputErr: shown in red after the input text
   confirmText: string; confirmAction: string;
   listY: number; listH: number; listX: number; listW: number;
   tv: TV | null; dv: DV | null;
@@ -41,11 +41,10 @@ export const S: State = {
   dirty: true, animating: false, repaint: false,
   tab: 0, mode: "list", prevMode: "list", fview: "",
   sel: 0, top: 0, psel: 0, ptop: 0,
-  filter: "", hfilter: "", liveOnly: false,
-  fulltext: new Set<string>(), useFull: false, fullq: "",
+  pins: [], local: new Map<string, Clause[]>(),
   view: [],
-  toast: "", toastKind: "info", toastAt: 0,
-  inputLabel: "", inputText: "", inputAction: "",
+  toast: "", toastKind: "info", toastAt: 0, toastMs: 5000,
+  inputLabel: "", inputText: "", inputAction: "", inputErr: "",
   confirmText: "", confirmAction: "",
   listY: 0, listH: 0, listX: 0, listW: 0,
   tv: null, dv: null,
@@ -58,6 +57,6 @@ export const S: State = {
 };
 
 export function say(kind: string, msg: string): void {
-  S.toast = msg; S.toastKind = kind; S.toastAt = Date.now();
+  S.toast = msg; S.toastKind = kind; S.toastAt = Date.now(); S.toastMs = 5000;
   if (S.cli && (kind === "warn" || kind === "err")) process.stderr.write(S.cliJson ? JSON.stringify({ warning: screenOut(msg) }) + "\n" : "agentglass: " + screenOut(msg) + "\n");
 }
