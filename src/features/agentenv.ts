@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import type { Proc, Sess } from "../model/types.ts";
 import { type Obj, str } from "../util/json.ts";
 import { section } from "../util/config.ts";
-import { sessions, parentOf } from "../model/sessions.ts";
+import { sessions, parentOf, loadHead } from "../model/sessions.ts";
 import { allProcs } from "../model/procs.ts";
 import { S, say } from "../state.ts";
 import { realCwd } from "../hooks.ts";
@@ -159,6 +159,8 @@ export function agentScope(args: string[]): Scope {
   return scope0;
 }
 export function inScope(s: Sess, sc: Scope): boolean { return sc.name === "all" || projectKey(realCwd(s)) === sc.key; }
+// inScope, reading the log's head first when the cwd is not known yet (it comes from the log)
+export function visible(s: Sess, sc: Scope): boolean { if (sc.name === "all") return true; if (!s.headDone || !s.cwd) loadHead(s); return inScope(s, sc); }
 // agentMode in the JSON help: full adds on + via
 export function hostObj(full: boolean): Obj {
   const h = agentHost(); const sc = agentScope(process.argv.slice(2));

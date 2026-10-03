@@ -15,7 +15,7 @@ import { REDACT } from "./redact-on.ts";
 import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
-import { agentHost, hostObj, cliError, parseDur } from "./agentenv.ts";
+import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 
 const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
@@ -25,6 +25,8 @@ const SUBS_OPT = opt("--subagents", "", "--json: include subagent sessions", "",
 const FROM_OPT = opt("--from-start", "", "--watch: replay existing logs from the beginning (combine with a filter)", "", []);
 export const FORMAT_OPT = opt("--format", "json|jsonl|csv|table", "--json: output format (default json)", "", ["json", "jsonl", "csv", "table"]);
 export const FIELDS_OPT = opt("--fields", "a,b,c", "--json: only these fields, in this order (tokens_in for nested ones)", "", []);
+const ALLP_OPT = opt("--all-projects", "", "inside an agent: every project (default: the current one only)", "", []);
+const PONLY_OPT = opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
 const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
 export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
@@ -34,14 +36,14 @@ function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.ar
 addCmd(cmd("", "agentglass", "interactive TUI", [], []));
 addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
 addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
-addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT], JSON_FIELDS));
-addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT], []));
+addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT, ALLP_OPT, PONLY_OPT], JSON_FIELDS));
+addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT], []));
 addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
 addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
 addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
 addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
 addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
-for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT]) addCmd(optRow(o));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT]) addCmd(optRow(o));
 function usage(): string {
   return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
     `--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
@@ -59,7 +61,7 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 `);
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean }
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope }
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
@@ -69,7 +71,7 @@ function out(line: string): void {
 export function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0 };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args) };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -88,10 +90,9 @@ function livePid(s: Sess): number {
   const p = parentOf(s);
   return p ? p.pid : 0;
 }
-function wanted(s: Sess, o: Opts): boolean {
-  if (o.harness && s.h !== o.harness) return false;
-  return !o.live || livePid(s) > 0;
-}
+// inside an agent only the current project (unless widened): titles, paths and events go to the agent's model provider
+function shown(s: Sess, o: Opts): boolean { return (!o.harness || s.h === o.harness) && visible(s, o.sc); }
+function wanted(s: Sess, o: Opts): boolean { return shown(s, o) && (!o.live || livePid(s) > 0); }
 export { usage };
 // the --json fields of one session (key order is the output order)
 export function jsonSess(s: Sess): Obj {
@@ -158,7 +159,7 @@ function watch(o: Opts): void {
   process.on("SIGINT", quit); process.on("SIGTERM", quit);
   const liveDiff = (): void => {
     for (const s of sessions.values()) {
-      if (!s.pid || live.get(s.path) === s.pid || (o.harness && s.h !== o.harness)) continue;
+      if (!s.pid || live.get(s.path) === s.pid || !shown(s, o)) continue;
       live.set(s.path, s.pid);
       emit(s, "live", null, "pid " + s.pid, "");
     }
@@ -166,20 +167,22 @@ function watch(o: Opts): void {
       const s = sessions.get(p);
       if (s && s.pid === pid) continue;
       live.delete(p);
-      if (s && !(o.harness && s.h !== o.harness)) emit(s, "exit", null, "pid " + pid, "");
+      if (s && shown(s, o)) emit(s, "exit", null, "pid " + pid, "");
     }
   };
   const poll = (): void => {
     for (const s of sessions.values()) {
       let at = off.get(s.path);
       if (at === undefined) { at = 0; off.set(s.path, 0); } // appeared after start: read it whole
-      if (!wanted(s, o)) continue;
+      if ((o.harness && s.h !== o.harness) || (o.live && !(livePid(s) > 0))) continue;
       const src = sourceOf(s.h);
       const st = src.stat(s);
       if (!st) continue;
       const size = st.size; const ep = epochOf(s); const was = eps.get(s.path); eps.set(s.path, ep);
       if (size < at || (was !== undefined && was !== ep)) { off.set(s.path, size); continue; } // truncated/rewritten/other cursor: resync at the end
       if (size === at) continue;
+      // scope after the size check: a log without a cwd yet is re-read only while it grows, and stays unread until it has one
+      if (!visible(s, o.sc)) { if (s.cwd) off.set(s.path, size); continue; }
       if (!headed.has(s.path)) { headed.add(s.path); if (!s.headDone) loadHead(s); loadTail(s); } // title/cwd for the output
       const r = src.lines(s, at, size);
       off.set(s.path, r.next);

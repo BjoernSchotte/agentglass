@@ -18,7 +18,7 @@ import { REDACT } from "./redact-on.ts";
 import { jsonSess, discover, JSON_FIELDS } from "./cli.ts";
 import { type CmdRec, type OptRec, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
-import { type Scope, agentHost, agentScope, inScope, cliError, realDir } from "./agentenv.ts";
+import { type Scope, agentHost, agentScope, visible, cliError, realDir } from "./agentenv.ts";
 import { type Found, resolveRef } from "../model/sessref.ts";
 
 function r6(c: number): number { return Math.round(c * 1e6) / 1e6; }
@@ -116,7 +116,7 @@ export function sessionObj(s: Sess): Obj {
   const evs: Ev[][] = []; const srcs: Src[] = [];
   for (let i = 0; i < fam.length; i++) { const x = fam[i]; const e = allEvents(x); evs.push(e); srcs.push({ evs: e, live: i === 0 ? x.pid > 0 : subActive(x), kind: x.kind, spawn: i === 0 ? "" : spawnOf(x) }); }
   const sm = summary(buildGraph(srcs, Date.now()));
-  const o = jsonSess(s);
+  const o = jsonSess(s); o["costUsd"] = s.cost < 0 ? null : r6(s.cost);
   o["turns"] = sm.turns; o["wallMs"] = sm.wall; o["activeMs"] = sm.active;
   o["models"] = modelRows(fam, null);
   o["tools"] = toolRows(fam, 15);
@@ -279,7 +279,7 @@ export function qopts(cmd: string, args: string[], allowed: string[], refOk: boo
 }
 // a reference that must resolve (exit 2/3/4 otherwise); an id outside the agent-mode scope is not found (current/parent are the agent's own)
 function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
-  const f: Found = resolveRef(ref, root);
+  const f: Found = resolveRef(ref, root, (x: Sess): boolean => visible(x, sc));
   if (!f.s) {
     if (f.code === 4) cliError("ambiguous", f.msg, "candidates: " + f.cands.slice(0, 5).map((c: Sess) => c.h + ":" + c.id).join(", ") + (f.cands.length > 5 ? ", …" : ""), 4);
     cliError(f.err || "not_found", f.msg, f.hint, f.code || 3);
@@ -324,11 +324,9 @@ function list(args: string[]): void {
   }
   ss.sort((a, b) => b.mtime - a.mtime);
   const rows: Obj[] = [];
-  for (const s of o.limit > 0 ? ss.slice(0, o.limit) : ss) { loadHead(s); loadTail(s); complete(s); const r = jsonSess(s); r["project"] = base(s.cwd); rows.push(r); }
+  for (const s of o.limit > 0 ? ss.slice(0, o.limit) : ss) { loadHead(s); loadTail(s); complete(s); const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = base(s.cwd); rows.push(r); }
   out(formatRows(rows, o.f, false, LIST_COLS, SESS_FIELDS, false));
 }
-// in the scope; the cwd comes from the log's head, read only when the scope needs it
-function visible(s: Sess, sc: Scope): boolean { if (sc.name === "all") return true; if (!s.headDone) loadHead(s); return inScope(s, sc); }
 // a subagent is live while its parent runs
 function kidsLive(s: Sess): boolean { for (const p of sessions.values()) if (!p.parent && p.h === s.h && p.id === s.parent) return p.pid > 0; return false; }
 function errors(args: string[]): void {

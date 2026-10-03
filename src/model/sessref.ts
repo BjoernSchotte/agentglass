@@ -16,20 +16,26 @@ function pick(ms: Sess[], ref: string): Found {
   const c = ms.slice().sort((a, b) => b.mtime - a.mtime);
   return { s: null, code: 4, cands: c, err: "ambiguous", msg: "session reference " + ref + " is ambiguous (" + String(c.length) + " sessions)", hint: "use more characters or <harness>:<id>" };
 }
-// "<harness>:<id>", an exact id (any harness, subagents included), else a unique prefix of ≥ 6 characters
-export function findSession(ref: string): Found {
+// matches of a reference: the ones in scope decide; only out-of-scope ones → not found without naming them (no ids leak)
+function among(ms: Sess[], ref: string, ok: (s: Sess) => boolean): Found {
+  const in_: Sess[] = []; for (const s of ms) if (ok(s)) in_.push(s);
+  if (in_.length) return pick(in_, ref);
+  const f = none(3, "session " + ref + " belongs to another project", "use --all-projects"); f.err = "out_of_scope"; return f;
+}
+// "<harness>:<id>", an exact id (any harness, subagents included), else a unique prefix of ≥ 6 characters; ok = the scope
+export function findSession(ref: string, ok: (s: Sess) => boolean): Found {
   const i = ref.indexOf(":");
   if (i > 0 && /^[a-z0-9-]+$/.test(ref.slice(0, i))) {
     const h = ref.slice(0, i); const id = ref.slice(i + 1);
     if (!isHarness(h)) return none(3, "unknown harness " + h, "");
     const ms: Sess[] = []; for (const s of sessions.values()) if (s.h === h && s.id === id) ms.push(s);
-    return ms.length ? pick(ms, ref) : none(3, "no " + h + " session " + id, "");
+    return ms.length ? among(ms, ref, ok) : none(3, "no " + h + " session " + id, "");
   }
   const ex: Sess[] = []; for (const s of sessions.values()) if (s.id === ref) ex.push(s);
-  if (ex.length) return pick(ex, ref);
+  if (ex.length) return among(ex, ref, ok);
   if (ref.length < MIN_PREFIX) return none(2, "session reference " + ref + " is too short", "give at least " + String(MIN_PREFIX) + " characters of the id, or current / last / parent");
   const ms: Sess[] = []; for (const s of sessions.values()) if (s.id.startsWith(ref)) ms.push(s);
-  return ms.length ? pick(ms, ref) : none(3, "no session " + ref, "agentglass sessions lists them");
+  return ms.length ? among(ms, ref, ok) : none(3, "no session " + ref, "agentglass sessions lists them");
 }
 // the newest top-level session in this directory's project (or exactly this directory), other than cur; heads are read
 // newest first until one matches (a session's cwd is known only from its log)
@@ -45,8 +51,8 @@ export function lastSession(cwd: string, cur: Sess | null): Sess | null {
   }
   return null;
 }
-// current (the default inside an agent), last, parent (= the current session's root), else findSession; needs discover() first
-export function resolveRef(ref: string, root: boolean): Found {
+// current (the default inside an agent), last, parent (= the current session's root), else findSession within ok; needs discover() first
+export function resolveRef(ref: string, root: boolean, ok: (s: Sess) => boolean): Found {
   if (ref === "current" || ref === "parent") {
     const c = currentSession(root || ref === "parent");
     if (c.s) return found(c.s);
@@ -57,5 +63,5 @@ export function resolveRef(ref: string, root: boolean): Found {
     const s = lastSession(process.cwd(), c.s);
     return s ? found(s) : none(3, "no other session in this project", "agentglass sessions --all-projects lists them all");
   }
-  return findSession(ref);
+  return findSession(ref, ok);
 }

@@ -66,6 +66,14 @@ eq "unknown id" "$rc" 3
 set +e; agent session "$GM" > /dev/null 2> "$t/e"; rc=$?; set -e
 eq "other project's session" "$rc|$(jq -r '.error.code' < "$t/e")" "3|out_of_scope"
 eq "other project's session, widened" "$(agent session "$GM" --all-projects --fields harness | jq -r '.harness')" gemini
+# the session list and the event stream are scoped too: no other project's titles, paths or events
+eq "--json: project scope" "$(agent --json | jq -c 'map(.harness) | sort')" '["claude","codex"]'
+eq "--json --all-projects" "$(agent --json --all-projects | jq -r 'length')" 3
+eq "--watch: project scope" "$(agent --watch --from-start --for 2s | jq -r '.harness' | sort -u | tr '\n' ' ')" "claude codex "
+eq "--watch --all-projects" "$(agent --watch --from-start --for 2s --all-projects | jq -r '.harness' | sort -u | tr '\n' ' ')" "claude codex gemini "
+# a prefix that only matches other projects' sessions is out of scope, not ambiguous (no candidate ids leak)
+set +e; (cd "$p2" && agent session abcdef > /dev/null 2> "$t/e"); rc=$?; set -e
+eq "prefix of other projects" "$rc|$(jq -r '.error.code' < "$t/e")|$(grep -c "$CX" < "$t/e")" "3|out_of_scope|0"
 e=$(agent errors)
 eq "errors: project scope" "$(printf "%s" "$e" | jq -c '[.scope, .source, (.rows | map(.harness))]')" '["project","recent",["claude"]]'
 eq "errors: text by call id" "$(printf "%s" "$e" | jq -r '.rows[0].text' | head -1)" "Exit code 1"

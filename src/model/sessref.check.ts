@@ -20,7 +20,7 @@ const b = put("codex", "aaaaaa-2222", dir + "/p1/sub", 300, "");
 const c = put("claude", "cccccc-3333", dir + "/p2", 500, "");
 const sub = put("claude", "agent-x1", dir + "/p1", 400, "aaaaaa-1111");
 put("gemini", "zz-old", dir + "/p1", 50, "");
-function f(ref: string): string { const r = findSession(ref); return String(r.code) + "|" + (r.s ? r.s.id : "-") + "|" + r.cands.map((x: Sess) => x.id).join(","); }
+function f(ref: string): string { const r = findSession(ref, (x: Sess): boolean => true); return String(r.code) + "|" + (r.s ? r.s.id : "-") + "|" + r.cands.map((x: Sess) => x.id).join(","); }
 
 eq("exact id", f("cccccc-3333"), "0|cccccc-3333|");
 eq("exact subagent id", f("agent-x1"), "0|agent-x1|");
@@ -31,6 +31,14 @@ eq("unique 6-char prefix", f("cccccc"), "0|cccccc-3333|");
 eq("shared prefix: ambiguous, newest first", f("aaaaaa"), "4|-|aaaaaa-2222,aaaaaa-1111");
 eq("too short", f("ccc"), "2|-|");
 eq("unknown", f("zzzzzz"), "3|-|");
+// scoped: out-of-scope matches never decide and are never named
+function fs(ref: string): string { const r = findSession(ref, (x: Sess): boolean => x.cwd.startsWith(dir + "/p1")); return String(r.code) + "|" + r.err + "|" + (r.s ? r.s.id : "-") + "|" + r.cands.map((x: Sess) => x.id).join(","); }
+eq("scoped: other project's id", fs("cccccc-3333"), "3|out_of_scope|-|");
+eq("scoped: other project's prefix", fs("cccccc"), "3|out_of_scope|-|");
+eq("scoped: in-scope id", fs("aaaaaa-1111"), "0||aaaaaa-1111|");
+put("claude", "aaaaaa-9999", dir + "/p2", 900, "");
+eq("scoped: a shared prefix resolves to the in-scope pair only", fs("aaaaaa"), "4|ambiguous|-|aaaaaa-2222,aaaaaa-1111");
+eq("scoped: prefix unique in scope", fs("aaaaaa-1"), "0||aaaaaa-1111|");
 
 // last: newest top-level session of the cwd's project (sub dirs count), not the current one
 eq("last from p1", (lastSession(dir + "/p1", null) ?? c).id, "aaaaaa-2222");
@@ -38,11 +46,11 @@ eq("last excludes current", (lastSession(dir + "/p1", b) ?? c).id, "aaaaaa-1111"
 eq("last of a dir without sessions", String(lastSession(dir + "/loose", null) === null), "true");
 // current / parent via the env session id (no process list here)
 setHost({ on: true, harness: "claude", session: "agent-x1", via: "env:CLAUDECODE" });
-eq("current", (resolveRef("current", false).s ?? c).id, "agent-x1");
-eq("current --root", (resolveRef("current", true).s ?? c).id, "aaaaaa-1111");
-eq("parent", (resolveRef("parent", false).s ?? c).id, "aaaaaa-1111");
+eq("current", (resolveRef("current", false, (x: Sess): boolean => true).s ?? c).id, "agent-x1");
+eq("current --root", (resolveRef("current", true, (x: Sess): boolean => true).s ?? c).id, "aaaaaa-1111");
+eq("parent", (resolveRef("parent", false, (x: Sess): boolean => true).s ?? c).id, "aaaaaa-1111");
 setHost({ on: true, harness: "claude", session: "", via: "env:CLAUDECODE" });
-const nc = resolveRef("current", false);
+const nc = resolveRef("current", false, (x: Sess): boolean => true);
 eq("no current", String(nc.code) + "|" + nc.err, "3|no_current_session");
 
 // scope
