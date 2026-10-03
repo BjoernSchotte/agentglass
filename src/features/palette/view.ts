@@ -229,7 +229,7 @@ export function paletteKey(k: string): void {
   else if (k === "wheeldown") move(3);
   else if (k === "right") { const it = selected(); if (it && it.s && !P.levels.length) enterSub(); }
   else if (k === "left") { if (P.levels.length) leaveSub(); }
-  else if (k === "tab") { if (!P.levels.length) { P.scope = (P.scope + 1) % SCOPES.length; if (PREFIX.indexOf(P.q.charAt(0)) > 0) P.q = P.q.slice(1); P.selId = ""; rank(); } }
+  else if (k === "tab") { if (!P.levels.length) { P.scope = (scopeOf() + 1) % SCOPES.length; if (PREFIX.indexOf(P.q.charAt(0)) > 0) P.q = P.q.slice(1); P.selId = ""; rank(); } } // from the shown scope (a typed prefix too)
   else {
     const was = P.q;
     if (k === "bs") P.q = Array.from(P.q).slice(0, -1).join("");

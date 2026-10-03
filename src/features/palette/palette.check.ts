@@ -86,6 +86,7 @@ key("\x1b"); key("\x0b");
 const sc: number[] = []; for (let i = 0; i < 5; i++) { sc.push(P.scope); key("\t"); }
 ok("tab cycles 5 scopes", JSON.stringify(sc) === "[0,1,2,3,4]" && P.scope === 0, JSON.stringify(sc));
 type("?"); ok("? lists the prefixes", P.help, String(P.help)); key("\x1b");
+key("\x0b"); type("@"); key("\t"); ok("tab after a typed @ goes on to projects", P.scope === 3 && P.q === "", String(P.scope) + " " + P.q); key("\x1b");
 // selection kept by id across re-ranking
 key("\x0b"); type("@00");
 const want = rows().find((r) => r.s === s2); ok("second session listed", want !== undefined, rows().map((r) => r.text).join(" | "));
