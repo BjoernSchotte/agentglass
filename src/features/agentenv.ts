@@ -8,7 +8,7 @@ import { type Obj, str } from "../util/json.ts";
 import { section } from "../util/config.ts";
 import { sessions, parentOf } from "../model/sessions.ts";
 import { allProcs } from "../model/procs.ts";
-import { say } from "../state.ts";
+import { S, say } from "../state.ts";
 import { realCwd } from "../hooks.ts";
 
 // via: "flag", "env:<NAME>", "ancestor:pid N", "env:<NAME>+ancestor:pid N" or ""
@@ -77,8 +77,8 @@ function envMap(): Record<string, string> {
   return m;
 }
 let host: AgentHost | null = null;
-export function agentHost(): AgentHost { if (!host) host = detectHost(envMap(), process.argv.slice(2)); return host; }
-export function setHost(h: AgentHost): void { host = h; } // checks
+export function agentHost(): AgentHost { if (!host) setHost(detectHost(envMap(), process.argv.slice(2))); return host as AgentHost; }
+export function setHost(h: AgentHost): void { host = h; S.cliJson = h.on; } // checks set it directly
 // a human can answer a prompt: a terminal on stdin and no agent around
 export function interactive(): boolean { return process.stdin.isTTY === true && !agentHost().on; }
 

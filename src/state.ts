@@ -34,6 +34,7 @@ interface State {
   prevSess: Sess | null; prevY0: number; prevX0: number; prevX1: number; // preview panel, for mouse hits
   lastClickY: number; lastClickAt: number;
   cli: boolean; // --json / --watch: no screen, say() warnings go to stderr
+  cliJson: boolean; // inside a coding agent: those warnings as one JSON line each ({"warning": …})
 }
 export const S: State = {
   W: 80, H: 24, frame: 0,
@@ -53,10 +54,10 @@ export const S: State = {
   helpScroll: 0,
   prevSess: null, prevY0: 0, prevX0: 0, prevX1: 0,
   lastClickY: -1, lastClickAt: 0,
-  cli: false,
+  cli: false, cliJson: false,
 };
 
 export function say(kind: string, msg: string): void {
   S.toast = msg; S.toastKind = kind; S.toastAt = Date.now();
-  if (S.cli && (kind === "warn" || kind === "err")) process.stderr.write("agentglass: " + screenOut(msg) + "\n");
+  if (S.cli && (kind === "warn" || kind === "err")) process.stderr.write(S.cliJson ? JSON.stringify({ warning: screenOut(msg) }) + "\n" : "agentglass: " + screenOut(msg) + "\n");
 }

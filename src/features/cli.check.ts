@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
-import { cliError } from "./agentenv.ts";
+import { cliError, agentHost } from "./agentenv.ts";
+import { S, say } from "../state.ts";
 
 const mode = process.argv[2] ?? "";
 if (mode === "--child-error") cliError("usage", "bad \"thing\"", "try --x", 2);
 if (mode === "--child-nohint") cliError("not_found", "no such session", "", 3);
+if (mode === "--child-warn") { agentHost(); S.cli = true; say("warn", "careful"); process.exit(0); }
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -25,6 +27,8 @@ eq("agent: no hint key", n[2] ?? "", "{\"error\":{\"code\":\"not_found\",\"messa
 eq("agent: exit 3", n[0] ?? "", "3");
 const h = child("--child-error", "0");
 eq("human: plain text", h[2] ?? "", "agentglass: bad \"thing\"\n  hint: try --x\n");
+eq("agent: warning as a JSON line", (child("--child-warn", "1")[2] ?? ""), "{\"warning\":\"careful\"}\n");
+eq("human: plain warning", (child("--child-warn", "0")[2] ?? ""), "agentglass: careful\n");
 rmSync(dir, { recursive: true, force: true });
 
 console.log(bad ? bad + " failed" : "cli: all checks passed");

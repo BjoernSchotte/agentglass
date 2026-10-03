@@ -168,6 +168,7 @@ function main(): void {
   const GLOBAL = ["--agent", "--no-agent", "--redact"];
   const raw = process.argv.slice(2);
   const args = raw.filter((a: string) => GLOBAL.indexOf(a) < 0).concat(raw.filter((a: string) => GLOBAL.indexOf(a) >= 0));
+  agentHost(); // decided before any handler can warn (warnings are JSON lines inside an agent)
   for (const f of H.cli) if (f(args)) return;
   // inside a coding agent the TUI would hang its tool call (PTY shells pass the TTY check): what exists, as compact JSON
   if (agentHost().on) { writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0); }
