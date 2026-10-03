@@ -1,7 +1,7 @@
 // agentglass — golden checks for the CLI formatter: scriptc build src/features/format.check.ts -o fm && ./fm
 // SPDX-License-Identifier: Apache-2.0
 import type { Obj } from "../util/json.ts";
-import { flatten, pickCols, csvCell, render, defaultFormat } from "./format.ts";
+import { flatten, pickCols, csvCell, render, defaultFormat, colsOf } from "./format.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ":\n got  " + JSON.stringify(got) + "\n want " + JSON.stringify(want)); } }
@@ -31,12 +31,20 @@ eq("csv number unguarded", csvCell(-3), "-3");
 eq("csv CR quoted", csvCell("a\rb"), "\"a\rb\"");
 eq("csv null", csvCell(null), "");
 
-// table (3+3+4+14 columns + 4 gaps of 2 leave 8 for the title at 40): CJK/emoji count 2 columns, the widest text column is cut with …, numbers right-aligned, trailing blanks trimmed
+// table (3+4 number columns + 4 gaps of 2 leave 25 for the text columns 3+14+18 at 40): the long text columns share the room
+// (both capped at 11, the short id stays whole); CJK/emoji count 2 columns, cuts end in …, numbers right-aligned, trailing blanks trimmed
 eq("table", render(rows, ["id", "neg", "cost", "cjk", "title"], "table", false, false, false, 40),
-  "id   neg  cost  cjk             title\n" +
-  "a     -3        日本語テキスト  Fix, \"q…\n" +
-  "bb    12  0.50  日本語テキスト  Fix, \"q…\n" +
-  "ccc    7  1.23  日本語テキスト  Fix, \"q…");
+  "id   neg  cost  cjk          title\n" +
+  "a     -3        日本語テキ…  Fix, \"quot…\n" +
+  "bb    12  0.50  日本語テキ…  Fix, \"quot…\n" +
+  "ccc    7  1.23  日本語テキ…  Fix, \"quot…");
+// a table shows ISO times as local "MM-DD HH:MM" (json/csv keep them)
+const iso = "2026-03-04T05:06:07.000Z"; const ld = new Date(iso);
+const two = (n: number): string => (n < 10 ? "0" : "") + String(n);
+eq("table: local time", render([{ updated: iso }], [], "table", false, false, false, 40), "updated\n" + two(ld.getMonth() + 1) + "-" + two(ld.getDate()) + " " + two(ld.getHours()) + ":" + two(ld.getMinutes()));
+eq("csv keeps ISO", render([{ updated: iso }], [], "csv", false, false, false, 40), "updated\n" + iso);
+// still too wide with every text column at 4: the gaps shrink to one space
+eq("table: narrow gaps", render([{ name: "abcdefgh", a: 123456, b: 654321 }], [], "table", false, false, false, 18), "name      a      b\nabc… 123456 654321");
 eq("table: decimals per column", render([{ c: 0.0012 }, { c: 0.5 }], [], "table", false, false, false, 40), "     c\n0.0012\n0.5000");
 eq("table cuts CJK on a column boundary", render(rows.slice(0, 1), ["cjk", "emoji"], "table", false, false, false, 16),
   "cjk        emoji\n日本語テ…  🚀 go");
@@ -55,6 +63,11 @@ eq("default: --json", defaultFormat(false, true, true), "json");
 eq("default: agent", defaultFormat(true, true, false), "json");
 eq("default: tty", defaultFormat(false, true, false), "table");
 eq("default: pipe", defaultFormat(false, false, false), "json");
+
+// table width: $COLUMNS, else the terminal's own width (stty size), else 120
+eq("width: $COLUMNS", String(colsOf("100", "24 77")), "100");
+eq("width: the terminal", String(colsOf("", "24 77")), "77");
+eq("width: neither", String(colsOf("", "")), "120");
 
 console.log(bad ? bad + " failed" : "format: all checks passed");
 if (bad) process.exit(1);

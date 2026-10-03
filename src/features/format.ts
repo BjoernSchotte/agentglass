@@ -1,5 +1,6 @@
 // agentglass — one formatter for every CLI list: rows of plain objects → json | jsonl | csv | table, with --fields selection
 // SPDX-License-Identifier: Apache-2.0
+import { spawnSync } from "node:child_process";
 import { type Obj, obj } from "../util/json.ts";
 import { width, cw, cpOf, clean } from "../util/text.ts";
 import { agentHost, cliError } from "./agentenv.ts";
@@ -74,10 +75,14 @@ function numText(n: number): string {
   if (Number.isInteger(n)) return String(n);
   return String(Math.abs(n) >= 1 ? Math.round(n * 100) / 100 : Math.round(n * 10000) / 10000);
 }
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+function two(n: number): string { return (n < 10 ? "0" : "") + String(n); }
+// an ISO time as local "MM-DD HH:MM": the table is for a person, and the full stamp would be cut first
+function localTime(s: string): string { const d = new Date(s); return d.getTime() > 0 ? two(d.getMonth() + 1) + "-" + two(d.getDate()) + " " + two(d.getHours()) + ":" + two(d.getMinutes()) : s; }
 function cellText(v: unknown): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "number") return numText(v as number);
-  if (typeof v === "string") return clean(v as string);
+  if (typeof v === "string") return ISO.test(v as string) ? localTime(v as string) : clean(v as string);
   return clean(typeof v === "boolean" ? String(v) : JSON.stringify(v));
 }
 // cut to w columns with … (no padding)
@@ -102,15 +107,18 @@ function table(rows: Obj[], cols: string[], tty: boolean, cols0: number): string
   const cells = flat.map((r: Obj) => cols.map((c: string, i: number) => { const v = r[c]; const d = dec[i] ?? -1; return d >= 0 && typeof v === "number" ? (v as number).toFixed(d) : cellText(v); }));
   const w: number[] = [];
   for (let i = 0; i < cols.length; i++) { let m = width(cols[i] ?? ""); for (const r of cells) m = Math.max(m, width(i < r.length ? r[i] : "")); w.push(m); }
-  // too wide: cut the widest text column, again and again, down to 4 columns each
-  for (;;) {
-    let tot = 0; for (const x of w) tot += x; tot += 2 * Math.max(0, w.length - 1);
-    if (tot <= cols0) break;
-    let wi = -1; for (let i = 0; i < w.length; i++) if (!num[i] && (w[i] ?? 0) > 4 && (wi < 0 || (w[i] ?? 0) > (w[wi] ?? 0))) wi = i;
-    if (wi < 0) break;
-    w[wi] = Math.max(4, (w[wi] ?? 0) - (tot - cols0));
-  }
-  const line = (r: string[]): string => r.map((v: string, i: number) => pad(cut(v, w[i] ?? 0), w[i] ?? 0, num[i] ?? false)).join("  ").replace(/\s+$/, "");
+  // too wide: the text columns share the room (one common cap, at least 4 each; short ones stay whole); gaps of 2, or 1
+  // when even the 4-column floors do not fit
+  const fixed = (): number => { let t = 0; for (let i = 0; i < w.length; i++) if (num[i]) t += w[i] ?? 0; return t; };
+  const floors = (): number => { let t = 0; for (let i = 0; i < w.length; i++) if (!num[i]) t += Math.min(4, w[i] ?? 0); return t; };
+  const gaps = Math.max(0, w.length - 1);
+  const gap = fixed() + floors() + 2 * gaps <= cols0 ? 2 : 1;
+  const room = cols0 - fixed() - gap * gaps;
+  const sumAt = (cap: number): number => { let t = 0; for (let i = 0; i < w.length; i++) if (!num[i]) t += Math.min(cap, w[i] ?? 0); return t; };
+  let cap = 0; for (let i = 0; i < w.length; i++) if (!num[i]) cap = Math.max(cap, w[i] ?? 0);
+  while (cap > 4 && sumAt(cap) > room) cap--;
+  for (let i = 0; i < w.length; i++) if (!num[i]) w[i] = Math.min(cap, w[i] ?? 0);
+  const line = (r: string[]): string => r.map((v: string, i: number) => pad(cut(v, w[i] ?? 0), w[i] ?? 0, num[i] ?? false)).join(" ".repeat(gap)).replace(/\s+$/, "");
   const hd = line(cols);
   return [tty ? B + hd + R : hd].concat(cells.map(line)).join("\n");
 }
@@ -146,8 +154,19 @@ export function defaultFormat(agent: boolean, stdoutTty: boolean, legacyJson: bo
   if (legacyJson || agent) return "json";
   return stdoutTty ? "table" : "json";
 }
-// $COLUMNS, else 120
-export function termCols(): number { const c = Number(process.env.COLUMNS ?? ""); return c > 20 ? c : 120; }
+// $COLUMNS (shells do not export it), else the terminal's width from "stty size" output ("rows cols"), else 120
+export function colsOf(env: string, stty: string): number {
+  const c = Number(env); if (c > 20) return c;
+  const m = /^\d+ (\d+)$/.exec(stty.trim()); const w = m ? Number(m[1] ?? "") : 0;
+  return w > 20 ? w : 120;
+}
+// stty only for a person at a terminal (tables elsewhere use $COLUMNS or 120)
+function termCols(tty: boolean): number {
+  const env = process.env.COLUMNS ?? "";
+  if (Number(env) > 20 || !tty) return colsOf(env, "");
+  const r = spawnSync("sh", ["-c", "stty size < /dev/tty"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  return colsOf(env, r.status === 0 ? String(r.stdout) : "");
+}
 
 // --format F / --fields a,b,c of one command line (fmt "" = the default for where the output goes)
 export interface Fmt { fmt: string; fields: string[] }
@@ -171,5 +190,5 @@ export function formatRows(rows: Obj[], f: Fmt, single: boolean, tableCols: stri
     cols = pc.cols;
   }
   const human = tty && !agent;
-  return render(rows, cols, fmt, single, fmt === "json" && human, human && process.env.NO_COLOR === undefined, termCols());
+  return render(rows, cols, fmt, single, fmt === "json" && human, human && process.env.NO_COLOR === undefined, termCols(tty));
 }

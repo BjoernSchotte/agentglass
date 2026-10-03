@@ -117,7 +117,7 @@ export function sessionObj(s: Sess): Obj {
   for (let i = 0; i < fam.length; i++) { const x = fam[i]; const e = allEvents(x); evs.push(e); srcs.push({ evs: e, live: i === 0 ? x.pid > 0 : subActive(x), kind: x.kind, spawn: i === 0 ? "" : spawnOf(x) }); }
   const sm = summary(buildGraph(srcs, Date.now()));
   const o = jsonSess(s); o["costUsd"] = s.cost < 0 ? null : r6(s.cost);
-  o["turns"] = sm.turns; o["wallMs"] = sm.wall; o["activeMs"] = sm.active;
+  o["turns"] = sm.turns; o["wallMs"] = Math.round(sm.wall); o["activeMs"] = Math.round(sm.active);
   o["models"] = modelRows(fam, null);
   o["tools"] = toolRows(fam, 15);
   const texts = new Map<string, string>();
