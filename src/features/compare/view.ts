@@ -33,6 +33,8 @@ export interface CState {
 }
 export const CV: { st: CState | null } = { st: null };
 const SECS = ["summary", "tools", "programs", "commands", "files", "models", "timeline"];
+const SECS_N = ["sum", "tools", "progs", "cmds", "files", "models", "time"]; // below 110 columns
+function secName(i: number, W: number): string { return (W >= 110 ? SECS[i] : SECS_N[i]) ?? ""; }
 
 // ── state beside CState: the count in flight and the rows of the shown section ──
 interface Item { kind: string /* metric | tool | cnt | file | head | model | spark */; i: number; key: string }
@@ -78,15 +80,17 @@ function dur(ms: number): string { return ms < 0 ? "–" : fmtMs(ms); }
 
 // ── layout: H − 2 lines (screen rows 1 … H−2), styled ──
 function header(st: CState, W: number): string {
-  const sep = fg(C.dim) + "  ·  " + RST;
-  const left = fg(C.accent) + CSI + "1m" + "compare" + RST + "  " + fg(C.accent) + "A: " + RST + fg(C.text) + labelOf(st.A) + RST + sep + fg(C.accent) + "B: " + RST + fg(C.text) + labelOf(st.B) + RST;
+  // each label gets half the room it needs at most: a long first prompt never pushes B off the line
+  const room = Math.max(10, W - 2 - 9 - 5 - 6); const la = labelOf(st.A); const lb = labelOf(st.B);
+  const wa = width(la) + width(lb) <= room ? width(la) : Math.max(Math.floor(room / 2), room - width(lb));
+  const left = fg(C.accent) + CSI + "1m" + "compare" + RST + "  " + fg(C.accent) + "A: " + RST + fg(C.text) + fit(la, Math.min(width(la), wa)) + RST + fg(C.dim) + "  ·  " + RST + fg(C.accent) + "B: " + RST + fg(C.text) + lb + RST;
   return " " + line(left, W - 2) + " ";
 }
 function tabsLine(st: CState, W: number): string {
   let l = "";
   for (let i = 0; i < SECS.length; i++) {
     if (i === 6 && !hasTimeline(st)) continue;
-    l += (i === st.sec ? bg(C.accent) + fg("20;20;24") + CSI + "1m" : fg(C.sub)) + " " + SECS[i] + " " + RST + " ";
+    l += (i === st.sec ? bg(C.accent) + fg("20;20;24") + CSI + "1m" : fg(C.sub)) + " " + secName(i, W) + " " + RST + " ";
   }
   const c = st.cmp; const fl: string[] = [];
   if (counting()) { const j = V.job; fl.push(fg(C.accent) + spin() + RST + fg(C.sub) + " counting " + String(Math.floor((j ? cmpProgress(j) : 0) * 100)).padStart(3) + "%" + RST); }
@@ -170,11 +174,11 @@ function modelLine(r: ModelRow, W: number, on: boolean, limited: boolean): strin
   return line(l, W) + RST;
 }
 const BLK = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-// slots merged to fit w columns: each column sums the slots it covers
-function spark(vals: number[], n: number, w: number, mx: number): string {
-  if (!n || w <= 0) return "";
-  const per = Math.max(1, Math.ceil(n / w)); let s = "";
-  for (let i = 0; i < n; i += per) { let v = 0; for (let k = i; k < i + per && k < vals.length; k++) v += vals[k] ?? 0; s += v <= 0 ? fg(C.line) + "·" : fg(C.accent) + (BLK[Math.max(1, Math.round((v / Math.max(1, mx)) * 8))] ?? "█"); }
+// slots merged per column (per slots each)
+function merge(vals: number[], n: number, per: number): number[] { const o: number[] = []; for (let i = 0; i < n; i += per) { let v = 0; for (let k = i; k < i + per && k < vals.length; k++) v += vals[k] ?? 0; o.push(v); } return o; }
+function spark(cols: number[], mx: number): string {
+  let s = "";
+  for (const v of cols) s += v <= 0 ? fg(C.line) + "·" : fg(C.accent) + (BLK[Math.max(1, Math.round((v / Math.max(1, mx)) * 8))] ?? "█");
   return s + RST;
 }
 
@@ -205,8 +209,9 @@ function itemLine(st: CState, it: Item, on: boolean, W: number): string {
   return "";
 }
 function emptyText(c: Cmp): string {
-  const one = (g: string, err: string, cs: Clause[]): string => err ? "group " + g + ": " + err + " — " + g.toLowerCase() + " edits it" : "group " + g + " matched nothing: " + exprText(cs) + " — " + g.toLowerCase() + " edits it";
-  const o: string[] = []; if (c.emptyA) o.push(one("A", c.a.err, c.A.cs)); if (c.emptyB) o.push(one("B", c.b.err, c.B.cs));
+  const one = (g: string, err: string, ix: number, cs: Clause[]): string => err ? "group " + g + ": " + err + " — " + g.toLowerCase() + " edits it"
+    : ix < 0.999 ? "group " + g + " is still being read (" + String(Math.floor(ix * 100)) + "%) — the numbers fill in" : "group " + g + " matched nothing: " + exprText(cs) + " — " + g.toLowerCase() + " edits it";
+  const o: string[] = []; if (c.emptyA) o.push(one("A", c.a.err, c.a.indexing, c.A.cs)); if (c.emptyB) o.push(one("B", c.b.err, c.b.indexing, c.B.cs));
   return o.join("  ·  ");
 }
 function build(st: CState, W: number, Ht: number, sync: boolean): string[] {
@@ -230,11 +235,12 @@ function build(st: CState, W: number, Ht: number, sync: boolean): string[] {
     const tl = timeline(c);
     if (!tl) out.push(" " + fg(C.sub) + "no timeline: a session has no start time" + RST);
     else {
-      const len = Math.max(tl.a.length, tl.b.length); let mx = 1; for (const v of tl.a) mx = Math.max(mx, v); for (const v of tl.b) mx = Math.max(mx, v);
-      const w = W - 8; const per = Math.max(1, Math.ceil(len / Math.max(1, w)));
+      const len = Math.max(tl.a.length, tl.b.length);
+      const w = W - 8; let per = 1; for (const p of [1, 2, 3, 6, 12, 24, 48, 96, 192, 384, 768]) { per = p; if (Math.ceil(len / p) <= w) break; } // whole 5/10/15/30/60 min … per column
       out.push(fg(C.dim) + line(" calls per " + (tl.slot === 300000 ? String(5 * per) + " min" : String(per) + " h") + " since each session's start" + (tl.slot !== 300000 ? " (hourly: older than the call rows)" : ""), W) + RST);
-      out.push(line(" " + fg(C.accent) + "A " + RST + spark(tl.a, len, w, mx * per), W));
-      out.push(line(" " + fg(C.accent) + "B " + RST + spark(tl.b, len, w, mx * per), W));
+      const ma = merge(tl.a, len, per); const mb = merge(tl.b, len, per); let mx = 1; for (const v of ma) mx = Math.max(mx, v); for (const v of mb) mx = Math.max(mx, v);
+      out.push(line(" " + fg(C.accent) + "A " + RST + spark(ma, mx), W));
+      out.push(line(" " + fg(C.accent) + "B " + RST + spark(mb, mx), W));
       out.push(fg(C.dim) + line(" A " + fmtMs(tl.a.length * tl.slot) + " · B " + fmtMs(tl.b.length * tl.slot) + " of activity", W) + RST);
     }
   } else if (!V.items.length) {
@@ -376,7 +382,7 @@ H.mouse.push((mode: string, b: number, x: number, y: number, press: boolean): bo
   if (b === 64 || b === 65) { keyView(st, b === 64 ? "wheelup" : "wheeldown"); return true; }
   if (!press || b !== 0) return b === 0 && press;
   if (y === 2) { // the section tabs
-    let cx = 1; for (let i = 0; i < SECS.length; i++) { if (i === 6 && !hasTimeline(st)) continue; const w = width(SECS[i]) + 2; if (x >= cx && x < cx + w) { st.sec = i; st.sel = 0; st.top = 0; } cx += w + 1; }
+    let cx = 1; for (let i = 0; i < SECS.length; i++) { if (i === 6 && !hasTimeline(st)) continue; const w = width(secName(i, S.W)) + 2; if (x >= cx && x < cx + w) { st.sec = i; st.sel = 0; st.top = 0; } cx += w + 1; }
     return true;
   }
   const i = st.top + (y - 1 - V.rowY0);

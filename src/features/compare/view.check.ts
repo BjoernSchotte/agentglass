@@ -30,6 +30,7 @@ if (!st) { bad++; console.log("FAIL no compare state"); } else {
   eq("subagents incl.", has(L1, "subagents incl.") ? "ok" : "no", "ok");
   eq("ratio column wide", has(L1, "×2.0") ? "ok" : "no", "ok");
   eq("tabs", has(L1, "summary") && has(L1, "timeline") ? "ok" : "no", "ok");
+  eq("tabs fit at 80", has(compareLines(st, 80, 24), " time ") ? "ok" : compareLines(st, 80, 24)[1] ?? "", "ok");
   eq("tool calls row", L1.some((l) => /tool calls\s+5\s+10\s+\+5\s+×2\.0/.test(l)) ? "ok" : L1.join("\n"), "ok");
   eq("no ratio < 100 cols", has(compareLines(st, 99, 40), "×2.0") ? "shown" : "dropped", "dropped");
   eq("no Δ < 80 cols", has(compareLines(st, 79, 40), "+5") ? "shown" : "dropped", "dropped");

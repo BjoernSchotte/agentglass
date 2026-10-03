@@ -23,7 +23,7 @@ export interface Group { label: string; cs: Clause[]; single: Sess | null /* the
 export interface Side {
   n: number /* top-level sessions */; t: Totals; m: ModeSum /* cost per billing mode, unpriced */; bill: Bill | "" /* single(m), "" mixed/none */;
   turns: number /* Σ Day.turns of top-level sessions */; wall: number /* ms, -1 n/a */; live: boolean; indexing: number /* 0..1, 1 = done */;
-  err: string /* the group's expression does not compile */; f: Compiled | null; mu: ModelUse[] /* per model over the side's session-days */;
+  err: string /* the group's expression does not compile */; prio: string /* a session of the group still being read, "" none */; f: Compiled | null; mu: ModelUse[] /* per model over the side's session-days */;
   calls: Map<string, number> /* call rows per model (within retention) */; limited: boolean /* session-days older than the call rows */;
 }
 export interface Metric { key: string; label: string; a: string; b: string; d: string /* Δ text, "" none */; r: string /* "×2.4", "" none */; tone: number /* +1 worse (red), -1 better (green), 0 neutral */ }
@@ -136,20 +136,22 @@ function sideOf(g: Group, f: Compiled | null, err: string, tj: TotJob | null, ca
     }
     for (const u of modelUses(a, dks)) mergeUse(by, u);
   }
-  // indexing: the bytes read of every session the group's session clauses admit (a session not read yet has no days to match)
+  // indexing: the bytes read of every session the group's session clauses admit (a session not read yet has no days to match);
+  // with day clauses only sessions written since the group's first day can hold one of its days
   let tot = 0; let done = 0; let prio = "";
+  const dk0: string = f && f.dayKeys ? f.dayKeys[0] ?? "~" : "";
   if (f) for (const s of sessions.values()) {
-    if (!sessMatches(f, s)) continue;
+    if (!sessMatches(f, s) || (dk0 && String(dayKey(new Date(s.mtime))) < dk0)) continue;
     const a = ledger.get(s.path); const off = a ? Math.min(a.off, s.size) : 0;
     tot += s.size; done += a && a.stall === s.size ? s.size : off;
     if (!prio && off < s.size && !(a && a.stall === s.size)) prio = s.path;
   }
-  if (prio) { L.prio = prio; L.prioAt = Date.now(); } // the ledger's next tick reads this group first (as the preview does)
   const mu = [...by.values()].sort((x: ModelUse, y: ModelUse) => y.cost - x.cost || (y.inTok + y.outTok) - (x.inTok + x.outTok) || (x.model < y.model ? -1 : x.model > y.model ? 1 : 0));
-  return { n: t.sessions, t, m, bill: single(m), turns, wall: g.single && t.first > 0 && t.last >= t.first ? Math.round(t.last - t.first) : -1, live, indexing: tot > 0 ? done / tot : 1, err, f, mu, calls, limited };
+  return { n: t.sessions, t, m, bill: single(m), turns, wall: g.single && t.first > 0 && t.last >= t.first ? Math.round(t.last - t.first) : -1, live, indexing: tot > 0 ? done / tot : 1, err, prio, f, mu, calls, limited };
 }
 function finish(j: CmpJob): Cmp {
   const a = sideOf(j.A, j.fa, j.ea, j.ja, j.ca); const b = sideOf(j.B, j.fb, j.eb, j.jb, j.cb);
+  const p = a.prio || b.prio; if (p) { L.prio = p; L.prioAt = Date.now(); } // the ledger's next tick reads A's sessions first, then B's (as the preview does)
   const same = !!j.fa && !!j.fb && j.fa.key === j.fb.key;
   return { key: j.key, A: j.A, B: j.B, subs: j.subs, a, b, rows: metricRows(j.A, j.B, a, b), same, emptyA: a.err !== "" || a.t.paths.size === 0, emptyB: b.err !== "" || b.t.paths.size === 0 };
 }
@@ -157,7 +159,7 @@ function finish(j: CmpJob): Cmp {
 // ── the summary rows (spec §3) ──
 const MINUS = "−";
 function signed(d: number, f: (n: number) => string): string { return d > 0 ? "+" + f(d) : d < 0 ? MINUS + f(-d) : "0"; }
-function ratio(a: number, b: number): string { return a > 0 && b >= 0 ? "×" + (b / a).toFixed(1) : ""; }
+function ratio(a: number, b: number): string { if (!(a > 0 && b >= 0)) return ""; const r = b / a; return "×" + (r < 100 ? r.toFixed(1) : r < 1000 ? String(Math.round(r)) : kfmt(r)); }
 function pctTxt(x: number): string { return (x * 100).toFixed(1) + "%"; }
 // a numeric row; a or b < 0 = unknown: "n/a", no Δ, no ratio. worse: a higher B is worse (cost, errors, durations)
 function num(key: string, label: string, a: number, b: number, f: (n: number) => string, worse: boolean, withRatio: boolean): Metric {
