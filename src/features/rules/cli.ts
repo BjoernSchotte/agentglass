@@ -91,6 +91,6 @@ H.cli.push((args: string[]): boolean => {
   }
   if (sub === "defaults") { out(defaultsText(args.indexOf("--examples") >= 0)); process.exit(0); }
   if (sub === "--help" || sub === "-h" || sub === "help") { out(HELP); process.exit(0); }
-  process.stderr.write("agentglass rules: unknown command \"" + sub + "\"\n" + HELP + "\n");
+  process.stderr.write("agentglass rules: " + (sub ? "unknown command \"" + sub + "\"" : "which one? check or defaults") + "\n" + HELP + "\n");
   process.exit(2);
 });

@@ -25,6 +25,8 @@ printf '{"notify":{"command":["/usr/bin/true"]}}\n' > "$rf"; chmod 664 "$rf"
 run rules check > "$t/out"; eq "group-writable command: exit" $? 2
 grep -q "notify.command ignored" "$t/out" || { echo "FAIL unsafe command not reported"; cat "$t/out"; fail=1; }
 run rules nope > /dev/null 2>&1; eq "unknown subcommand: exit" $? 2
+run rules 2> "$t/out"; eq "no subcommand: exit" $? 2
+grep -q "which one? check or defaults" "$t/out" || { echo "FAIL no subcommand message"; cat "$t/out"; fail=1; }
 run rules --help | grep -q "rules defaults" || { echo "FAIL rules --help"; fail=1; }
 run --help | grep -q "agentglass rules check" || { echo "FAIL --help lists rules"; fail=1; }
 run --help | grep -q -- "--no-alerts" || { echo "FAIL --help lists --no-alerts"; fail=1; }
