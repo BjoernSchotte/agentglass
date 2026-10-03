@@ -17,7 +17,7 @@ import type { Clause } from "../query/types.ts";
 import { parse, print, sameClause } from "../query/parse.ts";
 import { attrOf } from "../query/attrs.ts";
 import { type Compiled, EMPTY, compile, matchSession, numOf, callCutoff } from "../query/eval.ts";
-import { type Dist, type Weight, type Bin, aggregate, aggregateWhere, minus } from "../query/agg.ts";
+import { type Dist, type Weight, type Bin, type AggJob, aggJob, aggStep, minus } from "../query/agg.ts";
 import { type TRow, score, wscore } from "./score.ts";
 
 export type Base = "rest" | "previous" | "group";
@@ -108,39 +108,39 @@ function F(cs: Clause[]): Compiled { if (!cs.length) return EMPTY; const r = com
 // f restricted to the sessions that match sel in days (session entity): the selection's sessions are then described whole
 // (all their tools, programs, …), not only by the rows that made them match
 function within(f: Compiled, sel: Compiled, days: string[]): Compiled {
-  const inSel = new Set<string>();
-  for (const s of sessions.values()) if (matchSession(sel, s, days)) inSel.add(s.path);
-  const sess = f.sess.concat([(s: Sess): boolean => inSel.has(s.path)]);
+  const sess = f.sess.concat([(s: Sess): boolean => matchSession(sel, s, days)]);
   return { key: f.key + " ∧ ⊂[" + sel.key + "@" + days.join(",") + "]", cs: f.cs, sess, day: f.day, call: f.call, event: f.event, content: f.content, dayKeys: f.dayKeys, rowx: f.rowx, needsCalls: f.needsCalls, dimmed: f.dimmed };
 }
-interface Groups { sel: Dist[]; base: Dist[] }
-function group(r: Run, scopeF: Compiled, cs: Clause[], days: string[], dims: string[]): Dist[] {
-  if (!cs.length) return aggregate(scopeF, r.entity, days, dims, r.weight);
+function groupJob(r: Run, scopeF: Compiled, cs: Clause[], days: string[], dims: string[]): AggJob {
+  if (!cs.length) return aggJob(scopeF, r.entity, days, dims, r.weight, null);
   const gf = F(concat(without(r.scope, r.dropped), cs));
-  return r.entity === "session" ? aggregate(within(scopeF, gf, days), "session", days, dims, r.weight) : aggregate(gf, "call", days, dims, r.weight);
+  return r.entity === "session" ? aggJob(within(scopeF, gf, days), "session", days, dims, r.weight, null) : aggJob(gf, "call", days, dims, r.weight, null);
 }
+// the counts a run needs, in order (a later one may read an earlier result: slow needs the per-tool p90 first)
+interface Groups { plan: ((got: Dist[][]) => AggJob)[]; sel: (got: Dist[][]) => Dist[]; base: (got: Dist[][]) => Dist[] }
+function at(got: Dist[][], i: number): Dist[] { return i < got.length ? got[i] : []; }
 function groups(r: Run, dims: string[]): Groups {
-  const scopeCs = without(r.scope, r.dropped); const scopeF = F(scopeCs);
+  const scopeF = F(without(r.scope, r.dropped));
   const days = periodOf(r.days, false);
-  if (r.base === "previous") return { sel: group(r, scopeF, r.sel, days, dims), base: group(r, scopeF, r.sel, periodOf(r.days, true), dims) };
-  if (r.base === "group") return { sel: group(r, scopeF, r.sel, days, dims), base: group(r, scopeF, r.group, days, dims) };
+  if (r.base === "previous" || r.base === "group") {
+    const other = r.base === "group" ? r.group : r.sel; const od = r.base === "group" ? days : periodOf(r.days, true);
+    return { plan: [() => groupJob(r, scopeF, r.sel, days, dims), () => groupJob(r, scopeF, other, od, dims)], sel: (g: Dist[][]) => at(g, 0), base: (g: Dist[][]) => at(g, 1) };
+  }
   if (r.slow && r.entity === "call") {
     // untimed calls (fx, kiro, unfinished) are in neither group
-    const slow = slowKeep(r);
-    const timed = aggregateWhere(scopeF, days, dims, r.weight, (s: Sess, c: Call) => c.ms >= 0);
-    const sel = aggregateWhere(scopeF, days, dims, r.weight, slow);
-    return { sel, base: minus(timed, sel) };
+    return { plan: [() => p90Job(r), () => aggJob(scopeF, "call", days, dims, r.weight, (s: Sess, c: Call) => c.ms >= 0), (g: Dist[][]) => aggJob(scopeF, "call", days, dims, r.weight, slowFrom(at(g, 0)))],
+      sel: (g: Dist[][]) => at(g, 2), base: (g: Dist[][]) => minus(at(g, 1), at(g, 2)) };
   }
-  const all = aggregate(scopeF, r.entity, days, dims, r.weight);
-  const sel = group(r, scopeF, r.sel, days, dims);
-  return { sel, base: minus(all, sel) };
+  return { plan: [() => aggJob(scopeF, r.entity, days, dims, r.weight, null), () => groupJob(r, scopeF, r.sel, days, dims)], sel: (g: Dist[][]) => at(g, 1), base: (g: Dist[][]) => minus(at(g, 0), at(g, 1)) };
 }
 // the slow test: duration ≥ the p90 of the same tool over scope and period (30 s is normal for Bash and alarming for Read)
-export function slowKeep(r: Run): (s: Sess, c: Call) => boolean {
+function p90Job(r: Run): AggJob { return aggJob(F(without(r.scope, r.dropped)), "call", periodOf(r.days, false), ["tool"], "count", null); }
+function slowFrom(tools: Dist[]): (s: Sess, c: Call) => boolean {
   const p90 = new Map<string, number>();
-  for (const d of aggregate(F(without(r.scope, r.dropped)), "call", periodOf(r.days, false), ["tool"], "count")) for (const [t, b] of d.vals) if (histN(b) > 0) p90.set(t, pct(b.hist, 0.9, b.max));
+  for (const d of tools) for (const [t, b] of d.vals) if (histN(b) > 0) p90.set(t, pct(b.hist, 0.9, b.max));
   return (s: Sess, c: Call): boolean => c.ms >= 0 && c.ms >= (p90.get(nameOf(DICT.tool, c.tool)) ?? Infinity);
 }
+export function slowKeep(r: Run): (s: Sess, c: Call) => boolean { const j = p90Job(r); aggStep(j, Infinity); return slowFrom(j.out); }
 function histN(b: Bin): number { let n = 0; for (const x of b.hist) n += x; return n; }
 
 function labelOf(r: Run): string {
@@ -152,22 +152,48 @@ function labelOf(r: Run): string {
 }
 function baseLabelOf(r: Run): string { return r.base === "previous" ? "previous " + periodLabel(r.days) : r.base === "group" ? print(r.group) : "rest"; }
 export function runKey(r: Run): string {
-  return JSON.stringify([r.entity, print(without(r.scope, r.dropped)), print(r.sel), r.slow, r.base, print(r.group), r.days, r.weight]);
+  return JSON.stringify([r.entity, print(without(r.scope, r.dropped)), print(r.sel), r.slow, r.preset, r.base, print(r.group), r.days, r.weight]);
 }
 
 const cache = new Map<string, { ver: number; at: number; res: Result }>();
-// cached per (key, L.ver); while the ledger still indexes (L.ver moves constantly) recomputed at most every 2 s
-export function runTriage(r: Run): Result {
-  const key = runKey(r); const hit = cache.get(key); const partial = L.done < L.total;
-  if (hit && (hit.ver === L.ver || (partial && Date.now() - hit.at < 2000))) return hit.res;
-  const res = compute(r, key, partial);
-  if (cache.size > 32) cache.clear();
-  cache.set(key, { ver: L.ver, at: Date.now(), res });
-  return res;
+// a count in slices: the TUI steps it between frames (keys stay live during a 30-day count), runTriage runs it to the end
+export interface TJob { r: Run /* a copy: keys may change the view's run meanwhile */; key: string; ver: number; partial: boolean; g: Groups; got: Dist[][]; cur: AggJob | null; res: Result | null }
+function copyRun(r: Run): Run {
+  return { entity: r.entity, scope: r.scope.slice(), sel: r.sel.slice(), slow: r.slow, preset: r.preset, base: r.base, group: r.group.slice(), days: r.days, weight: r.weight, under: r.under, origin: r.origin, dropped: r.dropped.slice() };
 }
-function compute(r: Run, key: string, partial: boolean): Result {
+// cached per (key, L.ver); while the ledger still indexes (L.ver moves constantly) recomputed at most every 2 s
+export function triageJob(run: Run): TJob {
+  const r = copyRun(run); const key = runKey(r); const hit = cache.get(key); const partial = L.done < L.total;
+  const j: TJob = { r, key, ver: L.ver, partial, g: groups(r, dimsFor(r)), got: [], cur: null, res: null };
+  if (hit && (hit.ver === L.ver || (partial && Date.now() - hit.at < 2000))) j.res = hit.res;
+  return j;
+}
+// work until the clock reaches `until` (Infinity = to the end); true when j.res is set
+export function triageStep(j: TJob, until: number): boolean {
+  while (!j.res) {
+    let c = j.cur;
+    if (!c) { const mk = j.g.plan[j.got.length]; c = mk(j.got); j.cur = c; }
+    if (!aggStep(c, until)) return false;
+    j.got.push(c.out); j.cur = null;
+    if (j.got.length >= j.g.plan.length) {
+      const res = compute(j.r, j.key, j.partial, j.g.sel(j.got), j.g.base(j.got));
+      if (cache.size > 32) cache.clear();
+      cache.set(j.key, { ver: j.ver, at: Date.now(), res }); j.res = res;
+    } else if (until !== Infinity && Date.now() >= until) return false;
+  }
+  return true;
+}
+// 0…1, for the progress shown while a count runs
+export function triageProgress(j: TJob): number {
+  if (j.res) return 1;
+  const c = j.cur; const part = c && c.ss.length ? c.i / c.ss.length : 0;
+  return (j.got.length + part) / Math.max(1, j.g.plan.length);
+}
+export function runTriage(r: Run): Result { const j = triageJob(r); triageStep(j, Infinity); return j.res ?? emptyRes(j); }
+function emptyRes(j: TJob): Result { return compute(j.r, j.key, j.partial, [], []); }
+function compute(r: Run, key: string, partial: boolean, gs: Dist[], gb: Dist[]): Result {
   const dims = dimsFor(r);
-  const g = groups(r, dims);
+  const g = { sel: gs, base: gb };
   const s0 = g.sel.length ? g.sel[0] : null; const b0 = g.base.length ? g.base[0] : null;
   const A = s0 ? s0.total : 0; const B = b0 ? b0.total : 0;
   const days = periodOf(r.days, false);

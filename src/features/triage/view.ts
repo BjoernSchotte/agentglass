@@ -1,7 +1,8 @@
 // agentglass — triage view: full-screen ranking of over-/under-represented values, include/exclude/pin, guards (spec §5)
 // SPDX-License-Identifier: Apache-2.0
 // Opened with t from Sessions, Stats and the Stats drill-down (or by session-compare). A key changes the run at once; the
-// (possibly slow, 30-day) recount runs on the next fast tick, so the frame after a key shows the old table and a spinner.
+// recount (≈1 s for 30 days of call rows) runs in slices between frames: the old table stays, the header shows progress,
+// keys stay live and a newer key replaces the count in flight.
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, tabAt } from "../../hooks.ts";
@@ -24,7 +25,7 @@ import { compile, eachCall } from "../query/eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, setPins } from "../query/scope.ts";
 import { complete } from "../query/ui.ts";
 import { type TRow, rank, fmtLift, fmtPct, chiStr } from "./score.ts";
-import { type Run, type Result, PRESETS, presetOf, newRun, runTriage, triageCfg, periodOf, periodLabel, guardText, shown, slowKeep, without } from "./run.ts";
+import { type Run, type Result, type TJob, PRESETS, presetOf, newRun, triageJob, triageStep, triageProgress, triageCfg, periodOf, periodLabel, guardText, shown, slowKeep, without } from "./run.ts";
 
 export const TV_NAME = "triage";
 export interface TState { run: Run; res: Result | null; sel: number; top: number; expand: string; picker: boolean; calls: string /* attr\tvalue whose newest calls are listed, "" none */; csel: number; back: () => void }
@@ -32,7 +33,10 @@ export const T: { st: TState | null } = { st: null };
 
 // ── state beside TState: the listed rows, the newest-calls list, recount bookkeeping ──
 interface CR { s: Sess; c: Call }
-const V = { rows: [] as TRow[], rowsOf: "", calls: [] as CR[], stale: true, at: 0, ver: -1, want: "", inTx: false, rowY0: 0, rowN: 0 };
+const V = { rows: [] as TRow[], rowsOf: "", calls: [] as CR[], stale: true, job: null as TJob | null, at: 0, ver: -1, want: "", inTx: false, rowY0: 0, rowN: 0 };
+// ms of counting: a little in the frame after a key (small counts then finish without a spinner), then slices on a timer of
+// their own with the event loop free in between (the refresh jobs' 5% budget would stretch a 1 s count to 20 s)
+const SLICE_FRAME = 15; const SLICE = 40; const GAP = 10;
 const incOrigin: string[] = []; const incFn: ((c: Clause) => string)[] = []; // scriptc: no function values in a Map
 // a non-tab origin (session-compare's "Compare") receives the +/- clauses; fn returns the toast
 export function onInclude(origin: string, fn: (c: Clause) => string): void {
@@ -47,13 +51,14 @@ function crAt(i: number): CR | null { return i >= 0 && i < V.calls.length ? V.ca
 function idle(st: TState): boolean { return st.picker && !st.run.sel.length && !st.run.slow && st.run.preset === 0; }
 // the run changed: keep the cursor's (attr, value) and recount on the next tick
 function changed(st: TState): void { const r = rowAt(st.sel); if (r) V.want = rowKey(r); V.stale = true; st.calls = ""; S.dirty = true; }
-// recount (when stale, or the ledger moved: every 2 s while indexing, every 10 s otherwise) and re-rank
-function ensure(st: TState, force: boolean): void {
-  if (idle(st)) { st.res = null; V.rows = []; V.rowsOf = ""; return; }
+// recount (when stale, or the ledger moved: every 2 s while indexing, every 10 s otherwise) for up to `ms` (Infinity = to
+// the end), then re-rank; until a count finishes, st.res stays the previous result
+function ensure(st: TState, ms: number): void {
+  if (idle(st)) { st.res = null; V.rows = []; V.rowsOf = ""; V.job = null; V.stale = false; return; }
   const moved = L.ver !== V.ver && Date.now() - V.at >= (L.done < L.total ? 2000 : 10000);
-  if (V.stale || moved || force || !st.res) {
-    st.res = runTriage(st.run); V.stale = false; V.at = Date.now(); V.ver = L.ver; V.rowsOf = "";
-  }
+  if (V.stale || (!V.job && (moved || !st.res))) { V.job = triageJob(st.run); V.stale = false; V.at = Date.now(); V.ver = L.ver; }
+  const j = V.job;
+  if (j && triageStep(j, ms === Infinity ? Infinity : Date.now() + ms)) { st.res = j.res; V.job = null; V.rowsOf = ""; }
   const res = st.res; if (!res) return;
   const k = res.key + "|" + String(V.at) + "|" + String(st.run.under) + "|" + st.expand;
   if (k === V.rowsOf) return;
@@ -65,10 +70,11 @@ function ensure(st: TState, force: boolean): void {
 
 export function openTriage(r: Run, back: () => void): void {
   T.st = { run: r, res: null, sel: 0, top: 0, expand: "", picker: false, calls: "", csel: 0, back };
-  V.stale = true; V.rows = []; V.rowsOf = ""; V.calls = []; V.want = ""; V.inTx = false;
+  V.stale = true; V.job = null; V.rows = []; V.rowsOf = ""; V.calls = []; V.want = ""; V.inTx = false;
   S.fview = TV_NAME; S.mode = "view"; S.dirty = true;
 }
-function leave(st: TState): void { st.calls = ""; st.picker = false; const b = st.back; b(); }
+function leave(st: TState): void { st.calls = ""; st.picker = false; V.job = null; V.stale = true; const b = st.back; b(); }
+function counting(): boolean { return !!V.job || V.stale; }
 
 // ── text helpers ──
 function expr(cs: Clause[]): string { const o: string[] = []; for (const c of cs) { const vs: string[] = []; for (const v of c.vals) vs.push(shown(c.key, v)); o.push(printClause({ key: c.key, op: c.op, vals: vs, neg: c.neg, pinned: c.pinned })); } return o.join(" and "); }
@@ -96,10 +102,16 @@ function header(st: TState, W: number): string {
   const sc = without(r.scope, r.dropped);
   if (sc.length) left += fg(C.dim) + " · scope: " + RST + fg(C.sub) + expr(sc) + RST;
   if (r.dropped.length) left += fg(C.dim) + " · dropped: " + CSI + "9m" + expr(r.dropped) + RST;
-  const rw = vwidth(right); const room = W - 2 - rw - 2;
-  if (room < 30) return " " + line(left, W - 2) + " ";
-  const l = fitStyled(left, room);
-  return " " + l + fillTo(l, room) + "  " + right + " ";
+  let rt = right;
+  if (counting() && !idle(st)) {
+    // progress in a fixed place: no banner line comes and goes, the rows do not move
+    const j = V.job; const p = fg(C.accent) + spin() + RST + fg(C.sub) + " counting " + String(Math.floor((j ? triageProgress(j) : 0) * 100)).padStart(3) + "%" + RST;
+    rt = W - 2 - vwidth(p + " · " + right) - 2 >= 30 ? p + fg(C.dim) + " · " + RST + right : p;
+  }
+  const rw = vwidth(rt); const room = W - 2 - rw - 2;
+  if (room < 30 && rt === right) return " " + line(left, W - 2) + " ";
+  const l = fitStyled(left, Math.max(0, room));
+  return " " + l + fillTo(l, Math.max(0, room)) + "  " + rt + " ";
 }
 interface Cols { aw: number; vw: number; bw: number; chi: boolean; baseBar: boolean }
 function cols(W: number, weighted: boolean): Cols {
@@ -160,18 +172,21 @@ function banners(st: TState, res: Result): string[] {
   return o;
 }
 function build(st: TState, W: number, Ht: number, sync: boolean): string[] {
-  if (sync) ensure(st, false);
+  if (sync) ensure(st, Infinity);
   const n = Math.max(1, Ht - 2); const out: string[] = [header(st, W)];
   const c = cols(W, st.run.weight !== "count");
   const res = st.res;
-  if (st.picker || !res) {
+  if (st.picker || idle(st)) {
     for (const l of pickerLines(st, W)) out.push(l);
+  } else if (!res) {
+    // the first count of this triage: nothing to show yet but what is being counted
+    out.push(colHeader(st, c, W)); out.push("");
+    out.push(" " + fg(C.accent) + spin() + RST + fg(C.sub) + " counting " + entWord(st.run) + " · " + periodLabel(st.run.days) + " — keys work meanwhile" + RST);
   } else if (st.calls) {
     for (const l of callLines(st, W, n - 1)) out.push(l);
   } else {
     out.push(colHeader(st, c, W));
     const ban = banners(st, res);
-    if (V.stale) ban.unshift(fg(C.accent) + spin() + " counting…" + RST);
     if (res.guard) {
       out.push(""); out.push(" " + fg(C.yellow) + guardText(st.run, res, false) + RST);
     } else if (!V.rows.length) {
@@ -197,7 +212,8 @@ function build(st: TState, W: number, Ht: number, sync: boolean): string[] {
 export function viewLines(st: TState, W: number, Ht: number): string[] { const o: string[] = []; for (const l of build(st, W, Ht, true)) o.push(plainOf(l)); return o; }
 function render(): void {
   const st = T.st; if (!st) return;
-  if (!V.stale || !st.res) ensure(st, false); // a stale run is recounted by the fast tick, after this frame showed the spinner
+  ensure(st, SLICE_FRAME);
+  if (counting()) pump();
   const ls = build(st, S.W, S.H, false);
   for (let i = 0; i < ls.length; i++) put(0, 1 + i, ls[i] ?? "");
 }
@@ -212,7 +228,7 @@ function isTab(o: string): boolean { return o === "Sessions" || o === "Stats"; }
 // + / − on the selected row: into the origin tab's local filter (it stays there after triage), the run narrows; the toast
 export function includeSel(neg: boolean): string {
   const st = T.st; if (!st) return "";
-  ensure(st, false);
+  ensure(st, 0); // the rows on screen: a count in flight does not block the key
   const r = rowAt(st.sel); if (!r) return "";
   const c = clauseOf(st, r, neg);
   if (!c) { const m = "the session start " + r.attr + " has no filter key — o lists these sessions"; say("warn", m); return m; }
@@ -343,7 +359,7 @@ function keyView(st: TState, k: string): boolean {
 // test helper: put the cursor on (attr, value) if it is listed; true when found
 export function selectRow(attr: string, value: string): boolean {
   const st = T.st; if (!st) return false;
-  ensure(st, false);
+  ensure(st, Infinity);
   for (let i = 0; i < V.rows.length; i++) if (V.rows[i].attr === attr && V.rows[i].value === value) { st.sel = i; return true; }
   return false;
 }
@@ -387,13 +403,17 @@ H.mouse.push((mode: string, b: number, x: number, y: number, press: boolean): bo
   if (y - 1 >= V.rowY0 && i < st.top + V.rowN) { if (i === st.sel) keyView(st, "enter"); else st.sel = i; }
   return true;
 });
-// the recount after a key: one frame with the spinner first, then the count on the next 50 ms tick
-H.fastArmed.push(() => { const st = T.st; return S.mode === "view" && S.fview === TV_NAME && !!st && V.stale && !idle(st); });
-H.onFastTick.push((): boolean => {
+// a count in flight: SLICE ms of work, GAP ms for keys and frames, until done; it pauses outside the view (transcript, tabs)
+let pumping = false;
+function pump(): void { if (pumping) return; pumping = true; setTimeout(slice, GAP); }
+function slice(): void {
+  pumping = false;
   const st = T.st;
-  if (S.mode !== "view" || S.fview !== TV_NAME || !st || !V.stale) return false;
-  ensure(st, false); return true;
-});
+  if (!st || S.fview !== TV_NAME || (S.mode !== "view" && S.mode !== "help") || !counting()) return;
+  try { ensure(st, SLICE); } catch (e) { V.job = null; V.stale = false; say("err", "triage count failed: " + String(e)); }
+  S.dirty = true;
+  if (counting()) pump();
+}
 // the typed selection (preset 7): live validation, tab completion
 let cycBase = ""; let cycCands: string[] = []; let cycI = 0; let cycLast = "";
 function exprErr(t: string): string { if (!t.trim()) return "type a selection, e.g. tool is Bash and status is error"; const p = parse(t); if (p.err) return p.err.msg; const c = compile(p.cs, "stats"); return c.err ? c.err.msg : ""; }

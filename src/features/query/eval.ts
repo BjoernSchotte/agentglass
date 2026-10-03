@@ -309,9 +309,11 @@ export function matchSession(f: Compiled, s: Sess, days: string[] | null): boole
 }
 export function eachCall(f: Compiled, days: string[], fn: (s: Sess, c: Call) => void): void {
   const cut = callCutoff(); const ds = new Set<string>(days);
-  for (const s of sessions.values()) {
-    if (!all1(f.sess, s)) continue;
-    const a = ledger.get(s.path); if (!a) continue;
-    for (const c of a.calls) if (rowOk(f, s, a.days, c, cut, ds, false)) fn(s, c);
-  }
+  for (const s of sessions.values()) callsIn(f, s, ds, cut, (c: Call) => fn(s, c));
+}
+// one session's rows of eachCall (resumable aggregation steps a session at a time)
+export function callsIn(f: Compiled, s: Sess, days: Set<string>, cut: number, fn: (c: Call) => void): void {
+  if (!all1(f.sess, s)) return;
+  const a = ledger.get(s.path); if (!a) return;
+  for (const c of a.calls) if (rowOk(f, s, a.days, c, cut, days, false)) fn(c);
 }

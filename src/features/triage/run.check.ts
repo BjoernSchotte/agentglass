@@ -3,7 +3,7 @@
 import { parse, print } from "../query/parse.ts";
 import { fxReset, fxSession, fxBase, isoAt } from "../query/fixture.ts";
 import { rank } from "./score.ts";
-import { newRun, runTriage, parseTriageCfg } from "./run.ts";
+import { type Run, newRun, runTriage, parseTriageCfg, triageJob, triageStep, triageProgress } from "./run.ts";
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 // 200 codex shell calls today in one session: 20 errors (6 npm + 14 ls), 180 ok (4 npm + 176 ls) → npm 30% of errors vs 2.2% of rest
@@ -34,10 +34,25 @@ fxReset();
 fxSession("codex", "p2", "/w/p", "", "gpt-5", codexCalls(many("npm test", true, 1).concat(many("ls", true, 19), many("npm test", false, 9), many("ls", false, 171))));
 const r2 = runTriage(newRun("Stats", "call", [], parse("status is error").cs, 1));
 eq("no planted pattern", r2.rows.filter((r) => r.s.sig).length === 0 ? "ok" : r2.rows.filter((r) => r.s.sig).map((r) => r.attr + " " + r.value).join(","), "ok");
+// sliced counts (the TUI): a zero budget does one session per step; progress only grows; the result equals a full count;
+// the job counts a copy of the run, so a key that changes the run meanwhile does not mix into it
+fxReset(); fxBase();
+function sliced(r: Run, mutate: boolean): string {
+  const j = triageJob(r); let steps = 0; let last = 0; let mono = true;
+  if (mutate) { r.days = 30; r.sel = []; }
+  while (!triageStep(j, Date.now())) { steps++; const p = triageProgress(j); if (p < last || p > 1) mono = false; last = p; }
+  const res = j.res;
+  return (steps > 1 ? "sliced" : "one step") + " " + (mono ? "mono" : "not mono") + " " + (res ? res.selN + "/" + res.baseN : "none");
+}
+eq("sliced rest, run changed meanwhile", sliced(newRun("Stats", "call", [], parse("tool is Bash and status is error").cs, 2), true), "sliced mono 1/9");
+const rsl = newRun("Stats", "call", [], [], 2); rsl.slow = true; rsl.preset = 2;
+eq("sliced slow (p90 first)", sliced(rsl, false), "sliced mono " + String(runTriage(rsl).selN) + "/" + String(runTriage(rsl).baseN));
+eq("sliced slow total", String(runTriage(rsl).selN + runTriage(rsl).baseN), "8");
 // rest = scope − selection, two-clause selection (no OR in the grammar)
 fxReset(); fxBase();
 const r3 = runTriage(newRun("Stats", "call", [], parse("tool is Bash and status is error").cs, 2));
 eq("rest = scope − selection, two-clause selection", r3.selN + "/" + r3.baseN, "1/9");
+eq("fixed values not listed", r3.rows.filter((r) => (r.attr === "tool" && r.value === "Bash") || (r.attr === "status" && r.value === "error")).map((r) => r.attr).join(","), "");
 // empty baseline: scope already says status is error
 const r4 = runTriage(newRun("Stats", "call", parse("status is error").cs, parse("status is error").cs, 2));
 eq("empty-baseline guard", r4.guard, "empty-baseline"); eq("offending", print(r4.offending), "status is error");
