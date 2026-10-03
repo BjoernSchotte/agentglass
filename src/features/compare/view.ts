@@ -13,7 +13,7 @@ import { openTranscript } from "../../ui/transcript.ts";
 import { titleOf } from "../../model/sessions.ts";
 import { L, todayKey, dayKey, startOfDay } from "../usage/record.ts";
 import { ledger } from "../usage/ledger.ts";
-import { fmtMs } from "../usage/calls.ts";
+import { fmtMs, mcpServer } from "../usage/calls.ts";
 import { grp, kfmt, money } from "../usage/costs.ts";
 import { statsDrill, statsTabIndex } from "../usage/stats.ts";
 import { callDays } from "../usage/callcache.ts";
@@ -297,7 +297,7 @@ function drill(st: CState, tool: string): void {
 }
 function enter(st: CState): void {
   const it = itemAt(st.sel); if (!it) return;
-  if (it.kind === "tool") { const r = V.tools[it.i]; if (r.server && !st.open.has(r.key)) { st.open.add(r.key); return; } drill(st, r.key); return; }
+  if (it.kind === "tool") { drill(st, V.tools[it.i].key); return; } // a server row: the server's drill-down
   if (it.kind === "file") { const r = V.files[it.i]; if (!existsSync(r.abs)) { say("warn", "not found: " + display("file", home(r.abs), null)); return; } openPath(r.abs, false); return; }
   if (it.kind === "metric") { say("info", "tab: tools, programs, commands, files, models" + (hasTimeline(st) ? ", timeline" : "")); return; }
 }
@@ -336,6 +336,16 @@ function cycle(st: CState, d: number): void {
   const n = hasTimeline(st) ? 7 : 6;
   st.sec = (st.sec + d + n) % n; st.sel = 0; st.top = 0; S.dirty = true;
 }
+// an MCP server row (or one of its tools): want 1 open, 0 close (the cursor goes to the server), -1 flip
+function fold(st: CState, want: number): void {
+  const it = itemAt(st.sel); if (!it || it.kind !== "tool") return;
+  const r = V.tools[it.i]; if (!r.server && !r.kid) return;
+  const pk = r.kid ? "mcp__" + mcpServer(r.key) : r.key;
+  const open = want === 1 || (want === -1 && !st.open.has(pk));
+  if (open) { st.open.add(pk); return; }
+  st.open.delete(pk);
+  if (r.kid) for (let i = 0; i < V.tools.length; i++) if (V.tools[i].key === pk) st.sel = i;
+}
 function keyView(st: CState, k: string): boolean {
   const c = st.cmp; if (c) V.items = itemsOf(st, c); // the rows the key acts on: the shown section's, even before the next frame
   if (k === "esc" || k === "q" || k === "bs") { leave(st); return true; }
@@ -347,13 +357,7 @@ function keyView(st: CState, k: string): boolean {
   else if (k === "end" || k === "G") move(st, V.items.length);
   else if (k === "tab") cycle(st, 1);
   else if (k === "\x1b[Z") cycle(st, -1);
-  else if (k === " " || k === "right" || k === "left") {
-    const it = itemAt(st.sel);
-    if (it && it.kind === "tool" && st.sec === 1) {
-      const r = V.tools[it.i]; const pk = r.kid ? "mcp__" + r.key.slice(5, r.key.indexOf("__", 5)) : r.key;
-      if (r.server || r.kid) { if (st.open.has(pk) && k !== "right") { st.open.delete(pk); if (r.kid) { for (let i = 0; i < V.tools.length; i++) if (V.tools[i].key === pk) st.sel = i; } } else if (k !== "left") st.open.add(pk); }
-    }
-  }
+  else if (k === " " || k === "right" || k === "left") fold(st, k === " " ? -1 : k === "right" ? 1 : 0);
   else if (k === "enter") enter(st);
   else if (k === "[") { st.side = 0; say("info", "side A: ↵ drills into group A"); }
   else if (k === "]") { st.side = 1; say("info", "side B: ↵ drills into group B"); }
@@ -434,7 +438,7 @@ H.footerHints.push((mode: string): string[][] => {
 H.helpSections.push({ name: "compare", ctx: CV_NAME, keys: [
   ["m  C", "Sessions: mark A / B · compare (marks, mark vs selected, or the previous run of the repo)"], ["C", "Stats: this period vs the previous one"],
   ["tab  ⇧tab", "section: summary, tools, programs, commands, files, models, timeline (two sessions)"], ["↑↓ jk", "select a row"],
-  ["↵", "tools: Stats drill-down for the side · files: open in $PAGER"], ["[  ]", "side for ↵ and o: A / B"], ["␣  → ←", "fold / unfold an MCP server"],
+  ["↵", "tools: Stats drill-down (tool or MCP server) for the side · files: open in $PAGER"], ["[  ]", "side for ↵ and o: A / B"], ["␣  → ←", "fold / unfold an MCP server"],
   ["o  1  2", "transcript of the side's / A's / B's session (single sessions)"], ["a  b", "edit group A / B (filter grammar, tab completes)"],
   ["x", "swap A and B"], ["S", "subagents in / out of both groups"], ["t", "triage: what is different about A vs B"], ["esc", "back"],
   ["", "Δ = B − A; red: more cost, errors or duration · B/A from 100 columns, Δ from 80"]] });

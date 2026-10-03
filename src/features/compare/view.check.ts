@@ -48,6 +48,8 @@ if (!st) { bad++; console.log("FAIL no compare state"); } else {
   for (let i = 0; i < 4; i++) onInput("down");
   onInput(" "); eq("␣ opens the server", st.open.has("mcp__github") ? "open" : "closed", "open");
   eq("kids listed", has(compareLines(st, 120, 40), "get_issue") ? "ok" : "no", "ok");
+  onInput("down"); onInput("left"); eq("← on a tool folds its server", (st.open.has("mcp__github") ? "open" : "closed") + " sel " + String(st.sel), "closed sel 4");
+  onInput("right"); eq("→ unfolds", st.open.has("mcp__github") ? "open" : "closed", "open");
   onInput("tab"); eq("tab → programs", has(compareLines(st, 120, 40), "npm") ? "ok" : "no", "ok");
   onInput("tab"); onInput("tab"); eq("tab → files", String(st.sec), "4");
   const Lf = compareLines(st, 120, 40);
