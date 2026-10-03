@@ -3,7 +3,7 @@
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
 import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines } from "./record.ts";
 import { accOut, accIn } from "./cache.ts";
-import { type Dict, DICT, nameOf, MQ_MSG, MQ_SESS, localOf, extOf } from "./facts.ts";
+import { type Dict, DICT, ROWS, nameOf, MQ_MSG, MQ_SESS, localOf, extOf } from "./facts.ts";
 import { done } from "./calls.ts";
 import { newSess } from "../../model/types.ts";
 import { fx } from "../../harness/fx.ts";
@@ -125,5 +125,11 @@ rmSync("/tmp/agentglass-record-check", { recursive: true, force: true });
   ok("localOf memo", localOf(Date.parse(iso2)).hour === new Date(iso2).getHours(), "");
   const rt = accIn(JSON.parse(JSON.stringify(accOut(k)))); ok("t0 persisted", rt.t0 === k.t0 && rt.calls.length === 0 && rt.lastCall === -1, String(rt.t0));
 }
+// rows off (one-shot CLI runs that never read them): counters as always, no rows, files attach nowhere
+ROWS.on = false;
+const ro = newAcc(); const rd = bucket(ro, 0, "2026-10-01T10:00:00.000Z");
+pend(ro, rd, tool(ro, rd, "Bash", "m", MQ_MSG), "Bash", "r1", 0, "", "", ["ls"]); file(ro, rd, "Bash", "/w/x", 1, 0);
+ok("rows off: counted, no row", ro.tools === 1 && ro.calls.length === 0 && ro.lastCall === -1 && (rd.tt.get("Bash")?.n ?? 0) === 1, String(ro.calls.length));
+ROWS.on = true;
 console.log(bad ? bad + " failed" : "usage record: all checks passed");
 if (bad) process.exit(1);

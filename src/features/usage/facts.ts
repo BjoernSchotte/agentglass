@@ -4,6 +4,8 @@ export const MQ_MSG = 0; export const MQ_TURN = 1; export const MQ_SESS = 2; // 
 // one tool call. String columns are ids into DICT; -1 = none/unknown. t = call time (epoch ms, never 0: falls back to the bucket's time).
 // ms -1 = untimed; err -1 = no result seen yet, 0 ok, 1 failed; out = result bytes; cid = the harness call id ("" none)
 export interface Call { t: number; tool: number; model: number; mq: number; progs: number[]; cmds: number[]; files: number[]; ms: number; err: number; out: number; cid: string }
+// rows off: a one-shot CLI run that never reads call rows and never saves the ledger (cache.ts decides) skips building them
+export const ROWS = { on: true };
 export interface Dict { ids: Map<string, number>; names: string[] }
 function newDict(): Dict { return { ids: new Map<string, number>(), names: [] }; }
 // ledger-wide: ids are only meaningful in memory (calls files keep their own local dictionaries)

@@ -4,7 +4,7 @@
 // its result lines close a pending call with done() from calls.ts. Everything else (budgets, caching, stats) is the ledger's.
 import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
-import { type Call, DICT, intern, nameOf, dayKey } from "./facts.ts";
+import { type Call, DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
 export { dayKey };
 
 // one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro); turns = human prompts
@@ -80,6 +80,7 @@ export function tool(a: Acc, d: Day, name: string, model: string, mq: number): T
   st.n = st.n + 1;
   st.h[tsHour] = (st.h[tsHour] ?? 0) + 1;
   d.hours[tsHour] = (d.hours[tsHour] ?? 0) + 1;
+  if (!ROWS.on) return st;
   a.calls.push({ t: tsMs > 0 ? tsMs : Date.now(), tool: intern(DICT.tool, name), model: intern(DICT.model, model), mq, progs: [], cmds: [], files: [], ms: -1, err: -1, out: 0, cid: "" });
   a.lastCall = a.calls.length - 1;
   return st;
