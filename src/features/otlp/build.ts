@@ -345,9 +345,9 @@ export function advance(b: SessB, o: BuildOpts): XTurn[] {
   }
   const out = b.done; b.done = [];
   for (const tr of out) finalize(b, tr);
-  if (b.root.h === "fx" && out.length) { // fx keeps session totals only: they ride on the newest exported root
-    const t = fxTotals(b.root); const r = out[out.length - 1].spans[0];
-    if (t) { r.nIn = t.nIn; r.nOut = t.nOut; r.cr = t.cr; r.cw = t.cw; r.cost = t.usd; r.unk = t.unk; r.total = true; }
+  if (b.root.h === "fx" && out.length) { // fx keeps session totals only: they ride on the newest turn's chat span (usage never sits on invoke_agent)
+    const t = fxTotals(b.root); const lt = out[out.length - 1]; const r = lt.spans.find((x: XSpan) => x.op === "chat" && x.parentId === lt.spans[0].spanId);
+    if (t && r) { r.nIn = t.nIn; r.nOut = t.nOut; r.cr = t.cr; r.cw = t.cw; r.cost = t.usd; r.unk = t.unk; r.hasUsage = true; r.total = true; }
   }
   return out;
 }

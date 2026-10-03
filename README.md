@@ -483,7 +483,7 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
 - **Shape:** one trace per turn. The root `invoke_agent <harness>` span holds one `chat <model>` span per API request
   (tokens, cost, billing mode) and one `execute_tool <tool>` span per call; a subagent is an `invoke_agent <type>`
   span under the call that started it. Usage sits on `chat` spans only, so sums over all spans never count twice.
-  Kiro and fx log no per-request usage: one `chat` span per turn (fx: the session totals ride on its newest root).
+  Kiro and fx log no per-request usage: one `chat` span per turn (fx: the session totals ride on the newest turn's `chat` span, marked `agentglass.usage.session_total`).
 - **Options:** `--since 30m|24h|7d|YYYY-MM-DD|all` (default 7d) and `--until`, `--harness`, `--session <id>`,
   `--filter '<session clauses>'`, `--no-subagents`, `--batch N` (spans per request, default 512, at most 4 MB),
   `--compression gzip|none`, `--json` (summary on stdout). Exit codes: 0 sent, 1 some requests failed (run again to

@@ -89,6 +89,7 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
     if (sp.respId) a.push(attrS("gen_ai.response.id", sp.respId));
     a.push(attrS("agentglass.billing.mode", sp.bill || "unknown"));
     if (sp.hasUsage) usage(a, t, sp, c);
+    if (sp.total) a.push(attrB("agentglass.usage.session_total", true)); // fx: the session's totals, not this request's
     if (sp.superseded) a.push(attrB("agentglass.chat.superseded", true));
     if (c.content && sp.output) a.push(attrS("gen_ai.output.messages", msgs("assistant", sp.output, c.contentMax)));
   } else if (sp.op === "invoke_agent") {
@@ -99,7 +100,6 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
       a.push(attrI("agentglass.turn.index", t.index));
       if (t.compacted) a.push(attrB("gen_ai.conversation.compacted", true));
       if (sp.skill) a.push(attrS("gen_ai.skill.name", sp.skill));
-      if (sp.total) { usage(a, t, sp, c); a.push(attrB("agentglass.usage.session_total", true)); } // fx: session totals, once
     } else a.push(attrS("agentglass.session.id", sp.sess));
     if (c.content && sp.input) a.push(attrS("gen_ai.input.messages", msgs("user", sp.input, c.contentMax)));
     if (c.content && sp.output) a.push(attrS("gen_ai.output.messages", msgs("assistant", sp.output, c.contentMax)));

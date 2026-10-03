@@ -72,7 +72,7 @@ for (const t of traces) {
 let usageOnAgent = 0; let chatNoBill = 0; let billElsewhere = 0; let badParent = 0;
 for (const s of all) {
   const op = s.attrs.get("gen_ai.operation.name") ?? "";
-  if (op === "invoke_agent" && s.attrs.get("agentglass.usage.session_total") !== "true" && [...s.attrs.keys()].some((k: string) => k.startsWith("gen_ai.usage.") || k === "agentglass.usage.cost")) usageOnAgent++;
+  if (op === "invoke_agent" && [...s.attrs.keys()].some((k: string) => k.startsWith("gen_ai.usage.") || k === "agentglass.usage.cost")) usageOnAgent++;
   if (op === "chat" && !s.attrs.has("agentglass.billing.mode")) chatNoBill++;
   if (op !== "chat" && s.attrs.has("agentglass.billing.mode")) billElsewhere++;
   if (op === "chat" || op === "execute_tool") { const par = byId.get(s.parent); if (!par || (par.attrs.get("gen_ai.operation.name") !== "invoke_agent" && op === "chat")) badParent++; }

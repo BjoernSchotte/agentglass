@@ -10,7 +10,7 @@ export interface XSpan {
   sess: string; agent: string; attrs: Attr[]; events: XEvent[]; // sess = the (sub)session the span belongs to; agent = subagent type ("" = the harness)
   // facts the encoder turns into attributes
   model: string; respModel: string; provider: string; respId: string; models: string[];
-  nIn: number; nOut: number; cr: number; cw: number; rs: number; cost: number; unk: number; exact: boolean; hasUsage: boolean; total: boolean; // total = fx session totals on a root
+  nIn: number; nOut: number; cr: number; cw: number; rs: number; cost: number; unk: number; exact: boolean; hasUsage: boolean; total: boolean; // total = fx session totals on the last turn's chat span
   bill: string; // chat: honest-costs mode of this request ("" on other spans)
   tool: string; callId: string; mcp: string; prog: string; exit: number; skill: string; superseded: boolean; // exit -1 = unknown
   input: string; output: string; args: string; result: string; // content, sent only with --content

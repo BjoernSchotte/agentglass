@@ -36,7 +36,7 @@ function ledger(s: Sess, sub: boolean): string {
   if (st) for (const l of src.lines(s, 0, st.size).lines) harnessOf(s.h).usage(a, l);
   return [a.inTok, a.outTok, a.cr, a.cw, a.cost.toFixed(9)].join("/");
 }
-function noUsageOnAgents(ts: XTurn[]): boolean { for (const t of ts) for (const s of t.spans) if (s.op === "invoke_agent" && s.hasUsage && !s.total) return false; return true; }
+function noUsageOnAgents(ts: XTurn[]): boolean { for (const t of ts) for (const s of t.spans) if (s.op === "invoke_agent" && (s.hasUsage || s.total)) return false; return true; }
 function ids(ts: XTurn[]): string { return ts.map((t: XTurn) => t.traceId + ":" + t.spans.map((s: XSpan) => s.spanId).join(",")).join(" | "); }
 
 // ── claude: streamed lines = one chat, two fallback iterations = two chats, a subagent under its Agent call ──
@@ -171,11 +171,11 @@ const kt = finish(newSessB(KS, []), O);
 eq("kiro", kt.map((t: XTurn) => t.key + "=" + tree(t)).join(" ; "), "i1=invoke_agent Kiro<-1, chat<0 est, execute_tool execute_bash df<0 est ; i2=invoke_agent Kiro<-1, chat<0 est, execute_tool execute_bash free<0 !tool_error est");
 if (kt.length === 2) eq("kiro times + usage", new Date(kt[0].t1).toISOString() + " " + new Date(kt[1].t0).toISOString() + " " + String(kt[0].spans[1].nIn) + "/" + String(kt[1].spans[1].nOut), "2026-09-01T10:00:20.123Z 2026-09-01T10:00:20.123Z 900/25");
 
-// ── fx: one chat per turn, no usage; session totals on the last root ──
+// ── fx: one chat per turn, no usage; session totals on the last turn's chat span (never on invoke_agent, decision 2) ──
 const FS = sess("fx", "fx-77777777", F + "fx/.fx/sessions/fx-77777777/events.jsonl", "");
 const ft = finish(newSessB(FS, []), O);
 eq("fx", ft.map((t: XTurn) => tree(t) + " " + String((t.t1 - t.t0) / 1000)).join(" ; "), "invoke_agent fx<-1, chat fx-large<0 est, execute_tool shell wc<0 est 30 ; invoke_agent fx<-1, chat fx-large<0 est, execute_tool shell wc<0 !tool_error est 12");
-if (ft.length === 2) eq("fx totals", String(ft[0].spans[0].total) + " " + String(ft[1].spans[0].total) + " " + String(ft[1].spans[0].nIn) + " " + String(ft[1].spans[1].hasUsage), "false true 3000 false");
+if (ft.length === 2) eq("fx totals", String(ft[0].spans[1].total) + " " + String(ft[1].spans[1].total) + " " + String(ft[1].spans[1].nIn) + " " + String(ft[1].spans[1].hasUsage) + " " + String(ft[0].spans[1].hasUsage) + " " + String(ft[1].spans[0].hasUsage || ft[1].spans[0].total), "false true 3000 true false false");
 
 rmSync(tmp, { recursive: true, force: true });
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
