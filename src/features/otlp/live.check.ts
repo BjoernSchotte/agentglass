@@ -41,6 +41,21 @@ note = ""; T += 5000; liveTick(L, T, send); // approved 35 s after the call star
 const b = L.b.get(p); const op = b ? b.open : null;
 const call = op ? op.spans.filter((x) => x.op === "execute_tool")[0] : undefined;
 eq("approval wait recorded", call ? call.attrs.map((a) => a.k + "=" + String(a.n > 0)).join(",") + " " + call.events.map((e) => e.name + ":" + e.attrs.map((a) => a.k).join("")).join(",") : "none", "agentglass.tool.approval_wait=true agentglass.approval_wait:agentglass.estimated");
+// a call logged only after it ran (Gemini): the cleared wait waits for the call that covers it
+{
+  const p2 = dir + "/late-" + CID + ".jsonl"; writeFileSync(p2, lines.slice(0, 10).join("\n") + "\n");
+  const s2: Sess = newSess("claude", "late", p2, false); s2.pid = 4243; sessions.set(p2, s2);
+  const L4 = newLive(0); let n4 = ""; const s4 = (ts: XTurn[]): boolean => ts.length >= 0; L4.approval = (x: Sess) => x ? n4 : ""; L4.warn = (m: string) => { warns.push(m); };
+  let t4 = Date.parse("2026-09-01T10:05:03.000Z"); s2.mtime = t4;
+  liveTick(L4, t4, s4); // first sight: the builder reads the session
+  n4 = "approval dialog open"; liveTick(L4, t4, s4);
+  t4 = Date.parse("2026-09-01T10:05:12.000Z"); n4 = ""; liveTick(L4, t4, s4);
+  appendFileSync(p2, lines.slice(10, 12).join("\n") + "\n"); s2.mtime = t4; t4 += 1000; liveTick(L4, t4, s4); t4 += 1000; liveTick(L4, t4, s4);
+  const ob = L4.b.get(p2); const oo = ob ? ob.open : null;
+  const c4 = oo ? oo.spans.filter((x) => x.op === "execute_tool")[0] : undefined;
+  eq("late-logged call gets the wait", c4 ? c4.attrs.map((a) => a.k + "=" + String(a.n)).join(",") : "none", "agentglass.tool.approval_wait=10");
+  sessions.delete(p2);
+}
 // late events: turn 2 closes by quiet time (2 min); a later result opens a continuation turn, turn 2 is not sent again
 appendFileSync(p, lines[11] + "\n"); s.mtime = T; T += 1000; liveTick(L, T, send);
 T += 130000; liveTick(L, T, send);
