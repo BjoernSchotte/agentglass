@@ -15,7 +15,7 @@ import { startBuild, stepBuild } from "./build.ts";
 
 export interface RelJson {
   anchor: { session: string; harness: string; t: string; kind: string; text: string };
-  project: { key: string; label: string }; from: string; to: string;
+  project: { key: string; label: string }; from: string; to: string; more: number; capped: boolean; // more/capped: what was not read
   sessions: { id: string; harness: string; title: string; worktree: string }[];
   events: { t: string; session: string | null; harness: string; title: string; kind: string; tool: string; text: string; files: string[]; err: boolean; self: boolean; conflict: { kind: string; with: string[] } | null }[];
 }
@@ -75,7 +75,7 @@ export function relatedJson(prefix: string, eventId: string, at: string, minutes
   const text = (r: RelEv): string => r.kind === "write" && r.files.length ? r.files.map((x) => fileShown(x)).join(" ") : r.text; // writes: the files, repo-relative
   const out: RelJson = {
     anchor: { session: s.id, harness: s.h, t: iso(b.anchor.t), kind: b.anchor.kind, text: text(b.anchor) },
-    project: { key: keyShown(b.key), label: b.label }, from: iso(b.t0), to: iso(b.t1), sessions: [], events: [],
+    project: { key: keyShown(b.key), label: b.label }, from: iso(b.t0), to: iso(b.t1), more: b.more, capped: b.capped, sessions: [], events: [],
   };
   for (const p of b.cands) { const c = sessions.get(p); if (c) out.sessions.push({ id: c.id, harness: c.h, title: titleOf(c), worktree: wt(c) }); }
   for (const r of b.rows) {

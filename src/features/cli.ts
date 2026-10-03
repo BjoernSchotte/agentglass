@@ -79,8 +79,9 @@ function usage(): string {
   errorRate activeMin agentMin files[{path,edits,add,del,harnesses}] outsideFiles byHarness[] branches[]
   (activeMin = union of the sessions' active minutes, agentMin = their sum; errorRate null under 10 calls)
 
---json --related <session> fields: anchor{session,harness,t,kind,text} project{key,label} from to
+--json --related <session> fields: anchor{session,harness,t,kind,text} project{key,label} from to more capped
   sessions[{id,harness,title,worktree}] events[{t,session,harness,title,kind,tool,text,files[],err,self,conflict}]
+  (more = candidate sessions beyond the 40 read; capped = the 16 MB read budget ended reading early)
   (kind = prompt|write|shell|read|agent|web|mcp|alert|commit; session null = a reflog commit no session observed;
   conflict = {kind: conflict|overlap|clobber, with: [session ids]} or null; config related.minutes, related.conflictMinutes)
 

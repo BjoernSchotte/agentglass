@@ -36,6 +36,8 @@ let j: { anchor: { session: string; t: string; kind: string }; project: { key: s
 try { j = JSON.parse(r.json); } catch (e) { j = null; }
 if (!j) { bad++; console.log("FAIL json: " + r.json.slice(0, 200)); } else {
   eq("anchor", j.anchor.session + " " + j.anchor.t, "aaaaaa11 " + iso(60));
+  const jo = JSON.parse(r.json);
+  eq("complete: no sessions left out, not capped", String(jo.more) + " " + String(jo.capped), "0 false");
   eq("other project absent", String(j.sessions.map((x) => x.id).sort().join(",")), "aaaaaa11,bbbbbb22");
   let sorted = true; for (let i = 1; i < j.events.length; i++) if ((j.events[i]?.t ?? "") < (j.events[i - 1]?.t ?? "")) sorted = false;
   eq("events sorted by t", String(sorted) + " " + String(j.events.length), "true 4");

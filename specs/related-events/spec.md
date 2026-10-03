@@ -157,7 +157,7 @@ For each file `(top, rel)`, take the `write` events in the whole loaded range, b
 
 ### 7. CLI
 `agentglass --json --related <session-id-prefix> [--event <event id> | --at <iso>] [--minutes N]` prints:
-`{anchor:{session, harness, t, kind, text}, project:{key, label}, from, to, sessions:[…], events:[{t, session, harness, title, kind, tool, text, files:[rel], err, self, conflict:{kind:"conflict"|"overlap"|"clobber", with:[session]}|null}]}`.
+`{anchor:{session, harness, t, kind, text}, project:{key, label}, from, to, more, capped, sessions:[…], events:[{t, session, harness, title, kind, tool, text, files:[rel], err, self, conflict:{kind:"conflict"|"overlap"|"clobber", with:[session]}|null}]}`.
 An unknown prefix or event exits 3, an ambiguous prefix exits 4 with the candidates, a bad option 2 (the shared
 exit-code table of cli-agent-mode, `EXIT_CODES` in `src/features/clihelp.ts`).
 
