@@ -38,7 +38,7 @@ function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, s
   let subs = false; for (const c of s.subs) if (Date.now() - c.mtime < 45000) subs = true;
   const at = harnessOf(s.h).approvalTitle; const tty = at ? ttyOf(s.pid) : "";
   const asks = !!at && tty !== "" && at(titles().get(tty) ?? "");
-  return { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks };
+  return { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!harnessOf(s.h).noApproval };
 }
 // one look at every live session per alarm tick: the process tree and (lazily) the tmux pane titles
 export interface Looker { kids: Map<number, Proc[]>; titles: () => Map<string, string> }
