@@ -4,7 +4,8 @@ set -e
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-BIN="$T/agentglass"; scriptc build src/main.ts -o "$BIN" >/dev/null
+# AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
+BIN="$T/agentglass"; if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$BIN"; else scriptc build src/main.ts -o "$BIN" >/dev/null; fi
 mkdir -p "$T/home/.claude/projects/-w-app" "$T/home/.codex/sessions/2026/10/01" "$T/home/.agentglass"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 printf '%s\n' "{\"type\":\"user\",\"timestamp\":\"$NOW\",\"cwd\":\"/w/app\",\"sessionId\":\"c1\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}" \

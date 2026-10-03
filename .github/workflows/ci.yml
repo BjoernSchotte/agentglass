@@ -8,7 +8,7 @@ jobs:
   check:
     name: check ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45 # a hung test fails fast instead of holding the runner for 6 h
+    timeout-minutes: 20 # a hung test fails fast instead of holding the runner for 6 h (a cold run takes ~3 min)
     strategy:
       fail-fast: false
       matrix: { os: [ubuntu-24.04, macos-14] }
@@ -17,9 +17,25 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npm i -g scriptc@0.1.7
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang sqlite3
-      - run: ./build.sh
+      - uses: actions/cache@v4 # npm's download cache: the scriptc install skips the registry
+        with: { path: ~/.npm, key: "npm-scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}" }
+      - run: npm i -g --prefer-offline --no-audit --no-fund scriptc@0.1.7
+      - if: runner.os == 'Linux' # the runner image usually has both
+        run: command -v clang >/dev/null && command -v sqlite3 >/dev/null || { sudo apt-get update && sudo apt-get install -y clang sqlite3; }
+      # scriptc's persistent build cache (validated per input, keyed on the output path): unchanged checks skip codegen
+      # and linking. Exact key = this tree's sources; otherwise the newest cache for this scriptc + OS + arch
+      - id: scriptc-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.os == 'macOS' && '~/Library/Caches/scriptc' || '~/.cache/scriptc' }}
+          key: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/**', 'testdata/**', 'scripts/*.sh', 'build.sh') }}
+          restore-keys: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-
+      # builds the release binary (./agentglass) in parallel with the checks; the shell tests run it
       - run: sh scripts/check.sh
+        env: { AGENTGLASS_OUT: agentglass, CHECK_BIN_FLAGS: "", SCRIPTC_CACHE_MAX_MB: "2048" }
+      - if: ${{ !cancelled() && steps.scriptc-cache.outputs.cache-hit != 'true' && github.event_name == 'push' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.os == 'macOS' && '~/Library/Caches/scriptc' || '~/.cache/scriptc' }}
+          key: ${{ steps.scriptc-cache.outputs.cache-primary-key }}
       - run: ./agentglass --version && ./agentglass --version --json && ./agentglass --json --limit 1 >/dev/null
