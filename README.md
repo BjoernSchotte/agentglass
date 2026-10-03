@@ -336,8 +336,9 @@ transcript at the tool call that made the commit or printed the link, `y` copies
 - PR/MR, issue and commit URLs of GitHub, GitLab (nested groups, `/-/merge_requests/`), Bitbucket and Gitea/Forgejo
   are collected from tool output: `created` when `gh pr create`, `glab mr create`, `hub pull-request`, `tea pr
   create`, `gh/glab issue create` or an MCP `create_pull_request`/`create_merge_request`/`create_issue` tool printed
-  them, else `mentioned`. The `git push` hint `…/pull/new/<branch>` is no PR. URLs are stored without credentials,
-  query or fragment; one with a token-shaped path is dropped.
+  them, else `mentioned`, from the first 64 KB of each log line (file dumps beyond that are skipped). The `git push`
+  hint `…/pull/new/<branch>` is no PR. URLs are stored without credentials, query or fragment; one with a
+  token-shaped path is dropped. At most 200 per session: when full, new `mentioned` links are dropped first.
 - `$/commit` = cost of the session and its subagents ÷ ✓ commits (subagents' commits count for the parent, as
   their cost does). The Repos tab adds a `commits` column (from 92 columns), and the project detail shows
   commits, `$/commit` of the sessions that committed, spend without commits, per-branch commits and `$/c` (a session
@@ -345,7 +346,8 @@ transcript at the tool call that made the commit or printed the link, `y` copies
 - Local only: transcripts, `.git/logs/HEAD` read as a file (never written), and a few budgeted `git` calls — one
   `git log --no-walk` per opened git view for full shas and diff stats (closed sessions are cached in
   `~/.agentglass/cache/vcs.json`), at most one spawn per 500 ms. No `fetch`, no forge API. Committer names and emails
-  are never stored. Under `--redact` subjects and URLs are faked (numbers and shas kept).
+  are never stored. Under `--redact` subjects and URLs are faked (numbers and short shas kept; a full 40-hex sha is
+  masked like any key-shaped string).
 - Kiro logs no per-call times: its banners count, its quiet commits show ≈. fx is matched by `call_id`.
 
 ## Filters
