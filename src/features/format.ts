@@ -1,0 +1,175 @@
+// agentglass — one formatter for every CLI list: rows of plain objects → json | jsonl | csv | table, with --fields selection
+// SPDX-License-Identifier: Apache-2.0
+import { type Obj, obj } from "../util/json.ts";
+import { width, cw, cpOf, clean } from "../util/text.ts";
+import { agentHost, cliError } from "./agentenv.ts";
+
+export const FORMATS = ["json", "jsonl", "csv", "table"];
+
+// nested objects joined with "_" (tokens.in → tokens_in), arrays → ";"-joined scalars (objects inside as compact JSON), null stays null
+export function flatten(o: Obj): Obj {
+  const out: Obj = {};
+  const walk = (pre: string, v: Obj): void => {
+    for (const k of Object.keys(v)) {
+      const x = v[k]; const n = pre ? pre + "_" + k : k;
+      if (x === undefined) continue;
+      const ox = x !== null && !Array.isArray(x) ? obj(x) : null;
+      if (ox) walk(n, ox);
+      else if (Array.isArray(x)) out[n] = (x as unknown[]).map((e: unknown): string => typeof e === "string" ? e : JSON.stringify(e)).join(";");
+      else out[n] = x;
+    }
+  };
+  walk("", o);
+  return out;
+}
+function keysOf(rows: Obj[], flat: boolean): string[] {
+  const seen = new Set<string>(); const out: string[] = [];
+  for (const r of rows) for (const k of Object.keys(flat ? flatten(r) : r)) if (!seen.has(k)) { seen.add(k); out.push(k); }
+  return out;
+}
+// fields empty → defaults (empty defaults → every flattened key, first-seen order); valid = top-level + flattened names (+ known,
+// the command's declared fields, so an empty result still rejects a typo)
+export function pickCols(rows: Obj[], fields: string[], defaults: string[], known: string[]): { cols: string[]; bad: string[]; valid: string[] } {
+  const valid = keysOf(rows, false);
+  for (const k of keysOf(rows, true).concat(known)) if (valid.indexOf(k) < 0) valid.push(k);
+  if (!fields.length) return { cols: defaults.length ? defaults : keysOf(rows, true), bad: [], valid };
+  const bad: string[] = [];
+  for (const f of fields) if (valid.indexOf(f) < 0) bad.push(f);
+  return { cols: fields, bad, valid };
+}
+// a row cut to cols: a top-level name keeps its value (nested objects too), a flattened name takes the flat value
+function project(r: Obj, cols: string[]): Obj {
+  if (!cols.length) return r;
+  const out: Obj = {}; let flat: Obj | null = null;
+  for (const c of cols) {
+    const v = r[c];
+    if (v !== undefined) { out[c] = v; continue; }
+    if (!flat) flat = flatten(r);
+    const fv = flat[c];
+    out[c] = fv === undefined ? null : fv;
+  }
+  return out;
+}
+// csv/table columns: a top-level object name stands for its flattened children
+function expand(rows: Obj[], cols: string[]): string[] {
+  const all = keysOf(rows, true);
+  if (!cols.length) return all;
+  const out: string[] = [];
+  for (const c of cols) {
+    const kids = all.filter((k: string) => k.startsWith(c + "_"));
+    if (all.indexOf(c) < 0 && kids.length) { for (const k of kids) out.push(k); } else out.push(c);
+  }
+  return out;
+}
+
+// RFC 4180 cell; text starting with = + - @ gets a leading ' so spreadsheets do not run it (numbers are not guarded)
+export function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  let s = typeof v === "string" ? v : JSON.stringify(v);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) ? "\"" + s.split("\"").join("\"\"") + "\"" : s;
+}
+function numText(n: number): string {
+  if (Number.isInteger(n)) return String(n);
+  return String(Math.abs(n) >= 1 ? Math.round(n * 100) / 100 : Math.round(n * 10000) / 10000);
+}
+function cellText(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number") return numText(v as number);
+  if (typeof v === "string") return clean(v as string);
+  return clean(typeof v === "boolean" ? String(v) : JSON.stringify(v));
+}
+// cut to w columns with … (no padding)
+function cut(s: string, w: number): string {
+  if (width(s) <= w) return s;
+  let out = ""; let n = 0;
+  for (const ch of s) { const c = cw(cpOf(ch)); if (n + c > w - 1) break; out += ch; n += c; }
+  return out + "…";
+}
+function pad(s: string, w: number, right: boolean): string { const f = " ".repeat(Math.max(0, w - width(s))); return right ? f + s : s + f; }
+const B = "\x1b[1m"; const R = "\x1b[0m";
+function table(rows: Obj[], cols: string[], tty: boolean, cols0: number): string {
+  const flat = rows.map((r: Obj) => flatten(r));
+  const num = cols.map((c: string) => flat.every((r: Obj) => r[c] === null || r[c] === undefined || typeof r[c] === "number"));
+  // one decimal count per number column, so the points line up: whole numbers as is, else 2 (4 when every value is below 1)
+  const dec = cols.map((c: string, i: number): number => {
+    if (!num[i]) return -1;
+    let frac = false; let big = 0;
+    for (const r of flat) { const v = r[c]; if (typeof v === "number") { if (!Number.isInteger(v)) frac = true; big = Math.max(big, Math.abs(v as number)); } }
+    return !frac ? -1 : big < 1 ? 4 : 2;
+  });
+  const cells = flat.map((r: Obj) => cols.map((c: string, i: number) => { const v = r[c]; const d = dec[i] ?? -1; return d >= 0 && typeof v === "number" ? (v as number).toFixed(d) : cellText(v); }));
+  const w: number[] = [];
+  for (let i = 0; i < cols.length; i++) { let m = width(cols[i] ?? ""); for (const r of cells) m = Math.max(m, width(i < r.length ? r[i] : "")); w.push(m); }
+  // too wide: cut the widest text column, again and again, down to 4 columns each
+  for (;;) {
+    let tot = 0; for (const x of w) tot += x; tot += 2 * Math.max(0, w.length - 1);
+    if (tot <= cols0) break;
+    let wi = -1; for (let i = 0; i < w.length; i++) if (!num[i] && (w[i] ?? 0) > 4 && (wi < 0 || (w[i] ?? 0) > (w[wi] ?? 0))) wi = i;
+    if (wi < 0) break;
+    w[wi] = Math.max(4, (w[wi] ?? 0) - (tot - cols0));
+  }
+  const line = (r: string[]): string => r.map((v: string, i: number) => pad(cut(v, w[i] ?? 0), w[i] ?? 0, num[i] ?? false)).join("  ").replace(/\s+$/, "");
+  const hd = line(cols);
+  return [tty ? B + hd + R : hd].concat(cells.map(line)).join("\n");
+}
+// one object: key/value lines, values cut to the width
+function kv(row: Obj, cols: string[], tty: boolean, cols0: number): string {
+  const f = flatten(row);
+  let kw = 0; for (const c of cols) kw = Math.max(kw, width(c));
+  return cols.map((c: string) => (tty ? B + pad(c, kw, false) + R : pad(c, kw, false)) + "  " + cut(cellText(f[c]), Math.max(8, cols0 - kw - 2))).join("\n").replace(/[ \t]+$/gm, "");
+}
+// one object as JSON, stringified inside a one-element array: scriptc rejects stringify of a lone Obj from an array read
+function js(o: Obj[], pretty: boolean): string {
+  if (!pretty) return JSON.stringify(o).slice(1, -1);
+  const ls = JSON.stringify(o, null, 2).split("\n");
+  return ls.slice(1, ls.length - 1).map((l: string) => l.slice(2)).join("\n");
+}
+// rows → text (no trailing newline); cols [] = whole rows (json/jsonl) or every flattened key (csv/table)
+export function render(rows: Obj[], cols: string[], fmt: string, single: boolean, pretty: boolean, tty: boolean, cols0: number): string {
+  const p: Obj[] = []; for (const r of rows) p.push(project(r, cols));
+  const ls: string[] = [];
+  if (fmt === "jsonl") { for (let i = 0; i < p.length; i++) ls.push(js(p.slice(i, i + 1), false)); return ls.join("\n"); }
+  if (fmt === "csv") {
+    const cs = expand(p, cols);
+    ls.push(cs.map((c: string) => csvCell(c)).join(","));
+    for (const r of p) { const f = flatten(r); ls.push(cs.map((c: string) => csvCell(f[c])).join(",")); }
+    return ls.join("\n");
+  }
+  if (fmt === "table") { const cs = expand(p, cols); return single ? (p.length ? kv(p[0], cs, tty, cols0) : "") : table(p, cs, tty, cols0); }
+  if (single) return p.length ? js(p.slice(0, 1), pretty) : "null";
+  return pretty ? JSON.stringify(p, null, 2) : JSON.stringify(p);
+}
+// --json → json; inside an agent → json; a terminal → table; a pipe → json
+export function defaultFormat(agent: boolean, stdoutTty: boolean, legacyJson: boolean): string {
+  if (legacyJson || agent) return "json";
+  return stdoutTty ? "table" : "json";
+}
+// $COLUMNS, else 120
+export function termCols(): number { const c = Number(process.env.COLUMNS ?? ""); return c > 20 ? c : 120; }
+
+// --format F / --fields a,b,c of one command line (fmt "" = the default for where the output goes)
+export interface Fmt { fmt: string; fields: string[] }
+export function fmtArgs(args: string[]): Fmt {
+  const f: Fmt = { fmt: "", fields: [] };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--format") { f.fmt = args[i + 1] ?? ""; i++; if (FORMATS.indexOf(f.fmt) < 0) cliError("usage", "--format must be one of " + FORMATS.join(", "), "", 2); }
+    else if (a === "--fields") { f.fields = (args[i + 1] ?? "").split(",").map((x: string) => x.trim()).filter((x: string) => x !== ""); i++; if (!f.fields.length) cliError("usage", "--fields needs a comma-separated list of field names", "", 2); }
+  }
+  return f;
+}
+// rows → the text for stdout: format default, --fields check (unknown → exit 2 listing the valid names), styling only for a person at a terminal
+export function formatRows(rows: Obj[], f: Fmt, single: boolean, tableCols: string[], known: string[], legacyJson: boolean): string {
+  const agent = agentHost().on; const tty = process.stdout.isTTY === true;
+  const fmt = f.fmt || defaultFormat(agent, tty, legacyJson);
+  let cols: string[] = fmt === "table" ? tableCols : [];
+  if (f.fields.length) {
+    const pc = pickCols(rows, f.fields, tableCols, known);
+    if (pc.bad.length) cliError("usage", "unknown field" + (pc.bad.length > 1 ? "s " : " ") + pc.bad.join(", "), "valid: " + pc.valid.join(", "), 2);
+    cols = pc.cols;
+  }
+  const human = tty && !agent;
+  return render(rows, cols, fmt, single, fmt === "json" && human, human && process.env.NO_COLOR === undefined, termCols());
+}

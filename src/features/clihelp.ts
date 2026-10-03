@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Obj } from "../util/json.ts";
 import { BUILD } from "../build-info.ts";
+import { FORMATS } from "./format.ts";
 
 // def = default ("" none), values = the allowed values ([] = free)
 export interface OptRec { flag: string; arg: string; summary: string; def: string; values: string[] }
@@ -18,7 +19,6 @@ export function addCmd(c: CmdRec): void {
 export function cmdOf(cmd: string): CmdRec | null { for (const c of REG) if (c.group === "cmd" && c.cmd === cmd) return c; return null; }
 export function opt(flag: string, arg: string, summary: string, def: string, values: string[]): OptRec { return { flag, arg, summary, def, values }; }
 
-export const FORMATS = ["json", "jsonl", "csv", "table"];
 export const EXIT_CODES: Obj = { "0": "ok (an empty result is ok)", "1": "runtime failure", "2": "usage error", "3": "not found", "4": "ambiguous reference" };
 export const EXAMPLES: string[] = [
   "agentglass session current --fields costUsd,tools,errors",

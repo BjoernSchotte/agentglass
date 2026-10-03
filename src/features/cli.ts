@@ -5,7 +5,7 @@ import { H, complete, screenOut } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf } from "../harness/index.ts";
-import { base } from "../util/json.ts";
+import { type Obj, base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { BUILD } from "../build-info.ts";
@@ -16,12 +16,15 @@ import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { agentHost, hostObj, cliError, parseDur } from "./agentenv.ts";
+import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 
 const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
 const LIVE_OPT = opt("--live", "", "only sessions with a running agent process", "", []);
 const LIMIT_OPT = opt("--limit", "N", "--json: at most N sessions", "", []);
 const SUBS_OPT = opt("--subagents", "", "--json: include subagent sessions", "", []);
 const FROM_OPT = opt("--from-start", "", "--watch: replay existing logs from the beginning (combine with a filter)", "", []);
+export const FORMAT_OPT = opt("--format", "json|jsonl|csv|table", "--json: output format (default json)", "", ["json", "jsonl", "csv", "table"]);
+export const FIELDS_OPT = opt("--fields", "a,b,c", "--json: only these fields, in this order (tokens_in for nested ones)", "", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
 const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
 export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
@@ -31,14 +34,14 @@ function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.ar
 addCmd(cmd("", "agentglass", "interactive TUI", [], []));
 addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
 addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
-addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT], JSON_FIELDS));
+addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT], JSON_FIELDS));
 addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT], []));
 addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
 addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
 addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
 addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
 addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
-for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT]) addCmd(optRow(o));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FORMAT_OPT, FIELDS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT]) addCmd(optRow(o));
 function usage(): string {
   return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
     `--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
@@ -56,14 +59,7 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 `);
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean }
-interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
-interface JBill { mode: string; plan: string; source: string }
-interface JSess {
-  id: string; harness: string; title: string; cwd: string; branch: string; remote: string | null; model: string; path: string; updated: string; bytes: number;
-  live: boolean; pid: number; status: string; parent: string | null; kind: string; subagents: number; activity: string; tokens: JTok;
-  costUsd: number | null; billing: JBill; unpricedTokens: number; unpricedCredits: number; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null; skills: SkillUse[];
-}
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean }
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
@@ -73,7 +69,7 @@ function out(line: string): void {
 export function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0 };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -97,6 +93,20 @@ function wanted(s: Sess, o: Opts): boolean {
   return !o.live || livePid(s) > 0;
 }
 export { usage };
+// the --json fields of one session (key order is the output order)
+export function jsonSess(s: Sess): Obj {
+  return {
+    id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: s.path,
+    updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
+    parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
+    tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
+    costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
+    unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
+    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null),
+  };
+}
+// table columns of a session list (project = the cwd's last part)
+export const TABLE_COLS = ["updated", "harness", "title", "cwd", "costUsd", "tools", "status"];
 export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
 
 function snapshot(o: Opts): void {
@@ -104,20 +114,9 @@ function snapshot(o: Opts): void {
   const list: Sess[] = [];
   for (const s of sessions.values()) if ((o.subs || s.depth === 0) && wanted(s, o)) list.push(s);
   list.sort((a, b) => b.mtime - a.mtime);
-  const res: JSess[] = [];
-  for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) {
-    loadHead(s); loadTail(s); complete(s);
-    res.push({
-      id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: s.path,
-      updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
-      parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
-      tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
-      costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
-      unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-      attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null),
-    });
-  }
-  out(process.stdout.isTTY ? JSON.stringify(res, null, 2) : JSON.stringify(res));
+  const res: Obj[] = [];
+  for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) { loadHead(s); loadTail(s); complete(s); res.push(jsonSess(s)); }
+  out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS, o.json));
   process.exit(0);
 }
 
@@ -143,6 +142,7 @@ function emitEv(s: Sess, e: Ev): void {
 const IDLE_MS = 10000;
 function watch(o: Opts): void {
   // an endless stream ties up the agent's tool call
+  if (o.f.fmt || o.f.fields.length) cliError("usage", "--watch always prints JSONL: --format and --fields do not apply", "", 2);
   if (agentHost().on && !o.forMs && !o.idle) cliError("usage", "--watch needs --for <dur> or --until-idle inside an agent", "e.g. --watch --for 30s", 2);
   discover();
   const t0 = Date.now(); lastOut = t0;
