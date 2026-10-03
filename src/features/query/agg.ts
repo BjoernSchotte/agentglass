@@ -6,9 +6,10 @@ import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger } from "../usage/ledger.ts";
 import { type Day, L } from "../usage/record.ts";
-import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
+import { type Call, type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
-import { type Compiled, sessMatches, dayMatches, eachCall, weekdayOf, livePid } from "./eval.ts";
+import { type Compiled, sessMatches, dayMatches, eachCall, callsIn, weekdayOf, livePid } from "./eval.ts";
+import { callCutoff } from "../usage/callcache.ts";
 import { projectOf } from "./project.ts";
 import { titleOf, working } from "../../model/sessions.ts";
 
@@ -69,6 +70,8 @@ export function sessDim(dim: string, s: Sess): string[] {
 }
 function uniq(xs: string[]): string[] { const o: string[] = []; for (const x of xs) if (o.indexOf(x) < 0) o.push(x); return o; }
 function dictNames(d: { ids: Map<string, number>; names: string[] }, xs: number[]): string[] { const o: string[] = []; for (const x of xs) o.push(nameOf(d, x)); return o; }
+// the dimensions callDim answers per row; any other falls back to the session's value
+const CALL_LEVEL = ["tool", "server", "program", "command", "file", "ext", "status", "duration", "out", "model", "hour", "day", "weekday"];
 // a call attribute as dimension values (multi-valued attributes: each distinct value)
 export function callDim(dim: string, s: Sess, c: Call): string[] {
   switch (dim) {
@@ -101,46 +104,67 @@ export function aggKey(f: Compiled, entity: string, days: string[], dims: string
 function fresh(): void { if (cacheVer !== L.ver) { cache.clear(); tcache.clear(); cacheVer = L.ver; } if (cache.size > 64) cache.clear(); if (tcache.size > 64) tcache.clear(); }
 
 export function aggregate(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight): Dist[] {
-  fresh();
-  const k = aggKey(f, entity, days, dims, weight); const hit = cache.get(k); if (hit) return hit;
-  let rows = f.needsCalls; if (entity === "call") for (const d of dims) if (ROW_DIMS.indexOf(d) >= 0) rows = true;
-  const out = rows ? rowsAgg(f, entity, days, dims, weight, null) : bucketAgg(f, entity, days, dims, weight);
-  cache.set(k, out); return out;
+  const j = aggJob(f, entity, days, dims, weight, null); aggStep(j, Infinity); return j.out;
 }
 // rows path with an extra row test no filter can express (triage `slow`); not cached (keep is a closure)
-export function aggregateWhere(f: Compiled, days: string[], dims: string[], weight: Weight, keep: (s: Sess, c: Call) => boolean): Dist[] { return rowsAgg(f, "call", days, dims, weight, keep); }
+export function aggregateWhere(f: Compiled, days: string[], dims: string[], weight: Weight, keep: (s: Sess, c: Call) => boolean): Dist[] {
+  const j = aggJob(f, "call", days, dims, weight, keep); aggStep(j, Infinity); return j.out;
+}
 
-function bucketAgg(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight): Dist[] {
-  const out = newDists(dims, "buckets");
-  for (const s of sessions.values()) {
-    if (!sessMatches(f, s)) continue;
-    const a = ledger.get(s.path); if (!a) continue;
-    if (entity === "call") {
-      for (const dk of days) {
-        const d = a.days.get(dk); if (!d || !dayMatches(f, s, dk, d)) continue;
-        for (const [name, st] of d.tt) for (const ds of out) addTS(ds, s, dk, name, st, weight);
-      }
-      continue;
-    }
-    // session entity: once per session with ≥ 1 selected day passing the filter
-    let any = false; let err = 0; let w = 0; let unp = false; const tools: string[] = []; const progs: string[] = []; const exts: string[] = []; const dks: string[] = [];
-    for (const dk of days) {
-      const d = a.days.get(dk); if (!d || !dayMatches(f, s, dk, d)) continue;
-      any = true; dks.push(dk);
-      for (const [name, st] of d.tt) { err += st.err; if (tools.indexOf(name) < 0) tools.push(name); if (weight === "duration") w += st.ms; }
-      for (const pk of d.prog.keys()) { const p = pk.slice(pk.indexOf("\t") + 1); if (progs.indexOf(p) < 0) progs.push(p); }
-      for (const fk of d.files.keys()) { const e = extOf(fk.slice(fk.indexOf("\t") + 1)); if (exts.indexOf(e) < 0) exts.push(e); }
-      if (weight === "cost") { if (unpricedDay(d)) unp = true; w += d.cost; } else if (weight === "tokens") w += dayTok(d);
-    }
-    if (!any) continue;
-    if (weight === "count") w = 1;
-    for (const ds of out) {
-      const vs = ds.dim === "tool" ? tools : ds.dim === "program" ? progs : ds.dim === "ext" ? exts : ds.dim === "day" ? dks : sessDim(ds.dim, s);
-      ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
-      for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += err; }
-    }
+// ── resumable aggregation: one session per step, so a long count (30 days of call rows) runs in slices between frames ──
+export interface AggJob {
+  k: string /* cache key, "" = not cached */; f: Compiled; entity: "session" | "call"; days: string[]; dset: Set<string>; dims: string[]; weight: Weight;
+  keep: ((s: Sess, c: Call) => boolean) | null; rows: boolean; cut: number; sl: boolean[] /* dims answered per session */; ss: Sess[]; i: number; out: Dist[]; done: boolean;
+}
+export function aggJob(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight, keep: ((s: Sess, c: Call) => boolean) | null): AggJob {
+  fresh();
+  const k = keep ? "" : aggKey(f, entity, days, dims, weight); const hit = k ? cache.get(k) : undefined;
+  let rows = f.needsCalls || keep !== null; if (entity === "call") for (const d of dims) if (ROW_DIMS.indexOf(d) >= 0) rows = true;
+  const sl: boolean[] = []; for (const d of dims) sl.push(CALL_LEVEL.indexOf(d) < 0);
+  const ss: Sess[] = []; if (!hit) for (const s of sessions.values()) ss.push(s);
+  return { k, f, entity, days, dset: new Set<string>(days), dims, weight, keep, rows, cut: callCutoff(), sl, ss, i: 0, out: hit ?? newDists(dims, rows ? "rows" : "buckets"), done: !!hit };
+}
+// sessions until the clock reaches `until` (Infinity = to the end); true when done (j.out is then complete and cached)
+export function aggStep(j: AggJob, until: number): boolean {
+  while (!j.done) {
+    if (j.i >= j.ss.length) { j.done = true; if (j.k) { fresh(); cache.set(j.k, j.out); } break; }
+    const s = j.ss[j.i]; j.i++;
+    if (j.rows) { if (j.entity === "call") rowsCall(j, s); else rowsSess(j, s); }
+    else if (j.entity === "call") bucketCall(j, s); else bucketSess(j, s);
+    if (until !== Infinity && Date.now() >= until) break;
   }
-  return out;
+  return j.done;
+}
+
+function bucketCall(j: AggJob, s: Sess): void {
+  if (!sessMatches(j.f, s)) return;
+  const a = ledger.get(s.path); if (!a) return;
+  for (const dk of j.days) {
+    const d = a.days.get(dk); if (!d || !dayMatches(j.f, s, dk, d)) continue;
+    for (const [name, st] of d.tt) for (const ds of j.out) addTS(ds, s, dk, name, st, j.weight);
+  }
+}
+// session entity: once per session with ≥ 1 selected day passing the filter
+function bucketSess(j: AggJob, s: Sess): void {
+  if (!sessMatches(j.f, s)) return;
+  const a = ledger.get(s.path); if (!a) return;
+  const weight = j.weight;
+  let any = false; let err = 0; let w = 0; let unp = false; const tools: string[] = []; const progs: string[] = []; const exts: string[] = []; const dks: string[] = [];
+  for (const dk of j.days) {
+    const d = a.days.get(dk); if (!d || !dayMatches(j.f, s, dk, d)) continue;
+    any = true; dks.push(dk);
+    for (const [name, st] of d.tt) { err += st.err; if (tools.indexOf(name) < 0) tools.push(name); if (weight === "duration") w += st.ms; }
+    for (const pk of d.prog.keys()) { const p = pk.slice(pk.indexOf("\t") + 1); if (progs.indexOf(p) < 0) progs.push(p); }
+    for (const fk of d.files.keys()) { const e = extOf(fk.slice(fk.indexOf("\t") + 1)); if (exts.indexOf(e) < 0) exts.push(e); }
+    if (weight === "cost") { if (unpricedDay(d)) unp = true; w += d.cost; } else if (weight === "tokens") w += dayTok(d);
+  }
+  if (!any) return;
+  if (weight === "count") w = 1;
+  for (const ds of j.out) {
+    const vs = ds.dim === "tool" ? tools : ds.dim === "program" ? progs : ds.dim === "ext" ? exts : ds.dim === "day" ? dks : sessDim(ds.dim, s);
+    ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
+    for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += err; }
+  }
 }
 // one tool's day counter into a call-entity distribution
 function addTS(ds: Dist, s: Sess, dk: string, name: string, st: TS, weight: Weight): void {
@@ -151,47 +175,67 @@ function addTS(ds: Dist, s: Sess, dk: string, name: string, st: TS, weight: Weig
   for (const v of vs) { const b = bin(ds, v); b.n += st.n; b.w += w; b.err += st.err; addHist(b.hist, st.hist); if (st.max > b.max) b.max = st.max; }
 }
 
-interface SR { s: Sess; err: number; dur: number; dks: string[]; vals: string[][] } // one session's matching rows
-function rowsAgg(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight, keep: ((s: Sess, c: Call) => boolean) | null): Dist[] {
-  const out = newDists(dims, "rows");
-  if (entity === "call") {
-    eachCall(f, days, (s: Sess, c: Call) => {
-      if (keep) { const k = keep; if (!k(s, c)) return; }
-      const w = weight === "count" ? 1 : weight === "duration" ? Math.max(0, c.ms) : 0;
-      for (const ds of out) {
-        ds.total++; ds.wTotal += w;
-        for (const v of callDim(ds.dim, s, c)) { const b = bin(ds, v); b.n++; b.w += w; if (c.err === 1) b.err++; if (c.ms >= 0) { const hi = hb(c.ms); b.hist[hi] = (b.hist[hi] ?? 0) + 1; if (c.ms > b.max) b.max = c.ms; } }
-      }
-    });
-    return out;
-  }
-  // session entity: a session counts once if any of its rows match; call dims are the union over those rows
-  const by = new Map<string, SR>();
-  eachCall(f, days, (s: Sess, c: Call) => {
-    if (keep) { const k = keep; if (!k(s, c)) return; }
-    let r = by.get(s.path);
-    if (!r) { const vs: string[][] = []; for (let i = 0; i < dims.length; i++) vs.push([]); r = { s, err: 0, dur: 0, dks: [], vals: vs }; by.set(s.path, r); }
-    if (c.err === 1) r.err++;
-    if (c.ms > 0) r.dur += c.ms;
-    const dk = localOf(c.t).day; if (r.dks.indexOf(dk) < 0) r.dks.push(dk);
-    for (let i = 0; i < dims.length; i++) {
-      const dim = dims[i] ?? ""; if (dim === "hour" || dim === "weekday") continue;
-      const into = r.vals[i] ?? []; for (const v of callDim(dim, s, c)) if (into.indexOf(v) < 0) into.push(v);
+function rowsCall(j: AggJob, s: Sess): void {
+  const out = j.out; const weight = j.weight; const kp = j.keep;
+  // session attributes are the same for every row of the session: its rows add up in one bin, which joins each session
+  // dimension's value bin once at the end
+  const acc = newBin(); let any = false;
+  callsIn(j.f, s, j.dset, j.cut, (c: Call) => {
+    if (kp) { const k = kp; if (!k(s, c)) return; }
+    any = true;
+    const w = weight === "count" ? 1 : weight === "duration" ? Math.max(0, c.ms) : 0;
+    const hi = c.ms >= 0 ? hb(c.ms) : -1;
+    addRow(acc, w, c, hi);
+    for (let i = 0; i < out.length; i++) {
+      const ds = out[i]; const dim = ds.dim;
+      ds.total++; ds.wTotal += w;
+      if (j.sl[i]) continue;
+      // the multi-valued call dims straight from the row's ids, without per-row arrays
+      if (dim === "program" || dim === "file" || dim === "command") {
+        const ids: number[] = dim === "program" ? c.progs : dim === "file" ? c.files : c.cmds; const d: Dict = dim === "program" ? DICT.prog : dim === "file" ? DICT.file : DICT.cmd;
+        let x = 0; for (const id of ids) { if (ids.indexOf(id) === x) addRow(bin(ds, nameOf(d, id)), w, c, hi); x++; }
+      } else if (dim === "ext") {
+        if (c.files.length) { const es: string[] = []; for (const f of c.files) { const e = extId(f); if (es.indexOf(e) < 0) { es.push(e); addRow(bin(ds, e), w, c, hi); } } }
+      } else for (const v of callDim(dim, s, c)) addRow(bin(ds, v), w, c, hi);
     }
   });
-  for (const r of by.values()) {
-    const a = ledger.get(r.s.path);
-    let w = 1; let unp = false;
-    if (weight === "cost" || weight === "tokens") { w = 0; if (a) for (const dk of r.dks) { const d = a.days.get(dk); if (!d) continue; if (weight === "cost") { w += d.cost; if (unpricedDay(d)) unp = true; } else w += dayTok(d); } }
-    else if (weight === "duration") w = r.dur;
-    for (let i = 0; i < out.length; i++) {
-      const ds = out[i]; const dim = dims[i] ?? "";
-      const vs = dim === "hour" || dim === "weekday" ? sessDim(dim, r.s) : (r.vals[i] ?? []);
-      ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
-      for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += r.err; }
-    }
+  if (!any) return;
+  for (let i = 0; i < out.length; i++) {
+    if (!j.sl[i]) continue;
+    const ds = out[i];
+    for (const v of sessDim(ds.dim, s)) { const b = bin(ds, v); b.n += acc.n; b.w += acc.w; b.err += acc.err; addHist(b.hist, acc.hist); if (acc.max > b.max) b.max = acc.max; }
   }
-  return out;
+}
+function addRow(b: Bin, w: number, c: Call, hi: number): void { b.n++; b.w += w; if (c.err === 1) b.err++; if (hi >= 0) { b.hist[hi] = (b.hist[hi] ?? 0) + 1; if (c.ms > b.max) b.max = c.ms; } }
+// extension per file id (file ids are ledger-wide and never reused)
+const extMemo = new Map<number, string>();
+function extId(id: number): string { const e = extMemo.get(id); if (e !== undefined) return e; const x = extOf(nameOf(DICT.file, id)); extMemo.set(id, x); return x; }
+// session entity: a session counts once if any of its rows match; call dims are the union over those rows
+function rowsSess(j: AggJob, s: Sess): void {
+  const dims = j.dims; const kp = j.keep;
+  let n = 0; let err = 0; let dur = 0; const dks: string[] = []; const vals: string[][] = []; for (let i = 0; i < dims.length; i++) vals.push([]);
+  callsIn(j.f, s, j.dset, j.cut, (c: Call) => {
+    if (kp) { const k = kp; if (!k(s, c)) return; }
+    n++;
+    if (c.err === 1) err++;
+    if (c.ms > 0) dur += c.ms;
+    const dk = localOf(c.t).day; if (dks.indexOf(dk) < 0) dks.push(dk);
+    for (let i = 0; i < dims.length; i++) {
+      const dim = dims[i] ?? ""; if (dim === "hour" || dim === "weekday") continue;
+      const into = vals[i] ?? []; for (const v of callDim(dim, s, c)) if (into.indexOf(v) < 0) into.push(v);
+    }
+  });
+  if (!n) return;
+  const a = ledger.get(s.path); const weight = j.weight;
+  let w = 1; let unp = false;
+  if (weight === "cost" || weight === "tokens") { w = 0; if (a) for (const dk of dks) { const d = a.days.get(dk); if (!d) continue; if (weight === "cost") { w += d.cost; if (unpricedDay(d)) unp = true; } else w += dayTok(d); } }
+  else if (weight === "duration") w = dur;
+  for (let i = 0; i < j.out.length; i++) {
+    const ds = j.out[i]; const dim = dims[i] ?? "";
+    const vs = dim === "hour" || dim === "weekday" ? sessDim(dim, s) : (vals[i] ?? []);
+    ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
+    for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += err; }
+  }
 }
 
 // "rest" baselines: a − b per value (never below 0; values reaching 0 are dropped)

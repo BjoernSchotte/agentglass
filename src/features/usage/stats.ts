@@ -120,6 +120,7 @@ export function statsSummaryFor(expr: string): { sess: number; tools: number; co
   return { sess: t.sess, tools: t.tools, cost: t.cost, inTok: t.inTok, outTok: t.outTok, add: t.add, del: t.del, scoped: g.scoped };
 }
 export function statsDrillTool(): string { return dKey; }
+export function statsTabIndex(): number { return 2 + H.tabs.indexOf(tab); }
 // switch to the Stats tab with this local filter and open the drill-down of tool ("mcp__<server>" = the server)
 export function statsDrill(tool: string, local: Clause[], wk: boolean): void {
   const i = H.tabs.indexOf(tab); if (i >= 0) S.tab = i + 2;
@@ -688,7 +689,7 @@ H.footerHints.push((mode: string): string[][] => {
 });
 H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server or the skills group"],
   ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
-  ["B", "budget: current state and the config path"],
+  ["B", "budget: current state and the config path"], ["t", "triage the Stats filter's calls (drill-down: that tool's errors)"],
   ["/  p  P", "filter Stats (tool is Bash, repo is x, day >= -3d…) · pin it · edit pins"],
   ["", "costs = API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"],
   ["", "cost tags: spend = API key (real), plan = list-price equivalent, cloud = Bedrock/Vertex/Foundry, gw = gateway, ? = unknown; * = assumed from current config"],
