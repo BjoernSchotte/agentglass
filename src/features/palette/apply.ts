@@ -33,5 +33,6 @@ export function applyLink(ref: string, now: number): string {
 export function flushQueued(): void {
   if (!pending || S.mode === "input" || S.mode === "confirm") return;
   const ref = pending; pending = "";
+  if (S.toast.startsWith("link received: ")) S.toast = ""; // "applies when you leave this prompt": it applies now
   applyLink(ref, Date.now());
 }

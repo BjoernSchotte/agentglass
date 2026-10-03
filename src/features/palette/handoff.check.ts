@@ -70,6 +70,7 @@ ok("link during input → ok", applyLink("aaaaaa-0001", Date.now()) === "ok", ""
 ok("input untouched", S.mode === "input" && S.inputText === "half typed", S.mode + " " + S.inputText);
 onInput("esc"); flushQueued();
 ok("applied after the prompt closed", S.mode === "transcript" && tvNow()?.s === a, S.mode);
+ok("the \"applies when you leave\" toast is gone once applied", S.toast.indexOf("link received") < 0, S.toast);
 onInput("esc");
 // unknown → not-found; ambiguous → the palette prefilled
 ok("unknown → not-found", applyLink("zzzzzz-9", Date.now()) === "err not-found", "");
