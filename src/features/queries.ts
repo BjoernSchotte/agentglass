@@ -313,10 +313,11 @@ function session(args: string[]): void {
 function list(args: string[]): void {
   const o = qopts("sessions", args, ["--since", "--cwd", "--limit", "--live", "--subagents", "--harness"], false);
   const sc = agentScope(args);
+  const since = o.since ? o.sinceMs : Date.now() - 86400000; // default: the last 24 h
   discover();
   const ss: Sess[] = [];
   for (const s of sessions.values()) {
-    if ((!o.subs && s.depth !== 0) || (o.harness && s.h !== o.harness) || s.mtime < o.sinceMs || !visible(s, sc)) continue;
+    if ((!o.subs && s.depth !== 0) || (o.harness && s.h !== o.harness) || s.mtime < since || !visible(s, sc)) continue;
     if (o.live && !(s.pid > 0 || (s.parent && kidsLive(s)))) continue;
     if (o.cwd) { const c = realDir(realCwd(s)); if (c !== o.cwd && !c.startsWith(o.cwd + "/")) continue; }
     ss.push(s);
@@ -334,20 +335,22 @@ function errors(args: string[]): void {
   const o = qopts("errors", args, ["--since", "--limit", "--harness"], true);
   const sc = agentScope(args);
   discover();
-  const r = errorRows(o.ref, o.sinceMs, o.limit || 20, sc, o.harness);
+  // without a ref: the last 24 h unless --since says otherwise (all history would read every log head in scope)
+  const since = o.since || o.ref ? o.sinceMs : Date.now() - 86400000;
+  const r = errorRows(o.ref, since, o.limit || 20, sc, o.harness);
   printEnvelope(r.rows, r.source, sc, o.f, ERR_FIELDS, ERR_FIELDS);
 }
 
 const SCOPE_OPTS: OptRec[] = [opt("--all-projects", "", "inside an agent: every project (default: the current one)", "", []), opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", [])];
 const FMT_OPTS: OptRec[] = [opt("--format", "json|jsonl|csv|table", "output format", "json in an agent or a pipe, table on a terminal", ["json", "jsonl", "csv", "table"]), opt("--fields", "a,b,c", "only these fields, in this order (tokens_in for nested ones)", "", [])];
 function rec(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options: options.concat(FMT_OPTS, SCOPE_OPTS), fields, group: "cmd" }; }
-const SINCE = opt("--since", "today|<n>h|<n>d|YYYY-MM-DD", "only from then on", "", []);
+const SINCE = opt("--since", "today|<n>h|<n>d|YYYY-MM-DD", "only from then on", "24h", []);
 const HARNESS = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
 addCmd(rec("session", "agentglass session [<ref>]", "one session: cost, models, tools, errors, files, repeats, subagents\n(<ref> = current | last | parent | <id> | <id prefix ≥ 6> | <harness>:<id>; default current in an agent, else last)",
   [opt("--root", "", "a subagent's root session instead", "", [])], SESSION_FIELDS), "cost");
 addCmd(rec("sessions", "agentglass sessions [--since 24h]", "sessions, newest first (--cwd <dir>, --limit N, --live, --subagents, --harness h)",
   [SINCE, opt("--cwd", "<dir>", "only sessions in this directory or below it", "", []), opt("--limit", "N", "at most N sessions", "", []), opt("--live", "", "only sessions with a running agent", "", []), opt("--subagents", "", "include subagent sessions", "", []), HARNESS], SESS_FIELDS), "cost");
-addCmd(rec("errors", "agentglass errors [<ref>] [--since 24h]", "failed tool calls, newest first (--limit N, default 20; <ref>: that session and its subagents)",
+addCmd(rec("errors", "agentglass errors [<ref>] [--since 24h]", "failed tool calls, newest first (--limit N, default 20; <ref>: that session and its subagents, all its history)",
   [SINCE, opt("--limit", "N", "at most N errors", "20", []), HARNESS], ERR_FIELDS), "cost");
 
 H.cli.unshift((args: string[]): boolean => { // before cli.ts's flag handlers: these commands own their flags

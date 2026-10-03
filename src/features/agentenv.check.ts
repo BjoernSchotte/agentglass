@@ -20,6 +20,9 @@ eq("codex", host({ CODEX_CI: "1", CODEX_THREAD_ID: "t1" }, []), "true|codex|t1|e
 eq("codex sandbox", host({ CODEX_SANDBOX: "seatbelt" }, []), "true|codex||env:CODEX_SANDBOX");
 eq("gemini", host({ GEMINI_CLI: "1" }, []), "true|gemini||env:GEMINI_CLI");
 eq("pi", host({ PI_CODING_AGENT: "true" }, []), "true|pi||env:PI_CODING_AGENT");
+eq("pi session id", host({ PI_CODING_AGENT: "true", AI_AGENT: "pi", PI_SESSION_ID: "01a1" }, []), "true|pi|01a1|env:PI_CODING_AGENT");
+// nested: the harness's own id beats an inherited one of another harness
+eq("own session var first", host({ CLAUDE_CODE_SESSION_ID: "c1", CODEX_CI: "1", CODEX_THREAD_ID: "t1" }, []), "true|codex|t1|env:CODEX_CI");
 eq("opencode", host({ OPENCODE: "1", OPENCODE_SESSION_ID: "ses_x" }, []), "true|opencode|ses_x|env:OPENCODE");
 eq("kiro", host({ KIRO_SESSION_ID: "k1" }, []), "true|kiro|k1|env:KIRO_SESSION_ID");
 eq("AGENT alone", host({ AGENT: "1" }, []), "false|||");
@@ -63,7 +66,7 @@ const cx = put("codex", "cx-1", "");
 eq("unknown env id → ancestry", cur({ on: true, harness: "claude", session: "nope", via: "" }, [pr(7, 6, "", ""), pr(6, 1, "codex", cx.path)], 7, false), "cx-1|ancestor:pid 6||");
 eq("nested: ancestor beats env of another harness", cur(envH, [pr(7, 6, "", ""), pr(6, 5, "codex", cx.path), pr(5, 1, "claude", root.path)], 7, false), "cx-1|env:CLAUDE_CODE_SESSION_ID+ancestor:pid 6||");
 eq("same harness: env id stays", cur(envH, [pr(7, 5, "", ""), pr(5, 1, "claude", root.path)], 7, false), "root-1|env:CLAUDE_CODE_SESSION_ID||");
-eq("process found, no session", cur({ on: true, harness: "", session: "", via: "" }, [pr(7, 6, "", ""), pr(6, 1, "gemini", "")], 7, false), "-|ancestor:pid 6|no_current_session|session not written yet");
+eq("process found, no session", cur({ on: true, harness: "", session: "", via: "" }, [pr(7, 6, "", ""), pr(6, 1, "gemini", "")], 7, false), "-|ancestor:pid 6|no_current_session|session not written yet (or not linked to this gemini process: pass its id)");
 eq("nothing at all", cur({ on: true, harness: "", session: "", via: "" }, [pr(7, 1, "", "")], 7, false), "-||no_current_session|pass a session id or use 'last'");
 
 // ── durations, interactive ──

@@ -16,8 +16,9 @@ export interface AgentHost { on: boolean; harness: string; session: string; via:
 // harness-specific markers first: a nested agent inherits the outer one's generic AI_AGENT (codex run from Claude Code)
 export const MARKERS: string[] = ["CLAUDECODE", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_CI", "CODEX_THREAD_ID", "GEMINI_CLI",
   "PI_CODING_AGENT", "OPENCODE", "OPENCODE_SESSION_ID", "KIRO_SESSION_ID", "AI_AGENT"];
-export const SESSION_VARS: string[] = ["CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "CODEX_THREAD_ID", "KIRO_SESSION_ID"];
-const VAR_HARNESS = ["claude", "opencode", "codex", "kiro"]; // harness of SESSION_VARS[i]
+// PI_SESSION_ID: seen in pi's shell tool env (2026-10-03), = its session file's id
+export const SESSION_VARS: string[] = ["CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "CODEX_THREAD_ID", "KIRO_SESSION_ID", "PI_SESSION_ID"];
+const VAR_HARNESS = ["claude", "opencode", "codex", "kiro", "pi"]; // harness of SESSION_VARS[i]
 
 function markerHarness(name: string, v: string): string {
   if (name === "CLAUDECODE") return "claude";
@@ -98,7 +99,7 @@ export function currentFrom(h: AgentHost, envVar: string, procs: Map<number, Pro
   const as = a.session ? sessions.get(a.session) ?? null : null;
   if (envS && (!a.harness || a.harness === envS.h)) return fin(envS, "env:" + envVar);
   if (as) return fin(as, (envS ? "env:" + envVar + "+" : "") + "ancestor:pid " + String(a.pid));
-  if (a.harness) return { s: null, via: "ancestor:pid " + String(a.pid), code: "no_current_session", hint: "session not written yet" };
+  if (a.harness) return { s: null, via: "ancestor:pid " + String(a.pid), code: "no_current_session", hint: "session not written yet (or not linked to this " + a.harness + " process: pass its id)" };
   return { s: null, via: "", code: "no_current_session", hint: "pass a session id or use 'last'" };
 }
 // needs discover() first (sessions scanned, processes listed and linked); quiet = no warnings (current is only a side note)
