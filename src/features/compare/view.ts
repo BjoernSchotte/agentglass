@@ -10,6 +10,7 @@ import { ask, openPath } from "../../actions.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
+import { titleOf } from "../../model/sessions.ts";
 import { L, todayKey, dayKey, startOfDay } from "../usage/record.ts";
 import { ledger } from "../usage/ledger.ts";
 import { fmtMs } from "../usage/calls.ts";
@@ -72,7 +73,7 @@ function rp(s: string, w: number): string { const n = width(s); return n >= w ? 
 function line(s: string, W: number): string { const f = fitStyled(s, W); return f + fillTo(f, W); }
 function plainOf(s: string): string { return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""); }
 function exprText(cs: Clause[]): string { const o: string[] = []; for (const c of cs) { const vs: string[] = []; for (const v of c.vals) vs.push(shown(c.key, v)); o.push(printClause({ key: c.key, op: c.op, vals: vs, neg: c.neg, pinned: false })); } return o.join(" and "); }
-function labelOf(g: Group): string { return g.single ? clean(g.label) : exprText(g.cs); }
+function labelOf(g: Group): string { const s = g.single; return s ? clean(titleOf(s)) : exprText(g.cs); } // a live title (heads load lazily)
 const MINUS = "−";
 function pp(d: number): string { return (d > 0.05 ? "+" : d < -0.05 ? MINUS : "") + Math.abs(d).toFixed(1); }
 function errPct(n: number, e: number): string { return n > 0 ? ((e / n) * 100).toFixed(0) + "%" : "–"; }

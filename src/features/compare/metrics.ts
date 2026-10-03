@@ -158,8 +158,9 @@ function finish(j: CmpJob): Cmp {
 
 // ── the summary rows (spec §3) ──
 const MINUS = "−";
-function signed(d: number, f: (n: number) => string): string { return d > 0 ? "+" + f(d) : d < 0 ? MINUS + f(-d) : "0"; }
-function ratio(a: number, b: number): string { if (!(a > 0 && b >= 0)) return ""; const r = b / a; return "×" + (r < 100 ? r.toFixed(1) : r < 1000 ? String(Math.round(r)) : kfmt(r)); }
+// "0" also when the difference rounds away in the unit ($0.004 → "0", not "−$0.00")
+function signed(d: number, f: (n: number) => string): string { const t = f(Math.abs(d)); return d === 0 || t === f(0) ? "0" : (d > 0 ? "+" : MINUS) + t; }
+function ratio(a: number, b: number): string { if (!(a > 0 && b >= 0)) return ""; const r = b / a; return "×" + (r < 0.1 ? r.toFixed(2) : r < 100 ? r.toFixed(1) : r < 1000 ? String(Math.round(r)) : kfmt(r)); }
 function pctTxt(x: number): string { return (x * 100).toFixed(1) + "%"; }
 // a numeric row; a or b < 0 = unknown: "n/a", no Δ, no ratio. worse: a higher B is worse (cost, errors, durations)
 function num(key: string, label: string, a: number, b: number, f: (n: number) => string, worse: boolean, withRatio: boolean): Metric {

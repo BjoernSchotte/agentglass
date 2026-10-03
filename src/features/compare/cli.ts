@@ -63,6 +63,7 @@ function parseArgs(args: string[]): Opts {
 function sessGroup(v: string): Group {
   const r = resolveSession(v); if (r.err) fail(r.err);
   const s = sessionOf(r.v); if (!s) fail("session \"" + v + "\": no such session");
+  loadHead(s); // the title comes from the transcript's head for most harnesses
   return groupOfSession(s);
 }
 function exprGroup(src: string): Group {
