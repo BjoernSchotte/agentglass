@@ -144,7 +144,7 @@ function histN(b: Bin): number { let n = 0; for (const x of b.hist) n += x; retu
 function labelOf(r: Run): string {
   if (r.slow) return "slow calls";
   const p = presetOf(r.preset);
-  if (p && p.n >= 1 && p.n <= 5) return p.name;
+  if (p && p.n >= 1 && p.n <= 5 && p.entity === r.entity) return p.name; // "errored calls" on session rows: the expression says it
   if (!r.sel.length) return r.base === "previous" ? (r.entity === "call" ? "calls" : "sessions") + " · " + periodLabel(r.days) : "everything";
   return print(r.sel);
 }

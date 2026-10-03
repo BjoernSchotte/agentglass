@@ -1,6 +1,7 @@
 // agentglass — triage view: scriptc build src/features/triage/view.check.ts -o tvc && ./tvc
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../../state.ts";
+import { width } from "../../util/text.ts";
 import { H } from "../../hooks.ts";
 import { onInput } from "../../input.ts";
 import { parse, print, printClause } from "../query/parse.ts";
@@ -44,7 +45,13 @@ if (!st) { bad++; console.log("FAIL no triage state"); } else {
   onInput("e"); eq("e back to calls resets the weight", st.run.entity + " " + st.run.weight, "call count");
   onInput("s"); onInput("1"); onInput("d");
   eq("narrow drops chi2", String((viewLines(st, 90, 30)[1] ?? "").indexOf("χ²")), "-1");
-  eq("80 columns fit", viewLines(st, 80, 24).every((l) => l.length <= 80) ? "ok" : "too wide", "ok");
+  eq("80 columns fit", viewLines(st, 80, 24).every((l) => width(l) <= 80) ? "ok" : "too wide", "ok");
+  // banners (the multi-valued note is ~80 wide on session rows) are cut to the width like every other line
+  onInput("e"); const Ls = viewLines(st, 72, 24);
+  eq("errored calls on session rows say what they count", (Ls[0] ?? "").indexOf("triage · status is error (") >= 0 ? "ok" : Ls[0] ?? "", "ok");
+  onInput("e");
+  eq("72 columns fit (sessions)", Ls.every((l) => width(l) <= 72) ? "ok" : Ls.filter((l) => width(l) > 72).join("\n"), "ok");
+  eq("80 columns fit (sessions)", Ls.every((l) => width(l) <= 80) ? "ok" : Ls.filter((l) => width(l) > 80).join("\n"), "ok");
   onInput("w"); onInput("u");
   // enter expands, enter again lists the newest calls, esc leaves them
   selectRow("tool", "Bash"); onInput("enter"); eq("expand", st.expand, "tool");

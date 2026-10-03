@@ -203,7 +203,7 @@ function build(st: TState, W: number, Ht: number, sync: boolean): string[] {
       }
     }
     while (out.length < n - ban.length) out.push("");
-    for (const b of ban) out.push(" " + b);
+    for (const b of ban) out.push(line(" " + b, W) + RST);
   }
   while (out.length < n) out.push("");
   return out.slice(0, n);
