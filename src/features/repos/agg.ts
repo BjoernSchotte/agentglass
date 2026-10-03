@@ -5,7 +5,7 @@
 // src/a.ts edited in two worktrees is one row. Active time is the union of the sessions' intervals per day.
 import { basename, resolve } from "node:path";
 import type { Sess } from "../../model/types.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, parentOf } from "../../model/sessions.ts";
 import { P, labelOf, real } from "../../model/project.ts";
 import { ledger } from "../usage/ledger.ts";
 import { L, unionMin, spanMin } from "../usage/record.ts";
@@ -17,17 +17,19 @@ import { modeOf } from "../usage/bill-live.ts";
 import { type Compiled, EMPTY, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
 import { matchingPaths } from "../query/ui.ts";
 import { identOf } from "../query/project.ts";
+import { type GitInfo, allInfo } from "../vcs/attrib.ts";
 import { realCwd } from "../../hooks.ts";
 
 export interface FileAgg { n: number; add: number; del: number; by: Set<string> }
 export interface HarnessAgg { sess: number; cost: number; unk: number }
-export interface BranchAgg { sess: number; cost: number; unk: number }
+export interface BranchAgg { sess: number; cost: number; unk: number; commits: number } // commits: counted (✓) commits of the period
 export interface RepoAgg {
   key: string; label: string; kind: string; worktrees: Map<string, string> /* checkout name (linked worktree name, else the dir name) → top */; sessions: number; live: number; last: number;
   cost: number; unk: number; modes: ModeSum; inTok: number; outTok: number; calls: number; err: number; activeMin: number; agentMin: number;
   files: Map<string, FileAgg>; outside: FileAgg; tools: Map<string, Cnt>; progErr: Map<string, Cnt>;
   byHarness: Map<string, HarnessAgg>; branches: Map<string, BranchAgg>; paths: string[] /* top-level session paths, newest first */;
   remote: string; via: string; unread: boolean; // from the identity: header of the detail
+  commits: number; spendNoCommit: number; prs: string[]; // git linkage: ✓ commits of the period; cost of sessions that made none; created PR URLs
   days: string[]; // the period it was aggregated over
 }
 
@@ -36,10 +38,33 @@ function newHA(): HarnessAgg { return { sess: 0, cost: 0, unk: 0 }; }
 function newRepo(key: string, label: string, kind: string, days: string[]): RepoAgg {
   return { key, label, kind, worktrees: new Map<string, string>(), sessions: 0, live: 0, last: 0, cost: 0, unk: 0, modes: newSum(), inTok: 0, outTok: 0, calls: 0, err: 0, activeMin: 0, agentMin: 0,
     files: new Map<string, FileAgg>(), outside: newFile(), tools: new Map<string, Cnt>(), progErr: new Map<string, Cnt>(), byHarness: new Map<string, HarnessAgg>(), branches: new Map<string, BranchAgg>(), paths: [],
-    remote: "", via: "", unread: false, days };
+    remote: "", via: "", unread: false, commits: 0, spendNoCommit: 0, prs: [], days };
 }
 function cntOf(m: Map<string, Cnt>, k: string): Cnt { let c = m.get(k); if (!c) { c = newCnt(); m.set(k, c); } return c; }
 function haOf(m: Map<string, HarnessAgg>, k: string): HarnessAgg { let c = m.get(k); if (!c) { c = newHA(); m.set(k, c); } return c; }
+function brOf(m: Map<string, BranchAgg>, k: string): BranchAgg { let c = m.get(k); if (!c) { c = { sess: 0, cost: 0, unk: 0, commits: 0 }; m.set(k, c); } return c; }
+// a session's own ✓ commits whose time falls in the period: total and per branch
+export interface PCommits { n: number; bb: Map<string, number> }
+export function periodCommits(g: GitInfo | null, days: Set<string>): PCommits {
+  const o: PCommits = { n: 0, bb: new Map<string, number>() };
+  if (g) for (const c of g.commits) if (c.counted && days.has(localOf(c.at).day)) { o.n++; o.bb.set(c.br, (o.bb.get(c.br) ?? 0) + 1); }
+  return o;
+}
+// a PR URL of the project's own remote (a session may open PRs elsewhere, e.g. in a tap repo); no remote known: all count
+export function ownPr(url: string, remote: string): boolean {
+  if (!remote) return true;
+  const m = /^[a-z+]+:\/\/([^/]+)\/(.+)$/.exec(remote); if (!m) return true;
+  const base = ((m[1] ?? "") + "/" + (m[2] ?? "")).toLowerCase() + "/";
+  const u = url.replace(/^https?:\/\//, "").toLowerCase();
+  return u.startsWith(base);
+}
+// cost split over the branches its commits went to, by commit count (sessions without commits: their own branch)
+export function bookBranches(m: Map<string, BranchAgg>, pc: PCommits, branch: string, top: boolean, cost: number, unk: number): void {
+  if (pc.n > 0) {
+    for (const [br, n] of pc.bb) { const b = brOf(m, br || branch || "(detached)"); b.cost += (cost * n) / pc.n; b.unk += (unk * n) / pc.n; b.commits += n; }
+    if (branch && top) { const b = brOf(m, branch); b.sess++; }
+  } else if (branch) { const b = brOf(m, branch); b.cost += cost; b.unk += unk; if (top) b.sess++; }
+}
 function fileOf(m: Map<string, FileAgg>, k: string): FileAgg { let c = m.get(k); if (!c) { c = newFile(); m.set(k, c); } return c; }
 
 // a changed file's path relative to top ("" = outside the repo); a relative path is relative to the session's cwd
@@ -96,6 +121,13 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
   const acts = new Map<string, number[][]>(); // "<repo key>\t<day>" → the sessions' intervals
   const rd = f.needsCalls ? rowDays(f, days) : new Map<string, RowDay>();
   const reals = new Map<string, string>();
+  const gi = allInfo(); const dset = new Set<string>(days); const rootN = new Map<string, number>(); // root path → ✓ commits of it + its subagents
+  const pcOf = (x: Sess): PCommits => periodCommits(gi.get(x.path) ?? null, dset);
+  const rootCommits = (x: Sess): number => {
+    const root = x.parent ? parentOf(x) ?? x : x; const hit = rootN.get(root.path); if (hit !== undefined) return hit;
+    let n = pcOf(root).n; for (const k of root.subs) n += pcOf(k).n;
+    rootN.set(root.path, n); return n;
+  };
   for (const s of sessions.values()) {
     const a = ledger.get(s.path); if (!a || (tag && !allow.has(s.path)) || !sessOk(f, s)) continue;
     const id = identOf(s); if (!id) continue; // unresolved: the tab says "resolving N sessions…"
@@ -127,7 +159,10 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
     if (!any) continue;
     r.worktrees.set(id.worktree || basename(id.top) || id.label, id.top); // clones and linked worktrees each count
     const h = haOf(r.byHarness, s.h); h.cost += cost; h.unk += unk;
-    if (s.branch) { const b = haOf(r.branches, s.branch); b.cost += cost; b.unk += unk; if (!s.parent) b.sess++; }
+    const pc = pcOf(s); r.commits += pc.n;
+    bookBranches(r.branches, pc, s.branch, !s.parent, cost, unk);
+    if (rootCommits(s) === 0) r.spendNoCommit += cost;
+    const g = gi.get(s.path); if (g) for (const l of g.prs) if (l.how === "created" && ownPr(l.url, r.remote) && r.prs.indexOf(l.url) < 0) r.prs.push(l.url);
     if (!s.parent) { r.sessions++; h.sess++; if (s.pid) r.live++; r.paths.push(s.path); }
     const t = s.last || s.mtime; if (t > r.last) r.last = t;
   }
