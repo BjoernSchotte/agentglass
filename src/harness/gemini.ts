@@ -6,12 +6,12 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readBytes, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, nlines, num, isoMs } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, turn, skill, nlines, num, isoMs } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import { price } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
-import { toolArg, isNoise } from "./common.ts";
+import { toolArg, isNoise, prompts } from "./common.ts";
 
 // ── normalizing source ──
 // Gemini upserts: a changed message is re-appended whole under the same id (tokens, then its completed tool calls),
@@ -296,6 +296,10 @@ function priceKey(md: string, input: number, iso: string): string {
   return k === p.p ? md : k;
 }
 function usage(a: Acc, l: string): void {
+  if (l.indexOf("\"type\":\"user\"") >= 0) { // the prompt itself, not a nested object in a tool call that looks like one
+    const o = parseJson(l);
+    if (o && str(o["type"]) === "user") { if (!a.sub) turn(a, 0, str(o["timestamp"]), prompts(parse, o)); return; }
+  }
   if (l.indexOf("\"tokens\":{") < 0 && l.indexOf("\"toolCalls\":[") < 0) return;
   const o = parseJson(l); if (!o || str(o["type"]) !== "gemini") return;
   const iso = str(o["timestamp"]); const d = bucket(a, 0, iso);
@@ -310,6 +314,7 @@ function usage(a: Acc, l: string): void {
     const c = obj(v); if (!c) continue;
     const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
     const st = tool(a, d, name);
+    if (name === "activate_skill" && args) skill(d, "model", str(args["name"]));
     pend(a, d, st, name, id, t0, iso, callArg(name, args), name === "run_shell_command" && args ? [str(args["command"])] : []);
     const ok = str(c["status"]) === "success";
     const p = a.pend.get(id);
@@ -326,6 +331,8 @@ function usage(a: Acc, l: string): void {
 }
 
 export const gemini: HarnessAdapter = {
+  // "✋  Action Required (<dir>)" while the tool-approval dialog is open: the log has the reply text but not the call yet
+  approvalTitle: (t: string) => t.indexOf("✋") >= 0 || t.indexOf("Action Required") >= 0,
   id: "gemini", label: "Gemini", glyph: "✦", mark: "✦", color: () => C.gemini,
   bin: "gemini", procs: ["gemini"],
   roots, scan, meta, refresh: meta, source, headBytes: 65536,

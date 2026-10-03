@@ -7,10 +7,10 @@ import { FX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, nlines, num, modelTok, addCost, unpriced } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, modelTok, addCost, unpriced } from "../features/usage/record.ts";
 import { done, patchFiles } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
-import { toolArg, turnBusy } from "./common.ts";
+import { toolArg, turnBusy, prompts } from "./common.ts";
 
 const SESSIONS = join(FX, "sessions");
 function scan(add: AddFn): void { for (const id of listDir(SESSIONS)) add(join(SESSIONS, id, "events.jsonl"), id, "", false); }
@@ -67,6 +67,10 @@ function meta(s: Sess): void {
   if (own) { s.parent = str(own["parent_id"]); if (!s.kind) s.kind = "subagent"; }
 }
 function usage(a: Acc, l: string): void {
+  if (l.indexOf("\"user\":{") >= 0) { // the prompt event itself, not a lookalike nested in another event
+    const o = parseJson(l); const e = o ? obj(o["event"]) : null;
+    if (o && e && obj(e["user"])) { if (!a.sub) turn(a, num(o["timestamp_ms"]), "", prompts(parse, o)); return; }
+  }
   const res = l.indexOf("\"tool_result\"") >= 0;
   if (!res && l.indexOf("\"tool_call\"") < 0) return;
   const o = parseJson(l); if (!o) return;

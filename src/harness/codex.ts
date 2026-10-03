@@ -7,10 +7,11 @@ import { CODEX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
-import { type Acc, L, bucket, tool, pend, tokens, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
+import { type Acc, L, bucket, tool, pend, tokens, turn, skill, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
-import { toolArg, blockText, isNoise } from "./common.ts";
+import { toolArg, blockText, isNoise, prompts } from "./common.ts";
+import { scrubRemote } from "../util/giturl.ts";
 
 // ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl (+ archived_sessions/, flat)
 const titles = new Map<string, string>(); // thread names from session_index.jsonl
@@ -52,7 +53,7 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   if (!p) return;
   const pt = str(p["type"]);
   if (type === "session_meta" || type === "turn_context") {
-    if (s) { const c = str(p["cwd"]); if (c) s.cwd = c; const md = str(p["model"]); if (md) s.model = md; const g = obj(p["git"]); if (g) { const br = str(g["branch"]); if (br) s.branch = br; } }
+    if (s) { const c = str(p["cwd"]); if (c) s.cwd = c; const md = str(p["model"]); if (md) s.model = md; const g = obj(p["git"]); if (g) { const br = str(g["branch"]); if (br) s.branch = br; const ru = str(g["repository_url"]); if (ru) { const r = scrubRemote(ru); s.remote = r ? r.url : ""; } } } // the raw url may carry a token: never stored
     return;
   }
   if (type === "compacted") { out.push({ kind: "meta", text: "context compacted", ts, id: "", full: "" }); return; }
@@ -94,6 +95,16 @@ function usage(a: Acc, l: string): void {
     const tm = /"timestamp":"([^"]+)"/.exec(h); const t = tm ? isoMs(tm[1] ?? "") : 0;
     const codes = exitCodes(l);
     done(p, t > 0 && p.t > 0 ? t - p.t : -1, codexFailed(l, codes), l.length, id, codes);
+    return;
+  }
+  if (h.indexOf("\"type\":\"response_item\"") >= 0 && h.indexOf("\"role\":\"user\"") >= 0) { // prompts (injected context is noise)
+    const o = parseJson(l); if (!o) return;
+    const iso = str(o["timestamp"]);
+    if (h.indexOf("\"text\":\"<skill>") >= 0) { // Codex injects a skill's SKILL.md only for an explicit $name mention: a command use
+      const p = obj(o["payload"]); const m = /<name>([^<]*)<\/name>/.exec(p ? blockText(p["content"]) : "");
+      const nm = m ? (m[1] ?? "").trim() : ""; if (nm) skill(bucket(a, 0, iso), "command", nm);
+    }
+    const n = a.sub ? 0 : prompts(parse, o); if (n) turn(a, 0, iso, n);
     return;
   }
   if (!tc && !ctx && !call) return;

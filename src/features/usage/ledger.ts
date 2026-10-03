@@ -17,6 +17,7 @@ const BUDGET = 4194304; const CHUNK = 1048576; const SLICE_MS = 100;
 export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);
   if (!a || s.size < a.off || a.ep !== s.ep) { a = newAcc(); a.ep = s.ep; ledger.set(s.path, a); } // new, truncated/rewritten or other cursor epoch
+  a.sub = s.parent !== ""; // known before the first line is booked: scan/meta set it when the session is first seen
   return a;
 }
 export function pending(s: Sess, a: Acc): boolean { return a.off < s.size && a.stall !== s.size; }
@@ -88,6 +89,8 @@ function tick(): void {
   for (const s of sessions.values()) { const a = accOf(s); total += s.size; done += Math.min(a.off, s.size); if (a.stall === s.size) done += s.size - a.off; }
   L.done = done; L.total = total;
 }
+// the first index (or a big append) is still being read: the refresh level stays hot so the gauge advances
+export function indexing(): boolean { return L.total > 0 && L.done < L.total; }
 // blocking: everything up to the end of the file (CLI exports)
 export function complete(s: Sess): void {
   const a = accOf(s);

@@ -13,7 +13,7 @@ import { daemonWarn } from "../model/link.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
-const dir = "/tmp/agentglass-oc-check"; mkdirSync(dir, { recursive: true });
+const dir = "/tmp/agentglass-oc-check-" + String(process.pid); mkdirSync(dir, { recursive: true }); // per process: concurrent suite runs (other worktrees) must not share the fixture DB
 const db = dir + "/opencode.db";
 for (const f of [db, db + "-wal", db + "-shm", db + "-journal"]) { try { unlinkSync(f); } catch (e) { /* none */ } }
 execFileSync("sqlite3", [db], { input: readFileSync("specs/pi-opencode-harnesses/fixtures/opencode.sql", "utf8"), stdio: ["pipe", "ignore", "inherit"] });
@@ -125,6 +125,12 @@ ok("2.x fork: copied rows add no cost/tokens/tools/lines", Math.abs(fa.cost - 0.
 ok("2.x fork: the transcript still shows the copied rows", events(sess(F2), 0, end(sess(F2))).length > events(sess(F2), 91, end(sess(F2))).length, "");
 const fb = useOf(sess(F1));
 ok("1.x fork: copied parts add no cost/tokens/tools", Math.abs(fb.cost - 0.25) < 1e-9 && fb.inTok === 7 && fb.tools === 0, fb.cost + " in " + fb.inTok + " tools " + fb.tools);
+// turns: one per prompt the transcript shows; a fork's copied prompts are the parent's
+function turnsOf(u: Acc): number { let n = 0; for (const d of u.days.values()) n += d.turns; return n; }
+const users = (s: Sess): number => events(s, 0, end(s)).filter((e: Ev) => e.kind === "user").length;
+ok("2.x turns = user events", turnsOf(a) === users(sess(P2)) && turnsOf(a) > 0, turnsOf(a) + "/" + users(sess(P2)));
+ok("1.x turns = user events", turnsOf(b) === users(sess(P1)) && turnsOf(b) > 0, turnsOf(b) + "/" + users(sess(P1)));
+ok("forks: copied prompts are no turns", turnsOf(fa) === 0 && turnsOf(fb) === 0, turnsOf(fa) + "/" + turnsOf(fb));
 const pa = useOf(sess(P2));
 ok("the fork's parent keeps its own usage", pa.inTok === a.inTok && pa.tools === a.tools, pa.inTok + "/" + a.inTok);
 
@@ -214,13 +220,13 @@ scan();
 ok("no daemon, suspended, written just now: busy", busy(sess(P2)), "idle");
 ok("no daemon, suspended, written just now: the streaming row is held", end(sess(P2)) === 102 && src.lines(sess(P2), 99, 102).lines.length === 2, String(end(sess(P2))));
 // running is decided when asked, not when the DB was last read: an unchanged DB goes idle once the turn is IN_FLIGHT old
-const old = now0 - IN_FLIGHT + 1500;
+const old = Date.now() - IN_FLIGHT + 2500; // from now, not now0: the sqlite3 spawns above must not eat the margin under load
 sql("update session_message set time_updated=" + old + " where id in ('msg_su','msg_sa')");
 sql("insert into message (id,session_id,time_created,time_updated,data) values ('msg_v1run','" + P1 + "'," + old + "," + old + ",'{\"role\":\"assistant\",\"modelID\":\"claude-sonnet-5-5\",\"time\":{\"created\":" + old + "}}')");
 scan();
 ok("aging: 2.x still busy", busy(sess(P2)), "idle");
 ok("aging: 1.x in flight = busy", busy(sess(P1)), "idle");
-execFileSync("sleep", ["2"]);
+execFileSync("sleep", ["3"]);
 scan();
 ok("aged without a DB change: 2.x idle, all rows readable", !busy(sess(P2)) && end(sess(P2)) === 103, (busy(sess(P2)) ? "busy " : "idle ") + String(end(sess(P2))));
 ok("aged without a DB change: 1.x idle", !busy(sess(P1)), "busy");
@@ -243,5 +249,6 @@ t0 = Date.now(); scan(); const second = Date.now() - t0;
 ok("hung query: bounded by the 3 s limit", first >= 2500 && first < 4500, String(first) + " ms");
 ok("hung query: next scan backs off", second < 500, String(second) + " ms");
 
+rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "opencode: all checks passed");
 process.exit(bad ? 1 : 0);

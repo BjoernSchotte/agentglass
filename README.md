@@ -27,7 +27,9 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   sessions in one searchable list. Live sessions
   come first, and all your history is there too.
 - **Live transcripts.** Open a session and it follows the log as the agent works: prompts,
-  thinking, tool calls and results as they land.
+  thinking, tool calls and results as they land. A background task that finishes shows as `⟲ completed · …`
+  and a message from another agent as `⇄ <sender> · …`; neither counts as a new prompt or turn. Claude sessions
+  renamed with `/rename` show that name.
 - **Drill all the way down.** Put the cursor on any event and hit `↵`. You get the full tool call,
   its paired result, Edits as colored diffs, Writes and Reads with line numbers, and every file the
   agent touched. Press a number to open that file in `$PAGER` or `$EDITOR`.
@@ -53,11 +55,14 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   equivalent), `cloud` (Bedrock/Vertex), `gw` (gateway) or `?`. Usage without a price is spelled out per
   model, today and this month are projected, and an optional monthly budget warns. A **Stats**
   tab shows today and the last 7 days: per-harness totals, busiest session, top tools, activity by hour.
-  Top tools carry error rates (MCP servers grouped, `␣` expands); `↵` drills into one: p50/p95/max
+  Top tools carry error rates (MCP servers and the `✧ skills` you used grouped, `␣` expands; a skill is marked `/`
+  for slash-command uses, `⚙` for ones the agent chose, `/3 ⚙5` for both); `↵` drills into one: p50/p95/max
   duration, calls over time, top shell programs and command lines, most-changed files, the slowest
   calls and latest errors — `↵` on one opens its session at that call.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
+  Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux
+  (elsewhere it shows as a finished turn).
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **A live ticker** in the header scrolls what every running agent is doing right now.
@@ -92,6 +97,13 @@ Every screen in this README and the launch video was recorded this way.
   `agentglass update`, which asks GitHub for releases only when you run it.
 - **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
   is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off.
+- **Light enough to leave open all day.** Refresh follows activity: fast while an agent streams or
+  you type, slower when nothing happens, and at most one frame per second while the terminal is in
+  the background. Alarms (waiting for you, approval, stuck) keep a 1.5 s cadence whenever an agent
+  runs. Frames are only drawn when something changed. `{"refresh": {"mode": "fixed"}}` in
+  `~/.agentglass/config.json` (or `AGENTGLASS_REFRESH=fixed`) restores the old fixed 500 ms tick;
+  `AGENTGLASS_DEBUG_REFRESH=1` shows the activity level and each job's cost in the footer. Inside
+  tmux, `set -g focus-events on` lets agentglass notice that its pane is not in front.
 
 ## Prices
 
@@ -270,6 +282,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 
 ```sh
 agentglass --json --live | jq '.[] | {title, costUsd, attention}'   # snapshot of your sessions
+agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'  # skills used: [{name, source, n}]
 agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL stream of every agent's events
 agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one
 agentglass --redact                                                 # privacy mode for streams and screenshots
@@ -313,6 +326,13 @@ browsers are next, and PRs are welcome.
 
 Notes:
 
+- **Claude Code**: when a request falls back to another model (`usage.iterations`), each attempt is billed on its own
+  model, so a failed attempt on a pricier model counts. Skills count as slash-command uses (`/name`, paired with the
+  skill's base-directory line) and as model uses (`Skill` tool calls).
+- **Codex**: the preview and `--json` show the session's git remote (`remote`) with credentials, query and fragment
+  removed; a remote that still looks suspicious is not shown. Skills you mention with `$name` count as command uses.
+  OpenCode skills you activate count as command uses, its `skill` tool and Gemini `activate_skill` calls as model uses;
+  pi skills are not counted yet.
 - **pi**: honors `PI_CODING_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR` and `sessionDir` in pi's `settings.json`.
   pi has no session registry, so a session is live when a pi process runs in its working directory.
   Cost comes from pi's own `usage.cost`. MCP calls (pi ≥ 0.99 native MCP, also inside `codemode` scripts, and the

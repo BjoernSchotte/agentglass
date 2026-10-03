@@ -11,9 +11,12 @@ export interface View { name: string; render: () => void }
 
 export const H = {
   cli: [] as ((args: string[]) => boolean)[], // before the TUI starts, with argv[2..]; true = handled, the TUI does not start
-  onTick: [] as (() => void)[], // every 500ms tick, before render
+  onTick: [] as (() => void)[], // ledger, ticker, cache, prices, callgraph: cadence follows the activity level (500 ms … 5 s; 250 ms while the ledger indexes), before render
+  onWatch: [] as (() => void)[], // alarms (watchdog, rules): 1.5 s while any agent is live, else 5 s, at every level
   onQuit: [] as (() => void)[], // right before the TUI exits (flush caches); keep it fast
-  onFastTick: [] as (() => boolean)[], // every 50ms (timer only runs when any are registered); true = re-render
+  onFastTick: [] as (() => boolean)[], // every 50ms while any fastArmed source is armed (and the user is around); true = re-render
+  onHeaderTick: [] as (() => boolean)[], // like onFastTick, but true = only the header row changed (marquee): redraws that row alone
+  fastArmed: [] as (() => boolean)[], // true = this source needs 50ms frames now (marquee overflows, replay plays)
   keys: [] as ((mode: string, key: string) => boolean)[], // list/transcript/detail/view modes, before built-in keys; true = handled
   mouse: [] as ((mode: string, b: number, x: number, y: number, press: boolean) => boolean)[], // raw SGR mouse (b 0 left, 2 right, 64/65 wheel; 0-based x/y) before built-ins; true = handled
   enrich: [] as ((s: Sess) => void)[], // before a session is shown in preview/transcript/detail (runs every frame: cache!)
@@ -40,4 +43,5 @@ export function tabAt(i: number): Tab | null { return i >= 0 && i < H.tabs.lengt
 export function viewOf(name: string): View | null { for (const v of H.views) if (v.name === name) return v; return null; }
 export function applyMeta(s: Sess): void { for (const f of H.meta) f(s); }
 export function display(kind: string, text: string, s: Sess | null): string { let t = text; for (const f of H.display) t = f(kind, t, s); return t; }
+export function armed(): boolean { for (const f of H.fastArmed) if (f()) return true; return false; }
 export function screenOut(s: string): string { let t = s; for (const f of H.screenFilter) t = f(t); return t; }

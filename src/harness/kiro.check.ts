@@ -1,6 +1,6 @@
 // agentglass — self-check for kiro usage day attribution: sh scripts/check.sh
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, openSync, writeSync, closeSync } from "node:fs";
+import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { newSess } from "../model/types.ts";
 import { newAcc, dayKey } from "../features/usage/record.ts";
@@ -9,7 +9,7 @@ import { userRate } from "../features/usage/pricing.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, g: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + g); } }
-const dir = "/tmp/agentglass-kiro-check"; mkdirSync(dir, { recursive: true });
+const dir = "/tmp/agentglass-kiro-check-" + String(process.pid); mkdirSync(dir, { recursive: true });
 function write(p: string, s: string): void { const fd = openSync(p, "w"); writeSync(fd, s); closeSync(fd); }
 function two(n: number): string { return (n < 10 ? "0" : "") + String(n); }
 // touch -t [[CC]YY]MMDDhhmm[.ss] in local time: POSIX, so the same on Linux and macOS (scriptc has no utimesSync)
@@ -66,5 +66,6 @@ ok("ISO-string turn not on the .json mtime day", !isoS.has(dayKey(new Date(SEP24
   else ok("credits apart", a.uc === 3 && a.unk === 0 && a.cost === 0, a.uc + " / " + a.unk);
 }
 
+rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "kiro: all checks passed");
 process.exit(bad ? 1 : 0);

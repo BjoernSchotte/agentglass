@@ -19,8 +19,10 @@ for (const r of reals) { const f = fakeProject(r); ok("fake len " + r, f.length 
 
 // identity: title/cwd/branch/name are overridden and stay overridden after parsing writes them again
 const s = newSess("claude", "11111111-2222", "/tmp/x.jsonl", false);
-s.cwd = HOME + "/code/secretproj/src"; s.title = "Fix the thing for ACME"; s.branch = "acme/login"; s.name = "my-session";
+s.cwd = HOME + "/code/secretproj/src"; s.title = "Fix the thing for ACME"; s.branch = "acme/login"; s.name = "my-session"; s.remote = "https://github.com/acmecorp/secretproj";
 applyMeta(s);
+const rm1 = s.remote;
+ok("remote faked", rm1.startsWith("https://github.com/acme/") && rm1.indexOf("secretproj") < 0 && rm1.indexOf("acmecorp") < 0, rm1);
 const t1 = s.title; const c1 = s.cwd;
 ok("title faked", t1 !== "Fix the thing for ACME", t1);
 ok("cwd faked", c1.indexOf("secretproj") < 0 && c1.endsWith("/src"), c1);
@@ -28,7 +30,9 @@ ok("branch faked", s.branch.startsWith("feat/"), s.branch);
 ok("name faked", s.name !== "my-session", s.name);
 s.cwd = HOME + "/code/secretproj/src"; s.title = "Fix the thing for ACME";
 applyMeta(s);
-ok("stable", s.title === t1 && s.cwd === c1, s.title + " " + s.cwd);
+s.remote = "https://github.com/acmecorp/secretproj";
+applyMeta(s);
+ok("stable", s.title === t1 && s.cwd === c1 && s.remote === rm1, s.title + " " + s.cwd + " " + s.remote);
 
 // scrubber: same length, names and learned projects gone, box line stays aligned
 const line = "│ /Users/" + user + "/code/secretproj/web · " + user.toUpperCase() + " · me@example.org · sk-" + "Ab3".repeat(10) + " │";

@@ -28,6 +28,18 @@ export function restat(s: Sess, size: number, mtime: number, ep: string): void {
   if (ep === s.ep) return;
   s.ep = ep; s.tailSize = -1; s.headDone = false; s.evs = [];
 }
+// live probe: stat only pid-linked sessions (no spawn, no directory listing) so a streaming agent is seen within the probe
+// interval and its tail follows without waiting for scan(); unlinked sessions are left to scan(). true = one grew
+export function probeLive(): boolean {
+  let changed = false;
+  for (const s of sessions.values()) {
+    if (s.pid <= 0) continue;
+    const st = sourceOf(s.h).stat(s);
+    if (!st || (st.size === s.size && st.mtime === s.mtime)) continue;
+    restat(s, st.size, st.mtime, epochOf(s)); changed = true;
+  }
+  return changed;
+}
 export function scan(): void {
   const seen = new Set<string>();
   for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, seen, parent));

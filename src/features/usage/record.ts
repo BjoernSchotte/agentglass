@@ -5,12 +5,12 @@
 import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 
-// one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro)
-// tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"
+// one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro); turns = human prompts
+// tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"; skills "<command | model>\t<skill name>"
 // cp = cost per provider ("" = the session's single provider), hc = cost per local hour,
 // mt = per model [in, out, cacheRead, cacheWrite, costUsd] (same model key as um)
 export interface Day {
-  tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
+  tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
   um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>;
 }
 export interface Acc {
@@ -19,6 +19,8 @@ export interface Acc {
   pend: Map<string, Pend>; // calls waiting for their result, by call id (not persisted: a restart loses their duration)
   ep: string; // the source's cursor epoch off counts in (SessionSource.epoch)
   x: number[]; xM: number; // the harness adapter's own running state (codex: cumulative token counters; fx: usage snapshot + its mtime)
+  pk: string; // claude: "<promptId>\t<command>" of a slash command waiting for its skill base-directory line
+  sub: boolean; // a subagent's log (Sess.parent, set by ledger accOf, not persisted): its prompts come from an agent, never a Day.turn
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
   uc: number; // credits without a rate (kiro)
   bill: string; plan: string; billSrc: string; // billing mode stamped from evidence ("" = not stamped; billSrc "session" | "process")
@@ -40,7 +42,7 @@ export function lastDays(n: number): string[] {
 export function nlines(s: string): number { if (!s) return 0; const n = s.split("\n").length; return s.endsWith("\n") ? n - 1 : n; }
 
 export function newAcc(): Acc {
-  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0,
+  return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "" };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
@@ -51,7 +53,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 }
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
-  return { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
+  return { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
     um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>() };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
@@ -100,6 +102,18 @@ export function file(d: Day, name: string, path: string, add: number, del: numbe
   if (!path) return;
   const c = cnt(d.files, name + "\t" + path);
   c.add = c.add + add; c.del = c.del + del;
+}
+// human prompts (what the transcript shows as user events), on the local day of the prompt; root sessions only
+export function turn(a: Acc, ms: number, iso: string, n: number): void { if (n > 0 && !a.sub) { const d = bucket(a, ms, iso); d.turns = d.turns + n; } }
+export function skill(d: Day, source: string, name: string): void { if (name) cnt(d.skills, source + "\t" + name); }
+export interface SkillUse { name: string; source: string; n: number }
+// skill uses over the given local days (null = all), most used first
+export function skillUses(a: Acc, days: string[] | null): SkillUse[] {
+  const m = new Map<string, number>();
+  for (const [k, d] of a.days) { if (days && days.indexOf(k) < 0) continue; for (const [sk, c] of d.skills) m.set(sk, (m.get(sk) ?? 0) + c.n); }
+  const out: SkillUse[] = [];
+  for (const [sk, n] of m) { const i = sk.indexOf("\t"); out.push({ name: sk.slice(i + 1), source: sk.slice(0, i), n }); }
+  return out.sort((x, y) => y.n - x.n || (x.name < y.name ? -1 : x.name > y.name ? 1 : x.source < y.source ? -1 : 1));
 }
 export function isoMs(iso: string): number {
   if (!iso) return 0;

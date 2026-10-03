@@ -48,6 +48,12 @@ eq("codex err", String(c.spans[1].err), "1");
 const nt = buildGraph([src([ev("user", "a", -1, ""), ev("tool", "x\u0000", -1, ""), ev("result", "r", -1, "")], "", "")], T);
 eq("no timing", String(nt.noTiming) + " " + String(nt.t1 > nt.t0), "true true");
 eq("cats", [catOf("Bash"), catOf("exec_command"), catOf("Edit"), catOf("apply_patch"), catOf("Grep"), catOf("WebSearch"), catOf("Task"), catOf("mcp__x__y"), catOf("TodoWrite")].join(""), "001123456");
+// task notifications (⟲) and peer messages (⇄) are markers: no new turn, the agent's reaction stays in the open one
+const nf = [ev("user", "do it", 0, ""), ev("tool", "Bash\u0000a", 1, "a"), ev("result", "ok", 2, "a"), ev("meta", "⟲ completed · x", 3, "b"), ev("tool", "Bash\u0000c", 4, "c"), ev("result", "ok", 5, "c"),
+  ev("meta", "⇄ peer · hi", 6, ""), ev("tool", "Bash\u0000d", 7, "d"), ev("result", "ok", 8, "d"), ev("user", "next", 9, "")];
+const ng = buildGraph([src(nf, "", "")], T);
+eq("markers open no turn", String(summary(ng).turns), "2");
+eq("markers: tools stay in turn 1", ng.spans.filter((s) => s.kind === 1).map((s) => s.arg + ":" + s.parent).join(","), "a:0,c:0,d:0");
 eq("isErr", [isErr("Exit code: 2\nboom"), isErr("Exit code 127\nx"), isErr("Exit code: 0"), isErr('{"output":"x","metadata":{"exit_code":1}}'), isErr("fine")].join(","), "true,true,false,true,false");
 console.log(bad ? bad + " FAILED" : "ok");
 process.exit(bad ? 1 : 0);
