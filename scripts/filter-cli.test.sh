@@ -14,7 +14,7 @@ printf '%s\n' "{\"type\":\"user\",\"timestamp\":\"$NOW\",\"cwd\":\"/w/app\",\"se
 printf '%s\n' "{\"timestamp\":\"$NOW\",\"type\":\"session_meta\",\"payload\":{\"id\":\"x1\",\"cwd\":\"/w/other\",\"model\":\"gpt-5\"}}" \
   "{\"timestamp\":\"$NOW\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}}" \
   > "$T/home/.codex/sessions/2026/10/01/rollout-2026-10-01T10-00-00-0000aaaa-1111-2222-3333-444455556666.jsonl"
-ag() { HOME="$T/home" AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" "$@"; }
+ag() { HOME="$T/home" AGENTGLASS_AGENT=0 AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" "$@"; }
 ids() { grep -o '"id":"[^"]*"' | sort | tr '\n' ' '; }
 [ "$(ag --json | grep -o '"id":"' | wc -l)" -eq 2 ] || { echo "FAIL two sessions: $(ag --json)"; exit 1; }
 plain=$(ag --json | ids)
@@ -43,7 +43,7 @@ set +e; err=$(ag --watch --filter 'duration > 1s' 2>&1 >/dev/null); rc=$?; set -
 [ $rc = 2 ] || { echo "FAIL watch duration rc=$rc"; exit 1; }
 echo "$err" | grep -q 'known only after the call' || { echo "FAIL watch msg: $err"; exit 1; }
 # not through ag(): $! of a backgrounded function is its subshell, and killing that leaves agentglass running
-HOME="$T/home" AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" --watch --from-start --filter 'tool is Bash' > "$T/watch.out" 2>/dev/null & p=$!
+HOME="$T/home" AGENTGLASS_AGENT=0 AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" --watch --from-start --filter 'tool is Bash' > "$T/watch.out" 2>/dev/null & p=$!
 sleep 2; kill $p 2>/dev/null || true; wait $p 2>/dev/null || true
 w=$(cat "$T/watch.out")
 echo "$w" | grep -q '"kind":"tool","tool":"Bash"' || { echo "FAIL watch tool: $w"; exit 1; }

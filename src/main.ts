@@ -1,6 +1,7 @@
 // agentglass — a tiny TUI to browse, watch and steer coding-agent sessions
 // (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
 // SPDX-License-Identifier: Apache-2.0
+import { writeSync } from "node:fs";
 import { S, say } from "./state.ts";
 import { H, tabAt, viewOf, screenOut, armed, backlog } from "./hooks.ts";
 import { sessions, scan, buildView, probeLive } from "./model/sessions.ts";
@@ -24,11 +25,14 @@ import { section } from "./util/config.ts";
 import { L } from "./features/usage/record.ts";
 import { indexing } from "./features/usage/ledger.ts";
 import { replaying } from "./features/replay.ts";
+import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
+import { compactHelp } from "./features/clihelp.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
 import "./features/cli.ts";
 import "./features/cost-cli.ts";
+import "./features/queries.ts";
 import "./features/themes.ts";
 import "./features/ticker.ts";
 import "./features/watchdog.ts";
@@ -166,8 +170,18 @@ H.helpSections.push({ name: "refresh", ctx: "", keys: [
   ["tmux", "set -g focus-events on: lets it see it is hidden"] ] });
 
 function main(): void {
-  const args = process.argv.slice(2);
+  // flags of every command (read from process.argv where they act): handlers never see them, so they find their command at
+  // args[0] (agentglass --no-agent cost) and no command rejects them as unknown (triage --redact)
+  const GLOBAL = ["--agent", "--no-agent", "--redact"];
+  const args = process.argv.slice(2).filter((a: string) => GLOBAL.indexOf(a) < 0);
+  agentHost(); // decided before any handler can warn (warnings are JSON lines inside an agent)
   for (const f of H.cli) if (f(args)) return;
+  // inside a coding agent the TUI would hang its tool call (PTY shells pass the TTY check): what exists, as compact JSON
+  if (agentHost().on) {
+    const c = args[0] ?? ""; // no handler took it: a word here is a typo, not a request for the TUI
+    if (c && !c.startsWith("-")) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
+    writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0);
+  }
   if (!process.stdin.isTTY) { console.error("agentglass needs an interactive terminal"); process.exit(1); }
   enter();
   scan(); refreshProcs(); refreshSlow(); buildView();

@@ -16,6 +16,7 @@ import { parse as parseQuery } from "../query/parse.ts";
 import type { Clause } from "../query/types.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
 import { discover, opts as watchOpts, watch } from "../cli.ts";
+import { agentScope, visible } from "../agentenv.ts";
 import { newLive, liveTick, liveStop } from "./live.ts";
 import { type XTurn } from "./types.ts";
 import { newSessB, finish } from "./build.ts";
@@ -87,7 +88,7 @@ export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<st
       else if (a === "--batch") { const n = Number(val(i, a)); i++; if (!(Number.isInteger(n) && n >= 1 && n <= 100000)) throw new Error("--batch needs a whole number of spans, 1–100000"); o.batch = n; }
       else if (a === "--compression") { o.compression = val(i, a); i++; if (o.compression !== "gzip" && o.compression !== "none") throw new Error("--compression takes gzip or none"); }
       else if (a === "--json") o.json = true;
-      else if (a === "--redact") { /* read at startup (redact-on.ts) */ }
+      else if (a === "--redact" || a === "--agent" || a === "--no-agent" || a === "--all-projects" || a === "--project-only") { /* read at startup (redact-on.ts, agentenv.ts) */ }
       else throw new Error("unknown option " + a + " (agentglass --help lists the export options)");
     }
   } catch (e) { return { o, err: e instanceof Error ? e.message : String(e) }; }
@@ -133,9 +134,10 @@ export function batches(turns: XTurn[], max: number, maxBytes: number, c: OtlpCf
 interface Sel { roots: Sess[]; warns: string[] }
 function select(o: ExOpts): Sel {
   const f = sessFilter(o.filter).f;
-  const roots: Sess[] = [];
+  const roots: Sess[] = []; const sc = agentScope(process.argv.slice(2)); // inside a coding agent: its project only, unless widened
   for (const s of sessions.values()) {
     if (s.parent && s.depth > 0) continue; // subagents travel with their root session
+    if (!visible(s, sc)) continue;
     if (o.harness && s.h !== o.harness) continue;
     if (o.ids.length && !o.ids.some((id: string) => s.id === id || s.id.startsWith(id))) continue;
     if (o.since > 0 && s.mtime > 0 && s.mtime < o.since) continue; // nothing written since: no turn starts inside
@@ -296,7 +298,8 @@ function liveExport(args: string[]): number {
   if (gz) { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } if (!gzipProbe(d)) { gz = false; err("this build cannot write compressed bodies: sending uncompressed"); } }
   const cf = sf.f; // session clauses select what is exported
   const L = newLive(since); L.content = c.content; L.subagents = subagents;
-  L.want = (s: Sess): boolean => (!harness || s.h === harness) && (!cf || sessMatches(cf, s));
+  const sc = agentScope(args);
+  L.want = (s: Sess): boolean => (!harness || s.h === harness) && (!cf || sessMatches(cf, s)) && visible(s, sc);
   let skipFrom = new Map<string, number>(); let nativeAt = 0;
   L.skip = (t: XTurn): boolean => { const sk = skipFrom.get(t.h); return marked(st, t.path, t.key) || (sk !== undefined && t.t0 >= sk); };
   const sendWith = (timeoutS: number) => (turns: XTurn[]): boolean => {

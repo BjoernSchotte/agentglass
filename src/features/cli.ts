@@ -5,7 +5,7 @@ import { H, complete, screenOut } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf } from "../harness/index.ts";
-import { base } from "../util/json.ts";
+import { type Obj, base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { BUILD } from "../build-info.ts";
@@ -14,6 +14,9 @@ import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
+import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
+import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
+import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
 import { livePid } from "./query/eval.ts";
 import { type Alert, stateOf, render, severityOf } from "./rules/engine.ts";
@@ -22,54 +25,45 @@ import { onTrans } from "./rules/notify.ts";
 import { complete as ledgerComplete } from "./usage/ledger.ts";
 import { watched, looker, observeWith, watchStep, forgetSession, ruleOf, ledgerRule, alertsOf } from "./watchdog.ts";
 
-// option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
-const CMDS: string[][] = [
-  ["agentglass", "interactive TUI"],
-  ["agentglass --theme <name>", "TUI with a color theme"],
-  ["agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names"],
-  ["", "(also AGENTGLASS_REDACT=1; combinable with --json / --watch)"],
-  ["agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit"],
-  ["agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)"],
-  ["agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget"],
-  ["", "(--harness h: one harness; --check: exit 3 when over budget)"],
-  ["agentglass triage [opts]", "what is different about a selection (errored calls, $5+ sessions, …) vs the rest or last period"],
-  ["", "(--preset errors|slow|long|expensive|failing|period or --select '<expr>'; see agentglass triage --help)"],
-  ["agentglass rules check [--json]", "validate ~/.agentglass/rules.json (alert rules): effective rules + line:col problems"],
-  ["agentglass rules defaults [--examples]", "print the built-in alert rules as a ready-to-edit rules.json"],
-  ["agentglass export --otlp <url> [opts]", "send sessions to an OpenTelemetry (OTLP/HTTP) backend as GenAI traces, one per turn"],
-  ["", "(--since 7d|24h|30m|YYYY-MM-DD|all, --until, --harness h, --session id, --filter '<session clauses>',"],
-  ["", " --no-subagents, --content (prompts/outputs/tool I/O, off by default), --resend, --dry-run, --batch N,"],
-  ["", " --compression gzip|none, --native warn|skip|include, --status, --json; re-runs send nothing twice)"],
-  ["agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)"],
-  ["agentglass --help | -h", "this text"],
-  ["agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)"],
-  ["agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)"],
-];
-const OPTS: string[][] = [
-  ["--live", "only sessions with a running agent process"],
-  ["--harness " + harnessIds().join("|"), "only this harness"],
-  ["--limit N", "--json: at most N sessions"],
-  ["--subagents", "--json: include subagent sessions"],
-  ["--from-start", "--watch: replay existing logs from the beginning (combine with a filter)"],
-  ["--otlp <url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint (JSONL lines then only with --jsonl;"],
-  ["", " --since, --content, --no-subagents, --native, --compression, --batch as for export)"],
-  ["--filter '<expr>'", "only what matches, e.g. 'repo is x and cost > 2', 'tool is Bash and status is error' (repeatable)"],
-  ["--pinned", "also apply the filter pinned in the TUI (P); without it pins are ignored"],
-  ["--no-alerts", "--watch: no alert lines (the rules engine does not run)"],
-  ["--notify", "--watch: also run rules.json's notify command on alert transitions"],
-];
-function table(rows: string[][], col: number): string { return rows.map((r: string[]) => "  " + (r[0] ?? "").padEnd(col) + (r[1] ?? "")).join("\n"); }
+const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
+const LIVE_OPT = opt("--live", "", "only sessions with a running agent process", "", []);
+const LIMIT_OPT = opt("--limit", "N", "--json: at most N sessions", "", []);
+const SUBS_OPT = opt("--subagents", "", "--json: include subagent sessions", "", []);
+const FROM_OPT = opt("--from-start", "", "--watch: replay existing logs from the beginning (combine with a filter)", "", []);
+export const FORMAT_OPT = opt("--format", "json|jsonl|csv|table", "--json: output format (default json)", "", ["json", "jsonl", "csv", "table"]);
+export const FIELDS_OPT = opt("--fields", "a,b,c", "--json: only these fields, in this order (tokens_in for nested ones)", "", []);
+const ALLP_OPT = opt("--all-projects", "", "inside an agent: every project (default: the current one only)", "", []);
+const PONLY_OPT = opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", []);
+export const FILTER_OPT = opt("--filter", "'<expr>'", "only what matches, e.g. 'repo is x and cost > 2', 'tool is Bash and status is error' (repeatable)", "", []);
+const PINNED_OPT = opt("--pinned", "", "also apply the filter pinned in the TUI (P); without it pins are ignored", "", []);
+const NOALERTS_OPT = opt("--no-alerts", "", "--watch: no alert lines (the rules engine does not run)", "", []);
+const NOTIFY_OPT = opt("--notify", "", "--watch: also run rules.json's notify command on alert transitions", "", []);
+const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
+const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint (--since, --content, --no-subagents, --native, --compression, --batch as for export; JSONL lines then only with --jsonl)", "", []);
+const JSONL_OPT = opt("--jsonl", "", "--watch --otlp: also print the JSONL event lines", "", []);
+const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
+export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
+  "activity", "tokens", "costUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "alerts"];
+function cmd(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
+function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.arg ? " " + o.arg : ""), summary: o.summary, options: [], fields: [], group: "opt" }; }
+addCmd(cmd("", "agentglass", "interactive TUI", [], []));
+addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
+addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
+addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, ALLP_OPT, PONLY_OPT], JSON_FIELDS));
+addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, NOALERTS_OPT, NOTIFY_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT], []));
+addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
+addCmd(cmd("triage", "agentglass triage [opts]", "what is different about a selection (errored calls, $5+ sessions, …) vs the rest or last period\n(--preset errors|slow|long|expensive|failing|period or --select '<expr>'; see agentglass triage --help)", [], []));
+addCmd(cmd("rules check", "agentglass rules check [--json]", "validate ~/.agentglass/rules.json (alert rules): effective rules + line:col problems", [], []));
+addCmd(cmd("rules defaults", "agentglass rules defaults [--examples]", "print the built-in alert rules as a ready-to-edit rules.json", [], []));
+addCmd(cmd("export", "agentglass export --otlp <url> [opts]", "send sessions to an OpenTelemetry (OTLP/HTTP) backend as GenAI traces, one per turn\n(--since 7d|24h|30m|YYYY-MM-DD|all, --until, --harness h, --session id, --filter '<session clauses>',\n--no-subagents, --content (prompts/outputs/tool I/O, off by default), --resend, --dry-run, --batch N,\n--compression gzip|none, --native warn|skip|include, --status, --json; re-runs send nothing twice)", [], []));
+addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
+addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
+addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
+addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, NOALERTS_OPT, NOTIFY_OPT, FORMAT_OPT, FIELDS_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT]) addCmd(optRow(o));
 function usage(): string {
-  let col = 0; for (const r of CMDS.concat(OPTS)) col = Math.max(col, (r[0] ?? "").length + 2);
-  return `agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})
-
-usage:
-${table(CMDS, col)}
-
-options for --json / --watch:
-${table(OPTS, col)}
-
---json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
+  return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
+    `--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
   activity tokens{in,out,cacheRead,cacheWrite} costUsd billing{mode,plan,source} unpricedTokens unpricedCredits
   tools linesAdded linesRemoved attention stuck skills[{name,source,n}]
   alerts[{rule,severity,value,unit,threshold,since,message,labels,acked}] (live sessions; durations s, ratios 0–1, USD)
@@ -87,20 +81,12 @@ ${filterKeysHelp()}
 OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
   without it, 2.x sessions come from a running \`opencode service\` over HTTP with curl (AGENTGLASS_CURL); with neither
   they are not listed (a warning says so)
-`;
+`);
 }
 
-export interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null; jsonl: boolean }
+export interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null; jsonl: boolean }
 // a consumer of the --watch poll loop (the OTLP live export): tick after every poll, stop before exit
 export interface Sink { tick: (now: number) => void; stop: () => void }
-interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
-interface JBill { mode: string; plan: string; source: string }
-interface JSess {
-  id: string; harness: string; title: string; cwd: string; branch: string; remote: string | null; model: string; path: string; updated: string; bytes: number;
-  live: boolean; pid: number; status: string; parent: string | null; kind: string; subagents: number; activity: string; tokens: JTok;
-  costUsd: number | null; billing: JBill; unpricedTokens: number; unpricedCredits: number; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null; skills: SkillUse[];
-  alerts: JAl[];
-}
 interface JAl { rule: string; severity: string; value: number; unit: string; threshold: number; since: string; message: string; labels: { [k: string]: string }; acked: boolean }
 interface WAl { rule: string; severity: string; state: string; value: number; threshold: number; labels: { [k: string]: string } }
 interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: null; text: string; alert: WAl }
@@ -115,15 +101,17 @@ interface WEv { ts: string; harness: string; session: string; title: string; pro
 function out(line: string): void {
   try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); }
 }
-function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
+export function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 export function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, filters: [], pinned: false, alerts: true, notify: false, cf: null, jsonl: false };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args), filters: [], pinned: false, alerts: true, notify: false, cf: null, jsonl: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
     else if (a === "--subagents") o.subs = true;
     else if (a === "--from-start") o.fromStart = true;
+    else if (a === "--until-idle") o.idle = true;
+    else if (a === "--for") { o.forMs = parseDur(args[i + 1] ?? ""); i++; if (!(o.forMs > 0)) fail("--for needs a duration like 30s, 5m or 1h"); }
     else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (!isHarness(o.harness)) fail("--harness must be one of " + harnessIds().join(", ")); }
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
     else if (a === "--filter") { if (i + 1 >= args.length) fail("--filter needs an expression, e.g. --filter 'harness is codex'"); o.filters.push(args[i + 1] ?? ""); i++; }
@@ -135,33 +123,40 @@ export function opts(args: string[]): Opts {
   o.cf = cliFilter(o.filters, o.harness, o.live, o.pinned, args.indexOf("--watch") >= 0);
   return o;
 }
-function wanted(s: Sess, o: Opts): boolean { const cf = o.cf; return !cf || cliWatchSession(cf, s); }
+// the filter (with --harness / --live as clauses); inside an agent also only the current project unless widened: titles,
+// paths and events go to the agent's model provider
+function wanted(s: Sess, o: Opts): boolean { const cf = o.cf; return (!cf || cliWatchSession(cf, s)) && visible(s, o.sc); }
+export { usage };
+// the --json fields of one session (key order is the output order)
+export function jsonSess(s: Sess): Obj {
+  return {
+    id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: s.path,
+    updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
+    parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
+    tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
+    costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
+    unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
+    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null), alerts: jalerts(alertsOf(s)),
+  };
+}
+// table columns of a session list (project = the cwd's last part)
+export const TABLE_COLS = ["updated", "harness", "title", "cwd", "costUsd", "tools", "status"];
 export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
 
 function snapshot(o: Opts): void {
   discover();
   const list: Sess[] = [];
-  const cands: Sess[] = []; for (const s of sessions.values()) if (o.subs || s.depth === 0) cands.push(s);
+  const cands: Sess[] = []; for (const s of sessions.values()) if ((o.subs || s.depth === 0) && visible(s, o.sc)) cands.push(s);
   const cf = o.cf; for (const s of cf ? cliSelect(cf, cands) : cands) list.push(s);
   list.sort((a, b) => b.mtime - a.mtime);
-  const res: JSess[] = [];
-  for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) {
-    loadHead(s); loadTail(s); complete(s);
-    res.push({
-      id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: s.path,
-      updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
-      parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
-      tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
-      costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
-      unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-      attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null), alerts: jalerts(alertsOf(s)),
-    });
-  }
-  out(process.stdout.isTTY ? JSON.stringify(res, null, 2) : JSON.stringify(res));
+  const res: Obj[] = [];
+  for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) { loadHead(s); loadTail(s); complete(s); res.push(jsonSess(s)); }
+  out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS, o.json));
   if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run
   process.exit(0);
 }
 
+let lastOut = 0; // --until-idle: when the last line went out
 function oneLine(t: string): string {
   const l = t.replace(/\s+/g, " ").trim();
   return l.length > 500 ? l.slice(0, 500) + "…" : l;
@@ -172,6 +167,7 @@ function emit(s: Sess, kind: string, tool: string | null, text: string, ts: stri
     parent: s.parent ? s.parent : null, kind, tool, text: oneLine(text),
   };
   out(JSON.stringify(w));
+  lastOut = Date.now();
 }
 // a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run
 const calls = new Map<string, string[]>();
@@ -186,10 +182,15 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   emit(s, "tool", tool, args, e.ts);
 }
 
+const IDLE_MS = 10000;
 // JSONL lines go to stdout unless a sink takes the stream (then only with --jsonl)
 export function watch(o: Opts, sink: Sink | null): void {
+  // an endless stream ties up the agent's tool call
+  if (o.f.fmt || o.f.fields.length) cliError("usage", "--watch always prints JSONL: --format and --fields do not apply", "", 2);
+  if (agentHost().on && !o.forMs && !o.idle) cliError("usage", "--watch needs --for <dur> or --until-idle inside an agent", "e.g. --watch --for 30s", 2);
   discover();
   const lines = !sink || o.jsonl;
+  const t0 = Date.now(); lastOut = t0;
   const off = new Map<string, number>(); // path → next unread byte
   const eps = new Map<string, string>(); // path → the source's cursor epoch off counts in
   const headed = new Set<string>();
@@ -210,20 +211,22 @@ export function watch(o: Opts, sink: Sink | null): void {
       const s = sessions.get(p);
       if (s && s.pid === pid) continue;
       live.delete(p);
-      if (lines && s && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "");
+      if (lines && s && visible(s, o.sc) && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "");
     }
   };
   const poll = (): void => {
     for (const s of sessions.values()) {
       let at = off.get(s.path);
       if (at === undefined) { at = 0; off.set(s.path, 0); } // appeared after start: read it whole
-      if (!wanted(s, o)) continue;
+      if (o.cf && !cliWatchSession(o.cf, s)) continue;
       const src = sourceOf(s.h);
       const st = src.stat(s);
       if (!st) continue;
       const size = st.size; const ep = epochOf(s); const was = eps.get(s.path); eps.set(s.path, ep);
       if (size < at || (was !== undefined && was !== ep)) { off.set(s.path, size); continue; } // truncated/rewritten/other cursor: resync at the end
       if (size === at) continue;
+      // scope after the size check: a log without a cwd yet is re-read only while it grows, and stays unread until it has one
+      if (!visible(s, o.sc)) { if (s.cwd) off.set(s.path, size); continue; }
       if (!headed.has(s.path)) { headed.add(s.path); if (!s.headDone) loadHead(s); loadTail(s); } // title/cwd for the output
       const r = src.lines(s, at, size);
       off.set(s.path, r.next);
@@ -246,7 +249,7 @@ export function watch(o: Opts, sink: Sink | null): void {
         const l: { [k: string]: string } = {}; for (const [k, v] of r.labels) l[k] = v;
         const w: WAlert = { ts: new Date(t.at).toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind: "alert", tool: null,
           text: oneLine(msg), alert: { rule: r.id, severity: severityOf(t.to || t.from), state: t.state, value: t.v, threshold: t.thr, labels: l } };
-        out(JSON.stringify(w));
+        out(JSON.stringify(w)); lastOut = Date.now();
         onTrans(s, r, t, a.acked, true, o.notify, rs.notify, a.v, msg, a.lvAt); // --watch: never bell/desktop; the command with --notify
       }
     }
@@ -256,6 +259,8 @@ export function watch(o: Opts, sink: Sink | null): void {
   let tick = 0;
   setInterval(() => {
     tick++;
+    const now = Date.now();
+    if ((o.forMs > 0 && now - t0 >= o.forMs) || (o.idle && now - lastOut >= IDLE_MS)) quit(); // a sink flushes first
     if (tick % 4 === 0) scan();
     if (tick % 3 === 0) { refreshProcs(); liveDiff(); if (o.alerts && lines) alerts(); }
     if (tick % 10 === 0) { refreshSlow(); liveDiff(); }
@@ -264,8 +269,25 @@ export function watch(o: Opts, sink: Sink | null): void {
   }, 500);
 }
 
+// flags that go with any command (they do not name one)
+const GLOBAL_FLAGS = ["--agent", "--no-agent", "--redact"];
+// --help: text for people; JSON inside an agent or with --format json; "<cmd> --help" = that command only
+function help(args: string[]): void {
+  const rest = args.filter((a: string) => GLOBAL_FLAGS.indexOf(a) < 0);
+  const c = rest.length && !(rest[0] ?? "").startsWith("-") ? rest[0] ?? "" : "";
+  const fi = args.indexOf("--format");
+  if (agentHost().on || (fi >= 0 && args[fi + 1] === "json")) {
+    const j = jsonHelp(c, hostObj(true));
+    if (!j) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
+    out(j); return;
+  }
+  if (!c) { out(usage().trimEnd()); return; }
+  const r = cmdOf(c);
+  if (!r) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
+  out(cmdText(r));
+}
 H.cli.push((args: string[]): boolean => {
-  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(usage().trimEnd()); return true; }
+  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { help(args); return true; }
   if (args.indexOf("--version") >= 0) { out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
   if (args.indexOf("--json") >= 0) { S.cli = true; snapshot(opts(args)); return true; } // no toast line: warnings go to stderr
   if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args), null); return true; }

@@ -1,6 +1,7 @@
 #!/bin/sh
 # OTLP POST against a local mock server: header arrives, gzip body decodes, the token never shows in curl's argv: sh scripts/otlp-transport.test.sh
 set -e
+export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'kill $srv $snoop 2>/dev/null || true; rm -rf "$t"' EXIT
 command -v python3 > /dev/null || { echo "skipped: no python3"; exit 0; }
 . "$here/scripts/toolchain.sh"

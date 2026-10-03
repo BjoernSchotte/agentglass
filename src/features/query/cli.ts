@@ -10,9 +10,12 @@ import { keys } from "./attrs.ts";
 import { type Compiled, EMPTY, compile, matchSession, sessMatches } from "./eval.ts";
 import { addAll } from "./scope.ts";
 import { contentSet } from "./content.ts";
-import { S } from "../../state.ts";
+import { S, say } from "../../state.ts";
+import { agentHost, cliError } from "../agentenv.ts";
 
+// inside a coding agent: one JSON error line (the caret as the hint)
 function die(msg: string, src: string, col: number): never {
+  if (agentHost().on) cliError("filter", "filter: " + msg, src ? caret(src, { msg, col }) : "", 2);
   const c = src ? "\n  " + caret(src, { msg, col }).split("\n").join("\n  ") : "";
   process.stderr.write(screenOut("agentglass: filter: " + msg + c) + "\n");
   process.exit(2);
@@ -45,7 +48,7 @@ export function cliFilter(exprs: string[], harness: string, live: boolean, pinne
     if (CHEAP.indexOf(c.key) >= 0) ch.push(c);
     else if (HEAD.indexOf(c.key) >= 0) { ch.push(c); head = true; }
     else if (c.key !== "content" && c.key !== "event") { ledgerKeys = true; head = true; }
-    if (c.key === "state" && !watch) process.stderr.write("agentglass: state needs process info; run without --json or use live\n");
+    if (c.key === "state" && !watch) say("warn", "state needs process info; run without --json or use live");
   }
   const cheap = compile(ch, ctx).f ?? EMPTY;
   const nl: Clause[] = []; for (const c of ch) if (c.key !== "live") nl.push(c);
@@ -65,7 +68,7 @@ export function cliSelect(cf: CliFilter, cands: Sess[]): Sess[] {
   for (const c of cf.f.content) {
     const ps: string[] = []; for (const s of keep) ps.push(s.path);
     const r = contentSet(c.vals.join(" "), ps.length <= 200 ? ps : null);
-    if (r.timedOut) { process.stderr.write("agentglass: full-text search timed out after 30 s — content clause matches nothing\n"); return []; }
+    if (r.timedOut) { say("warn", "full-text search timed out after 30 s — content clause matches nothing"); return []; }
     const neg = c.op === "!~"; const next: Sess[] = [];
     for (const s of keep) if (r.paths.has(s.path) !== neg) next.push(s);
     keep = next;

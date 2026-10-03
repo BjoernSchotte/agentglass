@@ -32,6 +32,7 @@ export const H = {
   meta: [] as ((s: Sess) => void)[], // after log parsing / process linking (re)set a session's title, cwd, branch or name; may override them
   events: [] as ((s: Sess | null, evs: Ev[], from: number) => void)[], // after parseEvents appended evs[from..]; may rewrite them in place
   display: [] as ((kind: string, text: string, s: Sess | null) => string)[], // display-time rewrite of text that bypasses parseEvents (stats "tool:<name>"/"cmd"/"prog"/"file", process "args"/"cwd")
+  realCwd: [] as ((s: Sess) => string)[], // the session's real cwd when H.meta replaced s.cwd for display (redact); "" = not replaced
   screenFilter: [] as ((s: string) => string)[], // every chunk written to the terminal (TUI frame chunks, CLI output lines); must keep visible widths
   listFilter: [] as ((s: Sess) => boolean)[], // buildView keeps a top-level session when every hook passes for it or for one of its subagents
   listFiltering: [] as (() => boolean)[], // true = a filter is active: matching subagents are expanded, the others hidden
@@ -54,4 +55,5 @@ export function viewOf(name: string): View | null { for (const v of H.views) if 
 export function applyMeta(s: Sess): void { for (const f of H.meta) f(s); }
 export function display(kind: string, text: string, s: Sess | null): string { let t = text; for (const f of H.display) t = f(kind, t, s); return t; }
 export function armed(): boolean { for (const f of H.fastArmed) if (f()) return true; return false; }
+export function realCwd(s: Sess): string { for (const f of H.realCwd) { const r = f(s); if (r) return r; } return s.cwd; }
 export function screenOut(s: string): string { let t = s; for (const f of H.screenFilter) t = f(t); return t; }
