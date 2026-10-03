@@ -47,6 +47,11 @@ eq("plain remote refused", String(plainOk("http://10.0.0.5:4318/v1/traces", d, t
 eq("plain loopback ok", plainOk("http://localhost:4318/v1/traces", d, true) + plainOk("http://127.0.0.1:4318/", d, true), "");
 eq("plain without headers ok", plainOk("http://10.0.0.5:4318/v1/traces", d, false), "");
 eq("insecure ok", plainOk("http://10.0.0.5:4318/v1/traces", cfgFrom({ insecure: true }), true), "");
+eq("plain userinfo refused", String(plainOk("http://u:tok@10.0.0.5:4318/v1/traces", d, false).indexOf("10.0.0.5") >= 0), "true");
+eq("plain query refused", String(plainOk("http://10.0.0.5:4318/v1/traces?key=x", d, false).indexOf("?key") < 0 && plainOk("http://10.0.0.5:4318/v1/traces?key=x", d, false) !== ""), "true");
+eq("header CR/LF refused", String(expandHeaders(cfgFrom({ headers: { "X-A": "a\nurl = http://evil" } }), env([])).err.indexOf("line break") >= 0), "true");
+eq("header env CR/LF refused", String(expandHeaders(ch, env([["OTEL_TOKEN", "a\r\noutput = /tmp/x"]])).err.indexOf("line break") >= 0), "true");
+eq("OTEL header CR/LF refused", String(expandHeaders(d, env([["OTEL_EXPORTER_OTLP_HEADERS", "a=b%0Aoutput%3D%2Ftmp%2Fx"]])).err.indexOf("line break") >= 0), "true");
 eq("safeUrl", safeUrl("https://u:tok@h.example:4318/v1/traces?key=x#f"), "https://h.example:4318/v1/traces");
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }

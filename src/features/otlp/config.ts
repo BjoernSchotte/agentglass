@@ -76,11 +76,12 @@ export function endpointOf(flag: string, c: OtlpCfg, env: Map<string, string>): 
 export function safeUrl(url: string): string { return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/?#]*@/i, "$1").replace(/[?#].*$/, ""); }
 export function hostOf(url: string): string { const m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)/i.exec(url); return m ? (m[1] ?? "").toLowerCase() : ""; }
 function loop(h: string): boolean { return h === "localhost" || h === "[::1]" || h.startsWith("127."); }
-// headers over plain http only to loopback, unless the user says otlp.insecure
+// credentials (headers, URL userinfo or query) over plain http only to loopback, unless the user says otlp.insecure
 export function plainOk(url: string, c: OtlpCfg, hasHeaders: boolean): string {
-  if (!hasHeaders || c.insecure || !/^http:/i.test(url)) return "";
+  const inUrl = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(url) || /\?/.test(url);
+  if (!(hasHeaders || inUrl) || c.insecure || !/^http:/i.test(url)) return "";
   const h = hostOf(url);
-  return loop(h) ? "" : "headers would go over plain http to " + h + " — use https, or set \"otlp\": {\"insecure\": true}";
+  return loop(h) ? "" : (hasHeaders ? "headers" : "the URL's credentials or query") + " would go over plain http to " + h + " — use https, or set \"otlp\": {\"insecure\": true}";
 }
 function tilde(p: string): string { return p === "~" ? HOME : p.startsWith("~/") ? join(HOME, p.slice(2)) : p; }
 // owner uid and permission bits of a file ("" when it cannot be read)
@@ -95,8 +96,19 @@ function kvList(s: string): string[][] {
   for (const p of s.split(",")) { const i = p.indexOf("="); if (i <= 0) continue; let v = p.slice(i + 1).trim(); try { v = decodeURIComponent(v); } catch (e) { /* as is */ } out.push([p.slice(0, i).trim(), v]); }
   return out;
 }
+// a line break would end the header (and the curl config line that carries it)
+function broken(hs: string[][]): string {
+  for (const h of hs) if (/[\r\n]/.test((h[0] ?? "") + (h[1] ?? ""))) return "otlp header " + (h[0] ?? "").replace(/[\r\n].*$/s, "") + " contains a line break — remove it";
+  return "";
+}
 // the headers to send: config headers (${env:NAME} expanded now), the private headers file, else the OTEL_* variables
 export function expandHeaders(c: OtlpCfg, env: Map<string, string>): { headers: string[][]; err: string } {
+  const r = expandRaw(c, env);
+  if (r.err) return r;
+  const b = broken(r.headers);
+  return b ? { headers: [], err: b } : r;
+}
+function expandRaw(c: OtlpCfg, env: Map<string, string>): { headers: string[][]; err: string } {
   const out: string[][] = [];
   for (const h of c.headers) {
     let v = h[1] ?? "";

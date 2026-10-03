@@ -522,7 +522,7 @@ Configuration lives in `~/.agentglass/config.json`; header values never go on th
 
 Without `--otlp` the endpoint comes from `otlp.endpoint`, then `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, then
 `OTEL_EXPORTER_OTLP_ENDPOINT`; headers from the config, the `headersFile` (`Key: Value` lines, must be mode 0600), or
-`OTEL_EXPORTER_OTLP_HEADERS`. Headers go over plain `http://` only to localhost unless `"insecure": true`. curl does
+`OTEL_EXPORTER_OTLP_HEADERS`. Headers, and a URL with `user:token@` or a query, go over plain `http://` only to localhost unless `"insecure": true`; a header value with a line break is refused. curl does
 the sending (config on stdin, so no token shows up in `ps`); proxies apply except for localhost. An endpoint that
 refuses gzip bodies gets plain JSON from then on.
 
