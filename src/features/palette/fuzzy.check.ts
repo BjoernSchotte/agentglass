@@ -25,6 +25,11 @@ ok("backward pass tightens the window", JSON.stringify(p) === "[4,5,6]", JSON.st
 const hm = match(["Fix bug", "fix"], ["fix bug", "fix"], "fi", null, 200, null);
 ok("pos kept per hit", JSON.stringify(hm.hits[0].pos) === "[0,1]", JSON.stringify(hm.hits[0].pos));
 ok("shorter item wins a tie", hm.hits[0].i === 1, ids(hm.hits));
+// sessions carry project, harness, branch and id after the title: their length must not outrank recency (the natural
+// order: live first, newest first) — a live "Todo app" session ranked 14th behind older ones with shorter dir names
+const tl = ["Todo web app · agtest-command-palette-opencode · OpenCode · ses_1", "Todo web app · agtest-x-opencode · OpenCode · ses_2"];
+const tm = match(tl, tl.map((x: string) => x.toLowerCase()), "todo", null, 200, null);
+ok("long items: a tie keeps the natural order", tm.hits[0].i === 0 && tm.hits[0].score === tm.hits[1].score, ids(tm.hits));
 const bm = match(["Fix bug", "fix"], ["fix bug", "fix"], "fi", null, 200, [5, 0]);
 ok("bonus lifts an item", bm.hits[0].i === 0, ids(bm.hits));
 

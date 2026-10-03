@@ -36,7 +36,8 @@ export function scoreTerm(hay: string, low: string, t: string, cs: boolean, pos:
     i = h.indexOf(t.charAt(j), i + 1);
     pos.push(i); score += bonusAt(hay, i) + (i === last + 1 ? 4 : 0); last = i;
   }
-  return score - Math.min(30, e - s + 1 - n) - 0.1 * hay.length;
+  return score - Math.min(30, e - s + 1 - n) - 0.1 * Math.min(40, hay.length); // short items win ties; beyond 40 columns
+  // length says nothing (a session's text carries project, harness and id) and the natural order (recency) decides
 }
 const scratch: number[] = [];
 // every term must match; the item's score is the sum (bonus[i], MRU …, is added by match); NO_MATCH = no match
