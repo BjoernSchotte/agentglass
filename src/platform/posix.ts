@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync, renameSync } from "node:fs";
 import { join, basename } from "node:path";
 import { run } from "../util/fs.ts";
-import type { ProcRow } from "./types.ts";
+import type { ProcRow, FileInfo } from "./types.ts";
 
 export function psProcs(): ProcRow[] {
   const out: ProcRow[] = [];
@@ -43,5 +43,13 @@ export function freeName(dir: string, path: string): string {
   for (let n = 2; ; n++) { const c = stem + " " + n + ext; if (!existsSync(join(dir, c))) return c; }
 }
 export function moveInto(dir: string, path: string): string { const n = freeName(dir, path); renameSync(path, join(dir, n)); return n; }
+// `stat` output "<uid> <octal mode> <type words>" (GNU %F / BSD %HT) → FileInfo, null when unparsable
+export function fileInfoOf(out: string): FileInfo | null {
+  const m = /^(\d+) ([0-7]+) (.+?)\s*$/.exec(out);
+  if (!m) return null;
+  const t = (m[3] ?? "").toLowerCase();
+  const kind = t === "directory" ? "dir" : t === "regular file" || t === "regular empty file" ? "file" : t === "socket" ? "socket" : t === "symbolic link" ? "link" : t === "fifo" ? "fifo" : "other";
+  return { uid: Number(m[1] ?? ""), mode: parseInt(m[2] ?? "", 8) & 0o7777, kind };
+}
 // `stat` output "<uid> <octal mode>" → [uid, mode], [] when unparsable
 export function ownerModeOf(out: string): number[] { const m = /^(\d+) ([0-7]+)\s*$/.exec(out); return m ? [Number(m[1] ?? ""), parseInt(m[2] ?? "", 8)] : []; }

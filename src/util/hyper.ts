@@ -44,6 +44,9 @@ export function link(url: string, text: string): string {
   if (!hyperOn()) return text;
   return "\x1b]8;;" + url.replace(/[\u0000-\u001f\u007f]/g, "") + "\x1b\\" + text + "\x1b]8;;\x1b\\";
 }
+// agentglass://open/<h>/<id>: components percent-encoded outside [A-Za-z0-9._:-] (the canonical session link)
+export function urlPart(s: string): string { let o = ""; for (const ch of s) o += /^[A-Za-z0-9._:-]$/.test(ch) ? ch : encodeURIComponent(ch); return o; }
+export function sessUrl(h: string, id: string): string { return "agentglass://open/" + urlPart(h) + "/" + urlPart(id); }
 let host = "-";
 function hostname(): string {
   if (host === "-") host = (process.platform === "linux" ? readText("/proc/sys/kernel/hostname", 0, 256) : run("uname", ["-n"])).trim();

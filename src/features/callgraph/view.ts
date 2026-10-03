@@ -34,7 +34,7 @@ function loadTV(s: Sess): TV {
   const r = src.lines(s, src.align(s, Math.max(0, size - window(src, 6291456))), size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
-  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1 };
 }
 // the parent's tool call that spawned subagent s, if the harness records it
 function spawnOf(s: Sess): string { const f = harnessOf(s.h).spawnOf; return f ? f(s) : ""; }
