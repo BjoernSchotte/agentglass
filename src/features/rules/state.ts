@@ -4,6 +4,7 @@ import { statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { OS } from "../../platform/index.ts";
 import { readText } from "../../util/fs.ts";
+import { home } from "../../util/text.ts";
 import { S, say } from "../../state.ts";
 import { HIST } from "../../model/procs.ts";
 import { type RuleSet, loadRules, errCount } from "./config.ts";
@@ -12,7 +13,8 @@ import { retain } from "./engine.ts";
 
 // set: the rules in force; mtime -1 = no file; safe: the file may name a notify command (owned by the user, not group/world-writable)
 export const R = { set: loadRules("", false), mtime: -2, checkedAt: 0, safe: false, ver: 0 };
-const CMD_UNSAFE = "notify.command ignored: rules.json must not be group- or world-writable (and must be yours) — chmod 600 " + RULES_FILE;
+// the fix first: an 80-column toast cuts the tail
+const CMD_UNSAFE = "notify.command ignored — chmod 600 " + home(RULES_FILE) + " (the file must be yours, not group- or world-writable)";
 
 function warn(msg: string): void { if (S.cli) process.stderr.write("agentglass: " + msg + "\n"); else say("warn", msg); }
 // the file's change stamp (ctime: content writes and chmod/chown alike, so fixing the mode re-runs the permission check), -1 = missing
