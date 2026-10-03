@@ -22,17 +22,17 @@ function tie(da: number, db: number, na: number, nb: number, la: string, lb: str
 }
 
 // ── tools ──
-export interface ToolRow { key: string; label: string; server: boolean; kid: boolean; nA: number; nB: number; shA: number; shB: number; dpp: number; errA: number; errB: number; p95A: number; p95B: number; chi2: number /* -1 none */; sig: boolean }
+export interface ToolRow { key: string; label: string; server: boolean; kid: boolean; nA: number; nB: number; shA: number; shB: number; dpp: number; errA: number; errB: number; p50A: number; p50B: number; p95A: number; p95B: number; chi2: number /* -1 none */; sig: boolean }
 interface Acc2 { n: number; err: number; dn: number; max: number; hist: number[] }
 function acc0(): Acc2 { const h: number[] = []; for (let i = 0; i < HB; i++) h.push(0); return { n: 0, err: 0, dn: 0, max: 0, hist: h }; }
 function addT(x: Acc2, t: ToolT): void { x.n += t.n; x.err += t.err; x.dn += t.dn; if (t.max > x.max) x.max = t.max; for (let i = 0; i < HB; i++) x.hist[i] = (x.hist[i] ?? 0) + (t.hist[i] ?? 0); }
-function p95(x: Acc2): number { return x.dn > 0 ? pct(x.hist, 0.95, x.max) : -1; }
+function q(x: Acc2, p: number): number { return x.dn > 0 ? pct(x.hist, p, x.max) : -1; }
 function at(m: Map<string, Acc2>, k: string): Acc2 { let x = m.get(k); if (!x) { x = acc0(); m.set(k, x); } return x; }
 // selection = B, baseline = A: a significant row says "B uses this tool at another rate than A"
 function toolRow(key: string, label: string, server: boolean, kid: boolean, a: Acc2, b: Acc2, NA: number, NB: number, sigOn: boolean): ToolRow {
   const shA = NA > 0 ? a.n / NA : 0; const shB = NB > 0 ? b.n / NB : 0;
   const sc = sigOn ? score(b.n, NB, a.n, NA) : null;
-  return { key, label, server, kid, nA: a.n, nB: b.n, shA, shB, dpp: (shB - shA) * 100, errA: a.err, errB: b.err, p95A: p95(a), p95B: p95(b), chi2: sc ? sc.chi2 : -1, sig: sc ? sc.sig : false };
+  return { key, label, server, kid, nA: a.n, nB: b.n, shA, shB, dpp: (shB - shA) * 100, errA: a.err, errB: b.err, p50A: q(a, 0.5), p50B: q(b, 0.5), p95A: q(a, 0.95), p95B: q(b, 0.95), chi2: sc ? sc.chi2 : -1, sig: sc ? sc.sig : false };
 }
 function byShare(x: ToolRow, y: ToolRow): number { return tie(Math.abs(x.dpp), Math.abs(y.dpp), x.nA + x.nB, y.nA + y.nB, x.label, y.label); }
 export const SIG_MIN = 50; // calls per group before χ² marks anything
