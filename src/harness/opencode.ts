@@ -11,7 +11,7 @@ import { query, q, sqliteBin } from "../util/sqlite.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { say } from "../state.ts";
-import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, turn, skill, nlines, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, reasoning, turn, skill, nlines, num, patchLines } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live, SessionSource } from "./types.ts";
@@ -332,6 +332,7 @@ function book(a: Acc, d: Day, model: string, tk: Obj | null, usd: number, prov: 
   const c = obj(tk["cache"]);
   if (model) a.model = model;
   usageExact(a, d, model || a.model, num(tk["input"]), num(tk["output"]) + num(tk["reasoning"]), c ? num(c["read"]) : 0, c ? num(c["write"]) : 0, 0, usd, prov);
+  reasoning(a, d, num(tk["reasoning"]));
 }
 // model: the issuing message's model (1.x part row modelID, 2.x the assistant row's model.id)
 function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: number, t1: number, model: string): void {

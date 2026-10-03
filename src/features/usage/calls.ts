@@ -10,7 +10,8 @@ export interface TS { n: number; err: number; dn: number; ms: number; max: numbe
 // shell program / command line (n calls, err) or changed file (n edits, add/del lines)
 export interface Cnt { n: number; err: number; add: number; del: number }
 // a call still waiting for its result; sh = [program, command] counters per shell command, for error attribution; row = its fact row
-export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; row: Call | null }
+// name = the tool's name as booked (retool renames it)
+export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; row: Call | null; name: string }
 
 // duration histogram: bucket 0 = < 10 ms, bucket k = [EDGE[k-1], EDGE[k]), the last one ≥ 30 min (roughly ×2.5 per step)
 export const EDGE = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 180000, 600000, 1800000];
@@ -51,8 +52,12 @@ export function cnt(m: Map<string, Cnt>, k: string): Cnt {
   return c;
 }
 
+// the OTLP exporter's view of each finished call (exact duration, error flag, exit codes, real tool name); null outside it
+let callTap: ((id: string, ms: number, err: boolean, codes: number[], name: string) => void) | null = null;
+export function setCallTap(f: ((id: string, ms: number, err: boolean, codes: number[], name: string) => void) | null): void { callTap = f; }
 // a result arrived: ms < 0 = duration unknown, out = result size (bytes, approximate)
 export function done(p: Pend, ms: number, err: boolean, out: number, id: string, codes: number[]): void {
+  const tap = callTap; if (tap) tap(id, ms, err, codes, p.name);
   const st = p.st;
   const r: Rec = { t: p.t, ms, id, ts: p.ts, arg: p.arg };
   const row = p.row;

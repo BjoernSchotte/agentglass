@@ -7,7 +7,7 @@ import { CODEX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
-import { type Acc, L, bucket, tool, pend, tokens, turn, skill, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
+import { type Acc, L, bucket, tool, pend, tokens, reasoning, turn, skill, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
 import { MQ_TURN } from "../features/usage/facts.ts";
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
@@ -144,14 +144,16 @@ function usage(a: Acc, l: string): void {
   }
   const info = obj(p["info"]); const tu = info ? obj(info["total_token_usage"]) : null;
   if (tu) { // cumulative → attribute the delta to this event's day; input_tokens includes the cached part
-    const cur = [num(tu["input_tokens"]), num(tu["cached_input_tokens"]), num(tu["cache_write_input_tokens"]), num(tu["output_tokens"])];
+    const cur = [num(tu["input_tokens"]), num(tu["cached_input_tokens"]), num(tu["cache_write_input_tokens"]), num(tu["output_tokens"]), num(tu["reasoning_output_tokens"])];
     const dl: number[] = [];
     let back = false;
-    while (a.x.length < 4) a.x.push(0);
+    while (a.x.length < 5) a.x.push(0);
     for (let i = 0; i < 4; i++) { const v = (cur[i] ?? 0) - numAt(a.x, i, 0); dl.push(v); if (v < 0) back = true; }
+    dl.push((cur[4] ?? 0) - numAt(a.x, 4, 0));
     const use = back ? cur : dl; // counter went backwards (new thread in the same file): count it fresh
     const inp = use[0] ?? 0; const ca = use[1] ?? 0; const cw = use[2] ?? 0; const out = use[3] ?? 0;
     if (inp + out + cw > 0) tokens(a, d, a.model, Math.max(0, inp - ca - cw), out, ca, cw, 0);
+    reasoning(a, d, Math.max(0, use[4] ?? 0)); // a subset of output_tokens (kept in x[4])
     a.x = cur;
   }
   const rl = obj(p["rate_limits"]); const pr = rl ? obj(rl["primary"]) : null;

@@ -25,6 +25,7 @@ export interface Acc {
   sub: boolean; // a subagent's log (Sess.parent, set by ledger accOf, not persisted): its prompts come from an agent, never a Day.turn
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
   uc: number; // credits without a rate (kiro)
+  rs: number; // reasoning tokens, a subset of outTok (gemini thoughts, opencode reasoning, codex reasoning_output_tokens)
   bill: string; plan: string; billSrc: string; // billing mode stamped from evidence ("" = not stamped; billSrc "session" | "process")
   calls: Call[]; lastCall: number; // one row per tool call in call order (persisted apart, callcache.ts); index of the newest, -1 none
   t0: number; // first activity (epoch ms), 0 unknown
@@ -45,7 +46,7 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0 };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0 };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -99,10 +100,11 @@ export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number
   if (row) row.cid = id;
   if (!id) return;
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
-  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row });
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row, name });
 }
 // the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
 export function retool(a: Acc, p: Pend, name: string): void {
+  p.name = name;
   const d = bucket(a, p.t, p.ts);
   let key = ""; let found = false;
   for (const [k, v] of d.tt) if (v === p.st) { key = k; found = true; break; }
@@ -184,14 +186,24 @@ export function usageExact(a: Acc, d: Day, model: string, nIn: number, nOut: num
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   addCost(a, d, usd, prov, model);
+  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, cost: usd, unk: 0, exact: true, prov });
 }
 export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, prov = ""): void {
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   const p = price(model);
-  if (p) addCost(a, d, cost(p, nIn, nOut, nCr, w5, w1), prov, model);
-  else unpriced(a, d, model, nIn + nOut + nCr + w5 + w1);
+  const usd = p ? cost(p, nIn, nOut, nCr, w5, w1) : 0; const unk = p ? 0 : nIn + nOut + nCr + w5 + w1;
+  if (p) addCost(a, d, usd, prov, model);
+  else unpriced(a, d, model, unk);
+  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, cost: usd, unk, exact: false, prov });
 }
+// reasoning tokens: already inside out (adapters fold them in), kept apart for the OTLP export's reasoning attribute
+export function reasoning(a: Acc, d: Day, n: number): void { if (n > 0) a.rs = a.rs + n; }
+// one booking as tokens()/usageExact() made it (Claude fallback iterations: one per attempt), for the OTLP exporter's
+// per-request spans; prov = honest-costs' provider key ("" = the session's single provider). null outside the exporter.
+export interface Booking { model: string; nIn: number; nOut: number; cr: number; cw: number; cost: number; unk: number; exact: boolean; prov: string }
+let bookTap: ((b: Booking) => void) | null = null;
+export function setBookTap(f: ((b: Booking) => void) | null): void { bookTap = f; }
 
 export interface ModelUse { model: string; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number } // unk = unpriced tokens (um)
 // per-model tokens/cost/unpriced over the given local days (null = all): cost desc, then tokens desc, then model

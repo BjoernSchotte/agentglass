@@ -6,7 +6,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readBytes, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, turn, skill, nlines, num, isoMs } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, reasoning, turn, skill, nlines, num, isoMs } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import { price } from "../features/usage/pricing.ts";
@@ -309,6 +309,7 @@ function usage(a: Acc, l: string): void {
   if (tk) {
     const inp = num(tk["input"]); const cached = num(tk["cached"]);
     tokens(a, d, priceKey(md || a.model, inp, iso), Math.max(0, inp - cached) + num(tk["tool"]), num(tk["output"]) + num(tk["thoughts"]), cached, 0, 0);
+    reasoning(a, d, num(tk["thoughts"]));
   }
   const t0 = isoMs(iso);
   for (const v of arr(o["toolCalls"])) {
