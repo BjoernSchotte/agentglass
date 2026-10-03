@@ -151,7 +151,7 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
   if (e.kind === "tool") {
     const name = toolName(e); const n = tr.spans.length;
     const cid = e.id || "anon:" + tr.key + ":" + String(n);
-    const sp = newSpan("execute_tool", "execute_tool " + name, toolSpanId(b.R, sd.s.id, cid), par.spanId, t, sd.s.id);
+    const sp = newSpan("execute_tool", "execute_tool " + mcpTool(name), toolSpanId(b.R, sd.s.id, cid), par.spanId, t, sd.s.id);
     sp.agent = par.agent; sp.tool = name; sp.callId = e.id; sp.open = true;
     sp.mcp = mcpServer(name);
     const arg = toolArg(e);
@@ -176,7 +176,7 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
     sp.err = errType(e.text, c ? c.err : isErr(e.text));
     if (c) {
       if (c.codes.length) sp.exit = c.codes[c.codes.length - 1] ?? -1;
-      if (c.name && c.name !== sp.tool) { sp.tool = c.name; sp.mcp = mcpServer(c.name); sp.name = "execute_tool " + c.name; } // pi: the real MCP tool behind a proxy
+      if (c.name && c.name !== sp.tool) { sp.tool = c.name; sp.mcp = mcpServer(c.name); sp.name = "execute_tool " + mcpTool(c.name); } // pi: the real MCP tool behind a proxy
     }
     if (o.content) { sp.result = cut(e.text, CMAX); if (sp.err) sp.errMsg = cut(e.text, 1024); }
   }

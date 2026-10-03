@@ -47,7 +47,7 @@ const csub = sess("claude", "a1b2c3", CP + CID + "/subagents/agent-a1b2c3.jsonl"
 const ct = finish(newSessB(cs, [csub]), O);
 eq("claude turns", String(ct.length), "2");
 if (ct.length === 2) {
-  eq("claude turn 1", tree(ct[0]), "invoke_agent Claude Code<-1, chat claude-sonnet-4-5<0, execute_tool Bash git<0, execute_tool mcp__ctx__search<0, chat claude-opus-4-5<0 sup est, chat claude-sonnet-4-5<0 est, execute_tool Agent<0, chat claude-sonnet-4-5<0, invoke_agent Explore<6, chat claude-haiku-4-5<8, execute_tool Grep<8, chat claude-haiku-4-5<8");
+  eq("claude turn 1", tree(ct[0]), "invoke_agent Claude Code<-1, chat claude-sonnet-4-5<0, execute_tool Bash git<0, execute_tool search<0, chat claude-opus-4-5<0 sup est, chat claude-sonnet-4-5<0 est, execute_tool Agent<0, chat claude-sonnet-4-5<0, invoke_agent Explore<6, chat claude-haiku-4-5<8, execute_tool Grep<8, chat claude-haiku-4-5<8");
   eq("claude turn 2", tree(ct[1]), "invoke_agent Claude Code<-1, chat claude-sonnet-4-5<0, execute_tool Bash rm<0 !rejected, chat<0 !rate_limit");
   const r = ct[0].spans[0];
   eq("root models", r.model + " " + r.models.join(","), "claude-sonnet-4-5 claude-sonnet-4-5,claude-opus-4-5");
