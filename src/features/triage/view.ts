@@ -25,7 +25,7 @@ import { compile, eachCall } from "../query/eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, setPins } from "../query/scope.ts";
 import { complete } from "../query/ui.ts";
 import { type TRow, rank, fmtLift, fmtPct, chiStr } from "./score.ts";
-import { type Run, type Result, type TJob, PRESETS, presetOf, newRun, triageJob, triageStep, triageProgress, triageCfg, periodOf, periodLabel, guardText, shown, slowKeep, without } from "./run.ts";
+import { type Run, type Result, type TJob, PRESETS, presetOf, newRun, labelOf, triageJob, triageStep, triageProgress, triageCfg, periodOf, periodLabel, guardText, shown, slowKeep, without } from "./run.ts";
 
 export const TV_NAME = "triage";
 export interface TState { run: Run; res: Result | null; sel: number; top: number; expand: string; picker: boolean; calls: string /* attr\tvalue whose newest calls are listed, "" none */; csel: number; back: () => void }
@@ -95,7 +95,7 @@ function header(st: TState, W: number): string {
   const r = st.run; const res = st.res;
   const k = (key: string, v: string): string => fg(C.accent) + key + RST + fg(C.sub) + " " + v + RST;
   const right = k("b", r.base) + fg(C.dim) + " · " + RST + k("e", entWord(r)) + fg(C.dim) + " · " + RST + k("c", r.weight);
-  const sel = res ? res.selLabel : "choose a selection"; const base = res ? res.baseLabel : "";
+  const sel = res ? res.selLabel : idle(st) ? "choose a selection" : labelOf(r); const base = res ? res.baseLabel : ""; // the first count: what it counts
   let left = fg(C.accent) + CSI + "1m" + "triage" + RST + fg(C.dim) + " · " + RST + fg(C.text) + (res && res.selLabel === print(r.sel) ? expr(r.sel) : sel) + RST;
   if (res) left += fg(C.sub) + " (" + grp(res.selN) + ")" + RST + fg(C.dim) + " vs " + RST + fg(C.text) + (r.base === "group" ? expr(r.group) : base) + RST + fg(C.sub) + " (" + grp(res.baseN) + ")" + RST;
   left += fg(C.dim) + " · " + RST + fg(C.sub) + periodLabel(r.days) + RST;

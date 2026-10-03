@@ -141,7 +141,7 @@ function slowFrom(tools: Dist[]): (s: Sess, c: Call) => boolean {
 export function slowKeep(r: Run): (s: Sess, c: Call) => boolean { const j = p90Job(r); aggStep(j, Infinity); return slowFrom(j.out); }
 function histN(b: Bin): number { let n = 0; for (const x of b.hist) n += x; return n; }
 
-function labelOf(r: Run): string {
+export function labelOf(r: Run): string {
   if (r.slow) return "slow calls";
   const p = presetOf(r.preset);
   if (p && p.n >= 1 && p.n <= 5 && p.entity === r.entity) return p.name; // "errored calls" on session rows: the expression says it
