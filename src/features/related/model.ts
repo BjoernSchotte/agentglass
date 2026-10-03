@@ -61,7 +61,19 @@ export function shellCmd(arg: string): string {
   return a.length ? a.join(" ") : arg;
 }
 const BANNER = /^\[(?:detached HEAD|[^\]\s]+)(?: \(root-commit\))? ([0-9a-f]{7,40})\] (.*)$/;
-const DENIED = /^The user doesn't want to proceed/;
+// a result that records the user's (or a configured rule's) refusal of the call, per harness as its parser renders it:
+// Claude's rejection text; Codex ToolError::Rejected (core/src/tools/events.rs); OpenCode PermissionV1 Rejected/Corrected/
+// DeniedError (core/src/v1/permission.ts); Gemini's cancelled call; pi's default block by an extension (agent-loop.ts).
+// Kiro and fx record none that can be told apart
+export function denied(h: string, text: string): boolean {
+  const t = text.trimStart();
+  if (h === "claude") return /^The user doesn't want to proceed/.test(t);
+  if (h === "codex") return /^(exec command |patch )?rejected by user\b/.test(t);
+  if (h === "opencode") return /^\[error\] The user (rejected permission to use this specific tool call|has specified a rule which prevents you from using this specific tool call)/.test(t);
+  if (h === "gemini") return /^(\[cancelled\] )?\[Operation Cancelled\] Reason: User denied execution/.test(t); // the parser prefixes the status
+  if (h === "pi") return /^\[error\] Tool execution was blocked\s*$/.test(t);
+  return false;
+}
 
 // parsed events of one session → rows appended to out (spec 4): results fold into their call (also across batches),
 // events outside [t0, t1] are dropped, replays dedup by (id, kind) or (ts, text); an untimed event takes the previous time
@@ -109,7 +121,7 @@ function result(e: Ev, red: boolean, t: number, sess: string, h: string, top: st
   const key = sess + "\u0001" + e.id + "\u0001result";
   if (st.seen.has(key)) return;
   st.seen.add(key);
-  if (DENIED.test(e.text.trimStart())) {
+  if (denied(h, e.text)) {
     const r = row(t, e.ts, sess, h, top, "alert", "", "denied " + c.tool, self);
     r.evKind = "tool"; r.evId = c.evId; r.evText = c.evText; out.push(r); return;
   }

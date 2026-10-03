@@ -203,4 +203,8 @@ rebuilt on demand.
    section references instead of decision numbers where sections are meant (Today, Interactions).
 
 ## Open questions (to verify during implementation)
-1. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (section 4, uncertain).
+1. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (section 4, uncertain). **Resolved in review
+   (from the harnesses' sources and a live Gemini denial):** Codex `exec command|patch rejected by user`; OpenCode
+   `[error] The user rejected permission…` / `…has specified a rule which prevents…`; Gemini `[cancelled] [Operation
+   Cancelled] Reason: User denied execution.`; pi (no approvals; an extension's default block) `[error] Tool execution was
+   blocked`. Kiro and fx: none (`denied()` in `related/model.ts`).

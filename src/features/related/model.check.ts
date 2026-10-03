@@ -50,6 +50,20 @@ const den = rows([tool("Edit", "/w/main/src/a.ts", 20, "d1", "{\"file_path\":\"/
 eq("denied: call + alert", show(den), "write:Edit:err alert::ok");
 eq("denied: alert text", den[1]?.text ?? "", "denied Edit");
 eq("denied: alert time", String((den[1]?.t ?? 0) - T), "25000");
+// the other harnesses' recorded denials, as their parsers render the result (shapes from their sources)
+for (const [h, name, txt] of [
+  ["codex", "shell", "exec command rejected by user"], ["codex", "apply_patch", "patch rejected by user"],
+  ["opencode", "bash", "[error] The user rejected permission to use this specific tool call."],
+  ["opencode", "edit", "[error] The user rejected permission to use this specific tool call with the following feedback: use sed"],
+  ["opencode", "bash", "[error] The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules []"],
+  ["gemini", "run_shell_command", "[cancelled] [Operation Cancelled] Reason: User denied execution."],
+  ["pi", "bash", "[error] Tool execution was blocked"],
+]) {
+  const o: RelEv[] = []; toRel([tool(name, "x", 20, "dn", ""), ev("result", txt, 21, "dn", "")], "A", h, "/w/main", "/w/main", true, W0, W1, newSt(), o);
+  eq("denied " + h + ": " + txt.slice(0, 30), o.map((x: RelEv) => x.kind + ":" + x.text).join(" | ").replace(/^[a-z]+:x \| /, ""), "alert:denied " + name);
+}
+const nd: RelEv[] = []; toRel([tool("shell", "x", 20, "dn", ""), ev("result", "Wall time: 3.0 seconds\naborted by user", 21, "dn", "")], "A", "codex", "/w/main", "/w/main", true, W0, W1, newSt(), nd);
+eq("an interrupt is no denial", String(nd.length), "1");
 // ── commit banner in a shell result → a commit row ──
 const cm = rows([tool("Bash", "git commit -m 'fix login'", 30, "g1", "{\"command\":\"git commit -m 'fix login'\"}"), ev("result", "[main 3f2a91c] fix login redirect\n 1 file changed, 2 insertions(+)", 31, "g1", "")], "A", "/w/main", "/w/main");
 eq("banner: shell + commit rows", show(cm), "shell:Bash:ok commit::ok");

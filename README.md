@@ -413,9 +413,11 @@ of the repo, interleaved by time.
   row's session), `esc` back. When the window reaches into the future and an agent runs, new events stream in.
 - It reads only the window of each session (a time bisect over the log), at most 40 sessions and 16 MB per build,
   in slices that keep the UI responsive; nothing is stored.
-- Limits: writes through shell commands (`sed -i`, redirects, formatters) are not seen as writes. Only Claude Code
-  records a denied tool call (`denied <tool>` row); Codex, OpenCode, Gemini, Kiro and fx denials are not shown
-  (approval waits still come in through the alert rules). Logs without timestamps (Kiro) are read from their tail and
+- Limits: writes through shell commands (`sed -i`, redirects, formatters) are not seen as writes. A denied tool call
+  becomes a `denied <tool>` row where the log records the decision: Claude Code, Codex (`rejected by user`),
+  OpenCode (rejected permission, or a permission rule), Gemini CLI (cancelled: `User denied execution`) and pi (a
+  call an extension blocked without its own reason). Kiro and fx record none; approval waits still come in through
+  the alert rules. Logs without timestamps (Kiro) are read from their tail and
   their events cannot be placed. Under `--redact` conflicts are found on the real files and commands exactly as
   without it; only fakes are shown (file names, a clobber's generic `git` form, a commit's sha without its subject).
 - Config: `"related": {"minutes": 10, "conflictMinutes": 10}` (integers 1–240).
