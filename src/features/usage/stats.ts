@@ -689,7 +689,7 @@ H.footerHints.push((mode: string): string[][] => {
 });
 H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server or the skills group"],
   ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
-  ["B", "budget: current state and the config path"], ["t", "triage the Stats filter's calls (drill-down: that tool's errors)"],
+  ["B", "budget: current state and the config path"], ["t", "triage the Stats filter's calls (drill-down: that tool's errors)"], ["C", "compare this period with the previous one (today vs yesterday, 7 days vs the 7 before)"],
   ["/  p  P", "filter Stats (tool is Bash, repo is x, day >= -3d…) · pin it · edit pins"],
   ["", "costs = API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"],
   ["", "cost tags: spend = API key (real), plan = list-price equivalent, cloud = Bedrock/Vertex/Foundry, gw = gateway, ? = unknown; * = assumed from current config"],

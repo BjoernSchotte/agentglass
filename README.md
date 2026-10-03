@@ -282,6 +282,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `B` | in Stats: budget state and the config path |
 | `@` | in Sessions: open the selected session's project in the Repos tab |
 | `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
+| `m` `C` | mark A / B · compare two sessions or periods (see [Compare](#compare)) |
 
 ## Repos
 
@@ -329,10 +330,11 @@ harness is pi, day >= -7d               duration > 30s                       con
   weekdays `mo`…`su`; `unknown` finds unpriced cost and untimed calls (`cost is unknown`). Paths take `*` globs.
 - Keys (`--help` and `?` list them): session `harness repo cwd branch model title id agent subagent live archived
   state cost tokens tokens.in/out/cache_read/cache_write tools errors error_rate lines lines.added/removed age text
-  content worktree project.kind`, day `day weekday day.cost day.tokens day.tools`, call `tool server program command file ext status
-  duration out hour`, `event` (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the
-  same call), day clauses "has a day matching all of them". `model` of a call is the model of the message that issued
-  it (Codex: per turn; fx: per session; Kiro: unknown).
+  content worktree project.kind session` (`session is claude:3f2a9c`: a run and its subagents), day `day weekday
+  day.cost day.tokens day.tools`, call `tool server program command file ext status duration out hour`, `event`
+  (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
+  "has a day matching all of them". `model` of a call is the model of the message that issued it (Codex: per turn;
+  fx: per session; Kiro: unknown).
 - In the TUI, `/` parses as you type; the last valid filter stays while the text does not parse, the error shows
   next to it, `tab` completes keys, operators and values, `esc` restores the previous filter. `p` pins the tab's
   filter: pins apply on every tab and are remembered (`~/.agentglass/config.json` `"filter": {"pinned": …}`); on
@@ -380,6 +382,37 @@ agentglass triage --preset period --entity session --weight cost --json | jq '.r
 ```
 Guards are answers (exit 0, `"guard": "empty-baseline" | "empty-selection" | "small-sample" | "retention"`); a bad
 expression or option exits 2.
+
+## Compare
+
+"Why did this run cost 4× the last one?" and "did this week go worse than last week?" on one screen: two groups, A and
+B, side by side with Δ (B − A, more cost, errors or duration red) and B/A.
+
+- `m` on the Sessions tab marks A, a second `m` marks B (a third replaces B, `m` on a marked row unmarks it; marked rows
+  show `A`/`B` before the title). `C` compares the two marks, or the mark with the selected row, or — without marks —
+  the selected run with the previous top-level session of the same harness and repo (the rerun case; the header names
+  the pick, `a` or marks fix a wrong guess). `C` on Stats compares the period with the one before it (today vs
+  yesterday, 7 days vs the 7 before) in the Stats filter.
+- A group is any filter expression inside the pins: `session is claude:3f2a9c` (harness:id or a unique id prefix of
+  ≥ 6 characters; matches the session and its subagents), `model ~ opus`, `day >= -6d`. `S` leaves subagents out of
+  both groups, `a` / `b` edit a group (tab completes), `x` swaps them.
+- Summary: sessions, cost by billing mode (`+?` for unpriced parts; no Δ then), wall time, human turns, tokens, cache
+  hit, cost and tokens per turn, tool calls, errors and error rate, p50 / p95 / max call duration (`timed n/N`; fx and
+  Kiro record no durations: `n/a`), lines, files, models, subagents. `tab` cycles the detail sections: tools (MCP
+  servers fold with `␣`, `●` = share differs, χ² ≥ 6.63, from 50 calls per group), programs, commands, files (only in
+  A, only in B, in both; paths relative to the repo when both sides share one), models (tokens and cost from the
+  per-model day buckets, calls from the call rows) and, for two sessions, a timeline of calls since each start.
+- `↵` on a tool opens the Stats drill-down for side A (`[`) or B (`]`), on a file `$PAGER`; `o` / `1` / `2` open a
+  session's transcript; `t` runs triage with A as the selection and B as its baseline (`+` / `-` there edit group A).
+  Below 100 columns the B/A column goes, below 80 the Δ column.
+
+```sh
+agentglass compare 3f2a9c 7b11e0                                   # two sessions by id prefix
+agentglass compare claude:3f2a9c… codex:7b11e0… --no-subagents --json | jq '.a.metrics, .b.metrics'
+agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 'repo is agentglass'
+```
+Unknown values (unpriced cost, untimed calls) are `null` in `--json`. A bad expression, an unknown or ambiguous id
+(the candidates are listed) or A = B exits 2.
 
 ## Alert rules
 
@@ -492,6 +525,7 @@ agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'  # ski
 agentglass --json --repos --days 30 | jq '.[] | {label, costUsd, activeMin}'  # cost and active time per project
 agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL stream of every agent's events
 agentglass --watch | jq -c 'select(.kind=="alert") | .alert'        # alert rule transitions (fire, escalate, …)
+agentglass compare 3f2a9c 7b11e0 --json | jq '.b.metrics.cost'      # A vs B: two runs, or --a/--b expressions
 agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one
 agentglass --redact                                                 # privacy mode for streams and screenshots
 agentglass sessions --since 7d --format table                       # json | jsonl | csv | table, for every list

@@ -40,10 +40,14 @@ import "./features/usage/cache.ts";
 import "./features/repos/ident.ts";
 import "./features/usage/stats.ts";
 import "./features/repos/tab.ts";
+import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
 import "./features/triage/cli.ts";
 import "./features/triage/view.ts";
+import "./features/compare/cli.ts";
+import "./features/compare/marks.ts";
+import "./features/compare/view.ts";
 import "./features/redact.ts";
 import "./features/prices.ts";
 import "./features/update.ts";
