@@ -31,6 +31,9 @@ eq("banner observed on A", show(m, "A"), "a:observed+ =1"); eq("not on B", show(
 // a quiet commit inside A's git call span [1000, 2000] + 5 s is ✓; just after it it is ≈
 m = attribute([si("A", "X", 0, 100000, [vr("gcall", "1000-2000", 1000)])], logs("X", [ev("a", 7000, "commit", "main"), ev("b", 7001, "commit", "main")]));
 eq("span edge", show(m, "A"), "a:observed+ b:reflog =1");
+// reflog times are truncated to seconds: a commit at 31.9 s inside a call started at 31.5 s is logged at 31 s
+m = attribute([si("A", "X", 0, 100000, [vr("gcall", "31500-32000", 31500)])], logs("X", [ev("a", 31000, "commit", "main"), ev("b", 30499, "commit", "main")]));
+eq("reflog seconds", show(m, "A"), "b:reflog a:observed+ =1");
 // outside every window: nobody gets it
 m = attribute([si("A", "X", 0, 10000, [])], logs("X", [ev("a", 50000, "commit", "main")]));
 eq("outside every window", show(m, "A"), " =0");

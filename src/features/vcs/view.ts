@@ -63,15 +63,18 @@ function statusNote(c: GCommit): string {
 function linkRow(kind: string, label: string, l: GLink): Row {
   return { kind, text: fit(label, 12) + " " + fit(l.how, 9) + " " + display("vcs", l.url, null), dim: l.how !== "created", call: l.call, ts: l.ts, copy: l.url, path: l.path, mark: kind === "pr" ? "⇡" : kind === "issue" ? "#" : "↗" };
 }
-// commits (✓ before ≈ before ? shared, oldest first within), then PRs/MRs, issues, other links (created first)
-export function viewRows(g: GitInfo, now: number): Row[] {
+// commits (✓ before ≈ before ? shared, oldest first within), then PRs/MRs, issues, other links (created first);
+// w = the row width: narrow terminals get narrower branch/stat columns, a day-less time when every commit is today
+export function viewRows(g: GitInfo, now: number, w: number): Row[] {
   const out: Row[] = [];
+  let today = true; for (const c of g.commits) if (when(c.at, now).length > 5) today = false;
+  const tW = today ? 5 : 11; const bW = w < 100 ? 10 : 14; const sW = w < 100 ? 9 : 11;
   const rank = (c: GCommit): number => c.how === "observed" ? 0 : c.how === "reflog" ? 1 : 2;
   const cs = g.commits.slice().sort((x: GCommit, y: GCommit) => rank(x) - rank(y) || x.at - y.at);
   for (const c of cs) {
-    const st = c.add >= 0 ? "+" + String(c.add) + " −" + String(c.del) : "";
+    const st = c.add >= 0 && !c.merge ? "+" + String(c.add) + " −" + String(c.del) : ""; // a merge's diff is its branch's
     const note = statusNote(c);
-    out.push({ kind: "commit", text: fit(c.sha.slice(0, 7), 7) + "  " + fit(when(c.at, now), 11) + "  " + fit(c.br ? display("filter:branch", c.br, null) : "(detached)", 14) + "  " + fit(st, 11) + "  " + display("vcs", c.subj, null) + (note ? "  · " + note : ""),
+    out.push({ kind: "commit", text: fit(c.sha.slice(0, 7), 7) + "  " + fit(when(c.at, now), tW) + "  " + fit(c.br ? display("filter:branch", c.br, null) : "(detached)", bW) + " " + fit(st, sW) + " " + display("vcs", c.subj, null) + (note ? "  · " + note : ""),
       dim: !c.counted, call: c.call, ts: c.ts, copy: c.sha, path: c.path, mark: MARK[c.how] ?? "?" });
   }
   for (const l of g.prs) out.push(linkRow("pr", (l.url.indexOf("merge_requests") >= 0 ? "MR !" : "PR #") + String(l.n), l));
@@ -115,7 +118,7 @@ function refresh(): void {
     enrich(x.path, gi, i.top, closedNow(x), rl, gitRun());
   }
   V.g = g ? sessGit(s) : null; // re-merge: enrichment wrote into the per-session infos
-  V.rows = V.g ? viewRows(V.g, Date.now()) : [];
+  V.rows = V.g ? viewRows(V.g, Date.now(), S.W - 6) : [];
   if (V.sel >= V.rows.length) V.sel = Math.max(0, V.rows.length - 1);
   V.at = Date.now();
 }

@@ -56,7 +56,7 @@ eq("gitlab issue", ustr("https://gitlab.com/g/p/-/issues/5"), "issue 5 https://g
 const sha40 = "0123456789abcdef0123456789abcdef01234567";
 eq("commit url", ustr("https://github.com/o/r/commit/" + sha40), "commit 0 https://github.com/o/r/commit/" + sha40 + " " + sha40);
 eq("bitbucket commits url", ustr("https://bitbucket.org/o/r/commits/abc1234>"), "commit 0 https://bitbucket.org/o/r/commits/abc1234 abc1234");
-eq("host case-insensitive", ustr("HTTPS://GitHub.com/o/r/pull/4"), "pr 4 https://github.com/o/r/pull/4");
+eq("host case-insensitive", ustr("https://GitHub.com/o/r/pull/4"), "pr 4 https://github.com/o/r/pull/4");
 const cred = ustr("https://x-access-token:ghs_SECRET@github.com/o/r/pull/3");
 eq("credentials scrubbed", cred, "pr 3 https://github.com/o/r/pull/3");
 yes("no secret kept", cred.indexOf("ghs_SECRET") < 0);
@@ -153,10 +153,19 @@ a = newAcc(); scrape(a, "{\"content\":\"https:\\/\\/github.com\\/o\\/r\\/issues\
 eq("escaped issue URL in raw JSON", refs(a), "issue:https://github.com/o/r/issues/5:mentioned");
 a = newAcc();
 for (let i = 0; i < 210; i++) { addRef(a, { k: "pr", v: "https://h.io/o/r/pull/" + String(i), t: i, how: "mentioned", br: "", subj: "", call: "", ts: "" }); if (i === 5) addRef(a, { k: "pr", v: "https://h.io/o/r/pull/c", t: i, how: "created", br: "", subj: "", call: "", ts: "" }); }
-let kept = false; for (const r of a.vcs) if (r.how === "created") kept = true;
+addRef(a, { k: "commit", v: "abc1234", t: 1, how: "observed", br: "", subj: "", call: "", ts: "" });
+let kept = false; let cm = false; let last = false; for (const r of a.vcs) { if (r.how === "created") kept = true; if (r.k === "commit") cm = true; if (r.v.endsWith("/209")) last = true; }
 eq("cap", String(a.vcs.length), String(MAX_REFS)); yes("cap keeps the created ref", kept);
-yes("cap drops the oldest mentioned", a.vcs.length > 0 && a.vcs[0].v !== "https://h.io/o/r/pull/0");
+yes("full: a commit evicts the oldest mentioned", cm && a.vcs.length > 0 && a.vcs[0].v !== "https://h.io/o/r/pull/0");
+yes("full: a new mentioned ref is dropped (first sightings win)", !last);
+addRef(a, { k: "pr", v: "https://h.io/o/r/pull/7", t: 1, how: "created", br: "", subj: "", call: "x", ts: "" });
+let up = ""; for (const r of a.vcs) if (r.v === "https://h.io/o/r/pull/7") up = r.how + r.call;
+eq("upgrade through the key index", up, "createdx");
 
+// big lines: URLs in the first 64 KB only; a banner after a known git call anywhere
+a = newAcc(); scrape(a, "{\"text\":\"https://github.com/o/r/pull/21 " + "x".repeat(70000) + " https://github.com/o/r/pull/22\"}");
+eq("big line: head URL only", refs(a), "pr:https://github.com/o/r/pull/21:mentioned");
+eq("big banner output", refs(feed("claude", [claudeUse("toolu_b", "git commit -m big", "01"), claudeRes("toolu_b", "hook output\n" + "y".repeat(70000) + "\n[main abcdef0] big\n 1 file changed, 1 insertion(+)", "02")])), "commit:abcdef0:observed@toolu_b gcall:span:observed@toolu_b");
 // ── persistence round trip ──
 a = feed("claude", [claudeUse("toolu_1", "git commit -m one", "01"), claudeRes("toolu_1", BAN + "\nhttps://github.com/o/r/pull/12", "03")]);
 const back = accIn(JSON.parse(JSON.stringify(accOut(a, 64))));

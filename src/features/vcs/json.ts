@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Refs and the reflog need no spawn and are always there; status/add/del only with --git, which allows the git log spawns.
 import type { Sess } from "../../model/types.ts";
+import { sessions, loadHead } from "../../model/sessions.ts";
+import { complete, display } from "../../hooks.ts";
+import { identOf } from "../query/project.ts";
 import { type Obj } from "../../util/json.ts";
-import { display } from "../../hooks.ts";
 import { type GitInfo, type GLink, GIT, gitInfo, sessIn, sessGit, gitRun } from "./attrib.ts";
 import { enrich } from "./enrich.ts";
 import { readReflog } from "./reflog.ts";
@@ -24,8 +26,21 @@ export function costPerCommit(cost: number, unk: number, produced: number): numb
   if (produced <= 0 || (cost <= 0 && unk > 0)) return null;
   return Math.round((cost / produced) * 1e6) / 1e6;
 }
+// ≈ vs ? shared needs every session of the worktree indexed: those written to since the window opened are completed
+// (a one-shot run completes only the listed sessions)
+const peered = new Set<string>();
+function peers(s: Sess): void {
+  const me = sessIn(s, Date.now()); if (!me || me.t1 <= me.t0 || peered.has(me.gitdir + "\t" + String(me.t0))) return;
+  peered.add(me.gitdir + "\t" + String(me.t0));
+  for (const x of sessions.values()) {
+    if (x === s || x.mtime < me.t0) continue;
+    if (!x.headDone) loadHead(x);
+    const id = identOf(x); if (id && id.gitdir === me.gitdir) complete(x);
+  }
+}
 // null = no git worktree known for the session
 export function gitJson(s: Sess): Obj | null {
+  peers(s);
   if (GJ.full) enrichAll(s);
   const g: GitInfo | null = sessGit(s); if (!g) return null;
   const cs: Obj[] = [];

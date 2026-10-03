@@ -20,7 +20,7 @@ eq("nothing", previewLine(newInfo(), 1, 0, "api"), "");
 
 // rows: ✓ before ≈ before shared; created PR before mentioned; ≈/shared dim
 const g2 = info([gc("ddddddd", "reflog", 1), gc("eeeeeee", "shared", 0), gc("aaaaaaa", "observed", 9)], [gl("https://github.com/o/r/pull/1", 1, "created"), gl("https://github.com/o/r/pull/2", 2, "mentioned")]);
-const rs = viewRows(g2, 0);
+const rs = viewRows(g2, 0, 120);
 eq("row order", rs.map((r: Row) => r.mark + (r.kind === "commit" ? r.copy.slice(0, 1) : r.copy.slice(-1)) + (r.dim ? "d" : "")).join(" "), "✓a ≈dd ?ed ⇡1 ⇡2d");
 eq("not counted note", rs.length > 1 && rs[1].text.indexOf("not counted") >= 0 ? "y" : "n", "y");
 eq("diff stat column", rs.length ? (rs[0].text.indexOf("+1 −2") >= 0 ? "y" : "n") : "-", "y");

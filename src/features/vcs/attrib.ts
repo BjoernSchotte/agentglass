@@ -22,7 +22,7 @@ import { type RefEv, readReflog, reflogStamp, isNew } from "./reflog.ts";
 // last = time of the last spawn
 export const GIT = { pad: 10, spawn: true, cli: false, gate: true, last: 0 };
 export const HEAD_MS = 120000; // the window opens 2 min before the first activity
-export const SPAN_SLACK = 5000; // a git call's span ends 5 s after its result
+export const SPAN_SLACK = 5000; // a git call's span ends 5 s after its result (and starts 1 s early: reflog seconds)
 // one git spawn allowed now (TUI: ≤ 1 per 500 ms; CLI: ungated); true books it
 export function spawnOk(): boolean {
   if (S.cli ? !GIT.cli : !GIT.spawn) return false;
@@ -52,7 +52,7 @@ function spans(refs: VRef[]): number[] {
   for (const r of refs) {
     if (r.k !== "gcall") continue;
     const i = r.v.indexOf("-"); const a = Number(r.v.slice(0, i)); const b = Number(r.v.slice(i + 1));
-    if (a > 0 && b >= a) { out.push(a); out.push(b + SPAN_SLACK); }
+    if (a > 0 && b >= a) { out.push(a - 1000); out.push(b + SPAN_SLACK); } // reflog times are whole seconds
   }
   return out;
 }

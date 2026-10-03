@@ -82,6 +82,6 @@ export function accIn(o: Obj): Acc {
   return {
     off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), ep: str(o["ep"]), x: nums(o["x"]), xM: num(o["xM"]), pk: str(o["pk"]), sub: false,
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
-    bill: str(o["bill"]), plan: str(o["plan"]), billSrc: str(o["bs"]), calls: [], lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [],
+    bill: str(o["bill"]), plan: str(o["plan"]), billSrc: str(o["bs"]), calls: [], lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1,
   };
 }
