@@ -10,6 +10,8 @@ import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { BUILD } from "../build-info.ts";
 import { versionInfo } from "./version.ts";
+import { accOf } from "./usage/ledger.ts";
+import { type SkillUse, skillUses } from "./usage/record.ts";
 
 // option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
 const CMDS: string[][] = [
@@ -42,8 +44,9 @@ ${table(CMDS, col)}
 options for --json / --watch:
 ${table(OPTS, col)}
 
---json fields: id harness title cwd branch model path updated bytes live pid status parent kind subagents
+--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
   activity tokens{in,out,cacheRead,cacheWrite} costUsd tools linesAdded linesRemoved attention stuck
+  skills[{name,source,n}] (source = command: a slash command / $mention, model: the agent chose it)
 --watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears
 
@@ -56,9 +59,9 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean }
 interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
 interface JSess {
-  id: string; harness: string; title: string; cwd: string; branch: string; model: string; path: string; updated: string; bytes: number;
+  id: string; harness: string; title: string; cwd: string; branch: string; remote: string | null; model: string; path: string; updated: string; bytes: number;
   live: boolean; pid: number; status: string; parent: string | null; kind: string; subagents: number; activity: string; tokens: JTok;
-  costUsd: number | null; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null;
+  costUsd: number | null; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null; skills: SkillUse[];
 }
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
 
@@ -101,12 +104,12 @@ function snapshot(o: Opts): void {
   for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) {
     loadHead(s); loadTail(s); complete(s);
     res.push({
-      id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, model: s.model, path: s.path,
+      id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: s.path,
       updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
       parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
       tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
       costUsd: s.cost < 0 ? null : s.cost, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-      attention: s.attention, stuck: s.stuck ? s.stuck : null,
+      attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null),
     });
   }
   out(process.stdout.isTTY ? JSON.stringify(res, null, 2) : JSON.stringify(res));

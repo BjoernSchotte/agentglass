@@ -8,11 +8,11 @@ import { HOME, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, nlines, num, isoMs } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, isoMs } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import { userRate } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
-import { toolArg, blockText, isNoise } from "./common.ts";
+import { toolArg, blockText, isNoise, prompts } from "./common.ts";
 
 // ~/.kiro/sessions/cli/<uuid>.jsonl (transcript), <uuid>.json (metadata + per-turn usage), <uuid>.lock ({pid} while open)
 const DIR = join(HOME, ".kiro", "sessions", "cli");
@@ -105,7 +105,11 @@ function turnMs(a: Acc): number {
 }
 function usage(a: Acc, l: string): void {
   while (a.x.length < 3) a.x.push(0);
-  if (l.indexOf("\"kind\":\"Prompt\"") >= 0) { a.x[0] = numAt(a.x, 0, 0) + 1; return; }
+  if (l.indexOf("\"kind\":\"Prompt\"") >= 0) {
+    a.x[0] = numAt(a.x, 0, 0) + 1;
+    const o = a.sub ? null : parseJson(l); const n = o ? prompts(parse, o) : 0; if (o && n) turn(a, turnMs(a), "", n);
+    return;
+  }
   const isAsst = l.indexOf("\"kind\":\"AssistantMessage\"") >= 0;
   const isRes = l.indexOf("\"kind\":\"ToolResults\"") >= 0;
   if (!isAsst && !isRes) return;

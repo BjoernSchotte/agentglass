@@ -223,11 +223,11 @@ function scrubStyled(s: string): string {
 }
 
 // ── identity layer: per session, fakes that win over whatever parsing (re)writes ────────────────────────
-interface Rec { cwd: string; real: string; title: string; branch: string; name: string }
+interface Rec { cwd: string; real: string; title: string; branch: string; name: string; remote: string }
 const recs = new Map<string, Rec>();
 function recOf(s: Sess): Rec {
   let r = recs.get(s.path);
-  if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "" }; recs.set(s.path, r); }
+  if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "", remote: "" }; recs.set(s.path, r); }
   return r;
 }
 // ~/code/<fake project>/<generic or faked deeper segments>; outside ~/code only the basename survives (faked)
@@ -252,6 +252,7 @@ function meta(s: Sess): void {
   s.title = r.title;
   if (s.prompt) s.prompt = r.title;
   if (s.branch && s.branch !== r.branch) { r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
+  if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
   if (s.name && s.name !== r.name) { r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
 }
 

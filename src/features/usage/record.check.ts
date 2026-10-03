@@ -1,6 +1,7 @@
 // agentglass — self-check for the usage record primitives: scriptc build src/features/usage/record.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
-import { newAcc, bucket, tool, pend, retool } from "./record.ts";
+import { newAcc, bucket, tool, pend, retool, skill, skillUses, turn } from "./record.ts";
+import { accOut, accIn } from "./cache.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -32,5 +33,22 @@ ok("totals after two moves", a.tools === 3 && d.tools === 3, [a.tools, d.tools].
 if (p3) retool(a, p3, "mcp__s__t");
 const nw2 = d.tt.get("mcp__s__t");
 ok("same name no-op", !!nw2 && nw2.n === 2, nw2 ? String(nw2.n) : "none");
+// skills per day: "<source>\t<name>", summed and sorted by uses
+{
+  const k = newAcc(); const kd = bucket(k, 0, "2026-10-01T10:00:00.000Z"); const ke = bucket(k, 0, "2026-10-02T10:00:00.000Z");
+  skill(kd, "command", "a:b"); skill(ke, "command", "a:b"); skill(kd, "model", "a:b"); skill(kd, "model", "");
+  const u = skillUses(k, null).map((x) => x.name + "/" + x.source + "/" + String(x.n)).join(",");
+  ok("skillUses", u === "a:b/command/2,a:b/model/1", u);
+  const u1 = skillUses(k, ["2026-10-02"]).map((x) => x.name + "/" + x.source + "/" + String(x.n)).join(",");
+  ok("skillUses by day", u1 === "a:b/command/1", u1);
+  k.pk = "p1\tx:y"; turn(k, 0, "2026-10-01T11:00:00.000Z", 4);
+  const sb = newAcc(); sb.sub = true; turn(sb, 0, "2026-10-01T11:00:00.000Z", 2); ok("subagent: no turn, no day", sb.days.size === 0, String(sb.days.size));
+  const r = accIn(JSON.parse(JSON.stringify(accOut(k))));
+  const ru = skillUses(r, null).map((x) => x.name + "/" + x.source + "/" + String(x.n)).join(",");
+  const rd = r.days.get("2026-10-01");
+  ok("cache round trip: skills, pk, turns", ru === u && r.pk === "p1\tx:y" && !!rd && rd.turns === 4, ru + " " + r.pk + " " + (rd ? String(rd.turns) : "-"));
+  const old = accIn({ off: 1, days: { "2026-10-01": { t: 1 } } }); const od = old.days.get("2026-10-01");
+  ok("cache: old day without k/tu", !!od && od.skills.size === 0 && od.turns === 0 && old.pk === "", od ? String(od.turns) : "-");
+}
 console.log(bad ? bad + " failed" : "usage record: all checks passed");
 if (bad) process.exit(1);

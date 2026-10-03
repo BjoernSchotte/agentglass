@@ -6,10 +6,10 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readText, readLines, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, turn, isoMs, nlines, num } from "../features/usage/record.ts";
 import { done, fmtMs } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
-import { toolArg, blockText } from "./common.ts";
+import { toolArg, blockText, prompts } from "./common.ts";
 
 // sessions live in <session dir>/--<cwd>--/<ts>_<id>.jsonl; a custom session dir may hold the files directly
 function tilde(p: string): string { return p === "~" ? HOME : p.startsWith("~/") ? join(HOME, p.slice(2)) : p; }
@@ -200,10 +200,12 @@ function usage(a: Acc, l: string): void {
     return;
   }
   const hasU = l.indexOf("\"usage\":{") >= 0; const call = l.indexOf("\"toolCall\"") >= 0; const res = l.indexOf("\"toolCallId\"") >= 0;
-  if (!hasU && !call && !res) return;
+  const usr = !a.sub && l.indexOf("\"role\":\"user\"") >= 0;
+  if (!hasU && !call && !res && !usr) return;
   const o = parseJson(l); if (!o) return;
   const iso = str(o["timestamp"]);
   if (a.x.length > 1 && a.x[1] === 1 && isoMs(iso) < a.x[0]) return;
+  if (usr) { const n = prompts(parse, o); if (n) turn(a, 0, iso, n); }
   const type = str(o["type"]);
   if (type === "usage" || type === "compaction" || type === "branch_summary") { book(a, obj(o["usage"]), str(o["model"]), iso); return; }
   if (type !== "message") return;
