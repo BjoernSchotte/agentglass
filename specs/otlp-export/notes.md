@@ -49,3 +49,21 @@ In `build.ts`, `const c = newSpan(…); tr.spans.push(c); return c;` handed back
 (`tr.spans[last] === c` was false, later writes to `c` were lost); a reduced repro in a standalone file did not show it.
 Ruling: every span is pushed through `add()`/`addAt()`, which return the array's element, and all later writes go
 through that — the call graph keeps indexes for the same reason.
+
+## Live verification (2026-10-03)
+- Jaeger all-in-one: `export --since 2d` sent 45,381 spans in 716 turns from 302 sessions (85 requests, gzip);
+  Jaeger's v3 API showed the same span count per service (claude-code, codex, gemini-cli, pi, opencode), one root per
+  trace, no orphans, errored tools with status ERROR. A re-run sent only 2 turns new since; `--resend` of 365 Gemini
+  spans left Jaeger at 365 (dedupe confirmed on real data).
+- OpenTelemetry Collector (contrib 0.161.0, file + debug exporters): 23,932 spans in the summary = 23,932 in the file
+  exporter; gzip bodies accepted; no content keys without `--content`.
+- `--watch --otlp` while pi, OpenCode and Gemini CLI (in tmux) built a todo app: each turn arrived once, after the next
+  prompt or 2 quiet minutes; a Gemini shell call held 40 s at its approval dialog got `agentglass.tool.approval_wait`
+  (Gemini logs the call only after it ran: the cleared wait attaches to the call that covers it). Ctrl+C exits 0 and
+  releases the lock; a second exporter to the same endpoint exits 3; a lock left by a killed process is taken over.
+- Native detection: a project `.gemini/settings.json` with `telemetry.enabled` showed `gemini on (config …)` in
+  `--status`, `warn` printed once, `--native skip` recorded `nativeSince` and still sent the turns before it.
+- `--redact --content --dry-run`: none of 14 sampled real project names in 29 MB of output (the plain dry run had them
+  11–100 times each).
+
+Ruling: the id scheme `v1` goes into the changelog through the commit messages (CHANGELOG.md is generated at release).
