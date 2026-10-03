@@ -7,6 +7,7 @@ import { HOME, readText, readLines, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
 import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, turn, isoMs, nlines, num } from "../features/usage/record.ts";
+import { MQ_MSG, DICT, nameOf } from "../features/usage/facts.ts";
 import { done, fmtMs } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, prompts } from "./common.ts";
@@ -215,6 +216,7 @@ function usage(a: Acc, l: string): void {
     book(a, obj(m["usage"]), "", iso, "");
     const id = str(m["toolCallId"]); const p = a.pend.get(id);
     const det = obj(m["details"]);
+    const pm = p && p.row ? nameOf(DICT.model, p.row.model) : ""; // nested calls were issued by the parent call's message
     if (p) {
       a.pend.delete(id);
       const t = isoMs(iso);
@@ -231,7 +233,7 @@ function usage(a: Acc, l: string): void {
     if (ns.length === 0) return;
     const d = bucket(a, 0, iso);
     for (const c of ns) {
-      callStats(a, d, c.name, c.id, c.inp, iso, 0);
+      callStats(a, d, c.name, c.id, c.inp, iso, 0, pm);
       const p2 = a.pend.get(c.id); if (!p2) continue;
       a.pend.delete(c.id);
       done(p2, c.ms, c.status === "error", 0, c.id, []);
@@ -239,11 +241,12 @@ function usage(a: Acc, l: string): void {
     return;
   }
   if (role !== "assistant") return;
-  book(a, obj(m["usage"]), str(m["responseModel"]) || str(m["model"]), iso, str(m["provider"]));
+  const md = str(m["responseModel"]) || str(m["model"]);
+  book(a, obj(m["usage"]), md, iso, str(m["provider"]));
   const d = bucket(a, 0, iso);
   for (const b of arr(m["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "toolCall") continue;
-    callStats(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["arguments"]), iso, isoMs(iso));
+    callStats(a, d, str(bo["name"]) || "tool", str(bo["id"]), obj(bo["arguments"]), iso, isoMs(iso), md);
   }
 }
 // the name pi ≥ 0.99.2 gives the tool (its direct and nested calls already carry it): one row whatever named the call
@@ -273,9 +276,10 @@ function nested(m: Obj, det: Obj | null, parent: string): Nested[] {
   }
   return out;
 }
-// one tool call: tool row + pending result, shell programs, edit/write lines and files (inp null = arguments unknown)
-function callStats(a: Acc, d: Day, name: string, id: string, inp: Obj | null, iso: string, t: number): void {
-  const st = tool(a, d, name);
+// one tool call: tool row + pending result, shell programs, edit/write lines and files (inp null = arguments unknown);
+// model = the issuing assistant message's
+function callStats(a: Acc, d: Day, name: string, id: string, inp: Obj | null, iso: string, t: number, model: string): void {
+  const st = tool(a, d, name, model, MQ_MSG);
   pend(a, d, st, name, id, t, iso, toolArg(name, inp, ""), name === "bash" && inp ? [str(inp["command"])] : []);
   if (!inp) return;
   let add = 0; let del = 0;
@@ -285,7 +289,7 @@ function callStats(a: Acc, d: Day, name: string, id: string, inp: Obj | null, is
     if (es.length === 0) { add = nlines(str(inp["newText"])); del = nlines(str(inp["oldText"])); } // legacy: top-level oldText/newText
   } else if (name === "write") add = nlines(str(inp["content"]));
   else return;
-  lines(a, d, add, del); file(d, name, str(inp["path"]), add, del);
+  lines(a, d, add, del); file(a, d, name, str(inp["path"]), add, del);
 }
 
 export const pi: HarnessAdapter = {

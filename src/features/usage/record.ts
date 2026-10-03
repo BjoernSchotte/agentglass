@@ -4,6 +4,8 @@
 // its result lines close a pending call with done() from calls.ts. Everything else (budgets, caching, stats) is the ledger's.
 import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
+import { type Call, DICT, intern, nameOf, dayKey } from "./facts.ts";
+export { dayKey };
 
 // one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro); turns = human prompts
 // tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"; skills "<command | model>\t<skill name>"
@@ -24,12 +26,12 @@ export interface Acc {
   inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; tools: number; add: number; del: number;
   uc: number; // credits without a rate (kiro)
   bill: string; plan: string; billSrc: string; // billing mode stamped from evidence ("" = not stamped; billSrc "session" | "process")
+  calls: Call[]; lastCall: number; // one row per tool call in call order (persisted apart, callcache.ts); index of the newest, -1 none
+  t0: number; // first activity (epoch ms), 0 unknown
 }
 export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rlPct: -1, rlWin: 0, rlReset: 0, rlAt: 0 }; // rl* = latest Codex primary rate limit
 
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
-function two(n: number): string { return (n < 10 ? "0" : "") + n; }
-export function dayKey(d: Date): string { return d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()); }
 export function todayKey(): string { return dayKey(new Date()); }
 // local midnight today (ms); scriptc has no new Date(y, m, d)
 export function startOfDay(): number { const t = new Date(); return t.getTime() - ((t.getHours() * 60 + t.getMinutes()) * 60 + t.getSeconds()) * 1000 - t.getMilliseconds(); }
@@ -43,7 +45,7 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "" };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0 };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -57,32 +59,46 @@ export function newDay(): Day {
     um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>() };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
-let tsKey = ""; let tsDay = ""; let tsHour = 0;
+// tsIso/tsMs: the time of the last bucket() call, for the call rows tool() appends (0 = none: Date.now() fallback)
+let tsKey = ""; let tsDay = ""; let tsHour = 0; let tsIso = ""; let tsMs = 0;
 export function bucket(a: Acc, ms: number, iso: string): Day {
   if (iso) {
     const k = iso.slice(0, 13);
     if (k !== tsKey) { const d = new Date(iso); tsKey = k; tsDay = dayKey(d); tsHour = d.getHours(); }
-  } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); }
+    if (iso !== tsIso) { tsIso = iso; tsMs = isoMs(iso); }
+  } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); tsIso = ""; tsMs = ms > 0 ? ms : 0; }
+  if (tsMs > 0 && (a.t0 === 0 || tsMs < a.t0)) a.t0 = tsMs; // earliest, not first: side files (fx, kiro) are read before the log
   let d = a.days.get(tsDay);
   if (!d) { d = newDay(); a.days.set(tsDay, d); }
   return d;
 }
-export function tool(a: Acc, d: Day, name: string): TS {
+// one call: counters + a fact row carrying the model of the message that issued it ("" unknown; mq: MQ_MSG | MQ_TURN | MQ_SESS)
+export function tool(a: Acc, d: Day, name: string, model: string, mq: number): TS {
   a.tools++; d.tools++;
   let st = d.tt.get(name);
   if (!st) { st = newTS(); d.tt.set(name, st); }
   st.n = st.n + 1;
   st.h[tsHour] = (st.h[tsHour] ?? 0) + 1;
   d.hours[tsHour] = (d.hours[tsHour] ?? 0) + 1;
+  a.calls.push({ t: tsMs > 0 ? tsMs : Date.now(), tool: intern(DICT.tool, name), model: intern(DICT.model, model), mq, progs: [], cmds: [], files: [], ms: -1, err: -1, out: 0, cid: "" });
+  a.lastCall = a.calls.length - 1;
   return st;
 }
+function newest(a: Acc): Call | null { return a.lastCall >= 0 && a.lastCall < a.calls.length ? a.calls[a.lastCall] : null; }
+function addId(xs: number[], i: number): void { if (i >= 0 && xs.indexOf(i) < 0) xs.push(i); }
 // remember a call until its result shows up; shell commands are counted now, their errors on the result
 export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number, ts: string, arg: string, cmds: string[]): void {
-  const sh: Cnt[] = [];
-  for (const c of cmds) { const n = norm(c); if (n) { sh.push(cnt(d.prog, name + "\t" + program(n))); sh.push(cnt(d.cmds, name + "\t" + n)); } }
+  const sh: Cnt[] = []; const row = newest(a);
+  for (const c of cmds) {
+    const n = norm(c); if (!n) continue;
+    const pg = program(n);
+    sh.push(cnt(d.prog, name + "\t" + pg)); sh.push(cnt(d.cmds, name + "\t" + n));
+    if (row) { addId(row.progs, intern(DICT.prog, pg)); addId(row.cmds, intern(DICT.cmd, n)); }
+  }
+  if (row) row.cid = id;
   if (!id) return;
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
-  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh });
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row });
 }
 // the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
 export function retool(a: Acc, p: Pend, name: string): void {
@@ -97,11 +113,15 @@ export function retool(a: Acc, p: Pend, name: string): void {
   if (!st) { st = newTS(); d.tt.set(name, st); }
   st.n = st.n + 1; st.h[h] = (st.h[h] ?? 0) + 1;
   p.st = st;
+  if (p.row) p.row.tool = intern(DICT.tool, name);
 }
-export function file(d: Day, name: string, path: string, add: number, del: number): void {
+// a changed file: the day's counter, and the newest call row when it is this tool's (adapters book files right after tool())
+export function file(a: Acc, d: Day, name: string, path: string, add: number, del: number): void {
   if (!path) return;
   const c = cnt(d.files, name + "\t" + path);
   c.add = c.add + add; c.del = c.del + del;
+  const r = newest(a);
+  if (r && nameOf(DICT.tool, r.tool) === name) addId(r.files, intern(DICT.file, path));
 }
 // human prompts (what the transcript shows as user events), on the local day of the prompt; root sessions only
 export function turn(a: Acc, ms: number, iso: string, n: number): void { if (n > 0 && !a.sub) { const d = bucket(a, ms, iso); d.turns = d.turns + n; } }
@@ -189,5 +209,5 @@ export function modelUses(a: Acc, days: string[] | null): ModelUse[] {
 
 // every file an apply_patch-style patch touches: lines and per-file counts
 export function patchLines(a: Acc, d: Day, name: string, patch: string): void {
-  for (const f of patchFiles(patch)) { lines(a, d, f.add, f.del); file(d, name, f.p, f.add, f.del); }
+  for (const f of patchFiles(patch)) { lines(a, d, f.add, f.del); file(a, d, name, f.p, f.add, f.del); }
 }

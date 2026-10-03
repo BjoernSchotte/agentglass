@@ -7,6 +7,7 @@ import { HOME, readBytes, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, turn, skill, nlines, num, isoMs } from "../features/usage/record.ts";
+import { MQ_MSG } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import { price } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
@@ -313,7 +314,7 @@ function usage(a: Acc, l: string): void {
   for (const v of arr(o["toolCalls"])) {
     const c = obj(v); if (!c) continue;
     const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
-    const st = tool(a, d, name);
+    const st = tool(a, d, name, md, MQ_MSG);
     if (name === "activate_skill" && args) skill(d, "model", str(args["name"]));
     pend(a, d, st, name, id, t0, iso, callArg(name, args), name === "run_shell_command" && args ? [str(args["command"])] : []);
     const ok = str(c["status"]) === "success";
@@ -326,7 +327,7 @@ function usage(a: Acc, l: string): void {
     else if (name === "replace") { add = nlines(str(args["new_string"])); del = nlines(str(args["old_string"])); }
     else if (name === "write_file") add = nlines(str(args["content"]));
     else continue;
-    lines(a, d, add, del); file(d, name, (rd ? str(rd["filePath"]) : "") || str(args["file_path"]), add, del);
+    lines(a, d, add, del); file(a, d, name, (rd ? str(rd["filePath"]) : "") || str(args["file_path"]), add, del);
   }
 }
 

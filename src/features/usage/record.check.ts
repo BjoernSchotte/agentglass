@@ -1,19 +1,22 @@
 // agentglass — self-check for the usage record primitives: scriptc build src/features/usage/record.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
-import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn } from "./record.ts";
+import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines } from "./record.ts";
 import { accOut, accIn } from "./cache.ts";
+import { type Dict, DICT, nameOf, MQ_MSG, MQ_SESS, localOf, extOf } from "./facts.ts";
+import { done } from "./calls.ts";
 import { newSess } from "../../model/types.ts";
 import { fx } from "../../harness/fx.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
+function names(dc: Dict, xs: number[]): string { const o: string[] = []; for (const x of xs) o.push(nameOf(dc, x)); return o.join(","); }
 
 // retool moves the one count of a pending call to another tool row: tool total, hour histogram, row removed at 0
 const a = newAcc();
 const iso = "2026-10-01T10:00:00.000Z";
 const d = bucket(a, 0, iso); const hr = new Date(iso).getHours();
-pend(a, d, tool(a, d, "mcp"), "mcp", "c1", 0, iso, "", []);
+pend(a, d, tool(a, d, "mcp", "", MQ_SESS), "mcp", "c1", 0, iso, "", []);
 const p1 = a.pend.get("c1");
 ok("pending", !!p1, "");
 if (p1) retool(a, p1, "mcp__s__t");
@@ -24,8 +27,8 @@ ok("new row hour", !!row && (row.h[hr] ?? 0) === 1, row ? row.h.join(",") : "non
 ok("totals unchanged", a.tools === 1 && d.tools === 1 && (d.hours[hr] ?? 0) === 1, [a.tools, d.tools, d.hours[hr] ?? 0].join(","));
 ok("pend points at new row", !!p1 && !!row && p1.st === row, "");
 // a second call of the old tool stays where it is when another one moves
-pend(a, d, tool(a, d, "mcp"), "mcp", "c2", 0, iso, "", []);
-pend(a, d, tool(a, d, "mcp"), "mcp", "c3", 0, iso, "", []);
+pend(a, d, tool(a, d, "mcp", "", MQ_SESS), "mcp", "c2", 0, iso, "", []);
+pend(a, d, tool(a, d, "mcp", "", MQ_SESS), "mcp", "c3", 0, iso, "", []);
 const p3 = a.pend.get("c3");
 if (p3) retool(a, p3, "mcp__s__t");
 const old = d.tt.get("mcp"); const nw = d.tt.get("mcp__s__t");
@@ -88,6 +91,39 @@ rmSync("/tmp/agentglass-record-check", { recursive: true, force: true });
   ok("cache round trip: skills, pk, turns", ru === u && r.pk === "p1\tx:y" && !!rd && rd.turns === 4, ru + " " + r.pk + " " + (rd ? String(rd.turns) : "-"));
   const old = accIn({ off: 1, days: { "2026-10-01": { t: 1 } } }); const od = old.days.get("2026-10-01");
   ok("cache: old day without k/tu", !!od && od.skills.size === 0 && od.turns === 0 && old.pk === "", od ? String(od.turns) : "-");
+}
+// per-call fact rows: tool, model, programs, call id, result, files, retool, time fallback, t0
+{
+  const b = newAcc(); const iso2 = "2026-10-01T10:00:05.000Z"; const d2 = bucket(b, 0, iso2);
+  pend(b, d2, tool(b, d2, "Bash", "claude-opus-4-5", MQ_MSG), "Bash", "t1", Date.parse(iso2), iso2, "npm test", ["npm test", "git status", "npm run x"]);
+  const r0 = b.calls[0];
+  ok("row appended", b.calls.length === 1 && b.lastCall === 0, String(b.calls.length));
+  ok("row tool/model/mq", !!r0 && nameOf(DICT.tool, r0.tool) === "Bash" && nameOf(DICT.model, r0.model) === "claude-opus-4-5" && r0.mq === MQ_MSG, "");
+  ok("row progs", !!r0 && names(DICT.prog, r0.progs) === "npm,git", r0 ? r0.progs.join(",") : "");
+  ok("row t from iso", !!r0 && r0.t === Date.parse(iso2), r0 ? String(r0.t) : "");
+  ok("row open", !!r0 && r0.err === -1 && r0.ms === -1 && r0.cid === "t1", "");
+  const pp = b.pend.get("t1"); if (pp) done(pp, 1200, true, 42, "t1", []);
+  ok("row closed", !!r0 && r0.err === 1 && r0.ms === 1200 && r0.out === 42, r0 ? [r0.err, r0.ms, r0.out].join(",") : "");
+  tool(b, d2, "Edit", "", MQ_SESS); file(b, d2, "Edit", "/w/src/a.TS", 3, 1);
+  const r1 = b.calls[1];
+  ok("unknown model", !!r1 && r1.model === -1, "");
+  ok("file attached", !!r1 && names(DICT.file, r1.files) === "/w/src/a.TS", "");
+  ok("ext", extOf("/w/src/a.TS") === "ts" && extOf("/w/.bashrc") === "" && extOf("/w/Makefile") === "", "");
+  file(b, d2, "Write", "/w/other.md", 1, 0); // tool name differs from the newest row: day counter only
+  ok("file not attached to other tool", !!r1 && r1.files.length === 1, "");
+  tool(b, d2, "apply_patch", "gpt-5", MQ_SESS); patchLines(b, d2, "apply_patch", "*** Update File: x.go\n+a\n*** Add File: y.go\n+b\n");
+  ok("patch files attached", b.calls[2].files.length === 2, String(b.calls[2].files.length));
+  pend(b, d2, tool(b, d2, "mcp", "m1", MQ_MSG), "mcp", "c9", 0, iso2, "", []);
+  const p9 = b.pend.get("c9"); if (p9) retool(b, p9, "mcp__s__t");
+  ok("retool renames row", nameOf(DICT.tool, b.calls[3].tool) === "mcp__s__t", "");
+  // kiro-style: no call time → the bucket's time
+  const k = newAcc(); const kd = bucket(k, 1759312800000, ""); pend(k, kd, tool(k, kd, "shell", "", MQ_SESS), "shell", "u1", 0, "", "", []);
+  ok("row t falls back to bucket ms", k.calls[0].t === 1759312800000, String(k.calls[0].t));
+  ok("t0 first activity", k.t0 === 1759312800000 && b.t0 === Date.parse(iso2), [k.t0, b.t0].join(","));
+  bucket(k, 1759312700000, ""); ok("t0 earliest, not first", k.t0 === 1759312700000, String(k.t0));
+  const kn = newAcc(); bucket(kn, 0, ""); ok("now fallback is no activity", kn.t0 === 0, String(kn.t0));
+  ok("localOf memo", localOf(Date.parse(iso2)).hour === new Date(iso2).getHours(), "");
+  const rt = accIn(JSON.parse(JSON.stringify(accOut(k)))); ok("t0 persisted", rt.t0 === k.t0 && rt.calls.length === 0 && rt.lastCall === -1, String(rt.t0));
 }
 console.log(bad ? bad + " failed" : "usage record: all checks passed");
 if (bad) process.exit(1);
