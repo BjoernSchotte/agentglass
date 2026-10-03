@@ -38,7 +38,7 @@ function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, s
   let subs = false; for (const c of s.subs) if (Date.now() - c.mtime < 45000) subs = true;
   const at = harnessOf(s.h).approvalTitle; const tty = at ? ttyOf(s.pid) : "";
   const asks = !!at && tty !== "" && at(titles().get(tty) ?? "");
-  return { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks };
+  return { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!harnessOf(s.h).noApproval };
 }
 // one look at every live session per alarm tick: the process tree and (lazily) the tmux pane titles
 export interface Looker { kids: Map<number, Proc[]>; titles: () => Map<string, string> }
@@ -103,6 +103,8 @@ function tick(): void {
   if (changed || helpVer !== R.ver) helpRules(rs);
 }
 H.onWatch.push(tick);
+// one session's approval estimate outside the TUI (the OTLP live sink): "" = no approval wait seen; CPU history comes from refreshProcs
+export function approvalOf(s: Sess): string { if (!watched(s)) return ""; loadTail(s); return approvalNote(observe(s, kidsMap(), paneTitles)); }
 
 // --json: one-shot evaluation on the current state (no tick history, no bell/desktop/command, no ack); live TUI state wins
 const SNAP = new Map<string, Alert[]>();

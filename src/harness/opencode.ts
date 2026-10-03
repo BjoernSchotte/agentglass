@@ -11,7 +11,7 @@ import { query, q, sqliteBin } from "../util/sqlite.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { say } from "../state.ts";
-import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, turn, skill, nlines, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, reasoning, turn, skill, nlines, num, patchLines } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live, SessionSource } from "./types.ts";
@@ -159,7 +159,7 @@ function loadHttp(ep: Endpoint, db: string): boolean {
   keep(next, true);
   return true;
 }
-// one message as a record line: the SQLite line shape (type, seq first; copied when a fork took it from its parent)
+// one message as a record line: the SQLite line shape (type, seq first, then the message's own fields incl. id; copied when a fork took it from its parent)
 function httpLine(m: Obj, i: number, fork: number): string {
   const o: Obj = {}; o["type"] = str(m["type"]); o["seq"] = i;
   if (fork > 0 && tm(m, "created") < fork) o["copied"] = 1;
@@ -231,8 +231,8 @@ function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; ne
   // rows a fork copied from its parent are tagged "copied" (usage skips them, the transcript shows them)
   const f = String(r.fork);
   if (!r.v1) { // every row in [from, to) comes back, gaps included: the cursor moves to `to` unless the budget cut it short
-    const head = r.fork > 0 ? "case when time_created < " + f + " then json_object('type',type,'seq',seq,'copied',1) else json_object('type',type,'seq',seq) end" : "json_object('type',type,'seq',seq)";
-    const res = query(r.db, "select json_patch(" + head + ", data) l, seq, c >= " + budget + " cut from (select type, seq, time_created, data, length(data) n," +
+    const head = r.fork > 0 ? "case when time_created < " + f + " then json_object('type',type,'seq',seq,'id',id,'copied',1) else json_object('type',type,'seq',seq,'id',id) end" : "json_object('type',type,'seq',seq,'id',id)";
+    const res = query(r.db, "select json_patch(" + head + ", data) l, seq, c >= " + budget + " cut from (select id, type, seq, time_created, data, length(data) n," +
       " sum(length(data)) over (order by seq) c from session_message where session_id=" + q(r.id) +
       " and seq >= " + String(from) + " and seq < " + String(to) + ") where c - n < " + budget + " order by seq");
     if (!res) return { lines: [], next: from };
@@ -240,8 +240,8 @@ function sessionLines(s: Sess, from: number, to0: number): { lines: string[]; ne
     const last = res.length ? res[res.length - 1] : null;
     return { lines: out, next: last && num(last["cut"]) === 1 ? num(last["seq"]) + 1 : to };
   }
-  const res = query(r.db, "select json_object('v1',1,'role',json_extract(md,'$.role'),'model',json_extract(md,'$.modelID'),'prov',json_extract(md,'$.providerID'),'t',mt,'copied',mt < " + f + ",'part',json(pd)) l" +
-    " from (select md, mt, pd, k, n, sum(n) over (order by k) c from (select m.data md, m.time_created mt, pt.data pd, length(pt.data) n," +
+  const res = query(r.db, "select json_object('v1',1,'role',json_extract(md,'$.role'),'model',json_extract(md,'$.modelID'),'prov',json_extract(md,'$.providerID'),'t',mt,'mid',mid,'copied',mt < " + f + ",'part',json(pd)) l" +
+    " from (select md, mt, mid, pd, k, n, sum(n) over (order by k) c from (select m.data md, m.time_created mt, m.id mid, pt.data pd, length(pt.data) n," +
     " row_number() over (order by m.time_created, m.id, pt.id) k from part pt join message m on m.id=pt.message_id where pt.session_id=" + q(r.id) + ")" +
     " where k > " + String(from) + " and k <= " + String(to) + ") where c - n < " + budget + " order by k");
   if (!res) return { lines: [], next: from };
@@ -332,6 +332,7 @@ function book(a: Acc, d: Day, model: string, tk: Obj | null, usd: number, prov: 
   const c = obj(tk["cache"]);
   if (model) a.model = model;
   usageExact(a, d, model || a.model, num(tk["input"]), num(tk["output"]) + num(tk["reasoning"]), c ? num(c["read"]) : 0, c ? num(c["write"]) : 0, 0, usd, prov);
+  reasoning(a, d, num(tk["reasoning"]));
 }
 // model: the issuing message's model (1.x part row modelID, 2.x the assistant row's model.id)
 function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: number, t1: number, model: string): void {

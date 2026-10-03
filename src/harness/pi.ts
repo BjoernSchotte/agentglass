@@ -298,6 +298,7 @@ export const pi: HarnessAdapter = {
   roots: () => [sessionRoot()], scan, meta, headBytes: 262144, // the first entry is a large system message
   parse, busy,
   liveCwd: true, // no lock, no registry, the file is not kept open
+  noApproval: true, // no permission prompts: every tool call runs at once
   headless: (s: Sess, msg: string) => ["-p", "--session", s.path, "--", msg], // the file path: a bare id outside the cwd's dir prompts to fork
   resume: (s: Sess) => ["--session", s.path],
   files: (s: Sess) => [s.path],

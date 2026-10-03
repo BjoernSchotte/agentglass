@@ -1,12 +1,14 @@
 // agentglass — self-check for the usage record primitives: scriptc build src/features/usage/record.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
-import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines } from "./record.ts";
+import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines, type Booking, setBookTap, reasoning } from "./record.ts";
 import { accOut, accIn } from "./cache.ts";
 import { type Dict, DICT, ROWS, nameOf, MQ_MSG, MQ_SESS, localOf, extOf } from "./facts.ts";
-import { done } from "./calls.ts";
+import { done, setCallTap } from "./calls.ts";
 import { newSess } from "../../model/types.ts";
-import { fx } from "../../harness/fx.ts";
+import { fx, fxTotals } from "../../harness/fx.ts";
+import { codex } from "../../harness/codex.ts";
+import { opencode } from "../../harness/opencode.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -131,5 +133,57 @@ const ro = newAcc(); const rd = bucket(ro, 0, "2026-10-01T10:00:00.000Z");
 pend(ro, rd, tool(ro, rd, "Bash", "m", MQ_MSG), "Bash", "r1", 0, "", "", ["ls"]); file(ro, rd, "Bash", "/w/x", 1, 0);
 ok("rows off: counted, no row", ro.tools === 1 && ro.calls.length === 0 && ro.lastCall === -1 && (rd.tt.get("Bash")?.n ?? 0) === 1, String(ro.calls.length));
 ROWS.on = true;
+
+// otlp export taps: one Booking per tokens()/usageExact() call with the cost it added; reasoning is a subset of out
+{
+  const bs: Booking[] = [];
+  setBookTap((b: Booking) => { bs.push(b); });
+  const ta = newAcc(); const td = bucket(ta, 0, iso);
+  tokens(ta, td, "claude-sonnet-4-5", 10, 5, 3, 2, 0);
+  const c1 = ta.cost;
+  usageExact(ta, td, "x-model", 1, 1, 0, 0, 0, 0.5, "openrouter");
+  usageExact(ta, td, "claude-sonnet-4-5", 1, 1, 0, 0, 0, 0, "anthropic"); // no own cost: priced like tokens(), one booking
+  tokens(ta, td, "no-such-model-zz", 10, 10, 0, 0, 0);
+  const out0 = ta.outTok; reasoning(ta, td, 7);
+  ok("reasoning", ta.rs === 7 && ta.outTok === out0, ta.rs + " " + ta.outTok);
+  setBookTap(null);
+  tokens(ta, td, "claude-sonnet-4-5", 1, 1, 0, 0, 0);
+  const b0 = bs[0]; const b1 = bs[1]; const b2 = bs[2]; const b3 = bs[3];
+  ok("bookings", bs.length === 4, String(bs.length));
+  if (b0 && b1 && b2 && b3) {
+    ok("tokens booking", b0.model === "claude-sonnet-4-5" && b0.nIn === 10 && b0.nOut === 5 && b0.cr === 3 && b0.cw === 2 && !b0.exact && b0.prov === "" && c1 > 0 && Math.abs(b0.cost - c1) < 1e-12 && b0.unk === 0, JSON.stringify(b0));
+    ok("exact booking", b1.exact && b1.cost === 0.5 && b1.prov === "openrouter" && b1.nIn === 1, JSON.stringify(b1));
+    ok("exact without cost = priced", !b2.exact && b2.cost > 0 && b2.prov === "anthropic", JSON.stringify(b2));
+    ok("unpriced booking", b3.cost === 0 && b3.unk === 20, JSON.stringify(b3));
+  }
+  // call tap: id, duration, error, exit codes and the row's tool name (retool's new name)
+  const seen: string[] = [];
+  setCallTap((id: string, ms: number, err: boolean, codes: number[], name: string) => { seen.push(id + ":" + String(ms) + ":" + String(err) + ":" + codes.join("/") + ":" + name); });
+  pend(ta, td, tool(ta, td, "Bash", "", MQ_SESS), "Bash", "k1", 1000, iso, "", ["ls"]);
+  const pk = ta.pend.get("k1"); if (pk) done(pk, 1200, true, 10, "k1", [2]);
+  pend(ta, td, tool(ta, td, "mcp", "", MQ_SESS), "mcp", "k2", 0, iso, "", []);
+  const pm = ta.pend.get("k2"); if (pm) { retool(ta, pm, "mcp__s__t"); done(pm, -1, false, 0, "k2", []); }
+  setCallTap(null);
+  ok("call tap", seen.join(" ") === "k1:1200:true:2:Bash k2:-1:false::mcp__s__t", seen.join(" "));
+}
+// reasoning per harness: codex cumulative reasoning_output_tokens (delta), opencode tokens.reasoning
+{
+  const ca = newAcc();
+  const tc = (r: number, o: number): string => "{\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":0,\"output_tokens\":" + String(o) + ",\"reasoning_output_tokens\":" + String(r) + "}}}}";
+  codex.usage(ca, tc(20, 50)); codex.usage(ca, tc(30, 70));
+  ok("codex reasoning delta", ca.rs === 30 && ca.outTok === 70, ca.rs + "/" + ca.outTok);
+  const oa = newAcc();
+  opencode.usage(oa, "{\"type\":\"assistant\",\"seq\":1,\"time\":{\"created\":1790000000000},\"model\":{\"id\":\"gpt-5.2\",\"providerID\":\"openai\"},\"content\":[],\"cost\":0.01,\"tokens\":{\"input\":5,\"output\":4,\"reasoning\":10,\"cache\":{\"read\":0,\"write\":0}}}");
+  ok("opencode reasoning", oa.rs === 10 && oa.outTok === 14, oa.rs + "/" + oa.outTok);
+}
+// fx session totals from usage-v2.json (the exporter's per-session usage for fx)
+{
+  const fd0 = "/tmp/agentglass-fx-tot-" + String(process.pid); mkdirSync(fd0, { recursive: true });
+  const f = openSync(fd0 + "/usage-v2.json", "w"); writeSync(f, "{\"snapshot\":{\"input_tokens\":30,\"output_tokens\":4,\"cache_read_tokens\":10,\"cache_write_tokens\":2,\"total_cost\":0.25}}"); closeSync(f);
+  const t = fxTotals(newSess("fx", "x", fd0 + "/events.jsonl", false));
+  ok("fx totals", !!t && t.nIn === 30 && t.nOut === 4 && t.cr === 10 && t.cw === 2 && t.usd === 0.25 && t.unk === 0, t ? JSON.stringify(t) : "null");
+  ok("fx totals missing", fxTotals(newSess("fx", "y", fd0 + "/none/events.jsonl", false)) === null, "");
+  rmSync(fd0, { recursive: true, force: true });
+}
 console.log(bad ? bad + " failed" : "usage record: all checks passed");
 if (bad) process.exit(1);
