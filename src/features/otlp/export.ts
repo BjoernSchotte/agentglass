@@ -15,7 +15,8 @@ import { dayKey } from "../usage/record.ts";
 import { parse as parseQuery } from "../query/parse.ts";
 import type { Clause } from "../query/types.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
-import { discover } from "../cli.ts";
+import { discover, opts as watchOpts, watch } from "../cli.ts";
+import { newLive, liveTick, liveStop } from "./live.ts";
 import { type XTurn } from "./types.ts";
 import { newSessB, finish } from "./build.ts";
 import { encodeRequest } from "./encode.ts";
@@ -261,8 +262,71 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
   } finally { unlock(o.url); }
 }
 
-// first in line: the generic CLI handler would take `export --json` for a --json snapshot
+// ── agentglass --watch --otlp <url> ──
+function liveExport(args: string[]): number {
+  const c = loadCfg(); const env = envMap(); const now = Date.now();
+  for (const w of c.warns) err(w);
+  let flag = ""; let since = now; let subagents = true; let native = c.native; let comp = ""; let batch = c.batch; let filter = ""; let harness = "";
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? ""; const v = args[i + 1] ?? "";
+    if (a === "--otlp") { flag = v; i++; }
+    else if (a === "--since") { const t = timeArg(v, now); if (isNaN(t)) { err("--since takes 30m, 24h, 7d, YYYY-MM-DD or all (got " + v + ")"); return 2; } since = t; i++; }
+    else if (a === "--content") c.content = true;
+    else if (a === "--no-subagents") subagents = false;
+    else if (a === "--native") { native = v; i++; if (["warn", "skip", "include"].indexOf(native) < 0) { err("--native takes warn, skip or include"); return 2; } }
+    else if (a === "--compression") { comp = v; i++; if (comp !== "gzip" && comp !== "none") { err("--compression takes gzip or none"); return 2; } }
+    else if (a === "--batch") { batch = Number(v); i++; if (!(Number.isInteger(batch) && batch >= 1 && batch <= 100000)) { err("--batch needs a whole number of spans, 1–100000"); return 2; } }
+    else if (a === "--filter") { filter = filter ? filter + " and " + v : v; i++; }
+    else if (a === "--harness") { harness = v; i++; }
+  }
+  const url = endpointOf(flag, c, env);
+  if (!url) { err("--otlp needs a URL"); return 2; }
+  if (!curlBin()) { err("export needs curl (AGENTGLASS_CURL)"); return 2; }
+  const hx = expandHeaders(c, envMap()); if (hx.err) { err(hx.err); return 2; }
+  const pe = plainOk(url, c, hx.headers.length > 0); if (pe) { err(pe); return 2; }
+  const held = lock(url); if (held !== 0) { err("another export to " + safeUrl(url) + " is running, pid " + String(held)); return 3; }
+  const st = loadState(url); if (st.warn) err(st.warn);
+  let gz = (comp || c.compression) === "gzip" && (st.gzip || comp === "gzip");
+  if (gz) { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } if (!gzipProbe(d)) { gz = false; err("this build cannot write compressed bodies: sending uncompressed"); } }
+  const q = parseQuery(filter); const cf = filter && !q.err ? compile(q.cs, "watch").f : null; // session clauses select what is exported
+  const L = newLive(since); L.content = c.content; L.subagents = subagents;
+  L.want = (s: Sess): boolean => (!harness || s.h === harness) && (!cf || sessMatches(cf, s));
+  let skipFrom = new Map<string, number>(); let nativeAt = 0;
+  L.skip = (t: XTurn): boolean => { const sk = skipFrom.get(t.h); return marked(st, t.path, t.key) || (sk !== undefined && t.t0 >= sk); };
+  const sendWith = (timeoutS: number) => (turns: XTurn[]): boolean => {
+    let all = true;
+    for (const x of batches(turns, batch, MAX_BYTES, c)) {
+      const r = sendBatch({ url, headers: hx.headers, timeoutS, gzip: gz && !GZ.off, live: true }, x.json, realSleep);
+      if (r.gzipRefused) { gz = false; st.gzip = false; st.gzipNote = "refused gzip on " + new Date().toISOString().slice(0, 10); err(safeUrl(url) + " refused gzip: sending uncompressed JSON"); }
+      if (!r.ok) { all = false; if (L.fails === 0) err("otlp: " + r.msg + " — retrying with backoff"); continue; }
+      if (r.msg) err("otlp: " + r.msg);
+      for (const t of x.turns) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); }
+      st.last = Date.now(); saveState(url, st);
+    }
+    return all;
+  };
+  const send = sendWith(c.timeoutS);
+  let statusAt = now;
+  err("otlp: exporting finished turns to " + safeUrl(url) + (since < now ? " (catching up since " + new Date(since).toISOString() + ")" : "") + "; Ctrl+C stops");
+  watch(watchOpts(args), {
+    tick: (t: number): void => {
+      if (t - nativeAt >= 60000) { // the harnesses' own export: re-checked every minute
+        nativeAt = t;
+        const roots: Sess[] = []; for (const s of sessions.values()) if (L.b.has(s.path)) roots.push(s);
+        const d = applyPolicy(nativeNow(roots), native, st, t); skipFrom = d.skipFrom;
+        for (const n of d.notes) err(n);
+      }
+      liveTick(L, t, send);
+      if (t - statusAt >= 60000) { statusAt = t; err("otlp: " + String(L.sent) + " spans sent, " + String(L.qSpans) + " queued, last ok " + (L.lastOk ? new Date(L.lastOk).toISOString() : "never")); }
+    },
+    stop: (): void => { try { liveStop(L, sendWith(Math.min(5, c.timeoutS)), 5000); saveState(url, st); } finally { unlock(url); } },
+  });
+  return -1; // the poll loop keeps the process alive
+}
+
+// first in line: the generic CLI handler would take `export --json` for a --json snapshot (and --watch for plain JSONL)
 H.cli.unshift((args: string[]): boolean => {
+  if (args.indexOf("--watch") >= 0 && args.indexOf("--otlp") >= 0) { S.cli = true; const rc = liveExport(args); if (rc >= 0) process.exit(rc); return true; }
   if (args[0] !== "export") return false;
   S.cli = true;
   const c = loadCfg();

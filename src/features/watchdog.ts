@@ -103,6 +103,8 @@ function tick(): void {
   if (changed || helpVer !== R.ver) helpRules(rs);
 }
 H.onWatch.push(tick);
+// one session's approval estimate outside the TUI (the OTLP live sink): "" = no approval wait seen; CPU history comes from refreshProcs
+export function approvalOf(s: Sess): string { if (!watched(s)) return ""; loadTail(s); return approvalNote(observe(s, kidsMap(), paneTitles)); }
 
 // --json: one-shot evaluation on the current state (no tick history, no bell/desktop/command, no ack); live TUI state wins
 const SNAP = new Map<string, Alert[]>();

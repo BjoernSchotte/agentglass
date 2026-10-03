@@ -351,5 +351,15 @@ export function advance(b: SessB, o: BuildOpts): XTurn[] {
   }
   return out;
 }
+// subagents that appeared since the builder was made (live mode) join it
+export function syncSubs(b: SessB, subs: Sess[]): void {
+  for (const c of subs) { let has = false; for (const sd of b.subs) if (sd.s.path === c.path) has = true; if (!has) b.subs.push(newSide(c, false)); }
+}
+// the open turn's newest call still waiting for its result (approval waits attach to it), null = none
+export function openCall(b: SessB): XSpan | null {
+  const t = b.open; if (!t) return null;
+  for (let i = t.spans.length - 1; i > 0; i--) { const s = t.spans[i]; if (s.op === "execute_tool" && s.open && s.agent === "") return s; }
+  return null;
+}
 // one-shot export: the same pass, with the one-shot quiet time in o
 export function finish(b: SessB, o: BuildOpts): XTurn[] { return advance(b, o); }

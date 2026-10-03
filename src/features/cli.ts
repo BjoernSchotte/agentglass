@@ -51,6 +51,8 @@ const OPTS: string[][] = [
   ["--limit N", "--json: at most N sessions"],
   ["--subagents", "--json: include subagent sessions"],
   ["--from-start", "--watch: replay existing logs from the beginning (combine with a filter)"],
+  ["--otlp <url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint (JSONL lines then only with --jsonl;"],
+  ["", " --since, --content, --no-subagents, --native, --compression, --batch as for export)"],
   ["--filter '<expr>'", "only what matches, e.g. 'repo is x and cost > 2', 'tool is Bash and status is error' (repeatable)"],
   ["--pinned", "also apply the filter pinned in the TUI (P); without it pins are ignored"],
   ["--no-alerts", "--watch: no alert lines (the rules engine does not run)"],
@@ -88,7 +90,9 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 `;
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null }
+export interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null; jsonl: boolean }
+// a consumer of the --watch poll loop (the OTLP live export): tick after every poll, stop before exit
+export interface Sink { tick: (now: number) => void; stop: () => void }
 interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
 interface JBill { mode: string; plan: string; source: string }
 interface JSess {
@@ -113,8 +117,8 @@ function out(line: string): void {
 }
 function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
 
-function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, filters: [], pinned: false, alerts: true, notify: false, cf: null };
+export function opts(args: string[]): Opts {
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, filters: [], pinned: false, alerts: true, notify: false, cf: null, jsonl: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -126,6 +130,7 @@ function opts(args: string[]): Opts {
     else if (a === "--pinned") o.pinned = true;
     else if (a === "--no-alerts") o.alerts = false;
     else if (a === "--notify") o.notify = true;
+    else if (a === "--jsonl") o.jsonl = true;
   }
   o.cf = cliFilter(o.filters, o.harness, o.live, o.pinned, args.indexOf("--watch") >= 0);
   return o;
@@ -181,8 +186,10 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   emit(s, "tool", tool, args, e.ts);
 }
 
-function watch(o: Opts): void {
+// JSONL lines go to stdout unless a sink takes the stream (then only with --jsonl)
+export function watch(o: Opts, sink: Sink | null): void {
   discover();
+  const lines = !sink || o.jsonl;
   const off = new Map<string, number>(); // path → next unread byte
   const eps = new Map<string, string>(); // path → the source's cursor epoch off counts in
   const headed = new Set<string>();
@@ -191,19 +198,19 @@ function watch(o: Opts): void {
     off.set(s.path, o.fromStart ? 0 : s.size);
     if (s.pid) live.set(s.path, s.pid);
   }
-  const quit = (): void => process.exit(0);
+  const quit = (): void => { if (sink) sink.stop(); process.exit(0); };
   process.on("SIGINT", quit); process.on("SIGTERM", quit);
   const liveDiff = (): void => {
     for (const s of sessions.values()) {
       if (!s.pid || live.get(s.path) === s.pid) continue;
       live.set(s.path, s.pid);
-      if (wanted(s, o) && (!o.cf || cliWatchEvent(o.cf, s, "live", "", ""))) emit(s, "live", null, "pid " + s.pid, "");
+      if (lines && wanted(s, o) && (!o.cf || cliWatchEvent(o.cf, s, "live", "", ""))) emit(s, "live", null, "pid " + s.pid, "");
     }
     for (const [p, pid] of [...live.entries()]) {
       const s = sessions.get(p);
       if (s && s.pid === pid) continue;
       live.delete(p);
-      if (s && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "");
+      if (lines && s && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "");
     }
   };
   const poll = (): void => {
@@ -222,7 +229,7 @@ function watch(o: Opts): void {
       off.set(s.path, r.next);
       const evs: Ev[] = [];
       for (const l of r.lines) parseEvents(s.h, l, evs, s);
-      for (const e of evs) emitEv(s, e, o.cf);
+      if (lines) for (const e of evs) emitEv(s, e, o.cf);
     }
   };
   // the alert rules on every live top-level session, after each process refresh; transitions become alert lines
@@ -244,15 +251,16 @@ function watch(o: Opts): void {
       }
     }
   };
-  poll();
-  if (o.alerts) { refreshProcs(); alerts(); }
+  if (lines) poll();
+  if (o.alerts && lines) { refreshProcs(); alerts(); } // alert lines are JSONL too: with a sink only with --jsonl
   let tick = 0;
   setInterval(() => {
     tick++;
     if (tick % 4 === 0) scan();
-    if (tick % 3 === 0) { refreshProcs(); liveDiff(); if (o.alerts) alerts(); }
+    if (tick % 3 === 0) { refreshProcs(); liveDiff(); if (o.alerts && lines) alerts(); }
     if (tick % 10 === 0) { refreshSlow(); liveDiff(); }
-    poll();
+    if (lines) poll();
+    if (sink) sink.tick(Date.now());
   }, 500);
 }
 
@@ -260,6 +268,6 @@ H.cli.push((args: string[]): boolean => {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(usage().trimEnd()); return true; }
   if (args.indexOf("--version") >= 0) { out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
   if (args.indexOf("--json") >= 0) { S.cli = true; snapshot(opts(args)); return true; } // no toast line: warnings go to stderr
-  if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args)); return true; }
+  if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args), null); return true; }
   return false;
 });
