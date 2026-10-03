@@ -1,7 +1,7 @@
 // agentglass — Sessions tab: the session/subagent list and the preview panel
 // SPDX-License-Identifier: Apache-2.0
 import { base } from "../util/json.ts";
-import { width, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM } from "../util/text.ts";
+import { width, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM, localDay } from "../util/text.ts";
 import type { Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { H, BADGE_SLOT, enrich, boxChips, emptyText } from "../hooks.ts";
@@ -91,7 +91,7 @@ export function renderSessions(): void {
     if (s.branch) kv("branch", s.branch, C.green);
     if (s.remote) { const r = scrubRemote(s.remote); if (r) kv("remote", remoteLabel(r), C.green); }
     if (s.model) kv("model", s.model, C.cyan);
-    kv("updated", ago(s.mtime) + " ago · " + new Date(s.mtime).toISOString().slice(0, 10) + " " + localHM(new Date(s.mtime).toISOString()), C.sub);
+    kv("updated", ago(s.mtime) + " ago · " + localDay(new Date(s.mtime).toISOString()) + " " + localHM(new Date(s.mtime).toISOString()), C.sub); // both local: a UTC day next to a local clock was off by one around midnight
     if (s.pid) { const t = tmuxTarget(s.pid); kv("process", "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : "") + (t ? " · tmux " + t : ""), C.green); }
     else kv("process", s.archived ? "archived" : "not running", C.dim);
     if (s.depth === 1 || s.parent) { const par = parentOf(s); kv("subagent", s.kind + (s.name ? " · " + s.name : "") + (par ? "  ↰ " + titleOf(par) : ""), C.cyan); }
