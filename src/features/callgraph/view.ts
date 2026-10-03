@@ -57,6 +57,8 @@ function rebuild(): void {
   if (G.sel < 0) G.sel = G.sum.longest >= 0 ? G.sum.longest : G.g.spans.length ? 0 : -1;
   if (G.fitted) fitAll();
 }
+// the call graph of a session (the c key; repo-view's project detail); esc returns to where it was opened
+export function openGraph(s: Sess): void { open(s); }
 function open(s: Sess): void {
   load(s);
   G.backMode = S.mode; G.backTv = S.tv; G.inDetail = false;

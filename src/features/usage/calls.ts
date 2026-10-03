@@ -9,9 +9,9 @@ export interface Rec { t: number; ms: number; id: string; ts: string; arg: strin
 export interface TS { n: number; err: number; dn: number; ms: number; max: number; out: number; hist: number[]; h: number[]; slow: Rec[]; errs: Rec[] }
 // shell program / command line (n calls, err) or changed file (n edits, add/del lines)
 export interface Cnt { n: number; err: number; add: number; del: number }
-// a call still waiting for its result; sh = [program, command] counters per shell command, for error attribution; row = its fact row
-// name = the tool's name as booked (retool renames it)
-export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; row: Call | null; name: string }
+// a call still waiting for its result; sh = [program, command] counters per shell command, for error attribution; row = its fact row;
+// name = the tool's name as booked (retool renames it); sp = its session's Acc.sp: done() leaves the call's [start, end] there for the active-time intervals (record.ts flushSpans)
+export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; row: Call | null; sp: number[]; name: string }
 
 // duration histogram: bucket 0 = < 10 ms, bucket k = [EDGE[k-1], EDGE[k]), the last one ≥ 30 min (roughly ×2.5 per step)
 export const EDGE = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 180000, 600000, 1800000];
@@ -64,6 +64,7 @@ export function done(p: Pend, ms: number, err: boolean, out: number, id: string,
   if (row) { row.err = err ? 1 : 0; row.ms = ms >= 0 && ms < 86400000 ? ms : -1; row.out = out; }
   st.out = st.out + out;
   if (err) { st.err = st.err + 1; st.errs.push(r); if (st.errs.length > KEEP) st.errs.shift(); }
+  if (p.t > 0 && ms > 0 && ms < 86400000) { p.sp.push(p.t); p.sp.push(p.t + ms); } // a 20-minute test run is active time without lines
   if (ms >= 0 && ms < 86400000) {
     st.dn = st.dn + 1; st.ms = st.ms + ms;
     if (ms > st.max) st.max = ms;

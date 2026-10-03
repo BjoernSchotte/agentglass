@@ -30,7 +30,8 @@ export function renderProcs(): void {
     const on = S.ptop + r === S.psel;
     const b = on ? bg(C.sel) : "";
     const s = procSess(p);
-    const where = s ? clean(titleOf(s)) + "  " + home(s.cwd || display("cwd", p.cwd, null)) : home(display("cwd", p.cwd, null)) || display("args", p.args, null);
+    const sCwd: string = s ? s.cwd : ""; const pCwd: string = home(display("cwd", p.cwd, null));
+    const where = s ? clean(titleOf(s)) + "  " + (sCwd !== "" ? home(sCwd) : pCwd) : pCwd !== "" ? pCwd : display("args", p.args, null);
     const ph0 = hist.get(p.pid) ?? [];
     const g = braille(ph0, 16, 1, Math.max(20, Math.max(...ph0)))[0];
     put(1, 3 + r, b + (on ? fg(C.accent) + "❯" : " ") + fg(C.sub) + fit(String(p.pid), 7) + RST + badge(p.h) + b + " " + fg(heat(p.tcpu / 100)) + fit(p.tcpu.toFixed(1), 7) + fg(C.text) + fit(bytes(p.trss), 7) +

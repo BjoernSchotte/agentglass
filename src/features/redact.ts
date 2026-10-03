@@ -239,6 +239,26 @@ function fakeCwd(real: string): string {
   for (let i = 0; i < segs.length; i++) { const sg = segs[i] ?? ""; out.push(i > 0 && (GENERIC.has(sg.toLowerCase()) || sg.startsWith(".")) ? sg : fakeProject(sg)); }
   return code + out.join("/");
 }
+// owner/name → fake/fake (a leading host stays); ~/… and absolute paths like cwds; " (gone)" and "(no project)" kept
+function fakeRepo(text: string): string {
+  const gone = text.endsWith(" (gone)"); const t = gone ? text.slice(0, -7) : text;
+  if (!t || t.startsWith("(") || t === "~") return text; // the home dir as a project names nobody
+  let out = "";
+  if (t.startsWith("~/") || t.startsWith("/")) { const p = t.startsWith("~/") ? HOME + t.slice(1) : t; learnPath(p, false); const f = fakeCwd(p); out = f.startsWith(HOME + "/") ? "~" + f.slice(HOME.length) : f; }
+  else {
+    const segs = t.split("/"); const n = segs.length; const o: string[] = [];
+    for (let i = 0; i < n; i++) { const sg = segs[i] ?? ""; o.push(i >= n - 2 && sg ? fakeProject(sg) : sg); }
+    out = o.join("/");
+  }
+  return gone ? out + " (gone)" : out;
+}
+// scheme://host/…/owner/name → the last two segments faked like fakeRepo
+function fakeRemote(url: string): string {
+  const m = /^([a-z+]+:\/\/[^/]*)(\/.*)?$/.exec(url); if (!m) return url;
+  const path = m[2] ?? ""; if (!path) return url;
+  if ((m[1] ?? "") === "file://") return "file://" + fakeRepo(path);
+  return (m[1] ?? "") + "/" + fakeRepo(path.slice(1));
+}
 function kept(s: Sess): boolean {
   const r = recs.get(s.path);
   const real = r ? r.real : "";
@@ -254,6 +274,7 @@ function meta(s: Sess): void {
   if (s.branch && s.branch !== r.branch) { r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
   if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
   if (s.name && s.name !== r.name) { r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
+  recs.set(s.path, r); // scriptc may hand out a copy of an all-string record: store the updated one back (real cwd, kept fakes)
 }
 
 // ── content layer: synthetic events of the same shape ─────────────────────────────────────────────────
@@ -357,6 +378,8 @@ function display(kind: string, text: string, s: Sess | null): string {
   if (kind === "prog") return SAFE_PROGS.has(text) ? text : uniq(kind, text, PROGS);
   if (kind === "args") return fakeArgs(text);
   if (kind === "cwd") { learnPath(text, false); return text ? fakeCwd(text) : text; }
+  if (kind === "repo") return fakeRepo(text);
+  if (kind === "remote") return fakeRemote(text);
   if (kind.startsWith("filter:")) { // a filter chip's value, by its key
     const k = kind.slice(7);
     if (k === "cwd") { const p = text.startsWith("~/") ? HOME + text.slice(1) : text; learnPath(p, false); return p.indexOf("*") >= 0 ? scrubText(text) : fakeCwd(p); }

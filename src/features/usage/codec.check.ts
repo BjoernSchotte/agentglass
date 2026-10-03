@@ -18,7 +18,7 @@ const o = accOut(a, 64); const js = JSON.stringify(o);
 const back = parse(js);
 const b = accIn(back ?? {});
 const e = b.days.get([...a.days.keys()][0] ?? "");
-ok("version", VERSION === 9, String(VERSION)); // 9 = Acc.rs (otlp-export); 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
+ok("version", VERSION === 10, String(VERSION)); // 10 = Acc.rs (otlp-export); 9 = repo-view Day.act + Acc.al; 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
 ok("day present", !!e, [...b.days.keys()].join(","));
 if (e) {
   ok("unk", e.unk === d.unk, String(e.unk));
