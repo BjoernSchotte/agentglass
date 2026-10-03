@@ -11,6 +11,7 @@ import { parse, printClause } from "./parse.ts";
 import { register } from "./attrs.ts";
 import { type Compiled, EMPTY, compile, matchSession, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf } from "./eval.ts";
 import { projectOf, projectRoot } from "./project.ts";
+import { real } from "../../model/project.ts";
 import { fxBase, pathOf, isoAt } from "./fixture.ts";
 
 let bad = 0;
@@ -92,10 +93,11 @@ eq("weekdayOf", [weekdayOf("2026-10-03"), weekdayOf("2024-02-29"), weekdayOf("20
 // projectOf: a worktree's .git file resolves to the main repo
 const TMP = "/tmp/agentglass-eval-check"; rmSync(TMP, { recursive: true, force: true });
 mkdirSync(TMP + "/mainrepo/.git/worktrees/wt", { recursive: true }); mkdirSync(TMP + "/wt/sub", { recursive: true });
-writeFileSync(TMP + "/wt/.git", "gitdir: " + TMP + "/mainrepo/.git/worktrees/wt\n");
+writeFileSync(TMP + "/wt/.git", "gitdir: " + TMP + "/mainrepo/.git/worktrees/wt\n"); writeFileSync(TMP + "/mainrepo/.git/worktrees/wt/commondir", "../..\n");
 const WT = TMP + "/wt/sub";
+eq("projectOf unresolved = basename", projectOf(WT), "sub");
+eq("projectRoot worktree (resolves now, real path: /tmp is /private/tmp on macOS)", projectRoot(WT), real(TMP + "/mainrepo"));
 eq("projectOf worktree", projectOf(WT), "mainrepo");
-eq("projectRoot worktree", projectRoot(WT), TMP + "/mainrepo");
 eq("projectOf main", projectOf(TMP + "/mainrepo"), "mainrepo");
 eq("projectOf plain", projectOf("/nonexistent/abc"), "abc");
 rmSync(TMP, { recursive: true, force: true });

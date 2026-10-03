@@ -21,7 +21,7 @@ import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
 import { type Ctx, type Compiled, EMPTY, compile, matchSession } from "./eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
-import { projectOf } from "./project.ts";
+import { repoOf } from "./project.ts";
 
 // ── compiled filters per tab ──
 const comp = new Map<string, Compiled>();
@@ -44,7 +44,7 @@ function compiledOf(cs: Clause[], ctx: Ctx): Compiled {
 // (and heads: cwd, branch and title of some harnesses come from a transcript's head, read in the background below)
 function liveSig(): string { let p = 0; let a = 0; let h = 0; for (const s of sessions.values()) { if (s.pid) p += s.pid; if (s.attention || s.stuck) a++; if (s.headDone) h++; } return String(p) + "/" + String(a) + "/" + String(h) + "/" + String(sessions.size) + "/" + String(Math.floor(Date.now() / 60000)); }
 // a clause on these needs every session's head (the list reads heads only for visible rows)
-const HEADKEYS = ["repo", "cwd", "branch", "title", "text", "agent", "model"];
+const HEADKEYS = ["repo", "worktree", "project.kind", "cwd", "branch", "title", "text", "agent", "model"];
 function needsHeads(f: Compiled): boolean { for (const c of f.cs) if (HEADKEYS.indexOf(c.key) >= 0) return true; return false; }
 let headsLeft = 0;
 // ≤ 100 ms of head reads per tick while the Sessions filter needs them (the ledger's indexing slice); the list fills in as
@@ -228,7 +228,7 @@ function frequent(key: string): string[] {
       else for (const k of d.files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }
     }
   } else if (key === "model") { for (const n of DICT.model.names) bump(m, n, 1); for (const s of sessions.values()) bump(m, s.model, 1); }
-  else for (const s of sessions.values()) bump(m, key === "repo" ? projectOf(s.cwd) : key === "branch" ? s.branch : key === "agent" ? s.kind : "", 1);
+  else for (const s of sessions.values()) bump(m, key === "repo" ? repoOf(s) : key === "branch" ? s.branch : key === "agent" ? s.kind : "", 1);
   const vals = topOf(m); freq.set(key, { ver: L.ver, vals });
   return vals;
 }
@@ -302,10 +302,10 @@ function contentQuery(tab: string): string { for (const c of localFor(tab)) if (
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list") return false;
   const tab = tabName();
-  if (k === "P" && (S.tab <= 1 || tab === "Stats")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", print(S.pins)); return true; }
-  if (tab === "Stats") {
-    if (k === "/") { openFilterInput("Stats"); return true; }
-    if (k === "p") { say("info", pinAll("Stats")); return true; }
+  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", print(S.pins)); return true; }
+  if (tab === "Stats" || tab === "Repos") {
+    if (k === "/") { openFilterInput(tab); return true; }
+    if (k === "p") { say("info", pinAll(tab)); return true; }
     return false;
   }
   if (S.tab !== 0) return false;

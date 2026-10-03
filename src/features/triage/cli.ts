@@ -13,7 +13,7 @@ import { discover } from "../cli.ts";
 import { startOfDay } from "../usage/record.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, quoteVal } from "../query/parse.ts";
-import { projectOf } from "../query/project.ts";
+import { projectClause } from "../query/project.ts";
 import { agentHost, agentScope } from "../agentenv.ts";
 import { addAll } from "../query/scope.ts";
 import { sessMatches } from "../query/eval.ts";
@@ -135,7 +135,7 @@ function triage(args: string[]): void {
   if (agentHost().on) {
     o.json = true;
     const sc = agentScope(args);
-    if (sc.name === "project") r.scope = addAll(r.scope, parse("repo is " + quoteVal(projectOf(sc.cwd))).cs).cs;
+    if (sc.name === "project") r.scope = addAll(r.scope, parse(projectClause(sc.cwd)).cs).cs; // exact identity, not a same-named repo
   }
   triageCfg();
   discover();

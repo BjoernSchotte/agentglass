@@ -13,7 +13,7 @@ import { type Call, ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
 import { callCutoff } from "./usage/callcache.ts";
 import { sessMatches, dayMatches, eachCall } from "./query/eval.ts";
 import { sessDim } from "./query/agg.ts";
-import { projectOf } from "./query/project.ts";
+import { repoShown } from "./query/project.ts";
 import { type CliFilter, cliFilter, cliSelect } from "./query/cli.ts";
 import { type Rec, type TS, newTS, HB, pct } from "./usage/calls.ts";
 import { sessionBill } from "./usage/bill-live.ts";
@@ -388,7 +388,7 @@ function list(args: string[]): void {
   const ss = cliSelect(cf, cands);
   ss.sort((a, b) => b.mtime - a.mtime);
   const rows: Obj[] = [];
-  for (const s of o.limit > 0 ? ss.slice(0, o.limit) : ss) { loadHead(s); loadTail(s); complete(s); const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = projectOf(s.cwd); rows.push(r); }
+  for (const s of o.limit > 0 ? ss.slice(0, o.limit) : ss) { loadHead(s); loadTail(s); complete(s); const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = repoShown(s); rows.push(r); }
   out(formatRows(rows, o.f, false, LIST_COLS, SESS_FIELDS, false));
 }
 function errors(args: string[]): void {
