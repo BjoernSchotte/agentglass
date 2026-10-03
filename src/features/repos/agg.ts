@@ -28,14 +28,15 @@ export interface RepoAgg {
   files: Map<string, FileAgg>; outside: FileAgg; tools: Map<string, Cnt>; progErr: Map<string, Cnt>;
   byHarness: Map<string, HarnessAgg>; branches: Map<string, BranchAgg>; paths: string[] /* top-level session paths, newest first */;
   remote: string; via: string; unread: boolean; // from the identity: header of the detail
+  days: string[]; // the period it was aggregated over
 }
 
 function newFile(): FileAgg { return { n: 0, add: 0, del: 0, by: new Set<string>() }; }
 function newHA(): HarnessAgg { return { sess: 0, cost: 0, unk: 0 }; }
-function newRepo(key: string, label: string, kind: string): RepoAgg {
+function newRepo(key: string, label: string, kind: string, days: string[]): RepoAgg {
   return { key, label, kind, worktrees: new Map<string, string>(), sessions: 0, live: 0, last: 0, cost: 0, unk: 0, modes: newSum(), inTok: 0, outTok: 0, calls: 0, err: 0, activeMin: 0, agentMin: 0,
     files: new Map<string, FileAgg>(), outside: newFile(), tools: new Map<string, Cnt>(), progErr: new Map<string, Cnt>(), byHarness: new Map<string, HarnessAgg>(), branches: new Map<string, BranchAgg>(), paths: [],
-    remote: "", via: "", unread: false };
+    remote: "", via: "", unread: false, days };
 }
 function cntOf(m: Map<string, Cnt>, k: string): Cnt { let c = m.get(k); if (!c) { c = newCnt(); m.set(k, c); } return c; }
 function haOf(m: Map<string, HarnessAgg>, k: string): HarnessAgg { let c = m.get(k); if (!c) { c = newHA(); m.set(k, c); } return c; }
@@ -88,7 +89,7 @@ export function repoAgg(days: string[], f0: Compiled | null): RepoAgg[] {
     const a = ledger.get(s.path); if (!a || !sessOk(f, s)) continue;
     const id = identOf(s); if (!id) continue; // unresolved: the tab says "resolving N sessions…"
     let r = by.get(id.key);
-    if (!r) { r = newRepo(id.key, labelOf(id), id.kind); r.remote = id.remote; r.via = id.via; by.set(id.key, r); }
+    if (!r) { r = newRepo(id.key, labelOf(id), id.kind, days); r.remote = id.remote; r.via = id.via; by.set(id.key, r); }
     if (id.unread) r.unread = true;
     const cw = realCwd(s); let rc = reals.get(cw); if (rc === undefined) { rc = cw ? real(cw) : ""; reals.set(cw, rc); }
     let any = false; let cost = 0; let unk = 0;

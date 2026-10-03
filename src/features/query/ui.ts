@@ -302,10 +302,10 @@ function contentQuery(tab: string): string { for (const c of localFor(tab)) if (
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list") return false;
   const tab = tabName();
-  if (k === "P" && (S.tab <= 1 || tab === "Stats")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", print(S.pins)); return true; }
-  if (tab === "Stats") {
-    if (k === "/") { openFilterInput("Stats"); return true; }
-    if (k === "p") { say("info", pinAll("Stats")); return true; }
+  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", print(S.pins)); return true; }
+  if (tab === "Stats" || tab === "Repos") {
+    if (k === "/") { openFilterInput(tab); return true; }
+    if (k === "p") { say("info", pinAll(tab)); return true; }
     return false;
   }
   if (S.tab !== 0) return false;

@@ -34,6 +34,7 @@ import "./features/watchdog.ts";
 import "./features/usage/cache.ts";
 import "./features/repos/ident.ts";
 import "./features/usage/stats.ts";
+import "./features/repos/tab.ts";
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
 import "./features/redact.ts";
