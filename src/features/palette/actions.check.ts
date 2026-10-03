@@ -56,7 +56,16 @@ function snap(): string {
 }
 function tvNow(): TV | null { return S.tv; } // S.tv was set to null above: TS would narrow it
 const KEY: Record<string, string> = { "↵": "enter", "space": " ", "Tab": "tab", "esc": "esc", "1-9": "1" };
+// quit exits. T writes ~/.agentglass/theme, v ~/.agentglass/tmp, R rescans HOME: they run only in check.sh's temp HOME
+// (AGENTGLASS_HERMETIC), never against the user's real home
+const HOMELESS = ["theme.cycle", "detail.pagerAll", "session.resume", "transcript.resume"];
+const hermetic = process.env.AGENTGLASS_HERMETIC === "1" && (process.env.HOME ?? "").startsWith("/tmp/");
+const SKIP = hermetic ? ["app.quit"] : ["app.quit"].concat(HOMELESS);
+if (!hermetic) console.log("note: T/v/R cases skipped (run through scripts/check.sh for a temp HOME)");
+// T cycles from the current theme: start every case from the same one (it saves ~/.agentglass/theme: temp HOME only)
+const theme0 = H.actions.find((a: Action): boolean => a.id.startsWith("theme.set."));
 function base(ctx: string): void {
+  if (hermetic && theme0) theme0.run(cx("list", 0));
   S.mode = "list"; S.prevMode = "list"; S.tab = 0; S.fview = ""; S.tv = null; S.dv = null; S.local.clear(); S.pins = []; S.toast = ""; S.wrapCode = true; S.foldAll = false;
   S.sel = 1;
   if (ctx === "list") return;
@@ -64,7 +73,6 @@ function base(ctx: string): void {
   const tv = tvNow(); if (tv) { tv.cur = 2; tv.follow = false; }
   if (ctx === "detail") onInput("enter");
 }
-const SKIP = ["app.quit", "theme.cycle", "detail.pagerAll", "session.resume", "transcript.resume"]; // quit exits; T writes ~/.agentglass/theme, v ~/.agentglass/tmp (the real HOME); R rescans the real HOME (live sessions move the selection)
 let n = 0;
 for (const ctx of ["list", "transcript", "detail"]) {
   base(ctx);
@@ -78,7 +86,7 @@ for (const ctx of ["list", "transcript", "detail"]) {
     ok(ctx + " " + a.id + " == key " + key, A === B, A + "\n   vs " + B); n++;
   }
 }
-ok("ran equivalence cases", n > 30, String(n));
+ok("ran equivalence cases", n > (hermetic ? 44 : 30), String(n));
 // when(): transcript-only actions hidden in list mode and vice versa
 base("list"); const cl = ctxNow();
 function vis(c: Ctx, id: string): boolean { for (const a of H.actions) if (a.id === id) return a.when(c); return false; }
