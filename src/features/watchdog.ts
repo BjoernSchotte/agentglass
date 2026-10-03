@@ -7,7 +7,8 @@ import type { Ev, Proc, Sess } from "../model/types.ts";
 import { S, say } from "../state.ts";
 import { H } from "../hooks.ts";
 import { sessions, loadTail, working, titleOf, current, sessAt } from "../model/sessions.ts";
-import { allProcs, hist, rootOf, refreshProcs } from "../model/procs.ts";
+import { allProcs, hist, rootOf, refreshProcs, paneTitles, ttyOf } from "../model/procs.ts";
+import { harnessOf } from "../harness/index.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 
 // ── pure detection helpers (no globals, so they can be checked in isolation) ──
@@ -68,10 +69,11 @@ function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {
   const i = sh.args.indexOf(" -c ");
   return i >= 0 ? sh.args.slice(i + 4, i + 34) : base(sh.args.split(" ")[0] ?? "");
 }
-export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean }
+export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean } // asks: the agent's terminal title says it waits for approval
 function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 // waiting on a tool approval: tool call open > 20s, tree quiet (10s avg < 2%), no tool command started since the call
 export function approvalNote(o: Obs): string {
+  if (o.asks) return "approval dialog open"; // the agent says so itself (Gemini logs the call only once it ran)
   const t = pendingTool(o.evs);
   const pend = (o.now - o.mtime) / 1000;
   if (!o.busy || !t || pend <= 20 || o.cpu.length < 7 || o.subsActive) return "";
@@ -79,6 +81,12 @@ export function approvalNote(o: Obs): string {
   if (cpu >= 2) return "";
   for (const c of o.cmds) if (c.age < pend + 5) return "";
   return t + " pending " + dur(pend) + ", cpu " + cpu.toFixed(0) + "%";
+}
+// which alarm a look raises: approval first (a Gemini approval dialog looks like a finished turn in its log), then busy →
+// idle or a whole turn between two looks (fresh: a new prompt in the tail); "" = none
+export function alarmOf(wasBusy: boolean, busy: boolean, fresh: boolean, appr: boolean): string {
+  if (appr) return "approval?";
+  return !busy && (wasBusy || fresh) ? "turn finished" : "";
 }
 // [reason, detail] — "" reason = fine
 export function stuckOf(o: Obs): string[] {
@@ -101,10 +109,12 @@ export function stuckOf(o: Obs): string[] {
 }
 
 // ── live state ────────────────────────────────────────────────────────────────
-interface St { busy: boolean; att: string; attAt: number; note: string; appr: boolean; bell: number; stuckNote: string }
+interface St { busy: boolean; att: string; attAt: number; note: string; appr: boolean; bell: number; stuckNote: string; prompt: string } // prompt: newest user prompt seen in the tail
 const st = new Map<string, St>();
 let selPath = ""; let selSince = 0;
 
+// the newest user prompt in the tail window (ts + text), "" when none is in it
+function lastPrompt(evs: Ev[]): string { for (let i = evs.length - 1; i >= 0; i--) { const e = evs[i]; if (e.kind === "user") return e.ts + "\u0000" + e.text; } return ""; }
 function watched(s: Sess): boolean { return s.pid !== 0 && !s.parent; }
 function isBusy(s: Sess): boolean { return working(s); }
 function kidsMap(): Map<number, Proc[]> {
@@ -112,10 +122,12 @@ function kidsMap(): Map<number, Proc[]> {
   for (const p of allProcs.values()) { const a = k.get(p.ppid); if (a) a.push(p); else k.set(p.ppid, [p]); }
   return k;
 }
-function observe(s: Sess, kids: Map<number, Proc[]>): Obs {
+function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, string>): Obs {
   const r = rootOf(s.pid); const rp = r ? r.pid : s.pid;
   let subs = false; for (const c of s.subs) if (Date.now() - c.mtime < 45000) subs = true;
-  return { now: Date.now(), mtime: s.mtime, busy: isBusy(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs };
+  const at = harnessOf(s.h).approvalTitle; const tty = at ? ttyOf(s.pid) : "";
+  const asks = !!at && tty !== "" && at(titles().get(tty) ?? "");
+  return { now: Date.now(), mtime: s.mtime, busy: isBusy(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks };
 }
 function stateOf(s: Sess): St | null { return st.get(s.path) ?? null; }
 function raise(s: Sess, x: St, why: string, note: string): void {
@@ -130,6 +142,8 @@ function clear(s: Sess, x: St): void { s.attention = false; x.att = ""; x.note =
 
 function tick(): void {
   const kids = kidsMap();
+  const tt = new Map<string, string>(); let read = false; // tmux pane titles: one spawn per look, only when a live agent reports approval in its title
+  const titles = (): Map<string, string> => { if (!read) { read = true; for (const [k, v] of paneTitles()) tt.set(k, v); } return tt; };
   const now = Date.now();
   const cur = S.mode === "list" && S.tab === 0 ? current() : null;
   const cp = cur ? cur.path : "";
@@ -137,31 +151,32 @@ function tick(): void {
   for (const s of sessions.values()) {
     if (!watched(s)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } st.delete(s.path); continue; }
     loadTail(s);
-    const o = observe(s, kids);
+    const o = observe(s, kids, titles);
     const r = stuckOf(o);
     s.stuck = r[0] ?? "";
     let x = stateOf(s);
-    if (!x) { x = { busy: o.busy, att: "", attAt: 0, note: "", appr: false, bell: 0, stuckNote: "" }; st.set(s.path, x); } // first sight: record only
+    const pr = lastPrompt(s.evs);
+    if (!x) { x = { busy: o.busy, att: "", attAt: 0, note: "", appr: false, bell: 0, stuckNote: "", prompt: pr }; st.set(s.path, x); } // first sight: record only
     x.stuckNote = r[1] ?? "";
-    if (x.busy && !o.busy) raise(s, x, "turn finished", "");
-    else if (!x.busy && o.busy && x.att) clear(s, x);
-    x.busy = o.busy;
     const a = approvalNote(o);
-    if (a && !x.appr) raise(s, x, "approval?", a);
-    else if (a && x.att === "approval?") x.note = a;
+    const why = alarmOf(x.busy, o.busy, pr !== "" && pr !== x.prompt, a !== "");
+    if (why === "approval?" && !x.appr) raise(s, x, why, a);
+    else if (why === "turn finished") raise(s, x, why, "");
+    else if (!x.busy && o.busy && x.att && !a) clear(s, x);
+    if (a && x.att === "approval?") x.note = a;
     else if (!a && x.att === "approval?") clear(s, x);
-    x.appr = a !== "";
+    x.busy = o.busy; if (pr) x.prompt = pr; x.appr = a !== "";
     // the user looked: selected > 1s, or its transcript is open
     if (x.att && ((cp === s.path && now - selSince > 1000) || (S.tv !== null && S.tv.s === s))) clear(s, x);
   }
 }
-H.onTick.push(tick);
+H.onWatch.push(tick);
 
 H.complete.push((s: Sess) => {
   if (!watched(s)) { s.attention = false; s.stuck = ""; return; }
   if (!allProcs.size) refreshProcs();
   loadTail(s);
-  const o = observe(s, kidsMap());
+  const o = observe(s, kidsMap(), paneTitles);
   const r = stuckOf(o);
   s.stuck = r[0] ?? "";
   const x = stateOf(s);

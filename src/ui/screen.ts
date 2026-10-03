@@ -29,7 +29,7 @@ export function badge(h: string): string {
   return fg(ad.color()) + CSI + "1m" + g + RST + fg(ad.color()) + fit(" " + ad.label, BADGE_W - width(g)) + RST;
 }
 export const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-export function spin(): string { return SPIN[S.frame % SPIN.length]; }
+export function spin(): string { S.animating = true; return SPIN[S.frame % SPIN.length]; } // animating: the render job keeps building frames
 // braille area graph (btop style): values 0..max, each cell holds 2 samples × 4 levels
 export function braille(vals: number[], w: number, h: number, max: number): string[] {
   const rows: string[] = [];

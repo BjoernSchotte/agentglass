@@ -16,6 +16,9 @@ rmSync(DIR, { recursive: true, force: true }); mkdirSync(DIR, { recursive: true 
 function write(p: string, t: string): void { const fd = openSync(p, "w"); writeSync(fd, t); closeSync(fd); }
 function bytes(t: string): number { return new TextEncoder().encode(t).length; }
 ok("gemini has its own source", !!gemini.source, "none");
+const at = gemini.approvalTitle; const asks = (t: string): boolean => at ? at(t) : false;
+ok("title: approval dialog", asks("✋  Action Required (agtest-x)"), "no");
+ok("title: ready / working are not", !asks("◇  Ready (agtest-x)") && !asks("✦  Working… (agtest-x)") && !asks(""), "yes");
 const src: SessionSource = gemini.source ?? FILE_SOURCE;
 
 // ── fixture: lines in the shapes gemini 0.62.0 writes (hand-written, anonymized) ──

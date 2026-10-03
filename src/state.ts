@@ -16,6 +16,7 @@ export interface HelpSec { name: string; ctx: string; keys: string[][] }
 
 interface State {
   W: number; H: number; frame: number;
+  dirty: boolean; animating: boolean; repaint: boolean; // something visible changed / spin() drew last frame / screen cleared: write even if identical
   tab: number; // 0 sessions, 1 processes, 2+ H.tabs
   mode: Mode; prevMode: Mode; fview: string;
   sel: number; top: number; psel: number; ptop: number;
@@ -36,6 +37,7 @@ interface State {
 }
 export const S: State = {
   W: 80, H: 24, frame: 0,
+  dirty: true, animating: false, repaint: false,
   tab: 0, mode: "list", prevMode: "list", fview: "",
   sel: 0, top: 0, psel: 0, ptop: 0,
   filter: "", hfilter: "", liveOnly: false,

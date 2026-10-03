@@ -143,6 +143,16 @@ export function sharedDaemon(pid: number): string {
   }
   return "";
 }
+// tmux pane titles by pane tty, read now (an agent's title can change within a second); empty outside tmux
+export function paneTitles(): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const l of run("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_title}"]).split("\n")) {
+    const i = l.indexOf("\t");
+    if (i > 0) m.set(l.slice(0, i), l.slice(i + 1));
+  }
+  return m;
+}
+export function ttyOf(pid: number): string { const p = allProcs.get(pid); return p ? OS.ttyDevice(p.tty) : ""; }
 export function tmuxTarget(pid: number): string {
   const p = allProcs.get(pid);
   const dev = p ? OS.ttyDevice(p.tty) : "";

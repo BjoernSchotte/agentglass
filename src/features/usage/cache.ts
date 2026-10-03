@@ -6,7 +6,7 @@ import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
 import { HOME, readText } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger } from "./ledger.ts";
+import { ledger, indexing } from "./ledger.ts";
 import { L, type Acc, type Day } from "./record.ts";
 import { PRICES_SIG } from "./pricing.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
@@ -96,5 +96,7 @@ function save(): void {
 }
 
 load();
-H.onTick.push(() => { if (Date.now() - lastSave > 30000) { lastSave = Date.now(); save(); } });
+// a save serializes the whole ledger (tens of MB and ~0.5 s of CPU with a long history): every 30 s only while indexing
+// (a crash must not lose much of a first index), else every 5 min; quit always saves, a crash re-reads ≤ 5 min of logs
+H.onTick.push(() => { if (Date.now() - lastSave > (indexing() ? 30000 : 300000)) { lastSave = Date.now(); save(); } });
 H.onQuit.push(save);
