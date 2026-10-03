@@ -1,6 +1,7 @@
 // agentglass — self-check for the related-events builder: scriptc build src/features/related/build.check.ts -o rb && ./rb
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, rmSync, writeFileSync, appendFileSync, statSync, readFileSync } from "node:fs";
+import { run as runCmd } from "../../util/fs.ts";
 import { type Ev, type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { harnessOf, parseEvents } from "../../harness/index.ts";
@@ -154,6 +155,19 @@ if (!bh) { bad++; console.log("FAIL hooks: no build"); } else {
   eq("hooks: the shown text is the hooked one", bh.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.text).join(" "), "/fake/x.ts /fake/x.ts");
 }
 H.events.length = 0;
+// a cwd behind a symlink (macOS /tmp → /private/tmp, a linked ~/code): the identity's top is the real path, the agent
+// logs the linked one; files still map to the project (rel), not to absolute paths outside it
+reset();
+runCmd("ln", ["-s", D, D + "-link"]); mkdirSync(D + "/proj/src", { recursive: true });
+const lq = (dt: number, id: string): string => call(dt, id, "Edit", "{\"file_path\":\"" + D + "-link/proj/src/s.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}");
+const la1 = sess("lk1", D + "-link/proj", [user(0, "a"), lq(1000, "l1")], true);
+sess("lk2", D + "-link/proj/src", [user(500, "b"), lq(2000, "l2")], true); // cwd below the top: the alias drops the suffix
+const bk = startBuild(la1, evsOf(la1), 1, 10, 10);
+if (!bk) { bad++; console.log("FAIL symlink: no build"); } else {
+  run(bk);
+  eq("symlinked cwd: files relative to the project, conflict found", bk.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.mark + ":" + (r.files[0]?.rel ?? "")).join(" "), "conflict:src/s.ts conflict:src/s.ts");
+}
+rmSync(D + "-link", { force: true });
 
 rmSync(D, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "related build: all checks passed");

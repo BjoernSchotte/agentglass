@@ -35,6 +35,8 @@ const misc = rows([
   ev("assistant", "sure", 17, "", ""),
 ], "A", "/w/main", "/w/main");
 eq("kinds", show(misc), "shell:Bash:err read:Read:ok agent:Task:ok write:Write:ok prompt::ok");
+eq("fileRef through a symlinked spelling of the top", JSON.stringify([fileRef("/tmp/w/src/a.ts", "/private/tmp/w", "/tmp/w"), fileRef("/private/tmp/w/b.ts", "/private/tmp/w", "/tmp/w"), fileRef("/tmp/x/c.ts", "/private/tmp/w", "/tmp/w")]),
+  JSON.stringify([{ top: "/private/tmp/w", rel: "src/a.ts" }, { top: "/private/tmp/w", rel: "b.ts" }, { top: "", rel: "/tmp/x/c.ts" }]));
 eq("outside the repo: absolute, top \"\"", JSON.stringify(misc[3]?.files ?? []), JSON.stringify([{ top: "", rel: "/etc/hosts" }]));
 eq("prompt text: first line", misc[4]?.text ?? "", "fix the login");
 eq("prompt locates its event", (misc[4]?.evKind ?? "") + "|" + (misc[4]?.evText ?? ""), "user|fix the login\nplease");

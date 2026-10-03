@@ -6,14 +6,14 @@ import { H, realCwd, display } from "../../hooks.ts";
 import { sessions, parentOf, loadHead } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window, parseRaw, hookedCopy } from "../../harness/index.ts";
 import { seekTime } from "../../harness/source.ts";
-import { type Ident, labelOf } from "../../model/project.ts";
+import { type Ident, labelOf, real } from "../../model/project.ts";
 import { identOf, identSync } from "../query/project.ts";
 import { livePid } from "../query/eval.ts";
 import { ledger, pending } from "../usage/ledger.ts";
 import { dayKey } from "../usage/record.ts";
 import { LOG, severityOf } from "../rules/engine.ts";
 import { ms } from "../callgraph/model.ts";
-import { type RelEv, type RelSt, type Spawn, newSt, row, toRel, toRelShown, markConflicts } from "./model.ts";
+import { type RelEv, type RelSt, type Spawn, newSt, row, toRelShown, markConflicts } from "./model.ts";
 import { reflogCommits, worktreeGitdirs } from "./reflog.ts";
 import { REDACT } from "../redact-on.ts";
 
@@ -28,6 +28,7 @@ export interface Build {
   anchor: RelEv; key: string; label: string; scope: string; t0: number; t1: number; cMs: number; cands: string[]; more: number; next: number;
   rows: RelEv[]; all: RelEv[]; flagged: number; bytes: number; cur: Map<string, number>; end: Map<string, number>; last: Map<string, number>;
   refl: RelEv[]; st: RelSt; live: boolean; tsMissing: boolean; capped: boolean; spawns: Spawn[]; common: string; tops: Map<string, string>;
+  alias: Map<string, string>; // per session: its top as its (symlinked) cwd spells it, "" = the same
 }
 
 // the anchor's time: its own ts, else the nearest earlier one, else the next later one; 0 = none
@@ -107,13 +108,22 @@ export function isAnchor(b: Build, r: RelEv): boolean {
   return r.evKind === a.evKind && r.evText === a.evText && (r.ts === a.ts || a.ts === "");
 }
 function topOf(s: Sess): string { const id = identOf(s) ?? identSync(s); return id && id.top ? id.top : realCwd(s); }
+// the top as the session's own cwd spells it when that runs through a symlink ("" = the same): cwd minus its sub-path
+export function aliasOf(cwd: string, top: string): string {
+  if (!cwd || !top) return "";
+  const rc = real(cwd); if (rc !== top && !rc.startsWith(top + "/")) return "";
+  const sub = rc.slice(top.length); const c = cwd.replace(/\/+$/, "");
+  if (!c.endsWith(sub)) return "";
+  const a = c.slice(0, c.length - sub.length);
+  return a && a !== top ? a : "";
+}
 
 // scriptc: a Build built as a literal inside startBuild would be handed to helpers by value; built here it is shared
 function newBuild(anchor: RelEv, id: Ident | null, label: string, scope: string, t0: number, t1: number, cMs: number, cands: string[], more: number): Build {
   return {
     anchor, key: id ? id.key : "", label, scope, t0, t1, cMs, cands, more, next: 0, rows: [], all: [], refl: [], flagged: 0, bytes: 0,
     cur: new Map<string, number>(), end: new Map<string, number>(), last: new Map<string, number>(),
-    st: newSt(), live: false, tsMissing: false, capped: false, spawns: [], common: id ? id.common || id.gitdir : "", tops: new Map<string, string>(),
+    st: newSt(), live: false, tsMissing: false, capped: false, spawns: [], common: id ? id.common || id.gitdir : "", tops: new Map<string, string>(), alias: new Map<string, string>(),
   };
 }
 // null = the event has no time at all (the caller says so)
@@ -129,7 +139,7 @@ export function startBuild(anchor: Sess, evs: Ev[], i: number, minutes: number, 
   let first = 0; for (const x of evs) { first = ms(x.ts); if (first) break; }
   if (first && first <= t0 && !H.events.length) {
     b.tops.set(anchor.path, top); b.st.last = 0;
-    toRel(evs, anchor.path, anchor.h, realCwd(anchor), top, true, t0, t1, b.st, b.all);
+    toRelShown(evs, evs, false, anchor.path, anchor.h, realCwd(anchor), top, aliasOf(realCwd(anchor), top), true, t0, t1, b.st, b.all);
     b.last.set(anchor.path, b.st.last); b.cur.set(anchor.path, anchor.size); b.end.set(anchor.path, anchor.size);
     b.next = 1;
   }
@@ -194,7 +204,7 @@ function seek(b: Build, s: Sess): void {
   b.bytes += k.reads * win * src.unit;
   let at = k.at;
   if (!k.found) { b.tsMissing = true; at = src.align(s, Math.max(0, size - window(src, TAIL_BYTES))); }
-  b.cur.set(s.path, at); b.end.set(s.path, size); b.tops.set(s.path, topOf(s));
+  const top = topOf(s); b.cur.set(s.path, at); b.end.set(s.path, size); b.tops.set(s.path, top); b.alias.set(s.path, aliasOf(realCwd(s), top));
 }
 // one window of one session; true = this session is done
 function readWindow(b: Build, s: Sess): boolean {
@@ -208,7 +218,7 @@ function readWindow(b: Build, s: Sess): boolean {
   for (const l of r.lines) parseRaw(s.h, l, evs, s);
   const red = H.events.length > 0; // --redact: rows match the real events, show the hooked copies
   b.st.last = b.last.get(s.path) ?? 0;
-  toRelShown(evs, red ? hookedCopy(s, evs) : evs, red, s.path, s.h, realCwd(s), b.tops.get(s.path) ?? "", s.path === b.anchor.sess, b.t0, b.t1, b.st, b.all);
+  toRelShown(evs, red ? hookedCopy(s, evs) : evs, red, s.path, s.h, realCwd(s), b.tops.get(s.path) ?? "", b.alias.get(s.path) ?? "", s.path === b.anchor.sess, b.t0, b.t1, b.st, b.all);
   b.last.set(s.path, b.st.last);
   let past = false; for (const e of evs) if (ms(e.ts) > b.t1) { past = true; break; }
   return past || next >= end;

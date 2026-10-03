@@ -32,8 +32,11 @@ const CAT_KIND = ["shell", "write", "read", "web", "agent", "mcp", "read"]; // c
 
 // a file as shown: rel, through the display hooks (--redact: a stable fake, the same one for the same real path)
 export function fileShown(f: FileRef): string { return display("file", f.rel, null); }
-export function fileRef(abs: string, top: string): FileRef {
-  return top && abs.startsWith(top + "/") ? { top, rel: abs.slice(top.length + 1) } : { top: "", rel: abs };
+// alias = the same top as the agent sees it through a symlink (macOS /tmp → /private/tmp, a linked ~/code; "" none):
+// top is the real path, logs carry the linked one
+export function fileRef(abs: string, top: string, alias = ""): FileRef {
+  if (top && abs.startsWith(top + "/")) return { top, rel: abs.slice(top.length + 1) };
+  return top && alias && abs.startsWith(alias + "/") ? { top, rel: abs.slice(alias.length + 1) } : { top: "", rel: abs };
 }
 export function row(t: number, ts: string, sess: string, h: string, top: string, kind: string, tool: string, text: string, self: boolean): RelEv {
   return { t, ts, sess, h, top, kind, cat: -1, tool, text, files: [], add: 0, del: 0, err: false, self, mark: "", withS: [], dt: 0, race: false, evKind: "", evId: "", evText: "", sha: "", rt: 0, clob: false };
@@ -78,12 +81,12 @@ export function denied(h: string, text: string): boolean {
 // parsed events of one session → rows appended to out (spec 4): results fold into their call (also across batches),
 // events outside [t0, t1] are dropped, replays dedup by (id, kind) or (ts, text); an untimed event takes the previous time
 export function toRel(evs: Ev[], sess: string, h: string, cwd: string, top: string, self: boolean, t0: number, t1: number, st: RelSt, out: RelEv[]): void {
-  toRelShown(evs, evs, false, sess, h, cwd, top, self, t0, t1, st, out);
+  toRelShown(evs, evs, false, sess, h, cwd, top, "", self, t0, t1, st, out);
 }
 // the same over raw events (no hooks) and their shown copies (hookedCopy; same order): kinds, files, commands, errors,
 // denials and commit shas come from the real content, so --redact flags exactly what a plain run flags; texts are the
 // shown ones. red = the shown copies differ (redaction): a commit's subject is dropped, a clobber shows its git form
-export function toRelShown(evs: Ev[], shown: Ev[], red: boolean, sess: string, h: string, cwd: string, top: string, self: boolean, t0: number, t1: number, st: RelSt, out: RelEv[]): void {
+export function toRelShown(evs: Ev[], shown: Ev[], red: boolean, sess: string, h: string, cwd: string, top: string, alias: string, self: boolean, t0: number, t1: number, st: RelSt, out: RelEv[]): void {
   for (let i = 0; i < evs.length; i++) {
     const e = evs[i]; const v = i < shown.length ? shown[i] : e;
     const t = ms(e.ts) || st.last;
@@ -104,7 +107,7 @@ export function toRelShown(evs: Ev[], shown: Ev[], red: boolean, sess: string, h
     const sa = toolArg(v);
     const r = row(t, e.ts, sess, h, top, kind, name, firstLine(kind !== "shell" ? sa : red && form ? form : shellCmd(sa), 300), self);
     r.cat = cat; r.evKind = e.kind; r.evId = e.id; r.evText = v.text; r.clob = form !== "";
-    for (const abs of filesOf([e.text, e.full], cwd)) { const f = fileRef(abs, top); if (!r.files.some((x: FileRef) => x.top === f.top && x.rel === f.rel)) r.files.push(f); }
+    for (const abs of filesOf([e.text, e.full], cwd)) { const f = fileRef(abs, top, alias); if (!r.files.some((x: FileRef) => x.top === f.top && x.rel === f.rel)) r.files.push(f); }
     if (r.kind === "write") { const lc = lineCounts(e.full); r.add = lc[0] ?? 0; r.del = lc[1] ?? 0; }
     if (e.id) st.pend.set(sess + "\u0001" + e.id, out.length);
     out.push(r);

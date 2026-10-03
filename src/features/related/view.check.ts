@@ -3,6 +3,7 @@
 import { mkdirSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { type Sess, newSess } from "../../model/types.ts";
 import { S } from "../../state.ts";
+import { run as runX } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
 import { width } from "../../util/text.ts";
 import { onInput } from "../../input.ts";
@@ -20,7 +21,9 @@ let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 P.sync = true;
 S.W = 80; S.H = 24;
-const D = "/tmp/agentglass-related-view-keepme-" + String(process.pid);
+// everything behind a symlink, like macOS's /tmp → /private/tmp: identities resolve to the real path, logs keep the link
+const RL = "/tmp/agentglass-related-view-real-" + String(process.pid); mkdirSync(RL, { recursive: true }); runX("ln", ["-s", RL, RL + "-lnk"]);
+const D = RL + "-lnk/keepme";
 rmSync(D, { recursive: true, force: true });
 mkdirSync(D + "/proj/.git", { recursive: true }); writeFileSync(D + "/proj/.git/config", "[core]\n"); writeFileSync(D + "/proj/.git/HEAD", "ref: refs/heads/main\n");
 mkdirSync(D + "/logs", { recursive: true });
@@ -158,6 +161,6 @@ const cols = new Set<number>(); for (const l of L6.slice(2, -1)) { const k = kin
 eq("one kind column with and without a worktree tag", String(cols.size) + " " + String(L6.some((l: string) => plain(l).indexOf("wt-two") >= 0)), "1 true");
 eq("long label at 80: counts and flags stay", (L6[0] ?? "").indexOf("‼ ") >= 0 && plain(L6[0] ?? "").indexOf(" ev") >= 0 ? "ok" : plain(L6[0] ?? ""), "ok");
 onInput("esc");
-rmSync(D, { recursive: true, force: true });
+rmSync(RL, { recursive: true, force: true }); rmSync(RL + "-lnk", { force: true });
 console.log(bad ? bad + " failed" : "related view: all checks passed");
 process.exit(bad ? 1 : 0);

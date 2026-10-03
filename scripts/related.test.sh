@@ -3,9 +3,11 @@
 set -e
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d); trap 'rm -rf "$T" "$T.lnk"' EXIT
 BIN="$T/agentglass"; scriptc build src/main.ts -o "$BIN" >/dev/null
-M="$T/w/main"; W2="$T/w/wt2"
+# the repos sit behind a symlink, as under macOS's /tmp → /private/tmp: logs keep the link, identities the real path
+ln -s "$T" "$T.lnk"
+M="$T.lnk/w/main"; W2="$T.lnk/w/wt2"
 mkdir -p "$M/src"; echo a > "$M/src/a.ts"
 git -C "$M" init -q -b main
 git -C "$M" -c user.email=a@b -c user.name=n add -A
@@ -56,7 +58,7 @@ ag --redact --json --related c1aude00 --at "$D:06:43Z" > "$T/red.json" || { echo
 flags() { grep -o '"kind":"[a-z]*","tool":"[^"]*"\|"conflict":{"kind":"[a-z]*"\|"conflict":null' "$1" | tr '\n' ' '; }
 [ "$(flags "$T/out.json")" = "$(flags "$T/red.json")" ] || { echo "FAIL --redact flags differ"; flags "$T/out.json"; echo; flags "$T/red.json"; exit 1; }
 [ "$(grep -o '"conflict":{' "$T/red.json" | wc -l)" -ge 3 ] || { echo "FAIL --redact: expected ≥ 3 flags"; cat "$T/red.json"; exit 1; }
-if grep -qF -e "$T/w" -e '"src/a.ts"' -e "login redirect" "$T/red.json"; then echo "FAIL --redact leaks"; cat "$T/red.json"; exit 1; fi
+if grep -qF -e "$T/w" -e "$T.lnk" -e '"src/a.ts"' -e "login redirect" "$T/red.json"; then echo "FAIL --redact leaks"; cat "$T/red.json"; exit 1; fi
 set +e; ag --json --related zzzzzz >/dev/null 2>&1; rc=$?; set -e
 [ $rc = 3 ] || { echo "FAIL unknown prefix rc $rc"; exit 1; }
 set +e; ag --json --related c1aude00 --minutes 0 >/dev/null 2>&1; rc=$?; set -e
