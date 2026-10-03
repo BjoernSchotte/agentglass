@@ -14,13 +14,16 @@ import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
-import { type CmdRec, type OptRec, addCmd, opt, textHelp } from "./clihelp.ts";
+import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
+import { agentHost, hostObj, cliError, parseDur } from "./agentenv.ts";
 
 const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
 const LIVE_OPT = opt("--live", "", "only sessions with a running agent process", "", []);
 const LIMIT_OPT = opt("--limit", "N", "--json: at most N sessions", "", []);
 const SUBS_OPT = opt("--subagents", "", "--json: include subagent sessions", "", []);
 const FROM_OPT = opt("--from-start", "", "--watch: replay existing logs from the beginning (combine with a filter)", "", []);
+const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
+const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
 export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
   "activity", "tokens", "costUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills"];
 function cmd(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
@@ -29,13 +32,13 @@ addCmd(cmd("", "agentglass", "interactive TUI", [], []));
 addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
 addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
 addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT], JSON_FIELDS));
-addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT], []));
+addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT], []));
 addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
 addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
 addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
 addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
 addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
-for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT]) addCmd(optRow(o));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FOR_OPT, IDLE_OPT]) addCmd(optRow(o));
 function usage(): string {
   return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
     `--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
@@ -53,7 +56,7 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 `);
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean }
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean }
 interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
 interface JBill { mode: string; plan: string; source: string }
 interface JSess {
@@ -67,15 +70,17 @@ interface WEv { ts: string; harness: string; session: string; title: string; pro
 function out(line: string): void {
   try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); }
 }
-function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
+export function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
     else if (a === "--subagents") o.subs = true;
     else if (a === "--from-start") o.fromStart = true;
+    else if (a === "--until-idle") o.idle = true;
+    else if (a === "--for") { o.forMs = parseDur(args[i + 1] ?? ""); i++; if (!(o.forMs > 0)) fail("--for needs a duration like 30s, 5m or 1h"); }
     else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (!isHarness(o.harness)) fail("--harness must be one of " + harnessIds().join(", ")); }
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
   }
@@ -116,6 +121,7 @@ function snapshot(o: Opts): void {
   process.exit(0);
 }
 
+let lastOut = 0; // --until-idle: when the last line went out
 function oneLine(t: string): string {
   const l = t.replace(/\s+/g, " ").trim();
   return l.length > 500 ? l.slice(0, 500) + "…" : l;
@@ -126,6 +132,7 @@ function emit(s: Sess, kind: string, tool: string | null, text: string, ts: stri
     parent: s.parent ? s.parent : null, kind, tool, text: oneLine(text),
   };
   out(JSON.stringify(w));
+  lastOut = Date.now();
 }
 function emitEv(s: Sess, e: Ev): void {
   if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts); return; }
@@ -133,8 +140,12 @@ function emitEv(s: Sess, e: Ev): void {
   emit(s, "tool", i >= 0 ? e.text.slice(0, i) : e.text, i >= 0 ? e.text.slice(i + 1) : "", e.ts);
 }
 
+const IDLE_MS = 10000;
 function watch(o: Opts): void {
+  // an endless stream ties up the agent's tool call
+  if (agentHost().on && !o.forMs && !o.idle) cliError("usage", "--watch needs --for <dur> or --until-idle inside an agent", "e.g. --watch --for 30s", 2);
   discover();
+  const t0 = Date.now(); lastOut = t0;
   const off = new Map<string, number>(); // path → next unread byte
   const eps = new Map<string, string>(); // path → the source's cursor epoch off counts in
   const headed = new Set<string>();
@@ -181,6 +192,8 @@ function watch(o: Opts): void {
   let tick = 0;
   setInterval(() => {
     tick++;
+    const now = Date.now();
+    if ((o.forMs > 0 && now - t0 >= o.forMs) || (o.idle && now - lastOut >= IDLE_MS)) process.exit(0);
     if (tick % 4 === 0) scan();
     if (tick % 3 === 0) { refreshProcs(); liveDiff(); }
     if (tick % 10 === 0) { refreshSlow(); liveDiff(); }
@@ -188,8 +201,22 @@ function watch(o: Opts): void {
   }, 500);
 }
 
+// --help: text for people; JSON inside an agent or with --format json; "<cmd> --help" = that command only
+function help(args: string[]): void {
+  const c = args.length && !(args[0] ?? "").startsWith("-") ? args[0] ?? "" : "";
+  const fi = args.indexOf("--format");
+  if (agentHost().on || (fi >= 0 && args[fi + 1] === "json")) {
+    const j = jsonHelp(c, hostObj(true));
+    if (!j) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
+    out(j); return;
+  }
+  if (!c) { out(usage().trimEnd()); return; }
+  const r = cmdOf(c);
+  if (!r) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
+  out(cmdText(r));
+}
 H.cli.push((args: string[]): boolean => {
-  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(usage().trimEnd()); return true; }
+  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { help(args); return true; }
   if (args.indexOf("--version") >= 0) { out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
   if (args.indexOf("--json") >= 0) { S.cli = true; snapshot(opts(args)); return true; } // no toast line: warnings go to stderr
   if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args)); return true; }

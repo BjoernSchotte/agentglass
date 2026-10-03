@@ -9,6 +9,7 @@ import type { Obj } from "../util/json.ts";
 import { home } from "../util/text.ts";
 import { CONFIG_FILE } from "../util/config.ts";
 import { discover } from "./cli.ts";
+import { cliError } from "./agentenv.ts";
 import { startOfDay } from "./usage/record.ts";
 import { MODES } from "./usage/billing.ts";
 import { type ModeSum, money, kfmt, grp, unpricedLine, monthStart } from "./usage/costs.ts";
@@ -29,7 +30,7 @@ const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
 const WORDS = ["spend", "plan", "cloud", "gateway", "unknown"];
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
-function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
+function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 function byMode(m: ModeSum): Obj { const o: Obj = {}; for (let i = 0; i < MODES.length; i++) o[MODES[i] ?? ""] = round(m.by[i] ?? 0); return o; }
 function unpriced(m: ModeSum): Obj { const bm: Obj = {}; for (const [k, n] of m.um) bm[k] = n; return { tokens: m.unk, byModel: bm, credits: m.uc }; }
