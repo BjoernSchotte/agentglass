@@ -29,10 +29,11 @@ export function parseRef(raw: string): Ref {
   const hi = raw.indexOf("#");
   if (hi >= 0) { path = raw.slice(0, hi); anc = raw.slice(hi + 1); }
   let h = ""; let id = "";
-  if (path.startsWith("agentglass://")) {
-    if (!path.startsWith("agentglass://open/")) return bad("only agentglass://open/ links are accepted");
-    const parts = path.slice("agentglass://open/".length).split("/");
-    if (parts.length > 2 || !(parts[parts.length - 1] ?? "")) return bad("expected agentglass://open/[harness/]session-id");
+  if (path.slice(0, 13).toLowerCase() === "agentglass://") { // scheme and host are case-insensitive
+    if (path.slice(0, 18).toLowerCase() !== "agentglass://open/") return bad("only agentglass://open/ links are accepted");
+    let rest = path.slice(18); if (rest.endsWith("/")) rest = rest.slice(0, -1); // one trailing slash (some apps add it)
+    const parts = rest.split("/");
+    if (parts.length > 2 || parts.some((p: string) => !p)) return bad("expected agentglass://open/[harness/]session-id");
     const dec: string[] = [];
     for (const p of parts) { const d = pct(p); if (!d.ok) return bad("malformed %-escape in the link"); dec.push(d.v); }
     if (dec.length === 2) { h = dec[0] ?? ""; id = dec[1] ?? ""; } else id = dec[0] ?? "";

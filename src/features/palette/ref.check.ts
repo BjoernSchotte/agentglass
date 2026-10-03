@@ -22,6 +22,13 @@ const T: string[][] = [
   ["agentglass://open/%zz", "ERR"], ["agentglass://open/%252e%252e", "ERR"], ["agentglass://open/a/b/c", "ERR"],
   ["agentglass://open/bogus/abc123", "ERR"], ["agentglass://evil/abc123", "ERR"], ["abc123..x", "ERR"],
   ["agentglass://open/claude/..%2F..%2Fetc", "ERR"], ["abc123#call=a/b", "ERR"], ["abc123#ts=yesterday", "ERR"], ["", "ERR"],
+  // review: scheme and host are case-insensitive (RFC 3986), one trailing slash (some apps add it) is fine, an empty
+  // harness segment is not; traversal and smuggling stay refused after the one decoding pass
+  ["AGENTGLASS://Open/claude/abc123", "claude|abc123|||"], ["agentglass://open/claude/abc123/", "claude|abc123|||"],
+  ["agentglass://open/abc123/#call=c1", "|abc123|call|c1|"], ["agentglass://open//abc123", "ERR"], ["agentglass://open/claude/abc123//", "ERR"],
+  ["agentglass://open/%2e%2e%2fetc%2fpasswd", "ERR"], ["agentglass://open/claude/abc123?x=1", "ERR"], ["agentglass://open/claude/abc%00123", "ERR"],
+  ["agentglass://open/claude/abc123#call=%0a", "ERR"], ["agentglass://open/abc%23call=x", "ERR"], ["agentglass://open/claude%2Fabc123", "ERR"],
+  ["agentglass:abc123", "ERR"], ["agentglass:/open/abc123", "ERR"], ["file:///etc/passwd", "ERR"], ["claude:abc123;rm", "ERR"], ["$(id)abc", "ERR"],
 ];
 for (const c of T) { const got = f(parseRef(c[0] ?? "")); ok("parse " + JSON.stringify((c[0] ?? "").slice(0, 60)), got === c[1], got); }
 ok("error says why", parseRef("../x").err.indexOf("paths") >= 0, parseRef("../x").err);
