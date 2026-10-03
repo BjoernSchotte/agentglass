@@ -51,6 +51,12 @@ ORDER=$(grep -o '"t":"2026-09-30T14:[0-9:.]*Z","session":"[a-z0-9]*' "$T/out.jso
 [ "$(j '"kind":"shell","tool":"shell","text":"npm test"[^}]*"err":true')" ] || fail "failing npm test"
 [ "$(j '"kind":"commit","tool":"","text":"3f2a91c fix login redirect"')" ] || fail "commit row"
 [ "$(j '"project":{"key":"gitdir:[^"]*","label":"main"}')" ] || fail "project"
+# --redact: the same rows and flags (computed on the real files and commands), no real path, file or subject shown
+ag --redact --json --related c1aude00 --at "$D:06:43Z" > "$T/red.json" || { echo "FAIL --redact exit $?"; exit 1; }
+flags() { grep -o '"kind":"[a-z]*","tool":"[^"]*"\|"conflict":{"kind":"[a-z]*"\|"conflict":null' "$1" | tr '\n' ' '; }
+[ "$(flags "$T/out.json")" = "$(flags "$T/red.json")" ] || { echo "FAIL --redact flags differ"; flags "$T/out.json"; echo; flags "$T/red.json"; exit 1; }
+[ "$(grep -o '"conflict":{' "$T/red.json" | wc -l)" -ge 3 ] || { echo "FAIL --redact: expected ≥ 3 flags"; cat "$T/red.json"; exit 1; }
+if grep -qF -e "$T/w" -e '"src/a.ts"' -e "login redirect" "$T/red.json"; then echo "FAIL --redact leaks"; cat "$T/red.json"; exit 1; fi
 set +e; ag --json --related zzzzzz >/dev/null 2>&1; rc=$?; set -e
 [ $rc = 3 ] || { echo "FAIL unknown prefix rc $rc"; exit 1; }
 set +e; ag --json --related c1aude00 --minutes 0 >/dev/null 2>&1; rc=$?; set -e

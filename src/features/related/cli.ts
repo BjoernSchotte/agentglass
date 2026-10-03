@@ -10,7 +10,7 @@ import { section } from "../../util/config.ts";
 import { identOf } from "../query/project.ts";
 import { keyShown } from "../repos/cli.ts";
 import { ms } from "../callgraph/model.ts";
-import { type RelEv, relCfg } from "./model.ts";
+import { type RelEv, relCfg, fileShown } from "./model.ts";
 import { startBuild, stepBuild } from "./build.ts";
 
 export interface RelJson {
@@ -72,7 +72,7 @@ export function relatedJson(prefix: string, eventId: string, at: string, minutes
   if (!b) return { code: 3, json: "", err: "session " + s.id + " has no timestamps around that event", hint: "" };
   for (let g = 0; g < 100000 && stepBuild(b, 1e12, () => Date.now()); g++) { /* no tick budget in the CLI; the 16 MB cap stays */ }
   const iso = (t: number): string => new Date(t).toISOString();
-  const text = (r: RelEv): string => r.kind === "write" && r.files.length ? r.files.map((x) => x.rel).join(" ") : r.text; // writes: the files, repo-relative
+  const text = (r: RelEv): string => r.kind === "write" && r.files.length ? r.files.map((x) => fileShown(x)).join(" ") : r.text; // writes: the files, repo-relative
   const out: RelJson = {
     anchor: { session: s.id, harness: s.h, t: iso(b.anchor.t), kind: b.anchor.kind, text: text(b.anchor) },
     project: { key: keyShown(b.key), label: b.label }, from: iso(b.t0), to: iso(b.t1), sessions: [], events: [],
@@ -82,7 +82,7 @@ export function relatedJson(prefix: string, eventId: string, at: string, minutes
     const c = r.sess ? sessions.get(r.sess) : undefined;
     const fl = r.mark === "conflict" || r.mark === "overlap" || r.mark === "clobber";
     out.events.push({ t: iso(r.t), session: c ? c.id : null, harness: r.h, title: c ? titleOf(c) : "", kind: r.kind, tool: r.tool, text: text(r),
-      files: r.files.map((x) => x.rel), err: r.err, self: r.self, conflict: fl ? { kind: r.mark, with: r.withS.map((p: string) => idOf(p)) } : null });
+      files: r.files.map((x) => fileShown(x)), err: r.err, self: r.self, conflict: fl ? { kind: r.mark, with: r.withS.map((p: string) => idOf(p)) } : null });
   }
   return { code: 0, json: JSON.stringify(out), err: "", hint: "" };
 }

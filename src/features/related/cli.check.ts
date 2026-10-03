@@ -57,6 +57,25 @@ eq("out of scope → 3", String(relatedJson("aaaaaa11", "", "", 10, (s: Sess) =>
 sess("cccccc33", Q, [user(0, "secret plan alpha"), call(5, "call-q", "Bash", "{\"command\":\"cat secret-alpha.txt\"}")]);
 const q = relatedJson("cccccc33", "", "", 10, () => true);
 eq("redacted: no real title or content", String(q.code === 0 && q.json.indexOf("secret") < 0 && q.json.indexOf("private") < 0), "true");
+// --redact keeps the flags: conflicts and clobbers are computed on the real files and commands, only fakes are shown
+const sedit = "{\"file_path\":\"" + Q + "/src/secretmod.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}";
+sess("dddddd44", Q, [user(100, "one"), call(160, "call-d", "Edit", sedit), res(161, "call-d", "ok")]);
+sess("eeeeee55", Q, [user(110, "two"), call(190, "call-e", "Edit", sedit), res(191, "call-e", "ok")]);
+sess("ffffff66", Q, [user(120, "three"), call(200, "call-f", "Bash", "{\"command\":\"git reset --hard\"}"), res(201, "call-f", "HEAD is now at 1234567")]);
+const rq = relatedJson("dddddd44", "call-d", "", 10, () => true);
+let rj: { events: { session: string; kind: string; text: string; files: string[]; conflict: { kind: string; with: string[] } | null }[] } | null = null;
+try { rj = JSON.parse(rq.json); } catch (e) { rj = null; }
+if (!rj) { bad++; console.log("FAIL redact json: " + rq.err); } else {
+  const evs = rj.events;
+  const fl = (sid: string, k: string): string => evs.filter((e) => e.session === sid && e.kind === k && e.conflict !== null).map((e) => (e.conflict ? e.conflict.kind + ":" + e.conflict.with.slice().sort().join(",") : "")).join(" ");
+  eq("redacted: conflict of the first writer", fl("dddddd44", "write"), "conflict:eeeeee55");
+  eq("redacted: conflict of the second writer", fl("eeeeee55", "write"), "conflict:dddddd44");
+  eq("redacted: clobber over the others' writes", fl("ffffff66", "shell"), "clobber:dddddd44,eeeeee55");
+  const fs = evs.filter((e) => e.kind === "write").map((e) => e.files.join(","));
+  eq("redacted: both writes show one fake file", String(fs.length === 2 && fs[0] === fs[1] && (fs[0] ?? "") !== ""), "true");
+  eq("redacted: clobber shows the git command form", evs.filter((e) => e.session === "ffffff66" && e.kind === "shell").map((e) => e.text).join(""), "git reset --hard");
+}
+eq("redacted: no real path, file name or project", String(rq.json.indexOf("secretmod") < 0 && rq.json.indexOf("private") < 0 && rq.json.indexOf(D) < 0), "true");
 rmSync(D, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "related cli: all checks passed");
 process.exit(bad ? 1 : 0);

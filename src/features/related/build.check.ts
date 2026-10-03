@@ -4,6 +4,7 @@ import { mkdirSync, rmSync, writeFileSync, appendFileSync, statSync, readFileSyn
 import { type Ev, type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { harnessOf, parseEvents } from "../../harness/index.ts";
+import { H } from "../../hooks.ts";
 import { P } from "../../model/project.ts";
 import { ledger, accOf } from "../usage/ledger.ts";
 import { LOG } from "../rules/engine.ts";
@@ -131,6 +132,22 @@ const ra = sess("ra", D + "/proj", [user(-700000, "early"), user(0, "mid")], tru
 const tvEvs: Ev[] = [{ kind: "user", text: "early", ts: iso(-700000), id: "", full: "" }, { kind: "user", text: "mid", ts: iso(0), id: "", full: "" }];
 const br = startBuild(ra, tvEvs, 1, 10, 10);
 eq("reuse: anchor session done without reads", br ? String(br.next) + " " + String(br.bytes) + " " + kinds(br, ra.path) : "null", "1 0 prompt:mid");
+
+// event hooks that rewrite content (--redact): rows still match the real files, and the transcript's (fake) events are not reused
+reset();
+H.events.push((s: Sess | null, evs: Ev[], from: number) => { for (let i = from; i < evs.length; i++) { const e = evs[i]; if (e && e.kind === "tool") { e.text = "Edit\u0000/fake/x.ts"; e.full = "{\"file_path\":\"/fake/x.ts\"}"; } } });
+const qe = (dt: number, id: string): string => call(dt, id, "Edit", "{\"file_path\":\"" + D + "/proj/src/q.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}");
+const ha = sess("ha", D + "/proj", [user(-700000, "early"), qe(0, "q1")], true);
+sess("hb", D + "/proj", [user(10000, "b"), qe(60000, "q2")], true);
+const hEvs = evsOf(ha);
+const bh = startBuild(ha, hEvs, hEvs.length - 1, 10, 10);
+if (!bh) { bad++; console.log("FAIL hooks: no build"); } else {
+  run(bh);
+  eq("hooks: the anchor's log is read, not the fake transcript events", String(bh.bytes > 0), "true");
+  eq("hooks: conflict on the real file", bh.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.mark + ":" + (r.files[0]?.rel ?? "")).join(" "), "conflict:src/q.ts conflict:src/q.ts");
+  eq("hooks: the shown text is the hooked one", bh.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.text).join(" "), "/fake/x.ts /fake/x.ts");
+}
+H.events.length = 0;
 
 rmSync(D, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "related build: all checks passed");

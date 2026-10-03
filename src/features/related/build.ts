@@ -2,9 +2,9 @@
 // under a byte and time budget (spec related-events 2–3); nothing is persisted
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
-import { realCwd, display } from "../../hooks.ts";
+import { H, realCwd, display } from "../../hooks.ts";
 import { sessions, parentOf, loadHead } from "../../model/sessions.ts";
-import { harnessOf, sourceOf, window, parseEvents } from "../../harness/index.ts";
+import { harnessOf, sourceOf, window, parseRaw, hookedCopy } from "../../harness/index.ts";
 import { seekTime } from "../../harness/source.ts";
 import { type Ident, labelOf } from "../../model/project.ts";
 import { identOf, identSync } from "../query/project.ts";
@@ -13,7 +13,7 @@ import { ledger, pending } from "../usage/ledger.ts";
 import { dayKey } from "../usage/record.ts";
 import { LOG, severityOf } from "../rules/engine.ts";
 import { ms } from "../callgraph/model.ts";
-import { type RelEv, type RelSt, type Spawn, newSt, row, toRel, markConflicts } from "./model.ts";
+import { type RelEv, type RelSt, type Spawn, newSt, row, toRel, toRelShown, markConflicts } from "./model.ts";
 import { reflogCommits, worktreeGitdirs } from "./reflog.ts";
 import { REDACT } from "../redact-on.ts";
 
@@ -37,9 +37,9 @@ export function anchorTime(evs: Ev[], i: number): number {
   for (let j = i + 1; j < evs.length; j++) { const t = ms(evs[j].ts); if (t) return t; }
   return 0;
 }
-// epoch ms of the first event with a timestamp in one raw line (0 none); the parse runs the event hooks like any read
+// epoch ms of the first event with a timestamp in one raw line (0 none); no event hooks: only the time is read
 function tsOfLine(s: Sess): (l: string) => number {
-  return (l: string): number => { const evs: Ev[] = []; parseEvents(s.h, l, evs, s); for (const e of evs) { const t = ms(e.ts); if (t) return t; } return 0; };
+  return (l: string): number => { const evs: Ev[] = []; parseRaw(s.h, l, evs, s); for (const e of evs) { const t = ms(e.ts); if (t) return t; } return 0; };
 }
 // local [minute, minute) of the window inside one day starting at local midnight d0
 function minutesIn(a: number[], m0: number, m1: number): number {
@@ -123,9 +123,10 @@ export function startBuild(anchor: Sess, evs: Ev[], i: number, minutes: number, 
   const id: Ident | null = identSync(anchor);
   const top = topOf(anchor);
   const b = newBuild(anchorRow(anchor, evs[i], t, top), id, id ? display("repo", labelOf(id), anchor) : "", c.scope, t0, t1, conflictMinutes * 60000, c.paths, c.more);
-  // the open transcript already holds the window when it reaches back past t0: no re-read
+  // the open transcript already holds the window when it reaches back past t0: no re-read. Not when event hooks rewrite
+  // content (--redact): its events are the fakes, and files and commands must be matched on the real ones
   let first = 0; for (const x of evs) { first = ms(x.ts); if (first) break; }
-  if (first && first <= t0) {
+  if (first && first <= t0 && !H.events.length) {
     b.tops.set(anchor.path, top); b.st.last = 0;
     toRel(evs, anchor.path, anchor.h, realCwd(anchor), top, true, t0, t1, b.st, b.all);
     b.last.set(anchor.path, b.st.last); b.cur.set(anchor.path, anchor.size); b.end.set(anchor.path, anchor.size);
@@ -203,9 +204,10 @@ function readWindow(b: Build, s: Sess): boolean {
   const next = r.next > at ? r.next : Math.min(end, at + win); // a record longer than a window: skip it
   b.bytes += (next - at) * src.unit; b.cur.set(s.path, next);
   const evs: Ev[] = [];
-  for (const l of r.lines) parseEvents(s.h, l, evs, s);
+  for (const l of r.lines) parseRaw(s.h, l, evs, s);
+  const red = H.events.length > 0; // --redact: rows match the real events, show the hooked copies
   b.st.last = b.last.get(s.path) ?? 0;
-  toRel(evs, s.path, s.h, realCwd(s), b.tops.get(s.path) ?? "", s.path === b.anchor.sess, b.t0, b.t1, b.st, b.all);
+  toRelShown(evs, red ? hookedCopy(s, evs) : evs, red, s.path, s.h, realCwd(s), b.tops.get(s.path) ?? "", s.path === b.anchor.sess, b.t0, b.t1, b.st, b.all);
   b.last.set(s.path, b.st.last);
   let past = false; for (const e of evs) if (ms(e.ts) > b.t1) { past = true; break; }
   return past || next >= end;

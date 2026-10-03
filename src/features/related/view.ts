@@ -19,7 +19,7 @@ import { ms } from "../callgraph/model.ts";
 import { graphAnchor } from "../callgraph/view.ts";
 import { parse } from "../query/parse.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
-import { type RelEv, type FileRef, KIND_SETS, relCfg } from "./model.ts";
+import { type RelEv, type FileRef, KIND_SETS, relCfg, fileShown } from "./model.ts";
 import { type Build, startBuild, stepBuild, repoll, isAnchor } from "./build.ts";
 
 export const NAME = "related";
@@ -146,7 +146,7 @@ function note(st: RState, r: RelEv): string {
   return "may discard " + who(o) + more + "'s edits from " + dur(r.dt) + " before";
 }
 function rowText(r: RelEv): string {
-  if (r.kind === "write" && r.files.length) return r.files.map((f: FileRef) => f.rel).join(" ");
+  if (r.kind === "write" && r.files.length) return r.files.map((f: FileRef) => fileShown(f)).join(" ");
   return clean(r.text);
 }
 function status(r: RelEv): string {
@@ -216,7 +216,7 @@ export function viewLines(st: RState, w: number, h: number): string[] {
   let info = "";
   if (r) { // the selected row in full: whole text, every file, the note, then whose
     const s = r.sess ? sessions.get(r.sess) : undefined;
-    const files = r.files.map((f: FileRef) => (f.top && f.top !== st.b.anchor.top ? (worktree(r.sess) || "other") + ":" : "") + f.rel).join(" ");
+    const files = r.files.map((f: FileRef) => (f.top && f.top !== st.b.anchor.top ? (worktree(r.sess) || "other") + ":" : "") + fileShown(f)).join(" ");
     const nt = note(st, r);
     info = clock(r.t) + " · " + (r.kind === "write" && files ? files : clean(r.text)) + (nt ? " · " + nt : "") + (s ? " · " + harnessOf(s.h).label + " · " + clean(titleOf(s)) : "");
   }
