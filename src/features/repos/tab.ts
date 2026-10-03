@@ -3,6 +3,7 @@
 // List (one row per project) and, in the same tab, a project's detail: its sessions, most-changed files, failing tools
 // and branches. The active and pinned filters apply to the sessions before grouping.
 import { fit, fitStyled, fillTo, width, vwidth, clean, numAt, ago } from "../../util/text.ts";
+import { basename } from "node:path";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, type Tab, display } from "../../hooks.ts";
@@ -221,11 +222,14 @@ function sessRow(s: Sess, days: string[]): SRow {
   return o;
 }
 const whereMemo = new Map<string, string>();
-function whereOf(s: Sess): string {
+// the session's checkout: a linked worktree's name; with several checkouts (clones) the checkout's dir name; plus
+// ":sub/dir" below its top ("repo:sub/dir" with one checkout)
+function whereOf(s: Sess, multi: boolean): string {
   const id = identOf(s); if (!id) return "";
   if (id.worktree) return display("repo", id.worktree, s);
-  const cw = realCwd(s); const k = id.key + "\t" + cw; const hit = whereMemo.get(k); if (hit !== undefined) return hit;
-  const sub = subOf(id, cw); const w = sub ? "repo:" + display("file", sub, s) : "";
+  const cw = realCwd(s); const k = id.key + "\t" + cw + "\t" + (multi ? "m" : ""); const hit = whereMemo.get(k); if (hit !== undefined) return hit;
+  const sub = subOf(id, cw); const name = multi && id.top ? display("repo", basename(id.top), s) : "repo";
+  const w = sub ? name + ":" + display("file", sub, s) : multi ? name : "";
   if (whereMemo.size > 2000) whereMemo.clear();
   whereMemo.set(k, w); return w;
 }
@@ -287,7 +291,7 @@ function renderDetail(): void {
     if (!s.headDone && heads < 40) { loadHead(s); heads++; S.dirty = true; } // titles of visible rows (Claude/Codex: from the head)
     const x = sessRow(s, rr.days); const ad = isHarness(s.h) ? harnessOf(s.h) : null; const b = on ? bg(C.sel) : "";
     const mk = ad ? fg(ad.color()) + ad.mark + RST + b + " " : "  ";
-    return mk + (on ? fg(C.text) + CSI + "1m" : fg(C.sub)) + fit(clean(titleOf(s)), tW) + RST + b + " " + (whW ? fg(C.dim) + fit(whereOf(s), whW - 1) + " " + RST + b : "") +
+    return mk + (on ? fg(C.text) + CSI + "1m" : fg(C.sub)) + fit(clean(titleOf(s)), tW) + RST + b + " " + (whW ? fg(C.dim) + fitL(whereOf(s, rr.worktrees.size > 1), whW - 1) + " " + RST + b : "") +
       (brW ? fg(C.purple) + fit(clean(s.branch), brW - 1) + " " + RST + b : "") + rjs(costCell(x, money(x.cost, asBill(s.bill))), cW) + b + fg(C.text) + rj(x.act > 0 ? hm(x.act) : "·", aW) + RST + b + errCell(x.err, x.calls, eW);
   }, RV.file ? "no session of this period changed it" : "no sessions");
   // right column heights
