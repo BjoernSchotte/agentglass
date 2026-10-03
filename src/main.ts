@@ -164,7 +164,10 @@ H.helpSections.push({ name: "refresh", ctx: "", keys: [
   ["tmux", "set -g focus-events on: lets it see it is hidden"] ] });
 
 function main(): void {
-  const args = process.argv.slice(2);
+  // flags of every command go last, so handlers find their command at args[0] (agentglass --no-agent cost)
+  const GLOBAL = ["--agent", "--no-agent", "--redact"];
+  const raw = process.argv.slice(2);
+  const args = raw.filter((a: string) => GLOBAL.indexOf(a) < 0).concat(raw.filter((a: string) => GLOBAL.indexOf(a) >= 0));
   for (const f of H.cli) if (f(args)) return;
   // inside a coding agent the TUI would hang its tool call (PTY shells pass the TTY check): what exists, as compact JSON
   if (agentHost().on) { writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0); }

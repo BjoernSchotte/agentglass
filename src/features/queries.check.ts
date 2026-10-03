@@ -7,8 +7,9 @@ import { accOf } from "./usage/ledger.ts";
 import { tokens, bucket, dayKey, num } from "./usage/record.ts";
 import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { Ev } from "../model/types.ts";
+import type { Obj } from "../util/json.ts";
 import { arr, obj, str } from "../util/json.ts";
-import { modelRows, sessionObj, errorRows, parseSince, midnightOf } from "./queries.ts";
+import { modelRows, sessionObj, errorRows, parseSince, midnightOf, costRows } from "./queries.ts";
 import { scopeOf } from "./agentenv.ts";
 import { startOfDay } from "./usage/record.ts";
 import { loopRuns } from "./watchdog.ts";
@@ -18,7 +19,7 @@ function dayKeyOf(ms: number): string { return dayKey(new Date(ms)); }
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 const dir = "/tmp/agentglass-queries-keepme-" + String(process.pid); // keepme: the suite's AGENTGLASS_REDACT_KEEP, content stays real
 rmSync(dir, { recursive: true, force: true }); mkdirSync(dir + "/p1/.git", { recursive: true }); mkdirSync(dir + "/p2/.git", { recursive: true });
-function put(h: string, id: string, cwd: string): Sess { const s = newSess(h, id, dir + "/" + h + "-" + id + ".jsonl", false); s.cwd = cwd; s.mtime = 1; sessions.set(s.path, s); return s; }
+function put(h: string, id: string, cwd: string): Sess { const s = newSess(h, id, dir + "/" + h + "-" + id + ".jsonl", false); s.cwd = cwd; s.mtime = Date.parse("2026-10-01T12:00:00.000Z"); sessions.set(s.path, s); return s; }
 
 // ── per-model rows from the per-model day buckets ──
 const D1 = "2026-09-30T10:00:00.000Z"; const D2 = "2026-10-01T10:00:00.000Z";
@@ -104,6 +105,31 @@ eq("errors: limit", String(errorRows("", 0, 1, sc1, "").rows.length), "1");
 eq("errors: --all-projects", String(errorRows("", 0, 0, scopeOf(true, ["--all-projects"], "", dir + "/p1"), "").rows.length), "3");
 eq("errors: since drops older", String(errorRows("", Date.parse(T(45)), 0, sc1, "").rows.length), "1");
 eq("errors: harness", String(errorRows("", 0, 0, sc1, "codex").rows.length), "0");
+
+// ── cost rows: two days, two models (one unpriced), two harnesses, three projects ──
+const cx = put("codex", "cx-9", dir + "/p1"); const ax = accOf(cx);
+tokens(ax, bucket(ax, 0, D2), "gpt-x", 0, 50, 0, 0, 0);
+tokens(ax, bucket(ax, 0, D2), "claude-sonnet-4-5", 1000, 0, 0, 0, 0);
+const all = scopeOf(true, ["--all-projects"], "", dir + "/p1");
+function keyed(rows: Obj[]): Map<string, Obj> { const m = new Map<string, Obj>(); for (const r of rows) m.set(str(r["key"]), r); return m; }
+function totalOf(by: string): string { const t = keyed(costRows("2026-09-01", by, all, "")).get("total"); return t ? [t["in"], t["out"], t["cacheRead"], t["cacheWrite"], t["costUsd"], t["unpricedTokens"], t["sessions"]].map((v) => String(v)).join(",") : "-"; }
+const tm = totalOf("model");
+eq("cost: by model total = by harness total", tm, totalOf("harness"));
+eq("cost: by day total = by session total", totalOf("day"), totalOf("session"));
+eq("cost: by project total", totalOf("project"), tm);
+const bm = costRows("2026-09-01", "model", all, "");
+let sumIn = 0; let sumCost = 0; for (const r of bm) if (str(r["key"]) !== "total") { sumIn += num(r["in"]); sumCost += num(r["costUsd"]); }
+const tr = keyed(bm).get("total");
+eq("cost: model rows add up to the total", String(sumIn) + "|" + String(Math.round(sumCost * 1e6)), tr ? String(tr["in"]) + "|" + String(Math.round(num(tr["costUsd"]) * 1e6)) : "-");
+const gxr = keyed(bm).get("gpt-x");
+eq("cost: unpriced model row", gxr ? String(gxr["costUsd"]) + "|" + String(gxr["unpricedTokens"]) : "-", "null|150");
+const bd = costRows("2026-09-01", "day", all, "");
+eq("cost: one row per day + total", bd.map((r) => str(r["key"])).join(","), [dayKey(new Date(D1)), dayKey(new Date(D2)), "total"].filter((k: string, i: number, a: string[]) => a.indexOf(k) === i).join(","));
+eq("cost: since drops older days", String(keyed(costRows(dayKey(new Date(D2)), "day", all, "")).has(dayKey(new Date(D1)))), "false");
+const bh = keyed(costRows("2026-09-01", "harness", all, "codex"));
+eq("cost: --harness", [...bh.keys()].join(","), "codex,total");
+const pj = keyed(costRows("2026-09-01", "session", scopeOf(true, [], "", dir + "/p1"), ""));
+eq("cost: project scope drops other projects", String(pj.has("claude:" + SID2)) + "|" + String(pj.has("claude:m-1")) + "|" + String(pj.has("codex:cx-9")), "false|false|true");
 
 // ── --since ──
 const now = Date.parse("2026-10-03T15:30:00.000Z");

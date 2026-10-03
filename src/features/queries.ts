@@ -202,6 +202,53 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
   return { rows, source: "recent" };
 }
 
+// ── cost rows ────────────────────────────────────────────────────────────────
+export const BY = ["day", "model", "harness", "project", "session"];
+// TODO(filter-language): aggregate(<filter>, "session", days, [by], "cost") once the shared evaluator exists; until then the
+// ledger's day buckets (the Stats tab's source): per day/harness/project/session the Day totals, per model Day.mt / Day.um.
+// Rows by key (cost desc; days in date order) + a final "total" row from the Day totals; costUsd null for all-unpriced rows
+export function costRows(sinceKey: string, by: string, sc: Scope, harness: string): Obj[] {
+  const acc = new Map<string, number[]>(); // key → [in, out, cacheRead, cacheWrite, cost, unpriced]
+  const who = new Map<string, string[]>(); // key → session paths
+  const tot = [0, 0, 0, 0, 0, 0]; const all: string[] = [];
+  const sum = (r: number[], v: number[]): void => { for (let i = 0; i < 6; i++) r[i] = (r[i] ?? 0) + (v[i] ?? 0); };
+  const add = (k: string, s: Sess, v: number[]): void => {
+    let r = acc.get(k); if (!r) { r = [0, 0, 0, 0, 0, 0]; acc.set(k, r); }
+    sum(r, v);
+    let w = who.get(k); if (!w) { w = []; who.set(k, w); } if (w.indexOf(s.path) < 0) w.push(s.path);
+  };
+  const from = midnightOf(sinceKey);
+  for (const s of sessions.values()) {
+    if ((harness && s.h !== harness) || s.mtime < from || !visible(s, sc)) continue;
+    complete(s);
+    const a = accOf(s); let used = false;
+    for (const [k, d] of a.days) {
+      if (k < sinceKey) continue;
+      const v = [d.inTok, d.outTok, d.cr, d.cw, d.cost, d.unk];
+      if (d.inTok + d.outTok + d.cr + d.cw + d.unk === 0 && d.cost === 0) continue;
+      used = true;
+      sum(tot, v);
+      if (by === "model") {
+        const ms = new Set<string>();
+        for (const [m, r] of d.mt) { ms.add(m); add(m, s, [r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0, d.um.get(m) ?? 0]); }
+        for (const [m, n] of d.um) if (!ms.has(m)) add(m, s, [0, 0, 0, 0, 0, n]);
+      } else add(by === "day" ? k : by === "harness" ? s.h : by === "project" ? base(s.cwd) || "(unknown)" : s.h + ":" + s.id, s, v);
+    }
+    if (used) all.push(s.path);
+  }
+  const row = (k: string, r: number[], n: number): Obj => {
+    const c = r[4] ?? 0; const unk = r[5] ?? 0;
+    return { key: k, in: r[0] ?? 0, out: r[1] ?? 0, cacheRead: r[2] ?? 0, cacheWrite: r[3] ?? 0, costUsd: c === 0 && unk > 0 ? null : r6(c), unpricedTokens: unk, sessions: n };
+  };
+  const ks = [...acc.keys()];
+  const cost = (k: string): number => { const r = acc.get(k) ?? []; return r[4] ?? 0; };
+  if (by === "day") ks.sort(); else ks.sort((x, y) => cost(y) - cost(x) || (x < y ? -1 : x > y ? 1 : 0));
+  const out: Obj[] = [];
+  for (const k of ks) out.push(row(k, acc.get(k) ?? [], (who.get(k) ?? []).length));
+  out.push(row("total", tot, all.length));
+  return out;
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────
 function out(text: string): void { try { writeSync(1, screenOut(text) + "\n"); } catch (e) { process.exit(0); } }
 export interface QOpts { ref: string; root: boolean; since: string; sinceMs: number; cwd: string; limit: number; live: boolean; subs: boolean; harness: string; by: string; check: boolean; json: boolean; f: Fmt }
@@ -241,9 +288,10 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
   if (ref !== "current" && ref !== "parent" && !visible(s, sc)) cliError("out_of_scope", "session " + s.id + " belongs to another project", "use --all-projects", 3);
   return s;
 }
+export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
 function envelope(rows: Obj[], source: string, sc: Scope): string { return JSON.stringify({ rows, source, scope: sc.name }); }
 // json → the {rows, source, scope} envelope (compact inside an agent and in pipes); other formats → bare rows
-function printEnvelope(rows: Obj[], source: string, sc: Scope, f: Fmt, tableCols: string[], known: string[]): void {
+export function printEnvelope(rows: Obj[], source: string, sc: Scope, f: Fmt, tableCols: string[], known: string[]): void {
   const fmt = f.fmt || (agentHost().on || process.stdout.isTTY !== true ? "json" : "table");
   if (fmt !== "json") { out(formatRows(rows, { fmt, fields: f.fields }, false, tableCols, known, false)); return; }
   const r = f.fields.length ? JSON.parse(formatRows(rows, { fmt: "json", fields: f.fields }, false, tableCols, known, false)) as Obj[] : rows;

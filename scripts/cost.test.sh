@@ -35,6 +35,16 @@ echo "$txt" | grep -q "spend" || { echo "FAIL text has no spend tag"; echo "$txt
 echo "$txt" | grep -q "unpriced (month): gpt-x-unknown 5.0K" || { echo "FAIL text has no unpriced line"; echo "$txt"; fail=1; }
 run cost --help | grep -q -- "--check" || { echo "FAIL cost --help"; fail=1; }
 run --help | grep -q "agentglass cost" || { echo "FAIL --help lists cost"; fail=1; }
+# cli-agent-mode: inside an agent the summary is the same JSON; rows with --by/--since; csv needs rows; --check in both forms
+eq "agent summary = --json" "$(AGENTGLASS_AGENT=1 run cost)" "$(run cost --json)"
+set +e; run cost --format csv > /dev/null 2>&1; rc=$?; run cost --check --by day > "$t/rows" 2>/dev/null; rc2=$?; set -e
+eq "csv without --by" "$rc" 2
+eq "--check with rows" "$rc2" 3
+eq "rows: day + total" "$(jq -r '.rows | map(.key) | length' < "$t/rows")" 2
+eq "rows: total cost" "$(jq -r '.rows[-1].costUsd' < "$t/rows")" 3
+eq "rows envelope source" "$(jq -r '.source' < "$t/rows")" ledger
+eq "by model csv" "$(run cost --by model --format csv | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions"
+eq "unpriced model row" "$(run cost --by model --format csv | grep '^gpt-x-unknown,')" "gpt-x-unknown,5000,0,0,0,,5000,1"
 # a bad budget value: ignored with one warning on stderr, the run still succeeds
 printf '{"budget":{"monthlyUsd":"1"}}\n' > "$t/home/.agentglass/config.json"
 eq "bad budget" "$(run cost --json 2>"$t/err" | jq -r '.budget')" null
