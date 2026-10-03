@@ -244,7 +244,7 @@ export function realCwd(s: Sess): string { const r = recs.get(s.path); const rea
 // owner/name → fake/fake (a leading host stays); ~/… and absolute paths like cwds; " (gone)" and "(no project)" kept
 function fakeRepo(text: string): string {
   const gone = text.endsWith(" (gone)"); const t = gone ? text.slice(0, -7) : text;
-  if (!t || t.startsWith("(")) return text;
+  if (!t || t.startsWith("(") || t === "~") return text; // the home dir as a project names nobody
   let out = "";
   if (t.startsWith("~/") || t.startsWith("/")) { const p = t.startsWith("~/") ? HOME + t.slice(1) : t; learnPath(p, false); const f = fakeCwd(p); out = f.startsWith(HOME + "/") ? "~" + f.slice(HOME.length) : f; }
   else {

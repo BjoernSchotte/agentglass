@@ -91,7 +91,7 @@ const f1 = display("repo", "me/project-x", null); const f2 = display("repo", "me
 eq("repo faked", f1 !== "me/project-x" ? "y" : f1, "y"); eq("repo shape", String(f1.split("/").length), "2"); eq("repo stable", f2, f1);
 const fh = display("repo", "github.com/acmecorp/secretproj", null);
 eq("host kept", fh.startsWith("github.com/") && fh.indexOf("secretproj") < 0 ? "y" : fh, "y");
-eq("no project kept", display("repo", "(no project)", null), "(no project)");
+eq("no project kept", display("repo", "(no project)", null), "(no project)"); eq("home kept", display("repo", "~", null), "~");
 const fr = display("remote", "https://github.com/acmecorp/secretproj", null);
 eq("remote faked", fr.startsWith("https://github.com/") && fr.indexOf("secretproj") < 0 && fr.indexOf("acmecorp") < 0 ? "y" : fr, "y");
 const rs = sess("claude", "rd1", T + "/w1", "");
