@@ -270,7 +270,9 @@ export function renderPalette(): void {
   const title = " Go to… "; const sc = " " + (P.levels.length ? "session actions" : SCOPES[scopeOf()]) + " ";
   put(x0, y0, bc + "╭─" + CSI + "1m" + fg(C.text) + title + RST + bc + "─".repeat(Math.max(0, w - 4 - width(title) - width(sc))) + fg(C.dim) + sc + bc + "─╮" + RST);
   const ph = P.levels.length ? "actions for this session — ← back" : "actions, sessions, projects, tabs — > @ # : ?";
-  const inp = P.q ? fg(C.text) + fit(P.q + "▏", iw - 3) : fg(C.text) + "▏" + fg(C.dim) + fit(ph, iw - 4);
+  const qw = iw - 2; // after "› "
+  const qt = Array.from(P.q + "▏"); while (qt.length > 1 && width(qt.join("")) > qw) qt.shift(); // a long query shows its end
+  const inp = P.q ? fg(C.text) + fit(qt.join(""), qw) : fg(C.text) + "▏" + fg(C.dim) + fit(ph, qw - 1);
   put(x0, y0 + 1, bc + "│" + RST + bg(C.panel) + fg(C.accent) + CSI + "1m› " + RST + bg(C.panel) + inp + RST + bc + "│" + RST);
   if (P.sel < P.scroll) P.scroll = P.sel;
   if (P.sel >= P.scroll + nr) P.scroll = P.sel - nr + 1;

@@ -10,6 +10,7 @@ import { H } from "../../hooks.ts";
 import { onInput, keyName, tokens } from "../../input.ts";
 import { renderTranscript, openTranscript } from "../../ui/transcript.ts";
 import { buf } from "../../ui/screen.ts";
+import { vwidth } from "../../util/text.ts";
 import { renderFooter, footKey } from "../../ui/footer.ts";
 import { screenOut } from "../../hooks.ts";
 import { harnessIds } from "../../harness/index.ts";
@@ -149,6 +150,14 @@ ok("one project item for the repo and its worktree", pi.length === 1 && identNow
 if (pi.length === 1) { while (selected() !== null && selected()?.id !== pi[0].id && P.sel < rows().length - 1) key("\x1b[B"); key("\r"); }
 ok("Sessions filtered to that repo", S.view.indexOf(r1) >= 0 && S.view.indexOf(r2) >= 0 && S.view.indexOf(s1) < 0, String(S.view.length));
 setLocal("Sessions", []);
+// every row of the box is equally wide (the input row was one column short), also with a query wider than the box
+for (const q of ["", "todo", "x".repeat(150)]) {
+  key("\x0b"); type(q); buf.length = 0; renderPalette();
+  const ws = new Set<number>(); for (const l of buf) { const w = vwidth(l); if (w > 2) ws.add(w); }
+  ok("box rows equally wide (query " + String(q.length) + ")", ws.size === 1, JSON.stringify(Array.from(ws)));
+  if (q.length > 100) ok("a long query shows its end (the cursor)", buf.some((l: string) => screenOut(l).indexOf("xxx▏") >= 0), "");
+  key("\x1b");
+}
 // discoverable: the footer shows a clickable ^K wherever Ctrl+K works (it was on the Sessions/Processes list only)
 for (const m of ["list", "transcript"]) {
   S.mode = "list"; S.tv = null; S.tab = 2; if (m === "transcript") { openTranscript(s1); renderTranscript(); }
