@@ -47,6 +47,15 @@ function lineCounts(full: string): number[] {
   const p = str(o["input"]) || str(o["patch"]); if (p) { let a = 0; let d = 0; for (const f of patchFiles(p)) { a += f.add; d += f.del; } return [a, d]; }
   return [0, 0];
 }
+// a shell call's command line: Codex passes {"command":["bash","-lc","…"]} (or "cmd") as raw JSON arguments
+export function shellCmd(arg: string): string {
+  const o = parse(arg.trim()); if (!o) return arg;
+  const c = o["command"] ?? o["cmd"];
+  if (typeof c === "string") return c;
+  const a = arr(c).map((x: unknown) => str(x));
+  if (a.length >= 3 && /(^|\/)(ba|z)?sh$/.test(a[0] ?? "") && /^-l?c$/.test(a[1] ?? "")) return a.slice(2).join(" ");
+  return a.length ? a.join(" ") : arg;
+}
 const BANNER = /^\[(?:detached HEAD|[^\]\s]+)(?: \(root-commit\))? ([0-9a-f]{7,40})\] (.*)$/;
 const DENIED = /^The user doesn't want to proceed/;
 
@@ -67,7 +76,8 @@ export function toRel(evs: Ev[], sess: string, h: string, cwd: string, top: stri
       r.evKind = e.kind; r.evText = e.text; out.push(r); continue;
     }
     const name = toolName(e); const arg = toolArg(e); const cat = catOf(name);
-    const r = row(t, e.ts, sess, h, top, CAT_KIND[cat] ?? "read", name, firstLine(arg, 300), self);
+    const kind = CAT_KIND[cat] ?? "read";
+    const r = row(t, e.ts, sess, h, top, kind, name, firstLine(kind === "shell" ? shellCmd(arg) : arg, 300), self);
     r.cat = cat; r.evKind = e.kind; r.evId = e.id; r.evText = e.text;
     for (const abs of filesOf([e.text, e.full], cwd)) { const f = fileRef(abs, top); if (!r.files.some((x: FileRef) => x.top === f.top && x.rel === f.rel)) r.files.push(f); }
     if (r.kind === "write") { const lc = lineCounts(e.full); r.add = lc[0] ?? 0; r.del = lc[1] ?? 0; }

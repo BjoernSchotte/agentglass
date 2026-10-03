@@ -1,7 +1,7 @@
 // agentglass — self-check for the related-events model: scriptc build src/features/related/model.check.ts -o rm && ./rm
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev } from "../../model/types.ts";
-import { type RelEv, type RelSt, type Spawn, newSt, fileRef, toRel, markConflicts, clobberCmd, relCfg, KIND_SETS } from "./model.ts";
+import { type RelEv, type RelSt, type Spawn, newSt, shellCmd, fileRef, toRel, markConflicts, clobberCmd, relCfg, KIND_SETS } from "./model.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -40,6 +40,11 @@ eq("prompt text: first line", misc[4]?.text ?? "", "fix the login");
 eq("prompt locates its event", (misc[4]?.evKind ?? "") + "|" + (misc[4]?.evText ?? ""), "user|fix the login\nplease");
 eq("fileRef inside", JSON.stringify(fileRef("/w/main/x/y.ts", "/w/main")), JSON.stringify({ top: "/w/main", rel: "x/y.ts" }));
 eq("fileRef prefix is not inside", JSON.stringify(fileRef("/w/main2/y.ts", "/w/main")), JSON.stringify({ top: "", rel: "/w/main2/y.ts" }));
+// codex shell: raw JSON arguments → the command line; "Process exited with code 1" is a failure
+const cxs: RelEv[] = []; toRel([tool("shell", "{\"command\":[\"bash\",\"-lc\",\"npm test\"]}", 70, "s1", ""), ev("result", "Process exited with code 1\nWall time: 1s", 71, "s1", "")], "B", "codex", "/w/wt2", "/w/wt2", false, W0, W1, newSt(), cxs);
+eq("codex shell: command line, failed", (cxs[0]?.text ?? "") + " " + String(cxs[0]?.err), "npm test true");
+eq("shellCmd plain", shellCmd("ls -la"), "ls -la");
+eq("shellCmd cmd key", shellCmd("{\"cmd\":\"git status\"}"), "git status");
 // ── denial: Claude's recorded refusal → the call's row plus an alert row at the result's time ──
 const den = rows([tool("Edit", "/w/main/src/a.ts", 20, "d1", "{\"file_path\":\"/w/main/src/a.ts\"}"), ev("result", "The user doesn't want to proceed with this tool use. The tool use was rejected.", 25, "d1", "")], "A", "/w/main", "/w/main");
 eq("denied: call + alert", show(den), "write:Edit:err alert::ok");

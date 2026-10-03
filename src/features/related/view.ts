@@ -119,8 +119,10 @@ function flagged(r: RelEv): boolean { return r.mark === "conflict" || r.mark ===
 // ── text ──
 function off(dt: number): string {
   const s = Math.round(Math.abs(dt) / 1000); const m = Math.floor(s / 60); const x = s % 60;
-  return (dt < 0 ? "-" : dt > 0 ? "+" : " ") + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0");
+  return (s === 0 ? " " : dt < 0 ? "-" : "+") + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0");
 }
+// the end of a long name: worktrees of one repo usually differ in their suffix (app-wt, app-fix)
+function tailFit(v: string, n: number): string { const c: string[] = []; for (const ch of v) c.push(ch); return c.length <= n ? v + " ".repeat(n - c.length) : "…" + c.slice(c.length - n + 1).join(""); }
 function clock(t: number): string { const d = new Date(t); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") + ":" + String(d.getSeconds()).padStart(2, "0"); }
 function dur(m: number): string { const s = Math.round(m / 1000); return s < 60 ? String(s) + "s" : String(Math.floor(s / 60)) + "m" + (s % 60 ? String(s % 60).padStart(2, "0") + "s" : ""); }
 function who(path: string): string { const s = sessions.get(path); return s ? harnessOf(s.h).mark + " " + clean(titleOf(s)) : "(gone)"; }
@@ -187,8 +189,8 @@ function line(st: RState, r: RelEv, w: number, on: boolean): string {
   const ttl = s ? harnessOf(s.h).mark + " " + fit(clean(titleOf(s)), 16) : fit(r.sess ? "(gone)" : "(no session)", 18);
   const wt = r.sess && r.sess !== st.b.anchor.sess ? worktree(r.sess) : "";
   const aw = worktree(st.b.anchor.sess);
-  const wtag = wt && wt !== aw ? fit(wt, 6) + " " : "";
-  const k = (GLYPH[r.kind] ?? "·") + " " + fit(r.tool || r.kind, 6);
+  const wtag = wt && wt !== aw ? tailFit(wt, 6) + " " : "";
+  const k = (GLYPH[r.kind] ?? "·") + " " + fit(r.tool || r.kind, w >= 100 ? 10 : 6);
   const nt = note(st, r); const stt = status(r);
   const left = mk + RST + " " + fg(C.dim) + off(r.t - st.b.anchor.t) + " " + (w >= 70 ? clock(r.t) + " " : "") + RST + fg(tint) + ttl + RST + " " + fg(C.dim) + wtag + RST + fg(tint) + k + RST + " ";
   const lw = width(left.replace(/\x1b\[[0-9;]*m/g, ""));
@@ -212,11 +214,11 @@ export function viewLines(st: RState, w: number, h: number): string[] {
   }
   const r = rowAt(st, st.sel);
   let info = "";
-  if (r) { // the selected row in full: whole text, every file, the note
+  if (r) { // the selected row in full: whole text, every file, the note, then whose
     const s = r.sess ? sessions.get(r.sess) : undefined;
     const files = r.files.map((f: FileRef) => (f.top && f.top !== st.b.anchor.top ? (worktree(r.sess) || "other") + ":" : "") + f.rel).join(" ");
     const nt = note(st, r);
-    info = (s ? harnessOf(s.h).label + " · " + clean(titleOf(s)) + " · " : "") + clock(r.t) + " · " + (r.kind === "write" && files ? files : clean(r.text)) + (nt ? " · " + nt : "");
+    info = clock(r.t) + " · " + (r.kind === "write" && files ? files : clean(r.text)) + (nt ? " · " + nt : "") + (s ? " · " + harnessOf(s.h).label + " · " + clean(titleOf(s)) : "");
   }
   L.push(fg(C.sub) + fit(" " + info, w) + RST);
   return L.map((l: string) => l + fillTo(l, w));

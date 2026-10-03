@@ -51,7 +51,7 @@ eq("bad --at → 2", String(relatedJson("aaaaaa11", "", "yesterday-ish", 10, () 
 const early = relatedJson("bbbbbb22", "", iso(-3600), 10, () => true);
 eq("--at before the first event → the first event", early.code === 0 ? String(JSON.parse(early.json).anchor.t) : early.err, iso(30));
 const late = relatedJson("bbbbbb22", "", "", 10, () => true);
-eq("no --event/--at → the last event", late.code === 0 ? String(JSON.parse(late.json).anchor.t) : late.err, iso(131));
+eq("no --event/--at → the last event (a result: its call's row)", late.code === 0 ? String(JSON.parse(late.json).anchor.t) + " " + String(JSON.parse(late.json).anchor.kind) : late.err, iso(130) + " write");
 eq("out of scope → 3", String(relatedJson("aaaaaa11", "", "", 10, (s: Sess) => s.id !== "aaaaaa11").code), "3");
 // --redact (the checks run with AGENTGLASS_REDACT=1): titles, labels and content of a non-kept project are the fakes
 sess("cccccc33", Q, [user(0, "secret plan alpha"), call(5, "call-q", "Bash", "{\"command\":\"cat secret-alpha.txt\"}")]);

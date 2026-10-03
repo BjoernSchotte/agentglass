@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
 import { realCwd, display } from "../../hooks.ts";
-import { sessions, parentOf } from "../../model/sessions.ts";
+import { sessions, parentOf, loadHead } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window, parseEvents } from "../../harness/index.ts";
 import { seekTime } from "../../harness/source.ts";
 import { type Ident, labelOf } from "../../model/project.ts";
@@ -142,7 +142,7 @@ function extras(b: Build): void {
     if (b.st.seen.has(key)) continue;
     b.st.seen.add(key);
     const s = sessions.get(tr.path);
-    b.all.push(row(tr.at, new Date(tr.at).toISOString(), tr.path, s ? s.h : "", s ? b.tops.get(tr.path) ?? "" : "", "alert", "", tr.rule + " " + severityOf(tr.to) + (tr.state === "escalate" ? " (escalated)" : ""), b.anchor.sess === tr.path));
+    b.all.push(row(tr.at, new Date(tr.at).toISOString(), tr.path, s ? s.h : "", s ? b.tops.get(tr.path) ?? "" : "", "alert", "", tr.rule + " alert (" + severityOf(tr.to) + (tr.state === "escalate" ? ", escalated" : "") + ")", b.anchor.sess === tr.path));
   }
 }
 function reflogRows(b: Build): void {
@@ -174,7 +174,9 @@ function settle(b: Build): void {
   if (b.next >= b.cands.length) reflogRows(b);
   spawns(b);
   const rows = b.all.slice(); for (const r of b.refl) rows.push(r);
-  if (!rows.some((r: RelEv) => isAnchor(b, r))) rows.push(b.anchor); // assistant text, thinking: no row kind of its own
+  let found = false;
+  for (const r of rows) if (isAnchor(b, r)) { found = true; b.anchor.t = r.t; b.anchor.ts = r.ts; b.anchor.kind = r.kind; b.anchor.tool = r.tool; b.anchor.text = r.text; b.anchor.files = r.files; b.anchor.cat = r.cat; b.anchor.top = r.top; break; } // the anchor as its row shows it
+  if (!found) rows.push(b.anchor); // assistant text, thinking: no row kind of its own
   rows.sort((x: RelEv, y: RelEv) => x.t - y.t);
   b.flagged = markConflicts(rows, b.cMs, b.spawns);
   b.rows = rows;
@@ -185,6 +187,7 @@ function settle(b: Build): void {
 function seek(b: Build, s: Sess): void {
   const src = sourceOf(s.h); const st = src.stat(s); const size = st ? st.size : s.size;
   const win = window(src, WIN_BYTES);
+  if (!s.headDone) { loadHead(s); b.bytes += Math.min(size, window(src, harnessOf(s.h).headBytes)) * src.unit; } // title and cwd of a session the list has not shown yet
   const k = seekTime(s, src, size, b.t0, win, tsOfLine(s));
   b.bytes += k.reads * win * src.unit;
   let at = k.at;
@@ -214,7 +217,8 @@ export function stepBuild(b: Build, budgetMs: number, now: () => number): boolea
     if (now() - start >= budgetMs) break;
     const s = sessions.get(b.cands[b.next] ?? "");
     if (!s) { b.next++; continue; }
-    const src = sourceOf(s.h); const need = (b.end.get(s.path) === undefined ? 20 : 1) * window(src, WIN_BYTES) * src.unit; // a seek reads ≤ 19 windows
+    const src = sourceOf(s.h); const fresh = b.end.get(s.path) === undefined; // a seek reads ≤ 19 windows, plus the head once
+    const need = (fresh ? 20 : 1) * window(src, WIN_BYTES) * src.unit + (fresh && !s.headDone ? harnessOf(s.h).headBytes : 0);
     if (b.bytes + need > CAP_BYTES) { b.capped = true; b.next = b.cands.length; changed = true; break; }
     if (b.end.get(s.path) === undefined) seek(b, s);
     if (readWindow(b, s)) { b.next++; changed = true; }

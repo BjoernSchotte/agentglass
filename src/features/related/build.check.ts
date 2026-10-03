@@ -112,7 +112,7 @@ la.pid = process.pid; // live
 const bl = startBuild(la, evsOf(la), 0, 10, 10);
 if (!bl) { bad++; console.log("FAIL live: no build"); } else {
   run(bl);
-  eq("alert row of a candidate", kinds(bl, lb.path), "prompt:other | alert:approval degraded");
+  eq("alert row of a candidate", kinds(bl, lb.path), "prompt:other | alert:approval alert (degraded)");
   eq("no alert of a non-candidate", String(bl.rows.some((r: RelEv) => r.sess === lo.path)), "false");
   eq("banner commit row", kinds(bl, la.path), "prompt:go | shell:git commit -m fix | commit:abc1234 fix login");
   eq("reflog commit no session observed (subject hidden under --redact)", kinds(bl, ""), "commit:commit (no session) def5678");
