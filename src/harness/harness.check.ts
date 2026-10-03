@@ -121,6 +121,13 @@ for (const sm of SAMPLES) {
   ok(sm.h + " usage tokens", a.inTok === sm.inTok && a.outTok === sm.outTok, a.inTok + "/" + a.outTok);
   ok(sm.h + " usage cost", Math.abs(a.cost - sm.cost) < 1e-9, String(a.cost) + " ≠ " + String(sm.cost));
   ok(sm.h + " no pending calls left", a.pend.size === 0, String(a.pend.size));
+  // one fact row per counted call; closed rows match the per-tool counters (error count, timed count)
+  let tn = 0; let te = 0; let tdn = 0;
+  for (const dd of a.days.values()) for (const st of dd.tt.values()) { tn += st.n; te += st.err; tdn += st.dn; }
+  let rn = 0; let re = 0; let rdn = 0; for (const c of a.calls) { rn++; if (c.err === 1) re++; if (c.ms >= 0) rdn++; }
+  ok(sm.h + " rows = TS.n", rn === tn && rn === a.tools, rn + " vs " + tn);
+  ok(sm.h + " rows err = TS.err", re === te, re + " vs " + te);
+  ok(sm.h + " rows timed = TS.dn", rdn === tdn, rdn + " vs " + tdn);
   let tu = 0; for (const dd of a.days.values()) tu += dd.turns;
   const gt = buildGraph([{ evs, live: false, kind: "", spawn: "" }], Date.now()).spans.filter((x) => x.kind === 0 && x.ev >= 0).length; // turns with a prompt, not "earlier turn"
   ok(sm.h + " turns = call graph turns", tu === gt, String(tu) + " ≠ " + String(gt));

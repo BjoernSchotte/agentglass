@@ -3,9 +3,9 @@
 import { totalmem } from "node:os";
 import { clean, fit, fitStyled, fillTo, bytes, home } from "../util/text.ts";
 import { S } from "../state.ts";
-import { display } from "../hooks.ts";
+import { display, boxChips } from "../hooks.ts";
 import { titleOf } from "../model/sessions.ts";
-import { procs, allProcs, hist, procAt, procSess, tmuxTarget } from "../model/procs.ts";
+import { procs, procView, allProcs, hist, procAt, procSess, tmuxTarget } from "../model/procs.ts";
 import { C, CSI, RST, fg, bg, heat } from "./theme.ts";
 import { put, box, badge, BADGE_W, braille, gauge } from "./screen.ts";
 
@@ -17,10 +17,11 @@ export function renderProcs(): void {
   const th = Math.max(6, Math.floor(bodyH * 0.5));
   S.listX = 0; S.listY = 3; S.listH = th - 3; S.listW = W;
   const listH = S.listH;
-  box(0, 1, W, th, "harness processes", procs.length + " roots", S.mode === "list");
+  const hid = procs.length - procView.length; const ch = boxChips("processes", Math.max(10, W - 40));
+  box(0, 1, W, th, "harness processes", (ch ? ch + " " : "") + procView.length + " roots" + (hid > 0 ? " · pins hide " + hid : ""), S.mode === "list");
   const cols = fg(C.dim) + CSI + "1m" + fit("  PID", 8) + fit("AGENT", BADGE_W + 1) + fit("CPU%", 7) + fit("MEM", 7) + fit("KIDS", 5) + fit("UP", 12) + fit("CPU GRAPH", 17) + fit("SESSION / CWD", W - 69) + RST;
   put(1, 2, cols);
-  if (S.psel >= procs.length) S.psel = Math.max(0, procs.length - 1);
+  if (S.psel >= procView.length) S.psel = Math.max(0, procView.length - 1);
   if (S.psel < S.ptop) S.ptop = S.psel;
   if (S.psel >= S.ptop + listH) S.ptop = S.psel - listH + 1;
   for (let r = 0; r < listH; r++) {

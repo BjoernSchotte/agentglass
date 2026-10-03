@@ -6,6 +6,7 @@ import { CLAUDE, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
+import { MQ_MSG } from "../features/usage/facts.ts";
 import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
@@ -186,6 +187,7 @@ function usage(a: Acc, l: string): void {
   const iso = str(o["timestamp"]);
   const d = bucket(a, 0, iso);
   const id = str(m["id"]); const u = obj(m["usage"]);
+  const md0 = str(m["model"]); const rowModel = md0 === "<synthetic>" ? "" : md0; // the model that issued this line's calls
   if (u && !(id && a.ids.has(id))) { // one API message is split over several lines carrying the same id + usage
     if (id) a.ids.add(id);
     const model = str(m["model"]) || a.model; if (model) a.model = model;
@@ -206,7 +208,7 @@ function usage(a: Acc, l: string): void {
   }
   for (const b of arr(m["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "tool_use") continue;
-    const name = str(bo["name"]) || "tool"; const st = tool(a, d, name);
+    const name = str(bo["name"]) || "tool"; const st = tool(a, d, name, rowModel, MQ_MSG);
     const inp = obj(bo["input"]);
     if (name === "Skill" && inp) skill(d, "model", str(inp["skill"]));
     pend(a, d, st, name, str(bo["id"]), isoMs(iso), iso, toolArg(name, inp, ""), name === "Bash" && inp ? [str(inp["command"])] : []);
@@ -217,7 +219,7 @@ function usage(a: Acc, l: string): void {
     else if (name === "NotebookEdit") add = nlines(str(inp["new_source"]));
     else if (name === "MultiEdit") for (const e of arr(inp["edits"])) { const eo = obj(e); if (eo) { add += nlines(str(eo["new_string"])); del += nlines(str(eo["old_string"])); } }
     else continue;
-    lines(a, d, add, del); file(d, name, str(inp["file_path"]) || str(inp["notebook_path"]), add, del);
+    lines(a, d, add, del); file(a, d, name, str(inp["file_path"]) || str(inp["notebook_path"]), add, del);
   }
 }
 

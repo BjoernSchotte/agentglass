@@ -2,7 +2,7 @@
 // (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
 // SPDX-License-Identifier: Apache-2.0
 import { S, say } from "./state.ts";
-import { H, tabAt, viewOf, screenOut, armed } from "./hooks.ts";
+import { H, tabAt, viewOf, screenOut, armed, backlog } from "./hooks.ts";
 import { sessions, scan, buildView, probeLive } from "./model/sessions.ts";
 import { procs, refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
@@ -31,7 +31,9 @@ import "./features/cost-cli.ts";
 import "./features/themes.ts";
 import "./features/ticker.ts";
 import "./features/watchdog.ts";
+import "./features/usage/cache.ts";
 import "./features/usage/stats.ts";
+import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
 import "./features/redact.ts";
 import "./features/prices.ts";
@@ -80,7 +82,7 @@ let lastBuild = 0; let scanSig = ""; let watchSig = ""; let gen = 0;
 function live(): boolean { return procs.length > 0; }
 let why = "";
 function relevel(now: number): void {
-  const a = { now, input: act.input, focusOut: act.focusOut, replay: replaying(), grow: act.grow, indexing: indexing(), live: live() };
+  const a = { now, input: act.input, focusOut: act.focusOut, replay: replaying(), grow: act.grow, indexing: indexing() || backlog(), live: live() };
   sc.lv = levelOf(a); sc.burst = a.indexing; if (DBG.on) why = sc.lv !== "hot" ? "" : hotWhy(a) + (a.indexing ? " " + bytes(L.total - L.done) + " left" : "");
 }
 function sizeJob(): void { if (termSize()) render(); } // a resize repaints at once, outside the render cap
@@ -109,7 +111,7 @@ function body(j: Job, now: number): () => void {
     if (w === "full") render(); else if (w === "header") renderTop(); else if (w === "dirty") S.dirty = true;
   };
   return () => { // render: build only when something changed, animates, a toast is up, or the clock texts are due
-    const toast = S.toast !== "" && now - S.toastAt < 5500; // includes the frame that removes it
+    const toast = S.toast !== "" && now - S.toastAt < S.toastMs + 500; // includes the frame that removes it
     if (!(sc.fixed || S.dirty || S.animating || toast || now - lastBuild >= forceMs(sc.lv))) return;
     lastBuild = now; S.frame++; render();
   };

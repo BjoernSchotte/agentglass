@@ -8,6 +8,7 @@ import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, modelTok, addCost, unpriced } from "../features/usage/record.ts";
+import { MQ_SESS } from "../features/usage/facts.ts";
 import { done, patchFiles } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, turnBusy, prompts } from "./common.ts";
@@ -86,18 +87,19 @@ function usage(a: Acc, l: string): void {
   }
   const c = obj(e["tool_call"]); if (!c) return;
   const d = bucket(a, ms, ""); const name = str(c["tool_name"]) || "tool";
-  const st = tool(a, d, name);
+  const st = tool(a, d, name, a.model, MQ_SESS); // fx records the model per session only (usageSidecar copies it)
   const aj = str(c["arguments_json"]); const args = parseJson(aj);
   const cmd = name === "shell" && args ? str(args["command"]) : "";
   pend(a, d, st, name, str(c["call_id"]), ms, ms > 0 ? new Date(ms).toISOString() : "", toolArg(name, null, aj), cmd ? [cmd] : []);
   if (!args) return;
   // edits, best effort: a path plus new content / replacements, or an embedded patch (totals come from usage-v2.json)
   const fp = str(args["path"]) || str(args["file_path"]);
-  if (aj.indexOf("*** Begin Patch") >= 0) { for (const f of patchFiles(str(args["patch"]) || str(args["input"]))) file(d, name, f.p, f.add, f.del); }
-  else if (fp && (args["content"] !== undefined || args["new_string"] !== undefined || args["edits"] !== undefined)) file(d, name, fp, nlines(str(args["content"]) || str(args["new_string"])), nlines(str(args["old_string"])));
+  if (aj.indexOf("*** Begin Patch") >= 0) { for (const f of patchFiles(str(args["patch"]) || str(args["input"]))) file(a, d, name, f.p, f.add, f.del); }
+  else if (fp && (args["content"] !== undefined || args["new_string"] !== undefined || args["edits"] !== undefined)) file(a, d, name, fp, nlines(str(args["content"]) || str(args["new_string"])), nlines(str(args["old_string"])));
 }
 // fx keeps running totals in usage-v2.json; attribute changes to the day the file was written
 function usageSidecar(s: Sess, a: Acc): void {
+  if (s.model) a.model = s.model; // session.json's model (meta): the only model fx records; the ledger runs this before the log
   const f = s.path.slice(0, -"events.jsonl".length) + "usage-v2.json";
   let mt = 0; try { mt = statSync(f).mtimeMs; } catch (e) { return; }
   if (mt === a.xM) return;

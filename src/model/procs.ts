@@ -9,11 +9,12 @@ import type { Proc, Sess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { S } from "../state.ts";
 import { linkByCwd, daemonWarn, type CwdProc } from "./link.ts";
-import { applyMeta } from "../hooks.ts";
+import { H, applyMeta } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
 const OTHER = ["aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
 export let procs: Proc[] = [];
+export let procView: Proc[] = []; // the rows the Processes tab shows: procs passing H.procFilter (liveness code keeps reading procs)
 export const allProcs = new Map<number, Proc>();
 export const hist = new Map<number, number[]>();
 export const cpuHist: number[] = [];
@@ -74,9 +75,8 @@ export function refreshProcs(): void {
   OS.prune((pid: number) => allProcs.has(pid));
   cpuHist.push(total); if (cpuHist.length > 240) cpuHist.shift();
   out.sort((a, b) => b.tcpu - a.tcpu || a.pid - b.pid);
-  const sp = procAt(S.psel); const selPid = sp ? sp.pid : 0;
   procs = out;
-  for (let i = 0; i < procs.length; i++) if (procs[i].pid === selPid) S.psel = i; // selection follows the pid, not the row
+  buildProcView();
   registry.clear(); daemonLive.clear();
   const alive = (pid: number): boolean => allProcs.has(pid);
   const hOf = (pid: number): string => { const p = allProcs.get(pid); return p ? p.h : ""; };
@@ -102,6 +102,7 @@ export function refreshSlow(): void {
     if (i > 0) tmuxByTty.set(l.slice(0, i), l.slice(i + 1));
   }
   for (const p of procs) p.cwd = cwdByPid.get(p.pid) ?? "";
+  if (S.pins.length) buildProcView(); // cwd known now: repo and cwd pins apply
   linkSessions();
 }
 export function rootOf(pid: number): Proc | null {
@@ -159,5 +160,12 @@ export function tmuxTarget(pid: number): string {
   return dev ? tmuxByTty.get(dev) ?? "" : "";
 }
 // bounds-checked (see sessAt)
-export function procAt(i: number): Proc | null { return i >= 0 && i < procs.length ? procs[i] : null; }
+export function procAt(i: number): Proc | null { return i >= 0 && i < procView.length ? procView[i] : null; }
+export function buildProcView(): void {
+  const sp = procAt(S.psel); const selPid = sp ? sp.pid : 0;
+  const out: Proc[] = [];
+  for (const p of procs) { let ok = true; for (const f of H.procFilter) if (!f(p)) { ok = false; break; } if (ok) out.push(p); }
+  procView = out;
+  for (let i = 0; i < procView.length; i++) if (procView[i].pid === selPid) S.psel = i; // selection follows the pid, not the row
+}
 export function procSess(p: Proc): Sess | null { return p.sess ? sessions.get(p.sess) ?? null : null; }

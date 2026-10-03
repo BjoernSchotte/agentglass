@@ -5,7 +5,7 @@ import { type Acc, type Day } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 7; // 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 8; // 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
@@ -52,7 +52,7 @@ export function accOut(a: Acc, keepIds = 64): Obj {
   for (const k of [...a.days.keys()]) { const d = a.days.get(k); if (d) days[k] = dayOut(d); }
   return {
     off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids].slice(-keepIds), x: a.x, xM: a.xM, pk: a.pk,
-    t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del, a.uc], bill: a.bill, plan: a.plan, bs: a.billSrc, days,
+    t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del, a.uc], bill: a.bill, plan: a.plan, bs: a.billSrc, t0: a.t0, days,
   };
 }
 export function accIn(o: Obj): Acc {
@@ -65,6 +65,6 @@ export function accIn(o: Obj): Acc {
   return {
     off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: str(o["model"]), pend: new Map<string, Pend>(), ep: str(o["ep"]), x: nums(o["x"]), xM: num(o["xM"]), pk: str(o["pk"]), sub: false,
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9),
-    bill: str(o["bill"]), plan: str(o["plan"]), billSrc: str(o["bs"]),
+    bill: str(o["bill"]), plan: str(o["plan"]), billSrc: str(o["bs"]), calls: [], lastCall: -1, t0: num(o["t0"]),
   };
 }

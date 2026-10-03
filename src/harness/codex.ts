@@ -8,6 +8,7 @@ import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { type Acc, L, bucket, tool, pend, tokens, turn, skill, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
+import { MQ_TURN } from "../features/usage/facts.ts";
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
@@ -118,7 +119,7 @@ function usage(a: Acc, l: string): void {
     const ns = str(p["namespace"]);
     const bn = str(p["name"]) || (t === "local_shell_call" ? "shell" : "tool");
     const name = ns.startsWith("mcp__") ? ns + "__" + bn : bn; // MCP tools come namespaced: group them like Claude's mcp__server__tool
-    const st = tool(a, d, name);
+    const st = tool(a, d, name, a.model, MQ_TURN); // Codex fixes the model per turn: the latest turn_context is exact
     const id = str(p["call_id"]); const tms = isoMs(iso);
     const inp = str(p["input"]);
     if (t === "local_shell_call") { const act = obj(p["action"]); const c = argv(act ? act["command"] : null); pend(a, d, st, name, id, tms, iso, c, [c]); return; }

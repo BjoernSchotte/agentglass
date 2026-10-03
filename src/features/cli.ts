@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
 import { H, complete, screenOut } from "../hooks.ts";
-import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, parentOf } from "../model/sessions.ts";
+import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf } from "../harness/index.ts";
 import { base } from "../util/json.ts";
@@ -14,6 +14,8 @@ import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
+import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
+import { livePid } from "./query/eval.ts";
 
 // option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
 const CMDS: string[][] = [
@@ -36,6 +38,8 @@ const OPTS: string[][] = [
   ["--limit N", "--json: at most N sessions"],
   ["--subagents", "--json: include subagent sessions"],
   ["--from-start", "--watch: replay existing logs from the beginning (combine with a filter)"],
+  ["--filter '<expr>'", "only what matches, e.g. 'repo is x and cost > 2', 'tool is Bash and status is error' (repeatable)"],
+  ["--pinned", "also apply the filter pinned in the TUI (P); without it pins are ignored"],
 ];
 function table(rows: string[][], col: number): string { return rows.map((r: string[]) => "  " + (r[0] ?? "").padEnd(col) + (r[1] ?? "")).join("\n"); }
 function usage(): string {
@@ -57,13 +61,17 @@ ${table(OPTS, col)}
 --watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears
 
+filter: key op value [and …]; op = is = is_not != is_one_of is_not_one_of ~ !~ > >= < <=; not / - negates; bare words
+  search title, path, id; --json lists sessions with a matching call or day; --watch filters events (event is tool|result|…)
+${filterKeysHelp()}
+
 OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
   without it, 2.x sessions come from a running \`opencode service\` over HTTP with curl (AGENTGLASS_CURL); with neither
   they are not listed (a warning says so)
 `;
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean }
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; filters: string[]; pinned: boolean; cf: CliFilter | null }
 interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
 interface JBill { mode: string; plan: string; source: string }
 interface JSess {
@@ -80,7 +88,7 @@ function out(line: string): void {
 function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
 
 function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, filters: [], pinned: false, cf: null };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -88,25 +96,20 @@ function opts(args: string[]): Opts {
     else if (a === "--from-start") o.fromStart = true;
     else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (!isHarness(o.harness)) fail("--harness must be one of " + harnessIds().join(", ")); }
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
+    else if (a === "--filter") { if (i + 1 >= args.length) fail("--filter needs an expression, e.g. --filter 'harness is codex'"); o.filters.push(args[i + 1] ?? ""); i++; }
+    else if (a === "--pinned") o.pinned = true;
   }
+  o.cf = cliFilter(o.filters, o.harness, o.live, o.pinned, args.indexOf("--watch") >= 0);
   return o;
 }
-// subagents have no process of their own: they are live while their parent is
-function livePid(s: Sess): number {
-  if (s.pid) return s.pid;
-  const p = parentOf(s);
-  return p ? p.pid : 0;
-}
-function wanted(s: Sess, o: Opts): boolean {
-  if (o.harness && s.h !== o.harness) return false;
-  return !o.live || livePid(s) > 0;
-}
+function wanted(s: Sess, o: Opts): boolean { const cf = o.cf; return !cf || cliWatchSession(cf, s); }
 export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
 
 function snapshot(o: Opts): void {
   discover();
   const list: Sess[] = [];
-  for (const s of sessions.values()) if ((o.subs || s.depth === 0) && wanted(s, o)) list.push(s);
+  const cands: Sess[] = []; for (const s of sessions.values()) if (o.subs || s.depth === 0) cands.push(s);
+  const cf = o.cf; for (const s of cf ? cliSelect(cf, cands) : cands) list.push(s);
   list.sort((a, b) => b.mtime - a.mtime);
   const res: JSess[] = [];
   for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) {
@@ -122,6 +125,7 @@ function snapshot(o: Opts): void {
     });
   }
   out(process.stdout.isTTY ? JSON.stringify(res, null, 2) : JSON.stringify(res));
+  if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run
   process.exit(0);
 }
 
@@ -136,10 +140,17 @@ function emit(s: Sess, kind: string, tool: string | null, text: string, ts: stri
   };
   out(JSON.stringify(w));
 }
-function emitEv(s: Sess, e: Ev): void {
-  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts); return; }
+// a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run
+const calls = new Map<string, string[]>();
+function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const i = e.text.indexOf("\u0000");
-  emit(s, "tool", i >= 0 ? e.text.slice(0, i) : e.text, i >= 0 ? e.text.slice(i + 1) : "", e.ts);
+  const tool = e.kind === "tool" ? (i >= 0 ? e.text.slice(0, i) : e.text) : "";
+  const args = e.kind === "tool" && i >= 0 ? e.text.slice(i + 1) : "";
+  if (e.kind === "tool" && e.id) { if (calls.size > 20000) calls.clear(); calls.set(s.path + "\t" + e.id, [tool, args]); }
+  const pc = e.kind === "result" && e.id ? calls.get(s.path + "\t" + e.id) : undefined;
+  if (cf && !cliWatchEvent(cf, s, e.kind, pc ? pc[0] ?? "" : tool, pc ? pc[1] ?? "" : args)) return;
+  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts); return; }
+  emit(s, "tool", tool, args, e.ts);
 }
 
 function watch(o: Opts): void {
@@ -156,15 +167,15 @@ function watch(o: Opts): void {
   process.on("SIGINT", quit); process.on("SIGTERM", quit);
   const liveDiff = (): void => {
     for (const s of sessions.values()) {
-      if (!s.pid || live.get(s.path) === s.pid || (o.harness && s.h !== o.harness)) continue;
+      if (!s.pid || live.get(s.path) === s.pid) continue;
       live.set(s.path, s.pid);
-      emit(s, "live", null, "pid " + s.pid, "");
+      if (wanted(s, o) && (!o.cf || cliWatchEvent(o.cf, s, "live", "", ""))) emit(s, "live", null, "pid " + s.pid, "");
     }
     for (const [p, pid] of [...live.entries()]) {
       const s = sessions.get(p);
       if (s && s.pid === pid) continue;
       live.delete(p);
-      if (s && !(o.harness && s.h !== o.harness)) emit(s, "exit", null, "pid " + pid, "");
+      if (s && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "");
     }
   };
   const poll = (): void => {
@@ -183,7 +194,7 @@ function watch(o: Opts): void {
       off.set(s.path, r.next);
       const evs: Ev[] = [];
       for (const l of r.lines) parseEvents(s.h, l, evs, s);
-      for (const e of evs) emitEv(s, e);
+      for (const e of evs) emitEv(s, e, o.cf);
     }
   };
   poll();

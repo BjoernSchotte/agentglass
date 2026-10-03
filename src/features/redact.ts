@@ -357,6 +357,14 @@ function display(kind: string, text: string, s: Sess | null): string {
   if (kind === "prog") return SAFE_PROGS.has(text) ? text : uniq(kind, text, PROGS);
   if (kind === "args") return fakeArgs(text);
   if (kind === "cwd") { learnPath(text, false); return text ? fakeCwd(text) : text; }
+  if (kind.startsWith("filter:")) { // a filter chip's value, by its key
+    const k = kind.slice(7);
+    if (k === "cwd") { const p = text.startsWith("~/") ? HOME + text.slice(1) : text; learnPath(p, false); return p.indexOf("*") >= 0 ? scrubText(text) : fakeCwd(p); }
+    if (k === "file") return text.indexOf("*") >= 0 ? scrubText(text) : uniq("file", text, FILES);
+    if (k === "command") return uniq("cmd", text, CMDS);
+    if (k === "repo") { learnSeg(text); return scrubText(text); }
+    if (k === "title" || k === "text" || k === "content" || k === "branch" || k === "id" || k === "agent") return scrubText(text);
+  }
   return text;
 }
 
