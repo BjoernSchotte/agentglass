@@ -348,6 +348,15 @@ function skills(lines: string[], resumeAt: number): string {
   usageExact(c, g, "no-such-model", 10, 5, 0, 0, 0, 0);
   ok("usageExact with cost 0 and unknown model counts unpriced tokens", c.cost === 0 && c.unk === 15, String(c.unk));
 }
+// billing evidence in the transcript: a Bedrock model id (priced at list, stamped metered), Codex rate_limits.plan_type
+{
+  const a = newAcc();
+  harnessOf("claude").usage(a, "{\"type\":\"assistant\"," + T + "1Z\",\"message\":{\"id\":\"b1\",\"model\":\"us.anthropic.claude-sonnet-4-5-20250929-v1:0\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}");
+  ok("claude bedrock id stamps metered", a.bill === "metered" && a.billSrc === "session" && a.cost > 0, a.bill + "/" + a.billSrc + "/" + a.cost);
+  const c = newAcc();
+  harnessOf("codex").usage(c, "{" + T + "5Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":null,\"rate_limits\":{\"primary\":{\"used_percent\":3,\"window_minutes\":300,\"resets_at\":1767400000},\"plan_type\":\"pro\"}}}");
+  ok("codex plan_type stamps plan", c.bill === "plan" && c.plan === "pro" && c.billSrc === "session", c.bill + "/" + c.plan);
+}
 for (const id of ["claude", "codex", "fx", "pi", "opencode", "kiro", "gemini"]) ok(id + " registered", HARNESSES.some((a) => a.id === id), "missing");
 // a DB-backed adapter (own source) has no log lines to sample: its golden coverage is src/harness/<id>.check.ts
 for (const ad of HARNESSES) ok(ad.id + " has SAMPLES", ad.source ? existsSync("src/harness/" + ad.id + ".check.ts") : SAMPLES.some((sm: Sample) => sm.h === ad.id), "add a few real log lines above");

@@ -5,7 +5,8 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { CLAUDE, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
+import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise, leadTag, prompts } from "./common.ts";
@@ -188,6 +189,7 @@ function usage(a: Acc, l: string): void {
   if (u && !(id && a.ids.has(id))) { // one API message is split over several lines carrying the same id + usage
     if (id) a.ids.add(id);
     const model = str(m["model"]) || a.model; if (model) a.model = model;
+    const mb = modelBill(model); if (mb) stamp(a, mb, "", "session");
     const its = arr(u["iterations"]);
     if (its.length >= 2) { // fallback retries: each attempt billed on its own model; the top level mirrors only the last one
       for (const x of its) {

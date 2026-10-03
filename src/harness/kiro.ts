@@ -8,7 +8,7 @@ import { HOME, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, isoMs } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, isoMs, modelTok, addCost, credits } from "../features/usage/record.ts";
 import { done } from "../features/usage/calls.ts";
 import { userRate } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
@@ -177,8 +177,9 @@ function usageSidecar(s: Sess, a: Acc): void {
     a.inTok = a.inTok + nIn; a.outTok = a.outTok + nOut; d.inTok = d.inTok + nIn; d.outTok = d.outTok + nOut;
     let cr = 0;
     for (const m of arr(tm["metering_usage"])) { const mo = obj(m); if (mo && str(mo["unit"]) === "credit") cr += num(mo["value"]); }
-    if (rate > 0) { a.cost = a.cost + cr * rate; d.cost = d.cost + cr * rate; }
-    else if (cr > 0) { a.unk = a.unk + cr; d.unk = d.unk + cr; }
+    modelTok(d, a.model || "kiro", nIn, nOut, 0, 0);
+    if (rate > 0) addCost(a, d, cr * rate, "", a.model || "kiro");
+    else if (cr > 0) credits(a, d, cr);
   }
   a.x[1] = turns.length;
 }

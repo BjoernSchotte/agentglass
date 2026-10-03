@@ -3,7 +3,7 @@
 import { realpathSync, renameSync, mkdirSync, openSync, writeSync, closeSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { userInfo } from "node:os";
-import { HOME, readText, listDir, run } from "../util/fs.ts";
+import { HOME, readText, readBytes, listDir, run } from "../util/fs.ts";
 import type { Platform } from "./types.ts";
 import { psProcs, devOf, detached, freeName } from "./posix.ts";
 
@@ -72,4 +72,5 @@ export const linux: Platform = {
   trash,
   sha256File: (path: string) => (run("sha256sum", [path]).split(" ")[0] ?? "").trim(),
   trashName: "the trash (~/.local/share/Trash)",
+  envOf: (pid: number) => readBytes("/proc/" + String(pid) + "/environ", 0, 262144),
 };

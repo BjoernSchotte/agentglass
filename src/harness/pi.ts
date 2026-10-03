@@ -143,20 +143,20 @@ function busy(s: Sess): boolean {
 }
 
 // tokens and cost: pi writes usage.cost.total itself (usage.cost 0 = unpriced model → table fallback in usageExact)
-function book(a: Acc, u: Obj | null, model: string, iso: string): void {
+function book(a: Acc, u: Obj | null, model: string, iso: string, prov: string): void {
   if (!u) return;
   const d = bucket(a, 0, iso);
   const c = obj(u["cost"]); const w1 = num(u["cacheWrite1h"]);
   const usd = typeof u["cost"] === "number" ? num(u["cost"]) : c && typeof c["total"] === "number" ? num(c["total"]) : -1; // subagent results: a number
   const md = model || a.model; if (md) a.model = md;
-  usageExact(a, d, md, num(u["input"]), num(u["output"]), num(u["cacheRead"]), Math.max(0, num(u["cacheWrite"]) - w1), w1, usd);
+  usageExact(a, d, md, num(u["input"]), num(u["output"]), num(u["cacheRead"]), Math.max(0, num(u["cacheWrite"]) - w1), w1, usd, prov);
 }
 // subagents run by pi-subagents / the example extension report their usage on the parent's result; a child with its own
 // session file (sessionFile) is counted from that file, one without (--no-session) only here
 function bookSubs(a: Acc, m: Obj, det: Obj | null, iso: string): void {
   const tn = str(m["toolName"]); if (!det || (tn !== "subagent" && tn !== "Agent")) return;
   const keep = a.model;
-  for (const v of arr(det["results"])) { const r = obj(v); if (r && !str(r["sessionFile"])) book(a, obj(r["usage"]), str(r["model"]), iso); }
+  for (const v of arr(det["results"])) { const r = obj(v); if (r && !str(r["sessionFile"])) book(a, obj(r["usage"]), str(r["model"]), iso, ""); }
   a.model = keep; // the child's model is not the parent's
 }
 // the parent's tool call that spawned subagent s: pi-subagents → the result listing its sessionFile;
@@ -207,12 +207,12 @@ function usage(a: Acc, l: string): void {
   if (a.x.length > 1 && a.x[1] === 1 && isoMs(iso) < a.x[0]) return;
   if (usr) { const n = prompts(parse, o); if (n) turn(a, 0, iso, n); }
   const type = str(o["type"]);
-  if (type === "usage" || type === "compaction" || type === "branch_summary") { book(a, obj(o["usage"]), str(o["model"]), iso); return; }
+  if (type === "usage" || type === "compaction" || type === "branch_summary") { book(a, obj(o["usage"]), str(o["model"]), iso, ""); return; }
   if (type !== "message") return;
   const m = obj(o["message"]); if (!m) return;
   const role = str(m["role"]);
   if (role === "toolResult") {
-    book(a, obj(m["usage"]), "", iso);
+    book(a, obj(m["usage"]), "", iso, "");
     const id = str(m["toolCallId"]); const p = a.pend.get(id);
     const det = obj(m["details"]);
     if (p) {
@@ -239,7 +239,7 @@ function usage(a: Acc, l: string): void {
     return;
   }
   if (role !== "assistant") return;
-  book(a, obj(m["usage"]), str(m["responseModel"]) || str(m["model"]), iso);
+  book(a, obj(m["usage"]), str(m["responseModel"]) || str(m["model"]), iso, str(m["provider"]));
   const d = bucket(a, 0, iso);
   for (const b of arr(m["content"])) {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "toolCall") continue;

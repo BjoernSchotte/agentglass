@@ -71,12 +71,19 @@ function remoteSig(): string {
 }
 export const PRICES_SIG = (user ? JSON.stringify(user) : "") + remoteSig();
 
+// the list-price row's key for a model id: provider/ prefixes (proxies, Bedrock ARNs), Bedrock's [region.]anthropic. prefix
+// with its -vN[:M] suffix, Vertex's @YYYYMMDD and the -YYYYMMDD snapshot suffix are dropped
+export function normModel(model: string): string {
+  let m = model.toLowerCase();
+  const sl = m.lastIndexOf("/"); if (sl >= 0) m = m.slice(sl + 1);
+  const br = m.replace(/^(?:[a-z]{2,4}\.)?anthropic\./, "");
+  if (br !== m) m = br.replace(/-v\d+(?::\d+)?$/, ""); // only Bedrock ids: deepseek-v3 & co. keep their -vN
+  return m.replace(/@\d{8}$/, "").replace(/-\d{8}$/, "");
+}
 export function price(model: string): Price | null {
   const hit = memo.get(model);
   if (hit !== undefined) return hit;
-  let m = model.toLowerCase();
-  const sl = m.lastIndexOf("/"); if (sl >= 0) m = m.slice(sl + 1); // provider/model ids from proxies
-  m = m.replace(/-\d{8}$/, "");
+  const m = normModel(model);
   let r: Price | null = null;
   for (const x of P) if (m.startsWith(x.p)) { r = x; break; }
   memo.set(model, r);
