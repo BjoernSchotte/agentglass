@@ -259,6 +259,15 @@ function fakeRemote(url: string): string {
   if ((m[1] ?? "") === "file://") return "file://" + fakeRepo(path);
   return (m[1] ?? "") + "/" + fakeRepo(path.slice(1));
 }
+// git linkage: a forge URL keeps host, kind segment, number and sha, its owner/repo path faked; a commit subject → a title
+const VCS_SEG = /\/(-\/merge_requests|-\/issues|-\/commit|pull|pulls|pull-requests|issues|commits?)\/[0-9a-f]+$/;
+function fakeVcs(text: string): string {
+  const m = /^(https?:\/\/[^/]+)\/(.*)$/.exec(text);
+  if (!m) return pick(TITLES, "vcs\t" + text);
+  const rest = m[2] ?? ""; const k = VCS_SEG.exec("/" + rest); const at = k ? rest.length - (k[0] ?? "").length + 1 : rest.length;
+  const segs = rest.slice(0, Math.max(0, at - 1)).split("/").filter((x: string) => x.length > 0).map((x: string) => fakeProject(x));
+  return (m[1] ?? "") + "/" + segs.join("/") + (k ? k[0] ?? "" : "");
+}
 function kept(s: Sess): boolean {
   const r = recs.get(s.path);
   const real = r ? r.real : "";
@@ -380,6 +389,7 @@ function display(kind: string, text: string, s: Sess | null): string {
   if (kind === "cwd") { learnPath(text, false); return text ? fakeCwd(text) : text; }
   if (kind === "repo") return fakeRepo(text);
   if (kind === "remote") return fakeRemote(text);
+  if (kind === "vcs") return fakeVcs(text);
   if (kind.startsWith("filter:")) { // a filter chip's value, by its key
     const k = kind.slice(7);
     if (k === "cwd") { const p = text.startsWith("~/") ? HOME + text.slice(1) : text; learnPath(p, false); return p.indexOf("*") >= 0 ? scrubText(text) : fakeCwd(p); }
