@@ -1,0 +1,8 @@
+{"version":"v1","kind":"Prompt","data":{"content":[{"kind":"text","data":"show disk usage"}]}}
+{"version":"v1","kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"Checking."},{"kind":"toolUse","data":{"toolUseId":"k_t1","name":"execute_bash","input":{"command":"df -h","__tool_use_purpose":"disk"}}}]}}
+{"version":"v1","kind":"ToolResults","data":{"content":[{"kind":"toolResult","data":{"toolUseId":"k_t1","status":"success","content":[{"kind":"text","data":"/dev/sda1 50%"}]}}]}}
+{"version":"v1","kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"Half full."}]}}
+{"version":"v1","kind":"Prompt","data":{"content":[{"kind":"text","data":"and memory?"}]}}
+{"version":"v1","kind":"AssistantMessage","data":{"content":[{"kind":"toolUse","data":{"toolUseId":"k_t2","name":"execute_bash","input":{"command":"free -m"}}}]}}
+{"version":"v1","kind":"ToolResults","data":{"content":[{"kind":"toolResult","data":{"toolUseId":"k_t2","status":"error","content":[{"kind":"text","data":"free: not found"}]}}]}}
+{"version":"v1","kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"No free on this box."}]}}

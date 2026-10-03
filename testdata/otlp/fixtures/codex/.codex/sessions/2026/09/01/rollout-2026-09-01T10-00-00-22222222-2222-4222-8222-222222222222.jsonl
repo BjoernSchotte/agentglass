@@ -1,0 +1,22 @@
+{"timestamp":"2026-09-01T10:00:00.000Z","type":"session_meta","payload":{"id":"22222222-2222-4222-8222-222222222222","timestamp":"2026-09-01T10:00:00.000Z","cwd":"/home/u/proj","originator":"codex_cli_rs","cli_version":"0.120.0","model_provider":"openai","git":{"branch":"main","repository_url":"https://github.com/u/proj.git"}}}
+{"timestamp":"2026-09-01T10:00:00.000Z","type":"turn_context","payload":{"cwd":"/home/u/proj","model":"gpt-5.2-codex"}}
+{"timestamp":"2026-09-01T10:00:01.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-09-01T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"add a test"}]}}
+{"timestamp":"2026-09-01T10:00:03.000Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Look at files"}]}}
+{"timestamp":"2026-09-01T10:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls tests\"}","call_id":"call_ls"}}
+{"timestamp":"2026-09-01T10:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":50,"reasoning_output_tokens":20,"total_tokens":1050},"last_token_usage":{}},"rate_limits":null}}
+{"timestamp":"2026-09-01T10:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":5.0,"window_minutes":300,"resets_at":1788000000}}}}
+{"timestamp":"2026-09-01T10:00:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_ls","output":"Process exited with code 0\nOutput:\ntest_a.py"}}
+{"timestamp":"2026-09-01T10:00:04.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":50,"reasoning_output_tokens":20,"total_tokens":1050},"last_token_usage":{}},"rate_limits":null}}
+{"timestamp":"2026-09-01T10:00:06.000Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","arguments":"{\"agent_type\":\"worker\",\"message\":\"write test_b\"}","call_id":"call_spawn"}}
+{"timestamp":"2026-09-01T10:00:06.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2500,"cached_input_tokens":1800,"output_tokens":90,"reasoning_output_tokens":30,"total_tokens":2590},"last_token_usage":{}},"rate_limits":null}}
+{"timestamp":"2026-09-01T10:00:07.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_spawn","output":"{\"agent_id\":\"33333333-3333-4333-8333-333333333333\"}"}}
+{"timestamp":"2026-09-01T10:00:20.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Started a worker."}]}}
+{"timestamp":"2026-09-01T10:00:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":4000,"cached_input_tokens":3000,"output_tokens":120,"reasoning_output_tokens":30,"total_tokens":4120},"last_token_usage":{}},"rate_limits":null}}
+{"timestamp":"2026-09-01T10:00:21.000Z","type":"event_msg","payload":{"type":"task_complete"}}
+{"timestamp":"2026-09-01T10:05:00.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-09-01T10:05:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ask the worker for status"}]}}
+{"timestamp":"2026-09-01T10:05:02.000Z","type":"response_item","payload":{"type":"function_call","name":"send_input","arguments":"{\"id\":\"33333333-3333-4333-8333-333333333333\",\"message\":\"status?\"}","call_id":"call_send"}}
+{"timestamp":"2026-09-01T10:05:02.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":110},"last_token_usage":{}},"rate_limits":null}}
+{"timestamp":"2026-09-01T10:05:03.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_send","output":"ok"}}
+{"timestamp":"2026-09-01T10:05:09.000Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}
