@@ -100,6 +100,7 @@ const r11 = R("r11"); eq("alias unresolved → gitdir", r11.kind, "gitdir"); eq(
 // non-git, gone, broken worktree
 dir("plain/sub"); const pl = R("plain/sub"); eq("non-git", pl.kind + " " + pl.key, "path path:" + T + "/plain/sub");
 const gone = R("missing/dir"); eq("gone", gone.gone ? "gone" : "here", "gone"); eq("gone label", gone.label.endsWith(" (gone)") ? "y" : gone.label, "y"); eq("gone key", gone.key, "path:" + T + "/missing/dir");
+const gw = R("r1/.claude/worktrees/agent-1"); eq("gone cwd inside a repo → its project", gw.key + " " + gw.worktree + (gw.gone ? " gone" : ""), r1.key + " agent-1 gone");
 mk("bw/.git", "gitdir: " + T + "/deleted/.git/worktrees/bw"); eq("broken worktree → path", R("bw").kind, "path");
 eq("empty cwd", ID(resolveCwd("", stub)), "none none | (no project)");
 // unreadable .git file

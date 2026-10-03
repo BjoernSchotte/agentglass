@@ -28,7 +28,7 @@ export interface CliFilter { f: Compiled; cheap: Compiled; ended: Compiled /* ch
 // keys whose values need no ledger and no transcript: they pick the candidates before complete(s) runs
 // (cwd, branch, title and agent come from a transcript's head for some harnesses: loaded first when a clause names them)
 const CHEAP = ["harness", "id", "subagent", "live", "archived"];
-const HEAD = ["repo", "cwd", "branch", "agent", "title", "text"];
+const HEAD = ["repo", "worktree", "project.kind", "cwd", "branch", "agent", "title", "text"];
 // --filter values (merged with the same-scope rules), --harness / --live sugar, --pinned; a bad expression exits 2 with a caret
 export function cliFilter(exprs: string[], harness: string, live: boolean, pinned: boolean, watch: boolean): CliFilter {
   let cs: Clause[] = [];

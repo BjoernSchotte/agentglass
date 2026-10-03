@@ -18,6 +18,7 @@ import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, c
 import { livePid } from "./query/eval.ts";
 import { identOf } from "./query/project.ts";
 import { labelOf } from "../model/project.ts";
+import { keyShown, reposCli } from "./repos/cli.ts";
 
 // option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
 const CMDS: string[][] = [
@@ -42,6 +43,8 @@ const OPTS: string[][] = [
   ["--from-start", "--watch: replay existing logs from the beginning (combine with a filter)"],
   ["--filter '<expr>'", "only what matches, e.g. 'repo is x and cost > 2', 'tool is Bash and status is error' (repeatable)"],
   ["--pinned", "also apply the filter pinned in the TUI (P); without it pins are ignored"],
+  ["--repos", "--json: one object per project instead of sessions (worktrees and clones of one remote merge)"],
+  ["--days N", "--repos: the last N days (default 7, 0 = all history); day clauses of --filter narrow it"],
 ];
 function table(rows: string[][], col: number): string { return rows.map((r: string[]) => "  " + (r[0] ?? "").padEnd(col) + (r[1] ?? "")).join("\n"); }
 function usage(): string {
@@ -53,6 +56,10 @@ ${table(CMDS, col)}
 
 options for --json / --watch:
 ${table(OPTS, col)}
+
+--json --repos fields: key label kind worktrees[{name,top}] sessions live last costUsd unpricedTokens tokens{in,out} calls errors
+  errorRate activeMin agentMin files[{path,edits,add,del,harnesses}] outsideFiles byHarness[] branches[]
+  (activeMin = union of the sessions' active minutes, agentMin = their sum; errorRate null under 10 calls)
 
 --json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
   activity tokens{in,out,cacheRead,cacheWrite} costUsd billing{mode,plan,source} unpricedTokens unpricedCredits
@@ -74,7 +81,7 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 `;
 }
 
-interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; filters: string[]; pinned: boolean; cf: CliFilter | null }
+interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; filters: string[]; pinned: boolean; cf: CliFilter | null; days: number }
 interface JTok { in: number; out: number; cacheRead: number; cacheWrite: number }
 interface JBill { mode: string; plan: string; source: string }
 interface JSess {
@@ -94,7 +101,7 @@ function out(line: string): void {
 function fail(msg: string): never { process.stderr.write("agentglass: " + msg + "\n"); process.exit(2); }
 
 function opts(args: string[]): Opts {
-  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, filters: [], pinned: false, cf: null };
+  const o: Opts = { live: false, harness: "", limit: 0, subs: false, fromStart: false, filters: [], pinned: false, cf: null, days: 7 };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -104,6 +111,7 @@ function opts(args: string[]): Opts {
     else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
     else if (a === "--filter") { if (i + 1 >= args.length) fail("--filter needs an expression, e.g. --filter 'harness is codex'"); o.filters.push(args[i + 1] ?? ""); i++; }
     else if (a === "--pinned") o.pinned = true;
+    else if (a === "--days") { const v = args[i + 1] ?? ""; o.days = /^\d+$/.test(v) ? Number(v) : -1; i++; if (o.days < 0) fail("--days needs a number ≥ 0 (0 = all history), e.g. --days 30"); if (args.indexOf("--repos") < 0) fail("--days applies to --repos only: agentglass --json --repos --days " + v); }
   }
   o.cf = cliFilter(o.filters, o.harness, o.live, o.pinned, args.indexOf("--watch") >= 0);
   return o;
@@ -135,13 +143,6 @@ function snapshot(o: Opts): void {
   process.exit(0);
 }
 
-// a project key under --redact: its path part faked like labels and cwds
-function keyShown(key: string): string {
-  if (!REDACT) return key;
-  if (key.startsWith("git:file/")) return "git:file" + display("cwd", key.slice(8), null);
-  if (key.startsWith("git:")) { const i = key.indexOf("/"); return i > 0 ? key.slice(0, i + 1) + display("repo", key.slice(i + 1), null) : key; }
-  const c = key.indexOf(":"); return c > 0 && key.slice(c + 1).startsWith("/") ? key.slice(0, c + 1) + display("cwd", key.slice(c + 1), null) : key;
-}
 function repoJ(s: Sess): JRepo | null {
   const id = identOf(s); if (!id) return null;
   return { key: keyShown(id.key), label: display("repo", labelOf(id), s), kind: id.kind, worktree: id.worktree ? display("repo", id.worktree, s) : "",
@@ -230,7 +231,12 @@ function watch(o: Opts): void {
 H.cli.push((args: string[]): boolean => {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(usage().trimEnd()); return true; }
   if (args.indexOf("--version") >= 0) { out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
-  if (args.indexOf("--json") >= 0) { S.cli = true; snapshot(opts(args)); return true; } // no toast line: warnings go to stderr
+  if (args.indexOf("--json") >= 0) { // no toast line: warnings go to stderr
+    S.cli = true; const o = opts(args); const cf = o.cf;
+    if (args.indexOf("--repos") >= 0) reposCli(o.days, cf ? cf.f : null, cf ? cf.cheap : null); else snapshot(o);
+    return true;
+  }
+  if (args.indexOf("--repos") >= 0) fail("--repos needs --json: agentglass --json --repos");
   if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args)); return true; }
   return false;
 });

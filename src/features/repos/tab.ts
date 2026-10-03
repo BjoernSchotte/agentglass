@@ -6,7 +6,7 @@ import { fit, fitStyled, fillTo, width, vwidth, clean, numAt, ago } from "../../
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, type Tab, display } from "../../hooks.ts";
-import { sessions, titleOf, loadHead, current, parentOf } from "../../model/sessions.ts";
+import { sessions, titleOf, loadHead, loadTail, current, parentOf } from "../../model/sessions.ts";
 import { P, subOf } from "../../model/project.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
@@ -22,7 +22,8 @@ import { tabFilter, chips } from "../query/ui.ts";
 import { identOf } from "../query/project.ts";
 import { realCwd } from "../redact.ts";
 import { openGraph } from "../callgraph/view.ts";
-import { type RepoAgg, type HarnessAgg, type FileAgg, repoAgg, relFile, errPct, allDays } from "./agg.ts";
+import { type RepoAgg, type HarnessAgg, type FileAgg, repoAgg, relFile, errPct, allDays, topFiles } from "./agg.ts";
+export { topFiles };
 
 // ── pure helpers (checks) ──
 // 9h12m, 1h05m, 12m
@@ -80,14 +81,6 @@ function touched(s: Sess, r: RepoAgg, file: string): boolean {
   for (const dk of r.days) { const d = a.days.get(dk); if (!d) continue; for (const k of d.files.keys()) if (relFile(id.top, cwd, k.slice(k.indexOf("\t") + 1)) === file) return true; }
   return false;
 }
-// most-edited files; "outside the repo" last
-export function topFiles(r: RepoAgg, n: number): [string, FileAgg][] {
-  const xs: [string, FileAgg][] = [...r.files.entries()];
-  xs.sort((x: [string, FileAgg], y: [string, FileAgg]) => y[1].n - x[1].n || (x[0] < y[0] ? -1 : 1));
-  const out = xs.slice(0, n);
-  if (r.outside.n > 0) out.push(["", r.outside]);
-  return out;
-}
 // tools by errors, then calls
 export function topErrTools(r: RepoAgg, n: number): [string, Cnt][] {
   const xs: [string, Cnt][] = [...r.tools.entries()];
@@ -140,11 +133,12 @@ let pendN = 0;
 function pending(days: string[]): number {
   let n = P.todo; let loads = 0;
   for (const s of sessions.values()) {
-    if (s.headDone || s.cwd) continue;
+    if (s.cwd || (s.headDone && s.tailSize === s.size) || (s.parent && s.headDone)) continue;
     const a = ledger.get(s.path); if (!a) continue;
     let any = false; for (const dk of days) if (a.days.has(dk)) { any = true; break; }
     if (!any) continue;
-    if (loads < 40) { loadHead(s); loads++; if (s.headDone) continue; } // ≤ 40 head reads per frame, like the session list
+    // ≤ 40 reads per frame, like the session list; a head without a cwd line (huge first lines): the tail has one
+    if (loads < 40) { if (!s.headDone) loadHead(s); if (!s.cwd) loadTail(s); loads++; continue; }
     n++;
   }
   if (loads) S.dirty = true;

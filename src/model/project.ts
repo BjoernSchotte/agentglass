@@ -94,7 +94,7 @@ function askGit(git: GitRun, top: string, common: string, name: string): string 
 export function resolveCwd(cwd: string, git: GitRun): Ident {
   BROKEN.v = false;
   if (!cwd) return ident("none", "(no project)", "none", "");
-  if (isDir(cwd) < 0) { const g = ident("path:" + cwd, home(cwd) + " (gone)", "path", cwd); g.gone = true; return g; }
+  if (isDir(cwd) < 0) return goneIdent(cwd, git);
   const rc = real(cwd);
   let d = rc; let top = ""; let gitdir = "";
   for (let i = 0; i < MAX_UP; i++) {
@@ -127,6 +127,18 @@ export function resolveCwd(cwd: string, git: GitRun): Ident {
   id.kind = "gitdir"; id.key = "gitdir:" + common;
   id.label = basename(mainTop === top && !common.endsWith("/.git") ? common.replace(/\.git$/, "") : mainTop);
   return id;
+}
+// a vanished cwd: inside a repo that still exists (a removed worktree under <repo>/.claude/worktrees, a deleted subdir) it
+// is that project, as a worktree named after it (files under it stay repo-relative); else path:<cwd> labelled "(gone)"
+function goneIdent(cwd: string, git: GitRun): Ident {
+  let d = dirname(cwd);
+  for (let i = 0; i < MAX_UP && isDir(d) < 0; i++) { const up = dirname(d); if (up === d) break; d = up; }
+  if (d !== "/" && isDir(d) === 1) {
+    const id = resolveCwd(d, git);
+    if (id.kind === "git" || id.kind === "gitdir") { id.gone = true; id.worktree = basename(cwd); id.top = cwd; id.gitdir = ""; return id; }
+  }
+  BROKEN.v = false;
+  const g = ident("path:" + cwd, home(cwd) + " (gone)", "path", cwd); g.gone = true; return g;
 }
 // the repo-relative dir of cwd ("" at the top or for non-git identities)
 export function subOf(id: Ident, cwd: string): string {
@@ -235,6 +247,7 @@ export function loadProjects(file: string): void {
   if (cs) for (const k of Object.keys(cs)) {
     const o = obj(cs[k]); if (!o || !str(o["key"]) || cwds.has(k)) continue;
     const id = identIn(o);
+    if (id.gone && id.kind === "path") continue; // the never-resolved fallback: resolving again is cheap and may find the repo around it
     if (id.remote && !scrubRemote(id.remote)) { id.remote = ""; } // never trust a stored remote that no longer passes the scrub
     cwds.set(k, { id, mt: num(o["cfgMtime"]), checked: num(o["checked"]) });
   }

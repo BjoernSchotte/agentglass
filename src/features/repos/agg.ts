@@ -48,6 +48,14 @@ export function relFile(top: string, cwd: string, p: string): string {
   const abs = p.startsWith("/") ? resolve(p) : cwd ? resolve(cwd, p) : "";
   return abs.startsWith(top + "/") ? abs.slice(top.length + 1) : "";
 }
+// most-edited files; "outside the repo" last
+export function topFiles(r: RepoAgg, n: number): [string, FileAgg][] {
+  const xs: [string, FileAgg][] = [...r.files.entries()];
+  xs.sort((x: [string, FileAgg], y: [string, FileAgg]) => y[1].n - x[1].n || (x[0] < y[0] ? -1 : 1));
+  const out = xs.slice(0, n);
+  if (r.outside.n > 0) out.push(["", r.outside]);
+  return out;
+}
 // tool error rate in percent; -1 below 10 calls (shown as "·")
 export function errPct(err: number, n: number): number { return n < 10 ? -1 : (err * 100) / n; }
 // every day key in the ledger, sorted (period "all")
