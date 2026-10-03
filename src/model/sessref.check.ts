@@ -60,7 +60,7 @@ mkdirSync(dir + "/wt", { recursive: true }); writeFileSync(dir + "/wt/.git", "gi
 eq("project key: a worktree is its main repo", projectKey(dir + "/wt"), "git:" + R + "/p1");
 eq("project key: plain dir", projectKey(dir + "/loose"), "path:" + R + "/loose");
 const sc = scopeOf(true, [], "", dir + "/p1");
-eq("agent default: project", sc.name + "|" + sc.key, "project|git:" + dir + "/p1");
+eq("agent default: project", sc.name + "|" + sc.key, "project|git:" + R + "/p1");
 eq("same project in scope", String(inScope(b, sc)), "true");
 eq("other project out of scope", String(inScope(c, sc)), "false");
 eq("unknown cwd out of scope", String(inScope(put("pi", "nocwd", "", 1, ""), sc)), "false");
