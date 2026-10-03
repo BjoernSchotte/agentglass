@@ -93,6 +93,10 @@ const dir = "/tmp/agentglass-otlp-enc-" + String(process.pid); mkdirSync(dir + "
 writeFileSync(dir + "/.git/config", "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://user:ghp_x@github.com/o/r.git\n");
 const v = vcsOf(dir, "main", "");
 eq("vcs", v.map((a) => a.k + "=" + a.s).join(" "), REDACT ? "" : "vcs.repository.url.full=https://github.com/o/r vcs.repository.name=r vcs.owner.name=o vcs.provider.name=github vcs.ref.head.name=main vcs.ref.head.type=branch");
+// the remote repo-view picks for the project (here the only one, not named origin)
+writeFileSync(dir + "/.git/config", "[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = git@gitlab.com:grp/proj.git\n");
+const v2 = vcsOf(dir + "/", "dev", "");
+eq("vcs: non-origin remote", v2.map((a) => a.k + "=" + a.s).join(" "), REDACT ? "" : "vcs.repository.url.full=ssh://gitlab.com/grp/proj vcs.repository.name=proj vcs.owner.name=grp vcs.provider.name=gitlab vcs.ref.head.name=dev vcs.ref.head.type=branch");
 rmSync(dir, { recursive: true, force: true });
 // privacy (suite runs with AGENTGLASS_REDACT=1): a learned name never leaves, no vcs.* keys
 if (REDACT) {

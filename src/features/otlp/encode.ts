@@ -3,14 +3,11 @@
 // Attribute names follow the OpenTelemetry GenAI semantic conventions as of semantic-conventions v1.37 (gen-ai registry,
 // Development stability) plus the general vcs/process/mcp registries; facts with no semconv home use agentglass.*.
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
-import { existsSync, statSync } from "node:fs";
-import { readText } from "../../util/fs.ts";
 import { scrubRemote } from "../../util/giturl.ts";
 import { BUILD } from "../../build-info.ts";
 import { REDACT } from "../redact-on.ts";
 import { scrubText } from "../redact.ts";
-import { projectRoot, projectOf } from "../query/project.ts";
+import { identNow, labelOf } from "../../model/project.ts";
 import { mcpServer } from "../usage/calls.ts";
 import { type InMode, inputTokens, providerOf } from "./requests.ts";
 import { type OtlpCfg } from "./config.ts";
@@ -22,22 +19,7 @@ export function nanos(ms: number): string { return String(Math.floor(ms)) + "000
 const NATIVE = new Map<string, string>([["claude", "session.id"], ["codex", "conversation.id"], ["gemini", "session.id"], ["opencode", "session.id"]]);
 export function nativeKey(h: string): string { return NATIVE.get(h) ?? ""; }
 
-// ── vcs.* from the repo's own git config (no git process); dropped entirely under --redact ──
-const remotes = new Map<string, string>();
-function originOf(root: string): string {
-  const hit = remotes.get(root); if (hit !== undefined) return hit;
-  let gd = join(root, ".git");
-  try { if (statSync(gd).isFile()) { const m = /gitdir:\s*(.+)/.exec(readText(gd, 0, 4096)); if (m) gd = (m[1] ?? "").trim(); } } catch (e) { gd = ""; }
-  let url = ""; let inOrigin = false;
-  if (gd && existsSync(join(gd, "config"))) for (const l of readText(join(gd, "config"), 0, 262144).split("\n")) {
-    const t = l.trim();
-    if (t.startsWith("[")) { inOrigin = /^\[remote\s+"origin"\]/.test(t); continue; }
-    const m = inOrigin ? /^url\s*=\s*(.+)$/.exec(t) : null; if (m) { url = (m[1] ?? "").trim(); break; }
-  }
-  if (remotes.size > 1024) remotes.clear();
-  remotes.set(root, url);
-  return url;
-}
+// ── vcs.* from repo-view's project identity (its chosen remote, worktrees resolved; no git process); dropped under --redact ──
 function providerName(host: string): string {
   const h = host.replace(/:\d+$/, "");
   if (h === "github.com" || h.endsWith(".github.com")) return "github";
@@ -49,14 +31,15 @@ function providerName(host: string): string {
 export function vcsOf(cwd: string, branch: string, remote: string): Attr[] {
   if (REDACT || !cwd) return [];
   const out: Attr[] = [];
-  const root = projectRoot(cwd);
-  const r = scrubRemote((root ? originOf(root) : "") || remote);
+  const id = identNow(cwd);
+  const repo = id.kind === "git" || id.kind === "gitdir";
+  const r = scrubRemote(id.remote || remote);
   if (r) {
     out.push(attrS("vcs.repository.url.full", r.url));
     if (r.name) out.push(attrS("vcs.repository.name", r.name));
     if (r.owner) out.push(attrS("vcs.owner.name", r.owner));
     const p = providerName(r.host); if (p) out.push(attrS("vcs.provider.name", p));
-  } else if (root) out.push(attrS("vcs.repository.name", projectOf(cwd)));
+  } else if (repo) out.push(attrS("vcs.repository.name", labelOf(id)));
   if (branch) { out.push(attrS("vcs.ref.head.name", branch)); out.push(attrS("vcs.ref.head.type", "branch")); }
   return out;
 }
