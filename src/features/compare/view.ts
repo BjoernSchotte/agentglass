@@ -10,18 +10,20 @@ import { ask, openPath } from "../../actions.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
-import { L, todayKey } from "../usage/record.ts";
+import { L, todayKey, dayKey, startOfDay } from "../usage/record.ts";
+import { ledger } from "../usage/ledger.ts";
 import { fmtMs } from "../usage/calls.ts";
 import { grp, kfmt, money } from "../usage/costs.ts";
 import { statsDrill, statsTabIndex } from "../usage/stats.ts";
 import { callDays } from "../usage/callcache.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, printClause } from "../query/parse.ts";
-import { compile } from "../query/eval.ts";
-import { effective, localFor } from "../query/scope.ts";
+import { compile, callCutoff } from "../query/eval.ts";
+import { addClause, effective, localFor } from "../query/scope.ts";
 import { complete } from "../query/ui.ts";
-import { shown } from "../triage/run.ts";
-import { type Group, type Cmp, type CmpJob, type Metric, groupOfExpr, groupClauses, cmpJob, cmpStep, cmpProgress, cmpCached, cmpKey, costCell } from "./metrics.ts";
+import { shown, newRun } from "../triage/run.ts";
+import { openTriage, onInclude } from "../triage/view.ts";
+import { type Group, type Cmp, type CmpJob, type Metric, NOSUB, groupOfExpr, groupClauses, cmpJob, cmpStep, cmpProgress, cmpCached, cmpKey, costCell } from "./metrics.ts";
 import { type ToolRow, type CntRow, type FileRow, type ModelRow, toolRows, cntRows, fileLists, modelRows, timeline } from "./sections.ts";
 
 export const CV_NAME = "compare";
@@ -298,6 +300,31 @@ function openSide(st: CState, side: number): void {
   openTranscript(s); V.inTx = true;
 }
 function swap(st: CState): void { const a = st.A; st.A = st.B; st.B = a; st.side = 1 - st.side; st.note = st.note ? "swapped · " + st.note.replace(/^swapped · /, "") : ""; changed(st); }
+// t: triage with A as the selection and B as an explicit group baseline, in the compare scope; entity call when every
+// counted session's calls are within retention, else session; the period reaches back to the oldest counted day
+function triageAB(st: CState): void {
+  const c = st.cmp;
+  if (!c) { say("info", "still counting — t works once both groups are counted"); return; }
+  if (c.emptyA || c.emptyB) { say("warn", emptyText(c)); return; }
+  const cut = callCutoff(); let calls = true; let oldest = todayKey();
+  for (const t of [c.a.t, c.b.t]) for (const p of t.paths) {
+    const a = ledger.get(p); if (!a || a.t0 < cut) calls = false;
+    const ds: string[] = t.pdays.get(p) ?? []; for (const d of ds) if (String(d) < oldest) oldest = String(d);
+  }
+  let days = 1; const noon = startOfDay() + 43200000;
+  while (days < 3650 && String(dayKey(new Date(noon - days * 86400000))) >= oldest) days++;
+  const extra: Clause[] = st.subs ? [] : [NOSUB];
+  const r = newRun("Compare", calls ? "call" : "session", st.scope.slice(), st.A.cs.concat(extra), days);
+  r.base = "group"; r.group = st.B.cs.concat(extra);
+  V.job = null;
+  openTriage(r, () => { S.fview = CV_NAME; S.mode = "view"; S.dirty = true; });
+}
+// triage's + / − edit group A (the compare view is a non-tab origin)
+onInclude("Compare", (cl: Clause): string => {
+  const st = CV.st; if (!st) return "";
+  const cs = addClause(st.A.cs, cl).cs; st.A = { label: print(cs), cs, single: null }; st.note = ""; changed(st);
+  return "group A: + " + printClause(cl);
+});
 function cycle(st: CState, d: number): void {
   const n = hasTimeline(st) ? 7 : 6;
   st.sec = (st.sec + d + n) % n; st.sel = 0; st.top = 0; S.dirty = true;
@@ -329,6 +356,7 @@ function keyView(st: CState, k: string): boolean {
   else if (k === "a") { S.inputErr = ""; cyc.cands = []; ask("group A", "cmp-a", print(st.A.cs)); }
   else if (k === "b") { S.inputErr = ""; cyc.cands = []; ask("group B", "cmp-b", print(st.B.cs)); }
   else if (k === "x") swap(st);
+  else if (k === "t") triageAB(st);
   else if (k === "S") { st.subs = !st.subs; changed(st); say("info", st.subs ? "subagents included" : "subagents excluded"); }
   else return k !== "?";
   return true;

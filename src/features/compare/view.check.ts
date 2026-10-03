@@ -11,6 +11,8 @@ import { print } from "../query/parse.ts";
 import { groupOfSession } from "./metrics.ts";
 import { CV, openCompare, compareLines } from "./view.ts";
 import { M, selectSession } from "./marks.ts";
+import { useTriageCfg } from "../triage/run.ts";
+import { T, selectRow as selectTriageRow, includeSel } from "../triage/view.ts";
 import { cmpBase, cmpCleanup, sess } from "./fixture.ts";
 
 let bad = 0;
@@ -76,6 +78,22 @@ M.a = ""; M.b = "";
 S.tab = statsTabIndex(); onInput("C");
 const st3 = CV.st; eq("Stats C: periods", st3 ? print(st3.A.cs) + " | " + print(st3.B.cs) + " | " + st3.origin : "", "day is yesterday | day is today | Stats");
 onInput("esc"); eq("esc to Stats", S.mode + " " + String(S.tab === statsTabIndex()), "list true");
+// t: triage A vs B, + edits group A, esc returns with the view's state
+useTriageCfg({ longCall: "30s", expensiveUsd: 5, minSupport: 1, warn: "" });
+cmpBase(); openCompare(groupOfSession(sess("a1")), groupOfSession(sess("b1")), "Sessions", "");
+const cs0 = CV.st; if (cs0) { cs0.sec = 1; compareLines(cs0, 120, 40); }
+onInput("t");
+const ts = T.st;
+eq("t opens triage A vs B", ts ? ts.run.base + " | " + print(ts.run.sel) + " | " + print(ts.run.group) : "none", "group | session is claude:a1 | session is claude:b1");
+eq("entity call within retention", ts ? ts.run.entity + " " + String(ts.run.days) : "", "call 1");
+eq("origin", ts ? ts.run.origin : "", "Compare");
+selectTriageRow("tool", "Bash"); const msg = includeSel(false);
+eq("include toast", msg, "group A: + tool is Bash");
+onInput("esc"); eq("back in compare", S.fview + " " + S.mode, "compare view");
+const cs = CV.st; eq("include edited group A", cs ? print(cs.A.cs) : "", "session is claude:a1 and tool is Bash");
+eq("state kept (section)", cs ? String(cs.sec) : "", "1");
+eq("header shows the expression", cs ? (compareLines(cs, 120, 40)[0] ?? "").indexOf("A: session is claude:a1 and tool is Bash") >= 0 ? "ok" : compareLines(cs, 120, 40)[0] ?? "" : "", "ok");
+if (cs) { onInput("S"); onInput("t"); const t2 = T.st; eq("t without subagents", t2 ? print(t2.run.sel) + " | " + print(t2.run.group) : "", "session is claude:a1 and tool is Bash and subagent is false | session is claude:b1 and subagent is false"); onInput("esc"); }
 cmpCleanup();
 console.log(bad ? String(bad) + " failed" : "compare view: all checks passed");
 if (bad) process.exit(1);

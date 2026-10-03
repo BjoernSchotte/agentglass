@@ -45,7 +45,7 @@ export function groupOfExpr(src: string): { g: Group | null; err: QErr | null } 
   const one = cs.length === 1 && cs[0].key === "session" && cs[0].op === "is" && cs[0].vals.length === 1 ? sessionOf(cs[0].vals[0] ?? "") : null;
   return { g: one ? groupOfSession(one) : { label: print(cs), cs, single: null }, err: null };
 }
-const NOSUB: Clause = { key: "subagent", op: "is", vals: ["false"], neg: false, pinned: false };
+export const NOSUB: Clause = { key: "subagent", op: "is", vals: ["false"], neg: false, pinned: false };
 // scope ∧ group (∧ subagent is false): a plain AND — addAll would merge `harness is a` with `harness is b` into one_of
 export function groupClauses(g: Group, scope: Clause[], subs: boolean): Clause[] { return scope.concat(g.cs, subs ? [] : [NOSUB]); }
 
