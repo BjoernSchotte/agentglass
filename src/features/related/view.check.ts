@@ -3,6 +3,7 @@
 import { mkdirSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { type Sess, newSess } from "../../model/types.ts";
 import { S } from "../../state.ts";
+import { H } from "../../hooks.ts";
 import { width } from "../../util/text.ts";
 import { onInput } from "../../input.ts";
 import { sessions } from "../../model/sessions.ts";
@@ -68,6 +69,9 @@ if (!tv) { bad++; console.log("FAIL no transcript"); } else {
   const Lw = st ? viewLines(st, 160, 22) : [];
   eq("header wide: long labels", (Lw[0] ?? "").indexOf("±10m around") >= 0 && (Lw[0] ?? "").indexOf("3 sessions") >= 0 ? "ok" : Lw[0] ?? "", "ok");
   eq("anchor marker", L.some((l: string) => l.indexOf("▶") >= 0 && l.indexOf("+00:00") < 0 && l.indexOf(" 00:00") >= 0) ? "ok" : L.join("\n"), "ok");
+  let fw = width("? keys") + 2 + width("esc back") + 2; // the footer: "? keys", the feature's hints, "esc back" (each + 2 spaces)
+  for (const f of H.footerHints) for (const kd of f("view")) fw += width((kd[0] ?? "") + " " + (kd[1] ?? "")) + 2;
+  eq("footer hints fit 80 columns", String(fw - 2 <= 79), "true");
   eq("conflict note", L.some((l: string) => l.indexOf("‼") >= 0 && l.indexOf("also edited by") >= 0) ? "ok" : L.join("\n"), "ok");
   onInput("esc");
   eq("esc → transcript", S.mode + " " + String(S.tv === tv) + " " + String(tv.cur), "transcript true 1");

@@ -147,6 +147,7 @@ function note(st: RState, r: RelEv): string {
 }
 function rowText(r: RelEv): string {
   if (r.kind === "write" && r.files.length) return r.files.map((f: FileRef) => fileShown(f)).join(" ");
+  if (r.kind === "commit" && !r.sess) return clean(r.text.replace(/^commit \(no session\) /, "")); // the columns say "(no session) ● commit"
   return clean(r.text);
 }
 function status(r: RelEv): string {
@@ -340,7 +341,7 @@ H.footerHints.push((mode: string): string[][] => {
   if (mode === "detail" || mode === "transcript") return R.st && R.st.inTx && mode === "transcript" ? [["r", "related"], ["esc", "back to related"]] : [["r", "related"]];
   if (mode === "view" && S.fview === "call graph") return [["r", "related"]];
   if (mode !== "view" || S.fview !== NAME) return [];
-  return [["↑↓", "event"], ["↵", "transcript"], ["+/-", "window"], ["k", "kinds"], ["f", "files"], ["o", "own"], ["n/N", "flagged"], ["/", "filter"]];
+  return [["↵", "open"], ["+/-", "window"], ["k", "kinds"], ["f", "files"], ["n/N", "flagged"], ["/", "filter"]]; // 80 columns; o and the rest: ?
 });
 H.helpSections.push({ name: "related events", ctx: NAME, keys: [
   ["r", "related events around the event (detail, transcript cursor, call graph span)"],
