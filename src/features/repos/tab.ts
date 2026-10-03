@@ -7,7 +7,7 @@ import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, type Tab, display } from "../../hooks.ts";
 import { sessions, titleOf, loadHead, loadTail, current, parentOf } from "../../model/sessions.ts";
-import { P, subOf } from "../../model/project.ts";
+import { P, subOf, cwdOfSess } from "../../model/project.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
@@ -131,14 +131,14 @@ function shown(label: string): string { return display("repo", label, null); }
 // sessions still without a project: queued cwds, plus sessions with activity in the period whose head (cwd) is unread
 let pendN = 0;
 function pending(days: string[]): number {
-  let n = P.todo; let loads = 0;
+  let n = P.todo; let loads = 0; const t0 = Date.now();
   for (const s of sessions.values()) {
-    if (s.cwd || (s.headDone && s.tailSize === s.size) || (s.parent && s.headDone)) continue;
+    if (s.cwd || (s.headDone && s.tailSize === s.size) || (s.parent && s.headDone) || cwdOfSess(s.path)) continue; // known from projects.json
     const a = ledger.get(s.path); if (!a) continue;
     let any = false; for (const dk of days) if (a.days.has(dk)) { any = true; break; }
     if (!any) continue;
-    // ≤ 40 reads per frame, like the session list; a head without a cwd line (huge first lines): the tail has one
-    if (loads < 40) { if (!s.headDone) loadHead(s); if (!s.cwd) loadTail(s); loads++; continue; }
+    // ≤ 60 ms of reads per frame; a head without a cwd line (huge first lines): the tail has one
+    if (Date.now() - t0 < 60) { if (!s.headDone) loadHead(s); if (!s.cwd) loadTail(s); loads++; continue; }
     n++;
   }
   if (loads) S.dirty = true;
@@ -251,7 +251,7 @@ function renderDetail(): void {
   for (const [n, top] of r.worktrees) wts.push(fg(C.text) + display("repo", n, null) + RST + fg(C.dim) + " " + clean(display("cwd", top, null)) + RST);
   const l2 = fg(C.dim) + (r.worktrees.size > 1 ? "worktrees (" + String(r.worktrees.size) + ") " : "worktree ") + RST + wts.join(dot);
   const l3 = costCell(r, split(r.modes, false)) + dot + fg(C.cyan) + "↑" + kfmt(r.inTok) + RST + fg(C.sub) + " in " + RST + fg(C.purple) + "↓" + kfmt(r.outTok) + RST + fg(C.sub) + " out" + RST + dot +
-    fg(C.text) + hm(r.activeMin) + RST + fg(C.sub) + " active" + RST + fg(C.dim) + " (" + hm(r.agentMin) + (iw >= 100 ? " agent-hours)" : " agents)") + RST + dot + fg(C.text) + grp(r.calls) + RST + fg(C.sub) + (iw >= 100 ? " tool calls" : " calls") + RST + dot + errCell(r.err, r.calls, 0) + fg(C.sub) + " err" + RST;
+    fg(C.text) + hm(r.activeMin) + RST + fg(C.sub) + " active" + RST + fg(C.dim) + " (" + hm(r.agentMin) + (iw >= 100 ? " agent-hours)" : " agents)") + RST + dot + fg(C.text) + grp(r.calls) + RST + fg(C.sub) + (iw >= 100 ? " tool calls" : " calls") + RST + dot + (r.calls < 10 ? fg(C.dim) + "err% · (< 10 calls)" + RST : errCell(r.err, r.calls, 0) + fg(C.sub) + " errors" + RST);
   line(1, 2, W - 2, " " + l1); line(1, 3, W - 2, " " + l2); line(1, 4, W - 2, " " + l3);
   // boxes: sessions (left) | files, tools, branches (right)
   const y0 = 6; const bh = Ht - 1 - y0; if (bh < 4) return;

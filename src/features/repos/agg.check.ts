@@ -50,7 +50,7 @@ function byKey(rows: RepoAgg[], k: string): RepoAgg | null { for (const r of row
 const rows = repoAgg([TODAY], null);
 const x = byKey(rows, "git:github.com/me/x"); const o = byKey(rows, "git:github.com/me/other");
 eq("two projects", String(rows.length), "2");
-eq("worktrees merged", x ? [...x.worktrees.keys()].sort().join(",") : "", "(main),w1");
+eq("worktrees merged", x ? [...x.worktrees.keys()].sort().join(",") : "", "r1,w1");
 eq("subagent without cwd → parent's project", x ? String(x.cost) : "", "7");
 eq("top-level sessions only", x ? String(x.sessions) : "", "2");
 eq("subagent with own cwd → its project", o ? String(o.cost) + " " + String(o.sessions) : "", "8 0");

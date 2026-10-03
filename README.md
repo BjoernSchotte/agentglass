@@ -276,8 +276,38 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `c` | call graph (flame chart ⇄ call tree with `Tab`) |
 | `!` | jump to the next agent waiting for you |
 | `T` | cycle themes |
-| `Tab` `1` `2` `3` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) |
+| `Tab` `1` `2` `3` `4` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) ⇄ Repos |
 | `B` | in Stats: budget state and the config path |
+| `@` | in Sessions: open the selected session's project in the Repos tab |
+
+## Repos
+
+The Repos tab (`4`) groups the sessions of every harness by project, not by directory: linked worktrees and
+separate clones of one remote are one row (`⑂N` = worktrees), with sessions, live ones, cost, active time, tool error
+rate, an 8-cell harness mix (by cost, by sessions when nothing is priced), changed files and the last activity.
+
+- `d` `w` `m` `a` today / 7 days / 30 days / all time · `s` sorts by cost, active, sessions, err%, last · `/` filters
+  the *sessions* before grouping (`harness is codex` shows each project's Codex share) · `↵` opens the project.
+- Project detail: its sessions (`↵` transcript, `c` call graph), the 20 most-changed repo-relative files (`↵` keeps
+  only the sessions that changed it; `esc` clears that), the tools that fail most with the failing shell programs,
+  and branches. `←` `→` move between the boxes, `esc` / `⌫` go back.
+- Identity, from the filesystem only (no network; the one git call is `git remote get-url` for an `insteadOf` alias
+  or an `[include]`d config): the remote `origin`, else `upstream`, else the first one, normalized
+  (`https://`, `ssh://` and `git@host:` forms, default ports, `.git` merge; paths compare case-insensitively only on
+  github.com, gitlab.com and bitbucket.org). Forks are separate projects. Without a remote, the worktrees of one
+  local repo merge (`gitdir:`); a non-git directory is its own `~/…` row. Remotes are stored without credentials.
+  Identities are cached in `~/.agentglass/cache/projects.json`; a worktree that was deleted keeps the identity it
+  had while it existed. A deleted worktree never seen before is matched to the repo around it (Claude's
+  `.claude/worktrees/agent-*`) when there is one, else it shows as `~/… (gone)`.
+- Active time is the union of the sessions' active minutes: lines no more than `repo.idleGapMin` minutes apart
+  (`~/.agentglass/config.json` `"repo": {"idleGapMin": 5}`, 1–60) count as one stretch, a tool call counts for its
+  whole run. Two agents working in parallel for an hour are one hour active and two agent-hours. A changed gap
+  applies to newly indexed lines. This is not the call graph's span-based "active". File counts are approximate on
+  very busy days (the ledger keeps each day's 300 most-edited paths once it holds 600); err% shows from 10 calls.
+- The same identity is the filter key `repo` (`repo is me/x` matches the label, `repo ~ shop` label or key), plus
+  `worktree` and `project.kind` (`git` `gitdir` `path` `none`). `--json` sessions carry
+  `repo{key,label,kind,worktree,top,remote}`, and `agentglass --json --repos [--days N] [--filter …]` prints one
+  object per project (`--days` defaults to 7, `0` = all history).
 
 ## Filters
 
@@ -296,7 +326,7 @@ harness is pi, day >= -7d               duration > 30s                       con
   weekdays `mo`…`su`; `unknown` finds unpriced cost and untimed calls (`cost is unknown`). Paths take `*` globs.
 - Keys (`--help` and `?` list them): session `harness repo cwd branch model title id agent subagent live archived
   state cost tokens tokens.in/out/cache_read/cache_write tools errors error_rate lines lines.added/removed age text
-  content`, day `day weekday day.cost day.tokens day.tools`, call `tool server program command file ext status
+  content worktree project.kind`, day `day weekday day.cost day.tokens day.tools`, call `tool server program command file ext status
   duration out hour`, `event` (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the
   same call), day clauses "has a day matching all of them". `model` of a call is the model of the message that issued
   it (Codex: per turn; fx: per session; Kiro: unknown).
@@ -321,6 +351,7 @@ A bad expression exits 2 with the message and a caret under the column.
 ```sh
 agentglass --json --live | jq '.[] | {title, costUsd, attention}'   # snapshot of your sessions
 agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'  # skills used: [{name, source, n}]
+agentglass --json --repos --days 30 | jq '.[] | {label, costUsd, activeMin}'  # cost and active time per project
 agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL stream of every agent's events
 agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one
 agentglass --redact                                                 # privacy mode for streams and screenshots

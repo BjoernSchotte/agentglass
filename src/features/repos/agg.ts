@@ -3,7 +3,7 @@
 // Each session (top-level or subagent) adds its matching days to the project of its own cwd (a subagent without one: its
 // parent's), so a worktree-isolated subagent books where it worked. Files are relative to each worktree's own top, so
 // src/a.ts edited in two worktrees is one row. Active time is the union of the sessions' intervals per day.
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { P, labelOf, real } from "../../model/project.ts";
@@ -23,7 +23,7 @@ export interface FileAgg { n: number; add: number; del: number; by: Set<string> 
 export interface HarnessAgg { sess: number; cost: number; unk: number }
 export interface BranchAgg { sess: number; cost: number; unk: number }
 export interface RepoAgg {
-  key: string; label: string; kind: string; worktrees: Map<string, string> /* name ("(main)") → top */; sessions: number; live: number; last: number;
+  key: string; label: string; kind: string; worktrees: Map<string, string> /* checkout name (linked worktree name, else the dir name) → top */; sessions: number; live: number; last: number;
   cost: number; unk: number; modes: ModeSum; inTok: number; outTok: number; calls: number; err: number; activeMin: number; agentMin: number;
   files: Map<string, FileAgg>; outside: FileAgg; tools: Map<string, Cnt>; progErr: Map<string, Cnt>;
   byHarness: Map<string, HarnessAgg>; branches: Map<string, BranchAgg>; paths: string[] /* top-level session paths, newest first */;
@@ -122,7 +122,7 @@ export function repoAgg(days: string[], f0: Compiled | null): RepoAgg[] {
       }
     }
     if (!any) continue;
-    r.worktrees.set(id.worktree || "(main)", id.top);
+    r.worktrees.set(id.worktree || basename(id.top) || id.label, id.top); // clones and linked worktrees each count
     const h = haOf(r.byHarness, s.h); h.cost += cost; h.unk += unk;
     if (s.branch) { const b = haOf(r.branches, s.branch); b.cost += cost; b.unk += unk; if (!s.parent) b.sess++; }
     if (!s.parent) { r.sessions++; h.sess++; if (s.pid) r.live++; r.paths.push(s.path); }

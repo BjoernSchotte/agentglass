@@ -26,7 +26,7 @@ function usd(cost: number, unk: number): number | null { return cost === 0 && un
 // files: top 50 (outside the repo counted apart); errorRate null under 10 calls; labels and paths through display()
 export function repoJson(r: RepoAgg): JRepo {
   const wts: { name: string; top: string }[] = [];
-  for (const [n, top] of r.worktrees) wts.push({ name: n === "(main)" ? n : display("repo", n, null), top: display("cwd", top, null) });
+  for (const [n, top] of r.worktrees) wts.push({ name: display("repo", n, null), top: display("cwd", top, null) });
   const files: { path: string; edits: number; add: number; del: number; harnesses: string[] }[] = [];
   for (const e of topFiles(r, 50)) if (e[0]) files.push({ path: display("file", e[0], null), edits: e[1].n, add: e[1].add, del: e[1].del, harnesses: [...e[1].by].sort() });
   const bh: { harness: string; sessions: number; costUsd: number | null }[] = [];
