@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { run } from "../util/fs.ts";
+import { home } from "../util/text.ts";
 import { readFileSync } from "node:fs";
 import { iniRemotes, hasInclude, pickRemote, normRemote, type Ident, resolveCwd, subOf, real, cfgMtime,
   P, identOfCwd, resolveTick, labelOf, rememberSess, cwdOfSess, loadProjects, saveProjects, resetProjects } from "./project.ts";
@@ -141,6 +142,8 @@ mk("main9/.git/config", cfg("origin", "https://github.com/me/nine")); mk("wt9/.g
 identOfCwd(T + "/wt9"); resolveTick(1e9, 1e9, nowF, stub);
 rmSync(T + "/main9", { recursive: true, force: true });
 resolveTick(1e9, 1e9, (): number => Date.now() + 33 * 60000, stub); const w9 = identOfCwd(T + "/wt9"); eq("broken worktree keeps git key", w9 ? w9.key : "", "git:github.com/me/nine");
+// a never-resolved vanished cwd: cached like any other (no re-resolve per start); resolved again once it exists
+identOfCwd(T + "/back"); resolveTick(1e9, 1e9, nowF, stub); const bk = identOfCwd(T + "/back"); eq("gone path", bk ? bk.label : "", home(T + "/back") + " (gone)");
 // projects.json round trip
 identOfCwd(T + "/r7"); identOfCwd(T + "/w1"); resolveTick(1e9, 1e9, nowF, stub);
 rememberSess("/logs/a.jsonl", T + "/w1"); rememberSess("/logs/dead.jsonl", T + "/r7");
@@ -153,6 +156,9 @@ const before = JSON.stringify([identOfCwd(T + "/w1"), identOfCwd(T + "/r7"), ide
 resetProjects(); eq("reset", identOfCwd(T + "/w1") === null ? "null" : "x", "null");
 resetProjects(); loadProjects(PF);
 eq("round trip idents", JSON.stringify([identOfCwd(T + "/w1"), identOfCwd(T + "/r7"), identOfCwd(T + "/wt9")]), before);
+const bk2 = identOfCwd(T + "/back"); eq("gone path kept in projects.json", bk2 ? bk2.key + (bk2.gone ? " gone" : "") : "null", "path:" + T + "/back gone");
+mk("back/.git/config", cfg("origin", "https://github.com/me/back"));
+resolveTick(1e9, 1e9, (): number => Date.now() + 44 * 60000, stub); const bk3 = identOfCwd(T + "/back"); eq("reappeared cwd re-resolved", bk3 ? bk3.key + (bk3.gone ? " gone" : "") : "", "git:github.com/me/back");
 eq("sess kept", cwdOfSess("/logs/a.jsonl"), T + "/w1"); eq("sess dropped", cwdOfSess("/logs/dead.jsonl"), "");
 rememberSess("/logs/b.jsonl", T + "/w1"); eq("read-only target", saveProjects("/proc/nope/projects.json", new Set<string>()) ? "y" : "n", "n");
 // label collisions get the host prefix

@@ -183,10 +183,12 @@ function store(cwd: string, id: Ident, now: number): void {
   if (!old || !same(old.id, id)) P.ver++;
   P.dirty = true;
 }
-// a re-resolve: a vanished cwd is never re-resolved; a git identity survives a broken .git link (main repo deleted)
+// a re-resolve: a vanished cwd keeps its identity until it exists again; a git identity survives a broken .git link
+// (main repo deleted)
 function revalidate(cwd: string, e: Ent, now: number, git: GitRun): void {
   cwds.set(cwd, { id: e.id, mt: e.mt, checked: now }); // a fresh record: scriptc may hand out copies of Map records
-  if (e.id.gone || isDir(cwd) !== 1) return;
+  if (isDir(cwd) !== 1) return;
+  if (e.id.gone) { store(cwd, resolveCwd(cwd, git), now); return; } // recreated (same path, maybe another repo)
   if (e.id.common && cfgMtime(e.id.common) === e.mt && isDir(e.id.common) === 1) return;
   const id = resolveCwd(cwd, git);
   if (BROKEN.v && (e.id.kind === "git" || e.id.kind === "gitdir")) return;
@@ -227,7 +229,8 @@ export function labelOf(id: Ident): string {
   const hp = id.key.slice(4); const sl = hp.indexOf("/");
   return (sl > 0 ? hp.slice(0, sl) : hp) + "/" + id.label;
 }
-export function rememberSess(path: string, cwd: string): void { if (path && cwd && sessCwd.get(path) !== cwd) { sessCwd.set(path, cwd); P.dirty = true; } }
+// a session's cwd became known (head read): bumps P.ver, so aggregations place it even when its cwd was resolved before
+export function rememberSess(path: string, cwd: string): void { if (path && cwd && sessCwd.get(path) !== cwd) { sessCwd.set(path, cwd); P.dirty = true; P.ver++; } }
 export function cwdOfSess(path: string): string { return sessCwd.get(path) ?? ""; }
 export function resetProjects(): void { cwds.clear(); queue.length = 0; queued.clear(); sessCwd.clear(); P.todo = 0; P.ver++; P.dirty = false; rvAt = 0; }
 
@@ -247,7 +250,6 @@ export function loadProjects(file: string): void {
   if (cs) for (const k of Object.keys(cs)) {
     const o = obj(cs[k]); if (!o || !str(o["key"]) || cwds.has(k)) continue;
     const id = identIn(o);
-    if (id.gone && id.kind === "path") continue; // the never-resolved fallback: resolving again is cheap and may find the repo around it
     if (id.remote && !scrubRemote(id.remote)) { id.remote = ""; } // never trust a stored remote that no longer passes the scrub
     cwds.set(k, { id, mt: num(o["cfgMtime"]), checked: num(o["checked"]) });
   }

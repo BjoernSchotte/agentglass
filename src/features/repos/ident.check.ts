@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { applyMeta, display } from "../../hooks.ts";
-import { P, real, resolveTick, setGit } from "../../model/project.ts";
+import { P, real, resolveTick, setGit, rememberSess } from "../../model/project.ts";
 import { parse } from "../query/parse.ts";
 import { EMPTY, compile, sessMatches } from "../query/eval.ts";
 import { projectOf, projectRoot } from "../query/project.ts";
@@ -50,6 +50,21 @@ const is = identOf(sub); eq("subagent → parent identity", is ? is.key + " " + 
 const ig = identOf(gone); eq("gone cwd + remote", ig ? ig.key + " " + ig.kind : "", "git:github.com/me/x git");
 eq("head unread → null", identOf(unread) === null ? "null" : "x", "null");
 unread.headDone = true; const iu = identOf(unread); eq("no cwd after head → none", iu ? iu.kind : "", "none");
+// a subagent reads its own head before taking its parent's project (a worktree-isolated one works elsewhere)
+const subU = newSess("claude", "sub2", "/fx/claude/sub2.jsonl", false); subU.parent = "w1"; sessions.set(subU.path, subU);
+eq("subagent head unread → null (not the parent's)", identOf(subU) === null ? "null" : "x", "null");
+subU.headDone = true; const isu = identOf(subU); eq("subagent head read, no cwd → parent", isu ? isu.worktree : "", "w1");
+const orphanP = newSess("claude", "op", "/fx/claude/op.jsonl", false); sessions.set(orphanP.path, orphanP);
+const subP = sess("claude", "sub3", "", "op");
+eq("parent head unread → null", identOf(subP) === null ? "null" : "x", "null");
+// huge first lines: no cwd in the head, the tail is still unread → unresolved, not "(no project)"
+const big = sess("claude", "big", "", ""); big.size = 5000000;
+eq("cwd only in the unread tail → null", identOf(big) === null ? "null" : "x", "null");
+big.tailSize = big.size; const ib = identOf(big); eq("tail read, still no cwd → none", ib ? ib.kind : "", "none");
+// after a restart the remembered cwd (projects.json) wins over the parent's
+const subR = sess("claude", "sub4", "", "m1"); rememberSess(subR.path, T + "/w1");
+identOf(subR); resolveTick(1e9, 1e9, now, stub); const isr = identOf(subR); eq("remembered cwd beats the parent", isr ? isr.worktree : "", "w1");
+for (const x of [subU, orphanP, subP, big, subR]) sessions.delete(x.path);
 eq("repoLabel", repoLabel(wt), "me/x");
 eq("projectOf after resolve", projectOf(T + "/w1/src"), "me/x");
 eq("projectRoot worktree → main", projectRoot(T + "/w1/src"), T + "/r1");

@@ -7,19 +7,19 @@ import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, type Tab, display } from "../../hooks.ts";
 import { sessions, titleOf, loadHead, loadTail, current, parentOf } from "../../model/sessions.ts";
-import { P, subOf, cwdOfSess } from "../../model/project.ts";
+import { subOf } from "../../model/project.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { harnessOf, isHarness } from "../../harness/index.ts";
-import { ledger } from "../usage/ledger.ts";
-import { todayKey, lastDays, spanMin } from "../usage/record.ts";
+import { ledger, pending as pendingBytes } from "../usage/ledger.ts";
+import { type Acc, todayKey, lastDays, spanMin, startOfDay } from "../usage/record.ts";
 import type { Cnt } from "../usage/calls.ts";
 import { kfmt, grp, money, split, single } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
 import { EMPTY } from "../query/eval.ts";
 import { tabFilter, chips } from "../query/ui.ts";
-import { identOf } from "../query/project.ts";
+import { identOf, identSync } from "../query/project.ts";
 import { realCwd } from "../redact.ts";
 import { openGraph } from "../callgraph/view.ts";
 import { type RepoAgg, type HarnessAgg, type FileAgg, repoAgg, relFile, errPct, allDays, topFiles } from "./agg.ts";
@@ -89,7 +89,7 @@ export function topErrTools(r: RepoAgg, n: number): [string, Cnt][] {
 }
 
 // ── state ──
-const RV = { period: "w", sort: "cost", sel: 0, top: 0, detail: "", focus: 0, file: "", s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+const RV = { period: "w", sort: "cost", sel: 0, selKey: "", top: 0, detail: "", focus: 0, file: "", s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
 export function reposState(): { period: string; detail: string; file: string; focus: number } { return { period: RV.period, detail: RV.detail, file: RV.file, focus: RV.focus }; }
 function periodDays(): string[] { return RV.period === "d" ? [todayKey()] : RV.period === "m" ? lastDays(30) : RV.period === "a" ? allDays() : lastDays(7); }
 function periodName(): string { return RV.period === "d" ? "today" : RV.period === "m" ? "last 30 days" : RV.period === "a" ? "all time" : "last 7 days"; }
@@ -128,31 +128,44 @@ function mixCells(by: Map<string, HarnessAgg>, cells: number): string {
 }
 function byShare(by: Map<string, HarnessAgg>): string[] { const xs = [...by.entries()]; xs.sort((x: [string, HarnessAgg], y: [string, HarnessAgg]) => y[1].cost - x[1].cost || y[1].sess - x[1].sess); return xs.map((e: [string, HarnessAgg]) => e[0]); }
 function shown(label: string): string { return display("repo", label, null); }
-// sessions still without a project: queued cwds, plus sessions with activity in the period whose head (cwd) is unread
-let pendN = 0;
-function pending(days: string[]): number {
-  let n = P.todo; let loads = 0; const t0 = Date.now();
+// placement progress of the period's sessions (those with ledger days in it): left = not yet in a project (cwd in an
+// unread head, or a cwd still queued for its identity); idx = the period's share of indexed log bytes (1 = done)
+export const PL = { left: 0, total: 0, idx: 1 };
+function inPeriod(a: Acc, days: string[], all: boolean): boolean {
+  if (all) return a.days.size > 0;
+  for (const dk of days) if (a.days.has(dk)) return true;
+  return false;
+}
+// one slice of placement work: head (then tail) reads for at most maxMs, so keys stay responsive and rows appear as
+// their projects resolve; identOf queues each newly known cwd for the budgeted resolver (model/project.ts resolveTick)
+export function placeTick(days: string[], all: boolean, maxMs: number): void {
+  const t0 = Date.now(); let left = 0; let total = 0; let loads = 0;
+  const from = all ? 0 : startOfDay() - Math.max(0, days.length - 1) * 86400000; let done = 0; let size = 0;
   for (const s of sessions.values()) {
-    if (s.cwd || (s.headDone && s.tailSize === s.size) || (s.parent && s.headDone) || cwdOfSess(s.path)) continue; // known from projects.json
-    const a = ledger.get(s.path); if (!a) continue;
-    let any = false; for (const dk of days) if (a.days.has(dk)) { any = true; break; }
-    if (!any) continue;
-    // ≤ 60 ms of reads per frame; a head without a cwd line (huge first lines): the tail has one
-    if (Date.now() - t0 < 60) { if (!s.headDone) loadHead(s); if (!s.cwd) loadTail(s); loads++; continue; }
-    n++;
+    const a = ledger.get(s.path);
+    if (s.mtime >= from) { size += s.size; done += a && !pendingBytes(s, a) ? s.size : a ? Math.min(a.off, s.size) : 0; }
+    if (!a || !inPeriod(a, days, all)) continue;
+    total++;
+    if (identOf(s)) continue;
+    if (!s.cwd && Date.now() - t0 < maxMs) {
+      const p = s.parent ? parentOf(s) : null; // a subagent whose own log names no cwd books under its parent's
+      if (!s.headDone) loadHead(s); else if (s.tailSize < 0 && !s.parent) loadTail(s); else if (p && !p.headDone) loadHead(p); // a head without a cwd line (huge first lines): the tail has one
+      loads++;
+      if (identOf(s)) continue;
+    }
+    left++;
   }
-  if (loads) S.dirty = true;
-  return n;
+  if (loads || left !== PL.left || total !== PL.total) S.dirty = true;
+  PL.left = left; PL.total = total; PL.idx = size - done < 1048576 ? 1 : done / size; // live appends (< 1 MB behind) are not "indexing"
 }
 
 // ── list ──
 function renderList(): void {
   const W = S.W; const Ht = S.H; const iw = W - 4;
-  const days = periodDays(); const f = tabFilter("Repos", "stats");
+  const f = tabFilter("Repos", "stats");
   const rs = rows(); lastRows = rs;
-  pendN = pending(days);
   const ch = f === EMPTY ? "" : chips("Repos", "stats", Math.max(10, W - 40));
-  const title = "repos" + (pendN > 0 ? " · " + spin() + " resolving " + String(pendN) + " sessions…" : "");
+  const title = "repos" + progress();
   box(0, 1, W, Ht - 2, title, ch ? ch + fg(C.dim) + " · " + periodName() + RST : periodName() + " · " + String(rs.length) + " projects", true);
   line(1, 2, W - 2, " " + chip(RV.period === "d", "d", "Today") + " " + chip(RV.period === "w", "w", "7 days") + " " + chip(RV.period === "m", "m", "30 days") + " " + chip(RV.period === "a", "a", "All") +
     fg(C.dim) + "   sort " + RST + fg(C.text) + RV.sort + RST + fg(C.dim) + " (s)" + RST);
@@ -164,14 +177,15 @@ function renderList(): void {
   const hdr = fg(C.dim) + " " + fit("repo", rw) + rj("sess", cS) + (cL ? rj("live", cL) : "") + rj("cost", cC) + rj("active", cA) + rj("err%", cE) + (mixW ? "  " + fit("harness mix", mixW + mkW) : "") + (cF ? rj("files", cF) : "") + rj("last", cT) + RST;
   line(1, 3, W - 2, " " + hdr);
   const y0 = 4; const vis = Math.max(0, Ht - 2 - y0);
-  RV.sel = Math.max(0, Math.min(RV.sel, rs.length - 1));
+  if (RV.selKey) for (let i = 0; i < rs.length; i++) if (rs[i]?.key === RV.selKey) { RV.sel = i; break; } // rows reorder as projects resolve: the cursor stays on its project
+  RV.sel = Math.max(0, Math.min(RV.sel, rs.length - 1)); RV.selKey = rs[RV.sel]?.key ?? "";
   if (RV.sel < RV.top) RV.top = RV.sel;
   if (RV.sel >= RV.top + vis) RV.top = RV.sel - vis + 1;
   RV.top = Math.max(0, Math.min(RV.top, Math.max(0, rs.length - vis)));
   listY0 = y0; listN = Math.min(vis, rs.length - RV.top);
   for (let i = 0; i < vis; i++) {
     const r = RV.top + i < rs.length ? rs[RV.top + i] : undefined;
-    if (!r) { line(1, y0 + i, W - 2, i === 0 && !rs.length ? "  " + fg(C.dim) + emptyLine(f !== EMPTY, pendN) + RST : ""); continue; }
+    if (!r) { line(1, y0 + i, W - 2, i === 0 && !rs.length ? "  " + fg(C.dim) + emptyLine(f !== EMPTY) + RST : ""); continue; }
     const on = RV.top + i === RV.sel; const b = on ? bg(C.sel) : "";
     const wt = r.worktrees.size > 1 ? fg(C.dim) + " ⑂" + String(r.worktrees.size) + RST + b : "";
     const lab = (on ? fg(C.text) + CSI + "1m" : fg(r.kind === "path" || r.kind === "none" ? C.sub : C.text)) + clean(shown(r.label)) + RST + b + (r.unread ? fg(C.dim) + " ?" + RST + b : "") + wt;
@@ -184,8 +198,14 @@ function renderList(): void {
     line(1, y0 + i, W - 2, b + s + b);
   }
 }
-function emptyLine(filtered: boolean, pend: number): string {
-  if (pend > 0) return "resolving projects…";
+// " · ⠋ resolving 312 of 1,204 sessions… · indexing 40%" while the period is still being placed or indexed
+function progress(): string {
+  const idx = PL.idx < 0.999 ? "indexing " + String(Math.floor(PL.idx * 100)) + "%" : "";
+  const res = PL.left > 0 ? "resolving " + grp(PL.left) + " of " + grp(PL.total) + " sessions…" : "";
+  return res || idx ? " · " + spin() + " " + [res, idx].filter((x: string) => x.length > 0).join(" · ") : ""; // box titles are plain text
+}
+function emptyLine(filtered: boolean): string {
+  if (PL.left > 0 || PL.idx < 0.999) return "placing sessions in their projects…";
   return filtered ? "no project matches the filter in this period — / edits it, d/w/m/a switch the period" : "no session activity in this period — d/w/m/a switch the period";
 }
 
@@ -230,12 +250,12 @@ function listIn(i: number, x: number, y: number, w: number, h: number, n: number
   }
 }
 function renderDetail(): void {
-  const W = S.W; const Ht = S.H; const days = periodDays();
+  const W = S.W; const Ht = S.H;
   const rs = rows(); let r: RepoAgg | null = null; for (const x of rs) if (x.key === RV.detail) r = x;
-  lastDetail = r; pendN = pending(days);
+  lastDetail = r;
   if (!r) {
     box(0, 1, W, Ht - 2, "project", periodName(), true);
-    line(2, 2, W - 4, fg(C.yellow) + (pendN > 0 ? spin() + " resolving " + String(pendN) + " sessions…" : "no activity of this project in " + periodName() + " (or none matches the filter) — d/w/m/a switch the period, esc back") + RST);
+    line(2, 2, W - 4, fg(C.yellow) + (PL.left > 0 ? spin() + " resolving " + grp(PL.left) + " sessions…" : "no activity of this project in " + periodName() + " (or none matches the filter) — d/w/m/a switch the period, esc back") + RST);
     for (let y = 3; y < Ht - 2; y++) line(1, y, W - 2, "");
     return;
   }
@@ -341,9 +361,10 @@ function key(k: string): boolean {
   else if (k === "pgdn") RV.sel = Math.min(Math.max(0, n - 1), RV.sel + page);
   else if (k === "g" || k === "home") RV.sel = 0;
   else if (k === "G" || k === "end") RV.sel = Math.max(0, n - 1);
-  else if (k === "s") { RV.sort = SORTS[(SORTS.indexOf(RV.sort) + 1) % SORTS.length] ?? "cost"; RV.sel = 0; RV.top = 0; say("info", "repos sorted by " + RV.sort); }
+  else if (k === "s") { RV.sort = SORTS[(SORTS.indexOf(RV.sort) + 1) % SORTS.length] ?? "cost"; RV.sel = 0; RV.top = 0; RV.selKey = ""; say("info", "repos sorted by " + RV.sort); return true; }
   else if (k === "enter" || k === "right") { const r = lastRows[RV.sel]; if (r) openDetail(r.key); }
   else return false;
+  RV.selKey = lastRows[RV.sel]?.key ?? "";
   return true;
 }
 function mouse(x: number, y: number, dbl: boolean): void {
@@ -356,6 +377,7 @@ function mouse(x: number, y: number, dbl: boolean): void {
     if (y < listY0 || y >= listY0 + listN) return;
     const i = RV.top + (y - listY0); const r = lastRows[i]; if (!r) return;
     if (i === RV.sel || dbl) { RV.sel = i; openDetail(r.key); } else RV.sel = i;
+    RV.selKey = r.key;
     return;
   }
   for (let i = 0; i < areas.length; i++) {
@@ -368,13 +390,15 @@ function mouse(x: number, y: number, dbl: boolean): void {
 const tab: Tab = { name: "Repos", render: () => { if (RV.detail) renderDetail(); else renderList(); }, key, mouse };
 H.tabs.push(tab);
 function mine(): boolean { return S.tab - 2 === H.tabs.indexOf(tab); }
-H.backlog.push(() => pendN > 0 && mine() && S.mode === "list"); // head reads ride on frames: keep them coming while the tab resolves
+// head reads ride on the tick while the tab is shown (40 ms a slice); the backlog keeps the burst cadence until all are placed
+H.onTick.push(() => { if (mine() && S.mode === "list") placeTick(periodDays(), RV.period === "a", 40); });
+H.backlog.push(() => PL.left > 0 && mine() && S.mode === "list");
 
 // @ in the Sessions list: the selected session's project detail (a period that holds its activity)
 export function jumpToProject(s: Sess | null): boolean {
   if (!s) return false;
   const top = s.parent ? parentOf(s) ?? s : s;
-  const id = identOf(s); if (!id) { say("info", "project not resolved yet — try again in a moment"); return false; }
+  const id = identSync(s); if (!id) { say("info", "project not resolved yet — try again in a moment"); return false; }
   S.tab = 2 + H.tabs.indexOf(tab); S.mode = "list";
   openDetail(id.key);
   let found = false; for (const r of rows()) if (r.key === id.key) found = true;

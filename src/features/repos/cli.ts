@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
 import { H, complete, display, screenOut } from "../../hooks.ts";
-import { sessions, scan, buildView, loadHead, loadTail } from "../../model/sessions.ts";
+import { sessions, scan, buildView, loadHead, loadTail, parentOf } from "../../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../../model/procs.ts";
 import { REDACT } from "../redact-on.ts";
 import { lastDays, startOfDay } from "../usage/record.ts";
@@ -49,6 +49,7 @@ export function reposCli(days: number, f: Compiled | null, cheap: Compiled | nul
     if (s.mtime < from) continue; // nothing written since before the period: no activity in it
     if (!s.headDone) loadHead(s); // Claude/Codex cwd lives in the head
     if (!s.cwd) loadTail(s); // …or, behind huge first lines, in the tail
+    const p = !s.cwd && s.parent ? parentOf(s) : null; if (p && !p.headDone) loadHead(p); // …or it is the parent's
     if (cheap && cheap !== EMPTY && !sessMatches(cheap, s)) continue; // the ledger is completed only for survivors
     complete(s);
   }

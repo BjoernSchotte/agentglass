@@ -16,7 +16,7 @@ import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
 import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
 import { livePid } from "./query/eval.ts";
-import { identOf } from "./query/project.ts";
+import { identSync } from "./query/project.ts";
 import { labelOf } from "../model/project.ts";
 import { keyShown, reposCli } from "./repos/cli.ts";
 
@@ -144,7 +144,7 @@ function snapshot(o: Opts): void {
 }
 
 function repoJ(s: Sess): JRepo | null {
-  const id = identOf(s); if (!id) return null;
+  const id = identSync(s); if (!id) return null;
   return { key: keyShown(id.key), label: display("repo", labelOf(id), s), kind: id.kind, worktree: id.worktree ? display("repo", id.worktree, s) : "",
     top: id.top ? display("cwd", id.top, s) : "", remote: id.remote ? display("remote", id.remote, s) : "" };
 }

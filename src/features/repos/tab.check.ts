@@ -11,7 +11,7 @@ import { type Day, L, newAcc, newDay, todayKey } from "../usage/record.ts";
 import { newTS, newCnt } from "../usage/calls.ts";
 import { identOf } from "../query/project.ts";
 import { type RepoAgg, type HarnessAgg, repoAgg } from "./agg.ts";
-import { hm, mixBar, sortRepos, detailSessions, topFiles, topErrTools, reposState } from "./tab.ts";
+import { hm, mixBar, sortRepos, detailSessions, topFiles, topErrTools, reposState, placeTick, PL } from "./tab.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -71,6 +71,21 @@ let handled = false; for (const f of H.keys) if (f("list", "@")) { handled = tru
 const st = reposState();
 eq("@ handled", handled ? "y" : "n", "y"); eq("@ tab", String(S.tab), String(2 + H.tabs.findIndex((t) => t.name === "Repos")));
 eq("@ detail", st.detail, "git:github.com/me/x");
+
+// progressive placement: a session whose cwd sits in its unread head is read on the tick, then resolves; rows follow
+const line = JSON.stringify({ type: "user", cwd: T + "/r2/sub", message: { role: "user", content: "hi" }, timestamp: new Date(now).toISOString() }) + "\n";
+mk("heads/u1.jsonl", line); mkdirSync(T + "/r2/sub", { recursive: true });
+const u = newSess("claude", "u1", T + "/heads/u1.jsonl", false); u.size = line.length; u.mtime = now; sessions.set(u.path, u);
+const ua = newAcc(); ua.off = u.size; const ud: Day = newDay(); ud.cost = 3; ua.days.set(TODAY, ud); ledger.set(u.path, ua);
+placeTick([TODAY], false, 0);
+eq("a 0 ms slice reads no head", (u.headDone ? "read" : "unread") + " " + String(PL.left) + "/" + String(PL.total), "unread 1/4");
+eq("unplaced session not in a row yet", String(repoAgg([TODAY], null).filter((r: RepoAgg) => r.label === "me/b")[0]?.sessions ?? 0), "1");
+placeTick([TODAY], false, 1000);
+eq("head read, cwd queued", (u.headDone ? "read" : "unread") + " " + String(PL.left), "read 1");
+resolveTick(1e9, 1e9, (): number => Date.now(), (c: string, a: string[]): string => c + a.join("") === "" ? "x" : "");
+placeTick([TODAY], false, 1000);
+eq("placed", String(PL.left) + "/" + String(PL.total) + " idx " + String(PL.idx), "0/4 idx 1");
+eq("its project row grows", String(repoAgg([TODAY], null).filter((r: RepoAgg) => r.label === "me/b")[0]?.sessions ?? 0), "2");
 
 rmSync(T, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "repos tab ok");
