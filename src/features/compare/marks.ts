@@ -6,14 +6,15 @@
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, tabAt } from "../../hooks.ts";
-import { sessions, titleOf, current, buildView, loadHead } from "../../model/sessions.ts";
+import { sessions, titleOf, current, buildView } from "../../model/sessions.ts";
 import { clean } from "../../util/text.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { ledger } from "../usage/ledger.ts";
 import { dayKey, todayKey } from "../usage/record.ts";
 import { statsPeriod } from "../usage/stats.ts";
 import { parse } from "../query/parse.ts";
-import { projectOf } from "../query/project.ts";
+import { identSync } from "../query/project.ts";
+import { labelOf } from "../../model/project.ts";
 import { type Group, groupOfSession } from "./metrics.ts";
 import { openCompare } from "./view.ts";
 
@@ -33,16 +34,17 @@ export function toggleMark(s: Sess): string {
   if (!M.a) { M.a = s.path; return "A: " + clean(titleOf(s)); }
   M.b = s.path; return "B: " + clean(titleOf(s));
 }
-// the newest top-level session of b's harness and repo that started before b (never b, never a subagent); null none.
-// Candidates are visited newest first and their heads read lazily (cwd comes from the head for some harnesses), so the
-// walk stops at the first one in the same repo.
+// the newest top-level session of b's harness and project that started before b (never b, never a subagent); null none.
+// The project is repo-view's identity (worktrees and clones of one remote are one project). Candidates are visited newest
+// first and resolved lazily (their cwd may sit in an unread head), so the walk stops at the first one in the project.
+function projKey(s: Sess): string { const id = identSync(s); return id ? id.key : ""; }
+function projLabel(s: Sess): string { const id = identSync(s); return id ? labelOf(id) : "?"; }
 export function prevSession(b: Sess): Sess | null {
-  if (!b.headDone) loadHead(b);
-  const repo = projectOf(b.cwd); const t = startOf(b);
-  const cand: Sess[] = [];
+  const key = projKey(b); if (!key) return null;
+  const t = startOf(b); const cand: Sess[] = [];
   for (const s of sessions.values()) if (s !== b && !s.parent && s.h === b.h && startOf(s) < t) cand.push(s);
   cand.sort((x: Sess, y: Sess) => startOf(y) - startOf(x));
-  for (const s of cand) { if (!s.headDone) loadHead(s); if (projectOf(s.cwd) === repo) return s; }
+  for (const s of cand) if (projKey(s) === key) return s;
   return null;
 }
 // spec §2.2: the pair for C on the Sessions tab, or the toast that explains why there is none
@@ -57,7 +59,7 @@ export function pickPair(): { A: Group; B: Group; note: string } | string {
   }
   if (!cur) return "no session selected";
   const p = prevSession(cur);
-  const repo = projectOf(cur.cwd) || "?";
+  const repo = projLabel(cur);
   if (!p) return "no earlier " + cur.h + " session in " + repo + " — mark two with m";
   return { A: groupOfSession(p), B: groupOfSession(cur), note: "A: previous " + cur.h + " session in " + repo + " · " + clean(titleOf(p)) + " · " + when(startOf(p)) };
 }
