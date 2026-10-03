@@ -55,6 +55,8 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   calls and latest errors — `↵` on one opens its session at that call.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
+  Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux
+  (elsewhere it shows as a finished turn).
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **A live ticker** in the header scrolls what every running agent is doing right now.
@@ -89,6 +91,13 @@ Every screen in this README and the launch video was recorded this way.
   `agentglass update`, which asks GitHub for releases only when you run it.
 - **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
   is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off.
+- **Light enough to leave open all day.** Refresh follows activity: fast while an agent streams or
+  you type, slower when nothing happens, and at most one frame per second while the terminal is in
+  the background. Alarms (waiting for you, approval, stuck) keep a 1.5 s cadence whenever an agent
+  runs. Frames are only drawn when something changed. `{"refresh": {"mode": "fixed"}}` in
+  `~/.agentglass/config.json` (or `AGENTGLASS_REFRESH=fixed`) restores the old fixed 500 ms tick;
+  `AGENTGLASS_DEBUG_REFRESH=1` shows the activity level and each job's cost in the footer. Inside
+  tmux, `set -g focus-events on` lets agentglass notice that its pane is not in front.
 
 ## Prices
 

@@ -5,6 +5,7 @@ import { S } from "../state.ts";
 import { H } from "../hooks.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put } from "./screen.ts";
+import { DBG } from "../sched.ts";
 
 // mouse hit map for the hints, rebuilt every frame
 export const footX0: number[] = []; export const footX1: number[] = []; export const footKey: string[] = [];
@@ -37,6 +38,7 @@ export function renderFooter(): void {
   else if (S.tab === 1) hints += k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
   else hints += k("q", "quit");
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
+  if (DBG.on && DBG.line) { const d = " " + fit(DBG.line, Math.min(width(DBG.line), W - 2)) + " "; put(W - width(d), y, bg(C.panel) + fg(C.dim) + d + RST); } // over the hints' tail
   if (S.toast && Date.now() - S.toastAt < 5000) {
     const tk = S.toastKind;
     const icon = tk === "ok" ? "✔" : tk === "err" ? "✖" : tk === "warn" ? "⚠" : "ℹ";

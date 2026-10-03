@@ -87,6 +87,8 @@ function tick(): void {
   for (const s of sessions.values()) { const a = accOf(s); total += s.size; done += Math.min(a.off, s.size); if (a.stall === s.size) done += s.size - a.off; }
   L.done = done; L.total = total;
 }
+// the first index (or a big append) is still being read: the refresh level stays hot so the gauge advances
+export function indexing(): boolean { return L.total > 0 && L.done < L.total; }
 // blocking: everything up to the end of the file (CLI exports)
 export function complete(s: Sess): void {
   const a = accOf(s);
