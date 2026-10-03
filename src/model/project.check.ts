@@ -44,6 +44,7 @@ const p3 = pickRemote(iniRemotes('[remote "b"]\n url = https://a/b\n[remote "c"]
 eq("no remotes", pickRemote(iniRemotes("[core]\n\tbare = false\n")) === null ? "null" : "x", "null");
 eq("comment ignored", String(iniRemotes('[remote "o"]\n# url = x\n; url = y\n\turl = "https://q/r" ; trailing\n').map((r) => r.url).join(",")), "https://q/r");
 eq("first url per section", iniRemotes('[remote "o"]\n url = https://a/1\n url = https://a/2').map((r) => r.url).join(","), "https://a/1");
+eq("section name case-insensitive", iniRemotes('[Remote "origin"]\n URL = https://a/1').map((r) => r.name + " " + r.url).join(","), "origin https://a/1");
 eq("url outside remote", String(iniRemotes('[branch "main"]\n url = https://x/y').length), "0");
 eq("includeIf", hasInclude('[core]\n[includeIf "gitdir:~/w/"]\n\tpath = x') ? "y" : "n", "y");
 eq("include", hasInclude("[include]\n\tpath = x") ? "y" : "n", "y");

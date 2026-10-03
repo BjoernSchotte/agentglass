@@ -27,7 +27,7 @@ export function iniRemotes(text: string): RemoteEntry[] {
   for (const raw of text.split("\n")) {
     const l = raw.trim();
     if (!l || l.startsWith("#") || l.startsWith(";")) continue;
-    if (l.startsWith("[")) { const m = /^\[\s*remote\s+"([^"]*)"\s*\]/.exec(l); cur = m ? m[1] ?? "" : ""; has = false; continue; }
+    if (l.startsWith("[")) { const m = /^\[\s*remote\s+"([^"]*)"\s*\]/i.exec(l); cur = m ? m[1] ?? "" : ""; has = false; continue; }
     if (!cur || has) continue;
     const m = /^url\s*=(.*)$/i.exec(l); if (!m) continue;
     const u = unquote(m[1] ?? ""); if (!u) continue;
