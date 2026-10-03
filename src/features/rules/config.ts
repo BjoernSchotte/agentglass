@@ -21,6 +21,7 @@ export interface RuleSet { rules: Rule[]; notify: NotifyCfg; diags: Diag[]; synt
 export const METRICS: string[] = ["turn_done", "approval_wait", "repeat_run", "command_age", "stalled", "spinning", "session_cost", "session_tokens", "tool_calls", "tool_errors", "tool_error_rate"];
 const UNITS = ["duration", "duration", "count", "duration", "duration", "duration", "usd", "count", "count", "count", "ratio"];
 export const CALL_METRICS = ["repeat_run", "tool_calls", "tool_errors", "tool_error_rate"];
+const ROW_METRICS = ["tool_calls", "tool_errors", "tool_error_rate"]; // read the ledger's call rows (window, min_calls)
 export function unitOf(metric: string): string { for (let i = 0; i < METRICS.length && i < UNITS.length; i++) if (METRICS[i] === metric) return UNITS[i]; return ""; }
 // metric → [param, default, lo, hi] (hi -1 = no upper bound); grace is a duration
 const PARAMS: Record<string, string[][]> = {
@@ -240,16 +241,20 @@ function applyRule(cx: Ctx, path: string, o: Obj, r: Rule, isNew: boolean): bool
   const unit = unitOf(r.metric);
   if (v("where") !== undefined) { if (typeof v("where") !== "string") err("where", "where must be a string"); else r.where = v("where") as string; }
   if (v("op") !== undefined) { if (typeof v("op") !== "string" || OPS.indexOf(v("op") as string) < 0) err("op", "op must be one of " + OPS.join(" ")); else r.op = v("op") as string; }
+  let badThr = false;
   for (const k of ["degraded", "critical"]) {
     const x = v(k); if (x === undefined) continue;
     if (x === null) { if (k === "degraded") r.hasDeg = false; else r.hasCrit = false; continue; } // null removes a built-in level
     const n = parseThr(x, unit);
-    if (n < 0) { err(k, thrHint(x, r.metric, unit)); continue; }
+    if (n < 0) { err(k, thrHint(x, r.metric, unit)); badThr = true; continue; }
     if (k === "degraded") { r.deg = n; r.hasDeg = true; } else { r.crit = n; r.hasCrit = true; }
   }
   if (v("for") !== undefined) { const n = typeof v("for") === "string" ? durSec(v("for") as string) : isNum(v("for")) ? (v("for") as number) : -1; if (n < 0) err("for", "for must be a duration (\"30s\", \"2m\")"); else r.forSec = n; }
   if (v("min_calls") !== undefined) { if (!intIn(v("min_calls"), 0)) err("min_calls", "min_calls must be an integer ≥ 0"); else r.minCalls = v("min_calls") as number; }
   if (v("window") !== undefined) { if (!intIn(v("window"), 0)) err("window", "window must be an integer ≥ 0 (0 = the whole session)"); else r.window = v("window") as number; }
+  // fields a metric does not read are warnings, not silent no-ops
+  if (v("min_calls") !== undefined && r.metric !== "tool_error_rate") diag(cx, path + ".min_calls:k", r.id, "min_calls applies to tool_error_rate only (ignored for " + r.metric + ")", false);
+  if (v("window") !== undefined && ROW_METRICS.indexOf(r.metric) < 0) diag(cx, path + ".window:k", r.id, "window applies to " + ROW_METRICS.join(", ") + " only (ignored for " + r.metric + ")", false);
   if (v("ack") !== undefined) { if (v("ack") !== "look" && v("ack") !== "none") err("ack", "ack must be \"look\" or \"none\""); else r.ack = v("ack") as string; }
   if (v("notify") !== undefined) { if (typeof v("notify") !== "boolean") err("notify", "notify must be true or false"); else r.notify = v("notify") as boolean; }
   if (v("enabled") !== undefined) { if (typeof v("enabled") !== "boolean") err("enabled", "enabled must be true or false"); else r.enabled = v("enabled") as boolean; }
@@ -276,7 +281,7 @@ function applyRule(cx: Ctx, path: string, o: Obj, r: Rule, isNew: boolean): bool
       else r.params.set(k, n);
     }
   }
-  if (!r.hasDeg && !r.hasCrit) err("", "rule \"" + r.id + "\" needs a degraded or critical threshold");
+  if (!r.hasDeg && !r.hasCrit && !badThr) err("", "rule \"" + r.id + "\" needs a degraded or critical threshold");
   if (r.hasDeg && r.hasCrit) {
     const up = r.op === ">" || r.op === ">=";
     if (up ? !(r.deg < r.crit) : !(r.deg > r.crit)) err(v("critical") !== undefined ? "critical" : "degraded", "degraded must be " + (up ? "below" : "above") + " critical for op " + r.op);
@@ -336,10 +341,13 @@ export function loadRules(text: string, exists: boolean): RuleSet {
     seen.add(sid);
     let idx = -1; for (let j = 0; j < rs.rules.length; j++) if (rs.rules[j].id === sid) idx = j;
     const r = idx >= 0 ? copyRule(rs.rules[idx]) : blank(sid);
+    const d0 = rs.diags.length;
     const good = applyRule(cx, path, o, r, idx < 0);
-    if (!good) r.enabled = false;
     if (!r.message) r.message = DEFMSG[r.metric] ?? "{value}";
-    if (idx >= 0) rs.rules[idx] = r; else rs.rules.push(r);
+    // a broken override leaves the built-in as it was (the defaults stay active); a broken new rule is disabled
+    for (let j = d0; j < rs.diags.length; j++) { const d = rs.diags[j]; if (d.err) d.msg += idx >= 0 ? " — the built-in " + sid + " stays unchanged until this is fixed" : " — rule disabled"; }
+    if (good) { if (idx >= 0) rs.rules[idx] = r; else rs.rules.push(r); }
+    else if (idx < 0) { r.enabled = false; rs.rules.push(r); }
   }
   return rs;
 }

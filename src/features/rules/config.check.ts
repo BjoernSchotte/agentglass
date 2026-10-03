@@ -63,6 +63,19 @@ for (const e of errs) {
   if (e[1]) eq("disabled " + (e[0] ?? ""), en(rs, e[1] ?? ""), "false");
   eq("others run " + (e[0] ?? ""), en(rs, "waiting"), "true");
 }
+// a broken override of a built-in keeps the built-in as it was (defaults stay active)
+const bo = loadRules('{"rules":[{"id":"approval","critical":"2x"}]}', true);
+const ba = rule(bo, "approval");
+eq("broken override: built-in kept", ba ? String(ba.enabled) + " " + String(ba.deg) + " " + String(ba.hasCrit) : "", "true 20 false");
+eq("broken override: says so", String(bo.diags.length === 1 && bo.diags[0].msg.indexOf("the built-in approval stays unchanged") >= 0), "true");
+eq("broken new rule: says disabled", String(loadRules('{"rules":[{"id":"x","metric":"nope"}]}', true).diags[0].msg.endsWith("— rule disabled")), "true");
+// an invalid threshold is one diagnostic, not two
+eq("bad threshold: one diag", String(loadRules('{"rules":[{"id":"x","metric":"session_cost","degraded":"2m"}]}', true).diags.length), "1");
+eq("no threshold at all", first(loadRules('{"rules":[{"id":"loop","critical":null}]}', true)), "1:11 loop E");
+// fields the metric does not read: warnings
+eq("min_calls on tool_calls", diags(loadRules('{"rules":[{"id":"x","metric":"tool_calls","degraded":1,"min_calls":5}]}', true)), "1:56 x W min_calls applies to tool_error_rate only (ignored for tool_calls)");
+eq("window on session_cost", first(loadRules('{"rules":[{"id":"x","metric":"session_cost","degraded":1,"window":5}]}', true)), "1:58 x W");
+eq("window on tool_error_rate", diags(loadRules('{"rules":[{"id":"x","metric":"tool_error_rate","degraded":"10%","window":5,"min_calls":3}]}', true)), "");
 const dup = loadRules('{"rules":[{"id":"x","metric":"session_cost","degraded":1},{"id":"x","metric":"session_cost","degraded":2}]}', true);
 eq("duplicate id", first(dup), "1:65 x E");
 eq("duplicate keeps first", rule(dup, "x") ? String((rule(dup, "x") as Rule).deg) : "", "1");
