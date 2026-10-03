@@ -78,20 +78,18 @@ export function newRun(origin: string, entity: "call" | "session", scope: Clause
 
 const CALL_DIMS = ["tool", "server", "program", "ext", "model", "repo", "harness", "agent", "hour", "weekday", "branch", "status", "file"];
 const SESS_DIMS = ["harness", "repo", "model", "agent", "branch", "tool", "program", "ext", "weekday", "hour", "state", "subagent"];
-// equality clauses of the selection fix their key: its dimension would only restate the selection (status is error → 100% error).
-// On session rows a call clause fixes nothing: "sessions with a Bash call" use other tools too
-function fixedKeys(r: Run): string[] {
-  const o: string[] = [];
+export function dimsFor(r: Run): string[] { return r.entity === "call" ? CALL_DIMS : SESS_DIMS; }
+// the values an equality clause of the selection fixes, "attr\tvalue" lowercased. Against the rest or the previous period
+// their rows only restate the selection (`tool is Bash` → "tool Bash 100% vs 0%", `status is error` → status 100%), so they
+// are not listed; the attribute's other values stay: `program is npm` still shows which programs run beside npm.
+// A group baseline (compare) is another expression: there the shares are an answer.
+function fixedVals(r: Run): Set<string> {
+  const o = new Set<string>(); if (r.base === "group") return o;
   for (const c of r.sel) {
     const a = attrOf(c.key);
-    if (!a || c.neg || (c.op !== "is" && c.op !== "is_one_of") || (r.entity === "session" && a.ent !== "session")) continue;
-    o.push(a.key);
+    if (!a || c.neg || (c.op !== "is" && c.op !== "is_one_of")) continue;
+    for (const v of c.vals) if (v.indexOf("*") < 0) o.add(a.key + "\t" + v.toLowerCase());
   }
-  return o;
-}
-export function dimsFor(r: Run): string[] {
-  const fx = fixedKeys(r); const o: string[] = [];
-  for (const d of r.entity === "call" ? CALL_DIMS : SESS_DIMS) if (fx.indexOf(d) < 0) o.push(d);
   return o;
 }
 // local day keys oldest first: the last `days` days, or the `days` before them
@@ -211,19 +209,21 @@ function compute(r: Run, key: string, partial: boolean, gs: Dist[], gb: Dist[]):
   if (r.entity === "call" && r.base === "previous") {
     if (startOfDay() - (2 * r.days - 1) * 86400000 < callCutoff()) { res.guard = "retention"; return res; } // ±1 h around DST: the cutoff is a whole day
   }
-  const weighted = r.weight !== "count";
+  const weighted = r.weight !== "count"; const fx = fixedVals(r);
   for (let i = 0; i < dims.length; i++) {
     const sd = i < g.sel.length ? g.sel[i] : null; const bd = i < g.base.length ? g.base[i] : null;
     if (!sd || !bd) continue;
     const vals = new Set<string>(); for (const k of sd.vals.keys()) vals.add(k); for (const k of bd.vals.keys()) vals.add(k);
     if (vals.size <= 1) continue;
     const dim = dims[i] ?? "";
-    res.dimsUsed.push(dim);
+    let used = false;
     for (const [v, sb] of sd.vals) {
-      if (sb.n <= 0 || (dim === "server" && v === "")) continue; // server "" = not an MCP call
+      if (sb.n <= 0 || (dim === "server" && v === "") || fx.has(dim + "\t" + v.toLowerCase())) continue; // server "" = not an MCP call
+      used = true;
       const bb = bd.vals.get(v);
       res.rows.push({ attr: dim, value: v, s: weighted ? wscore(sb.n, sb.w, sd.wTotal, bb ? bb.n : 0, bb ? bb.w : 0, bd.wTotal) : score(sb.n, A, bb ? bb.n : 0, B) });
     }
+    if (used) res.dimsUsed.push(dim);
   }
   return res;
 }

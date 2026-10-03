@@ -52,6 +52,7 @@ eq("sliced slow total", String(runTriage(rsl).selN + runTriage(rsl).baseN), "8")
 fxReset(); fxBase();
 const r3 = runTriage(newRun("Stats", "call", [], parse("tool is Bash and status is error").cs, 2));
 eq("rest = scope − selection, two-clause selection", r3.selN + "/" + r3.baseN, "1/9");
+// the selection's own equality values restate it against the rest: not listed (the attributes' other values are)
 eq("fixed values not listed", r3.rows.filter((r) => (r.attr === "tool" && r.value === "Bash") || (r.attr === "status" && r.value === "error")).map((r) => r.attr).join(","), "");
 // empty baseline: scope already says status is error
 const r4 = runTriage(newRun("Stats", "call", parse("status is error").cs, parse("status is error").cs, 2));
@@ -76,10 +77,13 @@ eq("session hour = start", rh.rows.filter((r) => r.attr === "hour").map((r) => r
 const rt = runTriage(newRun("Sessions", "session", [], parse("tool is Bash").cs, 2));
 eq("session sizes", rt.selN + "/" + rt.baseN, "1/3");
 eq("session tools of the selection are whole", rt.rows.filter((r) => r.attr === "tool" && r.value === "Read").map((r) => String(r.s.a) + "/" + String(r.s.b)).join(","), "1/0");
+// a multi-valued attribute: Bash restates the selection, Read (used in the same sessions) is an answer
+eq("multi-valued fixed: the value goes", rt.rows.some((r) => r.attr === "tool" && r.value === "Bash") ? "listed" : "ok", "ok");
 // group baseline (compare's t)
 const rg = newRun("Compare", "call", [], parse("harness is claude").cs, 2); rg.base = "group"; rg.group = parse("harness is codex").cs;
 const rgr = runTriage(rg);
 eq("group baseline sizes", rgr.selN + "/" + rgr.baseN, "7/2");
+eq("group keeps the selection's own values", rgr.rows.some((r) => r.attr === "harness" && r.value === "claude") ? "ok" : "missing", "ok");
 // weighted runs: no chi-square, shares of the weight
 const rw = newRun("Stats", "call", [], parse("status is error").cs, 2); rw.weight = "duration";
 const rwr = runTriage(rw);

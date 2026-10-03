@@ -329,7 +329,10 @@ are over-represented in it compared with a baseline: `program npm — 34% of err
   `6` this period vs the previous one · `7` a typed expression.
 - Rows are ranked by share difference (percentage points), at most 3 values per attribute (`↵` shows all of one,
   `↵` again its newest calls, `↵` there opens the transcript at the call). `●` marks χ² ≥ 6.63 (2×2, Yates, p < 0.01);
-  it never hides a row. Small groups (< 20) get a banner instead of silence.
+  it never hides a row. Small groups (< 20) get a banner instead of silence. Values the selection itself fixes
+  (`tool is Bash` → tool Bash, 100% vs 0%) are not listed; the attribute's other values are (`program is npm` still
+  shows the programs that run beside npm). A recount runs in the background with its progress in the header; keys
+  keep working.
 - `+` / `-` include or exclude the value in the tab you came from (it stays after `esc`), `p` pins it, `o` lists the
   matching sessions. `b` baseline (rest ⇄ previous period), `e` calls ⇄ sessions, `c` weight (count, duration; cost,
   tokens for sessions), `u` under-represented values, `s` selection, `d` `w` `m` today / 7 / 30 days.
