@@ -33,7 +33,19 @@ run() { env -i HOME="$h" PATH="$PATH" AGENTGLASS_CACHE_DIR="$t/cache" AGENTGLASS
 agent() { run CLAUDECODE=1 CLAUDE_CODE_SESSION_ID="$CL" "$t/ag" "$@"; }
 
 # bare agentglass under a PTY inside an agent: compact help at once, never the TUI (perl alarm: a hang fails, not blocks)
-if script --version > /dev/null 2>&1; then pty() { script -qec "$1" /dev/null; } # util-linux
+# a PTY for "sh -c $1" from python's forkpty (Linux and macOS alike: BSD script fails on a non-terminal stdin), else script
+if command -v python3 > /dev/null 2>&1; then
+  pty() { python3 -c 'import os, sys
+pid, fd = os.forkpty()
+if pid == 0: os.execvp("sh", ["sh", "-c", sys.argv[1]])
+out = b""
+while True:
+    try: b = os.read(fd, 4096)
+    except OSError: break
+    if not b: break
+    out += b
+os.waitpid(pid, 0); sys.stdout.buffer.write(out)' "$1"; }
+elif script --version > /dev/null 2>&1; then pty() { script -qec "$1" /dev/null; } # util-linux
 else pty() { script -q /dev/null sh -c "$1"; }; fi # BSD
 s0=$(date +%s)
 set +e; out=$(pty "env -i HOME='$h' PATH='$PATH' CLAUDECODE=1 AGENTGLASS_CACHE_DIR='$t/cache' perl -e 'alarm 3; exec @ARGV' '$t/ag'" < /dev/null | tr -d '\r'); set -e; s1=$(date +%s)

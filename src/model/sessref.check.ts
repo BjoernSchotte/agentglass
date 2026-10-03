@@ -1,6 +1,6 @@
 // agentglass — self-check for session references and the agent-mode scope: scriptc build src/model/sessref.check.ts -o sr && ./sr
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import type { Sess } from "./types.ts";
 import { newSess } from "./types.ts";
 import { sessions } from "./sessions.ts";
@@ -12,6 +12,7 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
 const dir = "/tmp/agentglass-sessref-" + String(process.pid);
 rmSync(dir, { recursive: true, force: true });
 for (const p of ["p1/.git", "p1/sub", "p2/.git", "loose"]) mkdirSync(dir + "/" + p, { recursive: true });
+const R = realpathSync(dir); // keys name real paths (macOS: /tmp is /private/tmp)
 function put(h: string, id: string, cwd: string, mtime: number, parent: string): Sess {
   const s = newSess(h, id, dir + "/" + h + "-" + id + ".jsonl", false); s.cwd = cwd; s.mtime = mtime; s.parent = parent; sessions.set(s.path, s); return s;
 }
@@ -54,10 +55,10 @@ const nc = resolveRef("current", false, (x: Sess): boolean => true);
 eq("no current", String(nc.code) + "|" + nc.err, "3|no_current_session");
 
 // scope
-eq("project key: git root", projectKey(dir + "/p1/sub"), "git:" + dir + "/p1");
+eq("project key: git root", projectKey(dir + "/p1/sub"), "git:" + R + "/p1");
 mkdirSync(dir + "/wt", { recursive: true }); writeFileSync(dir + "/wt/.git", "gitdir: " + dir + "/p1/.git/worktrees/wt\n");
-eq("project key: a worktree is its main repo", projectKey(dir + "/wt"), "git:" + dir + "/p1");
-eq("project key: plain dir", projectKey(dir + "/loose"), "path:" + dir + "/loose");
+eq("project key: a worktree is its main repo", projectKey(dir + "/wt"), "git:" + R + "/p1");
+eq("project key: plain dir", projectKey(dir + "/loose"), "path:" + R + "/loose");
 const sc = scopeOf(true, [], "", dir + "/p1");
 eq("agent default: project", sc.name + "|" + sc.key, "project|git:" + dir + "/p1");
 eq("same project in scope", String(inScope(b, sc)), "true");

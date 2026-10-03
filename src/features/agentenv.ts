@@ -138,7 +138,7 @@ export function projectKey(dir: string): string {
   if (!dir) return "";
   const hit = keys.get(dir); if (hit !== undefined) return hit;
   const r = realDir(dir); const root = projectRoot(r);
-  const k = root ? "git:" + root : "path:" + r;
+  const k = root ? "git:" + realDir(root) : "path:" + r; // a worktree's gitdir may name its repo by another path
   if (keys.size > 4096) keys.clear();
   keys.set(dir, k);
   return k;
