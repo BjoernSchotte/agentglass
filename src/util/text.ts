@@ -43,21 +43,28 @@ export function wrap(s: string, w: number): string[] {
   }
   return out;
 }
-// truncate a styled line to w visible columns (keeps escapes)
+// escape sequences that take no columns: CSI, and OSC 8 hyperlinks (terminated by ST or BEL); ESC_HEAD for scanners
+export const ESC_RE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+export const ESC_HEAD = /^(?:\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\))/;
+const LINK_END = "\x1b]8;;\x1b\\";
+// truncate a styled line to w visible columns (keeps escapes); a cut inside a hyperlink closes it, so it cannot spill
 export function fitStyled(s: string, w: number): string {
-  let out = ""; let n = 0; let i = 0;
+  let out = ""; let n = 0; let i = 0; let inLink = false;
   while (i < s.length) {
-    if (s.charCodeAt(i) === 27) { const m = /^\x1b\[[0-9;]*[A-Za-z]/.exec(s.slice(i, i + 24)); if (m) { out += m[0]; i += m[0].length; continue; } }
+    if (s.charCodeAt(i) === 27) {
+      const m = ESC_HEAD.exec(s.slice(i, i + 2100)); // a link's url is ≤ 2 KB
+      if (m) { const e = m[0]; if (e.startsWith("\x1b]8;")) inLink = !/^\x1b\]8;[^;\x07\x1b]*;(?:\x07|\x1b\\)$/.test(e); out += e; i += e.length; continue; }
+    }
     const a = s.charCodeAt(i);
     const ch = a >= 0xd800 && a <= 0xdbff ? s.slice(i, i + 2) : s.slice(i, i + 1);
     const c = cw(cpOf(ch));
     if (n + c > w) break;
     out += ch; n += c; i += ch.length;
   }
-  return out + RST;
+  return out + (inLink ? LINK_END : "") + RST;
 }
 // the visible width of a styled string (escape sequences take no columns)
-export function vwidth(styled: string): number { return width(styled.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")); }
+export function vwidth(styled: string): number { return width(styled.replace(ESC_RE, "")); }
 // pad a styled line (already ≤ w visible) to width w using its visible width
 export function fillTo(styled: string, w: number): string {
   const n = vwidth(styled);

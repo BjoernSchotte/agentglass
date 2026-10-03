@@ -265,6 +265,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 
 | | |
 |---|---|
+| `Ctrl+K` | command palette: every action, session, project and tab by name (see [Palette and links](#palette-and-links)) |
 | `↵` / click | open live transcript · drill into an event |
 | `j` `k` | move · in a transcript: previous / next event |
 | `/` `F` | filter (`repo is x and cost > 2`, see [Filters](#filters)) · full-text search |
@@ -282,6 +283,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `B` | in Stats: budget state and the config path |
 | `@` | in Sessions: open the selected session's project in the Repos tab |
 | `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
+| `y` `Y` | copy the session id · copy a link to the session (list) or to the event under the cursor (transcript) |
 
 ## Repos
 
@@ -484,6 +486,60 @@ environment (API keys stay out; a script reads its own secrets). It gets SIGTERM
 most 4 run at once (more are dropped with a warning). It runs only when `rules.json` is yours and not group- or world-writable
 (`chmod 600`; a chmod is picked up like an edit), and in `--watch` only with `--notify`. `--redact` fakes titles and projects there too.
 
+## Palette and links
+
+`Ctrl+K` opens one fuzzy finder over everything: actions (every key binding by name, so `resume` finds `R`), sessions
+of all harnesses (subagents too), projects and tabs. Words match in any order and as abbreviations (`fx tmz` finds
+"Fix timezone bug"); a capital letter makes a word case-sensitive. A first character picks the scope: `>` actions,
+`@` sessions, `#` projects, `:` tabs (`Tab` cycles them, `?` lists them). `↵` runs the item, `→` on a session shows its
+actions (transcript, call graph, send, resume, copy id or link, filter to its project), `esc` puts everything back.
+Recent picks rank first; they are kept as ids only in `~/.agentglass/palette.json` (not written under `--redact`).
+
+Links make a session (or one event in it) addressable from a commit message, an issue or a script:
+
+```sh
+agentglass open 019a2c                                  # a session id, a unique 6+ character prefix, or <harness>:<id>
+agentglass open 'claude:5f1e…#call=toolu_01Abc'          # …at a tool call (#ts=2026-09-30T10:00:00Z: the first event then)
+agentglass open 'agentglass://open/codex/019a2c…#call=c1' # the URL form (Y copies it)
+agentglass open 019a2c --print                          # resolve only: {harness,id,path,title,cwd,anchor,url} (pipes and agents too)
+agentglass open 019a2c --print-url                      # the canonical agentglass://open/<harness>/<id> link
+agentglass open '019a2c#turn=2026-09-30T10:00:00.000Z'  # a turn by its start time as logged (~1: the 2nd turn starting then; #turn=3: the 3rd)
+agentglass open 4bf92f3577b34da6a3ce929d0e0e4736         # an OTLP trace id from `agentglass export` → that session and turn
+agentglass open 4bf92f3577b34da6a3ce929d0e0e4736/00f067aa0ba902b7  # …and a span in it: the call, request or subagent
+```
+
+The turn's start time is the stable form (`Y` and `--print-url` use it): it still names the same turn after a Gemini
+rewind or a compaction drops earlier turns, where the number may move on. Trace and span ids are the ones `agentglass
+export` sends (they are derived from session ids and turn keys, so they need no lookup table). In Grafana (Tempo) add a
+data link on spans to `agentglass://open/${__span.tags["gen_ai.conversation.id"]}#span=${__span.spanId}`; in Jaeger a
+link pattern on the span tag `gen_ai.tool.call.id` such as `agentglass://open/#{gen_ai.conversation.id}#call=#{gen_ai.tool.call.id}`.
+With the handler below installed, clicking one opens the call in agentglass.
+
+A link only ever opens a view: it selects the session, opens its transcript (from the event, also when it is older
+than the 6 MB the transcript normally reads) and puts the cursor on it. It never sends, resumes, kills, trashes or
+exports. Paths are not accepted: a link names a session agentglass already lists. Exit codes: 2 bad link, 3 not found,
+4 ambiguous prefix (candidates on stderr).
+
+**One window.** When an agentglass TUI is already running, `open` hands the link to it and exits (`opened in
+running agentglass (pid N)`); the running TUI shows the session and rings the bell. If the TUI is in a prompt or a
+confirm dialog, the link waits until you leave it. `--new-instance` always starts a new TUI; `"open":
+{"singleInstance": false}` in `~/.agentglass/config.json` turns the hand-off off. The hand-off is a spool directory
+(`~/.agentglass/run/inbox/`; the runtime has no Unix sockets): the directory must be yours with mode `0700`, every
+request file `0600` and yours, at most 1 KB, one `open <link>` line, at most 10 links a minute. Anything else
+(another owner, a symlink, a FIFO, group or other permissions) is never read or removed, and the hand-off is switched
+off with a warning. A TUI that does not answer within 2 s gets a new window instead.
+
+**Terminal hyperlinks.** In terminals that support OSC 8 (kitty, WezTerm, iTerm2, VS Code, Ghostty, VTE ≥ 0.50 such
+as GNOME Terminal, Windows Terminal) the session id in the preview and the transcript header, the files in an event's
+detail and the `id` column of `--format table` are clickable links (agentglass captures plain clicks, so use
+Ctrl/Cmd+click where the terminal allows it under mouse reporting). Off inside tmux/screen, inside agents and under
+`--redact`; `"hyperlinks": "on" | "off" | "auto"` in the config or `AGENTGLASS_HYPERLINKS=on|off` decides.
+
+**Browser and chat links (Linux).** `agentglass open --install-handler` registers `agentglass://` with xdg-mime
+(`~/.local/share/applications/agentglass-open.desktop`), opening links in `"open": {"terminal": "kitty"}`,
+`$TERMINAL` or `x-terminal-emulator`; `--uninstall-handler` removes it. On macOS, point a URL-router app (for
+example Finicky or OpenIn) at `agentglass open "<url>"` in a terminal.
+
 ## Scriptable
 
 ```sh
@@ -620,6 +676,8 @@ export AGENTGLASS_KIRO="kiro-cli"
 export AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"   # headless sends may edit files
 export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (default ~/.agentglass/cache)
 export AGENTGLASS_CONFIG="/tmp/ag-config.json"   # another config file (default ~/.agentglass/config.json)
+export AGENTGLASS_RUN_DIR="/tmp/ag-run"   # single-instance lock and link inbox (default ~/.agentglass/run; must be yours, 0700)
+export AGENTGLASS_PALETTE_FILE="/tmp/ag-palette.json"   # the palette's recent picks (default ~/.agentglass/palette.json)
 export AGENTGLASS_OTLP_DIR="/tmp/ag-otlp"     # OTLP export state, lock and request bodies (default ~/.agentglass/otlp)
 ```
 

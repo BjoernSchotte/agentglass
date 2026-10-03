@@ -38,13 +38,14 @@ export function keyName(k: string): string {
   const m: Record<string, string> = {
     "\x1b[A": "up", "\x1b[B": "down", "\x1b[C": "right", "\x1b[D": "left", "\x1bOA": "up", "\x1bOB": "down",
     "\x1b[5~": "pgup", "\x1b[6~": "pgdn", "\x1b[H": "home", "\x1b[F": "end", "\x1b[1~": "home", "\x1b[4~": "end", "\x1bOH": "home", "\x1bOF": "end",
-    "\r": "enter", "\n": "enter", "\x7f": "bs", "\b": "bs", "\t": "tab", "\x03": "ctrl-c", "\x15": "ctrl-u", "\x17": "ctrl-w",
+    "\r": "enter", "\n": "enter", "\x7f": "bs", "\b": "bs", "\t": "tab", "\x03": "ctrl-c", "\x15": "ctrl-u", "\x17": "ctrl-w", "\x0b": "ctrl-k", "\x10": "ctrl-p", "\x0e": "ctrl-n",
   };
   return m[k] ?? k;
 }
 // the input line's feature handlers (H.input): true = one of them asks to keep the line open
 function inputEv(ev: string): boolean { let keep = false; for (const f of H.input) if (f(S.inputAction, ev, S.inputText)) keep = true; return keep; }
 export function onInput(k: string): void {
+  for (const f of H.modal) if (f(S.mode, k)) return; // the palette: Ctrl+K from any view, then its own keys
   if (S.mode === "input") {
     const was = S.inputText;
     if (k === "enter") {

@@ -8,6 +8,7 @@ import { parseEvents, sourceOf, window, epochOf } from "../harness/index.ts";
 import { titleOf, parentOf, subActive, activeSubs, restat } from "../model/sessions.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, spin, scrollbar } from "./screen.ts";
+import { link, hyperOn, sessUrl } from "../util/hyper.ts";
 
 export function evLines(e: Ev, w: number, expand: boolean, out: string[]): void {
   const tsx = e.ts.length >= 16 ? localHM(e.ts) : "";
@@ -76,7 +77,9 @@ export function renderTranscript(): void {
   const live = s.pid || (s.depth === 1 && subActive(s)) ? " · " + spin() + " live" : "";
   const subs = s.subs.length ? " · ⑂ " + activeSubs(s) + "/" + s.subs.length + " (n)" : "";
   const name = s.depth === 1 ? "↳ " + s.kind + (s.name ? " " + s.name : "") + ": " + titleOf(s) : titleOf(s);
-  box(0, 1, W, H - 2, name, (s.depth === 1 ? "u parent · n next · " : "") + home(s.cwd) + subs + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%"), true);
+  const info = (s.depth === 1 ? "u parent · n next · " : "") + home(s.cwd) + subs + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%");
+  // OSC 8 terminals: the short id links to the session (Y copies the event's link); styled info is cut by box()
+  box(0, 1, W, H - 2, name, hyperOn() ? clean(info) + " · " + fg(C.dim) + link(sessUrl(s.h, s.id), s.id.slice(0, 8)) + RST : info, true);
   for (let r = 0; r < vh; r++) {
     const li = t.scroll + r;
     const l = li < t.lines.length ? t.lines[li] : "";
@@ -97,20 +100,38 @@ export function moveCur(t: TV, d: number, vh: number): void {
   else if (e0 > t.scroll + vh) t.scroll = Math.min(s0, e0 - vh);
   if (d > 0 && t.cur === n - 1) t.follow = true;
 }
-export function openTranscript(s: Sess): void {
-  const t: TV = { s, evs: [], off: 0, ep: s.ep, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+export function openTranscript(s: Sess): void { openTranscriptAt(s, -1); }
+// cursor ≥ 0 (a link to an event older than the tail): read from just before it, then skip to the tail; G/follow still
+// go to the live end
+export function openTranscriptAt(s: Sess, cursor: number): TV {
+  const t: TV = { s, evs: [], off: 0, ep: s.ep, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: cursor };
   tvStart(t);
   S.tv = t;
   S.mode = "transcript";
+  return t;
 }
-// (re)start reading at the last 6 MB
+function meta(text: string): Ev { return { kind: "meta", text, ts: "", id: "", full: "" }; }
+// (re)start reading: at the last 6 MB, or (t.from) a 6 MB window from 64 KB before the link's event, then the tail
 function tvStart(t: TV): void {
   const s = t.s; const src = sourceOf(s.h);
   const start = Math.max(0, s.size - window(src, 6291456));
   t.evs = []; t.off = start; t.ep = s.ep; t.ln = -1;
+  if (t.from > 0 && t.from < start) {
+    const a = src.align(s, Math.max(0, t.from - window(src, 65536)));
+    const r = src.lines(s, a, Math.min(s.size, a + window(src, 6291456)));
+    const evs: Ev[] = [];
+    for (const l of r.lines) parseEvents(s.h, l, evs, s);
+    let first = ""; for (const e of evs) if (e.ts) { first = e.ts; break; }
+    t.evs.push(meta("showing from " + (first ? localHM(first) + " " + first.slice(0, 10) : bytes(a * src.unit)) + " (opened by link)"));
+    for (const e of evs) t.evs.push(e);
+    const tail = src.align(s, start);
+    if (tail > r.next) t.evs.push(meta("… " + bytes((tail - r.next) * src.unit) + " not shown …"));
+    t.off = Math.max(tail, r.next);
+    return;
+  }
   if (start > 0) { // skip the partial first line
     t.off = src.align(s, start);
-    t.evs.push({ kind: "meta", text: "showing last " + bytes((s.size - start) * src.unit) + " of " + bytes(s.size * src.unit), ts: "", id: "", full: "" });
+    t.evs.push(meta("showing last " + bytes((s.size - start) * src.unit) + " of " + bytes(s.size * src.unit)));
   }
 }
 export function cycleSub(dir: number): void {

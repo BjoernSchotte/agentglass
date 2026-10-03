@@ -62,14 +62,14 @@ tick(); eq("first sight records only", String(fs.attention), "false");
 fs.evs = [ev("meta", "turn started"), ev("assistant", "done"), ev("meta", "turn complete")];
 tick(); eq("turn finished raises", String(fs.attention), "true");
 tick(); eq("stays raised", String(fs.attention), "true");
-S.tv = { s: fs, evs: [], off: 0, ep: "", scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: 0, lexp: false, cur: 0, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+S.tv = { s: fs, evs: [], off: 0, ep: "", scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: 0, lexp: false, cur: 0, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1 };
 tick(); eq("transcript open clears", String(fs.attention), "false");
 S.tv = null;
 // a whole turn between two looks (a short answer, or an approval prompt the agent logs as a finished reply): never seen
 // busy, but a new prompt in the log and idle now = the turn finished
 fs.evs = [ev("meta", "turn started"), ev("assistant", "done"), ev("meta", "turn complete"), ev("user", "next"), ev("meta", "turn started"), ev("assistant", "ok"), ev("meta", "turn complete")];
 tick(); eq("turn between two looks raises", String(fs.attention), "true");
-S.tv = { s: fs, evs: [], off: 0, ep: "", scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: 0, lexp: false, cur: 0, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+S.tv = { s: fs, evs: [], off: 0, ep: "", scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: 0, lexp: false, cur: 0, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1 };
 tick(); S.tv = null;
 tick(); eq("same prompt again: no new alarm", String(fs.attention), "false");
 fs.evs = [ev("assistant", "ok"), ev("meta", "turn complete")]; // the prompt scrolled out of the tail window

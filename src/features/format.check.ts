@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Obj } from "../util/json.ts";
 import { flatten, pickCols, csvCell, render, defaultFormat, colsOf } from "./format.ts";
+import { setHyper } from "../util/hyper.ts";
+import { vwidth } from "../util/text.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ":\n got  " + JSON.stringify(got) + "\n want " + JSON.stringify(want)); } }
@@ -69,5 +71,15 @@ eq("width: $COLUMNS", String(colsOf("100", "24 77")), "100");
 eq("width: the terminal", String(colsOf("", "24 77")), "77");
 eq("width: neither", String(colsOf("", "")), "120");
 
+// OSC 8: the table's id cells link to agentglass://open/<harness>/<id> (terminal only); widths stay the same
+const srows: Obj[] = [{ id: "abc-1", harness: "claude", title: "t" }, { id: "x/y", harness: "codex", title: "u" }];
+setHyper(false); const plainT = render(srows, ["id", "harness", "title"], "table", false, false, true, 80);
+setHyper(true); const linkT = render(srows, ["id", "harness", "title"], "table", false, false, true, 80);
+eq("table links ids", String(linkT.indexOf("\x1b]8;;agentglass://open/claude/abc-1\x1b\\abc-1\x1b]8;;\x1b\\") >= 0 && linkT.indexOf("agentglass://open/codex/x%2Fy") >= 0), "true");
+eq("table widths unchanged", linkT.split("\n").map((l: string) => String(vwidth(l))).join(","), plainT.split("\n").map((l: string) => String(vwidth(l))).join(","));
+eq("no links without a terminal", String(render(srows, ["id"], "table", false, false, false, 80).indexOf("\x1b]")), "-1");
+let any = false; for (const f of ["json", "jsonl", "csv"]) if (render(srows, ["id", "harness"], f, false, false, true, 80).indexOf("\x1b]") >= 0) any = true;
+eq("never in json/jsonl/csv", String(any), "false");
+setHyper(false);
 console.log(bad ? bad + " failed" : "format: all checks passed");
 if (bad) process.exit(1);
