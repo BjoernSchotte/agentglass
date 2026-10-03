@@ -27,7 +27,7 @@ function load(): void {
   for (const path of Object.keys(ss)) {
     const o = obj(ss[path]); if (!o) continue;
     const a = accIn(o);
-    const calls = loadCallsFrom(CALLS_DIR, path, a.off);
+    const calls = loadCallsFrom(CALLS_DIR, path, a);
     if (!calls) continue; // no or stale call rows: this session alone re-indexes
     a.calls = calls; a.lastCall = calls.length - 1;
     ledger.set(path, a); written.set(path, a.off);
