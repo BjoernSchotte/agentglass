@@ -27,6 +27,8 @@ const CMDS: string[][] = [
   ["agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)"],
   ["agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget"],
   ["", "(--harness h: one harness; --check: exit 3 when over budget)"],
+  ["agentglass triage [opts]", "what is different about a selection (errored calls, $5+ sessions, …) vs the rest or last period"],
+  ["", "(--preset errors|slow|long|expensive|failing|period or --select '<expr>'; see agentglass triage --help)"],
   ["agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)"],
   ["agentglass --help | -h", "this text"],
   ["agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)"],

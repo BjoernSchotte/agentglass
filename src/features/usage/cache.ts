@@ -19,6 +19,7 @@ export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 const ARGV = process.argv.slice(2);
 function rowless(): boolean {
   if (ARGV[0] === "cost") return true;
+  if (ARGV[0] === "triage") return false; // ranks call rows (and saves what it indexed)
   const oneShot = ["--json", "--watch", "--help", "-h", "--version"].some((x: string) => ARGV.indexOf(x) >= 0);
   return oneShot && ARGV.indexOf("--filter") < 0 && ARGV.indexOf("--pinned") < 0;
 }

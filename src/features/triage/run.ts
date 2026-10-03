@@ -189,7 +189,7 @@ function compute(r: Run, key: string, partial: boolean): Result {
     for (const [v, sb] of sd.vals) {
       if (sb.n <= 0 || (dim === "server" && v === "")) continue; // server "" = not an MCP call
       const bb = bd.vals.get(v);
-      res.rows.push({ attr: dim, value: v, s: weighted ? wscore(sb.n, sb.w, sd.wTotal, bb ? bb.w : 0, bd.wTotal) : score(sb.n, A, bb ? bb.n : 0, B) });
+      res.rows.push({ attr: dim, value: v, s: weighted ? wscore(sb.n, sb.w, sd.wTotal, bb ? bb.n : 0, bb ? bb.w : 0, bd.wTotal) : score(sb.n, A, bb ? bb.n : 0, B) });
     }
   }
   return res;

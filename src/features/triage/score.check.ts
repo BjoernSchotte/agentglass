@@ -16,8 +16,8 @@ eq("sig", String(s.sig), "true"); eq("lift fmt", fmtLift(s), "×6.0");
 eq("new when b = 0", fmtLift(score(5, 10, 0, 100)), "new");
 eq("tiny N not significant", String(score(3, 5, 1, 10).sig), "false");
 eq("threshold", String(CHI_SIG), "6.63");
-const w = wscore(4, 30, 100, 10, 200);   // 4 rows, 30% of selection cost vs 5% of baseline cost
-near("weighted diff", w.diff, 0.25); eq("weighted no chi2", String(w.chi2), "-1"); eq("weighted not sig", String(w.sig), "false");
+const w = wscore(4, 30, 100, 2, 10, 200);   // 4 rows, 30% of selection cost vs 2 rows, 5% of baseline cost
+near("weighted diff", w.diff, 0.25); eq("weighted no chi2", String(w.chi2), "-1"); eq("weighted not sig", String(w.sig), "false"); eq("weighted support", String(w.a) + "/" + String(w.b), "4/2");
 eq("pct", fmtPct(0.342), "34.2%");
 // ranking: significant and non-significant rows in one list by diff; 3 per attr; support and 1% floor; under flips
 const R = (attr: string, value: string, a: number, A: number, b: number, B: number): TRow => ({ attr, value, s: score(a, A, b, B) });

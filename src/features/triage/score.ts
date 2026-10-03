@@ -18,10 +18,10 @@ export function score(a: number, A: number, b: number, B: number): Score {
   const pS = A > 0 ? a / A : 0; const pB = B > 0 ? b / B : 0; const x = chi2(a, A, b, B);
   return { a, A, b, B, pS, pB, diff: pS - pB, lift: b === 0 ? -1 : pS / pB, chi2: x, sig: x >= CHI_SIG };
 }
-// weight shares (cost, tokens, duration): a stays the row support; no count test applies
-export function wscore(a: number, wa: number, WA: number, wb: number, WB: number): Score {
+// weight shares (cost, tokens, duration): a and b stay row counts (support), A and B are the groups' weights; no count test applies
+export function wscore(a: number, wa: number, WA: number, b: number, wb: number, WB: number): Score {
   const pS = WA > 0 ? wa / WA : 0; const pB = WB > 0 ? wb / WB : 0;
-  return { a, A: WA, b: wb, B: WB, pS, pB, diff: pS - pB, lift: wb <= 0 ? -1 : pS / pB, chi2: -1, sig: false };
+  return { a, A: WA, b, B: WB, pS, pB, diff: pS - pB, lift: wb <= 0 ? -1 : pS / pB, chi2: -1, sig: false };
 }
 // files are high-cardinality: listed only with support ≥ 5
 function support(attr: string, minSupport: number): number { return attr === "file" ? Math.max(5, minSupport) : minSupport; }
