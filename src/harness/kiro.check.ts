@@ -4,7 +4,7 @@ import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { newSess } from "../model/types.ts";
 import { newAcc, dayKey } from "../features/usage/record.ts";
-import { kiro } from "./kiro.ts";
+import { kiro, kiroTurns } from "./kiro.ts";
 import { userRate } from "../features/usage/pricing.ts";
 
 let bad = 0;
@@ -64,6 +64,15 @@ ok("ISO-string turn not on the .json mtime day", !isoS.has(dayKey(new Date(SEP24
   const side = kiro.usageSidecar; if (side) side(s, a);
   if (userRate("kiroCreditUsd") > 0 || Number(process.env.AGENTGLASS_KIRO_CREDIT_USD ?? "") > 0) ok("credits with a rate are priced", a.cost > 0 && a.uc === 0 && a.unk === 0, String(a.cost));
   else ok("credits apart", a.uc === 3 && a.unk === 0 && a.cost === 0, a.uc + " / " + a.unk);
+}
+
+// per-turn sidecar totals for the OTLP export: in order, end times ascending, credits priced like usageSidecar
+{
+  const id = "55555555-5555-5555-5555-555555555555"; const p = dir + "/" + id + ".jsonl"; write(p, PROMPT + "\n");
+  write(dir + "/" + id + ".json", "{\"session_state\":{\"conversation_metadata\":{\"user_turn_metadatas\":[" + "{\"end_timestamp\":\"2026-09-15T12:00:00.123456789Z\",\"input_token_count\":900,\"output_token_count\":1,\"metering_usage\":[]}" + "," + turn(SEP16) + "]}}}");
+  const ts = kiroTurns(newSess("kiro", id, p, false));
+  ok("kiro turns", ts.length === 2 && ts[0].end === Date.parse("2026-09-15T12:00:00.123Z") && ts[1].end === SEP16 && ts[0].nIn === 900 && ts[1].nOut === 1, JSON.stringify(ts));
+  ok("kiro turns none", kiroTurns(newSess("kiro", "x", dir + "/nope.jsonl", false)).length === 0, "");
 }
 
 rmSync(dir, { recursive: true, force: true });

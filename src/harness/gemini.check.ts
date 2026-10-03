@@ -309,5 +309,8 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
 }
 
 rmSync(DIR, { recursive: true, force: true });
+// reasoning tokens (thoughts) for the OTLP export: a subset of out, never added twice
+{ const a = newAcc(); gemini.usage(a, "{\"id\":\"r1\",\"timestamp\":\"2026-01-02T10:00:00.000Z\",\"type\":\"gemini\",\"model\":\"gemini-2.5-pro\",\"tokens\":{\"input\":10,\"output\":5,\"cached\":0,\"thoughts\":50,\"tool\":0,\"total\":65}}");
+  ok("gemini thoughts → rs", a.rs === 50 && a.outTok === 55, a.rs + "/" + a.outTok); }
 console.log(bad ? bad + " failed" : "gemini: all checks passed");
 process.exit(bad ? 1 : 0);

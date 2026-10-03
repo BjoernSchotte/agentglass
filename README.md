@@ -544,6 +544,75 @@ agentglass sessions --since 7d --format table                       # json | jso
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
 ```
 
+## Send to an OTLP backend
+
+agentglass sends your sessions to any OpenTelemetry backend that takes OTLP/HTTP (Jaeger, Grafana Tempo, SigNoz,
+Honeycomb, an OpenTelemetry Collector) as [GenAI semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+traces. It reads the transcripts, so it works for every harness, needs no hooks, and also sends the past.
+
+```sh
+docker run -d --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:latest
+agentglass export --otlp http://localhost:4318 --since 7d       # history; then open http://localhost:16686
+agentglass export --otlp http://localhost:4318                  # again later: only what is new is sent
+agentglass --watch --otlp http://localhost:4318                 # live: each turn as it finishes (Ctrl+C flushes)
+agentglass export --dry-run --since 1d | jq .                   # the OTLP/JSON requests, nothing sent
+agentglass export --status --otlp http://localhost:4318         # last export, gzip, the harnesses' own telemetry
+```
+
+- **Shape:** one trace per turn. The root `invoke_agent <harness>` span holds one `chat <model>` span per API request
+  (tokens, cost, billing mode) and one `execute_tool <tool>` span per call; a subagent is an `invoke_agent <type>`
+  span under the call that started it. Usage sits on `chat` spans only, so sums over all spans never count twice.
+  Kiro and fx log no per-request usage: one `chat` span per turn (fx: the session totals ride on the newest turn's `chat` span, marked `agentglass.usage.session_total`).
+- **Options:** `--since 30m|24h|7d|YYYY-MM-DD|all` (default 7d) and `--until`, `--harness`, `--session <id>`,
+  `--filter '<session clauses>'`, `--no-subagents`, `--batch N` (spans per request, default 512, at most 4 MB),
+  `--compression gzip|none`, `--json` (summary on stdout). Exit codes: 0 sent, 1 some requests failed (run again to
+  retry them), 2 usage error, 3 another export to the same endpoint is running.
+- **No duplicates:** span and trace ids are deterministic (SHA-256 of the session and turn, scheme `v1`), and a state
+  file per endpoint (`~/.agentglass/otlp/`, mode 0600; `AGENTGLASS_OTLP_DIR` moves it) marks every turn the backend
+  accepted. `--resend` sends again with the same ids: Jaeger keeps one copy; Grafana Tempo was seen storing both
+  (until compaction); SigNoz and Honeycomb are untested — expect duplicates there.
+- **Content stays local:** without `--content` no prompt, answer, tool argument or result leaves the machine — only
+  names, models, counts, durations, cwd and git remote (credentials scrubbed). `--content` adds them, each cut to
+  `otlp.contentMax`. `--redact` exports the same fake names the screen shows and drops the `vcs.*` attributes.
+- **Timing:** request start times are reconstructed (the previous event of the session to the response), so they
+  include the harness's own queueing. Kiro and fx log no per-call times: their spans are spread over the turn and
+  marked `agentglass.timing.estimated`. Live mode adds `agentglass.tool.approval_wait` (seconds, estimated by the
+  watchdog) to a call that waited for your approval.
+- **Input tokens** include cache reads and writes for every provider (semconv); `"inputTokens": "provider"` sends
+  what each provider's API reports instead (Anthropic: without the cache). fx's split is unverified; Kiro logs no
+  cache split at all.
+- **The harnesses' own telemetry:** Claude Code, Codex, Gemini CLI and OpenCode can export OTLP themselves (off by
+  default). agentglass notices when one does (`--status`) and warns that the backend may show those turns twice;
+  `--native skip` leaves new turns of such a harness to it and sends only the history before. The root span carries
+  the harness's own session key (`session.id`, Codex `conversation.id`) so both sources can be joined.
+
+Configuration lives in `~/.agentglass/config.json`; header values never go on the command line:
+
+```json
+{"otlp": {
+  "endpoint": "https://otlp.example.com",
+  "headers": {"Authorization": "Bearer ${env:OTEL_TOKEN}"},
+  "headersFile": "~/.agentglass/otlp-headers",
+  "content": false, "contentMax": 16384, "inputTokens": "inclusive", "hostName": false,
+  "attributes": {"extra": {"deployment.environment.name": "laptop"}, "rename": {}, "drop": ["process.working_directory"]},
+  "batch": 512, "timeoutSeconds": 10, "insecure": false, "compression": "gzip", "native": "warn"
+}}
+```
+
+Without `--otlp` the endpoint comes from `otlp.endpoint`, then `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, then
+`OTEL_EXPORTER_OTLP_ENDPOINT`; headers from the config, the `headersFile` (`Key: Value` lines, must be mode 0600), or
+`OTEL_EXPORTER_OTLP_HEADERS`. Headers, and a URL with `user:token@` or a query, go over plain `http://` only to localhost unless `"insecure": true`; a header value with a line break is refused. curl does
+the sending (config on stdin, so no token shows up in `ps`); proxies apply except for localhost. An endpoint that
+refuses gzip bodies gets plain JSON from then on.
+
+An OpenTelemetry Collector that prints what arrives:
+
+```yaml
+receivers: {otlp: {protocols: {http: {endpoint: 0.0.0.0:4318}}}}
+exporters: {debug: {verbosity: detailed}}
+service: {pipelines: {traces: {receivers: [otlp], exporters: [debug]}}}
+```
+
 `--format csv` is RFC 4180 with a header row: nested fields are flattened (`tokens_in`), lists joined with `;`, `null`
 is empty, and text starting with `= + - @` gets a leading `'` so spreadsheets do not run it. `--fields` picks and
 orders columns; an unknown name exits 2 and lists the valid ones. On a terminal the default is `table`, in a pipe
@@ -599,6 +668,7 @@ export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (d
 export AGENTGLASS_CONFIG="/tmp/ag-config.json"   # another config file (default ~/.agentglass/config.json)
 export AGENTGLASS_RUN_DIR="/tmp/ag-run"   # single-instance lock and link inbox (default ~/.agentglass/run; must be yours, 0700)
 export AGENTGLASS_PALETTE_FILE="/tmp/ag-palette.json"   # the palette's recent picks (default ~/.agentglass/palette.json)
+export AGENTGLASS_OTLP_DIR="/tmp/ag-otlp"     # OTLP export state, lock and request bodies (default ~/.agentglass/otlp)
 ```
 
 ## Supported harnesses

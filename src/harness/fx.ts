@@ -119,6 +119,16 @@ function usageSidecar(s: Sess, a: Acc): void {
   lines(a, d, dl[5] ?? 0, dl[6] ?? 0);
 }
 
+// the session's running totals now (usage-v2.json snapshot): fx keeps no per-turn usage, the OTLP export sends these once
+export interface FxTot { nIn: number; nOut: number; cr: number; cw: number; usd: number; unk: number } // unk = unpriced tokens ($0 custom models)
+export function fxTotals(s: Sess): FxTot | null {
+  const o = parseJson(readText(s.path.slice(0, -"events.jsonl".length) + "usage-v2.json", 0, 1048576).trim()); const sn = o ? obj(o["snapshot"]) : null;
+  if (!sn) return null;
+  const t: FxTot = { nIn: num(sn["input_tokens"]), nOut: num(sn["output_tokens"]), cr: num(sn["cache_read_tokens"]), cw: num(sn["cache_write_tokens"]), usd: num(sn["total_cost"]), unk: 0 };
+  if (t.usd === 0) t.unk = t.nIn + t.nOut + t.cr + t.cw;
+  return t;
+}
+
 export const fx: HarnessAdapter = {
   id: "fx", label: "fx", glyph: "▲", mark: "▲", color: () => C.fx,
   badge: () => fg(C.text) + CSI + "1m" + "▲" + RST + fg(C.fx) + CSI + "1m" + " 𝒇x" + RST + fg(C.fx) + "      " + RST,

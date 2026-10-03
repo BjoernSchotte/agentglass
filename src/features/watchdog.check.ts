@@ -36,6 +36,7 @@ eq("approval: idle", approvalNote({ now, mtime: base.mtime, busy: false, evs: ba
 // the agent's terminal says so (Gemini's tmux pane title "✋ Action Required"): Gemini logs the reply text but the tool
 // call only once it ran, so the log looks like a finished turn and no tool is pending; idle, busy CPU, at once
 eq("approval: title, at once", approvalNote({ now, mtime: now, busy: false, evs: [ev("assistant", "I will run mkdir x")], cpu: [], cmds: [], subsActive: false, asks: true }), "approval dialog open");
+eq("approval: a harness that never asks (pi)", approvalNote({ now, mtime: base.mtime, busy: true, evs: base.evs, cpu: base.cpu, cmds: [], subsActive: false, noAsk: true }), "");
 eq("approval: no title", approvalNote({ now, mtime: now, busy: false, evs: [ev("assistant", "I will run mkdir x")], cpu: [], cmds: [], subsActive: false, asks: false }), "");
 // which alarm a look raises: approval wins over the turn that only looks finished
 eq("alarm: approval over turn finished", alarmOf(true, false, true, true), "approval?");

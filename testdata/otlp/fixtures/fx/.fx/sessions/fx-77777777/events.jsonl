@@ -1,0 +1,10 @@
+{"seq":1,"timestamp_ms":1788256800000,"event":{"turn_started":{}}}
+{"seq":2,"timestamp_ms":1788256840000,"event":{"user":{"text":"count lines"}}}
+{"seq":3,"timestamp_ms":1788256840000,"event":{"tool_call":{"tool_name":"shell","call_id":"f_c1","arguments_json":"{\"command\":\"wc -l *.py\"}"}}}
+{"seq":4,"timestamp_ms":1788256840000,"event":{"tool_result":{"call_id":"f_c1","status":"success","preview":"{\"output\":\"12 a.py\"}","output_bytes":7}}}
+{"seq":5,"timestamp_ms":1788256840000,"event":{"assistant":{"text":"12 lines."}}}
+{"seq":6,"timestamp_ms":1788256840000,"event":{"turn_completed":{"turn_summary":{"turn_duration_ms":30000}}}}
+{"seq":7,"timestamp_ms":1788257000000,"event":{"user":{"text":"and in tests?"}}}
+{"seq":8,"timestamp_ms":1788257000000,"event":{"tool_call":{"tool_name":"shell","call_id":"f_c2","arguments_json":"{\"command\":\"wc -l tests/*.py\"}"}}}
+{"seq":9,"timestamp_ms":1788257000000,"event":{"tool_result":{"call_id":"f_c2","status":"failed","preview":"{\"error\":\"no such file\"}","output_bytes":13}}}
+{"seq":10,"timestamp_ms":1788257000000,"event":{"turn_completed":{"turn_summary":{"turn_duration_ms":12000}}}}

@@ -18,7 +18,8 @@ export function asBill(s: string): Bill { const i = MODES.indexOf(s as Bill); re
 export interface Det { bill: Bill; plan: string; why: string; src: string }
 // names = environment variable names present, on = SWITCHES set to a true value, kv = config facts (type fields only)
 export interface Evid { names: string[]; on: string[]; kv: Map<string, string> }
-export const SWITCHES = ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "GOOGLE_GENAI_USE_VERTEXAI"];
+export const SWITCHES = ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "GOOGLE_GENAI_USE_VERTEXAI",
+  "CLAUDE_CODE_ENABLE_TELEMETRY", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"]; // the last two: otlp-export's native-telemetry detection
 const OFF = ["", "0", "false", "no", "off"];
 const CAP = 2097152; // config reads are size-capped
 

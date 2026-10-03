@@ -11,6 +11,8 @@ import { say } from "../state.ts";
 export const CONFIG_FILE = process.env.AGENTGLASS_CONFIG || join(HOME, ".agentglass", "config.json");
 const root: Obj | null = obj((() => { try { return JSON.parse(readText(CONFIG_FILE, 0, 262144)); } catch (e) { return null; } })());
 
+// a section's raw value (undefined when absent): lets a section report a wrong shape
+export function rawSection(name: string): unknown { return root ? root[name] : undefined; }
 // a section of the config ({} when absent or not an object)
 export function section(name: string): Obj { return (root ? obj(root[name]) : null) ?? {}; }
 

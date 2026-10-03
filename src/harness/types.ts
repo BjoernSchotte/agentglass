@@ -56,6 +56,7 @@ export interface HarnessAdapter {
   // ── live detection (either or both) ──
   liveFile?: (path: string) => boolean; // the harness keeps its transcript open while running: is this open file one?
   liveRegistry?: (alive: (pid: number) => boolean, harnessOfPid: (pid: number) => string) => Live[]; // the harness writes a pid ↔ session registry (harnessOfPid: "" = no agent process)
+  noApproval?: boolean; // it never asks before running a tool call (pi): no approval wait is ever guessed for it
   approvalTitle?: (title: string) => boolean; // its terminal title (read from its tmux pane) says it waits for the user to approve a tool call
   daemon?: string; // its registry pids are one shared daemon running many sessions: never signalled from here; how the user stops it
 

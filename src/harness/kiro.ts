@@ -185,6 +185,22 @@ function usageSidecar(s: Sess, a: Acc): void {
   a.x[1] = turns.length;
 }
 
+// per-turn totals for the OTLP export (one chat span per turn): user_turn_metadatas in order, priced like usageSidecar
+export interface KTurn { end: number; nIn: number; nOut: number; credits: number; usd: number; unk: number } // unk = credits without a rate
+export function kiroTurns(s: Sess): KTurn[] {
+  const out: KTurn[] = [];
+  const o = side(s); const ss = o ? obj(o["session_state"]) : null; const cm = ss ? obj(ss["conversation_metadata"]) : null;
+  if (!cm) return out;
+  const rate = creditUsd();
+  for (const v of arr(cm["user_turn_metadatas"])) {
+    const tm = obj(v); if (!tm) continue;
+    let cr = 0;
+    for (const m of arr(tm["metering_usage"])) { const mo = obj(m); if (mo && str(mo["unit"]) === "credit") cr += num(mo["value"]); }
+    out.push({ end: endMs(tm["end_timestamp"]), nIn: num(tm["input_token_count"]), nOut: num(tm["output_token_count"]), credits: cr, usd: rate > 0 ? cr * rate : 0, unk: rate > 0 ? 0 : cr });
+  }
+  return out;
+}
+
 export const kiro: HarnessAdapter = {
   id: "kiro", label: "Kiro", glyph: "◇", mark: "◇", color: () => C.purple,
   bin: "kiro-cli", procs: ["kiro-cli", "kiro-cli-chat"],

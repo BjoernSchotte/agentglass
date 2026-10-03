@@ -84,7 +84,7 @@ function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {
   const i = sh.args.indexOf(" -c ");
   return i >= 0 ? sh.args.slice(i + 4, i + 34) : base(sh.args.split(" ")[0] ?? "");
 }
-export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean } // asks: the agent's terminal title says it waits for approval
+export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean; noAsk?: boolean } // asks: the agent's terminal title says it waits for approval; noAsk: the harness never asks (pi)
 function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 // a metric's value for a rule: v -1 = absent (its preconditions do not hold, the rule cannot fire); lv: the level the agent
 // itself asserts (1: Gemini's approval title), whatever the threshold; at: recorded time of the newest record behind v
@@ -94,6 +94,7 @@ function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal
 // seconds a tool call has been open while the tree is quiet (avg over samples < cpuBelow) and no tool command started
 // within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once
 export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec: number): MVal {
+  if (o.noAsk) return absent(); // a quiet long call there is just a long call (pi execs `sleep` & co. without a shell)
   const pend = (o.now - o.mtime) / 1000;
   if (o.asks) { const m = mv(pend, pendingTool(o.evs) || "approval dialog", "", avgTail(o.cpu, samples).toFixed(0), o.mtime); m.lv = 1; return m; }
   const t = pendingTool(o.evs);

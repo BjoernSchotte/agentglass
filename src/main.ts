@@ -52,6 +52,7 @@ import "./features/triage/view.ts";
 import "./features/redact.ts";
 import "./features/prices.ts";
 import "./features/update.ts";
+import "./features/otlp/export.ts";
 
 function render(): void {
   S.dirty = false; S.animating = false; // spin() sets animating again while something on screen turns

@@ -1,0 +1,12 @@
+{"sessionId":"44444444-4444-4444-8444-444444444444","projectHash":"abc123","startTime":"2026-09-01T10:00:00.000Z","lastUpdated":"2026-09-01T10:09:00.000Z","kind":"main"}
+{"id":"u1","timestamp":"2026-09-01T10:00:00.000Z","type":"user","content":[{"text":"list the files"}]}
+{"id":"g1","timestamp":"2026-09-01T10:00:03.000Z","type":"gemini","content":"","model":"gemini-2.5-pro","tokens":{"input":1000,"output":20,"cached":600,"thoughts":15,"tool":0,"total":1035}}
+{"id":"g1","timestamp":"2026-09-01T10:00:03.000Z","type":"gemini","content":"","model":"gemini-2.5-pro","toolCalls":[{"id":"run_shell_command__1","name":"run_shell_command","args":{"command":"ls"},"result":[{"functionResponse":{"id":"run_shell_command__1","name":"run_shell_command","response":{"output":"a.py"}}}],"status":"success","timestamp":"2026-09-01T10:00:04.000Z"}]}
+{"id":"g2","timestamp":"2026-09-01T10:00:06.000Z","type":"gemini","content":"Two files.","model":"gemini-2.5-flash","tokens":{"input":1200,"output":10,"cached":900,"thoughts":0,"tool":0,"total":1210}}
+{"id":"u2","timestamp":"2026-09-01T10:03:00.000Z","type":"user","content":[{"text":"delete a.py"}]}
+{"id":"g3","timestamp":"2026-09-01T10:03:02.000Z","type":"gemini","content":"","model":"gemini-2.5-flash","tokens":{"input":1300,"output":8,"cached":0,"thoughts":0,"tool":0,"total":1308}}
+{"$rewindTo":"u2"}
+{"id":"u3","timestamp":"2026-09-01T10:04:00.000Z","type":"user","content":[{"text":"rename a.py to b.py"}]}
+{"id":"g4","timestamp":"2026-09-01T10:04:02.000Z","type":"gemini","content":"","model":"gemini-2.5-flash","tokens":{"input":1400,"output":12,"cached":1000,"thoughts":0,"tool":0,"total":1412}}
+{"id":"g4","timestamp":"2026-09-01T10:04:02.000Z","type":"gemini","content":"","model":"gemini-2.5-flash","toolCalls":[{"id":"run_shell_command__2","name":"run_shell_command","args":{"command":"mv a.py b.py"},"result":[{"functionResponse":{"id":"run_shell_command__2","name":"run_shell_command","response":{"output":""}}}],"status":"error","timestamp":"2026-09-01T10:04:03.000Z"}]}
+{"id":"g5","timestamp":"2026-09-01T10:04:05.000Z","type":"gemini","content":"mv failed.","model":"gemini-2.5-flash","tokens":{"input":1500,"output":6,"cached":1100,"thoughts":0,"tool":0,"total":1506}}
