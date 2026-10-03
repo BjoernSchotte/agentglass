@@ -48,7 +48,7 @@ export function fileInfoOf(out: string): FileInfo | null {
   const m = /^(\d+) ([0-7]+) (.+?)\s*$/.exec(out);
   if (!m) return null;
   const t = (m[3] ?? "").toLowerCase();
-  const kind = t === "directory" ? "dir" : t === "regular file" || t === "regular empty file" ? "file" : t === "socket" ? "socket" : t === "symbolic link" ? "link" : t === "fifo" ? "fifo" : "other";
+  const kind = t === "directory" ? "dir" : t === "regular file" || t === "regular empty file" ? "file" : t === "socket" ? "socket" : t === "symbolic link" ? "link" : t === "fifo" || t === "fifo file" ? "fifo" : "other"; // BSD %HT: "Fifo File"
   return { uid: Number(m[1] ?? ""), mode: parseInt(m[2] ?? "", 8) & 0o7777, kind };
 }
 // `stat` output "<uid> <octal mode>" → [uid, mode], [] when unparsable

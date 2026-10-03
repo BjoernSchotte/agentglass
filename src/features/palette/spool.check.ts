@@ -93,7 +93,7 @@ function step2(): void {
   rmSync(inbox); secureDir(inbox, uid, info, true);
   // review: a rename (.tmp → .link) that leaves the inbox's mtime and entry count as they were is still seen
   clear();
-  const pin = (): void => { execFileSync("touch", ["-m", "-d", "@1700000000", inbox]); };
+  const pin = (): void => { execFileSync("touch", ["-m", "-t", "202311142213", inbox]); /* -t: GNU and BSD touch alike */ };
   writeFileSync(inbox + "/.tmp-" + String(now) + "-41", "open abc123\n"); chmodSync(inbox + "/.tmp-" + String(now) + "-41", 0o600); pin();
   ok("tmp only → nothing applied", spoolPoll(run, now + 5, uid, info, { at: [] }, apply) === 0, ls());
   execFileSync("mv", [inbox + "/.tmp-" + String(now) + "-41", inbox + "/" + String(now) + "-41.link"]); pin();
