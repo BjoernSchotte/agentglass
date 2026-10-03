@@ -2,7 +2,7 @@
 // (Claude Code ~/.claude, Codex ~/.codex, fx ~/.fx). Built as a native binary with scriptc.
 // SPDX-License-Identifier: Apache-2.0
 import { S, say } from "./state.ts";
-import { H, tabAt, viewOf, screenOut, armed } from "./hooks.ts";
+import { H, tabAt, viewOf, screenOut, armed, backlog } from "./hooks.ts";
 import { sessions, scan, buildView, probeLive } from "./model/sessions.ts";
 import { procs, refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
@@ -82,7 +82,7 @@ let lastBuild = 0; let scanSig = ""; let watchSig = ""; let gen = 0;
 function live(): boolean { return procs.length > 0; }
 let why = "";
 function relevel(now: number): void {
-  const a = { now, input: act.input, focusOut: act.focusOut, replay: replaying(), grow: act.grow, indexing: indexing(), live: live() };
+  const a = { now, input: act.input, focusOut: act.focusOut, replay: replaying(), grow: act.grow, indexing: indexing() || backlog(), live: live() };
   sc.lv = levelOf(a); sc.burst = a.indexing; if (DBG.on) why = sc.lv !== "hot" ? "" : hotWhy(a) + (a.indexing ? " " + bytes(L.total - L.done) + " left" : "");
 }
 function sizeJob(): void { if (termSize()) render(); } // a resize repaints at once, outside the render cap

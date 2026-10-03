@@ -47,14 +47,17 @@ function liveSig(): string { let p = 0; let a = 0; let h = 0; for (const s of se
 const HEADKEYS = ["repo", "cwd", "branch", "title", "text", "agent", "model"];
 function needsHeads(f: Compiled): boolean { for (const c of f.cs) if (HEADKEYS.indexOf(c.key) >= 0) return true; return false; }
 let headsLeft = 0;
-// ≤ 40 ms of head reads per tick while the Sessions filter needs them; the list fills in as they arrive
+// ≤ 100 ms of head reads per tick while the Sessions filter needs them (the ledger's indexing slice); the list fills in as
+// they arrive. Pending reads count as backlog: the tick runs at the indexing burst cadence instead of its stretched idle one
+// (a restored repo pin would otherwise match nothing for minutes)
 H.onTick.push(() => {
   const f = tabFilter("Sessions", "list"); headsLeft = 0;
   if (f === EMPTY || !needsHeads(f)) return;
   const t0 = Date.now(); let read = 0;
-  for (const s of sessions.values()) { if (s.headDone) continue; if (Date.now() - t0 < 40) { loadHead(s); read++; } else headsLeft++; }
+  for (const s of sessions.values()) { if (s.headDone) continue; if (Date.now() - t0 < 100) { loadHead(s); read++; } else headsLeft++; }
   if (read) S.dirty = true;
 });
+H.backlog.push(() => headsLeft > 0);
 interface MP { key: string; paths: Set<string> }
 const mp = new Map<string, MP>();
 let searchOk = true; // false while typing: a content clause never starts a search (enter does)

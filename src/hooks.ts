@@ -39,7 +39,9 @@ export const H = {
   procFilter: [] as ((p: Proc) => boolean)[], // the Processes table shows a root process when every hook passes
   boxChips: [] as ((where: string, w: number) => string)[], // styled filter chips for a built-in box title ("sessions" | "processes"), w = room
   emptyText: [] as ((where: string) => string)[], // the line an empty built-in list shows instead of the stock one ("" = stock)
+  backlog: [] as (() => boolean)[], // true = a feature has background work its onTick slices through (filter head reads): tick at the indexing burst cadence
 };
+export function backlog(): boolean { for (const f of H.backlog) if (f()) return true; return false; }
 export function boxChips(where: string, w: number): string { let o = ""; for (const f of H.boxChips) o += f(where, w); return o; }
 export function emptyText(where: string): string { for (const f of H.emptyText) { const t = f(where); if (t) return t; } return ""; }
 
