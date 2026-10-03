@@ -42,6 +42,7 @@ import "./features/usage/stats.ts";
 import "./features/repos/tab.ts";
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
+import "./features/related/view.ts"; // after the call graph: its view lets r fall through to here
 import "./features/triage/cli.ts";
 import "./features/triage/view.ts";
 import "./features/redact.ts";

@@ -123,10 +123,9 @@ export function startBuild(anchor: Sess, evs: Ev[], i: number, minutes: number, 
   const id: Ident | null = identSync(anchor);
   const top = topOf(anchor);
   const b = newBuild(anchorRow(anchor, evs[i], t, top), id, id ? display("repo", labelOf(id), anchor) : "", c.scope, t0, t1, conflictMinutes * 60000, c.paths, c.more);
-  // the open transcript already holds the window when it reaches back past t0 (or holds the whole log): no re-read
-  const src = sourceOf(anchor.h);
+  // the open transcript already holds the window when it reaches back past t0: no re-read
   let first = 0; for (const x of evs) { first = ms(x.ts); if (first) break; }
-  if ((first && first <= t0) || anchor.size * src.unit <= TAIL_BYTES) {
+  if (first && first <= t0) {
     b.tops.set(anchor.path, top); b.st.last = 0;
     toRel(evs, anchor.path, anchor.h, realCwd(anchor), top, true, t0, t1, b.st, b.all);
     b.last.set(anchor.path, b.st.last); b.cur.set(anchor.path, anchor.size); b.end.set(anchor.path, anchor.size);
