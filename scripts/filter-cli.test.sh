@@ -42,7 +42,8 @@ printf '{"filter":{"pinned":"harness is codex","remember":false}}\n' > "$T/home/
 set +e; err=$(ag --watch --filter 'duration > 1s' 2>&1 >/dev/null); rc=$?; set -e
 [ $rc = 2 ] || { echo "FAIL watch duration rc=$rc"; exit 1; }
 echo "$err" | grep -q 'known only after the call' || { echo "FAIL watch msg: $err"; exit 1; }
-ag --watch --from-start --filter 'tool is Bash' > "$T/watch.out" 2>/dev/null & p=$!
+# not through ag(): $! of a backgrounded function is its subshell, and killing that leaves agentglass running
+HOME="$T/home" AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" --watch --from-start --filter 'tool is Bash' > "$T/watch.out" 2>/dev/null & p=$!
 sleep 2; kill $p 2>/dev/null || true; wait $p 2>/dev/null || true
 w=$(cat "$T/watch.out")
 echo "$w" | grep -q '"kind":"tool","tool":"Bash"' || { echo "FAIL watch tool: $w"; exit 1; }
