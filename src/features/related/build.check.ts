@@ -75,6 +75,10 @@ const uc = sess("uc", D + "/proj", [user(900000, "late")], false); // first ts a
 const c3 = candidates(ua, T - 600000, T + 600000, 40);
 eq("unindexed in window", String(c3.paths.indexOf(ub.path) > 0), "true");
 eq("unindexed starting after t1", String(c3.paths.indexOf(uc.path) >= 0), "false");
+// indexed, but the ledger booked no activity on the window's days (lines its usage parser skips): no evidence either way →
+// the head estimate decides, the session is not dropped
+const ud = sess("ud", D + "/proj", [user(-60000, "d")], false); accOf(ud).off = ud.size;
+eq("indexed without a day in the window → head estimate", String(candidates(ua, T - 600000, T + 600000, 40).paths.indexOf(ud.path) > 0), "true");
 
 // ── budget: 40 sessions of 2 MB each, all inside the window ──
 reset();

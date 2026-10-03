@@ -48,19 +48,20 @@ function minutesIn(a: number[], m0: number, m1: number): number {
   return n;
 }
 function localMin(t: number): number { const d = new Date(t); return d.getHours() * 60 + d.getMinutes(); }
-// active minutes of an indexed session inside [t0, t1] from its Day.act intervals (window day keys → intervals)
+// active minutes of an indexed session inside [t0, t1] from its Day.act intervals (window day keys → intervals);
+// -1 = no evidence (not indexed, or no activity booked on any of the window's days: the caller estimates from the head)
 function activeIn(s: Sess, t0: number, t1: number): number {
   const a = ledger.get(s.path); if (!a) return -1;
   if (pending(s, a)) return -1;
-  let n = 0; let t = t0;
+  let n = 0; let t = t0; let booked = false;
   for (let g = 0; g < 3 && t <= t1; g++) {
     const k = dayKey(new Date(t)); const m0 = localMin(t);
     const mid = t + (1440 - m0) * 60000 - (t % 60000); // the next local midnight (± a DST hour)
     const m1 = t1 < mid ? localMin(t1) + 1 : 1440;
-    const d = a.days.get(k); if (d) n += minutesIn(d.act, m0, m1);
+    const d = a.days.get(k); if (d && d.act.length) { booked = true; n += minutesIn(d.act, m0, m1); }
     t = mid;
   }
-  return n;
+  return booked ? n : -1;
 }
 // not indexed yet: written since t0, and its first timestamp (head) not after t1; the estimate = minutes of overlap
 function headTs(s: Sess): number {
