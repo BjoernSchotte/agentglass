@@ -43,3 +43,9 @@ args into a `user` event `"/x args"` (without args: a `meta` event); the ledger 
 `error` (e.g. `rate_limit`) plus `apiErrorStatus`.
 Ruling: such a line becomes a `chat` span with status ERROR, `error.type` = the line's `error` string (else
 `api_error`), no `gen_ai.request.model` (the request never reached a model) — cost if wrong: one attribute value.
+
+## scriptc 0.1.7: a pushed fresh object may be stored as a copy
+In `build.ts`, `const c = newSpan(…); tr.spans.push(c); return c;` handed back an object that was not the array's element
+(`tr.spans[last] === c` was false, later writes to `c` were lost); a reduced repro in a standalone file did not show it.
+Ruling: every span is pushed through `add()`/`addAt()`, which return the array's element, and all later writes go
+through that — the call graph keeps indexes for the same reason.
