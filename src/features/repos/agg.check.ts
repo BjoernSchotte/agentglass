@@ -5,8 +5,9 @@ import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { P, real, resolveTick, setGit } from "../../model/project.ts";
 import { ledger } from "../usage/ledger.ts";
-import { type Day, L, newAcc, newDay, todayKey, lastDays } from "../usage/record.ts";
-import { newTS, newCnt } from "../usage/calls.ts";
+import { type Acc, type Day, L, newAcc, newDay, todayKey, lastDays, bucket, tool, pend, flushSpans, startOfDay, dayKey } from "../usage/record.ts";
+import { MQ_MSG } from "../usage/facts.ts";
+import { newTS, newCnt, done } from "../usage/calls.ts";
 import { parse } from "../query/parse.ts";
 import { EMPTY, compile } from "../query/eval.ts";
 import { aggregate } from "../query/agg.ts";
@@ -74,10 +75,34 @@ eq("aggregate parity me/x", bx ? String(bx.w) : "", x ? String(x.cost) : "?"); e
 // cache: unchanged versions → the same array
 eq("cached", repoAgg([TODAY], null) === rows ? "same" : "new", "same");
 L.ver++; eq("ledger change → recomputed", repoAgg([TODAY], null) === rows ? "same" : "new", "new");
+// active time end to end (hand-computed): lines through bucket(), a tool run, midnight, two parallel sessions
+// A: a line every 4 min 10:00–11:00 → [600,661) = 61 · B: every 3 min 10:30–11:30 → [630,691) = 61, then 12:00 + a
+// 20-min Bash → [720,741) = 21 · D: 23:58 yesterday → 00:02 today → today [0,3) = 3, yesterday [1438,1440) = 2
+// today: union [0,3) ∪ [600,691) ∪ [720,741) = 3 + 91 + 21 = 115; sum 61 + 82 + 3 = 146; with yesterday +2 / +2
+mk("r5/.git/config", '[remote "origin"]\n\turl = https://github.com/me/five\n');
+const SOD = startOfDay();
+const at = (dayOff: number, hh: number, mm: number): number => SOD + dayOff * 86400000 + (hh * 60 + mm) * 60000;
+const YDAY = dayKey(new Date(at(-1, 12, 0)));
+function live(id: string, times: number[]): Acc {
+  const s = newSess("claude", id, "/fx/claude/" + id + ".jsonl", false); s.cwd = T + "/r5"; s.headDone = true; s.mtime = Date.now(); sessions.set(s.path, s);
+  const a = newAcc(); for (let i = 0; i < times.length; i++) bucket(a, 0, new Date(times[i] ?? 0).toISOString()); ledger.set(s.path, a); return a;
+}
+const ta: number[] = []; for (let m = 0; m <= 60; m += 4) ta.push(at(0, 10, m)); live("ea", ta);
+const tb: number[] = []; for (let m = 30; m <= 90; m += 3) tb.push(at(0, 10, m)); const ab = live("eb", tb);
+const db = bucket(ab, 0, new Date(at(0, 12, 0)).toISOString()); const stb = tool(ab, db, "Bash", "m", MQ_MSG);
+pend(ab, db, stb, "Bash", "t1", at(0, 12, 0), new Date(at(0, 12, 0)).toISOString(), "{}", []);
+const pb = ab.pend.get("t1"); if (pb) done(pb, 20 * 60000, false, 0, "t1", []); flushSpans(ab);
+live("ed", [at(-1, 23, 58), at(0, 0, 2)]);
+for (const s of sessions.values()) identOf(s);
+resolveTick(1e9, 1e9, now, stub); L.ver++;
+const e1 = byKey(repoAgg([TODAY], null), "git:github.com/me/five");
+eq("e2e active today (union)", e1 ? String(e1.activeMin) : "", "115"); eq("e2e agent-minutes today (sum)", e1 ? String(e1.agentMin) : "", "146");
+const e2 = byKey(repoAgg([YDAY, TODAY], null), "git:github.com/me/five");
+eq("e2e two days", e2 ? String(e2.activeMin) + " " + String(e2.agentMin) : "", "117 148");
 // helpers
 eq("relFile abs", relFile("/r", "/r/src", "/r/src/a.ts"), "src/a.ts"); eq("relFile rel", relFile("/r", "/r/src", "b/c.ts"), "src/b/c.ts");
 eq("relFile outside", relFile("/r", "/r", "/etc/x"), ""); eq("relFile prefix trap", relFile("/r", "/r", "/rx/a"), ""); eq("relFile ..", relFile("/r", "/r/src", "../x.ts"), "x.ts");
-eq("allDays", allDays().join(","), TODAY);
+eq("allDays", allDays().join(","), [YDAY, TODAY].join(","));
 eq("lastDays has today", lastDays(7).indexOf(TODAY) >= 0 ? "y" : "n", "y");
 
 rmSync(T, { recursive: true, force: true });
