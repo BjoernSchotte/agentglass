@@ -55,5 +55,8 @@ const ng = buildGraph([src(nf, "", "")], T);
 eq("markers open no turn", String(summary(ng).turns), "2");
 eq("markers: tools stay in turn 1", ng.spans.filter((s) => s.kind === 1).map((s) => s.arg + ":" + s.parent).join(","), "a:0,c:0,d:0");
 eq("isErr", [isErr("Exit code: 2\nboom"), isErr("Exit code 127\nx"), isErr("Exit code: 0"), isErr('{"output":"x","metadata":{"exit_code":1}}'), isErr("fine")].join(","), "true,true,false,true,false");
+// codex "turn aborted" ends the turn at its own timestamp (shared TurnCursor rule)
+const ab = buildGraph([src([ev("meta", "turn started", 0, ""), ev("user", "go", 0, ""), ev("tool", "exec\u0000sleep 9", 1, "s"), ev("meta", "turn aborted", 4, ""), ev("assistant", "late", 9, "")], "", "")], T);
+eq("codex aborted", ab.spans.filter((s) => s.kind === 0).map((s) => s.name + ":" + dur(s.t1 - s.t0)).join(","), "turn 1:4.0s,turn 2:0ms");
 console.log(bad ? bad + " FAILED" : "ok");
 process.exit(bad ? 1 : 0);

@@ -1,6 +1,7 @@
 // agentglass — call-graph model: session events → turn / tool / subagent spans, lanes, aggregates (pure, no UI)
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev } from "../../model/types.ts";
+import { newCursor, feed } from "./turns.ts";
 
 export const K_TURN = 0; export const K_TOOL = 1; export const K_AGENT = 2;
 export const CATS = ["shell", "edit", "read", "web", "agent", "mcp", "other"];
@@ -50,34 +51,30 @@ function spread(out: Span[], p: number): void {
 // one session → spans appended to out. Top level (parent -1) gets turn spans; a subagent's tools hang under its agent span.
 export function sessionSpans(evs: Ev[], src: number, parent: number, depth: number, live: boolean, now: number, out: Span[]): void {
   const pending = new Map<string, number>(); const anon: number[] = [];
-  let turn = -1; let last = 0; let turnNo = 0;
+  let turn = -1; let last = 0;
+  const cur = newCursor();
   const closeTurn = (): void => { if (turn >= 0) { if (out[turn].t1 < last) out[turn].t1 = last; spread(out, turn); } turn = -1; };
   for (let i = 0; i < evs.length; i++) {
     const e = evs[i];
     const t = ms(e.ts) || last;
     if (t > last) last = t;
-    if (e.kind === "user" && parent < 0 && turn >= 0 && out[turn].ev < 0) { out[turn].ev = i; out[turn].arg = e.text; } // prompt of a turn opened by "turn started"
-    else if (e.kind === "user" && parent < 0) {
+    const prev = cur.n; const wasPrompt = cur.open && cur.prompt;
+    const st = feed(cur, e, parent < 0); // shared turn rules (turns.ts)
+    if (st === "open") { // a prompt, codex "turn started" (its prompt follows), or activity while no turn is open
       closeTurn();
-      turnNo++;
       turn = out.length;
-      out.push(span(t, depth, K_TURN, "turn " + turnNo, e.text, src, i, -1));
-    } else if (e.kind === "meta" && e.text === "turn started" && parent < 0) { // codex: explicit turn start, prompt follows (or is noise)
-      closeTurn();
-      turnNo++;
-      turn = out.length;
-      out.push(span(t, depth, K_TURN, "turn " + turnNo, "", src, -1, -1));
-    } else if (e.kind === "meta" && e.text.startsWith("turn complete") && turn >= 0) {
+      const user = e.kind === "user"; const marker = e.kind === "meta";
+      const arg = user ? e.text : marker ? "" : prev ? "(no prompt logged)" : "(its prompt is before the loaded part of the log)";
+      out.push(span(t, depth, K_TURN, prev || user || marker ? "turn " + cur.n : "earlier turn", arg, src, user ? i : -1, -1));
+    } else if (e.kind === "user" && wasPrompt && turn >= 0) { out[turn].ev = i; out[turn].arg = e.text; } // prompt of a turn opened by "turn started"
+    else if (st === "close" && turn >= 0) {
       const m = /· ([\d.]+)s/.exec(e.text); // fx: "turn complete · 44.3s", logged with the turn's last timestamp
       const dur = m ? Number(m[1] ?? "0") * 1000 : 0;
       if (dur > 0 && t - dur < out[turn].t0) out[turn].t0 = t - dur;
       out[turn].t1 = t;
       closeTurn();
-    } else if (e.kind === "tool") {
-      if (parent < 0 && turn < 0) { // tools outside any turn: the prompt is before the loaded window, or was not logged
-        turn = out.length;
-        out.push(span(t, depth, K_TURN, turnNo ? "turn " + ++turnNo : "earlier turn", turnNo ? "(no prompt logged)" : "(its prompt is before the loaded part of the log)", src, -1, -1));
-      }
+    }
+    if (e.kind === "tool") {
       const p = parent >= 0 ? parent : turn;
       const s = span(t, p >= 0 ? out[p].depth + 1 : depth, K_TOOL, toolName(e), toolArg(e), src, i, p);
       s.id = e.id; s.open = true;
