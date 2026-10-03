@@ -13,7 +13,10 @@ import { put } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { copyText, resume } from "../../actions.ts";
 import { onInput } from "../../input.ts";
-import { projectOf } from "../query/project.ts";
+import { identOf, repoShown } from "../query/project.ts";
+import { identNow } from "../../model/project.ts";
+import { realCwd } from "../../hooks.ts";
+import { base } from "../../util/json.ts";
 import { localFor, setLocal, addClause } from "../query/scope.ts";
 import { REDACT } from "../redact-on.ts";
 import { type Hit, match } from "./fuzzy.ts";
@@ -51,13 +54,24 @@ function sessText(s: Sess): string {
   const par = s.parent ? parentOf(s) : null;
   const o: string[] = [(s.parent ? "⑂ " + (s.kind || "subagent") + " " : "") + titleOf(s)];
   if (par) o.push(titleOf(par));
-  const p = projectOf(s.cwd); if (p) o.push(p);
+  const p = projOf(s); if (p.key) o.push(p.label);
   o.push(harnessOf(s.h).label);
   if (s.branch) o.push(s.branch);
   o.push(s.id);
   return o.join(" · ");
 }
 function sessHint(s: Sess): string { return (s.cost >= 0 ? "$" + s.cost.toFixed(2) + " " : "") + ago(s.mtime) + (s.pid ? " ●" : ""); }
+// a session's project (repo-view identity: a repo and its worktrees are one): key groups, label is shown (faked under
+// --redact), val is the repo clause value (the identity key; under --redact the shown label, which the repo key also takes)
+function projOf(s: Sess): { key: string; label: string; val: string } {
+  const rc = realCwd(s);
+  const id = identOf(s) ?? (rc ? identNow(rc) : null); // not resolved yet (the Repos tab resolves in the background): now, cached
+  if (!id && !rc) return { key: "", label: "", val: "" };
+  const label = repoShown(s);
+  if (!id || id.kind === "none") return { key: "cwd:" + base(rc.replace(/\/+$/, "")), label, val: base(rc.replace(/\/+$/, "")).toLowerCase() };
+  const k = id.key; const v = REDACT ? label : k;
+  return { key: k, label, val: v.toLowerCase() };
+}
 function itemOfSess(s: Sess): Item { return { id: "session:" + s.h + ":" + s.id, kind: "session", text: sessText(s), hint: sessHint(s), s, act: null, proj: "", tab: -1 }; }
 function actItem(a: Action): Item { return { id: "act:" + a.id, kind: "action", text: a.group + ": " + a.title, hint: a.keys, s: null, act: a, proj: "", tab: -1 }; }
 function tabItem(name: string, n: number, hint: string): Item { return { id: "tab:" + name, kind: "tab", text: name, hint, s: null, act: null, proj: "", tab: n }; }
@@ -69,11 +83,14 @@ function collect(c: Ctx): Item[] {
   for (const s of ss) { if (Date.now() - t0 > 60) break; if (!s.headDone) loadHead(s); }
   const out: Item[] = [];
   for (const s of ss) out.push(itemOfSess(s));
-  const projs = new Map<string, { n: number; last: number }>();
-  for (const s of ss) { const p = projectOf(s.cwd); if (!p) continue; const e = projs.get(p); if (e) { e.n++; if (s.mtime > e.last) e.last = s.mtime; } else projs.set(p, { n: 1, last: s.mtime }); }
+  const projs = new Map<string, { n: number; last: number; label: string; val: string }>();
+  for (const s of ss) {
+    const p = projOf(s); if (!p.key) continue;
+    const e = projs.get(p.key); if (e) { e.n++; if (s.mtime > e.last) e.last = s.mtime; } else projs.set(p.key, { n: 1, last: s.mtime, label: p.label, val: p.val });
+  }
   const ps: string[] = []; for (const k of projs.keys()) ps.push(k);
   ps.sort((a, b) => (projs.get(b)?.last ?? 0) - (projs.get(a)?.last ?? 0));
-  for (const p of ps) { const e = projs.get(p); out.push({ id: "project:" + p, kind: "project", text: p, hint: (e ? String(e.n) + " · " + ago(e.last) : ""), s: null, act: null, proj: p, tab: -1 }); }
+  for (const k of ps) { const e = projs.get(k); if (e) out.push({ id: "project:" + k, kind: "project", text: e.label, hint: String(e.n) + " · " + ago(e.last), s: null, act: null, proj: e.val, tab: -1 }); }
   for (const a of H.actions) if (a.keys && a.when(c)) out.push(actItem(a)); // key bindings first, palette-only ones (themes) after
   for (const a of H.actions) if (!a.keys && a.when(c)) out.push(actItem(a));
   out.push(tabItem("Sessions", 0, "1")); out.push(tabItem("Processes", 1, "2"));
@@ -152,10 +169,11 @@ function restoreAll(): void {
 export function closePalette(): void { restoreAll(); P.levels = []; P.origin = null; }
 function gone(s: Sess): boolean { if (sourceOf(s.h).stat(s)) return false; say("warn", "that session is no longer on disk"); return true; }
 function toList(): void { S.mode = "list"; S.prevMode = "list"; S.tv = null; S.dv = null; }
-function projClause(p: string): void {
+// the Sessions tab filtered to one project (pins stay); val = the identity key, label for the toast
+function projClause(val: string, label: string): void {
   toList(); S.tab = 0;
-  setLocal("Sessions", addClause(localFor("Sessions"), { key: "repo", op: "is", vals: [p.toLowerCase()], neg: false, pinned: false }).cs);
-  say("info", "filter: repo is " + p);
+  setLocal("Sessions", addClause(localFor("Sessions"), { key: "repo", op: "is", vals: [val], neg: false, pinned: false }).cs);
+  say("info", "Sessions: project " + label);
 }
 // a session's own actions (→): each selects the session first, so the action sees what a key press on its row sees
 function subItems(s: Sess): Item[] {
@@ -170,7 +188,7 @@ function subItems(s: Sess): Item[] {
     mk("copyId", "Copy session id", "y", (): void => copyText(s.id, s.id)),
   ];
   for (const f of H.sessionActions) { const a = f(s); if (a) o.push({ id: "sub:" + a.id, kind: "action", text: a.title, hint: a.keys, s: null, act: a, proj: "", tab: -1 }); }
-  o.push(mk("project", "Filter to its project", "", (): void => { const p = projectOf(s.cwd); if (p) projClause(p); else say("info", "no project known for this session"); }));
+  o.push(mk("project", "Filter to its project", "", (): void => { const p = projOf(s); if (p.key) projClause(p.val, p.label); else say("info", "no project known for this session"); }));
   return o;
 }
 function runItem(it: Item): void {
@@ -180,7 +198,7 @@ function runItem(it: Item): void {
   const a = it.act; const s = it.s;
   if (a) a.run(c);
   else if (s) { if (!gone(s)) { toList(); selectRow(s); openTranscript(s); } }
-  else if (it.kind === "project") projClause(it.proj);
+  else if (it.kind === "project") projClause(it.proj, it.text);
   else if (it.kind === "tab") {
     if (it.tab >= 0) { toList(); S.tab = it.tab; }
     else if (it.tab === -2) onInput("c");

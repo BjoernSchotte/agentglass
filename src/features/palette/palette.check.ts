@@ -1,6 +1,10 @@
 // agentglass — self-check for the Ctrl+K palette: keys, scopes, ranking, restore on esc, redaction, MRU
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
+import { P as PJ, setGit, identNow } from "../../model/project.ts";
+import { repoShown } from "../query/project.ts";
+import { setLocal } from "../query/scope.ts";
+import { realCwd } from "../../hooks.ts";
 import { S, type TV, type DV } from "../../state.ts";
 import { H } from "../../hooks.ts";
 import { onInput, keyName, tokens } from "../../input.ts";
@@ -121,6 +125,22 @@ key("\x0b"); type(">live"); ok("mru list kept", mruList().length > 0, "");
 key("\x1b"); key("\x0b"); type(">filter"); const r0 = rows();
 ok("recent action ranks first", r0.length > 1 && r0[0].id === "act:filter.live", r0.map((r) => r.id).join(","));
 key("\x1b");
+// projects come from repo-view's identity: two directories of one repo (a linked worktree) are one project item, and
+// running it filters Sessions to exactly that repo
+const rp = dir + "/repo"; mkdirSync(rp + "/.git/worktrees/w", { recursive: true }); mkdirSync(dir + "/wt", { recursive: true });
+writeFileSync(rp + "/.git/config", '[remote "origin"]\n\turl = https://github.com/acme/widget\n');
+writeFileSync(dir + "/wt/.git", "gitdir: " + rp + "/.git/worktrees/w\n"); writeFileSync(rp + "/.git/worktrees/w/commondir", "../..\n");
+const r1 = addSess(dir, "rrrrrr-0001", "in the repo", convo(7, rp), Date.now() - 300, "");
+const r2 = addSess(dir, "rrrrrr-0002", "in its worktree", convo(8, dir + "/wt"), Date.now() - 200, "");
+setGit((c: string, a: string[]): string => ""); PJ.sync = true;
+const rv1 = realCwd(r1); const rv2 = realCwd(r2);
+S.mode = "list"; S.tab = 0; setLocal("Sessions", []);
+key("\x0b"); type("#");
+const pi = rows().filter((r) => r.proj !== "" && (r.proj === identNow(rv1).key.toLowerCase() || r.text === repoShown(r1)));
+ok("one project item for the repo and its worktree", pi.length === 1 && identNow(rv1).key === identNow(rv2).key && pi[0].hint.startsWith("2 "), JSON.stringify(rows().map((r) => r.text + "|" + r.proj + "|" + r.hint)));
+if (pi.length === 1) { while (selected() !== null && selected()?.id !== pi[0].id && P.sel < rows().length - 1) key("\x1b[B"); key("\r"); }
+ok("Sessions filtered to that repo", S.view.indexOf(r1) >= 0 && S.view.indexOf(r2) >= 0 && S.view.indexOf(s1) < 0, String(S.view.length));
+setLocal("Sessions", []);
 console.log("\n" + (bad ? bad + " failed" : "palette: all checks passed"));
 rmSync(dir, { recursive: true, force: true });
 process.exit(bad ? 1 : 0);

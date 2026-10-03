@@ -64,7 +64,7 @@ function base(ctx: string): void {
   const tv = tvNow(); if (tv) { tv.cur = 2; tv.follow = false; }
   if (ctx === "detail") onInput("enter");
 }
-const SKIP = ["app.quit", "theme.cycle", "detail.pagerAll"]; // quit exits; T writes ~/.agentglass/theme, v ~/.agentglass/tmp (the real HOME)
+const SKIP = ["app.quit", "theme.cycle", "detail.pagerAll", "session.resume", "transcript.resume"]; // quit exits; T writes ~/.agentglass/theme, v ~/.agentglass/tmp (the real HOME); R rescans the real HOME (live sessions move the selection)
 let n = 0;
 for (const ctx of ["list", "transcript", "detail"]) {
   base(ctx);

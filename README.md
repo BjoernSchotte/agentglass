@@ -597,6 +597,8 @@ export AGENTGLASS_KIRO="kiro-cli"
 export AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"   # headless sends may edit files
 export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (default ~/.agentglass/cache)
 export AGENTGLASS_CONFIG="/tmp/ag-config.json"   # another config file (default ~/.agentglass/config.json)
+export AGENTGLASS_RUN_DIR="/tmp/ag-run"   # single-instance lock and link inbox (default ~/.agentglass/run; must be yours, 0700)
+export AGENTGLASS_PALETTE_FILE="/tmp/ag-palette.json"   # the palette's recent picks (default ~/.agentglass/palette.json)
 ```
 
 ## Supported harnesses
