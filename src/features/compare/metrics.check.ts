@@ -6,7 +6,8 @@ import { parse } from "../query/parse.ts";
 import { totals } from "../query/agg.ts";
 import { compile } from "../query/eval.ts";
 import { type Metric, type Cmp, type Group, groupOfSession, groupOfExpr, compareGroups, cmpJob, cmpStep } from "./metrics.ts";
-import { cmpBase, cmpCleanup, sess, costOf } from "./fixture.ts";
+import { cmpBase, cmpCleanup, sess, costOf, prompt, call, TMP } from "./fixture.ts";
+import { fxSession, isoAt } from "../query/fixture.ts";
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -25,6 +26,9 @@ eq("error rate", val(c, "error_rate"), "20.0% | 10.0% | −10.0 pp |  | -1");
 eq("tokens in", val(c, "in"), "2.0K | 6.8K | +4.8K | ×3.4 | 0");
 eq("cache hit", val(c, "cache_hit"), "75.0% | 30.6% | −44.4 pp |  | 0");
 eq("wall", val(c, "wall"), "20m0s | 50m0s | +30m0s | ×2.5 | 0");
+// active time: union of the side's session-day minutes. b1: 11:00–11:08, 11:25–11:41 (the 11:20 task notification is no
+// activity), 11:48–11:49; its subagent's 11:10–11:12 falls into b1's idle gap and adds 2 → 27
+eq("active", val(c, "active"), "21m0s | 27m0s | +6m0s | ×1.3 | 0");
 eq("files", val(c, "files"), "2 | 2 | 0 | ×1.0 | 0");
 eq("lines", val(c, "lines"), "+4 −1 | +7 −2 |  |  | 0");
 eq("models", val(c, "models"), "claude-sonnet-4-5 | claude-opus-4-5, claude-sonnet-4-5 |  |  | 0");
@@ -36,7 +40,10 @@ eq("calls per turn", val(c, "calls_turn"), "5.0 | 5.0 | 0 | ×1.0 | 0");
 eq("cost per turn", part(c, "cost_turn", 0), money(costOf("a1"), c.a.bill));
 eq("cost cell", part(c, "cost", 1).indexOf(money(costOf("b1") + costOf("b1s"), c.b.bill)) === 0 ? "ok" : part(c, "cost", 1), "ok");
 eq("cost tone", part(c, "cost", 4), costOf("b1") + costOf("b1s") > costOf("a1") ? "1" : "-1");
-eq("cost Δ", part(c, "cost", 2), "+" + money(costOf("b1") + costOf("b1s") - costOf("a1"), c.a.bill === c.b.bill ? c.a.bill : ""));
+// the sign goes after an estimate's ≈ ("≈+$0.07", never "+≈$0.07")
+const dm = money(costOf("b1") + costOf("b1s") - costOf("a1"), c.a.bill === c.b.bill ? c.a.bill : "");
+eq("cost Δ", part(c, "cost", 2), dm.startsWith("≈") ? "≈+" + dm.slice(1) : "+" + dm);
+eq("cost Δ sign after ≈", part(c, "cost", 2).indexOf("+≈") < 0 && part(c, "cost", 2).indexOf("≈") <= 0 ? "ok" : part(c, "cost", 2), "ok");
 const cx = compareGroups(A, B, [], false, null);
 const tx = rowOf(cx, "tools");
 eq("subagents excluded", tx ? tx.b : "", "8");
@@ -61,6 +68,12 @@ cmpBase();
 const up = compareGroups(A, G("harness is fx"), [], true, null);
 const cu = rowOf(up, "cost");
 eq("unpriced fx: cost cell", cu ? cu.b : "", "≈$0.00");
+// an unpriced side has no cost per turn; the priced side keeps its own (no Δ between them)
+const u1 = fxSession("claude", "u1", TMP + "/app", "", "zz-mystery-1", [prompt(isoAt(0, 7, 0), "hi")].concat(call(isoAt(0, 7, 1), "mu1", "zz-mystery-1", "{\"input_tokens\":500,\"output_tokens\":50}", "Bash", "u1c1", "{\"command\":\"ls\"}", 100, false)));
+const cu2 = compareGroups(groupOfSession(u1), A, [], true, null);
+eq("unpriced side: cost +?", part(cu2, "cost", 0) + " | " + part(cu2, "cost", 2), "cost ? | ");
+eq("cost per turn beside an unpriced side", val(cu2, "cost_turn"), "n/a | " + money(costOf("a1"), cu2.b.bill) + " |  |  | 0");
+cmpBase();
 // a group whose expression does not compile: n/a everywhere, its message kept
 const bad1 = compareGroups(A, { label: "x", cs: parse("tool is Bash and session is abc").cs, single: null }, [], true, null);
 eq("compile error side", bad1.b.err + " | " + part(bad1, "tools", 1) + " | " + String(bad1.emptyB), "session \"abc\": id prefix needs at least 6 characters | n/a | true");

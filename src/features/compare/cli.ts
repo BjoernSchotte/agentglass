@@ -11,7 +11,8 @@ import { width } from "../../util/text.ts";
 import { C, RST, fg } from "../../ui/theme.ts";
 import { discover } from "../cli.ts";
 import { pct, mcpServer } from "../usage/calls.ts";
-import { total, single } from "../usage/costs.ts";
+import { type ModeSum, total, single } from "../usage/costs.ts";
+import { MODES } from "../usage/billing.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, printClause } from "../query/parse.ts";
 import { addAll } from "../query/scope.ts";
@@ -34,7 +35,9 @@ const HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--
   --filter '<scope>'  clauses both groups must also match (repeatable; pins are not applied)
   --no-subagents      leave subagents out (by default a session group includes its subagents)
   --json              {a:{expr, n, metrics}, b:{…}, subagents, tools[], programs[], files{onlyA, onlyB, both}};
-                      unknown values (unpriced cost, untimed calls) are null`;
+                      metrics.cost is the total, costByMode its split (api = real spend, the rest list-price
+                      estimates), billing the one mode or "mixed"; wallMs = first event → last activity,
+                      activeMs = minutes with activity; unknown values (unpriced cost, untimed calls) are null`;
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function fail(msg: string): never { process.stderr.write(screenOut("agentglass: compare: " + msg) + "\n"); process.exit(2); }
@@ -88,14 +91,16 @@ function completeFor(g: Group, scope: Clause[], subs: boolean): void {
 function r6(x: number): number { return Math.round(x * 1e6) / 1e6; }
 function orNull(x: number): number | null { return x < 0 ? null : x; }
 function unpriced(sd: Side): boolean { return sd.m.unk > 0 || sd.m.uc > 0; }
+// per billing mode, as `agentglass cost --json` writes it
+function byMode(m: ModeSum): Obj { const o: Obj = {}; for (let i = 0; i < MODES.length; i++) o[MODES[i] ?? ""] = r6(m.by[i] ?? 0); return o; }
 function metricsOf(sd: Side): Obj {
   const t = sd.t; const c = total(sd.m); const den = t.inTok + t.cr + t.cw; const bill = single(sd.m);
   const models: string[] = []; for (const u of sd.mu) if (u.inTok + u.outTok + u.cr + u.cw > 0 && u.model !== "unknown" && models.indexOf(u.model) < 0) models.push(u.model);
   for (const m of t.models) if (m !== "unknown" && models.indexOf(m) < 0) models.push(m);
   models.sort();
   return {
-    cost: c === 0 && unpriced(sd) ? null : r6(c), unpriced: unpriced(sd), billing: bill ? bill : c > 0 ? "mixed" : null,
-    wallMs: orNull(sd.wall), turns: sd.turns,
+    cost: c === 0 && unpriced(sd) ? null : r6(c), unpriced: unpriced(sd), billing: bill ? bill : c > 0 ? "mixed" : null, costByMode: byMode(sd.m),
+    wallMs: orNull(sd.wall), activeMs: sd.err ? null : sd.active, turns: sd.turns,
     tokens: { in: t.inTok, out: t.outTok, cacheRead: t.cr, cacheWrite: t.cw }, cacheHit: den > 0 ? r6(t.cr / den) : null,
     tools: t.tools, errors: t.errors, errorRate: t.tools > 0 ? r6(t.errors / t.tools) : null,
     p50Ms: t.dn > 0 ? pct(t.hist, 0.5, t.max) : null, p95Ms: t.dn > 0 ? pct(t.hist, 0.95, t.max) : null, maxMs: t.dn > 0 ? t.max : null, timed: t.dn,

@@ -6,7 +6,7 @@
 import type { Sess } from "../../model/types.ts";
 import { sessions, titleOf } from "../../model/sessions.ts";
 import { ledger } from "../usage/ledger.ts";
-import { L, dayKey, type ModelUse, modelUses } from "../usage/record.ts";
+import { L, dayKey, type ModelUse, modelUses, unionMin } from "../usage/record.ts";
 import type { Call } from "../usage/facts.ts";
 import { DICT, nameOf } from "../usage/facts.ts";
 import { fmtMs, pct } from "../usage/calls.ts";
@@ -22,7 +22,7 @@ import { sessionOf, resolveSession } from "./key.ts";
 export interface Group { label: string; cs: Clause[]; single: Sess | null /* the session when the group is one session */ }
 export interface Side {
   n: number /* top-level sessions */; t: Totals; m: ModeSum /* cost per billing mode, unpriced */; bill: Bill | "" /* single(m), "" mixed/none */;
-  turns: number /* Σ Day.turns of top-level sessions */; wall: number /* ms, -1 n/a */; live: boolean; indexing: number /* 0..1, 1 = done */;
+  turns: number /* Σ Day.turns of top-level sessions */; wall: number /* ms, -1 n/a */; active: number /* ms: per day the union of the counted sessions' active minutes */; live: boolean; indexing: number /* 0..1, 1 = done */;
   err: string /* the group's expression does not compile */; prio: string /* a session of the group still being read, "" none */; f: Compiled | null; mu: ModelUse[] /* per model over the side's session-days */;
   calls: Map<string, number> /* call rows per model (within retention) */; limited: boolean /* session-days older than the call rows */;
 }
@@ -124,7 +124,7 @@ function sideOf(g: Group, f: Compiled | null, err: string, tj: TotJob | null, ca
   const t = tj ? tj.t : emptyTotals();
   const m = newSum(); let turns = 0; let live = false; let limited = false;
   const cutDay: string = dayKey(new Date(callCutoff() + 43200000));
-  const by = new Map<string, ModelUse>();
+  const by = new Map<string, ModelUse>(); const acts = new Map<string, number[][]>(); // day → the counted sessions' Day.act
   for (const p of t.pdays.keys()) {
     const dks: string[] = t.pdays.get(p) ?? []; const s = sessions.get(p); const a = ledger.get(p); if (!s || !a) continue;
     if (livePid(s) > 0) live = true;
@@ -133,6 +133,7 @@ function sideOf(g: Group, f: Compiled | null, err: string, tj: TotJob | null, ca
       addDay(m, d, (prov: string): Bill => modeOf(s, prov));
       if (!s.parent) turns += d.turns; // a subagent's opening prompt comes from its parent agent, not a person
       if (String(dk) < cutDay) limited = true;
+      if (d.act.length) { const l = acts.get(dk); if (l) l.push(d.act); else acts.set(dk, [d.act]); }
     }
     for (const u of modelUses(a, dks)) mergeUse(by, u);
   }
@@ -146,8 +147,9 @@ function sideOf(g: Group, f: Compiled | null, err: string, tj: TotJob | null, ca
     tot += s.size; done += a && a.stall === s.size ? s.size : off;
     if (!prio && off < s.size && !(a && a.stall === s.size)) prio = s.path;
   }
+  let act = 0; for (const ls of acts.values()) act += unionMin(ls); // a subagent working inside its parent's minutes adds nothing
   const mu = [...by.values()].sort((x: ModelUse, y: ModelUse) => y.cost - x.cost || (y.inTok + y.outTok) - (x.inTok + x.outTok) || (x.model < y.model ? -1 : x.model > y.model ? 1 : 0));
-  return { n: t.sessions, t, m, bill: single(m), turns, wall: g.single && t.first > 0 && t.last >= t.first ? Math.round(t.last - t.first) : -1, live, indexing: tot > 0 ? done / tot : 1, err, prio, f, mu, calls, limited };
+  return { n: t.sessions, t, m, bill: single(m), turns, wall: g.single && t.first > 0 && t.last >= t.first ? Math.round(t.last - t.first) : -1, active: act * 60000, live, indexing: tot > 0 ? done / tot : 1, err, prio, f, mu, calls, limited };
 }
 function finish(j: CmpJob): Cmp {
   const a = sideOf(j.A, j.fa, j.ea, j.ja, j.ca); const b = sideOf(j.B, j.fb, j.eb, j.jb, j.cb);
@@ -159,7 +161,11 @@ function finish(j: CmpJob): Cmp {
 // ── the summary rows (spec §3) ──
 const MINUS = "−";
 // "0" also when the difference rounds away in the unit ($0.004 → "0", not "−$0.00")
-function signed(d: number, f: (n: number) => string): string { const t = f(Math.abs(d)); return d === 0 || t === f(0) ? "0" : (d > 0 ? "+" : MINUS) + t; }
+// an estimate keeps its ≈ in front: "≈+$0.07"
+function signed(d: number, f: (n: number) => string): string {
+  const t = f(Math.abs(d)); if (d === 0 || t === f(0)) return "0";
+  const sg = d > 0 ? "+" : MINUS; return t.startsWith("≈") ? "≈" + sg + t.slice(1) : sg + t;
+}
 function ratio(a: number, b: number): string { if (!(a > 0 && b >= 0)) return ""; const r = b / a; return "×" + (r < 0.1 ? r.toFixed(2) : r < 100 ? r.toFixed(1) : r < 1000 ? String(Math.round(r)) : kfmt(r)); }
 function pctTxt(x: number): string { return (x * 100).toFixed(1) + "%"; }
 // a numeric row; a or b < 0 = unknown: "n/a", no Δ, no ratio. worse: a higher B is worse (cost, errors, durations)
@@ -203,7 +209,9 @@ export function metricRows(A: Group, B: Group, a: Side, b: Side): Metric[] {
   const bill: Bill | "" = a.bill === b.bill ? a.bill : "";
   const mf = (n: number): string => money(n, bill);
   o.push({ key: "cost", label: "cost", a: costCell(a, false), b: costCell(b, false), d: known ? signed(cb - ca, mf) : "", r: known ? ratio(ca, cb) : "", tone: known ? (cb > ca ? 1 : cb < ca ? -1 : 0) : 0 });
+  // wall: first event → last activity (a session resumed days later spans the gap); active: the minutes with activity
   if (A.single || B.single) o.push(num("wall", "wall time", a.wall, b.wall, fmtMs, false, true));
+  o.push(num("active", "active time", a.err ? -1 : a.active, b.err ? -1 : b.active, fmtMs, false, true));
   o.push(num("turns", "turns", a.turns, b.turns, grp, false, true));
   o.push(num("in", "tokens in", ta.inTok, tb.inTok, kfmt, false, true));
   o.push(num("out", "tokens out", ta.outTok, tb.outTok, kfmt, false, true));
@@ -211,7 +219,8 @@ export function metricRows(A: Group, B: Group, a: Side, b: Side): Metric[] {
   o.push(num("cache_write", "cache write", ta.cw, tb.cw, kfmt, false, true));
   o.push(share("cache_hit", "cache hit", hitOf(ta), hitOf(tb), false));
   const perTurn = (s: Side, v: number): number => s.turns > 0 ? v / s.turns : -1;
-  o.push(num("cost_turn", "cost / turn", known ? perTurn(a, ca) : -1, known ? perTurn(b, cb) : -1, mf, true, true));
+  // each side's own cost per turn when that side is fully priced; num() drops Δ and ratio when the other is not
+  o.push(num("cost_turn", "cost / turn", !unpriced(a) && !a.err ? perTurn(a, ca) : -1, !unpriced(b) && !b.err ? perTurn(b, cb) : -1, mf, true, true));
   o.push(num("tok_turn", "tokens / turn", perTurn(a, tokAll(ta)), perTurn(b, tokAll(tb)), kfmt, false, true));
   o.push(num("tools", "tool calls", ta.tools, tb.tools, grp, false, true));
   o.push(num("calls_turn", "calls / turn", perTurn(a, ta.tools), perTurn(b, tb.tools), (n: number): string => n.toFixed(1), false, true));

@@ -26,6 +26,8 @@ grep -q '"tools":2' "$T/c.json" && grep -q '"tools":3' "$T/c.json" || { echo "FA
 grep -q '"expr":"session is claude:aaaaaa11","n":1' "$T/c.json" || { echo "FAIL expr"; cat "$T/c.json"; exit 1; }
 grep -q '"turns":1' "$T/c.json" || { echo "FAIL turns"; cat "$T/c.json"; exit 1; }
 grep -q '"wallMs":[0-9][0-9]*,' "$T/c.json" || { echo "FAIL wall"; cat "$T/c.json"; exit 1; }
+grep -q '"activeMs":[0-9][0-9]*,' "$T/c.json" || { echo "FAIL active"; cat "$T/c.json"; exit 1; }
+grep -q '"costByMode":{"api":[0-9.]*,"plan":[0-9.]*,"metered":[0-9.]*,"gateway":[0-9.]*,"unknown":[0-9.]*}' "$T/c.json" || { echo "FAIL costByMode"; cat "$T/c.json"; exit 1; }
 grep -q '"tools":\[{"tool":"Bash","a":{"n":2,"err":0,' "$T/c.json" || { echo "FAIL tools"; cat "$T/c.json"; exit 1; }
 grep -q '"programs":\[{"program":"npm","a":{"n":2,"err":0},"b":{"n":3,"err":0}}\]' "$T/c.json" || { echo "FAIL programs"; cat "$T/c.json"; exit 1; }
 grep -q '"files":{"onlyA":\[\],"onlyB":\[\],"both":\[\]}' "$T/c.json" || { echo "FAIL files"; cat "$T/c.json"; exit 1; }

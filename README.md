@@ -396,7 +396,8 @@ B, side by side with Δ (B − A, more cost, errors or duration red) and B/A.
 - A group is any filter expression inside the pins: `session is claude:3f2a9c` (harness:id or a unique id prefix of
   ≥ 6 characters; matches the session and its subagents), `model ~ opus`, `day >= -6d`. `S` leaves subagents out of
   both groups, `a` / `b` edit a group (tab completes), `x` swaps them.
-- Summary: sessions, cost by billing mode (`+?` for unpriced parts; no Δ then), wall time, human turns, tokens, cache
+- Summary: sessions, cost by billing mode (`+?` for unpriced parts; no Δ then), wall time (first event → last
+  activity, two sessions only; a run resumed days later spans the gap), active time (minutes with activity), human turns, tokens, cache
   hit, cost and tokens per turn, tool calls, errors and error rate, p50 / p95 / max call duration (`timed n/N`; fx and
   Kiro record no durations: `n/a`), lines, files, models, subagents. `tab` cycles the detail sections: tools (MCP
   servers fold with `␣`, `●` = share differs, χ² ≥ 6.63, from 50 calls per group), programs, commands, files (only in
@@ -411,7 +412,8 @@ agentglass compare 3f2a9c 7b11e0                                   # two session
 agentglass compare claude:3f2a9c… codex:7b11e0… --no-subagents --json | jq '.a.metrics, .b.metrics'
 agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 'repo is agentglass'
 ```
-Unknown values (unpriced cost, untimed calls) are `null` in `--json`. A bad expression, an unknown or ambiguous id
+In `--json`, `metrics.cost` is the total and `costByMode` its split by billing mode (`api` is real spend, the rest
+list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an unknown or ambiguous id
 (the candidates are listed) or A = B exits 2.
 
 ## Alert rules
