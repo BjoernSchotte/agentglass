@@ -8,6 +8,7 @@ jobs:
   check:
     name: check ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45 # a hung test fails fast instead of holding the runner for 6 h
     strategy:
       fail-fast: false
       matrix: { os: [ubuntu-24.04, macos-14] }
