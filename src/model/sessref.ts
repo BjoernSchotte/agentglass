@@ -1,7 +1,7 @@
 // agentglass — session references for the CLI (and deep links): current, last, parent, <harness>:<id>, an id or a unique id prefix
 // SPDX-License-Identifier: Apache-2.0
 import type { Sess } from "./types.ts";
-import { sessions } from "./sessions.ts";
+import { sessions, loadHead } from "./sessions.ts";
 import { isHarness } from "../harness/index.ts";
 import { realCwd } from "../hooks.ts";
 import { currentSession, projectKey, realDir } from "../features/agentenv.ts";
@@ -31,15 +31,19 @@ export function findSession(ref: string): Found {
   const ms: Sess[] = []; for (const s of sessions.values()) if (s.id.startsWith(ref)) ms.push(s);
   return ms.length ? pick(ms, ref) : none(3, "no session " + ref, "agentglass sessions lists them");
 }
-// the newest top-level session in this directory's project (or exactly this directory), other than cur
+// the newest top-level session in this directory's project (or exactly this directory), other than cur; heads are read
+// newest first until one matches (a session's cwd is known only from its log)
 export function lastSession(cwd: string, cur: Sess | null): Sess | null {
-  const k = projectKey(realDir(cwd)); let best: Sess | null = null;
-  for (const s of sessions.values()) {
-    const cwd = realCwd(s);
-    if (s.parent || s === cur || !cwd || projectKey(cwd) !== k) continue;
-    if (!best || s.mtime > best.mtime) best = s;
+  const k = projectKey(realDir(cwd));
+  const tops: Sess[] = [];
+  for (const s of sessions.values()) if (!s.parent && s !== cur) tops.push(s);
+  tops.sort((a, b) => b.mtime - a.mtime);
+  for (const s of tops) {
+    if (!s.cwd && !s.headDone) loadHead(s);
+    const c = realCwd(s);
+    if (c && projectKey(c) === k) return s;
   }
-  return best;
+  return null;
 }
 // current (the default inside an agent), last, parent (= the current session's root), else findSession; needs discover() first
 export function resolveRef(ref: string, root: boolean): Found {

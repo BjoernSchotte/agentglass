@@ -201,9 +201,12 @@ function watch(o: Opts): void {
   }, 500);
 }
 
+// flags that go with any command (they do not name one)
+const GLOBAL_FLAGS = ["--agent", "--no-agent", "--redact"];
 // --help: text for people; JSON inside an agent or with --format json; "<cmd> --help" = that command only
 function help(args: string[]): void {
-  const c = args.length && !(args[0] ?? "").startsWith("-") ? args[0] ?? "" : "";
+  const rest = args.filter((a: string) => GLOBAL_FLAGS.indexOf(a) < 0);
+  const c = rest.length && !(rest[0] ?? "").startsWith("-") ? rest[0] ?? "" : "";
   const fi = args.indexOf("--format");
   if (agentHost().on || (fi >= 0 && args[fi + 1] === "json")) {
     const j = jsonHelp(c, hostObj(true));

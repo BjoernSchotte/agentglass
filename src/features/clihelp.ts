@@ -11,9 +11,11 @@ export interface OptRec { flag: string; arg: string; summary: string; def: strin
 export interface CmdRec { cmd: string; usage: string; summary: string; options: OptRec[]; fields: string[]; group: string }
 
 export const REG: CmdRec[] = [];
-// a record with the same cmd and group replaces the older one (a feature refines a built-in row)
-export function addCmd(c: CmdRec): void {
+// a record with the same cmd and group replaces the older one (a feature refines a built-in row); else it goes before the
+// record named before ("" or unknown = at the end)
+export function addCmd(c: CmdRec, before = ""): void {
   for (let i = 0; i < REG.length; i++) if (REG[i].cmd === c.cmd && REG[i].group === c.group) { REG[i] = c; return; }
+  for (let i = 0; i < REG.length; i++) if (before && REG[i].cmd === before && REG[i].group === c.group) { REG.splice(i, 0, c); return; }
   REG.push(c);
 }
 export function cmdOf(cmd: string): CmdRec | null { for (const c of REG) if (c.group === "cmd" && c.cmd === cmd) return c; return null; }
@@ -70,6 +72,7 @@ function brief(s: string): string { const t = (s.split("\n")[0] ?? "").split(" (
 // bare agentglass inside an agent: what exists and three examples, no option tables (target ≤ 1 KB: it costs the agent tokens)
 export function compactHelp(agent: Obj): string {
   const cs: Obj[] = [];
-  for (const c of REG) if (c.group === "cmd" && NOT_COMPACT.indexOf(c.cmd) < 0) cs.push({ cmd: c.cmd, summary: brief(c.summary) });
+  for (const sub of [true, false]) // subcommands (the queries) first, then the flag commands
+    for (const c of REG) if (c.group === "cmd" && NOT_COMPACT.indexOf(c.cmd) < 0 && c.cmd.startsWith("-") !== sub) cs.push({ cmd: c.cmd, summary: brief(c.summary) });
   return JSON.stringify({ name: "agentglass", version: BUILD.version, agentMode: agent, commands: cs, examples: EXAMPLES.slice(0, 3), more: "agentglass --help" });
 }

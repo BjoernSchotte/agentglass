@@ -31,6 +31,27 @@ export function loopRun(evs: Ev[]): number {
   }
   return n;
 }
+export interface Run { tool: string; arg: string; n: number; ts: string }
+// every run of ≥ min identical tool calls anywhere (same key and same gaps as loopRun), in order; ts = its first call
+export function loopRuns(evs: Ev[], min: number): Run[] {
+  const out: Run[] = [];
+  let n = 0; let key = ""; let at = -1;
+  const close = (): void => {
+    if (at >= 0 && n >= min) { const f = evs[at]; const i = f.text.indexOf("\u0000"); out.push({ tool: i >= 0 ? f.text.slice(0, i) : f.text, arg: i >= 0 ? f.text.slice(i + 1) : "", n, ts: f.ts }); }
+    n = 0; key = ""; at = -1;
+  };
+  for (let j = 0; j < evs.length; j++) {
+    const e = evs[j];
+    if (e.kind === "result" || e.kind === "thinking") continue;
+    if (e.kind !== "tool") { close(); continue; }
+    const k = e.text + "\u0001" + e.full;
+    if (n > 0 && k !== key) close();
+    if (n === 0) at = j;
+    key = k; n++;
+  }
+  close();
+  return out;
+}
 export function toolName(e: Ev): string { const i = e.text.indexOf("\u0000"); return i >= 0 ? e.text.slice(0, i) : e.text; }
 // the last event is a tool call with no result yet → its name, else ""
 export function pendingTool(evs: Ev[]): string {
