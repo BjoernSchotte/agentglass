@@ -65,6 +65,8 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   (elsewhere it shows as a finished turn).
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
+- **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,
+  tool error rates, repeated commands, wait times. See [Alert rules](#alert-rules).
 - **A live ticker** in the header scrolls what every running agent is doing right now.
 - **Themes.** tokyo-night, catppuccin (mocha and latte), gruvbox, nord and dracula. Press `T` or pass `--theme`.
 - **Mouse too.** Click rows, click again to open, click a preview line to jump straight to that
@@ -346,6 +348,109 @@ agentglass --watch --filter 'harness is pi and event is_one_of tool result'    #
 ```
 A bad expression exits 2 with the message and a caret under the column.
 
+## Alert rules
+
+The watchdog's detectors are rules. Without `~/.agentglass/rules.json` the built-ins below run exactly as listed.
+The file is JSON; every field is optional:
+
+```json
+{
+  "version": 1,
+  "builtins": true,
+  "notify": { "bell": true, "desktop": true, "throttle": "30s", "command": null, "on": ["fire", "escalate"] },
+  "rules": [
+    { "id": "session-cost", "metric": "session_cost", "degraded": 5, "critical": 20, "message": "cost {value}" },
+    { "id": "bash-errors", "metric": "tool_error_rate", "where": "tool is Bash", "min_calls": 20, "degraded": "30%" },
+    { "id": "approval", "critical": "2m" },
+    { "id": "spinning", "enabled": false }
+  ]
+}
+```
+
+A rule with a built-in `id` changes only the fields it names: `{"id":"approval","critical":"2m"}` keeps the 20 s
+`◆` level and adds a red `⚠` after 2 minutes. `"builtins": false` drops all built-ins. Two severities: **degraded**
+= yellow `◆` (counts as attention), **critical** = red `⚠` (counts as stuck; `--json` `stuck` = the rule's reason).
+
+| field | meaning |
+|---|---|
+| `id` | `[a-z0-9-]{1,40}`, unique |
+| `metric` | what is measured (table below); required for a new rule |
+| `where` | a [filter](#filters): session keys (`harness`, `repo`, `model`, `cwd`, `branch`, `agent`, …) scope the rule; call keys (`tool`, `server`, `program`, `command`, `file`, `ext`, `status`) pick the calls of a call metric. Day keys are rejected |
+| `op` | `>` (default) `>=` `<` `<=` |
+| `degraded`, `critical` | thresholds, at least one: a number, `"30%"` (ratios) or a duration `"20s"` `"2m"` `"1h"` (a bare number = seconds) |
+| `for` | the condition must hold this long before the level fires (`"30s"`); a tick where the value is absent restarts it |
+| `min_calls`, `window` | `tool_error_rate`: fewer matching calls with a result → no value; `window: N` = only the last N such calls |
+| `params` | metric tuning (table below) |
+| `ack` | `"look"`: selecting the row for > 1 s or opening its transcript hides the alert until it resolves; `"none"` (default) |
+| `notify` | `true` (default for new rules): bell, desktop notification and the notify command on transitions |
+| `message` | template: `{value} {threshold} {severity} {rule} {tool} {title} {project} {harness} {cpu} {cmd}` |
+| `labels` | up to 16 `"key": "value"` strings, shown in the preview, `--json`, `--watch` and the command's JSON |
+| `enabled` | `false` switches the rule off |
+
+| metric | unit | value (no value when …) | params |
+|---|---|---|---|
+| `turn_done` | duration | since a turn finished, seen in this run (busy, or no finished turn seen) | |
+| `approval_wait` | duration | age of an open tool call while the process tree is quiet (idle, < `samples` CPU samples, a subagent active, CPU ≥ `cpu_below`, a tool command started within `grace`). Gemini's approval title in tmux raises the degraded level at once | `cpu_below` 2, `samples` 7, `grace` 5 |
+| `repeat_run` | count | identical consecutive tool calls at the end; with call keys in `where`, the repeated call must match them | |
+| `command_age` | duration | age of the oldest tool shell command (no call pending) | |
+| `stalled` | duration | log silence while busy (fewer samples, CPU avg ≥ `cpu_below`, a tool command running) | `cpu_below` 1, `samples` 7 |
+| `spinning` | duration | log silence (fewer samples, minimum CPU ≤ `cpu_above`) | `cpu_above` 80, `samples` 120 |
+| `session_cost` | USD | the session's cost (unknown) | |
+| `session_tokens` | count | input + output + cache read + cache write | |
+| `tool_calls` | count | matching calls | |
+| `tool_errors` | count | matching failed calls | |
+| `tool_error_rate` | ratio | failed / matching calls with a result (fewer than `min_calls`) | |
+
+`samples` is at most 400 (one sample per ~1.5 s; the CPU history grows to the largest one in use).
+
+Built-ins (`agentglass rules defaults` prints them as an editable file, `--examples` adds disabled examples):
+
+| id | metric | level | ack | notify | message |
+|---|---|---|---|---|---|
+| `waiting` | `turn_done` | `◆` `>=` 0s | look | yes | turn finished |
+| `approval` | `approval_wait` | `◆` `>` 20s | look | yes | `{tool} pending {value}, cpu {cpu}%` |
+| `loop` | `repeat_run` | `⚠` `>=` 3 | none | no | `{tool} called {value}× in a row with the same arguments` |
+| `long-cmd` | `command_age` | `⚠` `>` 10m | none | no | `{cmd} running {value}` |
+| `stalled` | `stalled` | `⚠` `>` 8m | none | no | `no log activity {value}, cpu {cpu}%` |
+| `spinning` | `spinning` | `⚠` `>` 3m | none | no | `cpu > {cpu}% for 3m while the log is silent {value}` |
+
+More examples:
+
+| intent | rule |
+|---|---|
+| only nag after 5 min of waiting (◆ and bell come at 5 min) | `{"id":"waiting","degraded":"5m"}` |
+| long test suites are fine | `{"id":"long-cmd","critical":"45m"}` |
+| the same command repeated more than 5 times | `{"id":"bash-repeats","metric":"repeat_run","where":"tool is Bash","degraded":5}` |
+| Bash error rate over the last 50 calls | `{"id":"bash-errors","metric":"tool_error_rate","where":"tool is Bash","min_calls":20,"window":50,"degraded":"30%"}` |
+| Codex waits 5 min, everything else keeps the default | `{"id":"waiting","where":"harness is_not codex"}` and `{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}` (a copy repeats the `ack`/`notify`/`message` it wants) |
+
+**Checking.** `agentglass rules check` prints the effective rules and every problem as
+`rules.json:<line>:<col>: <rule>: <message>` (exit 0 clean, 1 warnings, 2 errors; `--json` for scripts). A broken new rule
+is disabled and a broken override leaves its built-in unchanged; the rest keep running; the TUI says so once at start.
+Fields a metric does not read (`min_calls` outside `tool_error_rate`, `window` outside the call-row metrics) are warnings. A JSON syntax error keeps the built-ins.
+The file is re-read within 2 s of a change: a valid edit replaces the rules (alerts of removed rules end silently), a
+broken one keeps the previous rules with a warning.
+
+**Outputs.** Transitions are `fire` (0 → a level), `escalate`, `deescalate` and `resolve`. On `fire` and `escalate`
+of a `notify` rule the TUI rings the bell and sends a desktop notification (`notify.bell`, `notify.desktop`;
+`AGENTGLASS_NOTIFY=0` silences the notification), at most once per `throttle` per session, never for an acknowledged
+alert (an acknowledgement lasts until the alert resolves, so an escalation after a look stays quiet; the next firing
+shows again). The preview lists every firing alert; `?` shows the rules in force and the latest transitions.
+`--json` adds `alerts: [{rule, severity, value, unit, threshold, since, message, labels, acked}]` (a one-shot look:
+`for` is judged from recorded timestamps; a finished turn needs the TUI or `--watch` to be seen). `--watch` emits
+`{"kind":"alert", "text": <message>, "alert": {rule, severity, state, value, threshold, labels}, …}` lines
+(`--no-alerts` turns them off; durations in seconds, ratios 0–1, cost in USD).
+
+**Notify command.** `"command": ["/usr/bin/logger", "-t", "agentglass", "{rule} {severity} {title}"]` runs on every
+transition in `notify.on` (default `fire`, `escalate`) of a `notify` rule, also for acknowledged alerts. It is an argv:
+no shell, placeholders are substituted per argument, `$(…)` stays literal. Stdin gets the alert as one JSON line
+(`rule severity state value unit threshold since session harness title project message labels`), the environment
+`AGENTGLASS_RULE`, `_SEVERITY`, `_STATE`, `_SESSION`, `_HARNESS`, `_VALUE` plus only `PATH`, `HOME`, `USER`, locale,
+`TZ`, `TMPDIR`, `TERM`, the desktop bus/display, `XDG_*` dirs and proxy settings — never the rest of agentglass's
+environment (API keys stay out; a script reads its own secrets). It gets SIGTERM after 10 s and SIGKILL 2 s later; at
+most 4 run at once (more are dropped with a warning). It runs only when `rules.json` is yours and not group- or world-writable
+(`chmod 600`; a chmod is picked up like an edit), and in `--watch` only with `--notify`. `--redact` fakes titles and projects there too.
+
 ## Scriptable
 
 ```sh
@@ -353,6 +458,7 @@ agentglass --json --live | jq '.[] | {title, costUsd, attention}'   # snapshot o
 agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'  # skills used: [{name, source, n}]
 agentglass --json --repos --days 30 | jq '.[] | {label, costUsd, activeMin}'  # cost and active time per project
 agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL stream of every agent's events
+agentglass --watch | jq -c 'select(.kind=="alert") | .alert'        # alert rule transitions (fire, escalate, …)
 agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one
 agentglass --redact                                                 # privacy mode for streams and screenshots
 ```
