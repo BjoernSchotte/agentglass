@@ -5,16 +5,19 @@ import { S } from "../../state.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
 import { run } from "../../util/fs.ts";
+import { intSetting } from "../../util/config.ts";
 import { P, resolveTick, labelOf, loadProjects, saveProjects, PROJECTS_FILE } from "../../model/project.ts";
 import { identOf, repoOf } from "../query/project.ts";
 import { register } from "../query/attrs.ts";
 import { extend } from "../query/eval.ts";
 import type { Val } from "../query/types.ts";
+import { ACT } from "../usage/record.ts";
 export { identOf, repoOf };
 
 // the session's project label, "" while unresolved
 export function repoLabel(s: Sess): string { const id = identOf(s); return id ? labelOf(id) : ""; }
 
+ACT.gap = intSetting("repo", "idleGapMin", 1, 60, 5); // minutes between lines that still count as one stretch of work
 P.sync = true; // one-shot CLI runs resolve on first ask; the TUI's first tick switches to the budgeted queue
 loadProjects(PROJECTS_FILE);
 

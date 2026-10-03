@@ -5,15 +5,17 @@
 import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 import { type Call, DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
+import { numAt } from "../../util/text.ts";
 export { dayKey };
 
 // one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro); turns = human prompts
 // tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"; skills "<command | model>\t<skill name>"
 // cp = cost per provider ("" = the session's single provider), hc = cost per local hour,
 // mt = per model [in, out, cacheRead, cacheWrite, costUsd] (same model key as um)
+// act = active minutes, flat sorted merged [s0,e0,s1,e1,…] local minutes of the day (e exclusive, ≤ ACT_MAX intervals)
 export interface Day {
   tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
-  um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>;
+  um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>; act: number[];
 }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
@@ -28,6 +30,8 @@ export interface Acc {
   bill: string; plan: string; billSrc: string; // billing mode stamped from evidence ("" = not stamped; billSrc "session" | "process")
   calls: Call[]; lastCall: number; // one row per tool call in call order (persisted apart, callcache.ts); index of the newest, -1 none
   t0: number; // first activity (epoch ms), 0 unknown
+  al: number; // latest activity booked into Day.act (epoch ms), 0 none
+  sp: number[]; // finished calls' [start, end] pairs (epoch ms) not yet in Day.act (not persisted: flushed per line and per chunk)
 }
 export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rlPct: -1, rlWin: 0, rlReset: 0, rlAt: 0 }; // rl* = latest Codex primary rate limit
 
@@ -45,7 +49,7 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0 };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [] };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -56,7 +60,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
   return { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
-    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>() };
+    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [] };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
 // tsIso/tsMs: the time of the last bucket() call, for the call rows tool() appends (0 = none: Date.now() fallback)
@@ -68,9 +72,88 @@ export function bucket(a: Acc, ms: number, iso: string): Day {
     if (iso !== tsIso) { tsIso = iso; tsMs = isoMs(iso); }
   } else { const d = new Date(ms > 0 ? ms : Date.now()); tsKey = ""; tsDay = dayKey(d); tsHour = d.getHours(); tsIso = ""; tsMs = ms > 0 ? ms : 0; }
   if (tsMs > 0 && (a.t0 === 0 || tsMs < a.t0)) a.t0 = tsMs; // earliest, not first: side files (fx, kiro) are read before the log
+  if (a.sp.length) flushSpans(a);
   let d = a.days.get(tsDay);
   if (!d) { d = newDay(); a.days.set(tsDay, d); }
+  if (tsMs > 0) actMark(a, d, tsMs); // never for the Date.now() fallback: an untimed line says nothing about when work happened
   return d;
+}
+
+// ── active time: per session-day minute intervals; a line within ACT.gap minutes of the last activity extends it ──
+export const ACT = { gap: 5 }; // repo.idleGapMin (set at startup by features/repos/ident.ts); applies to newly indexed lines
+const ACT_MAX = 200;
+// local minute of day of an epoch ms; cached per minute (lines arrive in order). Offsets are whole minutes, so the
+// minute boundary is the same locally and in UTC.
+let amKey = -1; let amMin = 0;
+function minOf(ms: number): number { const k = Math.floor(ms / 60000); if (k !== amKey) { amKey = k; const t = new Date(ms); amMin = t.getHours() * 60 + t.getMinutes(); } return amMin; }
+function minOfAt(ms: number): number { const t = new Date(ms); return t.getHours() * 60 + t.getMinutes(); }
+function dayAt(a: Acc, ms: number): Day { const k = dayKey(new Date(ms)); let d = a.days.get(k); if (!d) { d = newDay(); a.days.set(k, d); } return d; }
+// [s, e) into a flat sorted merged list (overlapping and adjacent intervals merge); over ACT_MAX the closest pair merges
+export function addSpan(act: number[], s0: number, e0: number): void {
+  const s = Math.max(0, s0); const e = Math.min(1440, e0); if (e <= s) return;
+  const n = act.length;
+  if (n >= 2) { // fast paths: lines arrive in order, so nearly every call touches the last interval
+    const ls = act[n - 2] ?? 0; const le = act[n - 1] ?? 0;
+    if (s >= ls && e <= le) return;
+    if (s >= ls && s <= le) { act[n - 1] = e; return; }
+    if (s > le) { act.push(s); act.push(e); capSpans(act); return; }
+  } else if (n === 0) { act.push(s); act.push(e); return; }
+  let i = 0; while (i < n && (act[i] ?? 0) < s) i += 2; // first interval starting at or after s
+  act.splice(i, 0, s, e);
+  const out: number[] = [];
+  for (let j = 0; j < act.length; j += 2) {
+    const a0 = act[j] ?? 0; const a1 = act[j + 1] ?? 0; const m = out.length;
+    if (m && a0 <= (out[m - 1] ?? 0)) { if (a1 > (out[m - 1] ?? 0)) out[m - 1] = a1; } else { out.push(a0); out.push(a1); }
+  }
+  act.length = 0; for (const x of out) act.push(x);
+  capSpans(act);
+}
+function capSpans(act: number[]): void {
+  while (act.length > ACT_MAX * 2) {
+    let bi = 1; let bg = 1e9;
+    for (let j = 1; j + 1 < act.length; j += 2) { const g = (act[j + 1] ?? 0) - (act[j] ?? 0); if (g < bg) { bg = g; bi = j; } }
+    act.splice(bi, 2); // drop the end of one and the start of the next: the two become one
+  }
+}
+// one timestamped line: extends the session's latest activity when within the gap (across midnight: both days), else a new minute
+export function actMark(a: Acc, d: Day, ms: number): void {
+  const m = minOf(ms); const gap = ms - a.al;
+  if (a.al > 0 && gap >= 0 && gap <= ACT.gap * 60000) {
+    const pm = minOfAt(a.al);
+    if (m >= pm && Math.floor(ms / 60000) - Math.floor(a.al / 60000) === m - pm) addSpan(d.act, pm, m + 1); // same local day
+    else { const prev = a.days.get(dayKey(new Date(a.al))); if (prev && prev !== d) addSpan(prev.act, pm, 1440); addSpan(d.act, 0, m + 1); }
+  } else addSpan(d.act, m, m + 1);
+  if (ms > a.al) a.al = ms;
+}
+// [t0, t1] minute-wise, split at local midnights into each day's bucket
+export function actSpan(a: Acc, t0: number, t1: number): void {
+  let t = t0;
+  for (let guard = 0; t < t1 && guard < 3; guard++) {
+    const m0 = minOfAt(t); const startMin = Math.floor(t / 60000) * 60000;
+    const dayEnd = startMin + (1440 - m0) * 60000; // the next local midnight (± a DST hour, then the guard ends it)
+    const end = Math.min(t1, dayEnd);
+    addSpan(dayAt(a, t).act, m0, end >= dayEnd ? 1440 : m0 + Math.floor((end - startMin) / 60000) + 1);
+    t = dayEnd;
+  }
+  if (t1 > a.al) a.al = t1;
+}
+export function flushSpans(a: Acc): void {
+  const sp = a.sp.slice(); a.sp.length = 0;
+  for (let i = 0; i + 1 < sp.length; i += 2) actSpan(a, numAt(sp, i, 0), numAt(sp, i + 1, 0));
+}
+export function spanMin(act: number[]): number { let n = 0; for (let i = 0; i + 1 < act.length; i += 2) n += (act[i + 1] ?? 0) - (act[i] ?? 0); return n; }
+// minutes covered by any of the lists (parallel sessions count once)
+export function unionMin(lists: number[][]): number {
+  const iv: number[][] = [];
+  for (const l of lists) for (let i = 0; i + 1 < l.length; i += 2) iv.push([numAt(l, i, 0), numAt(l, i + 1, 0)]);
+  iv.sort((x, y) => (x[0] ?? 0) - (y[0] ?? 0));
+  let n = 0; let cs = -1; let ce = -1;
+  for (const v of iv) {
+    const s = v[0] ?? 0; const e = v[1] ?? 0;
+    if (s > ce) { if (ce > cs) n += ce - cs; cs = s; ce = e; } else if (e > ce) ce = e;
+  }
+  if (ce > cs) n += ce - cs;
+  return n;
 }
 // one call: counters + a fact row carrying the model of the message that issued it ("" unknown; mq: MQ_MSG | MQ_TURN | MQ_SESS)
 export function tool(a: Acc, d: Day, name: string, model: string, mq: number): TS {
@@ -99,7 +182,7 @@ export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number
   if (row) row.cid = id;
   if (!id) return;
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
-  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row });
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row, sp: a.sp });
 }
 // the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
 export function retool(a: Acc, p: Pend, name: string): void {

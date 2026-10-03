@@ -8,7 +8,7 @@ import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
-import { type Acc, L, newAcc, startOfDay } from "./record.ts";
+import { type Acc, L, newAcc, startOfDay, flushSpans } from "./record.ts";
 
 export const ledger = new Map<string, Acc>();
 
@@ -31,6 +31,7 @@ function step(s: Sess, a: Acc): number {
     const r = src.lines(s, a.off, Math.min(s.size, a.off + window(src, CHUNK)));
     const ad = harnessOf(s.h);
     for (const l of r.lines) ad.usage(a, l);
+    flushSpans(a); // the last result of the chunk: no later line of this session books its span
     const used = r.next - a.off; a.off = r.next;
     if (used <= 0) a.stall = s.size;
     return used * src.unit;
@@ -51,6 +52,7 @@ function step(s: Sess, a: Acc): number {
     const l = ls[i] ?? "";
     ad.usage(a, l);
   }
+  flushSpans(a);
   a.skip = false;
   a.off += z + 1;
   return z + 1;
