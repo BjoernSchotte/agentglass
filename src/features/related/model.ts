@@ -18,7 +18,7 @@ export interface FileRef { top: string; rel: string }
 export interface RelEv {
   t: number; ts: string; sess: string; h: string; top: string; kind: string; cat: number; tool: string; text: string; files: FileRef[];
   add: number; del: number; err: boolean; self: boolean; mark: string; withS: string[]; dt: number; race: boolean;
-  evKind: string; evId: string; evText: string; sha: string;
+  evKind: string; evId: string; evText: string; sha: string; rt: number; // rt = its result's time (0 none yet)
 }
 // per-session read state across batches: dedup keys, and open calls (call id → row index in the append-only out)
 export interface RelSt { seen: Set<string>; pend: Map<string, number>; last: number }
@@ -32,7 +32,7 @@ export function fileRef(abs: string, top: string): FileRef {
   return top && abs.startsWith(top + "/") ? { top, rel: abs.slice(top.length + 1) } : { top: "", rel: abs };
 }
 export function row(t: number, ts: string, sess: string, h: string, top: string, kind: string, tool: string, text: string, self: boolean): RelEv {
-  return { t, ts, sess, h, top, kind, cat: -1, tool, text, files: [], add: 0, del: 0, err: false, self, mark: "", withS: [], dt: 0, race: false, evKind: "", evId: "", evText: "", sha: "" };
+  return { t, ts, sess, h, top, kind, cat: -1, tool, text, files: [], add: 0, del: 0, err: false, self, mark: "", withS: [], dt: 0, race: false, evKind: "", evId: "", evText: "", sha: "", rt: 0 };
 }
 // +added/−removed lines of an edit call from its arguments (Claude/Gemini old_string/new_string, OpenCode oldString/newString,
 // pi oldText/newText and edits[], content of a whole-file write) or a Codex patch
@@ -81,6 +81,7 @@ function result(e: Ev, t: number, sess: string, h: string, top: string, self: bo
   if (i < 0 || i >= out.length) return; // its call lies outside the window
   const c = out[i];
   if (isErr(e.text)) c.err = true;
+  if (t && !c.rt) c.rt = t;
   if (!t || t < t0 || t > t1) return;
   const key = sess + "\u0001" + e.id + "\u0001result";
   if (st.seen.has(key)) return;
