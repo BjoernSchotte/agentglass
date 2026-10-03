@@ -43,8 +43,7 @@ export function evalRule(r: Rule, st: AState, v: MVal, now: number): Trans | nul
   const state = from === 0 ? "fire" : to === 0 ? "resolve" : to > from ? "escalate" : "deescalate";
   st.level = to; st.lvAt = now;
   if (state === "fire") { st.firedAt = now; st.acked = false; }
-  else if (state === "resolve") { st.firedAt = 0; st.acked = false; }
-  else if (state === "escalate") st.acked = false; // a new severity is news: it shows (and rings) again
+  else if (state === "resolve") { st.firedAt = 0; st.acked = false; } // an ack lasts until the alert resolves (spec §3)
   return { at: now, path: "", rule: r.id, from, to, state, v: st.v.v, thr: thrOf(r, to || from) };
 }
 function log(t: Trans): void { LOG.push(t); if (LOG.length > LOG_MAX) LOG.splice(0, LOG.length - LOG_MAX); }

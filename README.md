@@ -395,15 +395,17 @@ More examples:
 | Codex waits 5 min, everything else keeps the default | `{"id":"waiting","where":"harness is_not codex"}` and `{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}` (a copy repeats the `ack`/`notify`/`message` it wants) |
 
 **Checking.** `agentglass rules check` prints the effective rules and every problem as
-`rules.json:<line>:<col>: <rule>: <message>` (exit 0 clean, 1 warnings, 2 errors; `--json` for scripts). A broken rule
-is disabled, the rest keep running; the TUI says so once at start. A JSON syntax error keeps the built-ins.
+`rules.json:<line>:<col>: <rule>: <message>` (exit 0 clean, 1 warnings, 2 errors; `--json` for scripts). A broken new rule
+is disabled and a broken override leaves its built-in unchanged; the rest keep running; the TUI says so once at start.
+Fields a metric does not read (`min_calls` outside `tool_error_rate`, `window` outside the call-row metrics) are warnings. A JSON syntax error keeps the built-ins.
 The file is re-read within 2 s of a change: a valid edit replaces the rules (alerts of removed rules end silently), a
 broken one keeps the previous rules with a warning.
 
 **Outputs.** Transitions are `fire` (0 → a level), `escalate`, `deescalate` and `resolve`. On `fire` and `escalate`
 of a `notify` rule the TUI rings the bell and sends a desktop notification (`notify.bell`, `notify.desktop`;
 `AGENTGLASS_NOTIFY=0` silences the notification), at most once per `throttle` per session, never for an acknowledged
-alert. The preview lists every firing alert; `?` shows the rules in force and the latest transitions.
+alert (an acknowledgement lasts until the alert resolves, so an escalation after a look stays quiet; the next firing
+shows again). The preview lists every firing alert; `?` shows the rules in force and the latest transitions.
 `--json` adds `alerts: [{rule, severity, value, unit, threshold, since, message, labels, acked}]` (a one-shot look:
 `for` is judged from recorded timestamps; a finished turn needs the TUI or `--watch` to be seen). `--watch` emits
 `{"kind":"alert", "text": <message>, "alert": {rule, severity, state, value, threshold, labels}, …}` lines

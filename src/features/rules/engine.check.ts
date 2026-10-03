@@ -108,6 +108,15 @@ eq("resolve carries the last value", stepSession(ES, "/e/4", cost(-1), now).map(
 stepSession(ES, "/e/2", cost(21), now);
 eq("critical → stuck reason = id", flags(ES, "/e/2")[1] ?? "", "cost");
 
+// ack: look holds until the alert resolves (spec §3, §5): an escalation stays hidden; the next firing shows again
+const AK = loadRules('{"builtins":false,"rules":[{"id":"cost","metric":"session_cost","degraded":5,"critical":20,"ack":"look"}]}', true);
+stepSession(AK, "/ak/1", cost(6), now); ackLook(AK, "/ak/1");
+eq("acked escalate", states(stepSession(AK, "/ak/1", cost(21), now)), "cost:escalate");
+eq("escalate keeps the ack", String(stateOf("/ak/1", "cost")?.acked) + " " + flags(AK, "/ak/1").join("|"), "true |");
+stepSession(AK, "/ak/1", cost(0), now);
+stepSession(AK, "/ak/1", cost(21), now);
+eq("next firing shows", flags(AK, "/ak/1").join("|"), "|cost");
+
 // ── per-harness copies: never both for one session ──
 const PH = loadRules('{"rules":[{"id":"waiting","where":"harness is_not codex"},{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}]}', true);
 eq("copies load clean", String(PH.diags.length), "0");
