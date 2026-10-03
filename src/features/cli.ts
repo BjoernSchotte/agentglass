@@ -14,41 +14,31 @@ import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
+import { type CmdRec, type OptRec, addCmd, opt, textHelp } from "./clihelp.ts";
 
-// option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
-const CMDS: string[][] = [
-  ["agentglass", "interactive TUI"],
-  ["agentglass --theme <name>", "TUI with a color theme"],
-  ["agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names"],
-  ["", "(also AGENTGLASS_REDACT=1; combinable with --json / --watch)"],
-  ["agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit"],
-  ["agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)"],
-  ["agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget"],
-  ["", "(--harness h: one harness; --check: exit 3 when over budget)"],
-  ["agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)"],
-  ["agentglass --help | -h", "this text"],
-  ["agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)"],
-  ["agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)"],
-];
-const OPTS: string[][] = [
-  ["--live", "only sessions with a running agent process"],
-  ["--harness " + harnessIds().join("|"), "only this harness"],
-  ["--limit N", "--json: at most N sessions"],
-  ["--subagents", "--json: include subagent sessions"],
-  ["--from-start", "--watch: replay existing logs from the beginning (combine with a filter)"],
-];
-function table(rows: string[][], col: number): string { return rows.map((r: string[]) => "  " + (r[0] ?? "").padEnd(col) + (r[1] ?? "")).join("\n"); }
+const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
+const LIVE_OPT = opt("--live", "", "only sessions with a running agent process", "", []);
+const LIMIT_OPT = opt("--limit", "N", "--json: at most N sessions", "", []);
+const SUBS_OPT = opt("--subagents", "", "--json: include subagent sessions", "", []);
+const FROM_OPT = opt("--from-start", "", "--watch: replay existing logs from the beginning (combine with a filter)", "", []);
+export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
+  "activity", "tokens", "costUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills"];
+function cmd(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
+function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.arg ? " " + o.arg : ""), summary: o.summary, options: [], fields: [], group: "opt" }; }
+addCmd(cmd("", "agentglass", "interactive TUI", [], []));
+addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
+addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
+addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT], JSON_FIELDS));
+addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT], []));
+addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
+addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
+addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
+addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
+addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT]) addCmd(optRow(o));
 function usage(): string {
-  let col = 0; for (const r of CMDS.concat(OPTS)) col = Math.max(col, (r[0] ?? "").length + 2);
-  return `agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})
-
-usage:
-${table(CMDS, col)}
-
-options for --json / --watch:
-${table(OPTS, col)}
-
---json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
+  return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
+    `--json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
   activity tokens{in,out,cacheRead,cacheWrite} costUsd billing{mode,plan,source} unpricedTokens unpricedCredits
   tools linesAdded linesRemoved attention stuck skills[{name,source,n}]
   (costUsd = API list price, null when only unpriced usage exists; billing.mode = api|plan|metered|gateway|unknown,
@@ -60,7 +50,7 @@ ${table(OPTS, col)}
 OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
   without it, 2.x sessions come from a running \`opencode service\` over HTTP with curl (AGENTGLASS_CURL); with neither
   they are not listed (a warning says so)
-`;
+`);
 }
 
 interface Opts { live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean }
@@ -101,6 +91,7 @@ function wanted(s: Sess, o: Opts): boolean {
   if (o.harness && s.h !== o.harness) return false;
   return !o.live || livePid(s) > 0;
 }
+export { usage };
 export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
 
 function snapshot(o: Opts): void {
