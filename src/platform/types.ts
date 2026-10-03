@@ -28,6 +28,8 @@ export interface Platform {
   sha256File(path: string): string;
   // a process's raw environment block (NAME=value\0…), empty when unreadable or unsupported; callers keep names only (billing.ts envSummary)
   envOf(pid: number): Uint8Array;
+  // [owner uid, permission bits] of a file, [] when it cannot be read (scriptc: Stats has no uid/mode)
+  ownerMode(path: string): number[];
   // where trash() puts things, for messages ("~/.Trash")
   trashName: string;
 }

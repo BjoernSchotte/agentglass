@@ -9,6 +9,7 @@ import { sessions } from "../../model/sessions.ts";
 import { ledger, indexing } from "./ledger.ts";
 import { L } from "./record.ts";
 import { ROWS } from "./facts.ts";
+import { rulesNeedRows } from "../rules/file.ts";
 import { PRICES_SIG } from "./pricing.ts";
 import { VERSION, num, accOut, accIn } from "./codec.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
@@ -21,7 +22,9 @@ function rowless(): boolean {
   if (ARGV[0] === "cost") return true;
   if (ARGV[0] === "triage") return false; // ranks call rows (and saves what it indexed)
   const oneShot = ["--json", "--watch", "--help", "-h", "--version"].some((x: string) => ARGV.indexOf(x) >= 0);
-  return oneShot && ARGV.indexOf("--filter") < 0 && ARGV.indexOf("--pinned") < 0;
+  if (!oneShot || ARGV.indexOf("--filter") >= 0 || ARGV.indexOf("--pinned") >= 0) return false;
+  // --json alerts / --watch alert lines of a rule on call rows (tool_calls, tool_errors, tool_error_rate)
+  return !((ARGV.indexOf("--json") >= 0 || ARGV.indexOf("--watch") >= 0) && ARGV.indexOf("--no-alerts") < 0 && rulesNeedRows());
 }
 if (rowless()) ROWS.on = false;
 const DIR = CACHE_DIR; // AGENTGLASS_CACHE_DIR or ~/.agentglass/cache

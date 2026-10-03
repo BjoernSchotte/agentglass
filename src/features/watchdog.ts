@@ -1,122 +1,33 @@
-// agentglass — watchdog: flags live sessions waiting for you (◆, bell + desktop notification) and stuck ones (⚠)
+// agentglass — watchdog: runs the alert rules (rules/, built-ins = waiting ◆, approval? ◆, stuck ⚠) on live sessions
 // SPDX-License-Identifier: Apache-2.0
-import { OS } from "../platform/index.ts";
-import { base } from "../util/json.ts";
 import { ago } from "../util/text.ts";
 import type { Ev, Proc, Sess } from "../model/types.ts";
 import { S, say } from "../state.ts";
 import { H } from "../hooks.ts";
-import { sessions, loadTail, working, titleOf, current, sessAt } from "../model/sessions.ts";
+import { sessions, loadTail, working, current, sessAt, titleOf } from "../model/sessions.ts";
 import { allProcs, hist, rootOf, refreshProcs, paneTitles, ttyOf } from "../model/procs.ts";
 import { harnessOf } from "../harness/index.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-
-// ── pure detection helpers (no globals, so they can be checked in isolation) ──
-// ps etime: [[dd-]hh:]mm:ss → seconds
-export function etimeSec(e: string): number {
-  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(e.trim());
-  if (!m) return 0;
-  return Number(m[1] ?? "0") * 86400 + Number(m[2] ?? "0") * 3600 + Number(m[3] ?? "0") * 60 + Number(m[4] ?? "0");
-}
-// identical tool calls (name + args) in a row at the end; results/thinking between them don't break the run
-export function loopRun(evs: Ev[]): number {
-  let n = 0; let key = "";
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
-    if (e.kind === "result" || e.kind === "thinking") continue;
-    if (e.kind !== "tool") break;
-    const k = e.text + "\u0001" + e.full;
-    if (n > 0 && k !== key) break;
-    key = k; n++;
-  }
-  return n;
-}
-export function toolName(e: Ev): string { const i = e.text.indexOf("\u0000"); return i >= 0 ? e.text.slice(0, i) : e.text; }
-// the last event is a tool call with no result yet → its name, else ""
-export function pendingTool(evs: Ev[]): string {
-  if (!evs.length) return "";
-  const e = evs[evs.length - 1];
-  return e.kind === "tool" ? toolName(e) || "tool" : "";
-}
-export function avgTail(a: number[], n: number): number {
-  const t = a.slice(-n);
-  let x = 0; for (const v of t) x += v;
-  return t.length ? x / t.length : 0;
-}
-const SHELLS = ["sh", "bash", "zsh", "fish", "dash"];
-function isShell(p: Proc): boolean { return SHELLS.indexOf(base(p.args.split(" ")[0] ?? "").replace(/^-/, "")) >= 0; }
-export interface Cmd { age: number; name: string }
-// tool commands run by the agent = its outermost descendant shells (MCP servers & co are spawned directly, not via a shell)
-export function toolCmds(root: number, kids: Map<number, Proc[]>): Cmd[] {
-  const out: Cmd[] = [];
-  const stack: number[] = [root];
-  while (stack.length) {
-    const pid = stack.pop() as number;
-    for (const c of kids.get(pid) ?? []) {
-      if (isShell(c)) out.push({ age: etimeSec(c.etime), name: cmdName(c, kids) });
-      else stack.push(c.pid);
-    }
-  }
-  return out;
-}
-function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {
-  const q: Proc[] = [sh];
-  while (q.length) {
-    const p = q.shift() as Proc;
-    if (!isShell(p)) return base(p.args.split(" ")[0] ?? "");
-    for (const c of kids.get(p.pid) ?? []) q.push(c);
-  }
-  const i = sh.args.indexOf(" -c ");
-  return i >= 0 ? sh.args.slice(i + 4, i + 34) : base(sh.args.split(" ")[0] ?? "");
-}
-export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean } // asks: the agent's terminal title says it waits for approval
-function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
-// waiting on a tool approval: tool call open > 20s, tree quiet (10s avg < 2%), no tool command started since the call
-export function approvalNote(o: Obs): string {
-  if (o.asks) return "approval dialog open"; // the agent says so itself (Gemini logs the call only once it ran)
-  const t = pendingTool(o.evs);
-  const pend = (o.now - o.mtime) / 1000;
-  if (!o.busy || !t || pend <= 20 || o.cpu.length < 7 || o.subsActive) return "";
-  const cpu = avgTail(o.cpu, 7);
-  if (cpu >= 2) return "";
-  for (const c of o.cmds) if (c.age < pend + 5) return "";
-  return t + " pending " + dur(pend) + ", cpu " + cpu.toFixed(0) + "%";
-}
-// which alarm a look raises: approval first (a Gemini approval dialog looks like a finished turn in its log), then busy →
-// idle or a whole turn between two looks (fresh: a new prompt in the tail); "" = none
-export function alarmOf(wasBusy: boolean, busy: boolean, fresh: boolean, appr: boolean): string {
-  if (appr) return "approval?";
-  return !busy && (wasBusy || fresh) ? "turn finished" : "";
-}
-// [reason, detail] — "" reason = fine
-export function stuckOf(o: Obs): string[] {
-  const n = loopRun(o.evs);
-  if (n >= 3) {
-    let t = "tool"; for (let i = o.evs.length - 1; i >= 0; i--) { const e = o.evs[i]; if (e.kind === "tool") { t = toolName(e); break; } }
-    return ["loop", t + " called " + n + "× in a row with the same arguments"];
-  }
-  const silent = (o.now - o.mtime) / 1000;
-  if (pendingTool(o.evs)) { let old: Cmd | null = null; for (const c of o.cmds) if (c.age > 600 && (!old || c.age > old.age)) old = c; if (old) return ["long cmd", old.name + " running " + dur(old.age)]; }
-  if (o.cpu.length >= 7) {
-    const cpu = avgTail(o.cpu, 7);
-    if (o.busy && silent > 480 && cpu < 1 && !o.cmds.length) return ["stalled", "no log activity " + dur(silent) + ", cpu " + cpu.toFixed(1) + "%"];
-  }
-  if (o.cpu.length >= 120 && silent > 180) { // 120 samples × 1.5s = 3 min
-    let lo = 1e9; for (const v of o.cpu.slice(-120)) if (v < lo) lo = v;
-    if (lo > 80) return ["spinning", "cpu > " + lo.toFixed(0) + "% for 3m while the log is silent " + dur(silent)];
-  }
-  return ["", ""];
-}
+import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, alarmOf, stuckOf } from "./detect.ts";
+import { accOf, complete as ledgerComplete } from "./usage/ledger.ts";
+import type { Call } from "./usage/facts.ts";
+import { sessMatches } from "./query/eval.ts";
+import { type Rule, type RuleSet, CALL_METRICS, thrText, unitOf } from "./rules/config.ts";
+import { metricOf } from "./rules/metrics.ts";
+import { type Trans, type Alert, LOG, stepSession, unwatch, prune, ackLook, flags, firing, stateOf, watching, snapshot, render, severityOf } from "./rules/engine.ts";
+import { onTrans, forget } from "./rules/notify.ts";
+import { R, rules } from "./rules/state.ts";
+export { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, alarmOf, stuckOf };
 
 // ── live state ────────────────────────────────────────────────────────────────
-interface St { busy: boolean; att: string; attAt: number; note: string; appr: boolean; bell: number; stuckNote: string; prompt: string } // prompt: newest user prompt seen in the tail
+// busy/prompt: last look; turnAt: when this run saw the last turn finish (0 = none, or busy since)
+interface St { busy: boolean; prompt: string; turnAt: number }
 const st = new Map<string, St>();
 let selPath = ""; let selSince = 0;
 
 // the newest user prompt in the tail window (ts + text), "" when none is in it
 function lastPrompt(evs: Ev[]): string { for (let i = evs.length - 1; i >= 0; i--) { const e = evs[i]; if (e.kind === "user") return e.ts + "\u0000" + e.text; } return ""; }
-function watched(s: Sess): boolean { return s.pid !== 0 && !s.parent; }
-function isBusy(s: Sess): boolean { return working(s); }
+export function watched(s: Sess): boolean { return s.pid !== 0 && !s.parent; }
 function kidsMap(): Map<number, Proc[]> {
   const k = new Map<number, Proc[]>();
   for (const p of allProcs.values()) { const a = k.get(p.ppid); if (a) a.push(p); else k.set(p.ppid, [p]); }
@@ -127,73 +38,107 @@ function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, s
   let subs = false; for (const c of s.subs) if (Date.now() - c.mtime < 45000) subs = true;
   const at = harnessOf(s.h).approvalTitle; const tty = at ? ttyOf(s.pid) : "";
   const asks = !!at && tty !== "" && at(titles().get(tty) ?? "");
-  return { now: Date.now(), mtime: s.mtime, busy: isBusy(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks };
+  return { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks };
 }
-function stateOf(s: Sess): St | null { return st.get(s.path) ?? null; }
-function raise(s: Sess, x: St, why: string, note: string): void {
-  s.attention = true; x.att = why; x.attAt = Date.now(); x.note = note;
-  if (Date.now() - x.bell < 30000) return;
-  x.bell = Date.now();
-  process.stdout.write("\x07");
-  if (process.env.AGENTGLASS_NOTIFY === "0") return;
-  OS.notify("agentglass", s.h + " · " + (base(s.cwd) || "?"), (why === "approval?" ? "approval? " : "") + titleOf(s).slice(0, 120));
+// one look at every live session per alarm tick: the process tree and (lazily) the tmux pane titles
+export interface Looker { kids: Map<number, Proc[]>; titles: () => Map<string, string> }
+export function looker(): Looker {
+  const tt = new Map<string, string>(); let read = false; // tmux pane titles: one spawn per look, only when a live agent reports approval in its title
+  return { kids: kidsMap(), titles: (): Map<string, string> => { if (!read) { read = true; for (const [k, v] of paneTitles()) tt.set(k, v); } return tt; } };
 }
-function clear(s: Sess, x: St): void { s.attention = false; x.att = ""; x.note = ""; }
+export function observeWith(s: Sess, lk: Looker): Obs { return observe(s, lk.kids, lk.titles); }
+function rowMetric(r: Rule): boolean { return CALL_METRICS.indexOf(r.metric) >= 0 && r.metric !== "repeat_run"; }
+// an enabled rule reads the ledger (cost, tokens, call rows)
+export function ledgerRule(rs: RuleSet): boolean { for (const r of rs.rules) if (r.enabled && (rowMetric(r) || r.metric === "session_cost" || r.metric === "session_tokens")) return true; return false; }
+// rule id → value for every enabled rule whose where-scope the session passes
+export function ruleVals(rs: RuleSet, s: Sess, o: Obs, turnAt: (r: Rule) => number): Map<string, MVal> {
+  const m = new Map<string, MVal>(); const memo = new Map<string, MVal>();
+  let rows: Call[] = []; let haveRows = false;
+  for (const r of rs.rules) {
+    if (!r.enabled) continue;
+    const f = r.wf; if (f && !sessMatches(f, s)) continue;
+    if (rowMetric(r) && !haveRows) { rows = accOf(s).calls; haveRows = true; }
+    m.set(r.id, metricOf(r, s, o, turnAt(r), rows, memo));
+  }
+  return m;
+}
+// one watched session: turn tracking (first sight records only; a turn between two looks counts), values, engine step
+export function watchStep(s: Sess, o: Obs, rs: RuleSet, now: number): Trans[] {
+  const pr = lastPrompt(s.evs);
+  let x = st.get(s.path);
+  if (!x) { x = { busy: o.busy, prompt: pr, turnAt: 0 }; st.set(s.path, x); }
+  else if (o.busy) x.turnAt = 0;
+  else if (alarmOf(x.busy, o.busy, pr !== "" && pr !== x.prompt, o.asks === true) === "turn finished") x.turnAt = Math.max(now, x.turnAt + 1); // strictly newer: the engine tells turns apart by it (Gemini's approval dialog looks like a finished turn: alarmOf)
+  x.busy = o.busy; if (pr) x.prompt = pr;
+  const ta = x.turnAt;
+  return stepSession(rs, s.path, ruleVals(rs, s, o, (r: Rule) => ta), now);
+}
+export function forgetSession(path: string): void { st.delete(path); unwatch(path); forget(path); }
+export function ruleOf(rs: RuleSet, id: string): Rule | null { for (const r of rs.rules) if (r.id === id) return r; return null; }
 
 function tick(): void {
-  const kids = kidsMap();
-  const tt = new Map<string, string>(); let read = false; // tmux pane titles: one spawn per look, only when a live agent reports approval in its title
-  const titles = (): Map<string, string> => { if (!read) { read = true; for (const [k, v] of paneTitles()) tt.set(k, v); } return tt; };
+  const rs = rules();
+  const lk = looker();
   const now = Date.now();
   const cur = S.mode === "list" && S.tab === 0 ? current() : null;
   const cp = cur ? cur.path : "";
   if (cp !== selPath) { selPath = cp; selSince = now; }
+  let changed = false;
   for (const s of sessions.values()) {
-    if (!watched(s)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } st.delete(s.path); continue; }
+    if (!watched(s)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } if (st.has(s.path) || watching(s.path)) forgetSession(s.path); continue; }
     loadTail(s);
-    const o = observe(s, kids, titles);
-    const r = stuckOf(o);
-    s.stuck = r[0] ?? "";
-    let x = stateOf(s);
-    const pr = lastPrompt(s.evs);
-    if (!x) { x = { busy: o.busy, att: "", attAt: 0, note: "", appr: false, bell: 0, stuckNote: "", prompt: pr }; st.set(s.path, x); } // first sight: record only
-    x.stuckNote = r[1] ?? "";
-    const a = approvalNote(o);
-    const why = alarmOf(x.busy, o.busy, pr !== "" && pr !== x.prompt, a !== "");
-    if (why === "approval?" && !x.appr) raise(s, x, why, a);
-    else if (why === "turn finished") raise(s, x, why, "");
-    else if (!x.busy && o.busy && x.att && !a) clear(s, x);
-    if (a && x.att === "approval?") x.note = a;
-    else if (!a && x.att === "approval?") clear(s, x);
-    x.busy = o.busy; if (pr) x.prompt = pr; x.appr = a !== "";
+    const o = observe(s, lk.kids, lk.titles);
+    for (const t of watchStep(s, o, rs, now)) {
+      const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
+      onTrans(s, r, t, a.acked, false, true, rs.notify, a.v, render(r, a.v, t.to || t.from, s), a.lvAt);
+      changed = true;
+    }
     // the user looked: selected > 1s, or its transcript is open
-    if (x.att && ((cp === s.path && now - selSince > 1000) || (S.tv !== null && S.tv.s === s))) clear(s, x);
+    if ((cp === s.path && now - selSince > 1000) || (S.tv !== null && S.tv.s === s)) ackLook(rs, s.path);
+    const f = flags(rs, s.path);
+    s.attention = f[0] === "1"; s.stuck = f[1] ?? "";
   }
+  prune((p: string) => sessions.has(p));
+  for (const p of [...st.keys()]) if (!sessions.has(p)) st.delete(p);
+  if (changed || helpVer !== R.ver) helpRules(rs);
 }
 H.onWatch.push(tick);
 
+// --json: one-shot evaluation on the current state (no tick history, no bell/desktop/command, no ack); live TUI state wins
+const SNAP = new Map<string, Alert[]>();
 H.complete.push((s: Sess) => {
   if (!watched(s)) { s.attention = false; s.stuck = ""; return; }
+  if (watching(s.path)) return; // the TUI's engine has the history
+  const rs = rules();
   if (!allProcs.size) refreshProcs();
   loadTail(s);
+  if (ledgerRule(rs)) ledgerComplete(s);
   const o = observe(s, kidsMap(), paneTitles);
-  const r = stuckOf(o);
-  s.stuck = r[0] ?? "";
-  const x = stateOf(s);
-  s.attention = (x !== null && x.att !== "") || approvalNote(o) !== "";
+  // turn_done: threshold 0 needs a transition (absent); a threshold > 0 counts from the last recorded activity when idle
+  const vals = ruleVals(rs, s, o, (r: Rule) => (r.hasDeg ? r.deg : r.crit) > 0 ? s.mtime : 0);
+  const sn = snapshot(rs, s, vals, Date.now());
+  s.attention = sn.att; s.stuck = sn.stuck;
+  SNAP.set(s.path, sn.alerts);
 });
+// the firing alerts of a session: the live engine's in the TUI / --watch, else the --json snapshot's
+export function alertsOf(s: Sess): Alert[] { return watching(s.path) ? firing(R.set, s) : SNAP.get(s.path) ?? []; }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
 const B = CSI + "1m";
 H.rowBadges.push((s: Sess) => s.stuck ? fg(C.red) + B + "⚠" + RST : s.attention ? fg(C.yellow) + B + "◆" + RST : "");
+function labelText(a: Alert): string { let o = ""; for (const [k, v] of a.labels) o += " " + k + "=" + v; return o ? fg(C.sub) + o + RST : ""; }
+// one line per unacknowledged firing alert; built-ins keep their wording
 H.previewSections.push((s: Sess, w: number) => {
   const out: string[] = [];
-  const x = stateOf(s);
-  if (s.attention && x) {
-    const d = x.att === "approval?" ? "approval? · " + x.note : "waiting for you · " + (x.att || "turn finished") + " " + ago(x.attAt) + " ago";
-    out.push(fg(C.yellow) + B + "◆ " + RST + fg(C.yellow) + d + RST);
+  for (const a of firing(R.set, s)) {
+    if (a.acked) continue;
+    const r = ruleOf(R.set, a.rule); if (!r) continue;
+    if (a.level === 1) {
+      const d = r.builtin && r.id === "approval" ? "approval? · " + a.message
+        : r.builtin && r.id === "waiting" ? "waiting for you · " + a.message + " " + ago(a.since) + " ago" : r.id + " · " + a.message;
+      out.push(fg(C.yellow) + B + "◆ " + RST + fg(C.yellow) + d + RST + labelText(a));
+    } else out.push(fg(C.red) + B + "⚠ " + RST + fg(C.red) + r.reason + fg(C.sub) + " · " + a.message + RST + labelText(a));
   }
-  if (s.stuck) out.push(fg(C.red) + B + "⚠ " + RST + fg(C.red) + s.stuck + (x && x.stuckNote ? fg(C.sub) + " · " + x.stuckNote : "") + RST);
   return out;
 });
 H.headerWidgets.push((w: number) => {
@@ -215,4 +160,24 @@ H.keys.push((mode: string, k: string) => {
 H.helpSections.push({ name: "watchdog", ctx: "sessions", keys: [
   ["!", "jump to next ◆ waiting, then ⚠ stuck"],
   ["◆", "waiting for you: turn done / approval?"], ["", "bell + notification (AGENTGLASS_NOTIFY=0)"],
-  ["⚠", "stuck: loop · stalled · long cmd · spin"] ] });
+  ["⚠", "stuck: loop · stalled · long cmd · spin"],
+  ["rules", "~/.agentglass/rules.json: agentglass rules check"] ] });
+// the rules in force with their firing count, then the newest transitions (rebuilt on reload and on transitions)
+const RULES_HELP: string[][] = [];
+let helpVer = -1;
+function helpRules(rs: RuleSet): void {
+  helpVer = R.ver;
+  RULES_HELP.length = 0;
+  for (const r of rs.rules) {
+    let n = 0; for (const s of sessions.values()) { const a = stateOf(s.path, r.id); if (a && a.level > 0) n++; }
+    const u = unitOf(r.metric);
+    const thr = (r.hasDeg ? "◆" + r.op + thrText(u, r.deg) : "") + (r.hasDeg && r.hasCrit ? " " : "") + (r.hasCrit ? "⚠" + r.op + thrText(u, r.crit) : "");
+    RULES_HELP.push([r.id, (r.enabled ? "" : "off · ") + r.metric + " " + thr + (n ? " · " + String(n) + " firing" : "")]);
+  }
+  for (let i = LOG.length - 1; i >= 0 && i >= LOG.length - 5; i--) {
+    const t = LOG[i]; const s = sessions.get(t.path);
+    const d = new Date(t.at); const hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    RULES_HELP.push([hm, t.rule + " " + t.state + " " + severityOf(t.to || t.from) + (s ? " · " + titleOf(s).slice(0, 24) : "")]);
+  }
+}
+H.helpSections.push({ name: "rules", ctx: "sessions", keys: RULES_HELP });
