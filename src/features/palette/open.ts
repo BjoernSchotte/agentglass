@@ -140,8 +140,9 @@ function handOff(ref: string): boolean {
   spoolAwait(p, 2000, uid, info, (reply: string): void => {
     if (reply === "ok" || reply === "ok palette") { warn("opened in running agentglass (pid " + String(holder) + ")"); process.exit(0); }
     if (reply === "err not-found") cliError("not_found", "no session " + ref + " (asked the running agentglass, pid " + String(holder) + ")", "agentglass sessions lists them", 3);
-    if (reply === "err bad-request") cliError("usage", "the running agentglass refused the link", "agentglass open --help shows the link forms", 2);
-    if (reply === "err busy") warn("the running agentglass is busy (more than 10 links a minute) — opening a new window");
+    // the link parsed here, so a refusal means an older running agentglass that lacks this link form (e.g. trace ids)
+    if (reply === "err bad-request") warn("the running agentglass (pid " + String(holder) + ") does not know this link form (an older version?) — opening a new window");
+    else if (reply === "err busy") warn("the running agentglass is busy (more than 10 links a minute) — opening a new window");
     else warn("the running agentglass (pid " + String(holder) + ") did not answer within 2 s — opening a new window");
     ownTui(parseRef(ref));
   });
