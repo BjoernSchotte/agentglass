@@ -21,23 +21,34 @@ function bonusAt(hay: string, i: number): number {
 // scores can be negative (gaps, long haystacks): no match is this sentinel, never a sign test
 export const NO_MATCH = -1e9;
 // one term against one haystack (low = hay lower-cased, used unless the term is case-sensitive); NO_MATCH = no match;
-// pos receives the matched positions
+// pos receives the matched positions. fzf v1 scores only the first window; this scores the windows that start at the
+// first TRIES occurrences of the term's first character and keeps the best ("pi" as a word beats an earlier p…i)
+const TRIES = 6;
+const tryPos: number[] = [];
 export function scoreTerm(hay: string, low: string, t: string, cs: boolean, pos: number[]): number {
   const h = cs ? hay : low; const n = t.length;
   pos.length = 0;
   if (!n) return 0;
   // indexOf/lastIndexOf: native scans, several times faster than a charCodeAt loop in the native build
-  let e = -1;
-  for (let j = 0; j < n; j++) { e = h.indexOf(t.charAt(j), e + 1); if (e < 0) return NO_MATCH; }
-  let s = e + 1; // backward from the end: the latest start that still holds the whole term
-  for (let j = n - 1; j >= 0; j--) s = h.lastIndexOf(t.charAt(j), s - 1);
-  let score = 0; let last = -2; let i = s - 1;
-  for (let j = 0; j < n; j++) {
-    i = h.indexOf(t.charAt(j), i + 1);
-    pos.push(i); score += bonusAt(hay, i) + (i === last + 1 ? 4 : 0); last = i;
+  let best = NO_MATCH; let st = h.indexOf(t.charAt(0));
+  for (let k = 0; k < TRIES && st >= 0; k++) {
+    let e = st;
+    for (let j = 1; j < n && e >= 0; j++) e = h.indexOf(t.charAt(j), e + 1);
+    if (e < 0) break; // no later start can hold the whole term either
+    let s = e + 1; // backward from the end: the latest start that still holds the whole term
+    for (let j = n - 1; j >= 0; j--) s = h.lastIndexOf(t.charAt(j), s - 1);
+    let score = 0; let last = -2; let i = s - 1; tryPos.length = 0;
+    for (let j = 0; j < n; j++) {
+      i = h.indexOf(t.charAt(j), i + 1);
+      tryPos.push(i); score += bonusAt(hay, i) + (i === last + 1 ? 4 : 0); last = i;
+    }
+    const v = score - Math.min(30, e - s + 1 - n);
+    if (v > best) { best = v; pos.length = 0; for (const x of tryPos) pos.push(x); }
+    st = h.indexOf(t.charAt(0), s + 1);
   }
-  return score - Math.min(30, e - s + 1 - n) - 0.1 * Math.min(40, hay.length); // short items win ties; beyond 40 columns
-  // length says nothing (a session's text carries project, harness and id) and the natural order (recency) decides
+  if (best === NO_MATCH) return NO_MATCH;
+  return best - 0.1 * Math.min(40, hay.length); // short items win ties; beyond 40 columns length says nothing (a
+  // session's text carries project, harness and id) and the natural order (recency) decides
 }
 const scratch: number[] = [];
 // every term must match; the item's score is the sum (bonus[i], MRU …, is added by match); NO_MATCH = no match

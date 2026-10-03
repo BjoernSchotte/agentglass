@@ -19,7 +19,7 @@ ok("smart case: Fix does not match fix bug", sc("fix bug", "Fix") === NO_MATCH, 
 ok("smart case: fix matches Fix bug", sc("Fix bug", "fix") !== NO_MATCH, String(sc("Fix bug", "fix")));
 ok("AND over terms", sc("Fix bug", "fix zz") === NO_MATCH && sc("Fix bug", "fix bug") !== NO_MATCH, "");
 const longWeak = "Global: Keyboard shortcuts and a long tail of words (help)";
-ok("a weak match in a long item still matches (negative score)", sc(longWeak, "a") !== NO_MATCH && sc(longWeak, "a") < 0 && run([longWeak], "a").length === 1, String(sc(longWeak, "a")));
+ok("a weak match in a long item still matches (negative score)", sc(longWeak, "y") !== NO_MATCH && sc(longWeak, "y") < 0 && run([longWeak], "y").length === 1, String(sc(longWeak, "y")));
 const p: number[] = []; scoreTerm("a-b-abc", "a-b-abc", "abc", false, p);
 ok("backward pass tightens the window", JSON.stringify(p) === "[4,5,6]", JSON.stringify(p));
 const hm = match(["Fix bug", "fix"], ["fix bug", "fix"], "fi", null, 200, null);
@@ -30,6 +30,11 @@ ok("shorter item wins a tie", hm.hits[0].i === 1, ids(hm.hits));
 const tl = ["Todo web app · agtest-command-palette-opencode · OpenCode · ses_1", "Todo web app · agtest-x-opencode · OpenCode · ses_2"];
 const tm = match(tl, tl.map((x: string) => x.toLowerCase()), "todo", null, 200, null);
 ok("long items: a tie keeps the natural order", tm.hits[0].i === 0 && tm.hits[0].score === tm.hits[1].score, ids(tm.hits));
+// the best window, not the first: "pi" as a word (the harness) beats a p…i spread earlier in the title
+const pw: number[] = []; const hp = "Build a small todo web app here: index.html · pi"; const vp = scoreTerm(hp, hp.toLowerCase(), "pi", false, pw);
+ok("best window wins", JSON.stringify(pw) === "[46,47]", JSON.stringify(pw) + " " + String(vp));
+const pr2 = match(["Build a small todo web app here: index.html · pi", "Build a tiny todo web app in this dir · pi"], ["build a small todo web app here: index.html · pi", "build a tiny todo web app in this dir · pi"], "pi todo", null, 200, null);
+ok("same harness word, same title word → tie, natural order", pr2.hits[0].i === 0 && pr2.hits[0].score === pr2.hits[1].score, ids(pr2.hits) + " " + String(pr2.hits[0].score) + "/" + String(pr2.hits[1].score));
 const bm = match(["Fix bug", "fix"], ["fix bug", "fix"], "fi", null, 200, [5, 0]);
 ok("bonus lifts an item", bm.hits[0].i === 0, ids(bm.hits));
 
