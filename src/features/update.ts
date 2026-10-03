@@ -11,6 +11,7 @@ import { OS } from "../platform/index.ts";
 import { H } from "../hooks.ts";
 import { BUILD } from "../build-info.ts";
 import { installMethod, samePath, versionOfTag, versionInfo } from "./version.ts";
+import { errLine, interactive } from "./agentenv.ts";
 import { type Rel, relsFromJson, pickTarget, isDowngrade, sumFor } from "./update-core.ts";
 
 const REPO = "BjoernSchotte/agentglass";
@@ -34,7 +35,7 @@ function opts(args: string[]): Opts | string {
   return o;
 }
 function say(o: Opts, text: string, data: Record<string, unknown>): void { console.log(o.json ? JSON.stringify(data) : text); }
-function fail(msg: string, code: number): number { console.error("agentglass update: " + msg); return code; }
+function fail(msg: string, code: number): number { errLine("agentglass update", code === 2 ? "usage" : "update_failed", msg, ""); return code; }
 function rmrf(p: string): void { try { execFileSync("rm", ["-rf", p]); } catch (e) { /* best effort */ } }
 function tagOf(t: string): string { return t.startsWith("dev-") || t.startsWith("v") ? t : "v" + t; }
 
@@ -117,7 +118,7 @@ async function update(args: string[]): Promise<number> {
     const plan = { channel: tch, installed: BUILD.version, target: tv, tag: target.tag, downgrade: down, method, path: exe };
     if (o.dry) { say(o, "would update " + BUILD.version + " → " + tv + " (" + target.tag + ")" + (down ? " — a downgrade" : ""), plan); return 0; }
     if (down && !o.yes) {
-      if (!process.stdin.isTTY || !ask("downgrade " + BUILD.version + " → " + tv + "? [y/N] "))
+      if (!interactive() || !ask("downgrade " + BUILD.version + " → " + tv + "? [y/N] "))
         return fail("refusing to downgrade " + BUILD.version + " → " + tv + " without confirmation (use --yes)", 2);
     }
     const asset = "agentglass-" + BUILD.platform + ".tar.gz";
@@ -143,7 +144,7 @@ async function update(args: string[]): Promise<number> {
 
 // first in line: the generic CLI handler would take `update --json` for a --json snapshot
 H.cli.unshift((args: string[]): boolean => {
-  if (args[0] !== "update") return false;
+  if (args[0] !== "update" || args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) return false; // help: cli.ts prints the record
   update(args).then((code: number) => process.exit(code));
   return true;
 });

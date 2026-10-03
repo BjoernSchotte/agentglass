@@ -1,6 +1,7 @@
 #!/bin/sh
 # end-to-end tests for `agentglass update` against file:// fixture releases (two real builds): sh scripts/update.test.sh
 set -e
+export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'chmod -R u+w "$t" 2>/dev/null; rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 os=$(uname -s | tr 'A-Z' 'a-z'); case "$(uname -m)" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; esac

@@ -463,7 +463,45 @@ agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL
 agentglass --watch | jq -c 'select(.kind=="alert") | .alert'        # alert rule transitions (fire, escalate, …)
 agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one
 agentglass --redact                                                 # privacy mode for streams and screenshots
+agentglass sessions --since 7d --format table                       # json | jsonl | csv | table, for every list
+agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
 ```
+
+`--format csv` is RFC 4180 with a header row: nested fields are flattened (`tokens_in`), lists joined with `;`, `null`
+is empty, and text starting with `= + - @` gets a leading `'` so spreadsheets do not run it. `--fields` picks and
+orders columns; an unknown name exits 2 and lists the valid ones. On a terminal the default is `table`, in a pipe
+`json` (`--json` stays JSON).
+
+## Inside coding agents
+
+When a coding agent runs `agentglass` from its shell tool, agentglass notices (`CLAUDECODE`, `AI_AGENT`, `CODEX_*`,
+`GEMINI_CLI`, `PI_CODING_AGENT`, `OPENCODE*`, `KIRO_SESSION_ID`) and behaves like a CLI for machines: it never starts
+the TUI and never prompts, bare `agentglass` prints a compact JSON help (< 1 KB), `--help` is JSON, output is compact
+JSON, and errors are one line `{"error":{"code","message","hint"}}` on stderr. `--agent` / `--no-agent` (or
+`AGENTGLASS_AGENT=1|0`) force it either way, for example to open the TUI in tmux started from an agent.
+
+```sh
+agentglass session current --fields costUsd,tools,errors   # this session: cost, models, tool stats, failed calls, repeats
+agentglass session last                                     # the previous session in this project
+agentglass errors --since 24h --limit 5                     # failed tool calls with the first 200 chars of their output
+agentglass cost --since today --by model                    # rows per day | model | harness | project | session
+agentglass sessions --since 24h                             # the session list (default: the last 24 h)
+agentglass --watch --for 30s                                # inside an agent --watch needs --for <dur> or --until-idle
+```
+
+A `<ref>` is `current` (found through the agent's session variable or the process tree), `last`, `parent`, an id,
+a unique id prefix of 6+ characters, or `<harness>:<id>`. Exit codes: 0 ok (also when empty), 1 runtime failure,
+2 usage error, 3 not found, 4 ambiguous reference. As JSON, `errors` and `cost` rows come in
+`{"rows":[…],"source":"…","scope":"…"}`.
+
+Agent output lands in the agent's context and goes to its model provider, so inside an agent the queries only see
+the current project (the nearest directory with `.git`). `--all-projects` widens one command; `{"agent": {"scope":
+"all"}}` in `~/.agentglass/config.json` widens all of them and `--project-only` narrows again. `agentglass cost`
+without `--by`/`--since` stays the global summary (the budget is global). `--redact` works here too.
+
+For your `CLAUDE.md` / `AGENTS.md`:
+
+> Run `agentglass session current` to see this session's cost and failed tool calls.
 
 ## Custom agent commands
 

@@ -15,14 +15,17 @@ import { VERSION, num, accOut, accIn } from "./codec.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
-// One-shot runs that never read call rows and never save (`cost`, plain --json / --watch, --help, --version) neither load
-// nor build them: on a long history that is ~150 MB of a cold --json. A --filter or --pinned may need rows (and saves).
-const ARGV = process.argv.slice(2);
+// One-shot runs that never read call rows and never save (`cost`, `sessions`, `session`, plain --json / --watch, --help,
+// --version) neither load nor build them: on a long history that is ~150 MB of a cold --json. A --filter or --pinned may
+// need rows (and saves); `errors` reads them (every failed call within their retention).
+const GLOBAL = ["--agent", "--no-agent", "--redact"]; // flags of any command (main.ts moves them last)
+const ARGV = process.argv.slice(2).filter((a: string) => GLOBAL.indexOf(a) < 0);
 function rowless(): boolean {
-  if (ARGV[0] === "cost") return true;
+  const filtered = ARGV.indexOf("--filter") >= 0 || ARGV.indexOf("--pinned") >= 0;
+  if (ARGV[0] === "cost" || ARGV[0] === "sessions" || ARGV[0] === "session") return !filtered;
   if (ARGV[0] === "triage") return false; // ranks call rows (and saves what it indexed)
   const oneShot = ["--json", "--watch", "--help", "-h", "--version"].some((x: string) => ARGV.indexOf(x) >= 0);
-  if (!oneShot || ARGV.indexOf("--filter") >= 0 || ARGV.indexOf("--pinned") >= 0) return false;
+  if (!oneShot || filtered) return false;
   // --json alerts / --watch alert lines of a rule on call rows (tool_calls, tool_errors, tool_error_rate)
   return !((ARGV.indexOf("--json") >= 0 || ARGV.indexOf("--watch") >= 0) && ARGV.indexOf("--no-alerts") < 0 && rulesNeedRows());
 }

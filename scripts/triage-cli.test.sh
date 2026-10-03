@@ -17,7 +17,7 @@ call() { # id tool input err
 for i in 1 2 3; do call "$i" Bash '{"command":"npm test"}' ',"is_error":true'; done
 call 4 Bash '{"command":"ls"}' ''
 for i in 5 6 7 8 9 10; do call "$i" Read '{"file_path":"/w/app/README.md"}' ''; done
-ag() { HOME="$T/home" AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" "$@"; }
+ag() { HOME="$T/home" AGENTGLASS_AGENT=0 AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" "$@"; }
 ag triage --preset errors --days 1 --json > "$T/out.json"
 grep -q '"selection":{"expr":"status is error","n":3}' "$T/out.json" || { echo "FAIL selection"; cat "$T/out.json"; exit 1; }
 grep -q '"baseline":{"mode":"rest","expr":"","n":7}' "$T/out.json" || { echo "FAIL baseline"; cat "$T/out.json"; exit 1; }
