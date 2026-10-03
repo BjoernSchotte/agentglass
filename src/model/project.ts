@@ -6,7 +6,7 @@
 import { existsSync, realpathSync, statSync, openSync, writeSync, closeSync, renameSync, mkdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { scrubRemote } from "../util/giturl.ts";
-import { HOME, readText, listDir } from "../util/fs.ts";
+import { HOME, readText, listDir, run } from "../util/fs.ts";
 import { type Obj, obj, str } from "../util/json.ts";
 import { home } from "../util/text.ts";
 
@@ -142,16 +142,27 @@ const queue: string[] = []; const queued = new Set<string>();
 const sessCwd = new Map<string, string>(); // session path → cwd (Claude/Codex heads need not be re-read after a restart)
 const NONE = ident("none", "(no project)", "none", "");
 const REVALIDATE_MS = 600000;
-// ver: bumps when an identity is added or changes (aggregation cache key); todo: cwds still queued
-export const P = { ver: 0, todo: 0, dirty: false };
+// ver: bumps when an identity is added or changes (aggregation cache key); todo: cwds still queued; dirty: unsaved;
+// sync: resolve on first ask instead of queueing (one-shot CLI runs have no tick; the TUI turns it off on its first tick)
+export const P = { ver: 0, todo: 0, dirty: false, sync: false };
+const GIT: GitRun[] = [run]; // the git runner for sync resolves (checks swap in a stub)
+export function setGit(g: GitRun): void { GIT[0] = g; }
 // AGENTGLASS_CACHE_DIR: branch builds keep their caches apart (like the ledger)
 export const PROJECTS_FILE = join(process.env.AGENTGLASS_CACHE_DIR || join(HOME, ".agentglass", "cache"), "projects.json");
 
 export function identOfCwd(cwd: string): Ident | null {
   if (!cwd) return NONE;
   const e = cwds.get(cwd); if (e) return e.id;
+  if (P.sync) return identNow(cwd);
   if (!queued.has(cwd)) { queued.add(cwd); queue.push(cwd); P.todo = queue.length; }
   return null;
+}
+// cached, else resolved now (callers that cannot wait: CLI agent-mode scope, projectRoot)
+export function identNow(cwd: string): Ident {
+  if (!cwd) return NONE;
+  const e = cwds.get(cwd); if (e) return e.id;
+  const g = GIT[0] ?? run; const id = resolveCwd(cwd, g); store(cwd, id, Date.now());
+  return id;
 }
 function same(a: Ident, b: Ident): boolean { return JSON.stringify(a) === JSON.stringify(b); }
 function store(cwd: string, id: Ident, now: number): void {
@@ -162,7 +173,7 @@ function store(cwd: string, id: Ident, now: number): void {
 }
 // a re-resolve: a vanished cwd is never re-resolved; a git identity survives a broken .git link (main repo deleted)
 function revalidate(cwd: string, e: Ent, now: number, git: GitRun): void {
-  e.checked = now;
+  cwds.set(cwd, { id: e.id, mt: e.mt, checked: now }); // a fresh record: scriptc may hand out copies of Map records
   if (e.id.gone || isDir(cwd) !== 1) return;
   if (e.id.common && cfgMtime(e.id.common) === e.mt && isDir(e.id.common) === 1) return;
   const id = resolveCwd(cwd, git);

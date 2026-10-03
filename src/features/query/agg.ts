@@ -9,7 +9,7 @@ import { type Day, L } from "../usage/record.ts";
 import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
 import { type Compiled, sessMatches, dayMatches, eachCall, weekdayOf, livePid } from "./eval.ts";
-import { projectOf } from "./project.ts";
+import { repoOf } from "./project.ts";
 import { titleOf, working } from "../../model/sessions.ts";
 
 export type Weight = "count" | "cost" | "tokens" | "duration";
@@ -51,7 +51,7 @@ function startOf(s: Sess): { hour: string; wd: string } { const a = ledger.get(s
 export function sessDim(dim: string, s: Sess): string[] {
   switch (dim) {
     case "harness": return [s.h];
-    case "repo": case "project": return [projectOf(s.cwd)];
+    case "repo": case "project": return [repoOf(s)];
     case "cwd": return [s.cwd];
     case "branch": return [s.branch];
     case "model": return sessModels(s);

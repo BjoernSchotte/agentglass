@@ -32,6 +32,7 @@ import "./features/themes.ts";
 import "./features/ticker.ts";
 import "./features/watchdog.ts";
 import "./features/usage/cache.ts";
+import "./features/repos/ident.ts";
 import "./features/usage/stats.ts";
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";

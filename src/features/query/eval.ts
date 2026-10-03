@@ -13,7 +13,7 @@ import { callCutoff } from "../usage/callcache.ts";
 import type { Attr, Clause, QErr, Val } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
 import { printClause, suggest } from "./parse.ts";
-import { projectOf } from "./project.ts";
+import { repoVals } from "./project.ts";
 export { callCutoff };
 
 export type Ctx = "list" | "stats" | "json" | "watch" | "procs";
@@ -67,7 +67,7 @@ export function sessVal(key: string, s: Sess): Val {
   const x = EXT.get(key); if (x && x.sess) { const f = x.sess; return f(s); }
   switch (key) {
     case "harness": return V([s.h]);
-    case "repo": return V([projectOf(s.cwd).toLowerCase()]);
+    case "repo": return V(repoVals(s));
     case "cwd": return V([home(s.cwd).toLowerCase()]);
     case "branch": return V([s.branch.toLowerCase()]);
     case "model": return modelsOf(s);

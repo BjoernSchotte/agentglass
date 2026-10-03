@@ -1,7 +1,7 @@
 // agentglass — machine-readable CLI: --json snapshot, --watch JSONL event stream, --help, --version (no TTY needed)
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
-import { H, complete, screenOut } from "../hooks.ts";
+import { H, complete, screenOut, display } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf } from "../harness/index.ts";
@@ -16,6 +16,8 @@ import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
 import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
 import { livePid } from "./query/eval.ts";
+import { identOf } from "./query/project.ts";
+import { labelOf } from "../model/project.ts";
 
 // option rows [option, description] ("" = the description continues); one description column for both tables, past the longest option
 const CMDS: string[][] = [
@@ -54,10 +56,11 @@ ${table(OPTS, col)}
 
 --json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
   activity tokens{in,out,cacheRead,cacheWrite} costUsd billing{mode,plan,source} unpricedTokens unpricedCredits
-  tools linesAdded linesRemoved attention stuck skills[{name,source,n}]
+  tools linesAdded linesRemoved attention stuck skills[{name,source,n}] repo{key,label,kind,worktree,top,remote}
   (costUsd = API list price, null when only unpriced usage exists; billing.mode = api|plan|metered|gateway|unknown,
   source = session|process|config — config = assumed from the current config files;
-  skills source = command: a slash command / $mention, model: the agent chose it)
+  skills source = command: a slash command / $mention, model: the agent chose it;
+  repo = the project: worktrees and clones of one remote share key, kind = git|gitdir|path|none, null = no cwd known)
 --watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears
 
@@ -78,7 +81,10 @@ interface JSess {
   id: string; harness: string; title: string; cwd: string; branch: string; remote: string | null; model: string; path: string; updated: string; bytes: number;
   live: boolean; pid: number; status: string; parent: string | null; kind: string; subagents: number; activity: string; tokens: JTok;
   costUsd: number | null; billing: JBill; unpricedTokens: number; unpricedCredits: number; tools: number; linesAdded: number; linesRemoved: number; attention: boolean; stuck: string | null; skills: SkillUse[];
+  repo: JRepo | null;
 }
+// repo: the session's project (repo-view); top = real repo top, remote scrubbed; faked through display() under --redact
+interface JRepo { key: string; label: string; kind: string; worktree: string; top: string; remote: string }
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
@@ -121,12 +127,25 @@ function snapshot(o: Opts): void {
       tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
       costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
       unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-      attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null),
+      attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null), repo: repoJ(s),
     });
   }
   out(process.stdout.isTTY ? JSON.stringify(res, null, 2) : JSON.stringify(res));
   if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run
   process.exit(0);
+}
+
+// a project key under --redact: its path part faked like labels and cwds
+function keyShown(key: string): string {
+  if (!REDACT) return key;
+  if (key.startsWith("git:file/")) return "git:file" + display("cwd", key.slice(8), null);
+  if (key.startsWith("git:")) { const i = key.indexOf("/"); return i > 0 ? key.slice(0, i + 1) + display("repo", key.slice(i + 1), null) : key; }
+  const c = key.indexOf(":"); return c > 0 && key.slice(c + 1).startsWith("/") ? key.slice(0, c + 1) + display("cwd", key.slice(c + 1), null) : key;
+}
+function repoJ(s: Sess): JRepo | null {
+  const id = identOf(s); if (!id) return null;
+  return { key: keyShown(id.key), label: display("repo", labelOf(id), s), kind: id.kind, worktree: id.worktree ? display("repo", id.worktree, s) : "",
+    top: id.top ? display("cwd", id.top, s) : "", remote: id.remote ? display("remote", id.remote, s) : "" };
 }
 
 function oneLine(t: string): string {

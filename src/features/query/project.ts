@@ -1,39 +1,48 @@
-// agentglass — the project (repo) a working directory belongs to; repo-view later refines the identity behind these names
+// agentglass — the project (repo) a working directory or session belongs to, backed by repo-view's identity (src/model/project.ts)
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, statSync } from "node:fs";
-import { dirname, basename, join } from "node:path";
-import { readText } from "../../util/fs.ts";
+import { dirname } from "node:path";
+import type { Sess } from "../../model/types.ts";
+import { parentOf } from "../../model/sessions.ts";
+import { type Ident, identOfCwd, identNow, labelOf, rememberSess, cwdOfSess, normRemote } from "../../model/project.ts";
+import { base } from "../../util/json.ts";
+import { realCwd } from "../redact.ts";
+import { display } from "../../hooks.ts";
+import { REDACT } from "../redact-on.ts";
 
-const roots = new Map<string, string>();
-// the nearest dir with .git walking up from cwd; a worktree's .git file ("gitdir: X/.git/worktrees/N") resolves to X; "" none
+// the main worktree of cwd's repo (a linked worktree resolves to its main repo; a submodule is its own); "" non-git
 export function projectRoot(cwd: string): string {
   if (!cwd) return "";
-  const hit = roots.get(cwd); if (hit !== undefined) return hit;
-  let dir = cwd; let root = "";
-  for (let i = 0; i < 64; i++) {
-    const g = join(dir, ".git");
-    if (existsSync(g)) {
-      root = dir;
-      let isFile = false; try { isFile = statSync(g).isFile(); } catch (e) { isFile = false; }
-      if (isFile) {
-        const m = /gitdir:\s*(.+)/.exec(readText(g, 0, 4096));
-        const gd = m ? (m[1] ?? "").trim() : "";
-        const at = gd.indexOf("/.git/worktrees/");
-        if (at > 0) root = gd.slice(0, at);
-      }
-      break;
-    }
-    const up = dirname(dir);
-    if (up === dir) break;
-    dir = up;
-  }
-  if (roots.size > 4096) roots.clear();
-  roots.set(cwd, root);
-  return root;
+  const id = identNow(cwd);
+  if (id.kind !== "git" && id.kind !== "gitdir") return "";
+  return id.common.endsWith("/.git") ? dirname(id.common) : id.top;
 }
-// basename of the repo root, or of cwd itself without a repo; "" for ""
+// the project label of cwd; its basename until the identity is resolved (existing clauses keep matching); "" for ""
 export function projectOf(cwd: string): string {
   if (!cwd) return "";
-  const r = projectRoot(cwd);
-  return basename(r || cwd.replace(/\/+$/, "")) || cwd;
+  const id = identOfCwd(cwd);
+  return id ? labelOf(id) : base(cwd.replace(/\/+$/, "")) || cwd;
+}
+// a session's identity from its real cwd (a subagent without one: its parent's; after a restart: the remembered cwd);
+// null while unresolved (cwd in an unread head, or queued). A vanished cwd with a recorded remote is keyed by that remote.
+export function identOf(s: Sess): Ident | null {
+  let cwd = realCwd(s);
+  if (cwd) rememberSess(s.path, cwd);
+  else { const p = s.parent ? parentOf(s) : null; cwd = p ? realCwd(p) : ""; if (!cwd) cwd = cwdOfSess(s.path); }
+  if (!cwd && !s.headDone) return null;
+  const id = identOfCwd(cwd); if (!id || !id.gone || !s.remote) return id;
+  const n = normRemote(s.remote); if (!n) return id;
+  return { key: n.key, label: n.label, kind: "git", top: id.top, common: "", gitdir: "", worktree: "", remote: n.url, via: "", gone: true, unread: false };
+}
+// the session's project label (dimension value, Stats/triage grouping); the cwd basename while unresolved
+export function repoOf(s: Sess): string { const id = identOf(s); return id ? labelOf(id) : base(realCwd(s).replace(/\/+$/, "")) || "(no project)"; }
+// the repo attribute's values (lowercase): label and key; the cwd basename too for non-git dirs (clauses written against
+// basenames keep matching), and under --redact the faked label and cwd basename shown on screen
+export function repoVals(s: Sess): string[] {
+  const out: string[] = [];
+  const add = (v: string): void => { const l = v.toLowerCase(); if (l && out.indexOf(l) < 0) out.push(l); };
+  const id = identOf(s);
+  if (id) { const lb = labelOf(id); add(lb); add(id.key); if (id.kind === "path" || id.kind === "none") add(base(realCwd(s))); add(display("repo", lb, s)); }
+  else add(base(realCwd(s).replace(/\/+$/, "")));
+  if (REDACT && s.cwd) add(base(s.cwd.replace(/\/+$/, "")));
+  return out;
 }
