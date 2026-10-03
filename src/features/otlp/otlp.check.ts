@@ -17,8 +17,8 @@ let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + got + " want " + want); } }
 const HS = ["claude", "codex", "gemini", "opencode", "pi", "kiro", "fx"];
 const child = process.env["AGENTGLASS_GOLDEN_CHILD"] ?? "";
-// the scope version is the build's: normalized so a golden survives commits
-function norm(l: string): string { return l.replace(/"scope":\{"name":"agentglass","version":"[^"]*"\}/g, "\"scope\":{\"name\":\"agentglass\",\"version\":\"(build)\"}"); }
+// the scope version is the build's and os.type the runner's: normalized so a golden survives commits and macOS
+function norm(l: string): string { return l.replace(/"scope":\{"name":"agentglass","version":"[^"]*"\}/g, "\"scope\":{\"name\":\"agentglass\",\"version\":\"(build)\"}").replace(/"key":"os.type","value":\{"stringValue":"darwin"\}/g, "\"key\":\"os.type\",\"value\":{\"stringValue\":\"linux\"}"); }
 
 if (!child) {
   for (const h of HS) {

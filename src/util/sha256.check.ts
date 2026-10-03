@@ -14,11 +14,15 @@ eq("abc", sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb41
 eq("448-bit", sha256Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
 eq("896-bit", sha256Hex("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"), "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
 eq("million a", sha256Hex("a".repeat(1000000)), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
-// UTF-8 against the system tool
+// UTF-8 against the system tool (macOS has shasum, not sha256sum)
+function sys(input: string): string {
+  try { return execFileSync("sha256sum", [], { input, encoding: "utf8" }).split(" ")[0] ?? ""; }
+  catch (e) { return execFileSync("shasum", ["-a", "256"], { input, encoding: "utf8" }).split(" ")[0] ?? ""; }
+}
 const u = "ü€😀";
-eq("utf-8", sha256Hex(u), execFileSync("sha256sum", [], { input: u, encoding: "utf8" }).split(" ")[0] ?? "");
+eq("utf-8", sha256Hex(u), sys(u));
 // padding edges: lengths around one and two blocks
-for (const n of [55, 56, 63, 64, 65, 119, 120, 128]) eq("len " + String(n), sha256Hex("x".repeat(n)), execFileSync("sha256sum", [], { input: "x".repeat(n), encoding: "utf8" }).split(" ")[0] ?? "");
+for (const n of [55, 56, 63, 64, 65, 119, 120, 128]) eq("len " + String(n), sha256Hex("x".repeat(n)), sys("x".repeat(n)));
 
 // 1,000 random files (seeded xorshift) against OS.sha256File
 const dir = "/tmp/agentglass-sha-check-" + String(process.pid);

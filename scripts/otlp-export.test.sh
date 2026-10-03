@@ -13,7 +13,7 @@ run export --dry-run --since all > "$t/b.jsonl"
 eq "dry run lines" "$(wc -l < "$t/a.jsonl" | tr -d ' ')" 1
 cmp -s "$t/a.jsonl" "$t/b.jsonl" || { echo "FAIL dry run not stable"; fail=1; }
 g="$here/testdata/otlp/golden-claude.json"
-sed 's/"scope":{"name":"agentglass","version":"[^"]*"}/"scope":{"name":"agentglass","version":"(build)"}/g' "$t/a.jsonl" > "$t/n.jsonl"
+sed 's/"scope":{"name":"agentglass","version":"[^"]*"}/"scope":{"name":"agentglass","version":"(build)"}/g; s/"key":"os.type","value":{"stringValue":"darwin"}/"key":"os.type","value":{"stringValue":"linux"}/g' "$t/a.jsonl" > "$t/n.jsonl"
 if [ -f "$g" ]; then cmp -s "$t/n.jsonl" "$g" || { echo "FAIL dry run differs from $g"; diff "$t/n.jsonl" "$g" | head -5; fail=1; }; fi
 [ -z "$(ls -A "$t/otlp" 2>/dev/null)" ] || { echo "FAIL dry run wrote state: $(ls "$t/otlp")"; fail=1; }
 set +e
