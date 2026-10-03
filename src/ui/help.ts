@@ -9,7 +9,7 @@ import { harnessIds } from "../harness/index.ts";
 
 const HELP: HelpSec[] = [
   { name: "global", ctx: "", keys: [
-    ["?", "show / hide this help"], ["Tab  1  2", "switch Sessions / Processes"], ["q  ctrl-c", "quit"] ] },
+    ["?", "show / hide this help"], ["Tab  1-9", "switch tabs (Sessions, Processes, Stats, Repos: the numbers in the header)"], ["q  ctrl-c", "quit"] ] },
   { name: "sessions", ctx: "sessions", keys: [
     ["↑↓  j k", "move"], ["PgUp PgDn", "page"], ["g G  Home End", "first / last"],
     ["↵  →", "open live transcript"], ["space", "fold / unfold subagents"],
