@@ -109,7 +109,7 @@ function body(j: Job, now: number): () => void {
     if (w === "full") render(); else if (w === "header") renderTop(); else if (w === "dirty") S.dirty = true;
   };
   return () => { // render: build only when something changed, animates, a toast is up, or the clock texts are due
-    const toast = S.toast !== "" && now - S.toastAt < 5500; // includes the frame that removes it
+    const toast = S.toast !== "" && now - S.toastAt < S.toastMs + 500; // includes the frame that removes it
     if (!(sc.fixed || S.dirty || S.animating || toast || now - lastBuild >= forceMs(sc.lv))) return;
     lastBuild = now; S.frame++; render();
   };

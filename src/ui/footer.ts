@@ -39,7 +39,7 @@ export function renderFooter(): void {
   else hints += k("q", "quit");
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
   if (DBG.on && DBG.line) { const d = " " + fit(DBG.line, Math.min(width(DBG.line), W - 2)) + " "; put(W - width(d), y, bg(C.panel) + fg(C.dim) + d + RST); } // over the hints' tail
-  if (S.toast && Date.now() - S.toastAt < 5000) {
+  if (S.toast && Date.now() - S.toastAt < S.toastMs) {
     const tk = S.toastKind;
     const icon = tk === "ok" ? "✔" : tk === "err" ? "✖" : tk === "warn" ? "⚠" : "ℹ";
     const col = tk === "ok" ? C.green : tk === "err" ? C.red : tk === "warn" ? C.yellow : C.cyan;
