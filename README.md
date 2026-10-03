@@ -342,6 +342,7 @@ export AGENTGLASS_CURL="/opt/bin/curl"         # … or, without sqlite3, over t
 export AGENTGLASS_KIRO="kiro-cli"
 export AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"   # headless sends may edit files
 export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (default ~/.agentglass/cache)
+export AGENTGLASS_CONFIG="/tmp/ag-config.json"   # another config file (default ~/.agentglass/config.json)
 ```
 
 ## Supported harnesses
