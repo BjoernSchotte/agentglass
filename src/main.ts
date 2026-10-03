@@ -40,6 +40,7 @@ import "./features/usage/cache.ts";
 import "./features/repos/ident.ts";
 import "./features/usage/stats.ts";
 import "./features/repos/tab.ts";
+import "./features/vcs/view.ts";
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
 import "./features/triage/cli.ts";

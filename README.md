@@ -276,6 +276,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `1`–`9` `e` | open a referenced file in `$PAGER` / `$EDITOR` |
 | `P` (transcript) | replay the open transcript |
 | `c` | call graph (flame chart ⇄ call tree with `Tab`) |
+| `V` | git view: the session's commits, PRs/MRs, issues (see [Git linkage](#git-linkage)) |
 | `!` | jump to the next agent waiting for you |
 | `T` | cycle themes |
 | `Tab` `1` `2` `3` `4` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) ⇄ Repos |
@@ -311,6 +312,43 @@ rate, an 8-cell harness mix (by cost, by sessions when nothing is priced), chang
   `worktree` and `project.kind` (`git` `gitdir` `path` `none`). `--json` sessions carry
   `repo{key,label,kind,worktree,top,remote}`, and `agentglass --json --repos [--days N] [--filter …]` prints one
   object per project (`--days` defaults to 7, `0` = all history).
+
+## Git linkage
+
+Every session in a git worktree gets a `git` line in the preview — `3 commits (✓3 · ≈1 · ?1 shared not counted) ·
+PR #142 (created) · $0.84/commit` — and `V` opens its git view (Sessions list, transcript, Repos detail): commits with
+short sha, time, branch, `+add −del`, subject and status, then PRs/MRs, issues and other commit links. `↵` opens the
+transcript at the tool call that made the commit or printed the link, `y` copies the sha or URL.
+
+- **✓ counted**: the session's own commits — a `[branch sha] subject` banner in the output of its `git commit`,
+  `cherry-pick` or `revert` call (`cat`, `git log` or `git show` output never counts), or a commit in the worktree's
+  HEAD reflog made during one of its `git commit/merge/cherry-pick/revert/am/rebase` calls (+5 s). That covers
+  `git commit --quiet` and merges: `git merge` prints no banner, so a merge counts only when the session ran it.
+  An amend chain counts once. A ✓ commit rewritten later (rebase, squash) stays counted and shows `missing`.
+- **≈ listed, not counted**: other commits in the same worktree's reflog while the session was active (first
+  activity − 2 min … last activity + `git.tailPadMin`, default 10, `~/.agentglass/config.json`
+  `"git": {"tailPadMin": 10}`, 0–120; live sessions until now). The person may have made them.
+  **`? shared`**: the same, covered by several sessions of the worktree — listed on each, counted on none.
+- A banner whose sha the worktree's reflog should hold but does not (`git -C ../other commit`) is `elsewhere`, not
+  counted. Without a reflog (deleted, `core.logAllRefUpdates=false`, expired) the view says "no reflog — matched by
+  time" and lists the commits of the session's branch in its window by your `user.email` (≈, and only when no other
+  session of the project was active then).
+- PR/MR, issue and commit URLs of GitHub, GitLab (nested groups, `/-/merge_requests/`), Bitbucket and Gitea/Forgejo
+  are collected from tool output: `created` when `gh pr create`, `glab mr create`, `hub pull-request`, `tea pr
+  create`, `gh/glab issue create` or an MCP `create_pull_request`/`create_merge_request`/`create_issue` tool printed
+  them, else `mentioned`, from the first 64 KB of each log line (file dumps beyond that are skipped). The `git push`
+  hint `…/pull/new/<branch>` is no PR. URLs are stored without credentials, query or fragment; one with a
+  token-shaped path is dropped. At most 200 per session: when full, new `mentioned` links are dropped first.
+- `$/commit` = cost of the session and its subagents ÷ ✓ commits (subagents' commits count for the parent, as
+  their cost does). The Repos tab adds a `commits` column (from 92 columns), and the project detail shows
+  commits, `$/commit` of the sessions that committed, spend without commits, per-branch commits and `$/c` (a session
+  with commits on two branches splits its cost by commit count) and the PRs created in the project's own remote.
+- Local only: transcripts, `.git/logs/HEAD` read as a file (never written), and a few budgeted `git` calls — one
+  `git log --no-walk` per opened git view for full shas and diff stats (closed sessions are cached in
+  `~/.agentglass/cache/vcs.json`), at most one spawn per 500 ms. No `fetch`, no forge API. Committer names and emails
+  are never stored. Under `--redact` subjects and URLs are faked (numbers and short shas kept; a full 40-hex sha is
+  masked like any key-shaped string).
+- Kiro logs no per-call times: its banners count, its quiet commits show ≈. fx is matched by `call_id`.
 
 ## Filters
 
@@ -490,6 +528,8 @@ most 4 run at once (more are dropped with a warning). It runs only when `rules.j
 agentglass --json --live | jq '.[] | {title, costUsd, attention}'   # snapshot of your sessions
 agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'  # skills used: [{name, source, n}]
 agentglass --json --repos --days 30 | jq '.[] | {label, costUsd, activeMin}'  # cost and active time per project
+agentglass --json --repos | jq '.[] | {label, commits, costPerCommit, spendWithoutCommits}'  # what the spend produced
+agentglass --json --git --limit 5 | jq '.[] | {title, git: .git.commits}'  # commits per session, with diff stats
 agentglass --watch | jq -c 'select(.kind=="tool")'                  # live JSONL stream of every agent's events
 agentglass --watch | jq -c 'select(.kind=="alert") | .alert'        # alert rule transitions (fire, escalate, …)
 agentglass --theme list                                             # themes; --theme gruvbox-dark to pick one

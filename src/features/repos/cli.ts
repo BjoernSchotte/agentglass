@@ -11,12 +11,14 @@ import { type RepoAgg, repoAggIn, allDays, topFiles } from "./agg.ts";
 import { type Obj, obj } from "../../util/json.ts";
 import { type Scope, visible } from "../agentenv.ts";
 import { type Fmt, formatRows } from "../format.ts";
+import { costPerCommit } from "../vcs/json.ts";
 
 export interface JRepo {
   key: string; label: string; kind: string; worktrees: { name: string; top: string }[]; sessions: number; live: number; last: string;
   costUsd: number | null; unpricedTokens: number; tokens: { in: number; out: number }; calls: number; errors: number; errorRate: number | null;
   activeMin: number; agentMin: number; files: { path: string; edits: number; add: number; del: number; harnesses: string[] }[]; outsideFiles: number;
-  byHarness: { harness: string; sessions: number; costUsd: number | null }[]; branches: { branch: string; sessions: number; costUsd: number | null }[];
+  byHarness: { harness: string; sessions: number; costUsd: number | null }[]; branches: { branch: string; sessions: number; commits: number; costUsd: number | null }[];
+  commits: number; costPerCommit: number | null; spendWithoutCommits: number; prs: string[];
 }
 // a project key under --redact: its path part faked like labels and cwds
 export function keyShown(key: string): string {
@@ -35,19 +37,21 @@ export function repoJson(r: RepoAgg): JRepo {
   const bh: { harness: string; sessions: number; costUsd: number | null }[] = [];
   for (const [h, x] of r.byHarness) bh.push({ harness: h, sessions: x.sess, costUsd: usd(x.cost, x.unk) });
   bh.sort((x, y) => (y.costUsd ?? 0) - (x.costUsd ?? 0) || y.sessions - x.sessions);
-  const br: { branch: string; sessions: number; costUsd: number | null }[] = [];
-  for (const [b, x] of r.branches) br.push({ branch: b, sessions: x.sess, costUsd: usd(x.cost, x.unk) });
+  const br: { branch: string; sessions: number; commits: number; costUsd: number | null }[] = [];
+  for (const [b, x] of r.branches) br.push({ branch: display("filter:branch", b, null), sessions: x.sess, commits: x.commits, costUsd: usd(x.cost, x.unk) });
   br.sort((x, y) => (y.costUsd ?? 0) - (x.costUsd ?? 0) || y.sessions - x.sessions);
   return {
     key: keyShown(r.key), label: display("repo", r.label, null), kind: r.kind, worktrees: wts, sessions: r.sessions, live: r.live, last: r.last > 0 ? new Date(r.last).toISOString() : "",
     costUsd: usd(r.cost, r.unk), unpricedTokens: r.unk, tokens: { in: r.inTok, out: r.outTok }, calls: r.calls, errors: r.err, errorRate: r.calls < 10 ? null : Math.round((r.err / r.calls) * 10000) / 10000,
     activeMin: r.activeMin, agentMin: r.agentMin, files, outsideFiles: r.outside.n, byHarness: bh, branches: br,
+    commits: r.commits, costPerCommit: costPerCommit(r.cost - r.spendNoCommit, r.unk, r.commits), spendWithoutCommits: Math.round(r.spendNoCommit * 1e6) / 1e6,
+    prs: r.prs.map((u: string) => display("vcs", u, null)),
   };
 }
 // the --repos fields (output order) and the table columns
 export const REPO_FIELDS = ["key", "label", "kind", "worktrees", "sessions", "live", "last", "costUsd", "unpricedTokens", "tokens", "calls", "errors", "errorRate",
-  "activeMin", "agentMin", "files", "outsideFiles", "byHarness", "branches"];
-const REPO_COLS = ["label", "sessions", "live", "costUsd", "activeMin", "agentMin", "errorRate", "last"];
+  "activeMin", "agentMin", "files", "outsideFiles", "byHarness", "branches", "commits", "costPerCommit", "spendWithoutCommits", "prs"];
+const REPO_COLS = ["label", "sessions", "live", "costUsd", "commits", "activeMin", "agentMin", "errorRate", "last"];
 // days 0 = all history; session clauses pick the sessions (heads read when needed), day clauses narrow the period;
 // inside an agent only the sessions its scope shows (agent mode: output goes to the agent's model provider)
 export function reposCli(days: number, f: Compiled | null, cheap: Compiled | null, sc: Scope, fm: Fmt, legacyJson: boolean): void {

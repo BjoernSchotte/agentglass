@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { newCnt } from "../usage/calls.ts";
 import { newSum } from "../usage/costs.ts";
-import { type RepoAgg, type FileAgg, type HarnessAgg } from "./agg.ts";
+import { type RepoAgg, type FileAgg, type HarnessAgg, type BranchAgg } from "./agg.ts";
 import { repoJson, keyShown } from "./cli.ts";
 import "../redact.ts"; // registers the --redact hooks
 
@@ -14,7 +14,7 @@ function repo(cost: number, unk: number, calls: number, err: number, nFiles: num
   const byHarness = new Map<string, HarnessAgg>(); byHarness.set("claude", { sess: 2, cost, unk }); 
   const worktrees = new Map<string, string>(); worktrees.set("secretproj", "/home/x/code/secretproj"); worktrees.set("secretproj-wt", "/home/x/code/secretproj-wt");
   return { key: "git:github.com/acmecorp/secretproj", label: "acmecorp/secretproj", kind: "git", worktrees, sessions: 2, live: 1, last: 1767225600000, cost, unk, modes: newSum(), inTok: 10, outTok: 5, calls, err, activeMin: 90, agentMin: 120,
-    files, outside: { n: 3, add: 0, del: 0, by: new Set<string>() }, tools: new Map(), progErr: new Map(), byHarness, branches: new Map<string, HarnessAgg>(), paths: [], remote: "", via: "", unread: false, days: [] };
+    files, outside: { n: 3, add: 0, del: 0, by: new Set<string>() }, tools: new Map(), progErr: new Map(), byHarness, branches: new Map<string, BranchAgg>(), paths: [], remote: "", via: "", unread: false, commits: 0, spendNoCommit: 0, prs: [], days: [] };
 }
 const j = repoJson(repo(1.5, 0, 60, 6, 60));
 eq("files top 50", String(j.files.length), "50"); eq("files sorted by edits", String(j.files[0] ? j.files[0].edits : 0), "60");

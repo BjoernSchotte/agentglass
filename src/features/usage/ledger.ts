@@ -9,6 +9,7 @@ import { sessions } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
 import { type Acc, L, newAcc, startOfDay, flushSpans } from "./record.ts";
+import { scrape } from "./vcs.ts";
 
 export const ledger = new Map<string, Acc>();
 
@@ -30,7 +31,7 @@ function step(s: Sess, a: Acc): number {
   if (src !== FILE_SOURCE) { // record-cursor source (database rows): whole records, no byte skipping
     const r = src.lines(s, a.off, Math.min(s.size, a.off + window(src, CHUNK)));
     const ad = harnessOf(s.h);
-    for (const l of r.lines) ad.usage(a, l);
+    for (const l of r.lines) { ad.usage(a, l); scrape(a, l); }
     flushSpans(a); // the last result of the chunk: no later line of this session books its span
     const used = r.next - a.off; a.off = r.next;
     if (used <= 0) a.stall = s.size;
@@ -50,7 +51,7 @@ function step(s: Sess, a: Acc): number {
   const ad = harnessOf(s.h);
   for (let i = a.skip ? 1 : 0; i < ls.length; i++) {
     const l = ls[i] ?? "";
-    ad.usage(a, l);
+    ad.usage(a, l); scrape(a, l); // after usage(): the calls this line closed name the command behind its output
   }
   flushSpans(a);
   a.skip = false;
