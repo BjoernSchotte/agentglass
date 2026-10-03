@@ -26,6 +26,7 @@ import { indexing } from "./features/usage/ledger.ts";
 import { replaying } from "./features/replay.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
+import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
 import "./features/cli.ts";
 import "./features/cost-cli.ts";
 import "./features/themes.ts";
