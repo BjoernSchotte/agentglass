@@ -58,7 +58,7 @@ eq("lines", S0("lines.added is 2"), "c1");
 eq("weekday today", S0("weekday is " + ["su", "mo", "tu", "we", "th", "fr", "sa"][new Date().getDay()]), "c1,c1s,k1,x1");
 eq("day.tools", S0("day.tools >= 4"), "c1");
 eq("status ok on kiro (untimed)", S0("status is ok and duration is unknown"), "k1");
-eq("hour", S0("hour is 10"), "x1");
+eq("hour", S0("hour is 10"), new Date().getHours() === 10 ? "k1,x1" : "x1"); // kiro rows carry no time: booked now
 eq("state", S0("state is ended"), "c1,c1s,k1,x1");
 eq("live", S0("live is true"), "");
 eq("age", S0("age < 1h"), "c1,c1s,k1,x1");

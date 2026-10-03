@@ -16,10 +16,10 @@ printf '%s\n' "{\"timestamp\":\"$NOW\",\"type\":\"session_meta\",\"payload\":{\"
   > "$T/home/.codex/sessions/2026/10/01/rollout-2026-10-01T10-00-00-0000aaaa-1111-2222-3333-444455556666.jsonl"
 ag() { HOME="$T/home" AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" "$@"; }
 ids() { grep -o '"id":"[^"]*"' | sort | tr '\n' ' '; }
-[ "$(ag --json | grep -o '"id":"' | wc -l)" = 2 ] || { echo "FAIL two sessions: $(ag --json)"; exit 1; }
+[ "$(ag --json | grep -o '"id":"' | wc -l)" -eq 2 ] || { echo "FAIL two sessions: $(ag --json)"; exit 1; }
 [ "$(ag --json --filter 'tool is Bash and status is error' | ids)" = '"id":"c1" ' ] || { echo "FAIL same-call"; exit 1; }
 [ "$(ag --json --filter 'tool is Bash and status is ok' | ids)" = '' ] || { echo "FAIL same-call negative"; exit 1; }
-[ "$(ag --json --filter 'harness is codex' | grep -o '"id":"' | wc -l)" = 1 ] || { echo "FAIL harness"; exit 1; }
+[ "$(ag --json --filter 'harness is codex' | grep -o '"id":"' | wc -l)" -eq 1 ] || { echo "FAIL harness"; exit 1; }
 [ "$(ag --json --harness codex)" = "$(ag --json --filter 'harness is codex')" ] || { echo "FAIL --harness sugar"; exit 1; }
 [ "$(ag --json --filter 'repo is app' --filter 'model ~ sonnet' | ids)" = '"id":"c1" ' ] || { echo "FAIL repeated --filter"; exit 1; }
 [ "$(ag --json --filter 'hello' | ids)" = '"id":"c1" ' ] || { echo "FAIL bare word"; exit 1; }
@@ -30,10 +30,10 @@ echo "$err" | grep -q '^  \^' || { echo "FAIL caret: $err"; exit 1; }
 set +e; err=$(ag --json --filter 'cost > abc' 2>&1 >/dev/null); rc=$?; set -e
 [ $rc = 2 ] && echo "$err" | grep -q '^         \^' || { echo "FAIL caret column: $err"; exit 1; }
 printf '{"filter":{"pinned":"harness is codex"}}\n' > "$T/home/.agentglass/config.json"
-[ "$(ag --json | grep -o '"id":"' | wc -l)" = 2 ] || { echo "FAIL pins applied without --pinned"; exit 1; }
-[ "$(ag --json --pinned | grep -o '"id":"' | wc -l)" = 1 ] || { echo "FAIL --pinned"; exit 1; }
+[ "$(ag --json | grep -o '"id":"' | wc -l)" -eq 2 ] || { echo "FAIL pins applied without --pinned"; exit 1; }
+[ "$(ag --json --pinned | grep -o '"id":"' | wc -l)" -eq 1 ] || { echo "FAIL --pinned"; exit 1; }
 printf '{"filter":{"pinned":"harness is codex","remember":false}}\n' > "$T/home/.agentglass/config.json"
-[ "$(ag --json --pinned | grep -o '"id":"' | wc -l)" = 2 ] || { echo "FAIL remember false"; exit 1; }
+[ "$(ag --json --pinned | grep -o '"id":"' | wc -l)" -eq 2 ] || { echo "FAIL remember false"; exit 1; }
 set +e; err=$(ag --watch --filter 'duration > 1s' 2>&1 >/dev/null); rc=$?; set -e
 [ $rc = 2 ] || { echo "FAIL watch duration rc=$rc"; exit 1; }
 echo "$err" | grep -q 'known only after the call' || { echo "FAIL watch msg: $err"; exit 1; }
