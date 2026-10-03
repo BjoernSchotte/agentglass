@@ -16,6 +16,7 @@ export interface Live {
   apprAt: Map<string, number>; // … and when it was first seen waiting
   late: Map<string, number[]>; // a cleared wait whose call is not logged yet: [seen, cleared]
   since: number; content: boolean; subagents: boolean;
+  ticks: number; running: Set<string>; // turns open at the first poll (path + key): exported when they close, whatever --since says
   want: (s: Sess) => boolean; // selection (harness, session clauses)
   skip: (t: XTurn) => boolean; // already marked for this endpoint, or left to the harness's own export
   approval: (s: Sess) => string; // the watchdog's estimate (a stub in checks)
@@ -23,7 +24,7 @@ export interface Live {
   sent: number; lastOk: number;
 }
 export function newLive(since: number): Live {
-  return { b: new Map<string, SessB>(), q: [], qSpans: 0, lastFlush: 0, dropped: false, fails: 0, retryAt: 0, appr: new Map<string, string>(), apprAt: new Map<string, number>(), late: new Map<string, number[]>(), since, content: false, subagents: true,
+  return { b: new Map<string, SessB>(), q: [], qSpans: 0, lastFlush: 0, dropped: false, fails: 0, retryAt: 0, appr: new Map<string, string>(), apprAt: new Map<string, number>(), late: new Map<string, number[]>(), since, content: false, subagents: true, ticks: 0, running: new Set<string>(),
     want: (s: Sess) => !!s, skip: (t: XTurn) => !t, approval: approvalOf, warn: (m: string) => { process.stderr.write("agentglass: " + m + "\n"); }, sent: 0, lastOk: 0 };
 }
 // over MAX_SPANS: the oldest whole turns go (unmarked, so a later export resends them)
@@ -72,17 +73,26 @@ function approvals(L: Live, s: Sess, b: SessB, now: number): void {
   if (op) for (const sp of op.spans) if (sp.spanId === was) attach(sp, now);
 }
 // one poll: read every selected session, queue what closed, flush every 5 s or at 512 queued spans
+// The first poll also reads every session that may hold a running turn (a live process, or written within the quiet
+// time): its open turn is exported when it closes, even though it started before --since. Any other session untouched
+// since --since is not read at all until it changes; its turns had all closed before the start.
 export function liveTick(L: Live, now: number, send: (turns: XTurn[]) => boolean): void {
+  const first = L.ticks === 0; L.ticks++;
   for (const s of sessions.values()) {
     if (s.parent && s.depth > 0) continue;
     let b = L.b.get(s.path);
-    if (!b) { if (s.mtime < L.since || !L.want(s)) continue; b = newSessB(s, L.subagents ? s.subs : []); L.b.set(s.path, b); } // untouched since the start: not read at all
-    else if (L.subagents) syncSubs(b, s.subs);
+    if (!b) {
+      const maybeRunning = first && (s.pid > 0 || now - s.mtime < QUIET_LIVE);
+      if ((s.mtime < L.since && !maybeRunning) || !L.want(s)) continue;
+      b = newSessB(s, L.subagents ? s.subs : []); L.b.set(s.path, b);
+    } else if (L.subagents) syncSubs(b, s.subs);
     approvals(L, s, b, now);
     for (const t of advance(b, { now, quietMs: QUIET_LIVE, content: L.content, subagents: L.subagents })) {
-      if (t.t0 < L.since || L.skip(t)) continue;
+      const k = t.path + "\u0000" + t.key; const was = L.running.delete(k);
+      if ((t.t0 < L.since && !was) || L.skip(t)) continue;
       enqueue(L, t);
     }
+    const op = b.open; if (first && op) L.running.add(op.path + "\u0000" + op.key);
   }
   if (L.qSpans >= FLUSH_SPANS || now - L.lastFlush >= FLUSH_MS) flush(L, now, send);
 }

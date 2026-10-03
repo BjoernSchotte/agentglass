@@ -56,6 +56,24 @@ eq("approval wait recorded", call ? call.attrs.map((a) => a.k + "=" + String(a.n
   eq("late-logged call gets the wait", c4 ? c4.attrs.map((a) => a.k + "=" + String(a.n)).join(",") : "none", "agentglass.tool.approval_wait=10");
   sessions.delete(p2);
 }
+// a turn already running when the watch starts is exported once it closes (spec 5.2); one closed before the start is not
+{
+  const p5 = dir + "/run-" + CID + ".jsonl"; writeFileSync(p5, lines.slice(0, 9).join("\n") + "\n"); // turn 1 still open
+  const s5: Sess = newSess("claude", "run", p5, false); s5.pid = 4245; sessions.set(p5, s5);
+  const start = Date.parse("2026-09-01T10:01:00.000Z"); s5.mtime = start - 30000; // written before the start
+  const L5 = newLive(start); const got5: string[] = []; L5.warn = (m: string) => { warns.push(m); }; L5.want = (x: Sess) => x.path === p5;
+  const send5 = (ts: XTurn[]): boolean => { for (const t of ts) got5.push(t.key); return true; };
+  liveTick(L5, start, send5);
+  appendFileSync(p5, lines[9] + "\n"); s5.mtime = start + 5000; liveTick(L5, start + 6000, send5);
+  eq("running at start: sent when it closes", got5.join(","), "2026-09-01T10:00:00.000Z#0");
+  const p6 = dir + "/hist-" + CID + ".jsonl"; writeFileSync(p6, lines.slice(0, 10).join("\n") + "\n"); // turn 1 closed by turn 2
+  const s6: Sess = newSess("claude", "hist", p6, false); s6.pid = 4246; s6.mtime = start - 30000; sessions.set(p6, s6);
+  sessions.delete(p5);
+  const L6 = newLive(start); const got6: string[] = []; L6.warn = (m: string) => { warns.push(m); }; L6.want = (x: Sess) => x.path === p6;
+  liveTick(L6, start, (ts: XTurn[]): boolean => { for (const t of ts) got6.push(t.key); return true; });
+  eq("closed before the start: not sent", got6.join(","), "");
+  sessions.delete(p6);
+}
 // late events: turn 2 closes by quiet time (2 min); a later result opens a continuation turn, turn 2 is not sent again
 appendFileSync(p, lines[11] + "\n"); s.mtime = T; T += 1000; liveTick(L, T, send);
 T += 130000; liveTick(L, T, send);
