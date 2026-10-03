@@ -3,6 +3,7 @@
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { OS } from "../../platform/index.ts";
+import { fileInfoOf } from "../../platform/posix.ts";
 import { type FInfo, type InfoFn, myUid, secureDir, takeLock, releaseLock, lockHolder, holdsLock } from "./rundir.ts";
 
 const info: InfoFn = (p: string): FInfo | null => OS.fileInfo(p);
@@ -28,6 +29,9 @@ ok("fileInfo missing → null", OS.fileInfo(root + "/nope") === null, "");
 writeFileSync(root + "/f", "x"); execFileSync("ln", ["-s", root + "/f", root + "/l"]); execFileSync("mkfifo", [root + "/p"]);
 ok("fileInfo file/link/fifo", OS.fileInfo(root + "/f")?.kind === "file" && OS.fileInfo(root + "/l")?.kind === "link" && OS.fileInfo(root + "/p")?.kind === "fifo", "");
 
+// the stat CLI's words on both platforms (GNU %F / BSD %HT) — macOS says "Fifo File"
+const kinds = ["0 755 directory", "0 1777 Directory", "501 644 regular file", "501 644 Regular File", "501 0 regular empty file", "501 755 Symbolic Link", "501 644 fifo", "501 644 Fifo File", "501 755 Socket", "501 644 Block Device"].map((x: string) => fileInfoOf(x)?.kind ?? "null").join(",");
+ok("fileInfoOf GNU/BSD kinds", kinds === "dir,dir,file,file,file,link,fifo,fifo,socket,other", kinds);
 // absent + create → 0700, ours
 const run = root + "/run";
 ok("create", secureDir(run, uid, info, true) === "", secureDir(run, uid, info, true));
@@ -63,6 +67,14 @@ const dead = Number(execFileSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).
 writeFileSync(run + "/tui.lock", String(dead) + "\n"); chmodSync(run + "/tui.lock", 0o600);
 ok("dead holder → no holder", lockHolder(run, uid, info, alive, yes) === 0, "");
 ok("stale takeover → 1", takeLock(run, process.pid, uid, info, alive, yes) === 1 && readFileSync(run + "/tui.lock", "utf8").trim() === String(process.pid), "");
+// a stale lock that another TUI is breaking (tui.lock.break): not ours to take, untouched; a break file a crash left
+// behind ages out after 10 s
+const dead3 = Number(execFileSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).trim());
+writeFileSync(run + "/tui.lock", String(dead3) + "\n"); chmodSync(run + "/tui.lock", 0o600);
+writeFileSync(run + "/tui.lock.break", "1\n"); chmodSync(run + "/tui.lock.break", 0o600);
+ok("break in progress → 0, lock untouched", takeLock(run, process.pid, uid, info, alive, yes) === 0 && readFileSync(run + "/tui.lock", "utf8").trim() === String(dead3), "");
+execFileSync("touch", ["-m", "-t", "202001010000", run + "/tui.lock.break"]);
+ok("old break file → takeover, break file gone", takeLock(run, process.pid, uid, info, alive, yes) === 1 && !existsSync(run + "/tui.lock.break"), "");
 // alive but not agentglass → takeover
 ok("alive, not ours → takeover", takeLock(run, 4242, uid, info, alive, no) === 1 && readFileSync(run + "/tui.lock", "utf8").trim() === "4242", "");
 ok("holdsLock: replaced by 4242 → we do not", !holdsLock(run, process.pid, uid, info) && holdsLock(run, 4242, uid, info), "");

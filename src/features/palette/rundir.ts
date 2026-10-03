@@ -55,9 +55,14 @@ function lockPid(dir: string, uid: number, info: InfoFn): number {
   return /^\d{1,10}$/.test(t) ? Number(t) : 0; // garbage in our own lock = stale
 }
 // 1 = we hold the lock now, 0 = a live agentglass holds it, -1 = the lock is not a regular file of ours (disable)
+// A stale lock (dead pid, or a pid reused by another program) is broken only under tui.lock.break (O_EXCL): two TUIs
+// that judged the same stale lock at once could otherwise both unlink it and both serve (seen on CI). A break file
+// left by a crash is removed after BREAK_STALE.
+const BREAK_STALE = 10000;
+function oldBreak(bk: string, now: number): boolean { try { const st = fs.lstatSync(bk); return st.isFile() && !st.isSymbolicLink() && now - st.mtimeMs > BREAK_STALE; } catch (e) { return false; } }
 export function takeLock(dir: string, pid: number, uid: number, info: InfoFn, alive: (pid: number) => boolean, isOurs: (pid: number) => boolean): number {
-  const p = join(dir, "tui.lock");
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const p = join(dir, "tui.lock"); const bk = join(dir, "tui.lock.break");
+  for (let attempt = 0; attempt < 3; attempt++) {
     if (createOwn(p, String(pid) + "\n")) return 1;
     const i = info(p);
     if (!i) continue; // released between the two calls
@@ -66,8 +71,11 @@ export function takeLock(dir: string, pid: number, uid: number, info: InfoFn, al
     if (h < 0) return -1;
     if (h > 0 && h !== pid && alive(h) && isOurs(h)) return 0;
     if (h === pid) return 1;
-    if (lockPid(dir, uid, info) !== h) continue; // another TUI replaced the stale lock meanwhile: judge the new one
-    try { unlinkSync(p); } catch (e) { /* someone else cleaned it */ } // stale: dead pid, or a pid reused by another program
+    if (!createOwn(bk, String(pid) + "\n")) { // another TUI is breaking it: it serves (or a crashed breaker's file ages out)
+      if (oldBreak(bk, Date.now())) { try { unlinkSync(bk); } catch (e) { /* gone */ } continue; }
+      return 0;
+    }
+    try { if (lockPid(dir, uid, info) === h) unlinkSync(p); } catch (e) { /* someone else cleaned it */ } finally { try { unlinkSync(bk); } catch (e) { /* gone */ } }
   }
   return 0;
 }
