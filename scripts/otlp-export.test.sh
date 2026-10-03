@@ -25,6 +25,17 @@ eq "no curl exit" "$rc" 2
 grep -q "export needs curl (AGENTGLASS_CURL)" "$t/err" || { echo "FAIL no curl message: $(cat "$t/err")"; fail=1; }
 run export --otlp http://localhost:4318 --filter 'tool is Bash' > /dev/null 2> "$t/err"; rc=$?
 eq "call clause exit" "$rc" 2
+run export --otlp 'http://localhost:4318/v1/traces
+x' --dry-run > /dev/null 2> "$t/err"; rc=$?
+eq "url with a line break exit" "$rc" 2
+run --watch --otlp http://localhost:4318 --filter 'tool is Bash' > /dev/null 2> "$t/err"; rc=$?
+eq "live call clause exit" "$rc" 2
+run --watch --otlp http://localhost:4318 --filter 'nosuchkey is x' > /dev/null 2> "$t/err"; rc=$?
+eq "live bad filter exit" "$rc" 2
+run --watch --otlp http://localhost:4318 --harness nope > /dev/null 2> "$t/err"; rc=$?
+eq "live bad harness exit" "$rc" 2
+run --watch --otlp --content > /dev/null 2> "$t/err"; rc=$?
+eq "live --otlp without url exit" "$rc" 2
 run --help | grep -q "export --otlp <url>" || { echo "FAIL --help lacks export"; fail=1; }
 set -e
 [ $fail = 0 ] && echo "otlp export cli: ok"

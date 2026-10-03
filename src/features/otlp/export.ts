@@ -61,6 +61,10 @@ export function sessFilter(src: string): { f: Compiled | null; err: string } {
   const all = compile(p.cs, "json");
   return all.err ? { f: null, err: "--filter: " + all.err.msg } : { f: all.f, err: "" };
 }
+// an http(s) URL without spaces or control characters (it goes into curl's config as one line)
+export function urlErr(url: string): string {
+  return /^https?:\/\/[^/\s]/i.test(url) && !/[\s\u0000-\u001f\u007f]/.test(url) ? "" : "--otlp needs an http(s) URL (got " + safeUrl(url).replace(/[\u0000-\u001f\u007f]/g, "?") + ")";
+}
 export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<string, string>): { o: ExOpts; err: string } {
   const o: ExOpts = { url: "", since: now - 7 * 86400000, until: 0, harness: "", ids: [], filter: "", subagents: true, native: c.native, status: false, content: c.content, resend: false, dry: false, batch: c.batch, compression: "", json: false };
   let flag = "";
@@ -91,7 +95,7 @@ export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<st
   const sf = sessFilter(o.filter); if (sf.err) return { o, err: sf.err };
   o.url = endpointOf(flag, c, env);
   if (!o.url && !o.dry && !o.status) return { o, err: "no endpoint: pass --otlp <url>, set \"otlp\": {\"endpoint\": …} in ~/.agentglass/config.json, or OTEL_EXPORTER_OTLP_ENDPOINT" };
-  if (o.url && !/^https?:\/\/[^/]/i.test(o.url)) return { o, err: "--otlp needs an http(s) URL (got " + safeUrl(o.url) + ")" };
+  const ue = o.url ? urlErr(o.url) : ""; if (ue) return { o, err: ue };
   return { o, err: "" };
 }
 
@@ -277,10 +281,12 @@ function liveExport(args: string[]): number {
     else if (a === "--compression") { comp = v; i++; if (comp !== "gzip" && comp !== "none") { err("--compression takes gzip or none"); return 2; } }
     else if (a === "--batch") { batch = Number(v); i++; if (!(Number.isInteger(batch) && batch >= 1 && batch <= 100000)) { err("--batch needs a whole number of spans, 1–100000"); return 2; } }
     else if (a === "--filter") { filter = filter ? filter + " and " + v : v; i++; }
-    else if (a === "--harness") { harness = v; i++; }
+    else if (a === "--harness") { harness = v; i++; if (!isHarness(harness)) { err("--harness must be one of " + harnessIds().join(", ")); return 2; } }
   }
-  const url = endpointOf(flag, c, env);
+  const sf = sessFilter(filter); if (sf.err) { err(sf.err); return 2; }
+  const url = endpointOf(flag.startsWith("--") ? "" : flag, c, env);
   if (!url) { err("--otlp needs a URL"); return 2; }
+  const ue = urlErr(url); if (ue) { err(ue); return 2; }
   if (!curlBin()) { err("export needs curl (AGENTGLASS_CURL)"); return 2; }
   const hx = expandHeaders(c, envMap()); if (hx.err) { err(hx.err); return 2; }
   const pe = plainOk(url, c, hx.headers.length > 0); if (pe) { err(pe); return 2; }
@@ -288,7 +294,7 @@ function liveExport(args: string[]): number {
   const st = loadState(url); if (st.warn) err(st.warn);
   let gz = (comp || c.compression) === "gzip" && (st.gzip || comp === "gzip");
   if (gz) { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } if (!gzipProbe(d)) { gz = false; err("this build cannot write compressed bodies: sending uncompressed"); } }
-  const q = parseQuery(filter); const cf = filter && !q.err ? compile(q.cs, "watch").f : null; // session clauses select what is exported
+  const cf = sf.f; // session clauses select what is exported
   const L = newLive(since); L.content = c.content; L.subagents = subagents;
   L.want = (s: Sess): boolean => (!harness || s.h === harness) && (!cf || sessMatches(cf, s));
   let skipFrom = new Map<string, number>(); let nativeAt = 0;
