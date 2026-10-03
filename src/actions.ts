@@ -48,11 +48,13 @@ export function openExternal(cmd: string, path: string): void {
 }
 function pagerCmd(): string { const p = process.env.PAGER; return p !== undefined && p.trim() ? p : "less -R"; }
 function editorCmd(): string { const v = process.env.VISUAL; const e = process.env.EDITOR; return v !== undefined && v.trim() ? v : e !== undefined && e.trim() ? e : "vi"; }
+// a file in $PAGER (edit: $EDITOR); "not found" toast when it is gone
+export function openPath(path: string, edit: boolean): void { openExternal(edit ? editorCmd() : pagerCmd(), path); }
 export function openFileN(n: number, edit: boolean): void {
   const dv = S.dv;
   if (!dv || n < 0 || n >= dv.files.length) return;
   dv.fsel = n;
-  openExternal(edit ? editorCmd() : pagerCmd(), dv.files[n]);
+  openPath(dv.files[n], edit);
 }
 export function pageDetail(): void {
   const dv = S.dv;

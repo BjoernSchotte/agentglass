@@ -15,6 +15,7 @@ import { statsPeriod } from "../usage/stats.ts";
 import { parse } from "../query/parse.ts";
 import { projectOf } from "../query/project.ts";
 import { type Group, groupOfSession } from "./metrics.ts";
+import { openCompare } from "./view.ts";
 
 export const M = { a: "", b: "" }; // marked session paths ("" none)
 
@@ -85,11 +86,10 @@ H.keys.push((mode: string, k: string): boolean => {
   if (S.tab === 0 && k === "m") { const s = current(); if (s) say("info", toggleMark(s)); return true; }
   if (S.tab === 0 && k === "C") {
     const p = pickPair();
-    if (typeof p === "string") say("info", p);
-    else say("info", "compare: " + p.A.label + " vs " + p.B.label);
+    if (typeof p === "string") say("info", p); else openCompare(p.A, p.B, "Sessions", p.note);
     return true;
   }
-  if (k === "C" && statsTab()) { const p = periodPair(statsPeriod()); say("info", "compare: " + p.note); return true; }
+  if (k === "C" && statsTab()) { const p = periodPair(statsPeriod()); openCompare(p.A, p.B, "Stats", p.note); return true; }
   return false;
 });
 H.footerHints.push((mode: string): string[][] => mode === "list" && S.tab === 0 ? [["m", M.a || M.b ? "mark (" + (M.a && M.b ? "2" : "1") + ")" : "mark"], ["C", "compare"]] : mode === "list" && statsTab() ? [["C", "vs previous"]] : []);
