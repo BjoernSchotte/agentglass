@@ -4,7 +4,7 @@
 import type { Sess } from "../../model/types.ts";
 import type { Call } from "../usage/facts.ts";
 import { callMatches } from "../query/eval.ts";
-import { type Obs, type MVal, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, toolName } from "../watchdog.ts";
+import { type Obs, type MVal, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, toolName } from "../detect.ts";
 import { type Rule, paramDefault } from "./config.ts";
 
 function prm(r: Rule, k: string): number { const v = r.params.get(k); return v !== undefined ? v : paramDefault(r.metric, k); }
@@ -13,7 +13,7 @@ function val(v: number, at: number): MVal { const m = absent(); m.v = v; m.at = 
 // turnAt: when this run saw the session's last turn finish (0 = none, or busy since)
 export function procMetric(r: Rule, o: Obs, turnAt: number): MVal {
   switch (r.metric) {
-    case "turn_done": return turnAt > 0 && !o.busy ? val((o.now - turnAt) / 1000, turnAt) : absent();
+    case "turn_done": return turnAt > 0 && !o.busy ? val(Math.max(0, (o.now - turnAt) / 1000), turnAt) : absent();
     case "approval_wait": return approvalWait(o, prm(r, "cpu_below"), prm(r, "samples"), prm(r, "grace"));
     case "repeat_run": return repeatRun(o);
     case "command_age": return commandAge(o);

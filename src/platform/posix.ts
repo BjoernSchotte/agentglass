@@ -43,3 +43,5 @@ export function freeName(dir: string, path: string): string {
   for (let n = 2; ; n++) { const c = stem + " " + n + ext; if (!existsSync(join(dir, c))) return c; }
 }
 export function moveInto(dir: string, path: string): string { const n = freeName(dir, path); renameSync(path, join(dir, n)); return n; }
+// `stat` output "<uid> <octal mode>" → [uid, mode], [] when unparsable
+export function ownerModeOf(out: string): number[] { const m = /^(\d+) ([0-7]+)\s*$/.exec(out); return m ? [Number(m[1] ?? ""), parseInt(m[2] ?? "", 8)] : []; }

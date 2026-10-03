@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { userInfo } from "node:os";
 import { HOME, readText, readBytes, listDir, run } from "../util/fs.ts";
 import type { Platform } from "./types.ts";
-import { psProcs, devOf, detached, freeName } from "./posix.ts";
+import { psProcs, devOf, detached, freeName, ownerModeOf } from "./posix.ts";
 
 // ps %cpu on Linux is the lifetime average, so fresh helpers read as 100%+ and long-lived agents as idle →
 // diff utime+stime from /proc/<pid>/stat between refreshes instead
@@ -72,5 +72,6 @@ export const linux: Platform = {
   trash,
   sha256File: (path: string) => (run("sha256sum", [path]).split(" ")[0] ?? "").trim(),
   trashName: "the trash (~/.local/share/Trash)",
+  ownerMode: (path: string) => ownerModeOf(run("stat", ["-L", "-c", "%u %a", path])),
   envOf: (pid: number) => readBytes("/proc/" + String(pid) + "/environ", 0, 262144),
 };

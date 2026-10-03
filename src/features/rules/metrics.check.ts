@@ -3,7 +3,7 @@
 import type { Ev } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
 import { type Call, DICT, intern } from "../usage/facts.ts";
-import { type Obs, type MVal, approvalWait, commandAge, stalledFor, spinningFor, repeatRun } from "../watchdog.ts";
+import { type Obs, type MVal, approvalWait, commandAge, stalledFor, spinningFor, repeatRun } from "../detect.ts";
 import { type Rule, loadRules } from "./config.ts";
 import { metricOf, procMetric, sessMetric } from "./metrics.ts";
 

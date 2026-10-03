@@ -5,7 +5,7 @@ import type { Sess } from "../../model/types.ts";
 import { titleOf } from "../../model/sessions.ts";
 import { base } from "../../util/json.ts";
 import { ago } from "../../util/text.ts";
-import { type MVal, absent } from "../watchdog.ts";
+import { type MVal, absent } from "../detect.ts";
 import { type Rule, type RuleSet, unitOf } from "./config.ts";
 
 // since: [pending since for level 1, for level 2] (0 = its threshold does not hold); lvAt: when the current level began
@@ -97,32 +97,26 @@ export function fmtVal(unit: string, v: number): string {
   if (unit === "ratio") return (v * 100).toFixed(0) + "%";
   return String(Math.round(v));
 }
-export function render(r: Rule, v: MVal, level: number, s: Sess): string {
-  const u = unitOf(r.metric);
-  const sub = (k: string): string => {
-    switch (k) {
-      case "value": return v.v < 0 ? "" : fmtVal(u, v.v);
-      case "threshold": return fmtVal(u, thrOf(r, level || 1));
-      case "severity": return severityOf(level);
-      case "rule": return r.id;
-      case "tool": return v.tool;
-      case "cmd": return v.cmd;
-      case "cpu": return v.cpu;
-      case "title": return titleOf(s);
-      case "project": return base(s.cwd);
-      case "harness": return s.h;
-    }
-    return "{" + k + "}";
-  };
-  let out = ""; let i = 0; const t = r.message; // scriptc: no function replacements
+// placeholder values of an alert: {value} {threshold} {severity} {rule} {tool} {title} {project} {harness} {cpu} {cmd}
+export function placeholders(r: Rule, v: MVal, level: number, s: Sess): Map<string, string> {
+  const u = unitOf(r.metric); const m = new Map<string, string>();
+  m.set("value", v.v < 0 ? "" : fmtVal(u, v.v)); m.set("threshold", fmtVal(u, thrOf(r, level || 1))); m.set("severity", severityOf(level));
+  m.set("rule", r.id); m.set("tool", v.tool); m.set("cmd", v.cmd); m.set("cpu", v.cpu);
+  m.set("title", titleOf(s)); m.set("project", base(s.cwd)); m.set("harness", s.h);
+  return m;
+}
+// {name} → its value; unknown names stay as written (scriptc: no function replacements)
+export function fill(t: string, m: Map<string, string>): string {
+  let out = ""; let i = 0;
   while (i < t.length) {
     const a = t.indexOf("{", i); if (a < 0) break;
     const b = t.indexOf("}", a); if (b < 0) break;
-    const k = t.slice(a + 1, b);
-    out += t.slice(i, a) + (/^[a-z]+$/.test(k) ? sub(k) : "{" + k + "}"); i = b + 1;
+    const x = m.get(t.slice(a + 1, b));
+    out += t.slice(i, a) + (x !== undefined ? x : t.slice(a, b + 1)); i = b + 1;
   }
   return out + t.slice(i);
 }
+export function render(r: Rule, v: MVal, level: number, s: Sess): string { return fill(r.message, placeholders(r, v, level, s)); }
 function alertOf(r: Rule, st: AState, s: Sess): Alert {
   return { rule: r.id, severity: severityOf(st.level), level: st.level, value: st.v.v, unit: unitOf(r.metric), threshold: thrOf(r, st.level), since: st.lvAt,
     message: render(r, st.v, st.level, s), labels: r.labels, acked: st.acked };

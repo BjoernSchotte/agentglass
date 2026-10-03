@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
-import { type Obs, type MVal, type Cmd, absent, approvalNote, stuckOf } from "../watchdog.ts";
+import { type Obs, type MVal, type Cmd, absent, approvalNote, stuckOf } from "../detect.ts";
 import { type RuleSet, loadRules, unitOf } from "./config.ts";
 import { metricOf } from "./metrics.ts";
 import { type Trans, LOG, stepSession, flags, ackLook, unwatch, retain, stateOf, snapLevel, firing, watching } from "./engine.ts";
