@@ -22,7 +22,7 @@ export function fileSafe(p: string): boolean { const om = OS.ownerMode(p); retur
 function capOf(rs: RuleSet): number { let n = 120; for (const r of rs.rules) { const v = r.params.get("samples"); if (r.enabled && v !== undefined && v > n) n = v; } return n; }
 // a rule set for this file state; an unsafe command is dropped with a diagnostic
 export function withSafety(rs: RuleSet, safe: boolean): RuleSet {
-  if (!safe && rs.notify.command.length) { rs.notify.command = []; rs.diags.push({ line: 1, col: 1, rule: "", msg: CMD_UNSAFE, err: true }); }
+  if (!safe && rs.notify.command.length) { rs.notify.command = []; rs.diags.push({ line: rs.cmdAt[0] ?? 1, col: rs.cmdAt[1] ?? 1, rule: "", msg: CMD_UNSAFE, err: true }); }
   return rs;
 }
 function install(rs: RuleSet): void {

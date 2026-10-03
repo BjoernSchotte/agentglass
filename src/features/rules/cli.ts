@@ -3,17 +3,12 @@
 import { writeSync } from "node:fs";
 import { H, screenOut } from "../../hooks.ts";
 import { S } from "../../state.ts";
-import { type Rule, type RuleSet, loadRules, builtins, unitOf } from "./config.ts";
+import { type Rule, type RuleSet, loadRules, builtins, unitOf, thrText } from "./config.ts";
+export { thrText };
 import { RULES_FILE } from "./file.ts";
 import { fileText, fileMtime, fileSafe, withSafety } from "./state.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
-// a threshold as written in rules.json: "20s"/"10m"/"1h" for durations, "30%" for ratios, a number otherwise
-export function thrText(unit: string, v: number): string {
-  if (unit === "duration") return v > 0 && v % 3600 === 0 ? String(v / 3600) + "h" : v > 0 && v % 60 === 0 ? String(v / 60) + "m" : String(v) + "s";
-  if (unit === "ratio") return String(Math.round(v * 10000) / 100) + "%";
-  return String(v);
-}
 function thrJson(unit: string, v: number): string | number { return unit === "duration" || unit === "ratio" ? thrText(unit, v) : v; }
 interface JRule { id: string; metric: string; op: string; degraded: number | null; critical: number | null; for: number; where: string; enabled: boolean; builtin: boolean; ack: string; notify: boolean; message: string; labels: { [k: string]: string } }
 interface JDiag { line: number; col: number; rule: string; message: string; severity: string }
@@ -30,8 +25,9 @@ export function checkText(text: string, exists: boolean, safe: boolean): Checked
   for (const r of rs.rules) {
     const u = unitOf(r.metric);
     const lv = (r.hasDeg ? thrText(u, r.deg) : "-") + "/" + (r.hasCrit ? thrText(u, r.crit) : "-");
-    lines.push("  " + r.id.padEnd(w) + "  " + r.metric.padEnd(mw) + "  " + r.op.padEnd(2) + " " + lv.padEnd(11) + (r.forSec > 0 ? " for " + thrText("duration", r.forSec) : "") +
-      (r.where ? "  where " + r.where : "") + (r.enabled ? "" : "  (disabled)"));
+    const row = "  " + r.id.padEnd(w) + "  " + r.metric.padEnd(mw) + "  " + r.op.padEnd(2) + " " + lv.padEnd(11) + (r.forSec > 0 ? " for " + thrText("duration", r.forSec) : "") +
+      (r.where ? "  where " + r.where : "") + (r.enabled ? "" : "  (disabled)");
+    lines.push(row.trimEnd());
     jr.push({ id: r.id, metric: r.metric, op: r.op, degraded: r.hasDeg ? r.deg : null, critical: r.hasCrit ? r.crit : null, for: r.forSec, where: r.where, enabled: r.enabled, builtin: r.builtin, ack: r.ack, notify: r.notify, message: r.message, labels: labelsOf(r) });
   }
   let errs = 0; let warns = 0;

@@ -12,7 +12,7 @@ import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool
 import { accOf, complete as ledgerComplete } from "./usage/ledger.ts";
 import type { Call } from "./usage/facts.ts";
 import { sessMatches } from "./query/eval.ts";
-import { type Rule, type RuleSet, CALL_METRICS } from "./rules/config.ts";
+import { type Rule, type RuleSet, CALL_METRICS, thrText, unitOf } from "./rules/config.ts";
 import { metricOf } from "./rules/metrics.ts";
 import { type Trans, type Alert, LOG, stepSession, unwatch, prune, ackLook, flags, firing, stateOf, watching, snapshot, render, severityOf } from "./rules/engine.ts";
 import { onTrans, forget } from "./rules/notify.ts";
@@ -165,13 +165,13 @@ H.helpSections.push({ name: "watchdog", ctx: "sessions", keys: [
 // the rules in force with their firing count, then the newest transitions (rebuilt on reload and on transitions)
 const RULES_HELP: string[][] = [];
 let helpVer = -1;
-function short(n: number): string { return String(Math.round(n * 100) / 100); }
 function helpRules(rs: RuleSet): void {
   helpVer = R.ver;
   RULES_HELP.length = 0;
   for (const r of rs.rules) {
     let n = 0; for (const s of sessions.values()) { const a = stateOf(s.path, r.id); if (a && a.level > 0) n++; }
-    const thr = (r.hasDeg ? "◆" + r.op + short(r.deg) : "") + (r.hasDeg && r.hasCrit ? " " : "") + (r.hasCrit ? "⚠" + r.op + short(r.crit) : "");
+    const u = unitOf(r.metric);
+    const thr = (r.hasDeg ? "◆" + r.op + thrText(u, r.deg) : "") + (r.hasDeg && r.hasCrit ? " " : "") + (r.hasCrit ? "⚠" + r.op + thrText(u, r.crit) : "");
     RULES_HELP.push([r.id, (r.enabled ? "" : "off · ") + r.metric + " " + thr + (n ? " · " + String(n) + " firing" : "")]);
   }
   for (let i = LOG.length - 1; i >= 0 && i >= LOG.length - 5; i--) {

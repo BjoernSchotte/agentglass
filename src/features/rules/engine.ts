@@ -37,7 +37,7 @@ export function evalRule(r: Rule, st: AState, v: MVal, now: number): Trans | nul
     if (!st.since[i]) st.since[i] = now;
     if (now - st.since[i] >= r.forSec * 1000) to = k;
   }
-  st.v = v;
+  if (v.v >= 0) st.v = v; // the last present value: a resolve still says what it was
   const from = st.level;
   if (to === from) return null;
   const state = from === 0 ? "fire" : to === 0 ? "resolve" : to > from ? "escalate" : "deescalate";
@@ -45,7 +45,7 @@ export function evalRule(r: Rule, st: AState, v: MVal, now: number): Trans | nul
   if (state === "fire") { st.firedAt = now; st.acked = false; }
   else if (state === "resolve") { st.firedAt = 0; st.acked = false; }
   else if (state === "escalate") st.acked = false; // a new severity is news: it shows (and rings) again
-  return { at: now, path: "", rule: r.id, from, to, state, v: v.v, thr: thrOf(r, to || from) };
+  return { at: now, path: "", rule: r.id, from, to, state, v: st.v.v, thr: thrOf(r, to || from) };
 }
 function log(t: Trans): void { LOG.push(t); if (LOG.length > LOG_MAX) LOG.splice(0, LOG.length - LOG_MAX); }
 function statesOf(path: string): Map<string, AState> { const b = ST.get(path); if (b) return b.m; const m = new Map<string, AState>(); ST.set(path, { m }); return m; }

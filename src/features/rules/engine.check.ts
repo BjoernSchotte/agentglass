@@ -103,6 +103,8 @@ const ES = loadRules('{"builtins":false,"rules":[{"id":"cost","metric":"session_
 let seq = "";
 for (const c of [6, 21, 10, 0]) seq += states(stepSession(ES, "/e/1", cost(c), now)) + ";";
 eq("escalation sequence", seq, "cost:fire;cost:escalate;cost:deescalate;cost:resolve;");
+stepSession(ES, "/e/4", cost(6), now);
+eq("resolve carries the last value", stepSession(ES, "/e/4", cost(-1), now).map((t: Trans) => t.state + " " + String(t.v)).join(","), "resolve 6");
 stepSession(ES, "/e/2", cost(21), now);
 eq("critical → stuck reason = id", flags(ES, "/e/2")[1] ?? "", "cost");
 

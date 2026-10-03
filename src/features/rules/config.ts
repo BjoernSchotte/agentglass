@@ -15,7 +15,7 @@ export interface Rule {
   labels: Map<string, string>; enabled: boolean; builtin: boolean; reason: string /* s.stuck value */; prefix: string /* notification body prefix */;
 }
 export interface NotifyCfg { bell: boolean; desktop: boolean; throttleSec: number; command: string[]; on: string[] }
-export interface RuleSet { rules: Rule[]; notify: NotifyCfg; diags: Diag[]; syntax: string /* "" or the JSON error */ }
+export interface RuleSet { rules: Rule[]; notify: NotifyCfg; diags: Diag[]; syntax: string /* "" or the JSON error */; cmdAt: number[] /* [line, col] of notify.command */ }
 
 // ── metric catalog (spec §2) ──
 export const METRICS: string[] = ["turn_done", "approval_wait", "repeat_run", "command_age", "stalled", "spinning", "session_cost", "session_tokens", "tool_calls", "tool_errors", "tool_error_rate"];
@@ -67,6 +67,13 @@ function thrHint(v: unknown, metric: string, unit: string): string {
   const isDur = typeof v === "string" && durSec(v as string) >= 0 && /[a-z]$/.test(v as string);
   const want = unit === "duration" ? "a duration (\"20s\", \"2m\", \"1h\") or seconds" : unit === "usd" ? "a number in USD" : unit === "ratio" ? "a ratio (0.3) or a percentage (\"30%\")" : "a number";
   return "threshold " + shown + (isDur && unit !== "duration" ? " is a duration" : " is invalid") + "; " + metric + " needs " + want;
+}
+
+// a threshold as written in rules.json: "20s"/"10m"/"1h" for durations, "30%" for ratios, a number otherwise
+export function thrText(unit: string, v: number): string {
+  if (unit === "duration") return v > 0 && v % 3600 === 0 ? String(v / 3600) + "h" : v > 0 && v % 60 === 0 ? String(v / 60) + "m" : String(v) + "s";
+  if (unit === "ratio") return String(Math.round(v * 10000) / 100) + "%";
+  return String(v);
 }
 
 // ── JSON positions: a small scanner, because scriptc's JSON.parse errors carry no position ──
@@ -300,7 +307,7 @@ function loadNotify(cx: Ctx, o: Obj, n: NotifyCfg): void {
 }
 // text of rules.json (exists = the file is there); never throws
 export function loadRules(text: string, exists: boolean): RuleSet {
-  const rs: RuleSet = { rules: builtins(), notify: defaultNotify(), diags: [], syntax: "" };
+  const rs: RuleSet = { rules: builtins(), notify: defaultNotify(), diags: [], syntax: "", cmdAt: [1, 1] };
   if (!exists) return rs;
   const sc = scan(text);
   const cx: Ctx = { text, pos: sc.pos, diags: rs.diags };
@@ -313,7 +320,7 @@ export function loadRules(text: string, exists: boolean): RuleSet {
   if (root["builtins"] !== undefined && typeof root["builtins"] !== "boolean") diag(cx, "builtins", "", "builtins must be true or false", true);
   if (root["builtins"] === false) rs.rules = [];
   const no = root["notify"];
-  if (no !== undefined) { const o = obj(no); if (!o) diag(cx, "notify", "", "notify must be an object", true); else loadNotify(cx, o, rs.notify); }
+  if (no !== undefined) { const o = obj(no); if (!o) diag(cx, "notify", "", "notify must be an object", true); else loadNotify(cx, o, rs.notify); rs.cmdAt = at(cx, "notify.command"); }
   const rr = root["rules"];
   if (rr !== undefined && !Array.isArray(rr)) { diag(cx, "rules", "", "rules must be an array", true); return rs; }
   const seen = new Set<string>();
