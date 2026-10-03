@@ -248,7 +248,8 @@ export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr
     if (a.key === "content") { f.content.push(c); continue; }
     const m = matcher(a, c, r.vals); const key = a.key;
     if (a.ent === "event") { f.event.push((s: Sess, kind: string, tool: string, args: string) => m(V([kind]))); continue; }
-    if (ctx === "watch" && a.ent === "call") { f.event.push((s: Sess, kind: string, tool: string, args: string) => kind === "tool" && m(eventVal(key, tool, args))); continue; }
+    // tool events, and result events with their call's name and arguments
+    if (ctx === "watch" && a.ent === "call") { f.event.push((s: Sess, kind: string, tool: string, args: string) => (kind === "tool" || kind === "result") && m(eventVal(key, tool, args))); continue; }
     if (a.ent === "call") { f.call.push((s: Sess, cl: Call) => m(callVal(key, s, cl))); f.needsCalls = true; continue; }
     // model is per session (its models) and per call (the issuing message's): the session test lifts, rows test their own
     if (key === "model") { f.sess.push((s: Sess) => m(sessVal(key, s))); f.rowx.push((s: Sess, cl: Call) => m(callVal(key, s, cl))); f.needsCalls = true; continue; }
