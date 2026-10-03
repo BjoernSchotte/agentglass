@@ -1,7 +1,8 @@
 // agentglass — the `content` filter key: full-text search of transcripts (rg, grep fallback, HarnessAdapter.search)
 // SPDX-License-Identifier: Apache-2.0
-// One result set per query. It grows incrementally: sessions not searched yet (new ones, or candidates outside an earlier
-// narrowed search) are searched on demand; already searched files are not searched again until the query is re-applied.
+// One result set per query, kept current incrementally: sessions not searched yet (new ones, candidates outside an earlier
+// narrowed search) and transcripts that changed size since their search (a live agent wrote) are searched on demand,
+// just those files; everything else is not searched again until the query is re-applied.
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { run } from "../../util/fs.ts";
@@ -9,7 +10,7 @@ import { sessions } from "../../model/sessions.ts";
 import { HARNESSES, sourceOf } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
 
-interface Hit { paths: Set<string>; searched: Set<string>; roots: boolean; dbN: number; timedOut: boolean }
+interface Hit { paths: Set<string>; searched: Map<string, number> /* path → size when searched */; roots: boolean; dbN: number; timedOut: boolean }
 const hits = new Map<string, Hit>();
 const NARROW = 200; // candidates up to this many: rg gets those files instead of the harness roots
 
@@ -27,12 +28,13 @@ function addLines(h: Hit, out: string): void { for (const l of out.split("\n")) 
 // sessions whose transcripts contain q (case-insensitive); cands = the sessions the other clauses leave (null = all)
 export function contentSet(q: string, cands: string[] | null): { paths: Set<string>; timedOut: boolean } {
   let h = hits.get(q);
-  if (!h) { h = { paths: new Set<string>(), searched: new Set<string>(), roots: false, dbN: -1, timedOut: false }; hits.set(q, h); }
+  if (!h) { h = { paths: new Set<string>(), searched: new Map<string, number>(), roots: false, dbN: -1, timedOut: false }; hits.set(q, h); }
   if (h.timedOut) return { paths: new Set<string>(), timedOut: true };
-  const files: string[] = []; let db = 0;
+  const files: string[] = []; let db = 0; const size = new Map<string, number>();
   for (const s of sessions.values()) {
     if (sourceOf(s.h) !== FILE_SOURCE) { db++; continue; }
-    if (!h.searched.has(s.path)) files.push(s.path);
+    size.set(s.path, s.size);
+    if (h.searched.get(s.path) !== s.size) files.push(s.path);
   }
   const cs = new Set<string>(cands ?? []);
   const want = cands ? files.filter((p: string) => cs.has(p)) : files;
@@ -42,14 +44,14 @@ export function contentSet(q: string, cands: string[] | null): { paths: Set<stri
     const r = rg(q, dirs, true);
     if (r.timedOut) { h.timedOut = true; return { paths: new Set<string>(), timedOut: true }; }
     addLines(h, r.out); h.roots = true;
-    for (const p of files) h.searched.add(p);
+    for (const p of files) h.searched.set(p, size.get(p) ?? 0);
   } else if (want.length) { // new sessions, or a narrow candidate set: just those files
     for (let i = 0; i < want.length; i += 200) {
       const part = want.slice(i, i + 200);
       const r = rg(q, part, false);
       if (r.timedOut) { h.timedOut = true; return { paths: new Set<string>(), timedOut: true }; }
+      for (const p of part) { h.paths.delete(p); h.searched.set(p, size.get(p) ?? 0); } // a rewritten file may have lost the text
       addLines(h, r.out);
-      for (const p of part) h.searched.add(p);
     }
   }
   if (db !== h.dbN) { // database-backed sessions (OpenCode): the adapter searches itself; again when their number changes
