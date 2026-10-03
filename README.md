@@ -278,6 +278,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `T` | cycle themes |
 | `Tab` `1` `2` `3` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) |
 | `B` | in Stats: budget state and the config path |
+| `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
 
 ## Filters
 
@@ -315,6 +316,35 @@ agentglass --json --pinned                                                     #
 agentglass --watch --filter 'harness is pi and event is_one_of tool result'    # only pi's calls and results
 ```
 A bad expression exits 2 with the message and a caret under the column.
+
+## Triage
+
+"What is different about these?" without a hypothesis. Pick a selection; agentglass ranks the attribute values that
+are over-represented in it compared with a baseline: `program npm — 34% of errored calls vs 6% of the rest`.
+
+- `t` on the Sessions tab triages the sessions your local filter selects (pins stay the scope); on Stats the calls of
+  the Stats filter; in the Stats drill-down that tool's errors. Without a local filter a picker offers presets:
+  `1` errored calls · `2` slow calls (≥ the p90 of the same tool; untimed calls are left out) · `3` long calls
+  (`duration > 30s`) · `4` expensive sessions (`cost > 5`) · `5` failing sessions (`error_rate > 20% and tools >= 10`) ·
+  `6` this period vs the previous one · `7` a typed expression.
+- Rows are ranked by share difference (percentage points), at most 3 values per attribute (`↵` shows all of one,
+  `↵` again its newest calls, `↵` there opens the transcript at the call). `●` marks χ² ≥ 6.63 (2×2, Yates, p < 0.01);
+  it never hides a row. Small groups (< 20) get a banner instead of silence.
+- `+` / `-` include or exclude the value in the tab you came from (it stays after `esc`), `p` pins it, `o` lists the
+  matching sessions. `b` baseline (rest ⇄ previous period), `e` calls ⇄ sessions, `c` weight (count, duration; cost,
+  tokens for sessions), `u` under-represented values, `s` selection, `d` `w` `m` today / 7 / 30 days.
+- When the scope already says what the selection says (pinned `status is error`, then "errored calls"), the
+  baseline is empty: `r` drops that clause for this triage, `R` removes it from the tab and the pins.
+- Config: `"triage": {"longCall": "30s", "expensiveUsd": 5, "minSupport": 3}` (a value is listed with ≥ minSupport
+  rows and ≥ 1% of the selection; files need 5).
+
+```sh
+agentglass triage --preset errors --days 7                     # aligned table (no colors when piped)
+agentglass triage --select 'tool is Bash and status is error' --filter 'repo is agentglass'
+agentglass triage --preset period --entity session --weight cost --json | jq '.rows[:5]'
+```
+Guards are answers (exit 0, `"guard": "empty-baseline" | "empty-selection" | "small-sample" | "retention"`); a bad
+expression or option exits 2.
 
 ## Scriptable
 
