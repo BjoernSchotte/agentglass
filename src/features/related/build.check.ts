@@ -88,6 +88,8 @@ const b0 = big("b00"); for (let i = 1; i < 40; i++) big("b" + String(i).padStart
 const bb = startBuild(b0, [ev(iso(0))], 0, 10, 10);
 if (!bb) { bad++; console.log("FAIL budget: no build"); } else {
   let clock = 0; const fake = (): number => { clock += 20; return clock; };
+  stepBuild(bb, 50, fake);
+  eq("budget: a session still being read already shows its rows", String(bb.next === 0 && bb.rows.filter((r: RelEv) => r.sess === b0.path).length > 10), "true");
   let steps = 0; let maxWin = 0; let more = true;
   while (more && steps < 100000) {
     const before = bb.bytes; more = stepBuild(bb, 50, fake); steps++;
@@ -125,9 +127,9 @@ if (!bl) { bad++; console.log("FAIL live: no build"); } else {
   appendFileSync(la.path, user(90000, "later 1") + "\n" + user(95000, "later 2") + "\n");
   la.size = statSync(la.path).size;
   const n = bl.rows.length;
-  eq("repoll: changed", String(repoll(bl)), "true");
+  eq("repoll: changed", String(repoll(bl, 1e9, () => Date.now())), "true");
   eq("repoll: 2 more rows", String(bl.rows.length - n), "2");
-  eq("repoll again: nothing new", String(repoll(bl)), "false");
+  eq("repoll again: nothing new", String(repoll(bl, 1e9, () => Date.now())), "false");
   eq("repoll: no duplicates", String(bl.rows.filter((r: RelEv) => r.text === "later 1").length), "1");
 }
 // the open transcript reaching back past t0 is reused: no read of the anchor's log

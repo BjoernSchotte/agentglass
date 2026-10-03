@@ -215,7 +215,7 @@ function readWindow(b: Build, s: Sess): boolean {
 }
 // reads windows until budgetMs (by now()) or the byte cap; true while candidates remain
 export function stepBuild(b: Build, budgetMs: number, now: () => number): boolean {
-  const start = now(); let changed = false;
+  const start = now(); let changed = false; const n0 = b.all.length;
   while (b.next < b.cands.length) {
     if (now() - start >= budgetMs) break;
     const s = sessions.get(b.cands[b.next] ?? "");
@@ -226,19 +226,21 @@ export function stepBuild(b: Build, budgetMs: number, now: () => number): boolea
     if (b.end.get(s.path) === undefined) seek(b, s);
     if (readWindow(b, s)) { b.next++; changed = true; }
   }
-  if (changed) settle(b);
+  if (changed || b.all.length !== n0) settle(b); // what a session still being read has so far renders too
   return b.next < b.cands.length;
 }
-// live: the window reaches into the future and a candidate runs — append from each session's cursor (no seek), re-mark
-export function repoll(b: Build): boolean {
+// live: the window reaches into the future and a candidate runs — append from each session's cursor (no seek), re-mark;
+// at most budgetMs per poll (the cursors keep the rest for the next one)
+export function repoll(b: Build, budgetMs: number, now: () => number): boolean {
   if (b.next < b.cands.length || b.t1 <= Date.now() || !b.live) return false;
-  const n0 = b.all.length;
+  const n0 = b.all.length; const start = now();
   for (const p of b.cands) {
     const s = sessions.get(p); if (!s) continue;
     const st = sourceOf(s.h).stat(s); if (!st) continue;
     const at = b.cur.get(p) ?? st.size; if (st.size <= at) continue;
     b.end.set(p, st.size);
-    for (let g = 0; g < 64 && !readWindow(b, s); g++) { /* up to 4 MB per session and poll */ }
+    while (now() - start < budgetMs && !readWindow(b, s)) { /* one 64 KB window at a time */ }
+    if (now() - start >= budgetMs) break;
   }
   extras(b);
   if (b.all.length === n0) return false;

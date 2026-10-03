@@ -334,7 +334,7 @@ H.onTick.push(() => {
   const st = stAt(); if (!st) return;
   if (S.fview !== NAME || (S.mode !== "view" && S.mode !== "help" && S.mode !== "input")) return;
   if (building(st)) { stepBuild(st.b, 50, () => Date.now()); S.dirty = true; return; }
-  if (Date.now() - st.polled >= 2000) { st.polled = Date.now(); if (repoll(st.b)) S.dirty = true; }
+  if (Date.now() - st.polled >= 2000) { st.polled = Date.now(); if (repoll(st.b, 50, () => Date.now())) S.dirty = true; }
 });
 H.backlog.push(() => { const st = stAt(); return st !== null && S.fview === NAME && S.mode === "view" && building(st); });
 H.footerHints.push((mode: string): string[][] => {
