@@ -35,7 +35,7 @@ ok("today unfiltered", statsSummaryFor("").tools === 8, String(statsSummaryFor("
 const cs = statsSummaryFor("tool is Bash and status is error"); const ct = statsTotalsFor("tool is Bash and status is error");
 ok("call-scoped", cs.scoped && cs.tools === 1 && ct.callScoped && ct.tools === 1 && cs.cost === ct.cost && cs.cost > 0, [cs.scoped, cs.tools, ct.tools, cs.cost, ct.cost].join(","));
 const old = compile(parse("day is 2020-01-01").cs, "stats").f ?? EMPTY;
-ok("empty period ∩ day", periodMessage(old, statsPeriod()) === "no days of today match day is 2020-01-01", periodMessage(old, statsPeriod()));
+ok("empty period ∩ day", periodMessage(old, statsPeriod()) === "today does not match day is 2020-01-01", periodMessage(old, statsPeriod()));
 ok("period intersects", periodMessage(compile(parse("day is today").cs, "stats").f ?? EMPTY, statsPeriod()) === "", "");
 console.log(bad ? bad + " failed" : "stats: all checks passed");
 if (bad) process.exit(1);

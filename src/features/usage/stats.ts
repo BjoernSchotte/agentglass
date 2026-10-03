@@ -108,7 +108,7 @@ export function periodMessage(f: Compiled, days: string[]): string {
   const r = compile(dc, "stats"); const g = r.f; if (!g) return "";
   for (const dk of days) { let ok = true; for (const p of g.day) if (!p(NOSESS, dk, NODAY)) { ok = false; break; } if (ok) return ""; }
   const txt: string[] = []; for (const c of dc) txt.push(c.key + " " + c.op + " " + c.vals.join(" "));
-  return "no days of " + (days.length > 1 ? "the last " + String(days.length) : "today") + " match " + txt.join(" and ");
+  return (days.length > 1 ? "no days of the last " + String(days.length) + " match " : "today does not match ") + txt.join(" and ");
 }
 const NOSESS = newSess("", "", "", false); const NODAY: Day = newDay(); // day/weekday clauses read only the day key
 // totals of an expression over the current period (checks; also what the summary shows under a filter)
