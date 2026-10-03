@@ -1,5 +1,5 @@
-// agentglass — the palette's fuzzy matcher (fzf v1 style): AND over space-separated terms, smart case, boundary and
-// run bonuses, a backward pass that tightens the window; pure
+// agentglass — the palette's fuzzy matcher (fzf style): AND over space-separated terms, smart case, boundary bonuses
+// that carry through a run, a backward pass that tightens each window, the best of several windows; pure
 // SPDX-License-Identifier: Apache-2.0
 
 // i = item index, pos = matched character positions in the haystack (for highlighting)
@@ -37,12 +37,14 @@ export function scoreTerm(hay: string, low: string, t: string, cs: boolean, pos:
     if (e < 0) break; // no later start can hold the whole term either
     let s = e + 1; // backward from the end: the latest start that still holds the whole term
     for (let j = n - 1; j >= 0; j--) s = h.lastIndexOf(t.charAt(j), s - 1);
-    let score = 0; let last = -2; let i = s - 1; tryPos.length = 0;
+    let score = 0; let last = -2; let i = s - 1; let run = 0; tryPos.length = 0;
     for (let j = 0; j < n; j++) {
       i = h.indexOf(t.charAt(j), i + 1);
-      tryPos.push(i); score += bonusAt(hay, i) + (i === last + 1 ? 4 : 0); last = i;
+      let b = bonusAt(hay, i);
+      if (i === last + 1) b = Math.max(b, run, 4); else run = b; // a run keeps its first character's boundary bonus (fzf)
+      tryPos.push(i); score += b; last = i;
     }
-    const v = score - Math.min(30, e - s + 1 - n);
+    const v = score - Math.min(80, e - s + 1 - n); // 1 per skipped column: letters scattered far apart rank low
     if (v > best) { best = v; pos.length = 0; for (const x of tryPos) pos.push(x); }
     st = h.indexOf(t.charAt(0), s + 1);
   }

@@ -13,6 +13,7 @@ import { buf } from "../../ui/screen.ts";
 import { screenOut } from "../../hooks.ts";
 import { harnessIds } from "../../harness/index.ts";
 import { tmpDir, addSess, convo } from "./fixture.ts";
+import { sessions, buildView } from "../../model/sessions.ts";
 import { P, renderPalette, selected, rows } from "./view.ts";
 import { mruLoad, mruTouch, mruSave, mruList } from "./mru.ts";
 import "./links.ts";
@@ -87,7 +88,12 @@ const sc: number[] = []; for (let i = 0; i < 5; i++) { sc.push(P.scope); key("\t
 ok("tab cycles 5 scopes", JSON.stringify(sc) === "[0,1,2,3,4]" && P.scope === 0, JSON.stringify(sc));
 type("?"); ok("? lists the prefixes", P.help, String(P.help)); key("\x1b");
 key("\x0b"); type("@"); key("\t"); ok("tab after a typed @ goes on to projects", P.scope === 3 && P.q === "", String(P.scope) + " " + P.q); key("\x1b");
-// selection kept by id across re-ranking
+// typing without moving keeps the cursor on the best match (it followed the first keystroke's top item down to row 176)
+const kx = addSess(dir, "kqxxzz-0007", "kx", convo(7), Date.now() - 500, ""); const ky = addSess(dir, "kqzz-0008", "ky", convo(8), Date.now() - 400000, "");
+key("\x0b"); type("@kq"); const first = selected()?.s; type("zz");
+ok("typing: cursor stays on the top row", first === kx && P.sel === 0 && selected()?.s === ky, (first === kx ? "kx first" : "other first") + " sel " + String(P.sel) + " " + (selected()?.text ?? "none")); key("\x1b");
+sessions.delete(kx.path); sessions.delete(ky.path); buildView();
+// selection kept by id across re-ranking once the user moved it
 key("\x0b"); type("@00");
 const want = rows().find((r) => r.s === s2); ok("second session listed", want !== undefined, rows().map((r) => r.text).join(" | "));
 while (selected() !== null && selected()?.s !== s2 && P.sel < rows().length - 1) key("\x1b[B");

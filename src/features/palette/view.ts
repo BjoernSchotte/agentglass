@@ -147,10 +147,9 @@ function rank(): void {
     for (const h of m.hits) hits.push({ i: numAt(idx, h.i, 0), score: h.score, pos: h.pos });
     P.hits = hits;
   }
-  // the selection follows its item across re-ranking
-  let at = -1; for (let k = 0; k < P.hits.length; k++) if (hitItem(k).id === P.selId) { at = k; break; }
+  // an item the user moved to follows across re-ranking; otherwise the cursor stays on the best match
+  let at = -1; if (P.selId) for (let k = 0; k < P.hits.length; k++) if (hitItem(k).id === P.selId) { at = k; break; }
   P.sel = at >= 0 ? at : 0;
-  P.selId = P.hits.length ? hitItem(P.sel).id : "";
 }
 export function rows(): Item[] { return P.hits.map((h: Hit) => itemAt(h.i)); }
 export function selected(): Item | null { return P.sel >= 0 && P.sel < P.hits.length ? hitItem(P.sel) : null; }

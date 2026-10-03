@@ -35,6 +35,10 @@ const pw: number[] = []; const hp = "Build a small todo web app here: index.html
 ok("best window wins", JSON.stringify(pw) === "[46,47]", JSON.stringify(pw) + " " + String(vp));
 const pr2 = match(["Build a small todo web app here: index.html · pi", "Build a tiny todo web app in this dir · pi"], ["build a small todo web app here: index.html · pi", "build a tiny todo web app in this dir · pi"], "pi todo", null, 200, null);
 ok("same harness word, same title word → tie, natural order", pr2.hits[0].i === 0 && pr2.hits[0].score === pr2.hits[1].score, ids(pr2.hits) + " " + String(pr2.hits[0].score) + "/" + String(pr2.hits[1].score));
+// a contiguous word beats letters scattered over boundaries far apart ("c…o…p…y" across "code · (no prompt yet)")
+const cw = ["Analyze Campfire code · (no prompt yet) · Claude · main", "Session: Copy session id"];
+const cm = match(cw, cw.map((x: string) => x.toLowerCase()), "copy", null, 200, null);
+ok("contiguous beats scattered", cm.hits[0].i === 1 && cm.hits[0].score - cm.hits[1].score > 10, ids(cm.hits) + " " + cm.hits.map((h) => String(h.score)).join("/"));
 const bm = match(["Fix bug", "fix"], ["fix bug", "fix"], "fi", null, 200, [5, 0]);
 ok("bonus lifts an item", bm.hits[0].i === 0, ids(bm.hits));
 
