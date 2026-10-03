@@ -405,6 +405,7 @@ if (REDACT) {
     }
   });
   H.display.push(display);
+  H.realCwd.push((s: Sess): string => { const r = recs.get(s.path); return r ? r.real : ""; }); // agent-mode scope compares real projects
   H.screenFilter.push(scrubStyled);
   H.headerWidgets.unshift((w: number) => (w >= 10 ? bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST : ""));
 }

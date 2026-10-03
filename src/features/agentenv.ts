@@ -9,6 +9,7 @@ import { section } from "../util/config.ts";
 import { sessions, parentOf } from "../model/sessions.ts";
 import { allProcs } from "../model/procs.ts";
 import { say } from "../state.ts";
+import { realCwd } from "../hooks.ts";
 
 // via: "flag", "env:<NAME>", "ancestor:pid N", "env:<NAME>+ancestor:pid N" or ""
 export interface AgentHost { on: boolean; harness: string; session: string; via: string }
@@ -84,14 +85,15 @@ export interface Current { s: Sess | null; via: string; code: string; hint: stri
 function byId(id: string): Sess | null { for (const s of sessions.values()) if (s.id === id) return s; return null; }
 function top(s: Sess): Sess { let r = s; for (let i = 0; i < 8 && r.parent; i++) { const p = parentOf(r); if (!p) break; r = p; } return r; }
 // "current" from an env session id and the process tree; procs empty = ps unavailable (sandboxed shells): env ids only
-export function currentFrom(h: AgentHost, envVar: string, procs: Map<number, Proc>, pid: number, root: boolean): Current {
+export function currentFrom(h: AgentHost, envVar: string, procs: Map<number, Proc>, pid: number, root: boolean, quiet = false): Current {
+  const warn = (m: string): void => { if (!quiet) say("warn", m); };
   const fin = (s: Sess, via: string): Current => ({ s: root ? top(s) : s, via, code: "", hint: "" });
   const envS = h.session ? byId(h.session) : null;
   if (!procs.size) {
     if (envS) return fin(envS, "env:" + envVar);
-    say("warn", "process list unavailable: only the session id from the environment can name the current session");
+    warn("process list unavailable: only the session id from the environment can name the current session");
   }
-  if (h.session && !envS) say("warn", "session id from " + envVar + " not found, using the process tree");
+  if (h.session && !envS) warn("session id from " + envVar + " not found, using the process tree");
   const a = procs.size ? ancestry(pid, procs, (p: Proc): string => p.sess) : { harness: "", session: "", pid: 0, steps: 0 };
   const as = a.session ? sessions.get(a.session) ?? null : null;
   if (envS && (!a.harness || a.harness === envS.h)) return fin(envS, "env:" + envVar);
@@ -99,10 +101,10 @@ export function currentFrom(h: AgentHost, envVar: string, procs: Map<number, Pro
   if (a.harness) return { s: null, via: "ancestor:pid " + String(a.pid), code: "no_current_session", hint: "session not written yet" };
   return { s: null, via: "", code: "no_current_session", hint: "pass a session id or use 'last'" };
 }
-// needs discover() first (sessions scanned, processes listed and linked)
-export function currentSession(root: boolean): Current {
+// needs discover() first (sessions scanned, processes listed and linked); quiet = no warnings (current is only a side note)
+export function currentSession(root: boolean, quiet = false): Current {
   const h = agentHost();
-  return currentFrom(h, sessionVar(envMap(), h.session), allProcs, process.pid, root);
+  return currentFrom(h, sessionVar(envMap(), h.session), allProcs, process.pid, root, quiet);
 }
 
 // "30s", "2m", "1h", "500ms" → ms; anything else -1
@@ -155,7 +157,7 @@ export function agentScope(args: string[]): Scope {
   if (!scope0) { const c = section("agent")["scope"]; scope0 = scopeOf(agentHost().on, args, c === undefined ? "" : str(c) || String(c), process.cwd()); if (scope0.warn) say("warn", scope0.warn); }
   return scope0;
 }
-export function inScope(s: Sess, sc: Scope): boolean { return sc.name === "all" || projectKey(s.cwd) === sc.key; }
+export function inScope(s: Sess, sc: Scope): boolean { return sc.name === "all" || projectKey(realCwd(s)) === sc.key; }
 // agentMode in the JSON help: full adds on + via
 export function hostObj(full: boolean): Obj {
   const h = agentHost(); const sc = agentScope(process.argv.slice(2));
