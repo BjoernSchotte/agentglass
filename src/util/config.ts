@@ -7,7 +7,8 @@ import { type Obj, obj } from "./json.ts";
 import { HOME, readText } from "./fs.ts";
 import { say } from "../state.ts";
 
-export const CONFIG_FILE = join(HOME, ".agentglass", "config.json");
+// AGENTGLASS_CONFIG: another config file (test runs must not write the real one)
+export const CONFIG_FILE = process.env.AGENTGLASS_CONFIG || join(HOME, ".agentglass", "config.json");
 const root: Obj | null = obj((() => { try { return JSON.parse(readText(CONFIG_FILE, 0, 262144)); } catch (e) { return null; } })());
 
 // a section of the config ({} when absent or not an object)
