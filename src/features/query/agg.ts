@@ -69,6 +69,8 @@ export function sessDim(dim: string, s: Sess): string[] {
 }
 function uniq(xs: string[]): string[] { const o: string[] = []; for (const x of xs) if (o.indexOf(x) < 0) o.push(x); return o; }
 function dictNames(d: { ids: Map<string, number>; names: string[] }, xs: number[]): string[] { const o: string[] = []; for (const x of xs) o.push(nameOf(d, x)); return o; }
+// the dimensions callDim answers per row; any other falls back to the session's value
+const CALL_LEVEL = ["tool", "server", "program", "command", "file", "ext", "status", "duration", "out", "model", "hour", "day", "weekday"];
 // a call attribute as dimension values (multi-valued attributes: each distinct value)
 export function callDim(dim: string, s: Sess, c: Call): string[] {
   switch (dim) {
@@ -155,12 +157,18 @@ interface SR { s: Sess; err: number; dur: number; dks: string[]; vals: string[][
 function rowsAgg(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight, keep: ((s: Sess, c: Call) => boolean) | null): Dist[] {
   const out = newDists(dims, "rows");
   if (entity === "call") {
+    // session attributes are the same for every row of a session (eachCall walks one session's rows together): once per session
+    const sl: boolean[] = []; for (const d of dims) sl.push(CALL_LEVEL.indexOf(d) < 0);
+    let last = ""; let sv: string[][] = [];
     eachCall(f, days, (s: Sess, c: Call) => {
       if (keep) { const k = keep; if (!k(s, c)) return; }
+      if (s.path !== last) { last = s.path; sv = []; for (let i = 0; i < dims.length; i++) sv.push(sl[i] ? sessDim(dims[i] ?? "", s) : []); }
       const w = weight === "count" ? 1 : weight === "duration" ? Math.max(0, c.ms) : 0;
-      for (const ds of out) {
+      const hi = c.ms >= 0 ? hb(c.ms) : -1;
+      for (let i = 0; i < out.length; i++) {
+        const ds = out[i];
         ds.total++; ds.wTotal += w;
-        for (const v of callDim(ds.dim, s, c)) { const b = bin(ds, v); b.n++; b.w += w; if (c.err === 1) b.err++; if (c.ms >= 0) { const hi = hb(c.ms); b.hist[hi] = (b.hist[hi] ?? 0) + 1; if (c.ms > b.max) b.max = c.ms; } }
+        for (const v of sl[i] ? (sv[i] ?? []) : callDim(ds.dim, s, c)) { const b = bin(ds, v); b.n++; b.w += w; if (c.err === 1) b.err++; if (hi >= 0) { b.hist[hi] = (b.hist[hi] ?? 0) + 1; if (c.ms > b.max) b.max = c.ms; } }
       }
     });
     return out;
