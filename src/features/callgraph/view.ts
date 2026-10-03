@@ -1,6 +1,6 @@
 // agentglass — call graph (c): a session's turns, tool calls and subagents as a DevTools-style flame chart + call tree
 // SPDX-License-Identifier: Apache-2.0
-import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home } from "../../util/text.ts";
+import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home, ESC_RE } from "../../util/text.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
 import { H } from "../../hooks.ts";
@@ -236,7 +236,7 @@ function infoBar(y: number): void {
   const s = spanAt(G.sel);
   if (!s) { put(1, y, bg(C.sel) + " ".repeat(w) + RST); put(1, y + 1, bg(C.sel) + " ".repeat(w) + RST); return; }
   const st = status(s);
-  const sw = width(st.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
+  const sw = width(st.replace(ESC_RE, ""));
   const p = fitStyled(fg(C.accent) + B + " " + clean(pathOf(s)) + RST, w - sw - 2);
   put(1, y, bg(C.sel) + p + bg(C.sel) + fillTo(p, w - sw - 1) + st + bg(C.sel) + " " + RST);
   const tv = tvAt(s.src);
