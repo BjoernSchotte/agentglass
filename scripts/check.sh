@@ -11,7 +11,7 @@ for f in $(find src -name '*.check.ts' | sort); do
   # check can read or write the user's real home (sessions, ~/.agentglass config, cache, run dir, palette, theme)
   rm -rf "$out/home"; mkdir -p "$out/home"
   if env -u GEMINI_CLI_HOME -u OPENCODE_DB -u PI_CODING_AGENT_DIR -u PI_CODING_AGENT_SESSION_DIR -u AGENTGLASS_CACHE_DIR \
-    -u AGENTGLASS_CONFIG -u AGENTGLASS_RUN_DIR -u AGENTGLASS_PALETTE_FILE -u AGENTGLASS_THEME \
+    -u AGENTGLASS_CONFIG -u AGENTGLASS_RUN_DIR -u AGENTGLASS_PALETTE_FILE -u AGENTGLASS_OTLP_DIR -u AGENTGLASS_THEME \
     HOME="$out/home" XDG_CONFIG_HOME="$out/home/.config" XDG_DATA_HOME="$out/home/.local/share" XDG_STATE_HOME="$out/home/.local/state" \
     XDG_CACHE_HOME="$out/home/.cache" AGENTGLASS_HERMETIC=1 \
     AGENTGLASS_RULES=/nonexistent AGENTGLASS_NOTIFY=0 AGENTGLASS_REDACT=1 AGENTGLASS_REDACT_KEEP=keepme "$out/c" >"$out/run" 2>&1; then echo "ok   $f: $(tail -1 "$out/run")"; else echo "FAIL $f"; cat "$out/run"; fail=1; fi
