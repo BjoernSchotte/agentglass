@@ -20,7 +20,7 @@ claude aaaaaa22 3
 printf '%s\n' "{\"timestamp\":\"$NOW\",\"type\":\"session_meta\",\"payload\":{\"id\":\"bbbbbb33\",\"cwd\":\"/w/other\",\"model\":\"gpt-5\"}}" \
   "{\"timestamp\":\"$NOW\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}}" \
   > "$T/home/.codex/sessions/2026/10/01/rollout-2026-10-01T10-00-00-bbbbbb33-1111-2222-3333-444455556666.jsonl"
-ag() { HOME="$T/home" AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" "$@"; }
+ag() { HOME="$T/home" AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_CONFIG= AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 "$BIN" "$@"; } # human output: not the agent-mode JSON errors
 ag compare aaaaaa11 aaaaaa22 --json > "$T/c.json"
 grep -q '"tools":2' "$T/c.json" && grep -q '"tools":3' "$T/c.json" || { echo "FAIL counts"; cat "$T/c.json"; exit 1; }
 grep -q '"expr":"session is claude:aaaaaa11","n":1' "$T/c.json" || { echo "FAIL expr"; cat "$T/c.json"; exit 1; }
