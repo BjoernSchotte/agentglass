@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { S, say } from "../../state.ts";
 import { H, display } from "../../hooks.ts";
-import { clean, fit, fitStyled, fillTo, width, vwidth, home } from "../../util/text.ts";
+import { clean, fit, fitTail, fitStyled, fillTo, width, vwidth, home } from "../../util/text.ts";
 import { ask, openPath } from "../../actions.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, gauge, spin } from "../../ui/screen.ts";
@@ -15,6 +15,7 @@ import { L, todayKey, dayKey, startOfDay } from "../usage/record.ts";
 import { ledger } from "../usage/ledger.ts";
 import { fmtMs, mcpServer } from "../usage/calls.ts";
 import { grp, kfmt, money } from "../usage/costs.ts";
+import type { Bill } from "../usage/billing.ts";
 import { statsDrill, statsTabIndex } from "../usage/stats.ts";
 import { callDays } from "../usage/callcache.ts";
 import type { Clause } from "../query/types.ts";
@@ -39,24 +40,25 @@ function secName(i: number, W: number): string { return (W >= 110 ? SECS[i] : SE
 
 // ── state beside CState: the count in flight and the rows of the shown section ──
 interface Item { kind: string /* metric | tool | cnt | file | head | model | spark */; i: number; key: string }
-const V = { job: null as CmpJob | null, stale: true, at: 0, ver: -1, inTx: false, items: [] as Item[], tools: [] as ToolRow[], cnts: [] as CntRow[], files: [] as FileRow[], models: [] as ModelRow[], rowY0: 0, rowN: 0, sig: false, root: "", limited: false };
+const V = { job: null as CmpJob | null, stale: true, at: 0, dur: 0 /* ms the last count took */, ver: -1, inTx: false, items: [] as Item[], tools: [] as ToolRow[], cnts: [] as CntRow[], files: [] as FileRow[], models: [] as ModelRow[], rowY0: 0, rowN: 0, sig: false, root: "", limited: false };
 const SLICE_FRAME = 15; const SLICE = 40; const GAP = 10;
 function hasTimeline(st: CState): boolean { return !!st.A.single && !!st.B.single; }
 function key(st: CState): string { return cmpKey(st.A, st.B, st.scope, st.subs, null); }
 function changed(st: CState): void { V.stale = true; V.job = null; S.dirty = true; if (st.sec === 6 && !hasTimeline(st)) st.sec = 0; }
-// recount when the groups changed or the ledger moved (every 2 s while live or indexing, every 10 s otherwise); until a count
-// finishes the previous comparison stays on screen
+// recount when the groups changed or the ledger moved (every 2 s while live or indexing, every 10 s otherwise, and never
+// sooner than 3× the last count took: big call-row groups do not count back to back); until a count finishes the previous
+// comparison stays on screen
 function ensure(st: CState, ms: number): void {
   const k = key(st); const c = st.cmp;
   const busy = L.done < L.total || (!!c && (c.a.live || c.b.live));
-  const moved = L.ver !== V.ver && Date.now() - V.at >= (busy ? 2000 : 10000);
+  const moved = L.ver !== V.ver && Date.now() - V.at >= Math.max(busy ? 2000 : 10000, 3 * V.dur);
   if (V.stale || (!V.job && (!c || c.key !== k || moved))) {
     const hit = V.stale ? cmpCached(k) : null;
     V.stale = false; V.at = Date.now(); V.ver = L.ver;
     if (hit) { st.cmp = hit; V.job = null; } else V.job = cmpJob(st.A, st.B, st.scope, st.subs, null);
   }
   const j = V.job;
-  if (j && cmpStep(j, ms === Infinity ? Infinity : Date.now() + ms)) { st.cmp = j.res; V.job = null; }
+  if (j && cmpStep(j, ms === Infinity ? Infinity : Date.now() + ms)) { st.cmp = j.res; V.job = null; V.dur = Date.now() - V.at; }
 }
 function counting(): boolean { return !!V.job || V.stale; }
 
@@ -93,6 +95,10 @@ function tabsLine(st: CState, W: number): string {
     if (i === 6 && !hasTimeline(st)) continue;
     l += (i === st.sec ? bg(C.accent) + fg("20;20;24") + CSI + "1m" : fg(C.sub)) + " " + secName(i, W) + " " + RST + " ";
   }
+  return " " + line(l, W - 2) + " ";
+}
+// the line under the tabs: the pick's note and the scope on the left, the status flags on the right (they never squeeze the tabs)
+function noteLine(st: CState, W: number): string {
   const c = st.cmp; const fl: string[] = [];
   if (counting()) { const j = V.job; fl.push(fg(C.accent) + spin() + RST + fg(C.sub) + " counting " + String(Math.floor((j ? cmpProgress(j) : 0) * 100)).padStart(3) + "%" + RST); }
   fl.push(fg(C.sub) + "subagents " + (st.subs ? "incl." : "excl.") + RST);
@@ -100,17 +106,14 @@ function tabsLine(st: CState, W: number): string {
   const ix = c ? Math.min(c.a.indexing, c.b.indexing) : 1;
   if (ix < 0.999) fl.push(fg(C.yellow) + "indexing " + String(Math.floor(ix * 100)) + "%" + RST);
   if (st.sec === 1 || st.sec === 4) fl.push(fg(C.dim) + "↵ side " + RST + fg(C.accent) + (st.side === 0 ? "A" : "B") + RST);
-  const right = fl.join(fg(C.dim) + " · " + RST);
-  const room = W - 2 - vwidth(right) - 2;
-  if (room < 20) return " " + line(l, W - 2) + " ";
-  const lf = fitStyled(l, room);
-  return " " + lf + fillTo(lf, room) + "  " + right + " ";
-}
-function noteLine(st: CState, W: number): string {
+  const right = fitStyled(fl.join(fg(C.dim) + " · " + RST), W - 2);
   const parts: string[] = [];
   if (st.note) parts.push(st.note);
   const pins = st.scope; if (pins.length) parts.push("scope: " + exprText(pins));
-  return " " + fg(C.dim) + line(parts.join("  ·  "), W - 2) + RST + " ";
+  const room = W - 2 - vwidth(right) - 2;
+  const left = room >= 8 ? fg(C.dim) + fit(parts.join("  ·  "), room) + RST : "";
+  const l = left + (left ? "  " : "") + right;
+  return " " + l + fillTo(l, W - 2) + " ";
 }
 // summary columns: label | A | B | Δ | B/A (B/A below 100 columns and Δ below 80 dropped)
 interface SCols { lw: number; vw: number; dw: number; rw: number }
@@ -131,29 +134,32 @@ function metricLine(st: CState, m: Metric, c: SCols, on: boolean, W: number): st
 function summaryHead(c: SCols, W: number): string { return fg(C.dim) + line(" " + fit("", c.lw) + rp("A", c.vw) + " " + rp("B", c.vw) + (c.dw ? " " + rp("Δ  B − A", c.dw - 1) : "") + (c.rw ? " " + rp("B/A", c.rw - 1) : ""), W) + RST; }
 // tools / programs / commands: name | calls A | calls B | share A | share B | Δpp | err A | err B | (p95 A | p95 B) | ●
 interface TCols { nw: number; bw: number; err: boolean; p95: boolean }
-function tcols(W: number, p95: boolean): TCols {
+// names (commands, MCP tools) get 24 columns before the share gauges get any; the gauges take what is left, ≤ 16 each
+export function tableCols(W: number, p95: boolean): TCols {
   const err = W >= 80; const p = p95 && W >= 110;
   const fixed = 1 + 7 + 1 + 7 + 2 + 6 + 2 + 6 + 1 + 7 + (err ? 12 : 0) + (p ? 16 : 0) + 2;
-  const nw = Math.max(10, Math.min(28, Math.floor((W - fixed) * 0.4)));
-  const bw = Math.max(0, Math.min(16, Math.floor((W - fixed - nw) / 2)));
+  const free = W - fixed; const g = Math.min(16, Math.floor((free - 24) / 2) - 1);
+  const bw = g >= 4 ? g : 0;
+  const nw = Math.max(10, Math.min(40, free - (bw ? 2 * (bw + 1) : 0)));
   return { nw, bw, err, p95: p };
 }
-function shareCell(sh: number, bw: number): string { return (bw >= 3 ? gauge(sh, bw) + " " : "") + fg(C.text) + rp((sh * 100).toFixed(1) + "%", 6) + RST; }
+// b: the row's background, set again after the gauge's reset
+function shareCell(sh: number, bw: number, b: string): string { return (bw >= 3 ? gauge(sh, bw) + b + " " : "") + fg(C.text) + rp((sh * 100).toFixed(1) + "%", 6) + RST; }
 function tableHead(c: TCols, name: string, W: number): string {
-  return fg(C.dim) + line(" " + fit(name, c.nw) + rp("A", 7) + " " + rp("B", 7) + "  " + fit("share A", (c.bw >= 3 ? c.bw + 1 : 0) + 6) + "  " + fit("share B", (c.bw >= 3 ? c.bw + 1 : 0) + 6) + " " + rp("Δpp", 7) +
+  return fg(C.dim) + line(" " + fit(name, c.nw) + rp("A", 7) + " " + rp("B", 7) + "  " + (c.bw >= 3 ? fit("share A", c.bw + 7) : rp("% A", 6)) + "  " + (c.bw >= 3 ? fit("share B", c.bw + 7) : rp("% B", 6)) + " " + rp("Δpp", 7) +
     (c.err ? rp("err A", 6) + rp("err B", 6) : "") + (c.p95 ? rp("p95 A", 8) + rp("p95 B", 8) : "") + "  ", W) + RST;
 }
 function toolLine(st: CState, r: ToolRow, c: TCols, on: boolean, W: number): string {
   const b = on ? bg(C.sel) : "";
   const name = r.kid ? "   " + shown("tool", r.label) : r.server ? (st.open.has(r.key) ? "▾ ⧉ " : "▸ ⧉ ") + r.label : shown("tool", r.label);
   const dc = r.sig ? C.accent : C.sub;
-  const l = b + " " + fg(r.kid ? C.sub : C.text) + (on ? CSI + "1m" : "") + fit(name, c.nw) + RST + b + fg(C.text) + rp(grp(r.nA), 7) + " " + rp(grp(r.nB), 7) + RST + b + "  " + shareCell(r.shA, c.bw) + b + "  " + shareCell(r.shB, c.bw) + b + " " + fg(dc) + rp(pp(r.dpp), 7) + RST + b +
+  const l = b + " " + fg(r.kid ? C.sub : C.text) + (on ? CSI + "1m" : "") + fit(name, c.nw) + RST + b + fg(C.text) + rp(grp(r.nA), 7) + " " + rp(grp(r.nB), 7) + RST + b + "  " + shareCell(r.shA, c.bw, b) + b + "  " + shareCell(r.shB, c.bw, b) + b + " " + fg(dc) + rp(pp(r.dpp), 7) + RST + b +
     (c.err ? fg(C.sub) + rp(errPct(r.nA, r.errA), 6) + rp(errPct(r.nB, r.errB), 6) + RST + b : "") + (c.p95 ? fg(C.sub) + rp(dur(r.p95A), 8) + rp(dur(r.p95B), 8) + RST + b : "") + " " + (r.sig ? fg(C.accent) + "●" + RST + b : " ");
   return line(l, W) + RST;
 }
 function cntLine(r: CntRow, c: TCols, kind: string, on: boolean, W: number): string {
   const b = on ? bg(C.sel) : "";
-  const l = b + " " + fg(C.text) + (on ? CSI + "1m" : "") + fit(display(kind, r.key, null), c.nw) + RST + b + fg(C.text) + rp(grp(r.nA), 7) + " " + rp(grp(r.nB), 7) + RST + b + "  " + shareCell(r.shA, c.bw) + b + "  " + shareCell(r.shB, c.bw) + b + " " + fg(r.sig ? C.accent : C.sub) + rp(pp(r.dpp), 7) + RST + b +
+  const l = b + " " + fg(C.text) + (on ? CSI + "1m" : "") + fit(display(kind, r.key, null), c.nw) + RST + b + fg(C.text) + rp(grp(r.nA), 7) + " " + rp(grp(r.nB), 7) + RST + b + "  " + shareCell(r.shA, c.bw, b) + b + "  " + shareCell(r.shB, c.bw, b) + b + " " + fg(r.sig ? C.accent : C.sub) + rp(pp(r.dpp), 7) + RST + b +
     (c.err ? fg(C.sub) + rp(errPct(r.nA, r.errA), 6) + rp(errPct(r.nB, r.errB), 6) + RST + b : "") + " " + (r.sig ? fg(C.accent) + "●" + RST + b : " ");
   return line(l, W) + RST;
 }
@@ -164,14 +170,15 @@ function fileLine(r: FileRow, W: number, on: boolean): string {
   const cellA = r.editsA > 0 ? fg(C.sub) + rp(ed(r.editsA), 5) + RST + b + " " + lines2(r.addA, r.delA) : fg(C.dim) + rp("–", 5) + RST;
   const cellB = r.editsB > 0 ? fg(C.sub) + rp(ed(r.editsB), 5) + RST + b + " " + lines2(r.addB, r.delB) : fg(C.dim) + rp("–", 5) + RST;
   const ca = fitStyled(cellA, 16); const cb = fitStyled(cellB, 16);
-  const l = b + "   " + fg(C.text) + (on ? CSI + "1m" : "") + fit(display("file", r.shown, null), pw - 2) + RST + b + " " + ca + fillTo(ca, 16) + b + " " + cb + fillTo(cb, 16);
+  const l = b + "   " + fg(C.text) + (on ? CSI + "1m" : "") + fitTail(display("file", r.shown, null), pw - 2) + RST + b + " " + ca + fillTo(ca, 16) + b + " " + cb + fillTo(cb, 16);
   return line(l, W) + RST;
 }
-function modelLine(r: ModelRow, W: number, on: boolean, limited: boolean): string {
-  const b = on ? bg(C.sel) : ""; const nw = Math.max(12, Math.min(30, W - 2 - 64));
-  const cost = (c: number, unk: boolean): string => unk ? (c > 0 ? money(c, "") + " +?" : "cost ?") : c > 0 ? money(c, "") : "–";
+// billA / billB: the side's one billing mode (API spend prints "$", estimates "≈$"), as on the summary's cost row
+function modelLine(r: ModelRow, W: number, on: boolean, limited: boolean, billA: Bill | "", billB: Bill | ""): string {
+  const b = on ? bg(C.sel) : ""; const nw = Math.max(12, Math.min(30, W - 2 - 60));
+  const cost = (c: number, unk: boolean, bill: Bill | ""): string => unk ? (c > 0 ? money(c, bill) + " +?" : "cost ?") : c > 0 ? money(c, bill) : "–";
   const l = b + " " + fg(C.text) + (on ? CSI + "1m" : "") + fit(r.model, nw) + RST + b + fg(limited ? C.sub : C.text) + rp(grp(r.callsA), 8) + rp(grp(r.callsB), 8) + RST + b + fg(C.text) + rp(r.tokA ? kfmt(r.tokA) : "–", 10) + rp(r.tokB ? kfmt(r.tokB) : "–", 10) + RST + b +
-    fg(C.yellow) + rp(cost(r.costA, r.unkA), 14) + rp(cost(r.costB, r.unkB), 14) + RST + b;
+    fg(C.yellow) + rp(cost(r.costA, r.unkA, billA), 12) + rp(cost(r.costB, r.unkB, billB), 12) + RST + b;
   return line(l, W) + RST;
 }
 const BLK = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
@@ -202,10 +209,10 @@ function pickable(it: Item): boolean { return it.kind !== "head"; }
 function itemLine(st: CState, it: Item, on: boolean, W: number): string {
   const c = st.cmp;
   if (it.kind === "metric" && c) return metricLine(st, c.rows[it.i], scols(W), on, W);
-  if (it.kind === "tool") return toolLine(st, V.tools[it.i], tcols(W, true), on, W);
-  if (it.kind === "cnt") return cntLine(V.cnts[it.i], tcols(W, false), st.sec === 2 ? "prog" : "cmd", on, W);
+  if (it.kind === "tool") return toolLine(st, V.tools[it.i], tableCols(W, true), on, W);
+  if (it.kind === "cnt") return cntLine(V.cnts[it.i], tableCols(W, false), st.sec === 2 ? "prog" : "cmd", on, W);
   if (it.kind === "file") return fileLine(V.files[it.i], W, on);
-  if (it.kind === "model") return modelLine(V.models[it.i], W, on, V.limited);
+  if (it.kind === "model" && c) return modelLine(V.models[it.i], W, on, V.limited, c.a.bill, c.b.bill);
   if (it.kind === "head") return " " + fg(C.accent) + CSI + "1m" + line(it.key, W - 2) + RST + " ";
   return "";
 }
@@ -228,10 +235,10 @@ function build(st: CState, W: number, Ht: number, sync: boolean): string[] {
   if (c.emptyA || c.emptyB) ban.push(fg(C.yellow) + emptyText(c) + RST);
   V.items = itemsOf(st, c);
   if (st.sec === 0) out.push(summaryHead(scols(W), W));
-  else if (st.sec === 1) { out.push(tableHead(tcols(W, true), "tool", W)); if (!V.sig) ban.push(fg(C.dim) + "small samples, no significance (χ² needs ≥ 50 calls per group)" + RST); else ban.push(fg(C.dim) + "● share differs between A and B (χ² ≥ 6.63, p < 0.01) · ␣ folds MCP servers · ↵ Stats drill-down for side A ([) or B (])" + RST); }
-  else if (st.sec === 2 || st.sec === 3) { out.push(tableHead(tcols(W, false), st.sec === 2 ? "program" : "command", W)); if (!V.sig && V.cnts.length) ban.push(fg(C.dim) + "small samples, no significance" + RST); }
+  else if (st.sec === 1) { out.push(tableHead(tableCols(W, true), "tool", W)); if (!V.sig) ban.push(fg(C.dim) + "small samples, no significance (χ² needs ≥ 50 calls per group)" + RST); else ban.push(fg(C.dim) + "● share differs between A and B (χ² ≥ 6.63, p < 0.01) · ␣ folds MCP servers · ↵ Stats drill-down for side A ([) or B (])" + RST); }
+  else if (st.sec === 2 || st.sec === 3) { out.push(tableHead(tableCols(W, false), st.sec === 2 ? "program" : "command", W)); if (!V.sig && V.cnts.length) ban.push(fg(C.dim) + "small samples, no significance" + RST); }
   else if (st.sec === 4) { const pw = Math.max(10, W - 2 - 34); out.push(fg(C.dim) + line("   " + fit(V.root ? "path (in " + home(V.root) + ")" : "path", pw - 2) + " " + fit("A edits  ±", 16) + " " + fit("B edits  ±", 16), W) + RST); }
-  else if (st.sec === 5) { const nw = Math.max(12, Math.min(30, W - 2 - 64)); out.push(fg(C.dim) + line(" " + fit("model", nw) + rp("calls A", 8) + rp("calls B", 8) + rp("tokens A", 10) + rp("tokens B", 10) + rp("cost A", 14) + rp("cost B", 14), W) + RST); if (V.limited) ban.push(fg(C.dim) + "calls: call rows are kept " + String(callDays()) + " days, older calls are not counted — tokens and cost cover all history" + RST); }
+  else if (st.sec === 5) { const nw = Math.max(12, Math.min(30, W - 2 - 60)); out.push(fg(C.dim) + line(" " + fit("model", nw) + rp("calls A", 8) + rp("calls B", 8) + rp("tokens A", 10) + rp("tokens B", 10) + rp("cost A", 12) + rp("cost B", 12), W) + RST); if (V.limited) ban.push(fg(C.dim) + "calls: call rows are kept " + String(callDays()) + " days, older calls are not counted — tokens and cost cover all history" + RST); }
   if (st.sec === 6) {
     const tl = timeline(c);
     if (!tl) out.push(" " + fg(C.sub) + "no timeline: a session has no start time" + RST);

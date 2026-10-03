@@ -1,7 +1,7 @@
 // agentglass — self-check for the compare view: scriptc build src/features/compare/view.check.ts -o cvc && ./cvc
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../../state.ts";
-import { width } from "../../util/text.ts";
+import { width, fitTail } from "../../util/text.ts";
 import { onInput } from "../../input.ts";
 import { titleOf } from "../../model/sessions.ts";
 import { initPins } from "../query/scope.ts";
@@ -9,7 +9,7 @@ import { statsTabIndex, statsDrillTool } from "../usage/stats.ts";
 import { localFor } from "../query/scope.ts";
 import { print } from "../query/parse.ts";
 import { groupOfSession } from "./metrics.ts";
-import { CV, openCompare, compareLines } from "./view.ts";
+import { CV, openCompare, compareLines, tableCols } from "./view.ts";
 import { M, selectSession } from "./marks.ts";
 import { useTriageCfg } from "../triage/run.ts";
 import { T, selectRow as selectTriageRow, includeSel } from "../triage/view.ts";
@@ -31,6 +31,15 @@ if (!st) { bad++; console.log("FAIL no compare state"); } else {
   eq("ratio column wide", has(L1, "×2.0") ? "ok" : "no", "ok");
   eq("tabs", has(L1, "summary") && has(L1, "timeline") ? "ok" : "no", "ok");
   eq("tabs fit at 80", has(compareLines(st, 80, 24), " time ") ? "ok" : compareLines(st, 80, 24)[1] ?? "", "ok");
+  // the status flags (counting, subagents, live, side) never squeeze the tabs: every tab stays on the line at 80 columns
+  st.sec = 1; const L80 = compareLines(st, 80, 24); st.sec = 0;
+  eq("all tabs at 80 with flags", /\bsum\b.*\btools\b.*\bprogs\b.*\bcmds\b.*\bfiles\b.*\bmodels\b.*\btime\b/.test(L80[1] ?? "") ? "ok" : L80[1] ?? "", "ok");
+  eq("share headers whole at 80", !has(L80, "share…") && has(L80, "% A") ? "ok" : L80[3] ?? "", "ok");
+  eq("flags still shown", has(L80, "subagents incl.") && has(L80, "↵ side B") ? "ok" : L80.slice(0, 3).join("\n"), "ok");
+  // tables at 80 columns: names get the room (share gauges go first); paths keep their file name
+  eq("names ≥ 24 at 80", String(tableCols(80, false).nw >= 24 && tableCols(80, true).nw >= 20), "true");
+  eq("gauges when wide", String(tableCols(160, true).bw >= 8), "true");
+  eq("path keeps the file name", fitTail("/tmp/agtest-session-compare-opencode/app.js", 20), "…are-opencode/app.js");
   eq("tool calls row", L1.some((l) => /tool calls\s+5\s+10\s+\+5\s+×2\.0/.test(l)) ? "ok" : L1.join("\n"), "ok");
   eq("no ratio < 100 cols", has(compareLines(st, 99, 40), "×2.0") ? "shown" : "dropped", "dropped");
   eq("no Δ < 80 cols", has(compareLines(st, 79, 40), "+5") ? "shown" : "dropped", "dropped");

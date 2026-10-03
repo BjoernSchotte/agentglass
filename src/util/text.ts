@@ -28,6 +28,13 @@ export function fit(s: string, w: number): string {
   }
   return n < w ? out + " ".repeat(w - n) : out;
 }
+// paths: keep the end (the file name)
+export function fitTail(s: string, w: number): string {
+  if (width(s) <= w) return fit(s, w);
+  const cs: string[] = []; for (const ch of s) cs.push(ch);
+  let n = 0; let i = cs.length; while (i > 0 && n + cw(cpOf(cs[i - 1] ?? "")) <= w - 1) { i--; n += cw(cpOf(cs[i] ?? "")); }
+  return fit("…" + cs.slice(i).join(""), w);
+}
 export function wrap(s: string, w: number): string[] {
   const out: string[] = [];
   for (const raw of s.split("\n")) {
