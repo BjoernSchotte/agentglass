@@ -29,13 +29,13 @@ export function renderFooter(): void {
   const k = (key: string, what: string): string => {
     const w = width(key) + 1 + width(what);
     // clickable: the hint's key, when it maps to one keystroke
-    const act = key === "↵" ? "enter" : key === "␣" ? " " : key === "esc" ? "esc" : key === "tab" ? "tab" : width(key.split("/")[0]) === 1 && key.split("/")[0].length === 1 ? key.split("/")[0] : "";
+    const act = key === "^K" ? "ctrl-k" : key === "↵" ? "enter" : key === "␣" ? " " : key === "esc" ? "esc" : key === "tab" ? "tab" : width(key.split("/")[0]) === 1 && key.split("/")[0].length === 1 ? key.split("/")[0] : "";
     if (act) { footX0.push(fx); footX1.push(fx + w); footKey.push(act); }
     fx += w + 2;
     return fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
   };
   // feature hints right after "? keys": they are the mode-specific ones (e.g. replay) and must survive truncation
-  let hints = k("?", "keys") + (mode === "list" && S.tab <= 1 ? k("^K", "palette") : "");
+  let hints = k("?", "keys") + (mode === "list" || mode === "transcript" || mode === "detail" || mode === "view" ? k("^K", "palette") : ""); // everywhere Ctrl+K works
   for (const f of H.footerHints) for (const kd of f(mode)) hints += k(kd[0] ?? "", kd[1] ?? "");
   if (mode === "detail") hints += k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("z", "fold all") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
   else if (mode === "view") hints += k("esc", "back");

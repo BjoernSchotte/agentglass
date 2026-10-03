@@ -10,6 +10,7 @@ import { H } from "../../hooks.ts";
 import { onInput, keyName, tokens } from "../../input.ts";
 import { renderTranscript, openTranscript } from "../../ui/transcript.ts";
 import { buf } from "../../ui/screen.ts";
+import { renderFooter, footKey } from "../../ui/footer.ts";
 import { screenOut } from "../../hooks.ts";
 import { harnessIds } from "../../harness/index.ts";
 import { tmpDir, addSess, convo } from "./fixture.ts";
@@ -148,6 +149,13 @@ ok("one project item for the repo and its worktree", pi.length === 1 && identNow
 if (pi.length === 1) { while (selected() !== null && selected()?.id !== pi[0].id && P.sel < rows().length - 1) key("\x1b[B"); key("\r"); }
 ok("Sessions filtered to that repo", S.view.indexOf(r1) >= 0 && S.view.indexOf(r2) >= 0 && S.view.indexOf(s1) < 0, String(S.view.length));
 setLocal("Sessions", []);
+// discoverable: the footer shows a clickable ^K wherever Ctrl+K works (it was on the Sessions/Processes list only)
+for (const m of ["list", "transcript"]) {
+  S.mode = "list"; S.tv = null; S.tab = 2; if (m === "transcript") { openTranscript(s1); renderTranscript(); }
+  buf.length = 0; renderFooter(); const ft = buf.join("");
+  ok("footer ^K in " + m + (m === "list" ? " (Stats tab)" : ""), ft.indexOf("^K") >= 0 && footKey.indexOf("ctrl-k") >= 0, screenOut(ft).slice(0, 80));
+}
+S.mode = "list"; S.tv = null; S.tab = 0;
 console.log("\n" + (bad ? bad + " failed" : "palette: all checks passed"));
 rmSync(dir, { recursive: true, force: true });
 process.exit(bad ? 1 : 0);
