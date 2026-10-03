@@ -3,10 +3,10 @@
 // Linked worktrees and clones of one remote are one project: key git:<host>/<path> from the chosen remote (origin →
 // upstream → first), else gitdir:<common dir> (worktrees of one local repo merge), else path:<cwd>. Every remote goes
 // through scrubRemote first; .git is read only; the one git spawn is `git remote get-url` for aliases and [include]s.
-import { existsSync, realpathSync, statSync, openSync, writeSync, closeSync, renameSync, mkdirSync } from "node:fs";
+import { existsSync, realpathSync, statSync, readdirSync, openSync, writeSync, closeSync, renameSync, mkdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { scrubRemote } from "../util/giturl.ts";
-import { HOME, readText, listDir, run } from "../util/fs.ts";
+import { HOME, readText, run } from "../util/fs.ts";
 import { type Obj, obj, str } from "../util/json.ts";
 import { home } from "../util/text.ts";
 
@@ -78,6 +78,7 @@ export const BROKEN = { v: false };
 function ident(key: string, label: string, kind: string, top: string): Ident { return { key, label, kind, top, common: "", gitdir: "", worktree: "", remote: "", via: "", gone: false, unread: false }; }
 function pathIdent(cwd: string): Ident { return ident("path:" + cwd, home(cwd), "path", cwd); }
 function isDir(p: string): number { try { return statSync(p).isDirectory() ? 1 : 0; } catch (e) { return -1; } } // -1 missing
+function canList(p: string): boolean { try { readdirSync(p); return true; } catch (e) { return false; } }
 function sizeOf(p: string): number { try { return statSync(p).size; } catch (e) { return -1; } }
 export function cfgMtime(common: string): number { try { return statSync(join(common, "config")).mtimeMs; } catch (e) { return 0; } }
 // the `git remote get-url` fallback, once per (common dir, config mtime)
@@ -96,23 +97,28 @@ export function resolveCwd(cwd: string, git: GitRun): Ident {
   if (!cwd) return ident("none", "(no project)", "none", "");
   if (isDir(cwd) < 0) return goneIdent(cwd, git);
   const rc = real(cwd);
-  let d = rc; let top = ""; let gitdir = "";
+  let d = rc; let top = ""; let gitdir = ""; let pruned = "";
   for (let i = 0; i < MAX_UP; i++) {
     const g = join(d, ".git"); const t = isDir(g);
-    if (t === 1) { top = d; gitdir = g; if (!listDir(g).length) { const u = pathIdent(rc); u.unread = true; return u; } break; }
+    if (t === 1) { top = d; gitdir = g; if (!canList(g)) { const u = pathIdent(rc); u.unread = true; return u; } break; } // an empty .git is still a repo
     if (t === 0) {
       const sz = sizeOf(g); const txt = sz > 0 && sz <= GITFILE_MAX ? readText(g, 0, GITFILE_MAX) : "";
       const m = /^gitdir:\s*(.+)$/m.exec(txt);
       if (!m) { const u = pathIdent(rc); u.unread = true; return u; }
       const gd = resolve(d, (m[1] ?? "").trim());
-      if (isDir(gd) !== 1) { BROKEN.v = true; return pathIdent(rc); }
+      if (isDir(gd) !== 1) {
+        // pruned worktree metadata while the main repo still exists: still that repo's worktree
+        const at = gd.lastIndexOf("/worktrees/");
+        if (at > 0 && isDir(gd.slice(0, at)) === 1) { top = d; gitdir = gd; pruned = real(gd.slice(0, at)); break; }
+        BROKEN.v = true; return pathIdent(rc);
+      }
       top = d; gitdir = real(gd); break;
     }
     const up = dirname(d); if (up === d) break; d = up;
   }
   if (!top) return pathIdent(rc);
-  const cd = readText(join(gitdir, "commondir"), 0, GITFILE_MAX).trim();
-  const common = cd ? real(resolve(gitdir, cd)) : gitdir;
+  const cd = pruned ? ".." : readText(join(gitdir, "commondir"), 0, GITFILE_MAX).trim();
+  const common = pruned ? pruned : cd ? real(resolve(gitdir, cd)) : gitdir;
   const mainTop = common.endsWith("/.git") ? dirname(common) : top;
   const id = ident("", "", "git", top);
   id.common = common; id.gitdir = gitdir;

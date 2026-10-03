@@ -239,8 +239,6 @@ function fakeCwd(real: string): string {
   for (let i = 0; i < segs.length; i++) { const sg = segs[i] ?? ""; out.push(i > 0 && (GENERIC.has(sg.toLowerCase()) || sg.startsWith(".")) ? sg : fakeProject(sg)); }
   return code + out.join("/");
 }
-// the session's real cwd (s.cwd holds the fake one under --redact): project identity resolves from this
-export function realCwd(s: Sess): string { const r = recs.get(s.path); const real = r ? r.real : ""; return real || s.cwd; }
 // owner/name → fake/fake (a leading host stays); ~/… and absolute paths like cwds; " (gone)" and "(no project)" kept
 function fakeRepo(text: string): string {
   const gone = text.endsWith(" (gone)"); const t = gone ? text.slice(0, -7) : text;
@@ -438,6 +436,7 @@ if (REDACT) {
     }
   });
   H.display.push(display);
+  H.realCwd.push((s: Sess): string => { const r = recs.get(s.path); return r ? r.real : ""; }); // agent-mode scope compares real projects
   H.screenFilter.push(scrubStyled);
   H.headerWidgets.unshift((w: number) => (w >= 10 ? bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST : ""));
 }

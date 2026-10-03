@@ -3,13 +3,13 @@
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
-import { applyMeta, display } from "../../hooks.ts";
+import { applyMeta, display, realCwd } from "../../hooks.ts";
 import { P, real, resolveTick, setGit, rememberSess } from "../../model/project.ts";
 import { parse } from "../query/parse.ts";
 import { EMPTY, compile, sessMatches } from "../query/eval.ts";
-import { projectOf, projectRoot } from "../query/project.ts";
-import { realCwd } from "../redact.ts";
+import { projectOf, projectRoot, projectClause } from "../query/project.ts";
 import { REDACT } from "../redact-on.ts";
+import "../redact.ts"; // registers the --redact hooks (display, realCwd)
 import { identOf, repoLabel } from "./ident.ts";
 
 let bad = 0;
@@ -84,6 +84,15 @@ eq("repo basename for non-git", M("repo is plain"), "p1");
 eq("worktree is", M("worktree is w1"), "sub1,w1");
 eq("project.kind gitdir", M("project.kind is gitdir"), "l1");
 eq("project.kind path", M("project.kind is path"), "p1");
+
+// agent-mode triage scope: the project of a directory by exact identity; a same-named directory elsewhere stays out
+mkdirSync(T + "/one/app", { recursive: true }); mkdirSync(T + "/two/app", { recursive: true });
+const ap1 = sess("pi", "ap1", T + "/one/app", ""); const ap2 = sess("pi", "ap2", T + "/two/app", "");
+identOf(ap1); identOf(ap2); resolveTick(1e9, 1e9, now, stub);
+eq("basename clause matches both (why not)", M("repo is app").split(",").filter((x: string) => x.startsWith("ap")).join(","), "ap1,ap2");
+eq("projectClause: only this one", M(projectClause(T + "/one/app")).split(",").filter((x: string) => x.startsWith("ap")).join(","), "ap1");
+eq("projectClause: worktree → its repo", M(projectClause(T + "/w1/src")), "g1,m1,sub1,w1");
+sessions.delete(ap1.path); sessions.delete(ap2.path);
 
 // redaction (checks run with AGENTGLASS_REDACT=1)
 eq("redact on", REDACT ? "y" : "n", "y");

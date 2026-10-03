@@ -5,8 +5,8 @@ import type { Sess } from "../../model/types.ts";
 import { parentOf, loadHead, loadTail } from "../../model/sessions.ts";
 import { type Ident, identOfCwd, identNow, labelOf, rememberSess, cwdOfSess, normRemote } from "../../model/project.ts";
 import { base } from "../../util/json.ts";
-import { realCwd } from "../redact.ts";
-import { display } from "../../hooks.ts";
+import { quoteVal } from "./parse.ts";
+import { display, realCwd } from "../../hooks.ts";
 import { REDACT } from "../redact-on.ts";
 
 // the main worktree of cwd's repo as a real path (a linked worktree resolves to its main repo; a submodule is its own); "" non-git
@@ -62,3 +62,12 @@ export function repoVals(s: Sess): string[] {
   if (REDACT && s.cwd) add(base(s.cwd.replace(/\/+$/, "")));
   return out;
 }
+// the project label as shown (faked under --redact): dimension values, cost rows
+// (a directory without a repo is named by its last part, like a repo by owner/name; the Repos tab shows its ~/… path)
+export function repoShown(s: Sess): string {
+  const id = identOf(s); const b = base(realCwd(s).replace(/\/+$/, ""));
+  return display("repo", id && id.kind !== "path" && id.kind !== "none" ? labelOf(id) : b || (id ? id.label : "(no project)"), s);
+}
+// the filter clause for "the project of this directory", by exact identity (key): a same-named repo or directory elsewhere
+// does not match (agent-mode triage scope)
+export function projectClause(cwd: string): string { return "repo is " + quoteVal(identNow(cwd).key.toLowerCase()); }

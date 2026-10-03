@@ -12,7 +12,9 @@ import { gauge } from "../../ui/screen.ts";
 import { discover } from "../cli.ts";
 import { startOfDay } from "../usage/record.ts";
 import type { Clause } from "../query/types.ts";
-import { parse, print } from "../query/parse.ts";
+import { parse, print, quoteVal } from "../query/parse.ts";
+import { projectClause } from "../query/project.ts";
+import { agentHost, agentScope } from "../agentenv.ts";
 import { addAll } from "../query/scope.ts";
 import { sessMatches } from "../query/eval.ts";
 import { cliFilter } from "../query/cli.ts";
@@ -40,6 +42,7 @@ const HELP = `usage: agentglass triage [--select '<expr>' | --preset ${NAMES.joi
   --limit N           at most N rows (default 20)
   --json              {entity, period, selection, baseline, rows[], guard}; guard null | empty-baseline |
                       empty-selection | small-sample | retention
+  inside a coding agent: --json is the default and the scope is the current repo (--all-projects: every one)
 
   config (~/.agentglass/config.json): { "triage": { "longCall": "30s", "expensiveUsd": 5, "minSupport": 3 } }`;
 
@@ -65,6 +68,7 @@ export function parseArgs(args: string[]): CliOpts {
     else if (a === "--weight") weight = oneOf(val(), "--weight", ["count", "cost", "tokens", "duration"]);
     else if (a === "--limit") limit = intArg(val(), "--limit");
     else if (a === "--help" || a === "-h") { out(HELP); process.exit(0); }
+    else if (a === "--all-projects" || a === "--project-only") continue; // the agent-mode scope (agentScope reads them)
     else fail("unknown option " + a + " (see agentglass triage --help)");
   }
   if (hasSelect && preset) fail("--select and --preset are exclusive: pick one");
@@ -127,6 +131,12 @@ function text(r: Run, res: Result, rows: TRow[], tty: boolean): void {
 function triage(args: string[]): void {
   S.cli = true;
   const o = parseArgs(args); const r = o.run;
+  // inside an agent: JSON, and only the current project unless widened (the output goes to the agent's model provider)
+  if (agentHost().on) {
+    o.json = true;
+    const sc = agentScope(args);
+    if (sc.name === "project") r.scope = addAll(r.scope, parse(projectClause(sc.cwd)).cs).cs; // exact identity, not a same-named repo
+  }
   triageCfg();
   discover();
   // every session that can hold a row of either period, indexed to its end (cheap clauses of the scope pick them first)

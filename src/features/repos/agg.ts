@@ -17,7 +17,7 @@ import { modeOf } from "../usage/bill-live.ts";
 import { type Compiled, EMPTY, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
 import { matchingPaths } from "../query/ui.ts";
 import { identOf } from "../query/project.ts";
-import { realCwd } from "../redact.ts";
+import { realCwd } from "../../hooks.ts";
 
 export interface FileAgg { n: number; add: number; del: number; by: Set<string> }
 export interface HarnessAgg { sess: number; cost: number; unk: number }
@@ -84,17 +84,20 @@ function sessOk(f: Compiled, s: Sess): boolean { return f === EMPTY || (sessMatc
 interface Hit { key: string; at: number; rows: RepoAgg[] }
 const cache = new Map<string, Hit>();
 // per (days, canonical filter, ledger version, identity version), 5 s
-export function repoAgg(days: string[], f0: Compiled | null): RepoAgg[] {
+export function repoAgg(days: string[], f0: Compiled | null): RepoAgg[] { return repoAggIn(days, f0, new Set<string>(), ""); }
+// tag ≠ "": only the session paths in allow (agent-mode scope of the CLI); tag names that set in the cache key
+export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string>, tag: string): RepoAgg[] {
   const f = f0 ?? EMPTY;
-  const key = days.join(",") + "|" + f.key + "|" + String(L.ver) + "|" + String(P.ver);
-  const hit = cache.get(days.join(",") + "|" + f.key);
+  const ck = days.join(",") + "|" + f.key + "|" + tag;
+  const key = ck + "|" + String(L.ver) + "|" + String(P.ver);
+  const hit = cache.get(ck);
   if (hit && hit.key === key && Date.now() - hit.at < 5000) return hit.rows;
   const by = new Map<string, RepoAgg>();
   const acts = new Map<string, number[][]>(); // "<repo key>\t<day>" → the sessions' intervals
   const rd = f.needsCalls ? rowDays(f, days) : new Map<string, RowDay>();
   const reals = new Map<string, string>();
   for (const s of sessions.values()) {
-    const a = ledger.get(s.path); if (!a || !sessOk(f, s)) continue;
+    const a = ledger.get(s.path); if (!a || (tag && !allow.has(s.path)) || !sessOk(f, s)) continue;
     const id = identOf(s); if (!id) continue; // unresolved: the tab says "resolving N sessions…"
     let r = by.get(id.key);
     if (!r) { r = newRepo(id.key, labelOf(id), id.kind, days); r.remote = id.remote; r.via = id.via; by.set(id.key, r); }
@@ -136,7 +139,7 @@ export function repoAgg(days: string[], f0: Compiled | null): RepoAgg[] {
     rows.push(r);
   }
   if (cache.size > 32) cache.clear();
-  cache.set(days.join(",") + "|" + f.key, { key, at: Date.now(), rows });
+  cache.set(ck, { key, at: Date.now(), rows });
   return rows;
 }
 function mtimeOf(p: string): number { const s = sessions.get(p); return s ? s.last || s.mtime : 0; }

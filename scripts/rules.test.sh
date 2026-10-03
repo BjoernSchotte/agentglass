@@ -6,7 +6,7 @@ fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; 
 AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
 sh "$here/scripts/build-info.sh"
 mkdir -p "$t/home/.agentglass"
-run() { HOME="$t/home" AGENTGLASS_OFFLINE=1 AGENTGLASS_NOTIFY=0 "$t/ag" "$@"; }
+run() { HOME="$t/home" AGENTGLASS_AGENT=0 AGENTGLASS_OFFLINE=1 AGENTGLASS_NOTIFY=0 "$t/ag" "$@"; }
 rf="$t/home/.agentglass/rules.json"
 set +e
 run rules check > "$t/out"; eq "no file: exit" $? 0

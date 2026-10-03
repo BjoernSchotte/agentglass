@@ -109,6 +109,10 @@ eq("empty cwd", ID(resolveCwd("", stub)), "none none | (no project)");
 mk("ur/.git", "gitdir: x"); chmodSync(T + "/ur/.git", 0o000);
 const ur = R("ur"); const root = ur.unread === false && ur.kind === "git"; eq("unreadable .git", root ? "root?" : ur.kind + " " + (ur.unread ? "unread" : ""), "path unread");
 chmodSync(T + "/ur/.git", 0o644);
+mk("pw/.git", "gitdir: " + T + "/r1/.git/worktrees/gone-meta\n"); const pw = R("pw"); eq("pruned worktree metadata → its repo", pw.key + " " + pw.worktree, r1.key + " pw");
+mkdirSync(T + "/eg/.git", { recursive: true }); const eg = R("eg"); eq("empty .git dir is a repo", eg.kind + (eg.unread ? " unread" : ""), "gitdir");
+mkdirSync(T + "/ud/.git", { recursive: true }); chmodSync(T + "/ud/.git", 0o000);
+const ud = R("ud"); eq("unlistable .git dir", ud.kind + (ud.unread ? " unread" : ""), "path unread"); chmodSync(T + "/ud/.git", 0o755);
 // symlinked cwd
 run("ln", ["-s", T + "/r1", T + "/link"]); eq("symlink same key", R("link/src").key, r1.key); eq("symlink top real", R("link").top, T + "/r1");
 

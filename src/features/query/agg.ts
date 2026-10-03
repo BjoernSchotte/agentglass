@@ -10,7 +10,7 @@ import { type Call, type Dict, DICT, nameOf, extOf, localOf } from "../usage/fac
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
 import { type Compiled, sessMatches, dayMatches, eachCall, callsIn, weekdayOf, livePid } from "./eval.ts";
 import { callCutoff } from "../usage/callcache.ts";
-import { repoOf } from "./project.ts";
+import { repoShown } from "./project.ts";
 import { titleOf, working } from "../../model/sessions.ts";
 
 export type Weight = "count" | "cost" | "tokens" | "duration";
@@ -52,7 +52,7 @@ function startOf(s: Sess): { hour: string; wd: string } { const a = ledger.get(s
 export function sessDim(dim: string, s: Sess): string[] {
   switch (dim) {
     case "harness": return [s.h];
-    case "repo": case "project": return [repoOf(s)];
+    case "repo": case "project": return [repoShown(s)]; // the identity is real (realCwd): faked under --redact
     case "cwd": return [s.cwd];
     case "branch": return [s.branch];
     case "model": return sessModels(s);

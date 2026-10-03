@@ -6,7 +6,7 @@ import { fit, fitStyled, fillTo, width, vwidth, clean, numAt, ago } from "../../
 import { basename } from "node:path";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
-import { H, type Tab, display } from "../../hooks.ts";
+import { H, type Tab, display, realCwd } from "../../hooks.ts";
 import { sessions, titleOf, loadHead, loadTail, current, parentOf } from "../../model/sessions.ts";
 import { subOf } from "../../model/project.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
@@ -21,7 +21,6 @@ import { asBill } from "../usage/billing.ts";
 import { EMPTY } from "../query/eval.ts";
 import { tabFilter, chips } from "../query/ui.ts";
 import { identOf, identSync } from "../query/project.ts";
-import { realCwd } from "../redact.ts";
 import { openGraph } from "../callgraph/view.ts";
 import { type RepoAgg, type HarnessAgg, type FileAgg, repoAgg, relFile, errPct, allDays, topFiles } from "./agg.ts";
 export { topFiles };
@@ -324,7 +323,12 @@ function renderDetail(): void {
     }, "");
   }
 }
-function fitL(s: string, w: number): string { return width(s) <= w ? fit(s, w) : fit("…" + Array.from(s).slice(-(w - 1)).join(""), w); } // paths: keep the file name
+// paths: keep the end (the file name)
+function fitL(s: string, w: number): string {
+  if (width(s) <= w) return fit(s, w);
+  const cs: string[] = []; for (const ch of s) cs.push(ch);
+  return fit("…" + cs.slice(Math.max(0, cs.length - (w - 1))).join(""), w);
+}
 function branchRows(r: RepoAgg): [string, HarnessAgg][] { const xs = [...r.branches.entries()]; xs.sort((x: [string, HarnessAgg], y: [string, HarnessAgg]) => y[1].cost - x[1].cost || y[1].sess - x[1].sess || (x[0] < y[0] ? -1 : 1)); return xs; }
 function worstProgs(r: RepoAgg, n: number): string {
   const xs = [...r.progErr.entries()]; xs.sort((x: [string, Cnt], y: [string, Cnt]) => y[1].err - x[1].err || y[1].n - x[1].n);

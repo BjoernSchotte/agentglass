@@ -4,6 +4,7 @@ import { newCnt } from "../usage/calls.ts";
 import { newSum } from "../usage/costs.ts";
 import { type RepoAgg, type FileAgg, type HarnessAgg } from "./agg.ts";
 import { repoJson, keyShown } from "./cli.ts";
+import "../redact.ts"; // registers the --redact hooks
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
