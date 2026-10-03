@@ -158,7 +158,8 @@ For each file `(top, rel)`, take the `write` events in the whole loaded range, b
 ### 7. CLI
 `agentglass --json --related <session-id-prefix> [--event <event id> | --at <iso>] [--minutes N]` prints:
 `{anchor:{session, harness, t, kind, text}, project:{key, label}, from, to, sessions:[…], events:[{t, session, harness, title, kind, tool, text, files:[rel], err, self, conflict:{kind:"conflict"|"overlap"|"clobber", with:[session]}|null}]}`.
-An ambiguous or unknown prefix exits 2 with the candidates.
+An unknown prefix or event exits 3, an ambiguous prefix exits 4 with the candidates, a bad option 2 (the shared
+exit-code table of cli-agent-mode, `EXIT_CODES` in `src/features/clihelp.ts`).
 
 ### 8. Privacy
 Everything is local. Events go through `parseEvents()`, so `--redact` rewrites content through the existing

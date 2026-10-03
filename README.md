@@ -416,7 +416,8 @@ of the repo, interleaved by time.
 - Limits: writes through shell commands (`sed -i`, redirects, formatters) are not seen as writes. Only Claude Code
   records a denied tool call (`denied <tool>` row); Codex, OpenCode, Gemini, Kiro and fx denials are not shown
   (approval waits still come in through the alert rules). Logs without timestamps (Kiro) are read from their tail and
-  their events cannot be placed. Under `--redact` the content is synthetic, so conflicts are rarely flagged.
+  their events cannot be placed. Under `--redact` conflicts are found on the real files and commands exactly as
+  without it; only fakes are shown (file names, a clobber's generic `git` form, a commit's sha without its subject).
 - Config: `"related": {"minutes": 10, "conflictMinutes": 10}` (integers 1–240).
 
 ```sh
@@ -425,7 +426,7 @@ agentglass --json --related current --event toolu_01abc --minutes 30 | jq '.even
 ```
 `--related` takes a session reference like `agentglass session` (`current`, `last`, an id prefix ≥ 6,
 `<harness>:<id>`); without `--event` / `--at` it anchors on the session's last event. An unknown session or event
-exits 3, an ambiguous prefix 4, a bad option 2.
+exits 3, an ambiguous prefix 4 (with the candidates), a bad option 2 ([exit codes](#exit-codes)).
 
 ## Alert rules
 
@@ -544,6 +545,21 @@ agentglass sessions --since 7d --format table                       # json | jso
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
 ```
 
+### Exit codes
+
+One table for every command (`agentglass --help` prints it, the JSON help carries it as `exitCodes`):
+
+| Code | Meaning |
+|------|---------|
+| 0 | ok (an empty result is ok) |
+| 1 | runtime failure |
+| 2 | usage error (bad option or value, an id prefix shorter than 6) |
+| 3 | not found (unknown session, event or `current` outside an agent) |
+| 4 | ambiguous reference (an id prefix that matches several sessions; the candidates go to stderr) |
+
+Command-specific on top: `cost --check` exits 3 when the month is over budget, `rules check` 1 on warnings and 2 on
+errors, `export` 1 when some requests failed.
+
 ## Send to an OTLP backend
 
 agentglass sends your sessions to any OpenTelemetry backend that takes OTLP/HTTP (Jaeger, Grafana Tempo, SigNoz,
@@ -636,8 +652,8 @@ agentglass --watch --for 30s                                # inside an agent --
 ```
 
 A `<ref>` is `current` (found through the agent's session variable or the process tree), `last`, `parent`, an id,
-a unique id prefix of 6+ characters, or `<harness>:<id>`. Exit codes: 0 ok (also when empty), 1 runtime failure,
-2 usage error, 3 not found, 4 ambiguous reference. As JSON, `errors` and `cost` rows come in
+a unique id prefix of 6+ characters, or `<harness>:<id>`. [Exit codes](#exit-codes): 0 ok (also when empty),
+1 runtime failure, 2 usage error, 3 not found, 4 ambiguous reference. As JSON, `errors` and `cost` rows come in
 `{"rows":[…],"source":"…","scope":"…"}`.
 
 Agent output lands in the agent's context and goes to its model provider, so inside an agent the queries only see
