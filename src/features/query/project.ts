@@ -9,7 +9,7 @@ import { realCwd } from "../redact.ts";
 import { display } from "../../hooks.ts";
 import { REDACT } from "../redact-on.ts";
 
-// the main worktree of cwd's repo (a linked worktree resolves to its main repo; a submodule is its own); "" non-git
+// the main worktree of cwd's repo as a real path (a linked worktree resolves to its main repo; a submodule is its own); "" non-git
 export function projectRoot(cwd: string): string {
   if (!cwd) return "";
   const id = identNow(cwd);
