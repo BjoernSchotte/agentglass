@@ -1,6 +1,9 @@
 // agentglass — the commits a worktree's HEAD reflog records (<gitdir>/logs/HEAD), read without spawning git
 // SPDX-License-Identifier: Apache-2.0
-// ponytail: minimal local reader until git-linkage's readReflog (src/features/vcs/reflog.ts) lands — then use that one
+// ponytail: TEMPORARY duplicate of git-linkage's reader (PR feat/git-linkage, src/features/vcs/reflog.ts, not merged
+// when related-events was reviewed). Once it is on main: delete this file; in build.ts reflogRows use
+// `readReflog(gd).filter(isNew)` (fields at, sha, subj are the same) and git-linkage's list of a repo's worktree gitdirs
+// in place of worktreeGitdirs (build.check's reflog case covers the swap unchanged).
 import { statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { readText } from "../../util/fs.ts";
@@ -28,9 +31,10 @@ export function reflogCommits(gitdir: string): RefCommit[] {
   const f = join(gitdir, "logs", "HEAD");
   let size = 0; let mtime = 0; try { const st = statSync(f); size = st.size; mtime = st.mtimeMs; } catch (e) { return []; }
   const hit = cache.get(gitdir); if (hit && hit.size === size && hit.mtime === mtime) return hit.cs;
-  let text = readText(f, Math.max(0, size - MAX), MAX);
-  if (size > MAX) { const nl = text.indexOf("\n"); text = nl >= 0 ? text.slice(nl + 1) : ""; } // skip the partial first line
+  let text = size <= MAX ? readText(f, 0, size) : readText(f, size - MAX - 1, MAX + 1);
+  if (size > MAX) { const nl = text.indexOf("\n"); text = nl >= 0 ? text.slice(nl + 1) : ""; } // one byte early: a tail starting on a line start keeps that line
   const cs = parseReflog(text);
+  if (cache.size > 256) cache.clear();
   cache.set(gitdir, { size, mtime, cs });
   return cs;
 }
