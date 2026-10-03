@@ -15,7 +15,12 @@ export function renderFooter(): void {
   const y = Ht - 1;
   const mode = S.mode;
   if (mode === "input") {
-    put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + S.inputLabel + " ❯ " + RST + bg(C.sel) + fg(C.text) + fit(clean(S.inputText) + "▏", W - S.inputLabel.length - 4) + RST);
+    const room = W - width(S.inputLabel) - 4;
+    const txt = clean(S.inputText) + "▏";
+    const err = S.inputErr ? "  " + clean(S.inputErr) : "";
+    const tw = Math.min(width(txt), Math.max(10, room - width(err))); // the error stays visible next to the text
+    const shown = width(txt) > tw ? "…" + Array.from(txt).slice(-(tw - 1)).join("") : txt;
+    put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + S.inputLabel + " ❯ " + RST + bg(C.sel) + fg(C.text) + shown + fg(C.red) + fit(err, Math.max(0, room - width(shown))) + RST);
     return;
   }
   footX0.length = 0; footX1.length = 0; footKey.length = 0;
@@ -34,8 +39,8 @@ export function renderFooter(): void {
   if (mode === "detail") hints += k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("z", "fold all") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
   else if (mode === "view") hints += k("esc", "back");
   else if (mode === "transcript") hints += k("↑↓/jk", "event") + k("↵", "details") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
-  else if (S.tab === 0) hints += k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
-  else if (S.tab === 1) hints += k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("q", "quit");
+  else if (S.tab === 0) hints += k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("p", "pin") + k("P", "pins") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
+  else if (S.tab === 1) hints += k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("P", "pins") + k("q", "quit");
   else hints += k("q", "quit");
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
   if (DBG.on && DBG.line) { const d = " " + fit(DBG.line, Math.min(width(DBG.line), W - 2)) + " "; put(W - width(d), y, bg(C.panel) + fg(C.dim) + d + RST); } // over the hints' tail

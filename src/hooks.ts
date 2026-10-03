@@ -1,7 +1,7 @@
 // agentglass — extension seams. Feature modules push callbacks here at load time; main.ts imports them once.
 // Empty arrays = stock behavior. Styled strings may carry ANSI escapes; widths are visible columns.
 // SPDX-License-Identifier: Apache-2.0
-import type { Ev, Sess } from "./model/types.ts";
+import type { Ev, Sess, Proc } from "./model/types.ts";
 import type { HelpSec } from "./state.ts";
 
 // mouse: left click inside the tab's body (0-based cell), dbl = second click on the same row within 450ms
@@ -33,7 +33,15 @@ export const H = {
   events: [] as ((s: Sess | null, evs: Ev[], from: number) => void)[], // after parseEvents appended evs[from..]; may rewrite them in place
   display: [] as ((kind: string, text: string, s: Sess | null) => string)[], // display-time rewrite of text that bypasses parseEvents (stats "tool:<name>"/"cmd"/"prog"/"file", process "args"/"cwd")
   screenFilter: [] as ((s: string) => string)[], // every chunk written to the terminal (TUI frame chunks, CLI output lines); must keep visible widths
+  listFilter: [] as ((s: Sess) => boolean)[], // buildView keeps a top-level session when every hook passes for it or for one of its subagents
+  listFiltering: [] as (() => boolean)[], // true = a filter is active: matching subagents are expanded, the others hidden
+  input: [] as ((action: string, ev: string, text: string) => boolean)[], // the input line of S.inputAction: ev change | enter | esc | tab; enter → true keeps it open
+  procFilter: [] as ((p: Proc) => boolean)[], // the Processes table shows a root process when every hook passes
+  boxChips: [] as ((where: string, w: number) => string)[], // styled filter chips for a built-in box title ("sessions" | "processes"), w = room
+  emptyText: [] as ((where: string) => string)[], // the line an empty built-in list shows instead of the stock one ("" = stock)
 };
+export function boxChips(where: string, w: number): string { let o = ""; for (const f of H.boxChips) o += f(where, w); return o; }
+export function emptyText(where: string): string { for (const f of H.emptyText) { const t = f(where); if (t) return t; } return ""; }
 
 export const BADGE_SLOT = 2;
 export function enrich(s: Sess): void { for (const f of H.enrich) f(s); }

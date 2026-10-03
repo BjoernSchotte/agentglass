@@ -13,14 +13,15 @@ const HELP: HelpSec[] = [
   { name: "sessions", ctx: "sessions", keys: [
     ["↑↓  j k", "move"], ["PgUp PgDn", "page"], ["g G  Home End", "first / last"],
     ["↵  →", "open live transcript"], ["space", "fold / unfold subagents"],
-    ["/", "filter (title, path, id, harness)"], ["F", "full-text search (ripgrep)"],
-    ["h", "harness: all → " + harnessIds().join(" → ")], ["l", "live sessions only"], ["esc", "clear filters"],
+    ["/", "filter: repo is x · tool is Bash · cost > 2 · words (see filter)"], ["F", "full-text search (content ~ …, ripgrep)"],
+    ["p  P", "pin the filter (every tab, remembered) · edit pins"],
+    ["h", "harness: all → " + harnessIds().join(" → ")], ["l", "live sessions only"], ["esc", "clear the filter (pins stay)"],
     ["s", "send prompt (tmux if live, else headless)"], ["R", "resume interactively"],
     ["x", "SIGTERM the session's agent"], ["D", "move session to the trash"], ["y", "copy session id"] ] },
   { name: "processes", ctx: "processes", keys: [
     ["↑↓  j k", "move"], ["g G  Home End", "first / last"], ["↵  →", "open linked session"],
     ["s", "send prompt to the agent's tmux pane"], ["a", "switch tmux client to the pane"],
-    ["x", "SIGTERM (asks first)"], ["X", "SIGKILL (asks first)"] ] },
+    ["x", "SIGTERM (asks first)"], ["X", "SIGKILL (asks first)"], ["P", "edit pins (harness, repo, cwd, live apply here)"] ] },
   { name: "transcript", ctx: "transcript", keys: [
     ["↑↓  j k", "previous / next event (cursor ▌)"], ["↵  →  click", "drill into event: full call, result, diff, files"],
     ["wheel", "scroll lines"], ["PgUp PgDn  b ␣", "scroll a page"], ["g  Home", "top"],
@@ -32,7 +33,7 @@ const HELP: HelpSec[] = [
     ["tab  o  e", "select file · open in pager · open in $EDITOR"], ["z  click ▸", "expand / collapse long blocks (>10 lines)"], ["w", "wrap / cut long code lines"], ["v", "whole detail in $PAGER"], ["y", "copy detail to clipboard"],
     ["esc  q  ←  right-click", "back to transcript"] ] },
   { name: "prompt & dialogs", ctx: "", keys: [
-    ["↵", "submit"], ["esc", "cancel"], ["ctrl-u  ctrl-w", "clear line / delete word"], ["y  n", "confirm / cancel dialog"] ] },
+    ["↵", "submit"], ["esc", "cancel"], ["tab", "complete (filter and pins)"], ["ctrl-u  ctrl-w", "clear line / delete word"], ["y  n", "confirm / cancel dialog"] ] },
   { name: "mouse", ctx: "", keys: [
     ["wheel", "scroll list / transcript / details"], ["click", "select row · click again (or double-click) to open"],
     ["click preview row", "jump to that event / subagent"], ["click footer hint", "press that key"], ["right-click", "back"], ["click tab", "switch view"] ] },

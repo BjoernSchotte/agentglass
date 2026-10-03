@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../state.ts";
 import { C, CSI, RST, fg, bg, heat } from "./theme.ts";
-import { width, clean, fit } from "../util/text.ts";
+import { width, vwidth, clean, fit, fitStyled } from "../util/text.ts";
 import { harnessOf, isHarness } from "../harness/index.ts";
 
 export const buf: string[] = [];
@@ -11,10 +11,12 @@ export function box(x: number, y: number, w: number, h: number, title: string, i
   const bc = fg(focus ? C.accent : C.line);
   let t = title ? " " + clean(title) + " " : "";
   if (width(t) > w - 4) t = fit(t, w - 4);
-  let i = info ? " " + clean(info) + " " : "";
+  const styled = info.indexOf("\x1b") >= 0; // filter chips: already styled and sized by their maker
+  let i = info ? " " + (styled ? info : clean(info)) + " " : "";
   const room = w - 4 - width(t);
-  if (width(i) > room) i = room > 2 ? "…" + Array.from(i).slice(-(room - 1)).join("") : "";
-  const mid = Math.max(0, w - 3 - width(t) - width(i));
+  if (styled) { if (vwidth(i) > room) i = room > 2 ? fitStyled(i, room) : ""; }
+  else if (width(i) > room) i = room > 2 ? "…" + Array.from(i).slice(-(room - 1)).join("") : "";
+  const mid = Math.max(0, w - 3 - width(t) - (styled ? vwidth(i) : width(i)));
   put(x, y, bc + "╭─" + (focus ? CSI + "1m" + fg(C.text) : fg(C.sub)) + t + RST + bc + "─".repeat(mid) + fg(C.dim) + i + bc + "╮" + RST);
   for (let r = 1; r < h - 1; r++) { put(x, y + r, bc + "│" + RST); put(x + w - 1, y + r, bc + "│" + RST); }
   put(x, y + h - 1, bc + "╰" + "─".repeat(Math.max(0, w - 2)) + "╯" + RST);

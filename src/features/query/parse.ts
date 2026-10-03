@@ -202,3 +202,5 @@ export function sameClause(a: Clause, b: Clause): boolean {
   for (let i = 0; i < a.vals.length; i++) if ((a.vals[i] ?? "").toLowerCase() !== (b.vals[i] ?? "").toLowerCase()) return false;
   return true;
 }
+// a value as it must be typed (quoted when it would not survive as a bare word)
+export function quoteVal(v: string): string { return q(v, false); }
