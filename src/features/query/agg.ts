@@ -8,7 +8,7 @@ import { ledger } from "../usage/ledger.ts";
 import { type Day, L } from "../usage/record.ts";
 import { type Call, type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
-import { type Compiled, sessMatches, dayMatches, eachCall, callsIn, weekdayOf, livePid } from "./eval.ts";
+import { type Compiled, sessMatches, dayMatches, callsIn, weekdayOf, livePid } from "./eval.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { repoShown } from "./project.ts";
 import { titleOf, working } from "../../model/sessions.ts";
@@ -25,7 +25,7 @@ export interface Totals {
   tools: number; errors: number; add: number; del: number;
   dn: number; ms: number; max: number; hist: number[];                  // merged durations of all tools
   perTool: Map<string, ToolT>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; // prog/cmds keyed "<tool>\t<x>", files by path
-  models: Set<string>; paths: Set<string> /* matching session paths */; first: number; last: number /* min Acc.t0, max last activity */;
+  models: Set<string>; paths: Set<string> /* matching session paths */; pdays: Map<string, string[]> /* path → the day keys it contributed */; first: number; last: number /* min Acc.t0, max last activity */;
   callScoped: boolean;   // f had call clauses: cost/tokens are "in session-days with matching calls", tools/errors/durations from matching rows only
   path: "rows" | "buckets";
 }
@@ -256,18 +256,21 @@ export function minus(a: Dist[], b: Dist[]): Dist[] {
 }
 
 // ── totals ──
+// nothing counted (a group whose expression does not compile)
+export function emptyTotals(): Totals { return newTotals("buckets", false); }
 function newTotals(path: "rows" | "buckets", scoped: boolean): Totals {
   return { sessions: 0, subs: 0, subsCost: 0, subsUnk: 0, cost: 0, unk: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, tools: 0, errors: 0, add: 0, del: 0, dn: 0, ms: 0, max: 0, hist: zeros(HB),
-    perTool: new Map<string, ToolT>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), models: new Set<string>(), paths: new Set<string>(), first: 0, last: 0, callScoped: scoped, path };
+    perTool: new Map<string, ToolT>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), models: new Set<string>(), paths: new Set<string>(), pdays: new Map<string, string[]>(), first: 0, last: 0, callScoped: scoped, path };
 }
 function addCnt(m: Map<string, Cnt>, k: string, c: Cnt): void { let x = m.get(k); if (!x) { x = newCnt(); m.set(k, x); } x.n = x.n + c.n; x.err = x.err + c.err; x.add = x.add + c.add; x.del = x.del + c.del; }
 function bump(m: Map<string, Cnt>, k: string, err: boolean): void { let x = m.get(k); if (!x) { x = newCnt(); m.set(k, x); } x.n = x.n + 1; if (err) x.err = x.err + 1; }
 function toolT(t: Totals, name: string): ToolT { let x = t.perTool.get(name); if (!x) { x = newToolT(); t.perTool.set(name, x); } return x; }
 // a day's money, tokens and lines; models from its per-model buckets unless rows name them
-function dayMoney(t: Totals, s: Sess, d: Day, models: boolean): void {
+function dayMoney(t: Totals, s: Sess, dk: string, d: Day, models: boolean): void {
   t.cost += d.cost; t.unk += d.unk; t.inTok += d.inTok; t.outTok += d.outTok; t.cr += d.cr; t.cw += d.cw; t.add += d.add; t.del += d.del;
   if (s.parent) { t.subsCost += d.cost; t.subsUnk += d.unk; }
   if (models) for (const m of d.mt.keys()) t.models.add(m);
+  const pd = t.pdays.get(s.path); if (pd) pd.push(dk); else t.pdays.set(s.path, [dk]);
 }
 function sessSeen(t: Totals, s: Sess): void {
   if (t.paths.has(s.path)) return;
@@ -279,40 +282,50 @@ function sessSeen(t: Totals, s: Sess): void {
 }
 function allDays(): string[] { const set = new Set<string>(); for (const a of ledger.values()) for (const k of a.days.keys()) set.add(k); return [...set].sort(); }
 // days null = all history
-export function totals(f: Compiled, days: string[] | null): Totals {
+export function totals(f: Compiled, days: string[] | null): Totals { const j = totalsJob(f, days); totalsStep(j, Infinity); return j.t; }
+// resumable like aggJob: one session per step (compare counts two groups between frames)
+export interface TotJob { k: string; f: Compiled; dset: Set<string>; days: string[]; cut: number; ss: Sess[]; i: number; t: Totals; seen: Set<string>; done: boolean }
+export function totalsJob(f: Compiled, days: string[] | null): TotJob {
   fresh();
   const ds = days ?? allDays();
-  const k = aggKey(f, "totals", ds, [], ""); const hit = tcache.get(k); if (hit) return hit;
-  const t = f.needsCalls ? rowTotals(f, ds) : bucketTotals(f, ds);
-  tcache.set(k, t); return t;
+  const k = aggKey(f, "totals", ds, [], ""); const hit = tcache.get(k);
+  const ss: Sess[] = []; if (!hit) for (const s of sessions.values()) ss.push(s);
+  return { k, f, dset: new Set<string>(ds), days: ds, cut: callCutoff(), ss, i: 0, t: hit ?? newTotals(f.needsCalls ? "rows" : "buckets", f.needsCalls), seen: new Set<string>(), done: !!hit };
 }
-function bucketTotals(f: Compiled, days: string[]): Totals {
-  const t = newTotals("buckets", false);
-  for (const s of sessions.values()) {
-    if (!sessMatches(f, s)) continue;
-    const a = ledger.get(s.path); if (!a) continue;
-    for (const dk of days) {
-      const d = a.days.get(dk); if (!d || !dayMatches(f, s, dk, d)) continue;
-      sessSeen(t, s); dayMoney(t, s, d, true); t.tools += d.tools;
-      for (const [name, st] of d.tt) {
-        const x = toolT(t, name);
-        x.n += st.n; x.err += st.err; x.dn += st.dn; x.ms += st.ms; x.out += st.out; if (st.max > x.max) x.max = st.max; addHist(x.hist, st.hist);
-        t.errors += st.err; t.dn += st.dn; t.ms += st.ms; if (st.max > t.max) t.max = st.max; addHist(t.hist, st.hist);
-      }
-      for (const [pk, c] of d.prog) addCnt(t.prog, pk, c);
-      for (const [ck, c] of d.cmds) addCnt(t.cmds, ck, c);
-      for (const [fk, c] of d.files) addCnt(t.files, fk.slice(fk.indexOf("\t") + 1), c);
-    }
+// sessions until the clock reaches `until` (Infinity = to the end); true when done (j.t is then complete and cached)
+export function totalsStep(j: TotJob, until: number): boolean {
+  while (!j.done) {
+    if (j.i >= j.ss.length) { j.done = true; fresh(); tcache.set(j.k, j.t); break; }
+    const s = j.ss[j.i]; j.i++;
+    if (j.f.needsCalls) rowTotals(j, s); else bucketTotals(j, s);
+    if (until !== Infinity && Date.now() >= until) break;
   }
-  return t;
+  return j.done;
 }
-function rowTotals(f: Compiled, days: string[]): Totals {
-  const t = newTotals("rows", true);
-  const seenDays = new Set<string>(); // "<path>\t<day>": days with ≥ 1 matching row add their cost/tokens/lines once
-  eachCall(f, days, (s: Sess, c: Call) => {
+function bucketTotals(j: TotJob, s: Sess): void {
+  const f = j.f; const t = j.t;
+  if (!sessMatches(f, s)) return;
+  const a = ledger.get(s.path); if (!a) return;
+  for (const dk of j.days) {
+    const d = a.days.get(dk); if (!d || !dayMatches(f, s, dk, d)) continue;
+    sessSeen(t, s); dayMoney(t, s, dk, d, true); t.tools += d.tools;
+    for (const [name, st] of d.tt) {
+      const x = toolT(t, name);
+      x.n += st.n; x.err += st.err; x.dn += st.dn; x.ms += st.ms; x.out += st.out; if (st.max > x.max) x.max = st.max; addHist(x.hist, st.hist);
+      t.errors += st.err; t.dn += st.dn; t.ms += st.ms; if (st.max > t.max) t.max = st.max; addHist(t.hist, st.hist);
+    }
+    for (const [pk, c] of d.prog) addCnt(t.prog, pk, c);
+    for (const [ck, c] of d.cmds) addCnt(t.cmds, ck, c);
+    for (const [fk, c] of d.files) addCnt(t.files, fk.slice(fk.indexOf("\t") + 1), c);
+  }
+}
+// "<path>\t<day>" in j.seen: days with ≥ 1 matching row add their cost/tokens/lines once
+function rowTotals(j: TotJob, s: Sess): void {
+  const t = j.t; const a = ledger.get(s.path);
+  callsIn(j.f, s, j.dset, j.cut, (c: Call) => {
     sessSeen(t, s);
     const dk = localOf(c.t).day; const sk = s.path + "\t" + dk;
-    if (!seenDays.has(sk)) { seenDays.add(sk); const a = ledger.get(s.path); const d = a ? a.days.get(dk) : undefined; if (d) dayMoney(t, s, d, false); }
+    if (!j.seen.has(sk)) { j.seen.add(sk); const d = a ? a.days.get(dk) : undefined; if (d) dayMoney(t, s, dk, d, false); }
     t.models.add(c.model >= 0 ? nameOf(DICT.model, c.model) : "unknown");
     const name = nameOf(DICT.tool, c.tool); const x = toolT(t, name); const err = c.err === 1;
     t.tools++; x.n++; if (err) { t.errors++; x.err++; }
@@ -322,5 +335,4 @@ function rowTotals(f: Compiled, days: string[]): Totals {
     for (const cm of uniq(dictNames(DICT.cmd, c.cmds))) bump(t.cmds, name + "\t" + cm, err);
     for (const fp of uniq(dictNames(DICT.file, c.files))) bump(t.files, fp, false);
   });
-  return t;
 }
