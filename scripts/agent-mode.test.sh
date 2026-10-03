@@ -51,6 +51,9 @@ eq "update: exit" "$rc" 2
 eq "update: stdout empty" "$(cat "$t/o")" ""
 eq "update: one JSON line" "$(wc -l < "$t/e" | tr -d ' ')|$(jq -r '.error.message' < "$t/e" | grep -c downgrade)" "1|1"
 
+# an unknown command inside an agent is a usage error, not the compact help with exit 0
+set +e; agent sesions > "$t/o" 2> "$t/e"; rc=$?; set -e
+eq "unknown command" "$rc|$(jq -r '.error.code' < "$t/e")|$(cat "$t/o")" "2|usage|"
 # --watch inside an agent needs a bound
 set +e; agent --watch > "$t/o" 2> "$t/e"; rc=$?; set -e
 eq "watch unbounded" "$rc|$(jq -r '.error.code' < "$t/e")" "2|usage"

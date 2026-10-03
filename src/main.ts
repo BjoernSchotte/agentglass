@@ -25,7 +25,7 @@ import { section } from "./util/config.ts";
 import { L } from "./features/usage/record.ts";
 import { indexing } from "./features/usage/ledger.ts";
 import { replaying } from "./features/replay.ts";
-import { agentHost, hostObj } from "./features/agentenv.ts";
+import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
 import { compactHelp } from "./features/clihelp.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
@@ -171,7 +171,11 @@ function main(): void {
   agentHost(); // decided before any handler can warn (warnings are JSON lines inside an agent)
   for (const f of H.cli) if (f(args)) return;
   // inside a coding agent the TUI would hang its tool call (PTY shells pass the TTY check): what exists, as compact JSON
-  if (agentHost().on) { writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0); }
+  if (agentHost().on) {
+    const c = args[0] ?? ""; // no handler took it: a word here is a typo, not a request for the TUI
+    if (c && !c.startsWith("-")) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
+    writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0);
+  }
   if (!process.stdin.isTTY) { console.error("agentglass needs an interactive terminal"); process.exit(1); }
   enter();
   scan(); refreshProcs(); refreshSlow(); buildView();
