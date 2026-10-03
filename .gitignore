@@ -5,3 +5,4 @@ videos/*/renders/
 specs/internals/
 src/build-info.ts
 dist/
+!testdata/otlp/fixtures/claude/.claude/
