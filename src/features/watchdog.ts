@@ -71,16 +71,49 @@ function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {
 }
 export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean } // asks: the agent's terminal title says it waits for approval
 function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
+// a metric's value for a rule: v -1 = absent (its preconditions do not hold, the rule cannot fire); lv: the level the agent
+// itself asserts (1: Gemini's approval title), whatever the threshold; at: recorded time of the newest record behind v
+export interface MVal { v: number; tool: string; cmd: string; cpu: string; at: number; lv: number }
+export function absent(): MVal { return { v: -1, tool: "", cmd: "", cpu: "", at: 0, lv: 0 }; }
+function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal { return { v, tool, cmd, cpu, at, lv: 0 }; }
+// seconds a tool call has been open while the tree is quiet (avg over samples < cpuBelow) and no tool command started
+// within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once
+export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec: number): MVal {
+  const pend = (o.now - o.mtime) / 1000;
+  if (o.asks) { const m = mv(pend, pendingTool(o.evs) || "approval dialog", "", avgTail(o.cpu, samples).toFixed(0), o.mtime); m.lv = 1; return m; }
+  const t = pendingTool(o.evs);
+  if (!o.busy || !t || o.cpu.length < samples || o.subsActive) return absent();
+  const cpu = avgTail(o.cpu, samples);
+  if (cpu >= cpuBelow) return absent();
+  for (const c of o.cmds) if (c.age < pend + graceSec) return absent();
+  return mv(pend, t, "", cpu.toFixed(0), o.mtime);
+}
+// age of the oldest tool shell command while a tool call is pending
+export function commandAge(o: Obs): MVal {
+  if (!pendingTool(o.evs)) return absent();
+  let old: Cmd | null = null; for (const c of o.cmds) if (!old || c.age > old.age) old = c;
+  return old ? mv(old.age, "", old.name, "", o.now - old.age * 1000) : absent();
+}
+// log-silent seconds while busy, the tree idle (avg < cpuBelow) and no tool command running
+export function stalledFor(o: Obs, cpuBelow: number, samples: number): MVal {
+  if (!o.busy || o.cpu.length < samples || o.cmds.length) return absent();
+  const cpu = avgTail(o.cpu, samples);
+  return cpu < cpuBelow ? mv((o.now - o.mtime) / 1000, "", "", cpu.toFixed(1), o.mtime) : absent();
+}
+// log-silent seconds while every one of the last samples is above cpuAbove
+export function spinningFor(o: Obs, cpuAbove: number, samples: number): MVal {
+  if (o.cpu.length < samples) return absent();
+  let lo = 1e9; for (const v of o.cpu.slice(-samples)) if (v < lo) lo = v;
+  return lo > cpuAbove ? mv((o.now - o.mtime) / 1000, "", "", lo.toFixed(0), o.mtime) : absent();
+}
+function lastTool(evs: Ev[]): string { for (let i = evs.length - 1; i >= 0; i--) { const e = evs[i]; if (e.kind === "tool") return toolName(e); } return "tool"; }
+// identical consecutive tool calls at the end
+export function repeatRun(o: Obs): MVal { const n = loopRun(o.evs); return n > 0 ? mv(n, lastTool(o.evs), "", "", o.mtime) : absent(); }
 // waiting on a tool approval: tool call open > 20s, tree quiet (10s avg < 2%), no tool command started since the call
 export function approvalNote(o: Obs): string {
-  if (o.asks) return "approval dialog open"; // the agent says so itself (Gemini logs the call only once it ran)
-  const t = pendingTool(o.evs);
-  const pend = (o.now - o.mtime) / 1000;
-  if (!o.busy || !t || pend <= 20 || o.cpu.length < 7 || o.subsActive) return "";
-  const cpu = avgTail(o.cpu, 7);
-  if (cpu >= 2) return "";
-  for (const c of o.cmds) if (c.age < pend + 5) return "";
-  return t + " pending " + dur(pend) + ", cpu " + cpu.toFixed(0) + "%";
+  const a = approvalWait(o, 2, 7, 5);
+  if (a.lv > 0) return "approval dialog open"; // the agent says so itself (Gemini logs the call only once it ran)
+  return a.v > 20 ? a.tool + " pending " + dur(a.v) + ", cpu " + a.cpu + "%" : "";
 }
 // which alarm a look raises: approval first (a Gemini approval dialog looks like a finished turn in its log), then busy →
 // idle or a whole turn between two looks (fresh: a new prompt in the tail); "" = none
@@ -88,23 +121,16 @@ export function alarmOf(wasBusy: boolean, busy: boolean, fresh: boolean, appr: b
   if (appr) return "approval?";
   return !busy && (wasBusy || fresh) ? "turn finished" : "";
 }
-// [reason, detail] — "" reason = fine
+// [reason, detail] — "" reason = fine; the first of loop, long cmd, stalled, spinning
 export function stuckOf(o: Obs): string[] {
-  const n = loopRun(o.evs);
-  if (n >= 3) {
-    let t = "tool"; for (let i = o.evs.length - 1; i >= 0; i--) { const e = o.evs[i]; if (e.kind === "tool") { t = toolName(e); break; } }
-    return ["loop", t + " called " + n + "× in a row with the same arguments"];
-  }
-  const silent = (o.now - o.mtime) / 1000;
-  if (pendingTool(o.evs)) { let old: Cmd | null = null; for (const c of o.cmds) if (c.age > 600 && (!old || c.age > old.age)) old = c; if (old) return ["long cmd", old.name + " running " + dur(old.age)]; }
-  if (o.cpu.length >= 7) {
-    const cpu = avgTail(o.cpu, 7);
-    if (o.busy && silent > 480 && cpu < 1 && !o.cmds.length) return ["stalled", "no log activity " + dur(silent) + ", cpu " + cpu.toFixed(1) + "%"];
-  }
-  if (o.cpu.length >= 120 && silent > 180) { // 120 samples × 1.5s = 3 min
-    let lo = 1e9; for (const v of o.cpu.slice(-120)) if (v < lo) lo = v;
-    if (lo > 80) return ["spinning", "cpu > " + lo.toFixed(0) + "% for 3m while the log is silent " + dur(silent)];
-  }
+  const l = repeatRun(o);
+  if (l.v >= 3) return ["loop", l.tool + " called " + l.v + "× in a row with the same arguments"];
+  const c = commandAge(o);
+  if (c.v > 600) return ["long cmd", c.cmd + " running " + dur(c.v)];
+  const s = stalledFor(o, 1, 7);
+  if (s.v > 480) return ["stalled", "no log activity " + dur(s.v) + ", cpu " + s.cpu + "%"];
+  const p = spinningFor(o, 80, 120); // 120 samples × 1.5s = 3 min
+  if (p.v > 180) return ["spinning", "cpu > " + p.cpu + "% for 3m while the log is silent " + dur(p.v)];
   return ["", ""];
 }
 
