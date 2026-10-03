@@ -10,6 +10,7 @@ for f in $(find src -name '*.check.ts' | sort); do
   if AGENTGLASS_RULES=/nonexistent AGENTGLASS_NOTIFY=0 AGENTGLASS_REDACT=1 AGENTGLASS_REDACT_KEEP=keepme "$out/c" >"$out/run" 2>&1; then echo "ok   $f: $(tail -1 "$out/run")"; else echo "FAIL $f"; cat "$out/run"; fail=1; fi
 done
 for f in $(find scripts -name '*.test.sh' | sort); do
-  if sh "$f" >"$out/run" 2>&1; then echo "ok   $f: $(tail -1 "$out/run")"; else echo "FAIL $f"; cat "$out/run"; fail=1; fi
+  # each test sets up a fake HOME: the caller's config/rules/cache overrides would point it elsewhere
+  if env -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR sh "$f" >"$out/run" 2>&1; then echo "ok   $f: $(tail -1 "$out/run")"; else echo "FAIL $f"; cat "$out/run"; fail=1; fi
 done
 rm -rf "$out"; exit $fail
