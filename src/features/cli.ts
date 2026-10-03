@@ -125,6 +125,7 @@ function snapshot(o: Opts): void {
     });
   }
   out(process.stdout.isTTY ? JSON.stringify(res, null, 2) : JSON.stringify(res));
+  if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run
   process.exit(0);
 }
 

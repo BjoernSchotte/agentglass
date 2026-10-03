@@ -189,7 +189,7 @@ function renderStats(): void {
   const l2f = (narrow: boolean): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
     fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
     fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST + (t.ms.unk > 0 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
-  const sc = g.scoped ? fg(C.dim) + " · cost, tokens: in session-days with matching calls " + RST + callsChip(f) : "";
+  const sc = g.scoped ? fg(C.dim) + " · cost: days with matching calls" + RST : "";
   const l2 = (vwidth(l2f(false)) <= W - 4 ? l2f(false) : l2f(true)) + sc;
   const b = g.busy;
   const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? moneyTag(g.busyCost, asBill(b.bill)) + " " : "") + RST +
@@ -197,7 +197,8 @@ function renderStats(): void {
   // the projection: after "busiest" when wide, else in its place (busiest stays first in the table order)
   const pj = projLine(); const bst = costNow("").bs.state;
   const pjs = (bst === "over" ? fg(C.red) : bst === "watch" ? fg(C.yellow) : fg(C.sub)) + pj + RST;
-  const l3 = wide ? (b ? busiest + dot : "") + pjs : pjs;
+  // the projection is about all spend: under a filter the line shows the busiest matching session instead
+  const l3 = f !== EMPTY ? busiest + (g.scoped ? dot + callsChip(f) : "") : wide ? (b ? busiest + dot : "") + pjs : pjs;
   for (const [i, l] of [l1, l2, l3].entries()) put(1, 2 + i, " " + fitStyled(l, W - 4) + fillTo(fitStyled(l, W - 4), W - 4) + " ");
   const pm = periodMessage(f, days);
   if (pm) { // the period and the day clauses do not intersect: say so instead of empty tables

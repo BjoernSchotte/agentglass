@@ -1,11 +1,11 @@
 // agentglass — filter language in the TUI: the / input (live parse, completion), chips, pins keys, list/process hooks (spec §7)
 // SPDX-License-Identifier: Apache-2.0
-import { width, vwidth } from "../../util/text.ts";
+import { width, vwidth, fitStyled } from "../../util/text.ts";
 import { S, say } from "../../state.ts";
 import { H, tabAt, display } from "../../hooks.ts";
 import type { Proc } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
-import { sessions, buildView } from "../../model/sessions.ts";
+import { sessions, buildView, loadHead } from "../../model/sessions.ts";
 import { buildProcView } from "../../model/procs.ts";
 import { ask } from "../../actions.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
@@ -41,7 +41,20 @@ function compiledOf(cs: Clause[], ctx: Ctx): Compiled {
 
 // ── matching session paths (list hooks, hidden count, CLI) ──
 // live state and age change without a ledger tick: they are part of the cache key
-function liveSig(): string { let p = 0; let a = 0; for (const s of sessions.values()) { if (s.pid) p += s.pid; if (s.attention || s.stuck) a++; } return String(p) + "/" + String(a) + "/" + String(sessions.size) + "/" + String(Math.floor(Date.now() / 60000)); }
+// (and heads: cwd, branch and title of some harnesses come from a transcript's head, read in the background below)
+function liveSig(): string { let p = 0; let a = 0; let h = 0; for (const s of sessions.values()) { if (s.pid) p += s.pid; if (s.attention || s.stuck) a++; if (s.headDone) h++; } return String(p) + "/" + String(a) + "/" + String(h) + "/" + String(sessions.size) + "/" + String(Math.floor(Date.now() / 60000)); }
+// a clause on these needs every session's head (the list reads heads only for visible rows)
+const HEADKEYS = ["repo", "cwd", "branch", "title", "text", "agent", "model"];
+function needsHeads(f: Compiled): boolean { for (const c of f.cs) if (HEADKEYS.indexOf(c.key) >= 0) return true; return false; }
+let headsLeft = 0;
+// ≤ 40 ms of head reads per tick while the Sessions filter needs them; the list fills in as they arrive
+H.onTick.push(() => {
+  const f = tabFilter("Sessions", "list"); headsLeft = 0;
+  if (f === EMPTY || !needsHeads(f)) return;
+  const t0 = Date.now(); let read = 0;
+  for (const s of sessions.values()) { if (s.headDone) continue; if (Date.now() - t0 < 40) { loadHead(s); read++; } else headsLeft++; }
+  if (read) S.dirty = true;
+});
 interface MP { key: string; paths: Set<string> }
 const mp = new Map<string, MP>();
 let searchOk = true; // false while typing: a content clause never starts a search (enter does)
@@ -103,6 +116,10 @@ export function chips(tab: string, ctx: Ctx, w: number): string {
     if (vwidth(next) + (i < parts.length - 1 ? 9 : 0) > w) break; // room for " · … +N"
     out = next; shown++;
   }
+  if (shown === 0 && parts.length) { // not even one chip fits: cut the first one, so the bar never shows only "… +N"
+    const more = parts.length > 1 ? fg(C.dim) + " +" + String(parts.length - 1) + RST : "";
+    return fitStyled(parts[0] ?? "", Math.max(4, w - vwidth(more))) + more;
+  }
   if (shown < parts.length) out += (out ? sep : "") + fg(C.dim) + "… +" + String(parts.length - shown) + RST;
   return out;
 }
@@ -134,15 +151,23 @@ function startsClause(text: string, cs: Clause[]): boolean {
   for (const k of keys().concat(aliases())) if (k.startsWith(w)) return true;
   return false;
 }
+// while typing: a filter over call rows (tens of ms on a large ledger) applies once the keys pause, others at once
+let typedGen = 0;
+function applyTyped(tab: string, cs: Clause[]): void {
+  const g = ++typedGen;
+  const now = (): void => { if (g !== typedGen || S.mode !== "input") return; searchOk = false; setLocal(tab, cs); searchOk = true; };
+  if (compiledOf(effective(S.pins, cs).cs, ctxOf(tab)).needsCalls) setTimeout(now, 120); else now();
+}
 function onQuery(ev: string, text: string): boolean {
   if (ev === "change" && !completing) cyc.cands = [];
   if (ev === "change") {
     const r = check(text, true); S.inputErr = r.err;
-    if (!r.err && !startsClause(text, r.cs)) { searchOk = false; setLocal(editTab, r.cs); searchOk = true; }
+    if (!r.err && !startsClause(text, r.cs)) applyTyped(editTab, r.cs);
     return false;
   }
-  if (ev === "esc") { S.inputErr = ""; setLocal(editTab, before); return false; }
+  if (ev === "esc") { typedGen++; S.inputErr = ""; setLocal(editTab, before); return false; }
   if (ev === "enter") {
+    typedGen++;
     const r = check(text, false);
     if (r.err) { S.inputErr = r.err; return true; }
     for (const c of r.cs) if (c.key === "content") contentForget(c.vals[0] ?? "");
@@ -304,7 +329,8 @@ H.boxChips.push((where: string, w: number): string => {
   if (where === "processes") return chips("Processes", "procs", w);
   if (where !== "sessions") return "";
   const f = tabFilter("Sessions", "list"); if (f === EMPTY) return "";
-  const hid = hiddenCount("Sessions"); const tail = (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (f.needsCalls ? " " + callsChip(f) : "");
+  const hid = hiddenCount("Sessions");
+  const tail = (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (f.needsCalls ? " " + callsChip(f) : "");
   return chips("Sessions", "list", Math.max(8, w - vwidth(tail))) + tail;
 });
 H.emptyText.push((where: string): string => {
