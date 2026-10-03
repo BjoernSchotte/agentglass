@@ -415,9 +415,11 @@ shows again). The preview lists every firing alert; `?` shows the rules in force
 transition in `notify.on` (default `fire`, `escalate`) of a `notify` rule, also for acknowledged alerts. It is an argv:
 no shell, placeholders are substituted per argument, `$(…)` stays literal. Stdin gets the alert as one JSON line
 (`rule severity state value unit threshold since session harness title project message labels`), the environment
-`AGENTGLASS_RULE`, `_SEVERITY`, `_STATE`, `_SESSION`, `_HARNESS`, `_VALUE`. It is killed after 10 s; at most 4 run at
-once (more are dropped with a warning). It runs only when `rules.json` is yours and not group- or world-writable
-(`chmod 600`), and in `--watch` only with `--notify`. `--redact` fakes titles and projects there too.
+`AGENTGLASS_RULE`, `_SEVERITY`, `_STATE`, `_SESSION`, `_HARNESS`, `_VALUE` plus only `PATH`, `HOME`, `USER`, locale,
+`TZ`, `TMPDIR`, `TERM`, the desktop bus/display, `XDG_*` dirs and proxy settings — never the rest of agentglass's
+environment (API keys stay out; a script reads its own secrets). It gets SIGTERM after 10 s and SIGKILL 2 s later; at
+most 4 run at once (more are dropped with a warning). It runs only when `rules.json` is yours and not group- or world-writable
+(`chmod 600`; a chmod is picked up like an edit), and in `--watch` only with `--notify`. `--redact` fakes titles and projects there too.
 
 ## Scriptable
 

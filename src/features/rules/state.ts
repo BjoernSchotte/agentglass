@@ -15,7 +15,8 @@ export const R = { set: loadRules("", false), mtime: -2, checkedAt: 0, safe: fal
 const CMD_UNSAFE = "notify.command ignored: rules.json must not be group- or world-writable (and must be yours) — chmod 600 " + RULES_FILE;
 
 function warn(msg: string): void { if (S.cli) process.stderr.write("agentglass: " + msg + "\n"); else say("warn", msg); }
-export function fileMtime(p: string): number { try { return statSync(p).mtimeMs; } catch (e) { return -1; } }
+// the file's change stamp (ctime: content writes and chmod/chown alike, so fixing the mode re-runs the permission check), -1 = missing
+export function fileMtime(p: string): number { try { const st = statSync(p); return Math.max(st.mtimeMs, st.ctimeMs); } catch (e) { return -1; } }
 export function fileText(p: string): string { return readText(p, 0, 1048576); }
 // owned by this user and (mode & 0o022) === 0 — the check ssh does for its config
 export function fileSafe(p: string): boolean { const om = OS.ownerMode(p); return om.length === 2 && om[0] === userInfo().uid && ((om[1] ?? 0) & 0o022) === 0; }
@@ -49,7 +50,9 @@ export function reload(now: number, text: (p: string) => string, mtimeOf: (p: st
   }
   install(rs);
   const n = errCount(rs);
-  if (n) warn("rules.json: " + String(n) + " error" + (n === 1 ? "" : "s") + " (broken rules are disabled) — agentglass rules check");
+  const e1 = rs.diags.find((d) => d.err);
+  if (n === 1 && e1) warn("rules.json:" + String(e1.line) + ":" + String(e1.col) + ": " + (e1.rule ? e1.rule + ": " : "") + e1.msg);
+  else if (n) warn("rules.json: " + String(n) + " errors (broken rules are disabled, overridden built-ins unchanged) — agentglass rules check");
   return true;
 }
 // the rules in force (loads the file on first use, then hot-reloads)
