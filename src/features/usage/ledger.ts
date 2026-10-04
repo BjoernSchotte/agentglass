@@ -15,9 +15,14 @@ export const ledger = new Map<string, Acc>();
 
 const BUDGET = 4194304; const CHUNK = 1048576; const SLICE_MS = 100;
 
+// call rows the cache has but this run has not read (a run that never reads rows: cache.ts): they are read right before
+// the session grows, so its rows stay whole when it is saved; false = none or stale, the session is indexed from the start
+export const unread = new Set<string>();
+export const LAZY = { rows: (path: string, a: Acc): boolean => false };
 export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);
-  if (!a || s.size < a.off || a.ep !== s.ep) { a = newAcc(); a.ep = s.ep; ledger.set(s.path, a); } // new, truncated/rewritten or other cursor epoch
+  if (a && unread.has(s.path) && a.off < s.size) { unread.delete(s.path); if (!LAZY.rows(s.path, a)) a = undefined; }
+  if (!a || s.size < a.off || a.ep !== s.ep) { unread.delete(s.path); a = newAcc(); a.ep = s.ep; ledger.set(s.path, a); } // new, truncated/rewritten or other cursor epoch
   a.sub = s.parent !== ""; // known before the first line is booked: scan/meta set it when the session is first seen
   return a;
 }
@@ -98,7 +103,8 @@ export function indexing(): boolean { return L.total > 0 && L.done < L.total; }
 export function complete(s: Sess): void {
   const a = accOf(s);
   sidecar(s, a); // first: some adapters date log lines from it (kiro turn times)
-  while (step(s, a) > 0) { /* next chunk */ }
+  let n = 0; for (let k = step(s, a); k > 0; k = step(s, a)) n += k;
+  if (n > 0) L.ver++; // the ledger changed: a one-shot run saves it at exit (cache.ts)
   applyAcc(s, a);
 }
 

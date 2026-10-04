@@ -41,7 +41,9 @@ export function probeLive(): boolean {
   }
   return changed;
 }
+let scanned = false;
 export function scan(): void {
+  if (!scanned) { scanned = true; for (const f of H.firstScan) f(); }
   const seen = new Set<string>();
   for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, seen, parent));
   for (const k of [...sessions.keys()]) if (!seen.has(k)) sessions.delete(k);

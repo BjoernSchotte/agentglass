@@ -6,8 +6,8 @@ import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { readText } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger, indexing } from "./ledger.ts";
-import { L } from "./record.ts";
+import { ledger, indexing, unread, LAZY } from "./ledger.ts";
+import { type Acc, L } from "./record.ts";
 import { ROWS } from "./facts.ts";
 import { rulesNeedRows } from "../rules/file.ts";
 import { PRICES_SIG } from "./pricing.ts";
@@ -15,26 +15,28 @@ import { VERSION, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
-// One-shot runs that never read call rows and never save (`cost`, `sessions`, `session`, plain --json / --watch, --help,
-// --version) neither load nor build them: on a long history that is ~150 MB of a cold --json. A --filter or --pinned may
-// need rows (and saves); `errors` reads them (every failed call within their retention).
+// Runs that never read call rows (`cost`, `sessions`, `session`, plain --json / --watch) read a session's calls file only
+// right before that session grows (ledger.ts LAZY), not all of them up front: the rows they save stay whole. A --filter
+// or --pinned may need rows; `errors` and `triage` read them (every failed call within their retention).
 const GLOBAL = ["--agent", "--no-agent", "--redact"]; // flags of any command (main.ts moves them last)
 const ARGV = process.argv.slice(2).filter((a: string) => GLOBAL.indexOf(a) < 0);
-function rowless(): boolean {
+function lazyRows(): boolean {
   const filtered = ARGV.indexOf("--filter") >= 0 || ARGV.indexOf("--pinned") >= 0;
   if (ARGV[0] === "cost" || ARGV[0] === "sessions" || ARGV[0] === "session") return !filtered;
-  if (ARGV[0] === "triage") return false; // ranks call rows (and saves what it indexed)
-  const oneShot = ["--json", "--watch", "--help", "-h", "--version"].some((x: string) => ARGV.indexOf(x) >= 0);
+  if (ARGV[0] === "triage") return false; // ranks call rows
+  const oneShot = ["--json", "--watch"].some((x: string) => ARGV.indexOf(x) >= 0);
   if (!oneShot || filtered) return false;
   // --json alerts / --watch alert lines of a rule on call rows (tool_calls, tool_errors, tool_error_rate)
   return !((ARGV.indexOf("--json") >= 0 || ARGV.indexOf("--watch") >= 0) && ARGV.indexOf("--no-alerts") < 0 && rulesNeedRows());
 }
-if (rowless()) ROWS.on = false;
+const LAZY_ROWS = lazyRows();
 const DIR = CACHE_DIR; // AGENTGLASS_CACHE_DIR or ~/.agentglass/cache
 const FILE = join(DIR, "ledger.json");
 const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset (a message's lines are adjacent)
 
+let loaded = false;
 function load(): void {
+  loaded = true; savedVer = L.ver; // nothing to save until something is indexed
   let size = 0;
   try { size = statSync(FILE).size; } catch (e) { return; }
   const root = parse(readText(FILE, 0, size).trim());
@@ -45,7 +47,8 @@ function load(): void {
   for (const path of Object.keys(ss)) {
     const o = obj(ss[path]); if (!o) continue;
     const a = accIn(o);
-    if (!ROWS.on) { ledger.set(path, a); continue; } // no rows wanted: the day buckets alone are consistent with off
+    if (!ROWS.on) { ledger.set(path, a); continue; } // no rows built (checks): the day buckets alone are consistent with off
+    if (LAZY_ROWS) { ledger.set(path, a); written.set(path, a.off); unread.add(path); continue; } // its calls file, as is, until it grows
     const calls = loadCallsFrom(CALLS_DIR, path, a);
     if (!calls) continue; // no or stale call rows: this session alone re-indexes
     a.calls = calls; a.lastCall = calls.length - 1;
@@ -67,7 +70,7 @@ function saveCalls(): void {
 }
 let savedVer = -1; let lastSave = 0;
 function save(): void {
-  if (L.ver === savedVer || !ROWS.on) return; // without rows a save would leave calls files behind the ledger
+  if (!loaded || L.ver === savedVer || !ROWS.on) return; // without rows a save would leave calls files behind the ledger
   const ss: Obj = {};
   for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) ss[s.path] = accOut(a, KEEP_IDS); } // only sessions that still exist
   saveCalls();
@@ -81,7 +84,13 @@ function save(): void {
   } catch (e) { /* read-only home etc.: keep indexing in memory */ }
 }
 
-load();
+LAZY.rows = (path: string, a: Acc): boolean => {
+  const calls = loadCallsFrom(CALLS_DIR, path, a); if (!calls) return false;
+  a.calls = calls; a.lastCall = calls.length - 1; written.set(path, a.off); return true;
+};
+H.firstScan.push(load); // not at import: --help, --version and the agent help never read it
+// a one-shot CLI run keeps what it indexed for the next run (also on an error exit: what was saved is consistent)
+process.on("exit", () => { try { save(); } catch (e) { /* never block the exit */ } });
 // a save serializes the whole ledger (tens of MB and ~0.5 s of CPU with a long history): every 30 s only while indexing
 // (a crash must not lose much of a first index), else every 5 min; quit always saves, a crash re-reads ≤ 5 min of logs
 H.onTick.push(() => { if (Date.now() - lastSave > (indexing() ? 30000 : 300000)) { lastSave = Date.now(); save(); } });
