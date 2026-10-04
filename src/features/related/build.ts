@@ -14,7 +14,7 @@ import { dayKey } from "../usage/record.ts";
 import { LOG, severityOf } from "../rules/engine.ts";
 import { ms } from "../callgraph/model.ts";
 import { type RelEv, type RelSt, type Spawn, newSt, row, toRelShown, markConflicts } from "./model.ts";
-import { reflogCommits, worktreeGitdirs } from "./reflog.ts";
+import { readReflog, isNew, worktreeGitdirs } from "./reflog.ts";
 import { REDACT } from "../redact-on.ts";
 
 export const CAP_BYTES = 16777216; // read budget per build
@@ -160,7 +160,8 @@ function extras(b: Build): void {
 function reflogRows(b: Build): void {
   b.refl = [];
   const seen = new Set<string>(); for (const r of b.all) if (r.sha) seen.add(r.sha);
-  for (const gd of worktreeGitdirs(b.common)) for (const c of reflogCommits(gd)) {
+  for (const gd of worktreeGitdirs(b.common)) for (const c of readReflog(gd)) {
+    if (!isNew(c)) continue;
     if (c.at < b.t0 || c.at > b.t1) continue;
     const sha = c.sha.slice(0, 7); if (seen.has(sha)) continue;
     seen.add(sha);
