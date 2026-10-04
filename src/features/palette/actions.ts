@@ -45,6 +45,8 @@ addActions([
   keyAction("filter.pin", "Filter", "Pin the filter (every tab, remembered)", "p", "p", sessOrStats),
   keyAction("pins.edit", "Filter", "Edit pins…", "P", "P", (c: Ctx): boolean => inSessions(c) || inProcs(c) || tabNamed(c, "Stats")),
   keyAction("triage.open", "Filter", "Triage: what is different about the filtered sessions", "t", "t", sessOrStats),
+  keyAction("compare.mark", "Session", "Mark A / B for compare (again: unmark)", "m", "m", inSessions),
+  keyAction("compare.open", "Session", "Compare A vs B (marks, previous run of the repo; Stats: previous period)", "C", "C", sessOrStats),
   keyAction("filter.harness", "Filter", "Cycle harness filter", "h", "h", inSessions),
   keyAction("filter.live", "Filter", "Live sessions only", "l", "l", inSessions),
   keyAction("filter.clear", "Filter", "Clear the filter (pins stay)", "esc", "esc", inSessions),
