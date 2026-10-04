@@ -369,7 +369,7 @@ model ~ opus and tool is Bash           tool is Bash and status is error     not
 harness is pi, day >= -7d               duration > 30s                       content ~ "npm test"
 ```
 
-- `key op value`; terms are ANDed (`and`, `,` or just a blank; a dangling `and` / `,` is an error). Operators: `is` `=` `is_not` `!=` `is_one_of`
+- `key op value`; terms are ANDed (`and`, `,` or just a blank; a leading, doubled or trailing `and` / `,` is an error; `, and` counts as one). Operators: `is` `=` `is_not` `!=` `is_one_of`
   `is_not_one_of` `~` (contains) `!~` `>` `>=` `<` `<=`. `not` / `-` negates. Bare words search title, path, id,
   harness and branch, as `/` always did. OR exists only as `is_one_of`; no parentheses.
 - Values: `$0.50`, `40k`, `1.5M`, `100KB`, `500ms`, `30s`, `2m`, `1h`, `3d`, `20%`, `today`, `yesterday`, `-7d`,

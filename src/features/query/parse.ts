@@ -142,7 +142,8 @@ export function parse(src: string): Parsed {
     const t = toks[i];
     if (!t.q && (t.s === "," || t.s.toLowerCase() === "and")) {
       if (neg) return fail(cs, "\"not\" needs a filter after it", negCol);
-      if (conn || !cs.length) return fail(cs, "\"" + t.s + "\" needs a filter before it", t.col); // leading or doubled
+      const andAfterComma = conn !== null && conn.s === "," && t.s.toLowerCase() === "and"; // "a, and b": one connector
+      if ((conn && !andAfterComma) || !cs.length) return fail(cs, "\"" + t.s + "\" needs a filter before it", t.col); // leading or doubled
       conn = t; i++; continue;
     }
     if (!word(t, "not")) conn = null;
