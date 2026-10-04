@@ -63,5 +63,12 @@ const cm = display("vcs", "https://github.com/me/x/commit/abc1234", null);
 ok("vcs commit keeps sha", cm.endsWith("/commit/abc1234") && cm.indexOf("me/x") < 0, cm);
 const sj = display("vcs", "fix the secret client thing", null);
 ok("vcs subject replaced + stable", sj !== "fix the secret client thing" && sj.length > 0 && sj === display("vcs", "fix the secret client thing", null), sj);
+// a line with an OSC 8 link: the escape (url) bytes stay as they are, only the visible text is scrubbed
+const esc = "\x1b]8;;agentglass://open/claude/" + user + "\x1b\\";
+const lk = "\x1b[1m" + esc + "home of " + user + "\x1b]8;;\x1b\\\x1b[0m";
+const sl = screenOut(lk);
+ok("link escape untouched", sl.indexOf(esc) === 4 && sl.indexOf("\x1b]8;;\x1b\\") > 0, sl);
+ok("link text scrubbed", sl.slice(sl.indexOf(esc) + esc.length).indexOf(user) < 0, sl);
+
 console.log(bad ? bad + " failed" : "ok");
 process.exit(bad ? 1 : 0);

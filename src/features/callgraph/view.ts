@@ -1,6 +1,6 @@
 // agentglass — call graph (c): a session's turns, tool calls and subagents as a DevTools-style flame chart + call tree
 // SPDX-License-Identifier: Apache-2.0
-import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home } from "../../util/text.ts";
+import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home, ESC_RE } from "../../util/text.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
 import { H } from "../../hooks.ts";
@@ -34,7 +34,7 @@ function loadTV(s: Sess): TV {
   const r = src.lines(s, src.align(s, Math.max(0, size - window(src, 6291456))), size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
-  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1 };
+  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1 };
 }
 // the parent's tool call that spawned subagent s, if the harness records it
 function spawnOf(s: Sess): string { const f = harnessOf(s.h).spawnOf; return f ? f(s) : ""; }
@@ -236,7 +236,7 @@ function infoBar(y: number): void {
   const s = spanAt(G.sel);
   if (!s) { put(1, y, bg(C.sel) + " ".repeat(w) + RST); put(1, y + 1, bg(C.sel) + " ".repeat(w) + RST); return; }
   const st = status(s);
-  const sw = width(st.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
+  const sw = width(st.replace(ESC_RE, ""));
   const p = fitStyled(fg(C.accent) + B + " " + clean(pathOf(s)) + RST, w - sw - 2);
   put(1, y, bg(C.sel) + p + bg(C.sel) + fillTo(p, w - sw - 1) + st + bg(C.sel) + " " + RST);
   const tv = tvAt(s.src);

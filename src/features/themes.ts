@@ -4,7 +4,7 @@ import { openSync, writeSync, closeSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { HOME, readText } from "../util/fs.ts";
 import { S, say } from "../state.ts";
-import { H } from "../hooks.ts";
+import { H, type Ctx } from "../hooks.ts";
 import { C, HL } from "../ui/theme.ts";
 
 // every field of C and HL (HL.text → code); values are "r;g;b" or official-palette hex
@@ -100,14 +100,22 @@ H.cli.push((args) => {
 });
 H.keys.push((mode, k) => {
   if (k !== "T" || (mode !== "list" && mode !== "transcript" && mode !== "detail")) return false;
-  apply((cur + 1) % THEMES.length);
+  pick((cur + 1) % THEMES.length);
+  return true;
+});
+function pick(i: number): void {
+  apply(i);
   const name = THEMES[cur].name;
   save(name);
   if (S.dv) S.dv.lw = -1; // detail lines bake colors in: force a re-layout
   if (S.tv) S.tv.lw = -1;
   say("info", "theme: " + name);
-  return true;
-});
+}
+// palette: one action per theme
+for (let i = 0; i < THEMES.length; i++) {
+  const n = i;
+  H.actions.push({ id: "theme.set." + THEMES[i].name, title: THEMES[i].name, group: "Theme", keys: "", when: (c: Ctx): boolean => c.mode !== "input" && c.mode !== "confirm", run: (c: Ctx): void => pick(n) });
+}
 H.helpSections.push({ name: "themes", ctx: "", keys: [
   ["T", "cycle color theme (remembered)"], ["--theme <name>", "start with a theme (list: all)"],
   ["AGENTGLASS_THEME", "default theme via env"] ] });

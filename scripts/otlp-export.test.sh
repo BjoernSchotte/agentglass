@@ -39,6 +39,7 @@ eq "live bad harness exit" "$rc" 2
 run --watch --otlp --content > /dev/null 2> "$t/err"; rc=$?
 eq "live --otlp without url exit" "$rc" 2
 run --help | grep -q "export --otlp <url>" || { echo "FAIL --help lacks export"; fail=1; }
+run export --help | grep -q "^usage: agentglass export --otlp" || { echo "FAIL export --help"; fail=1; }
 set -e
 [ $fail = 0 ] && echo "otlp export cli: ok"
 exit $fail
