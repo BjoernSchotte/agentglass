@@ -131,6 +131,12 @@ eq("likely: bare reply after a result", aw({ now, mtime: th.mtime, busy: true, e
 eq("likely: prompt only, no reply yet (a slow model): nothing", aw({ now, mtime: th.mtime, busy: true, evs: [ev("user", "go")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "absent");
 eq("likely: bare reply in tmux: nothing", aw({ now, mtime: th.mtime, busy: true, evs: [ev("user", "go")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: false, bare: true }), "absent");
 eq("guess: bare reply", String(approvalGuess({ now, mtime: gq.mtime, busy: true, evs: [ev("user", "go")], cpu: gq.cpu, cmds: [], subsActive: false, bare: true }, true)), "true");
+// quiet over the whole log silence (1.5 s samples since the write), not only the rule's 7: a non-shell tool that burned
+// CPU for its first 10 s and then waits looks busy until the silence's average drops below cpu_below
+eq("likely: busy in the first half of the silence: nothing", aw({ now, mtime: now - 21000, busy: true, evs: th.evs, cpu: flat(7, 30).concat(flat(7, 0)), cmds: [], subsActive: false, mayGuess: true }), "absent");
+eq("likely: quiet over the whole silence", aw({ now, mtime: now - 21000, busy: true, evs: th.evs, cpu: flat(7, 30).concat(flat(14, 0.2)), cmds: [], subsActive: false, mayGuess: true }), "21 approval dialog likely lv0");
+eq("likely: fewer samples than the silence (just started): those there", aw({ now, mtime: now - 60000, busy: true, evs: th.evs, cpu: flat(8, 0.2), cmds: [], subsActive: false, mayGuess: true }), "60 approval dialog likely lv0");
+eq("open call: still the rule's samples", aw({ now, mtime: now - 21000, busy: true, evs: [ev("user", "go"), ev("tool", "write_file\u0000a")], cpu: flat(7, 30).concat(flat(7, 0)), cmds: [], subsActive: false, mayGuess: true }), "21 write_file  lv0");
 eq("likely: Gemini wrote the call (it ran) since", aw({ now, mtime: now - 1000, busy: true, evs: [ev("user", "go"), ev("thinking", "x"), ev("tool", "run_shell_command\u0000ls"), ev("result", "a.txt")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "absent");
 console.log(bad ? bad + " failed" : "watchdog: all checks passed");
 if (bad) process.exit(1);

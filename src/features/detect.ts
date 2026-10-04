@@ -92,6 +92,7 @@ function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 export interface MVal { v: number; tool: string; cmd: string; cpu: string; at: number; lv: number; hint: string }
 export function absent(): MVal { return { v: -1, tool: "", cmd: "", cpu: "", at: 0, lv: 0, hint: "" }; }
 function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal { return { v, tool, cmd, cpu, at, lv: 0, hint: "" }; }
+const SAMPLE_SEC = 1.5; // CPU sample cadence while an agent is live (sched.ts ALARM)
 // seconds a tool call has been open (or, likely, one Gemini has not logged yet: unlogged) while the tree is quiet (avg over samples
 // < cpuBelow) and no tool command started within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once
 export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec: number): MVal {
@@ -100,7 +101,7 @@ export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec
   if (o.asks) { const m = mv(pend, pendingTool(o.evs) || "approval dialog", "", avgTail(o.cpu, samples).toFixed(0), o.mtime); m.lv = 1; return m; }
   const call = pendingTool(o.evs); const t = call || (unlogged(o) ? "approval dialog" : "");
   if (!o.busy || !t || o.cpu.length < samples || o.subsActive) return absent();
-  const cpu = avgTail(o.cpu, samples);
+  const cpu = avgTail(o.cpu, call ? samples : Math.max(samples, Math.floor(pend / SAMPLE_SEC))); // a guess: quiet over the whole silence
   if (cpu >= cpuBelow) return absent();
   for (const c of o.cmds) if (c.age < pend + graceSec) return absent();
   const m = mv(pend, t, "", cpu.toFixed(0), o.mtime);
@@ -109,7 +110,7 @@ export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec
 }
 // no title to read (mayGuess: Gemini outside tmux) and the reply so far has no text and no calls (only thoughts, or bare):
 // Gemini logs a call once it ran, so its approval dialog looks like a long think. Log-silent past the approval rule's
-// threshold (20 s) with the tree quiet it likely is one; a tool that is not a shell command and runs that long looks the
+// threshold (20 s) with the tree quiet all that time (the samples since the write, at least `samples`) it likely is one; a tool that is not a shell command and runs that long looks the
 // same until Gemini writes again, hence the "likely" hint
 function unlogged(o: Obs): boolean { const e = o.evs.length ? o.evs[o.evs.length - 1] : null; return o.mayGuess === true && (o.bare === true || (!!e && e.kind === "thinking")); }
 // age of the oldest tool shell command while a tool call is pending
