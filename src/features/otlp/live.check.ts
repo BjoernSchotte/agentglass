@@ -84,7 +84,7 @@ eq("late event: continuation turn", sent.slice(1).join(","), "2026-09-01T10:05:0
 // a failing backend: the turns stay queued, retried after a backoff
 const L2 = newLive(0); L2.warn = (m: string) => { warns.push(m); };
 const big = (k: string, n: number): XTurn => {
-  const t: XTurn = { h: "claude", rootId: "x", path: "/x", key: k, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [] };
+  const t: XTurn = { h: "claude", rootId: "x", path: "/x", key: k, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx: [], fxOn: false };
   for (let i = 0; i < n; i++) t.spans.push(newSpan("execute_tool", "x", "s" + String(i), "", 1, "x"));
   return t;
 };

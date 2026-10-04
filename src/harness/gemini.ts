@@ -108,7 +108,7 @@ function msgAt(m: Obj, x: number, ix: Ix): string {
   const r: Obj = {};
   r["id"] = id; r["timestamp"] = str(m["timestamp"]); r["type"] = str(m["type"]);
   if (first) { if (m["content"] !== undefined) r["content"] = m["content"]; if (m["thoughts"] !== undefined) r["thoughts"] = m["thoughts"]; }
-  if ((first || tok) && m["model"] !== undefined) r["model"] = m["model"];
+  if ((first || tok || calls.length > 0) && m["model"] !== undefined) r["model"] = m["model"]; // calls: the issuing message's model
   if (tok) r["tokens"] = tk;
   if (calls.length > 0) r["toolCalls"] = calls;
   return JSON.stringify(r);
@@ -235,6 +235,45 @@ function resultText(c: Obj): string {
   }
   return str(c["resultDisplay"]);
 }
+// a call's failure, "" = ok, else the transcript's [tag]; codes = a shell command's exit code. Gemini writes status
+// "error" when a tool returns an error (read_file on a missing file, a failed write or edit, a shell spawn error) and
+// "success" for every shell command that ran: there the trailer run_shell_command appends after the output is the failure
+interface Fail { tag: string; codes: number[] }
+function failOf(c: Obj): Fail {
+  const st = str(c["status"]); if (st && st !== "success") return { tag: st, codes: [] };
+  for (const v of arr(c["result"])) {
+    const vo = obj(v); const fr = vo ? obj(vo["functionResponse"]) : null; const r = fr ? obj(fr["response"]) : null; if (!r) continue;
+    const er = r["error"]; if (er !== undefined && er !== null && er !== "") return { tag: "error", codes: [] };
+    if (str(c["name"]) === "run_shell_command" && typeof r["output"] === "string") return shellFail(str(r["output"]));
+  }
+  return { tag: "", codes: [] };
+}
+// gemini's shell trailer, in this order, each line at most once (tools/shell.ts): "Error: …" (a spawn error: current
+// gemini records that call with status "error"), "Exit Code: N" (only when non-zero), "Signal: …", "Background PIDs: …",
+// "Process Group PGID: N". Older versions ("Command: …" first) write every line, "(none)" when empty, "Exit Code: 0"
+const TRAILER = /^(Error|Exit Code|Signal|Background PIDs|Process Group PGID): (.*)$/;
+const RANK = ["Error", "Exit Code", "Signal", "Background PIDs", "Process Group PGID"];
+function shellFail(out: string): Fail {
+  const t = out.replace(/^\s*<untrusted_context>\s*/, "");
+  if (t.startsWith("Command was automatically cancelled because it exceeded the timeout")) return { tag: "timeout", codes: [] };
+  if (t.startsWith("Command was cancelled by user")) return { tag: "cancelled", codes: [] };
+  const old = t.startsWith("Command: ");
+  const ls = t.replace(/\s*<\/untrusted_context>\s*$/, "").split("\n");
+  let tag = ""; const codes: number[] = []; let above = RANK.length;
+  for (let i = ls.length - 1; i >= 0; i--) { // the trailer only, bottom-up: the output above it may print anything
+    const m = TRAILER.exec(ls[i] ?? ""); if (!m) break;
+    const k = m[1] ?? ""; const v = (m[2] ?? "").trim(); const rk = RANK.indexOf(k);
+    if (rk >= above || (k === "Error" && !old)) break; // out of order, repeated, or an Error line on a ran command: output
+    if (v === "(none)") { above = rk; continue; }
+    if (k === "Exit Code") {
+      const n = Number(v); if (!/^-?\d+$/.test(v) || (n === 0 && !old)) break;
+      if (n !== 0) { codes.push(n); tag = "error"; }
+    } else if ((k === "Process Group PGID" && !/^\d+$/.test(v)) || (k === "Background PIDs" && !/^\d+(, \d+)*$/.test(v))) break;
+    else if (k === "Signal" || k === "Error") tag = "error";
+    above = rk;
+  }
+  return { tag, codes };
+}
 // invoke_agent, list_directory, update_topic, activate_skill name their subject outside the common keys
 function callArg(name: string, a: Obj | null): string { const d = a ? str(a["agent_name"]) || str(a["dir_path"]) || str(a["objective"]) || str(a["title"]) || str(a["name"]) : ""; return d ? d : toolArg(name, a, ""); }
 // does this message (version) become a transcript event? (what parse below emits)
@@ -269,8 +308,8 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     const tc = obj(v); if (!tc) continue;
     const n = str(tc["name"]) || "tool"; const id = str(tc["id"]); const a = obj(tc["args"]);
     ev(out, "tool", n + "\u0000" + callArg(n, a), ts, id, a ? JSON.stringify(a) : "");
-    const st = str(tc["status"]);
-    ev(out, "result", (st && st !== "success" ? "[" + st + "] " : "") + resultText(tc), str(tc["timestamp"]) || ts, id, "");
+    const f = failOf(tc);
+    ev(out, "result", (f.tag ? "[" + f.tag + "] " : "") + resultText(tc), str(tc["timestamp"]) || ts, id, "");
   }
 }
 // no turn markers: the prompt, a tool result (the model answers next) or bare thoughts (their calls are written when
@@ -315,12 +354,12 @@ function usage(a: Acc, l: string): void {
   for (const v of arr(o["toolCalls"])) {
     const c = obj(v); if (!c) continue;
     const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
-    const st = tool(a, d, name, md, MQ_MSG);
+    const st = tool(a, d, name, md || a.model, MQ_MSG);
     if (name === "activate_skill" && args) skill(d, "model", str(args["name"]));
     pend(a, d, st, name, id, t0, iso, callArg(name, args), name === "run_shell_command" && args ? [str(args["command"])] : []);
-    const ok = str(c["status"]) === "success";
+    const f = failOf(c); const ok = !f.tag;
     const p = a.pend.get(id);
-    if (p) { a.pend.delete(id); const t1 = isoMs(str(c["timestamp"])); done(p, t0 > 0 && t1 >= t0 ? t1 - t0 : -1, !ok, resultText(c).length, id, []); } // written complete: start ≈ the message
+    if (p) { a.pend.delete(id); const t1 = isoMs(str(c["timestamp"])); done(p, t0 > 0 && t1 >= t0 ? t1 - t0 : -1, !ok, resultText(c).length, id, f.codes); } // written complete: start ≈ the message
     if (!ok || !args) continue; // a failed edit changed nothing
     const rd = obj(c["resultDisplay"]); const ds = rd ? obj(rd["diffStat"]) : null;
     let add = 0; let del = 0;

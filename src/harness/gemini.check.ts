@@ -6,6 +6,8 @@ import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
 import { type Acc, type Day, newAcc, skillUses } from "../features/usage/record.ts";
 import { applyUserPrices } from "../features/usage/pricing.ts";
+import { setCallTap } from "../features/usage/calls.ts";
+import { DICT, nameOf } from "../features/usage/facts.ts";
 import type { SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
 
@@ -289,8 +291,51 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   ok("lines: diffStat preferred, write_file from its content", a.add === 5 && a.del === 1 && fs.sort().join(" ") === "replace\t/w/a.js:3/1 write_file\tb.js:2/0", a.add + "/" + a.del + " " + fs.join(" "));
   ok("no pending calls", a.pend.size === 0, String(a.pend.size));
 }
+// gemini writes status "success" for every shell command that ran: the failure is in the response (gemini 0.62 shapes)
 {
-  const sk = "{\"id\":\"k9\",\"name\":\"activate_skill\",\"args\":{\"name\":\"ponytail\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\"}";
+  const sh = (id: string, out: string): string => "{\"id\":\"" + id + "\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"cat missing.txt\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\",\"result\":[{\"functionResponse\":{\"id\":\"" + id + "\",\"name\":\"run_shell_command\",\"response\":{\"output\":" + JSON.stringify(out) + "}}}]}";
+  const rf = "{\"id\":\"f5\",\"name\":\"read_file\",\"args\":{\"file_path\":\"nope.txt\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\",\"result\":[{\"functionResponse\":{\"id\":\"f5\",\"name\":\"read_file\",\"response\":{\"error\":\"File not found: nope.txt\"}}}]}";
+  const calls = [
+    sh("f1", "<untrusted_context>\nOutput: cat: missing.txt: No such file or directory\nExit Code: 1\nProcess Group PGID: 4242\n</untrusted_context>"), // failed
+    sh("f2", "<untrusted_context>\nOutput: cat: missing.txt: No such file or directory\nProcess Group PGID: 4243\n</untrusted_context>"), // `|| true`: exit 0
+    sh("f3", "Output: Exit Code: 7 is what the test prints\nProcess Group PGID: 4244"), // the command's own text, not the trailer
+    sh("f4", "Command: sleep 9\nDirectory: (root)\nOutput: (empty)\nError: (none)\nExit Code: (none)\nSignal: 15\nBackground PIDs: (none)\nProcess Group PGID: 4245"), // older gemini: killed
+    rf,
+    sh("f6", "Command was automatically cancelled because it exceeded the timeout of 5.0 minutes without output. There was no output before it was cancelled."),
+    sh("f7", "Command: ls\nDirectory: (root)\nOutput: a\nError: (none)\nExit Code: 0\nSignal: (none)\nBackground PIDs: (none)\nProcess Group PGID: 4246"), // older gemini: ok
+    // exit 0, the output's own last lines look like trailer lines: gemini writes "Error:" only with status "error" and
+    // "Exit Code:" only when non-zero, each once, in the order Error, Exit Code, Signal, Background PIDs, PGID
+    sh("f8", "<untrusted_context>\nOutput: npm test\nError: 2 tests failed\nProcess Group PGID: 4247\n</untrusted_context>"),
+    sh("f9", "<untrusted_context>\nOutput: done\nExit Code: 0\nProcess Group PGID: 4248\n</untrusted_context>"),
+    sh("f10", "<untrusted_context>\nOutput: Signal: 9\nExit Code: 2\nProcess Group PGID: 4249\n</untrusted_context>"), // out of order: the trailer is Exit Code + PGID
+    sh("f11", "<untrusted_context>\nOutput: x\nExit Code: 5\nExit Code: 3\nProcess Group PGID: 4250\n</untrusted_context>"), // one Exit Code line only
+  ];
+  const codes: string[] = [];
+  setCallTap((id: string, ms: number, err: boolean, cs: number[], nm: string) => { codes.push(id + (err ? "!" : "") + (cs.length ? ":" + cs.join(",") : "")); });
+  const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash", "", calls.join(","))]);
+  setCallTap(null);
+  const d = day0(a);
+  const row = (k: string): string => { const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err].join(",") : "none"; };
+  ok("failed calls: non-zero exit code, signal, response error, timeout count as errors", row("run_shell_command") === "10,5" && row("read_file") === "1,1", row("run_shell_command") + " " + row("read_file"));
+  ok("failed calls: the tap gets the error flag and the exit code", codes.join(" ") === "f1!:1 f2 f3 f4! f5! f6! f7 f8 f9 f10!:2 f11!:3", codes.join(" "));
+  const pg = d ? d.prog.get("run_shell_command\tcat") : undefined;
+  ok("failed calls: the shell program's error count", !!pg && pg.err === 5, pg ? String(pg.err) : "none");
+  ok("failed calls: call rows carry the error", a.calls.map((c) => String(c.err)).join("") === "10011100011", a.calls.map((c) => String(c.err)).join(""));
+  const e = evs(["{\"id\":\"q\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\",\"toolCalls\":[" + calls.join(",") + "]}"], null);
+  const tags = e.filter((v: Ev) => v.kind === "result").map((v: Ev) => { const m = /^\[[a-z]+\]/.exec(v.text); return m ? m[0] : "-"; }).join(" ");
+  ok("failed calls: the transcript marks them", tags === "[error] - - [error] [error] [timeout] - - - [error] [error]", tags);
+}
+// the issuing message's model reaches each call row, also when the calls arrive in a later version of the message
+{
+  const s = sess(P);
+  const ls = src.lines(s, 0, bytes(FULL)).lines.filter((l: string) => l.indexOf("\"toolCalls\"") >= 0);
+  ok("normalized call lines carry the message's model", ls.length === 2 && ls.every((l: string) => { const o = parseJson(l); return !!o && str(o["model"]).startsWith("gemini-2.5-"); }), ls.map((l: string) => l.slice(0, 120)).join(" | "));
+  const a = acc(src.lines(s, 0, bytes(FULL)).lines);
+  const ms = a.calls.map((c) => nameOf(DICT.model, c.model)).join(" ");
+  ok("call rows: the model of the message that issued them", ms === "gemini-2.5-pro gemini-2.5-pro gemini-2.5-flash", ms);
+}
+{
+  const sk ="{\"id\":\"k9\",\"name\":\"activate_skill\",\"args\":{\"name\":\"ponytail\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\"}";
   const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash", "", sk)]);
   const u = skillUses(a, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
   ok("activate_skill: a model skill use", u === "model\tponytail=1" && a.tools === 1, u);

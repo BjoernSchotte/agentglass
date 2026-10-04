@@ -5,14 +5,17 @@ import { isoMs, num } from "../usage/record.ts";
 
 // key = request key Q ("" never: no request → null); providerId = key is the provider's message id (→ gen_ai.response.id);
 // t0 = the request's own start when logged (0 = the builder takes the previous event of the session), t = its end
-export interface Req { key: string; model: string; respModel: string; provider: string; providerId: boolean; t0: number; t: number; err: string }
+// provider = gen_ai.provider.name (providerOf); logged = the provider id the record itself names (pi/OpenCode), "" = none
+export interface Req { key: string; model: string; respModel: string; provider: string; logged: string; providerId: boolean; t0: number; t: number; err: string }
 // codex: the last cumulative totals seen, and the ordinal of requests per timestamp
 export interface ReqState { codexLast: number[]; codexTs: string; codexK: number }
 export function newReqState(): ReqState { return { codexLast: [], codexTs: "", codexK: 0 }; }
 
+// prov = the logged provider id (pi/OpenCode) or the harness's only one (claude, codex): the name when the model has no vendor
 function req(key: string, model: string, prov: string, idKey: boolean, t0: number, t: number): Req {
-  return { key, model, respModel: "", provider: providerOf(prov, model), providerId: idKey, t0, t, err: "" };
+  return { key, model, respModel: "", provider: providerOf(prov, model), logged: "", providerId: idKey, t0, t, err: "" };
 }
+function logged(r: Req, prov: string): Req { r.logged = prov; return r; }
 function tm(o: Obj | null, k: string): number { const t = o ? obj(o["time"]) : null; return t ? num(t[k]) : 0; }
 function same(a: number[], b: number[]): boolean { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return false; return true; }
 
@@ -50,13 +53,14 @@ export function requestOf(h: string, o0: Obj | null, line: string, x: ReqState):
       const o = o0 ?? parseJson(line); const pt = o ? obj(o["part"]) : null;
       if (!o || !pt || str(pt["type"]) !== "step-finish" || o["copied"] === 1 || o["copied"] === true) return null;
       const mid = str(o["mid"]); const t = num(o["t"]);
-      return req(mid || "t:" + String(t), str(o["model"]), str(o["prov"]), !!mid, t, Math.max(t, tm(pt, "end")));
+      return logged(req(mid || "t:" + String(t), str(o["model"]), str(o["prov"]), !!mid, t, Math.max(t, tm(pt, "end"))), str(o["prov"]));
     }
     if (!line.startsWith("{\"type\":\"assistant\"") && !line.startsWith("{\"type\":\"compaction\"")) return null;
     const o = o0 ?? parseJson(line); if (!o || o["copied"] === 1 || !obj(o["tokens"])) return null;
     const m = obj(o["model"]); const id = str(o["id"]);
     const t0 = tm(o, "created");
-    return req(id || "seq:" + String(num(o["seq"])), m ? str(m["id"]) : "", m ? str(m["providerID"]) : "", !!id, t0, Math.max(t0, tm(o, "completed")));
+    const pv = m ? str(m["providerID"]) : "";
+    return logged(req(id || "seq:" + String(num(o["seq"])), m ? str(m["id"]) : "", pv, !!id, t0, Math.max(t0, tm(o, "completed"))), pv);
   }
   if (h === "pi") {
     if (line.indexOf("\"usage\":{") < 0) return null;
@@ -65,19 +69,19 @@ export function requestOf(h: string, o0: Obj | null, line: string, x: ReqState):
     if ((type === "usage" || type === "compaction" || type === "branch_summary") && obj(o["usage"])) return req(id, str(o["model"]), "", !!id, 0, t);
     const m = obj(o["message"]);
     if (type !== "message" || !m || str(m["role"]) !== "assistant" || !obj(m["usage"])) return null; // usage on a tool result: a subagent's, no request of this session
-    const r = req(id, str(m["model"]), str(m["provider"]), !!id, 0, t);
+    const r = logged(req(id, str(m["model"]), str(m["provider"]), !!id, 0, t), str(m["provider"]));
     const rm = str(m["responseModel"]); if (rm && rm !== r.model) r.respModel = rm;
     return r;
   }
   return null; // kiro, fx: no per-request records (one chat span per turn)
 }
 
-// gen_ai.provider.name: the logged provider id (aliases → semconv names), else from the model's prefix; "" = unknown (omitted)
+// gen_ai.provider.name, one rule for every span of a trace: the model's vendor (a "vendor/" prefix or a known model family),
+// else the logged provider id (aliases → semconv names); "" = unknown (omitted). A gateway or router id the record logs
+// (cliproxyapi, openrouter, github-copilot) is no model vendor: it stays on the chat span as agentglass.provider.id
 const ALIAS = new Map<string, string>([["google", "gcp.gemini"], ["gemini", "gcp.gemini"], ["vertex", "gcp.vertex_ai"], ["xai", "x_ai"], ["mistral", "mistral_ai"], ["moonshot", "moonshot_ai"], ["moonshotai", "moonshot_ai"], ["azure", "azure.ai.openai"], ["amazon-bedrock", "aws.bedrock"], ["bedrock", "aws.bedrock"]]);
 const VENDORS = ["anthropic", "openai", "deepseek", "x_ai", "mistral_ai", "moonshot_ai"];
 export function providerOf(logged: string, model: string): string {
-  const l = logged.toLowerCase();
-  if (l) return ALIAS.get(l) ?? l;
   let m = model.toLowerCase(); const sl = m.lastIndexOf("/");
   if (sl >= 0) { // "anthropic/claude-…" (a router's model id): a known vendor prefix names the provider
     const p = m.slice(0, sl); m = m.slice(sl + 1);
@@ -90,7 +94,8 @@ export function providerOf(logged: string, model: string): string {
   if (m.startsWith("deepseek-")) return "deepseek";
   if (m.startsWith("mistral-") || m.startsWith("codestral-") || m.startsWith("devstral-")) return "mistral_ai";
   if (m.startsWith("kimi-")) return "moonshot_ai";
-  return "";
+  const l = logged.toLowerCase();
+  return l ? ALIAS.get(l) ?? l : "";
 }
 export type InMode = "inclusive" | "provider";
 // agentglass's own `in` excludes cache reads/writes for every harness; semconv wants them included (inclusive). provider =

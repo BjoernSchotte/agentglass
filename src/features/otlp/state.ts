@@ -9,7 +9,7 @@ import { otlpDir } from "../../util/http.ts";
 import { H } from "./ids.ts";
 import { safeUrl } from "./config.ts";
 
-export interface SessMark { h: string; id: string; ep: string; turns: Set<string> }
+export interface SessMark { h: string; id: string; ep: string; turns: Set<string>; fx: number[]; fxAt: number } // fx = the fx session totals the backend accepted ([] = none), fxAt = the start of the turn that carried them
 // gzip = the endpoint takes gzip bodies; nativeSince = per harness, when agentglass first saw its own OTLP export on; last = last export (ms)
 export interface ExpState { v: number; endpoint: string; gzip: boolean; gzipNote: string; nativeSince: Map<string, number>; last: number; sessions: Map<string, SessMark>; warn: string }
 
@@ -32,13 +32,14 @@ export function loadState(url: string): ExpState {
     const x = obj(ss[p]); if (!x) continue;
     const turns = new Set<string>(); const tu = obj(x["turns"]);
     if (tu) for (const k of Object.keys(tu)) turns.add(k); else for (const k of arr(x["turns"])) turns.add(str(k));
-    st.sessions.set(p, { h: str(x["h"]), id: str(x["id"]), ep: str(x["ep"]), turns });
+    const fx: number[] = []; for (const v of arr(x["fx"])) fx.push(num(v));
+    st.sessions.set(p, { h: str(x["h"]), id: str(x["id"]), ep: str(x["ep"]), turns, fx, fxAt: num(x["fxAt"]) });
   }
   return st;
 }
 export function saveState(url: string, st: ExpState): void {
   const ss: Obj = {};
-  for (const [p, m] of st.sessions) { const tu: Obj = {}; for (const k of m.turns) tu[k] = 1; ss[p] = { h: m.h, id: m.id, ep: m.ep, turns: tu }; }
+  for (const [p, m] of st.sessions) { const tu: Obj = {}; for (const k of m.turns) tu[k] = 1; const o: Obj = { h: m.h, id: m.id, ep: m.ep, turns: tu }; if (m.fx.length) { o["fx"] = m.fx; o["fxAt"] = m.fxAt; } ss[p] = o; }
   const ns: Obj = {}; for (const [k, v] of st.nativeSince) ns[k] = v;
   const body = JSON.stringify({ v: 1, endpoint: safeUrl(st.endpoint), gzip: st.gzip, gzipNote: st.gzipNote, nativeSince: ns, last: st.last, sessions: ss });
   const p = statePath(url); const tmp = p + ".tmp-" + String(process.pid);
@@ -51,9 +52,11 @@ export function marked(st: ExpState, path: string, key: string): boolean { const
 // a turn is marked once the backend accepted it; the cursor epoch is kept for reference only (ids never depend on offsets)
 export function markTurn(st: ExpState, path: string, h: string, id: string, ep: string, key: string): void {
   let m = st.sessions.get(path);
-  if (!m) { m = { h, id, ep, turns: new Set<string>() }; st.sessions.set(path, m); }
+  if (!m) { m = { h, id, ep, turns: new Set<string>(), fx: [], fxAt: 0 }; st.sessions.set(path, m); }
   m.ep = ep; m.turns.add(key);
 }
+// the fx session totals a backend accepted (after markTurn): the next export sends only what grew since
+export function markFx(st: ExpState, path: string, fx: number[], at: number): void { const m = st.sessions.get(path); if (m && at >= m.fxAt) { m.fx = fx.slice(0); m.fxAt = at; } }
 function alive(pid: number): boolean { if (pid <= 0) return false; try { process.kill(pid, 0); return true; } catch (e) { return false; } }
 // 0 = this process holds the lock now; else the pid of the live exporter holding it (a dead holder's lock is taken over)
 export function lock(url: string): number {

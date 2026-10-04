@@ -6,7 +6,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readText, readLines, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, turn, isoMs, nlines, num } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, turn, skill, isoMs, nlines, num } from "../features/usage/record.ts";
 import { MQ_MSG, DICT, nameOf } from "../features/usage/facts.ts";
 import { done, fmtMs } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
@@ -85,6 +85,10 @@ function meta(s: Sess): void {
 }
 
 function ev(out: Ev[], kind: string, text: string, ts: string, id: string, full: string): void { out.push({ kind, text, ts, id, full }); }
+// `/skill:name args` reaches the log expanded: <skill name="…" location="…">\n<file>\n</skill>, then "\n\n<args>" if any
+// (pi's own parseSkillBlock); null = an ordinary prompt
+const SKILL = /^<skill name="([^"]+)" location="[^"]*">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/;
+function skillCmd(t: string): { name: string; args: string } | null { const m = SKILL.exec(t); return m ? { name: m[1] ?? "", args: (m[2] ?? "").trim() } : null; }
 function parse(o: Obj, out: Ev[], s: Sess | null): void {
   const type = str(o["type"]); const ts = str(o["timestamp"]);
   if (type === "session") { if (s) { const c = str(o["cwd"]); if (c) s.cwd = c; } return; }
@@ -99,6 +103,7 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     const c = m["content"];
     let t = typeof c === "string" ? c : blockText(c);
     if (!t) for (const b of arr(c)) { const bo = obj(b); if (bo && str(bo["type"]) === "image") { t = "[image]"; break; } } // an image-only prompt still starts a turn
+    const sk = t ? skillCmd(t) : null; if (sk) t = "/skill:" + sk.name + (sk.args ? " " + sk.args : ""); // what the user typed: a turn like any prompt
     if (t) ev(out, "user", t, ts, "", "");
   } else if (role === "assistant") {
     if (s) { const md = str(m["responseModel"]) || str(m["model"]); if (md) s.model = md; }
@@ -206,7 +211,12 @@ function usage(a: Acc, l: string): void {
   const o = parseJson(l); if (!o) return;
   const iso = str(o["timestamp"]);
   if (a.x.length > 1 && a.x[1] === 1 && isoMs(iso) < a.x[0]) return;
-  if (usr) { const n = prompts(parse, o); if (n) turn(a, 0, iso, n); }
+  if (usr) {
+    const n = prompts(parse, o); if (n) turn(a, 0, iso, n);
+    const m = l.indexOf("<skill name=") >= 0 ? obj(o["message"]) : null;
+    const sk = m && str(m["role"]) === "user" ? skillCmd(typeof m["content"] === "string" ? str(m["content"]) : blockText(m["content"])) : null;
+    if (sk) skill(bucket(a, 0, iso), "command", sk.name);
+  }
   const type = str(o["type"]);
   if (type === "usage" || type === "compaction" || type === "branch_summary") { book(a, obj(o["usage"]), str(o["model"]), iso, ""); return; }
   if (type !== "message") return;

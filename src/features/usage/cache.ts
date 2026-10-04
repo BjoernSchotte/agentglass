@@ -11,7 +11,7 @@ import { L } from "./record.ts";
 import { ROWS } from "./facts.ts";
 import { rulesNeedRows } from "../rules/file.ts";
 import { PRICES_SIG } from "./pricing.ts";
-import { VERSION, num, accOut, accIn } from "./codec.ts";
+import { VERSION, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
@@ -39,6 +39,7 @@ function load(): void {
   try { size = statSync(FILE).size; } catch (e) { return; }
   const root = parse(readText(FILE, 0, size).trim());
   if (!root || num(root["v"]) !== VERSION || str(root["prices"]) !== PRICES_SIG) return; // stale: re-index from scratch
+  rlIn(obj(root["rl"]));
   const ss = obj(root["sessions"]);
   if (!ss) return;
   for (const path of Object.keys(ss)) {
@@ -70,7 +71,7 @@ function save(): void {
   const ss: Obj = {};
   for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) ss[s.path] = accOut(a, KEEP_IDS); } // only sessions that still exist
   saveCalls();
-  const body = JSON.stringify({ v: VERSION, prices: PRICES_SIG, saved: Date.now(), sessions: ss });
+  const body = JSON.stringify({ v: VERSION, prices: PRICES_SIG, saved: Date.now(), rl: rlOut(), sessions: ss });
   try {
     mkdirSync(DIR, { recursive: true });
     const tmp = FILE + ".tmp";

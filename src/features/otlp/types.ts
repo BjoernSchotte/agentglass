@@ -10,7 +10,8 @@ export interface XSpan {
   sess: string; agent: string; attrs: Attr[]; events: XEvent[]; // sess = the (sub)session the span belongs to; agent = subagent type ("" = the harness)
   // facts the encoder turns into attributes
   model: string; respModel: string; provider: string; respId: string; models: string[];
-  nIn: number; nOut: number; cr: number; cw: number; rs: number; cost: number; unk: number; exact: boolean; hasUsage: boolean; total: boolean; // total = fx session totals on the last turn's chat span
+  nIn: number; nOut: number; cr: number; cw: number; rs: number; cost: number; unk: number; exact: boolean; hasUsage: boolean; total: boolean; // total = fx: the growth of the session totals since the last export (export.ts fxDelta)
+  provId: string; // chat: the provider id the record logged (pi/OpenCode: its config's name — a gateway, openrouter …), "" = none
   bill: string; // chat: honest-costs mode of this request ("" on other spans)
   tool: string; callId: string; mcp: string; prog: string; exit: number; skill: string; superseded: boolean; // exit -1 = unknown
   input: string; output: string; args: string; result: string; // content, sent only with --content
@@ -20,6 +21,8 @@ export interface XTurn {
   h: string; rootId: string; path: string; key: string; index: number; traceId: string;
   t0: number; t1: number; closed: boolean; closedBy: string; compacted: boolean; ver: string; cwd: string; branch: string; remote: string;
   spans: XSpan[]; // spans[0] = the root invoke_agent
+  fx: number[]; // fx: the session totals when this turn closed (in, out, cache read, cache write, $, unpriced); [] = none
+  fxOn: boolean; // fx: this turn carries the session's delta in the current send (export.ts fxDelta)
 }
 
 export function attrS(k: string, v: string): Attr { return { k, t: "s", s: v, n: 0, b: false, a: [] }; }
@@ -32,7 +35,7 @@ export function newSpan(op: string, name: string, spanId: string, parentId: stri
   return {
     op, name, spanId, parentId, kind: op === "chat" ? 3 : 1, t0, t1: t0, est: false, err: "", errMsg: "", sess, agent: "", attrs: [], events: [],
     model: "", respModel: "", provider: "", respId: "", models: [],
-    nIn: 0, nOut: 0, cr: 0, cw: 0, rs: 0, cost: 0, unk: 0, exact: false, hasUsage: false, total: false, bill: "",
+    nIn: 0, nOut: 0, cr: 0, cw: 0, rs: 0, cost: 0, unk: 0, exact: false, hasUsage: false, total: false, provId: "", bill: "",
     tool: "", callId: "", mcp: "", prog: "", exit: -1, skill: "", superseded: false, input: "", output: "", args: "", result: "", open: false,
   };
 }

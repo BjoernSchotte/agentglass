@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { width } from "../util/text.ts";
 import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
-import { type Acc, newAcc, bucket, usageExact } from "../features/usage/record.ts";
+import { type Acc, L, newAcc, bucket, usageExact } from "../features/usage/record.ts";
 import { price, cost } from "../features/usage/pricing.ts";
 import { skillUses } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
@@ -363,6 +363,10 @@ function skills(lines: string[], resumeAt: number): string {
   const c = newAcc();
   harnessOf("codex").usage(c, "{" + T + "5Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":null,\"rate_limits\":{\"primary\":{\"used_percent\":3,\"window_minutes\":300,\"resets_at\":1767400000},\"plan_type\":\"pro\"}}}");
   ok("codex plan_type stamps plan", c.bill === "plan" && c.plan === "pro" && c.billSrc === "session", c.bill + "/" + c.plan);
+  harnessOf("codex").usage(c, "{" + T + "6Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":null,\"rate_limits\":{\"primary\":{\"used_percent\":4,\"window_minutes\":300,\"resets_at\":4102444800},\"secondary\":{\"used_percent\":30,\"window_minutes\":10080,\"resets_at\":4102444800}}}}");
+  ok("codex rate limits: both windows kept", L.rl.map((w) => String(w.pct) + "/" + String(w.min)).join(" ") === "4/300 30/10080", JSON.stringify(L.rl));
+  harnessOf("codex").usage(c, "{" + T + "4Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":null,\"rate_limits\":{\"primary\":{\"used_percent\":99,\"window_minutes\":300,\"resets_at\":4102444800}}}}");
+  ok("codex rate limits: an older event does not replace them", L.rl.length === 2 && L.rl[0].pct === 4, JSON.stringify(L.rl));
 }
 for (const id of ["claude", "codex", "fx", "pi", "opencode", "kiro", "gemini"]) ok(id + " registered", HARNESSES.some((a) => a.id === id), "missing");
 // a DB-backed adapter (own source) has no log lines to sample: its golden coverage is src/harness/<id>.check.ts

@@ -56,7 +56,7 @@ function startTurn(b: SessB, e: Ev, t: number): XTurn {
   const k = e.ts ? e.ts + "#" + String(b.tsN.get(e.ts) ?? 0) : "i" + String(b.cur.n);
   if (e.ts) b.tsN.set(e.ts, (b.tsN.get(e.ts) ?? 0) + 1);
   const r = b.root;
-  const tr: XTurn = { h: r.h, rootId: r.id, path: r.path, key: k, index: b.cur.n, traceId: traceId(b.R, k), t0: t, t1: t, closed: false, closedBy: "", compacted: false, ver: b.ver, cwd: r.cwd, branch: r.branch, remote: r.remote, spans: [] };
+  const tr: XTurn = { h: r.h, rootId: r.id, path: r.path, key: k, index: b.cur.n, traceId: traceId(b.R, k), t0: t, t1: t, closed: false, closedBy: "", compacted: false, ver: b.ver, cwd: r.cwd, branch: r.branch, remote: r.remote, spans: [], fx: [], fxOn: false };
   const root = newSpan("invoke_agent", "invoke_agent " + agentName(r.h), rootSpanId(b.R, k), "", t, r.id);
   tr.spans.push(root);
   const sd = b.side; sd.chats = new Map<string, XSpan>(); sd.lastChat = null; sd.outBuf = "";
@@ -145,7 +145,11 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
   const par = parentOf(b, sd, tr, t);
   if (t > tr.t1) tr.t1 = t;
   if (t && (par.t1 < t || !par.t0)) { if (!par.t0) par.t0 = t; par.t1 = Math.max(par.t1, t); }
-  if (e.kind === "user") { if (!par.input) par.input = cut(e.text, CMAX); sd.mark = t; return; }
+  if (e.kind === "user") {
+    if (!par.input) par.input = cut(e.text, CMAX);
+    if (sd.top && b.root.h === "pi" && par === tr.spans[0]) { const m = /^\/skill:(\S+)/.exec(e.text); if (m) par.skill = m[1] ?? ""; } // pi's expanded /skill:name prompt (the adapter shows it as typed)
+    sd.mark = t; return;
+  }
   if (e.kind === "assistant") { sd.outBuf = cut(sd.outBuf ? sd.outBuf + "\n" + e.text : e.text, CMAX); par.output = cut(e.text, CMAX); return; }
   if (e.kind === "meta") { if (e.text === "context compacted" || e.text.startsWith("summary: ")) tr.compacted = true; sd.mark = t; return; }
   if (e.kind === "tool") {
@@ -211,7 +215,7 @@ function request(b: SessB, sd: Side, tr: XTurn, q: Req | null, bs: Booking[], rs
     else for (const x of bs) book(b, c, x);
     if (!c.model) c.model = q.model || (bs.length ? bs[0].model.replace(/^\?/, "") : "");
     c.respModel = q.respModel; c.err = q.err;
-    c.provider = q.provider || providerOf("", c.model);
+    c.provider = q.provider || providerOf("", c.model); c.provId = q.logged;
     if (q.providerId) c.respId = q.key;
     if (i === its - 1) { c.rs = c.rs + rs; if (o.content) c.output = sd.outBuf; }
     c.name = c.model ? "chat " + c.model : "chat";
@@ -345,12 +349,15 @@ export function advance(b: SessB, o: BuildOpts): XTurn[] {
   }
   const out = b.done; b.done = [];
   for (const tr of out) finalize(b, tr);
-  if (b.root.h === "fx" && out.length) { // fx keeps session totals only: they ride on the newest turn's chat span (usage never sits on invoke_agent)
-    const t = fxTotals(b.root); const lt = out[out.length - 1]; const r = lt.spans.find((x: XSpan) => x.op === "chat" && x.parentId === lt.spans[0].spanId);
-    if (t && r) { r.nIn = t.nIn; r.nOut = t.nOut; r.cr = t.cr; r.cw = t.cw; r.cost = t.usd; r.unk = t.unk; r.hasUsage = true; r.total = true; }
+  if (b.root.h === "fx" && out.length) { // fx keeps session totals only: they ride on the newest turn's chat span (usage never sits on invoke_agent);
+    // the exporter turns them into the growth since its last accepted export (export.ts fxDelta)
+    const t = fxTotals(b.root); const lt = out[out.length - 1]; const r = fxChat(lt);
+    if (t && r) { lt.fx = [t.nIn, t.nOut, t.cr, t.cw, t.usd, t.unk]; r.nIn = t.nIn; r.nOut = t.nOut; r.cr = t.cr; r.cw = t.cw; r.cost = t.usd; r.unk = t.unk; r.hasUsage = true; r.total = true; }
   }
   return out;
 }
+// the chat span of an fx turn that carries the session totals (the root's own chat span)
+export function fxChat(t: XTurn): XSpan | null { const r = t.spans.find((x: XSpan) => x.op === "chat" && x.parentId === t.spans[0].spanId); return r ?? null; }
 // subagents that appeared since the builder was made (live mode) join it
 export function syncSubs(b: SessB, subs: Sess[]): void {
   for (const c of subs) { let has = false; for (const sd of b.subs) if (sd.s.path === c.path) has = true; if (!has) b.subs.push(newSide(c, false)); }

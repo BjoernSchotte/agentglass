@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Pure rules over an evidence record, plus the readers that build it. Privacy: environment VALUES are decoded only for the
 // boolean SWITCHES (reduced to on/off at once); auth files are read for type fields only; ~/.claude.json only for the
-// oauthAccount plan fields (cut out of the text, never parsed whole). Nothing here keeps a secret or a personal value.
+// oauthAccount plan fields and the allowance block (cut out of the text, never parsed whole). Nothing here keeps a secret or a personal value.
 import { join } from "node:path";
+import { statSync } from "node:fs";
 import { readText } from "../../util/fs.ts";
-import { isoMs } from "./record.ts";
+import { type RlWin, isoMs } from "./record.ts";
 import { type Obj, obj, str } from "../../util/json.ts";
 
 export type Bill = "api" | "plan" | "metered" | "gateway" | "unknown";
@@ -135,8 +136,40 @@ function readObj(p: string): Obj | null {
   if (!t.startsWith("{")) return null;
   try { return obj(JSON.parse(t)); } catch (e) { return null; }
 }
+// parsed config files by path, read again only when mtime or size moved: ~/.claude.json moves every few seconds while
+// Claude runs, and every project folder's evidence (re-checked once a minute each) and the allowance gauge read it
+const memo = new Map<string, { sig: string; ev: Evid; parts: Obj[] }>();
+function sigOf(p: string): string { try { const st = statSync(p); return String(st.mtimeMs) + ":" + String(st.size) + ":" + String(st.ino); } catch (e) { return ""; } }
+function cached(p: string, read: (ev: Evid, parts: Obj[], p: string) => void): { ev: Evid; parts: Obj[] } {
+  const sig = sigOf(p); const hit = memo.get(p);
+  if (hit && hit.sig === sig) return hit;
+  const n = { sig, ev: newEvid(), parts: [] as Obj[] };
+  if (sig) read(n.ev, n.parts, p);
+  memo.set(p, n);
+  return n;
+}
+// in order, as if each file's reader had written into ev itself (callers own ev: the cached records stay untouched)
+function merge(ev: Evid, f: Evid): void {
+  for (const k of f.names) if (ev.names.indexOf(k) < 0) ev.names.push(k);
+  for (const k of f.on) if (ev.on.indexOf(k) < 0) ev.on.push(k);
+  for (const [k, v] of f.kv) ev.kv.set(k, v);
+}
+// ~/.claude.json: the plan fields (oauthAccount) and the allowance block (cachedUsageUtilization), one read per change
+function readClaudeJson(ev: Evid, parts: Obj[], p: string): void {
+  const t = readText(p, 0, 4 * CAP);
+  const oa = cutObject(t, "oauthAccount");
+  if (oa) {
+    const bt = str(oa["billingType"]); if (bt) ev.kv.set("claude.billingType", bt);
+    const ot = str(oa["organizationType"]);
+    const plan = str(oa["claudeMaxTier"]) || (ot.startsWith("claude_") ? ot.slice(7) : ot) || str(oa["seatTier"]);
+    if (plan) ev.kv.set("claude.plan", plan);
+  }
+  const cu = cutObject(t, "cachedUsageUtilization"); if (cu) parts.push(cu);
+}
+export function claudeJson(p: string): { ev: Evid; usage: Obj | null } { const c = cached(p, readClaudeJson); return { ev: c.ev, usage: c.parts.length ? c.parts[0] : null }; }
 // a settings file: apiKeyHelper presence, env block names and switch values
-function claudeSettings(ev: Evid, p: string): void {
+function claudeSettings(ev: Evid, p: string): void { merge(ev, cached(p, (e: Evid, parts: Obj[], q: string) => claudeSettingsOf(e, q)).ev); }
+function claudeSettingsOf(ev: Evid, p: string): void {
   const o = readObj(p); if (!o) return;
   if (str(o["apiKeyHelper"])) ev.kv.set("claude.helper", "1");
   const env = obj(o["env"]); if (!env) return;
@@ -177,13 +210,7 @@ export function configEv(h: string, home: string, cwd: string): Evid {
   if (h === "claude") {
     claudeSettings(ev, join(home, ".claude", "settings.json"));
     if (cwd) { claudeSettings(ev, join(cwd, ".claude", "settings.json")); claudeSettings(ev, join(cwd, ".claude", "settings.local.json")); }
-    const oa = cutObject(readText(join(home, ".claude.json"), 0, 4 * CAP), "oauthAccount");
-    if (oa) {
-      const bt = str(oa["billingType"]); if (bt) ev.kv.set("claude.billingType", bt);
-      const ot = str(oa["organizationType"]);
-      const plan = str(oa["claudeMaxTier"]) || (ot.startsWith("claude_") ? ot.slice(7) : ot) || str(oa["seatTier"]);
-      if (plan) ev.kv.set("claude.plan", plan);
-    }
+    merge(ev, claudeJson(join(home, ".claude.json")).ev);
   } else if (h === "codex") {
     const a = readObj(join(home, ".codex", "auth.json"));
     if (a) {
@@ -232,4 +259,34 @@ export function allowanceOf(o: Obj | null, now: number): Allow | null {
   const h5 = winOf(u["five_hour"], now); const d7 = winOf(u["seven_day"], now);
   if (!h5 && !d7) return null;
   return { h5, d7, hi: h5 && (!d7 || h5.pct > d7.pct) ? "5h" : "7d" };
+}
+
+// ── Codex rate limits (token_count.rate_limits): primary = the short window (5 h), secondary = the weekly one when the plan has it ──
+function rlWin(v: unknown, atMs: number): RlWin | null {
+  const o = obj(v); if (!o) return null;
+  const p = o["used_percent"]; const m = o["window_minutes"];
+  if (typeof p !== "number" || typeof m !== "number" || !((p as number) >= 0 && (p as number) <= 100) || !((m as number) > 0)) return null;
+  const ra = o["resets_at"]; const ri = o["resets_in_seconds"]; // epoch seconds; older codex: seconds after the event
+  const reset = typeof ra === "number" ? (ra as number) * 1000 : typeof ri === "number" && atMs > 0 ? atMs + (ri as number) * 1000 : 0;
+  return reset > 0 ? { pct: p as number, min: m as number, reset } : null;
+}
+export function rlWins(rl: Obj | null, atMs: number): RlWin[] {
+  const out: RlWin[] = []; if (!rl) return out;
+  for (const k of ["primary", "secondary"]) { const w = rlWin(rl[k], atMs); if (w) out.push(w); }
+  return out;
+}
+// one window of an allowance gauge; hi = the fuller one (drawn bold, kept when the header is narrow)
+export interface GW { lbl: string; pct: number; hi: boolean }
+function winLabel(min: number): string { return min >= 1440 ? String(Math.round(min / 1440)) + "d" : min >= 60 ? String(Math.round(min / 60)) + "h" : String(Math.round(min)) + "m"; }
+// the windows still running, shortest first; a tie goes to the longer window (as Claude's)
+export function gaugeWins(ws: RlWin[], now: number): GW[] {
+  const live = ws.filter((w: RlWin) => w.reset > now).sort((a: RlWin, b: RlWin) => a.min - b.min);
+  let hi = -1; for (let i = 0; i < live.length; i++) if (hi < 0 || Math.round(live[i].pct) >= Math.round(live[hi].pct)) hi = i;
+  return live.map((w: RlWin, i: number) => ({ lbl: winLabel(w.min), pct: Math.round(w.pct), hi: i === hi }));
+}
+export function claudeWins(al: Allow): GW[] {
+  const out: GW[] = [];
+  if (al.h5) out.push({ lbl: "5h", pct: al.h5.pct, hi: al.hi === "5h" });
+  if (al.d7) out.push({ lbl: "7d", pct: al.d7.pct, hi: al.hi === "7d" });
+  return out;
 }
