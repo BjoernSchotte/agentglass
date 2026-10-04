@@ -59,7 +59,7 @@ for (const [h, name, txt] of [
   ["opencode", "edit", "[error] The user rejected permission to use this specific tool call with the following feedback: use sed"],
   ["opencode", "bash", "[error] The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules []"],
   ["gemini", "run_shell_command", "[cancelled] [Operation Cancelled] Reason: User denied execution."],
-  ["pi", "bash", "[error] Tool execution was blocked"],
+  ["pi", "bash", "[error] Tool execution was blocked"], ["pi", "bash", "[error] Blocked by user"],
 ]) {
   const o: RelEv[] = []; toRel([tool(name, "x", 20, "dn", ""), ev("result", txt, 21, "dn", "")], "A", h, "/w/main", "/w/main", true, W0, W1, newSt(), o);
   eq("denied " + h + ": " + txt.slice(0, 30), o.map((x: RelEv) => x.kind + ":" + x.text).join(" | ").replace(/^[a-z]+:x \| /, ""), "alert:denied " + name);

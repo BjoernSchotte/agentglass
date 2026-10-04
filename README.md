@@ -416,7 +416,7 @@ of the repo, interleaved by time.
 - Limits: writes through shell commands (`sed -i`, redirects, formatters) are not seen as writes. A denied tool call
   becomes a `denied <tool>` row where the log records the decision: Claude Code, Codex (`rejected by user`),
   OpenCode (rejected permission, or a permission rule), Gemini CLI (cancelled: `User denied execution`) and pi (a
-  call an extension blocked without its own reason). Kiro and fx record none; approval waits still come in through
+  call an extension blocked with the default reason or `Blocked by user`). Kiro and fx record none; approval waits still come in through
   the alert rules. Logs without timestamps (Kiro) are read from their tail and
   their events cannot be placed. Under `--redact` conflicts are found on the real files and commands exactly as
   without it; only fakes are shown (file names, a clobber's generic `git` form, a commit's sha without its subject).

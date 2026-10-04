@@ -74,7 +74,7 @@ export function denied(h: string, text: string): boolean {
   if (h === "codex") return /^(exec command |patch )?rejected by user\b/.test(t);
   if (h === "opencode") return /^\[error\] The user (rejected permission to use this specific tool call|has specified a rule which prevents you from using this specific tool call)/.test(t);
   if (h === "gemini") return /^(\[cancelled\] )?\[Operation Cancelled\] Reason: User denied execution/.test(t); // the parser prefixes the status
-  if (h === "pi") return /^\[error\] Tool execution was blocked\s*$/.test(t);
+  if (h === "pi") return /^\[error\] (Tool execution was blocked|Blocked by user)\s*$/.test(t); // the default, and the permission-gate example's reason
   return false;
 }
 
