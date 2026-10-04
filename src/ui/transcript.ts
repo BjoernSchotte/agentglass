@@ -14,7 +14,7 @@ export function evLines(e: Ev, w: number, expand: boolean, out: string[]): void 
   const tsx = e.ts.length >= 16 ? localHM(e.ts) : "";
   if (e.kind === "user") {
     out.push("");
-    const ls = wrap(e.text, w - 2);
+    const ls = wrap(e.text, w - 8); // every line as wide as the first, which leaves room for the time
     for (let i = 0; i < ls.length; i++) out.push((i === 0 ? fg(C.cyan) + CSI + "1m" + "❯ " : "  ") + RST + bg(C.sel) + fg(C.text) + fit(ls[i], w - 8) + RST + (i === 0 ? fg(C.dim) + " " + fit(tsx, 5) + RST : ""));
   } else if (e.kind === "assistant") {
     const ls = wrap(e.text, w - 2);
@@ -27,7 +27,7 @@ export function evLines(e: Ev, w: number, expand: boolean, out: string[]): void 
   } else if (e.kind === "tool") {
     const i = e.text.indexOf("\u0000");
     const name = e.text.slice(0, i);
-    const ls = wrap(e.text.slice(i + 1), w - 4 - width(name));
+    const ls = wrap(e.text.slice(i + 1), w - 5 - width(name)); // "⚒ name(" + the line + ")" or " …"
     const n = expand ? ls.length : Math.min(3, ls.length);
     for (let j = 0; j < n; j++) out.push((j === 0 ? fg(C.yellow) + "⚒ " + CSI + "1m" + name + RST + fg(C.sub) + "(" : " ".repeat(width(name) + 3) + fg(C.sub)) + ls[j] + (j === n - 1 ? (n < ls.length ? " …" : ")") : "") + RST);
   } else if (e.kind === "result") {

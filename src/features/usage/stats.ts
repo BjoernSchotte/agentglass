@@ -186,12 +186,15 @@ function renderStats(): void {
   const l1h = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx;
   const l1 = l1h + sourcesOf(t.sess ? g.rows : [], W - 4 - vwidth(l1h));
   const wide = W >= 130; const sp = wide ? " " : "";
-  // the split figure ("$3.10 spend + ≈$9.20 plan"), or the ≈ total when the line would not fit (the table keeps the tags)
-  const l2f = (narrow: boolean): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
-    fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
-    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST + (t.ms.unk > 0 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
+  // the split figure ("$3.10 spend + ≈$9.20 plan"), or the ≈ total when the line would not fit (the table keeps the tags);
+  // still too long (80 columns): the parts the table below repeats go first — unpriced, sessions, cache write, lines
+  const l2f = (narrow: boolean, drop: number): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
+    fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read" : " cr") + RST + (drop >= 3 ? "" : "  " + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST) + dot +
+    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + (drop >= 4 ? "" : dot + linesStr(t.add, t.del)) + (drop >= 2 ? "" : dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST) + (t.ms.unk > 0 && drop < 1 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
   const sc = g.scoped ? fg(C.dim) + " · cost: days with matching calls" + RST : "";
-  const l2 = (vwidth(l2f(false)) <= W - 4 ? l2f(false) : l2f(true)) + sc;
+  let l2 = l2f(false, 0);
+  for (let d = 0; d <= 4 && vwidth(l2 + sc) > W - 4; d++) l2 = l2f(true, d);
+  l2 += sc;
   const b = g.busy;
   const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? moneyTag(g.busyCost, asBill(b.bill)) + " " : "") + RST +
     fg(C.text) + clean(titleOf(b)) + RST : fg(C.dim) + "no activity yet" + RST;
@@ -537,6 +540,18 @@ function jump(x: DR): void {
 }
 // vertical block-bar chart with a heat gradient (green at the bottom → red at the top); dayCost labels the 7-day view
 // cur = the per-day cost labels' currency mark: "$" only when every figure is API spend
+// labels under a bar column of cw cells keep the bars' gap (cw > 2: the bar is cw − 1 wide), else they run together
+// ("Mo 28Tu 29", "≈1615≈1348"): the weekday goes first, then the cents, then the "$", then the figure shrinks to 1.6K
+export function dayLabel(wd: number, dom: number, cw: number): string {
+  const room = cw > 2 ? cw - 1 : cw; // "Mo 28" on every column or on none: the same form across the axis
+  return room >= 5 ? WD.slice(wd * 2, wd * 2 + 2) + " " + String(dom) : String(dom);
+}
+export function costLabel(c: number, cur: string, cw: number): string {
+  if (c <= 0) return "";
+  const room = cw > 2 ? cw - 1 : cw; const cn = c < 100 ? c.toFixed(1) : String(Math.round(c)); const one = cur === "$" ? "$" : "≈";
+  for (const l of [cur + cn, one + cn, one + kfmt(c), kfmt(c)]) if (width(l) <= room) return l;
+  return "";
+}
 function chart(x: number, y: number, w: number, h: number, vals: number[], days: string[], dayCost: number[], cur: string): void {
   const n = vals.length; const ch = h - 2; const axis = 5;
   const cwid = Math.max(1, Math.floor((w - axis - 1) / n));
@@ -559,12 +574,9 @@ function chart(x: number, y: number, w: number, h: number, vals: number[], days:
   let l1 = " ".repeat(axis); let l2 = " ".repeat(axis);
   for (let i = 0; i < n; i++) {
     if (days.length > 1) {
-      const d = new Date(startOfDay() + 43200000 - (n - 1 - i) * 86400000); const wd = d.getDay();
-      l1 += fg(i === n - 1 ? C.accent : C.sub) + fit(WD.slice(wd * 2, wd * 2 + 2) + " " + d.getDate(), cwid) + RST;
-      const c = numAt(dayCost, i, 0);
-      const cn = c < 100 ? c.toFixed(1) : String(Math.round(c));
-      const cl = cur.length + cn.length < cwid ? cur + cn : cur === "$" ? "$" + cn : "≈" + cn; // keep a gap: "≈2.4" when "≈$2.4" would touch
-      l2 += fg(C.yellow) + fit(c > 0 ? cl : "", cwid) + RST;
+      const d = new Date(startOfDay() + 43200000 - (n - 1 - i) * 86400000);
+      l1 += fg(i === n - 1 ? C.accent : C.sub) + fit(dayLabel(d.getDay(), d.getDate(), cwid), cwid) + RST;
+      l2 += fg(C.yellow) + fit(costLabel(numAt(dayCost, i, 0), cur, cwid), cwid) + RST;
     } else {
       const lab = i % (cwid >= 3 ? 2 : 3) === 0 ? String(i) : "";
       l1 += fg(i === nowH ? C.accent : C.dim) + fit(i === nowH ? "▲" + (cwid >= 3 ? String(i) : "") : lab, cwid) + RST;

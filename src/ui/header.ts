@@ -31,24 +31,37 @@ export function renderHeader(): void {
     tabX1.push(i === tabs.length - 1 ? x + 1 : x);
   }
   const spark = braille(cpuHist, W >= 150 ? 16 : 6, 1, Math.max(100, Math.max(...cpuHist.slice(-32))))[0];
-  const right = fg(C.green) + "● " + live + " live" + RST + fg(C.dim) + " · " + RST + fg(C.yellow) + busy + " busy" + RST + fg(C.dim) + " · " + RST +
-    fg(C.sub) + "cpu " + RST + fg(heat(cpu / 400)) + cpu.toFixed(1) + "% " + spark + RST + fg(C.dim) + " · " + RST +
-    fg(C.text) + bytes(mem) + RST + fg(C.dim) + (W >= 190 ? "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions" : "") + " " + RST; // totals only when wide: widgets need the room
-  const rw = width(right.replace(ESC_RE, ""));
-  const free = Math.max(0, W - x - rw);
-  let wid = "";
-  if ((H.headerWidgets.length || H.headerFlex.length) && free > 1) {
-    const parts: string[] = [];
-    let used = 0;
-    for (const f of H.headerWidgets) {
-      const w = f(Math.max(0, free - 1 - used));
-      if (!w) continue;
-      parts.push(w); used += width(w.replace(ESC_RE, "")) + 1;
-    }
-    const room = free - 1 - used - 2;
-    if (room > 8) for (const f of H.headerFlex) { const w = f(room); if (w) { parts.push(fg(C.line) + "│" + RST + " " + w); break; } }
-    if (parts.length) wid = fitStyled(parts.join(" "), free - 1);
+  const sep = fg(C.dim) + " · " + RST; const lv = fg(C.green) + "● " + live + " live" + RST; const bz = fg(C.yellow) + busy + " busy" + RST;
+  const cpuS = fg(C.sub) + "cpu " + RST + fg(heat(cpu / 400)) + cpu.toFixed(1) + "% " + spark + RST;
+  // the stats on the right, widest first; below 100 columns they step down so the widgets (alarms ◆ ⚠, cost) keep a
+  // place (wider: the established split, cpu and memory stay)
+  const rights = [lv + sep + bz + sep + cpuS + sep + fg(C.text) + bytes(mem) + RST + fg(C.dim) + (W >= 190 ? "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions" : "") + " " + RST, // totals only when wide: widgets need the room
+    lv + sep + bz + " ", lv + " ", ""];
+  const want = W < 100 && fixed(Math.max(0, W - x)) !== ""; // a widget has something to say
+  let right = ""; let rw = 0;
+  for (const r of rights) {
+    right = r; rw = width(r.replace(ESC_RE, ""));
+    if (W - x > rw && (!want || fixed(W - x - rw) !== "")) break;
   }
+  const free = Math.max(0, W - x - rw); const wid = widgets(free);
   const ww = width(wid.replace(ESC_RE, ""));
   put(0, 0, s + wid + " ".repeat(Math.max(0, free - ww)) + (W - x > rw ? right : ""));
+}
+// the fixed-size header widgets that fit in free columns ("" = none)
+function fixed(free: number): string {
+  const parts: string[] = []; let used = 0;
+  if (free > 1) for (const f of H.headerWidgets) {
+    const w = f(Math.max(0, free - 1 - used)); const ww = width(w.replace(ESC_RE, ""));
+    if (!w || ww > free - 1 - used) continue; // not every widget sizes itself (the alarm counts)
+    parts.push(w); used += ww + 1;
+  }
+  return parts.join(" ");
+}
+// those plus the flexible one (the ticker) in the rest; called once a frame: the ticker keeps its slot width
+function widgets(free: number): string {
+  if (!(H.headerWidgets.length || H.headerFlex.length) || free <= 1) return "";
+  const fx = fixed(free); const parts: string[] = fx ? [fx] : [];
+  const room = free - 1 - (fx ? width(fx.replace(ESC_RE, "")) + 1 : 0) - 2;
+  if (room > 8) for (const f of H.headerFlex) { const w = f(room); if (w) { parts.push(fg(C.line) + "│" + RST + " " + w); break; } }
+  return parts.length ? fitStyled(parts.join(" "), free - 1) : "";
 }

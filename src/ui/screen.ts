@@ -15,7 +15,11 @@ export function box(x: number, y: number, w: number, h: number, title: string, i
   let i = info ? " " + (styled ? info : clean(info)) + " " : "";
   const room = w - 4 - width(t);
   if (styled) { if (vwidth(i) > room) i = room > 2 ? fitStyled(i, room) : ""; }
-  else if (width(i) > room) i = room > 2 ? "…" + Array.from(i).slice(-(room - 1)).join("") : "";
+  else if (width(i) > room) { // the trailing " · "-parts (key hints) go first, then the head is cut
+    const ps = clean(info).split(" · "); while (ps.length > 1 && width(ps.join(" · ")) + 2 > room) ps.pop();
+    i = " " + ps.join(" · ") + " ";
+    if (width(i) > room) i = room > 2 ? "…" + Array.from(i).slice(-(room - 1)).join("") : "";
+  }
   const mid = Math.max(0, w - 3 - width(t) - (styled ? vwidth(i) : width(i)));
   put(x, y, bc + "╭─" + (focus ? CSI + "1m" + fg(C.text) : fg(C.sub)) + t + RST + bc + "─".repeat(mid) + fg(C.dim) + i + bc + "╮" + RST);
   for (let r = 1; r < h - 1; r++) { put(x, y + r, bc + "│" + RST); put(x + w - 1, y + r, bc + "│" + RST); }

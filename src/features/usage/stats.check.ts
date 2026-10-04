@@ -1,6 +1,6 @@
 // agentglass — self-check for the Stats top-tools list (skill markers lead: a long name is cut, they are not): scriptc build src/features/usage/stats.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
-import { toolRows, allowGauge, open, statsTotalsFor, statsSummaryFor, periodMessage, statsPeriod } from "./stats.ts";
+import { toolRows, allowGauge, dayLabel, costLabel, open, statsTotalsFor, statsSummaryFor, periodMessage, statsPeriod } from "./stats.ts";
 import { parse } from "../query/parse.ts";
 import { EMPTY, compile } from "../query/eval.ts";
 import { fxBase } from "../query/fixture.ts";
@@ -47,6 +47,14 @@ ok("period intersects", periodMessage(compile(parse("day is today").cs, "stats")
   ok("gauge: the fuller one bold", g.indexOf("\x1b[1m7d 64%") >= 0 && g.indexOf("\x1b[1m5h") < 0, JSON.stringify(g));
   ok("gauge: narrow keeps the fuller window", plain(allowGauge("cx", ws, 18)) === " · cx 7d 64%", plain(allowGauge("cx", ws, 18)));
   ok("gauge: too narrow = nothing", allowGauge("cx", ws, 11) === "" && allowGauge("cx", [], 80) === "", allowGauge("cx", ws, 11));
+}
+{ // 7-day chart labels keep the bars' gap at 80 columns (5 cells a day: 4 for the label), the full form when wide (8)
+  const t = (w: string, got: string, want: string): void => ok(w, got === want, JSON.stringify(got));
+  t("day: wide", dayLabel(1, 28, 8), "Mo 28"); t("day: 5 cells drop the weekday", dayLabel(1, 28, 5), "28");
+  t("day: one form across the axis", dayLabel(4, 1, 5), "1");
+  t("cost: wide", costLabel(1615.4, "≈$", 8), "≈$1615"); t("cost: 5 cells", costLabel(1615.4, "≈$", 5), "1.6K");
+  t("cost: small fits", costLabel(394, "≈$", 5), "≈394"); t("cost: cents", costLabel(2.4, "≈$", 6), "≈$2.4");
+  t("cost: api keeps $", costLabel(12.5, "$", 6), "$12.5"); t("cost: none", costLabel(0, "≈$", 8), "");
 }
 console.log(bad ? bad + " failed" : "stats: all checks passed");
 if (bad) process.exit(1);
