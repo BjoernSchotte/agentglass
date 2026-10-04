@@ -21,6 +21,7 @@ export function renderFooter(): void {
     const tw = Math.min(width(txt), Math.max(10, room - width(err))); // the error stays visible next to the text
     const shown = width(txt) > tw ? "…" + Array.from(txt).slice(-(tw - 1)).join("") : txt;
     put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + S.inputLabel + " ❯ " + RST + bg(C.sel) + fg(C.text) + shown + fg(C.red) + fit(err, Math.max(0, room - width(shown))) + RST);
+    renderToast(); // e.g. a link that waits for this prompt
     return;
   }
   footX0.length = 0; footX1.length = 0; footKey.length = 0;
@@ -28,22 +29,27 @@ export function renderFooter(): void {
   const k = (key: string, what: string): string => {
     const w = width(key) + 1 + width(what);
     // clickable: the hint's key, when it maps to one keystroke
-    const act = key === "↵" ? "enter" : key === "␣" ? " " : key === "esc" ? "esc" : key === "tab" ? "tab" : width(key.split("/")[0]) === 1 && key.split("/")[0].length === 1 ? key.split("/")[0] : "";
+    const act = key === "^K" ? "ctrl-k" : key === "↵" ? "enter" : key === "␣" ? " " : key === "esc" ? "esc" : key === "tab" ? "tab" : width(key.split("/")[0]) === 1 && key.split("/")[0].length === 1 ? key.split("/")[0] : "";
     if (act) { footX0.push(fx); footX1.push(fx + w); footKey.push(act); }
     fx += w + 2;
     return fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + "  " + RST;
   };
   // feature hints right after "? keys": they are the mode-specific ones (e.g. replay) and must survive truncation
-  let hints = k("?", "keys");
+  let hints = k("?", "keys") + (mode === "list" || mode === "transcript" || mode === "detail" || mode === "view" ? k("^K", "palette") : ""); // everywhere Ctrl+K works
   for (const f of H.footerHints) for (const kd of f(mode)) hints += k(kd[0] ?? "", kd[1] ?? "");
   if (mode === "detail") hints += k("↑↓/jk", "scroll") + k("[/]", "prev/next event") + k("1-9", "open file") + k("tab", "select file") + k("o", "pager") + k("e", "edit") + k("z", "fold all") + k("w", "wrap") + k("v", "all in pager") + k("y", "copy") + k("esc", "back");
   else if (mode === "view") hints += k("esc", "back");
+  else if (mode === "palette") hints += k("↵", "run") + k("→", "session actions") + k("tab", "scope") + k("esc", "close");
   else if (mode === "transcript") hints += k("↑↓/jk", "event") + k("↵", "details") + k("g/G", "top/end") + k("f", "follow") + k("t", "expand tools") + k("n/N", "subagents") + k("u", "parent") + k("s", "send") + k("R", "resume") + k("esc", "back");
   else if (S.tab === 0) hints += k("↵", "open") + k("␣", "subagents") + k("/", "filter") + k("p", "pin") + k("P", "pins") + k("F", "full-text") + k("h", "harness") + k("l", "live") + k("s", "send") + k("R", "resume") + k("x", "kill") + k("D", "trash");
   else if (S.tab === 1) hints += k("↵", "session") + k("s", "send") + k("x", "SIGTERM") + k("X", "SIGKILL") + k("a", "attach tmux") + k("P", "pins") + k("q", "quit");
   else hints += k("q", "quit");
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
   if (DBG.on && DBG.line) { const d = " " + fit(DBG.line, Math.min(width(DBG.line), W - 2)) + " "; put(W - width(d), y, bg(C.panel) + fg(C.dim) + d + RST); } // over the hints' tail
+  renderToast();
+}
+function renderToast(): void {
+  const W = S.W; const Ht = S.H;
   if (S.toast && Date.now() - S.toastAt < S.toastMs) {
     const tk = S.toastKind;
     const icon = tk === "ok" ? "✔" : tk === "err" ? "✖" : tk === "warn" ? "⚠" : "ℹ";

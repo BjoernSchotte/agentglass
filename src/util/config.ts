@@ -16,6 +16,9 @@ export function rawSection(name: string): unknown { return root ? root[name] : u
 // a section of the config ({} when absent or not an object)
 export function section(name: string): Obj { return (root ? obj(root[name]) : null) ?? {}; }
 
+// a top-level value of the config (undefined when absent)
+export function topValue(name: string): unknown { return root ? root[name] : undefined; }
+
 // merge {[name]: {...old, [key]: value}} into the config file (atomic; other sections and keys stay as they are)
 export function setConfig(name: string, key: string, value: string): void {
   const cur = obj((() => { try { return JSON.parse(readText(CONFIG_FILE, 0, 262144)); } catch (e) { return null; } })()) ?? {};

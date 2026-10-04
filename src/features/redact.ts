@@ -12,6 +12,7 @@ import { H } from "../hooks.ts";
 import { isErr } from "./callgraph/model.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { REDACT } from "./redact-on.ts";
+import { ESC_RE } from "../util/text.ts";
 
 export { REDACT };
 const envKeep = process.env.AGENTGLASS_REDACT_KEEP;
@@ -216,7 +217,7 @@ function scrubStyled(s: string): string {
   const hit = memo.get(s);
   if (hit !== undefined) return hit;
   let o = ""; let last = 0;
-  for (const m of s.matchAll(/\x1b\[[0-9;?]*[A-Za-z]/g)) { const i = m.index ?? 0; const esc = m[0]; o += scrubText(s.slice(last, i)); o += esc; last = i + esc.length; }
+  for (const m of s.matchAll(ESC_RE)) { const i = m.index ?? 0; const esc = m[0]; o += scrubText(s.slice(last, i)); o += esc; last = i + esc.length; }
   o += scrubText(s.slice(last));
   memo.set(s, o);
   return o;

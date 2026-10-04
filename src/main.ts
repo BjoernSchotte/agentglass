@@ -43,6 +43,11 @@ import "./features/repos/tab.ts";
 import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
+import "./features/palette/actions.ts";
+import "./features/palette/view.ts";
+import "./features/palette/links.ts";
+import "./features/palette/open.ts";
+import "./features/palette/serve.ts";
 import "./features/triage/cli.ts";
 import "./features/triage/view.ts";
 import "./features/compare/cli.ts";
@@ -59,7 +64,7 @@ function render(): void {
   buf.push("\x1b[?2026h");
   renderHeader();
   const mode = S.mode; const pm = S.prevMode;
-  const fv = mode === "view" || (pm === "view" && (mode === "help" || mode === "input" || mode === "confirm")) ? viewOf(S.fview) : null;
+  const fv = mode === "view" || (pm === "view" && (mode === "help" || mode === "input" || mode === "confirm" || mode === "palette")) ? viewOf(S.fview) : null;
   if (fv) { S.listH = 0; for (let y = 1; y < S.H - 1; y++) put(0, y, CSI + "2K"); fv.render(); }
   else if (mode === "detail" || (mode !== "list" && S.dv && pm === "detail")) { renderTranscript(); renderDetail(); }
   else if (mode === "transcript" || (mode !== "list" && S.tv && pm === "transcript")) renderTranscript();
@@ -73,6 +78,7 @@ function render(): void {
   renderFooter();
   if (mode === "confirm") renderModal("confirm", [S.confirmText, "", "y  yes      n / esc  cancel"], C.yellow);
   if (mode === "help") renderHelp();
+  for (const f of H.overlays) f();
   buf.push("\x1b[?2026l");
   if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
   flush(buf.join(""), (s: string) => { process.stdout.write(s); });
@@ -188,14 +194,23 @@ function main(): void {
     if (c && !c.startsWith("-")) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
     writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0);
   }
+  tui();
+}
+let started = false;
+function tui(): void {
+  if (started) return; started = true;
   if (!process.stdin.isTTY) { console.error("agentglass needs an interactive terminal"); process.exit(1); }
   enter();
   scan(); refreshProcs(); refreshSlow(); buildView();
+  for (const f of H.start) f();
   if (mode.err) say("warn", mode.err);
   DBG.on = process.env.AGENTGLASS_DEBUG_REFRESH === "1";
   render(); lastBuild = Date.now(); scanSig = scanSum();
   process.stdin.on("data", onData);
   process.on("SIGTERM", () => quit());
+  process.on("SIGINT", () => quit()); // raw mode: only a kill sends it; quit() releases the single-instance lock (no SIGHUP in scriptc 0.1.7: a stale lock is taken over)
   loop();
 }
+H.tui.push(tui);
+H.redraw.push(() => { if (started) render(); });
 main();

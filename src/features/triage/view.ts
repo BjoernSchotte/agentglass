@@ -6,7 +6,7 @@
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { H, tabAt } from "../../hooks.ts";
-import { clean, fit, fitStyled, fillTo, width, vwidth } from "../../util/text.ts";
+import { clean, fit, fitStyled, fillTo, width, vwidth, ESC_RE } from "../../util/text.ts";
 import { titleOf } from "../../model/sessions.ts";
 import { ask } from "../../actions.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
@@ -86,7 +86,7 @@ function bar(frac: number, w: number, col: string): string {
   return fg(col) + s + RST + " ".repeat(Math.max(0, w - width(s)));
 }
 function line(s: string, W: number): string { const f = fitStyled(s, W); return f + fillTo(f, W); }
-function plainOf(s: string): string { return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""); }
+function plainOf(s: string): string { return s.replace(ESC_RE, ""); }
 const MULTI_CALL = ["program", "ext", "file"]; const MULTI_SESS = ["tool", "program", "ext", "model"];
 function entWord(r: Run): string { return r.entity === "call" ? "calls" : "sessions"; }
 

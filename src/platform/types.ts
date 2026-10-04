@@ -4,6 +4,8 @@
 // one row of the process table; cpu as the OS reports it (see Platform.cpuOf), rss in bytes, etime as [[dd-]hh:]mm:ss
 export interface ProcRow { pid: number; ppid: number; cpu: number; rss: number; etime: string; tty: string; args: string }
 
+export interface FileInfo { uid: number; mode: number; kind: string }
+
 export interface Platform {
   name: string;
   // every process on the machine
@@ -30,6 +32,9 @@ export interface Platform {
   envOf(pid: number): Uint8Array;
   // [owner uid, permission bits] of a file, [] when it cannot be read (scriptc: Stats has no uid/mode)
   ownerMode(path: string): number[];
+  // the entry itself (lstat semantics: a symlink is "link"), via the stat CLI (scriptc: Stats has no uid/mode); null = missing.
+  // kind: dir | file | socket | link | fifo | other; mode = permission bits
+  fileInfo(path: string): FileInfo | null;
   // where trash() puts things, for messages ("~/.Trash")
   trashName: string;
 }

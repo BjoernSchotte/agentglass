@@ -1,6 +1,8 @@
 // agentglass — self-check for styled-text widths: scriptc build src/util/text.check.ts -o tc && ./tc
 // SPDX-License-Identifier: Apache-2.0
-import { width, vwidth, fillTo, fitStyled } from "./text.ts";
+import { width, vwidth, fillTo, fitStyled, ESC_RE } from "./text.ts";
+import { link, hyperMode, fileUrl, setHyper } from "./hyper.ts";
+import { RST } from "../ui/theme.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -10,5 +12,37 @@ ok("width() counts escape bodies (why vwidth exists)", width(st) > vwidth(st), S
 ok("wide glyphs", vwidth("\x1b[1m≈$1 ✦ 日本\x1b[0m") === 10, String(vwidth("\x1b[1m≈$1 ✦ 日本\x1b[0m")));
 ok("fillTo pads to the visible width", fillTo(st, 20).length === 7, String(fillTo(st, 20).length));
 ok("fitStyled keeps escapes, cuts visible", vwidth(fitStyled(st, 4)) === 4, String(vwidth(fitStyled(st, 4))));
+
+// OSC 8 links: escape bytes take no columns, a cut inside a link closes it before RST
+setHyper(true);
+const L = link("agentglass://open/x", "abc");
+ok("link form", L === "\x1b]8;;agentglass://open/x\x1b\\abc\x1b]8;;\x1b\\", JSON.stringify(L));
+ok("fillTo over a link", fillTo(L, 10).length === 7, String(fillTo(L, 10).length));
+ok("vwidth over a link", vwidth(L) === 3, String(vwidth(L)));
+const bel = "\x1b]8;;u\x07abc\x1b]8;;\x07";
+ok("BEL-terminated link", vwidth(bel) === 3 && fillTo(bel, 10).length === 7, String(vwidth(bel)));
+const cut = fitStyled("\x1b[1m" + link("u", "abcdef") + "gh", 4);
+ok("cut inside a link: visible", vwidth(cut) === 4 && cut.replace(ESC_RE, "") === "abcd", JSON.stringify(cut));
+ok("cut inside a link: closed before RST", cut.endsWith("\x1b]8;;\x1b\\" + RST) && cut.indexOf("gh") < 0, JSON.stringify(cut));
+const whole = fitStyled(link("u", "ab") + "cd", 10);
+ok("no extra close when the link ended", whole.split("\x1b]8;;").length === 3, JSON.stringify(whole));
+ok("link() strips control chars from the url", link("a\x1bb\x07c\nd", "t").indexOf("abcd") > 0, JSON.stringify(link("a\x1bb\x07c\nd", "t")));
+setHyper(false);
+ok("off → plain text", link("u", "abc") === "abc", link("u", "abc"));
+// enablement table
+const kitty: Record<string, string> = { TERM: "xterm-kitty" };
+const tm: Record<string, string> = { TERM: "xterm-kitty", TMUX: "/tmp/tmux-1/default,1,0" };
+ok("agent → off", !hyperMode(kitty, "on", true, true, false), "");
+ok("redact → off", !hyperMode(kitty, "on", true, false, true), "");
+ok("tmux auto → off", !hyperMode(tm, "auto", true, false, false), "");
+ok("screen auto → off", !hyperMode({ TERM: "screen-256color", VTE_VERSION: "7000" }, "auto", true, false, false), "");
+ok("kitty auto tty → on", hyperMode(kitty, "auto", true, false, false), "");
+ok("kitty auto non-tty → off", !hyperMode(kitty, "auto", false, false, false), "");
+ok("on in tmux → on", hyperMode(tm, "on", true, false, false), "");
+ok("off with kitty → off", !hyperMode(kitty, "off", true, false, false), "");
+ok("env wins over config", hyperMode({ AGENTGLASS_HYPERLINKS: "on" }, "off", true, false, false) && !hyperMode({ TERM: "xterm-kitty", AGENTGLASS_HYPERLINKS: "off" }, "on", true, false, false), "");
+ok("vte ≥ 5000", hyperMode({ VTE_VERSION: "6003" }, "auto", true, false, false) && !hyperMode({ VTE_VERSION: "4800" }, "auto", true, false, false), "");
+ok("iTerm/WezTerm/vscode/ghostty/WT", hyperMode({ TERM_PROGRAM: "WezTerm" }, "auto", true, false, false) && hyperMode({ WT_SESSION: "x" }, "auto", true, false, false) && !hyperMode({ TERM_PROGRAM: "Apple_Terminal" }, "auto", true, false, false), "");
+ok("fileUrl encodes", fileUrl("/a b/c").indexOf("/a%20b/c") > 0 && fileUrl("/a b/c").startsWith("file://"), fileUrl("/a b/c"));
 console.log(bad ? bad + " failed" : "text: all checks passed");
 if (bad) process.exit(1);

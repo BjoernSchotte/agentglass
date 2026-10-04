@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type Obj, obj, str, arr, parse } from "../util/json.ts";
 import { HOME, readText } from "../util/fs.ts";
 import { width, clean, fit, wrap, fitStyled, fillTo, localHM, home } from "../util/text.ts";
+import { link, fileUrl } from "../util/hyper.ts";
 import type { Ev } from "../model/types.ts";
 import { S, type TV, type DV } from "../state.ts";
 import { titleOf } from "../model/sessions.ts";
@@ -273,7 +274,7 @@ function buildDetail(t: TV, idx: number, w: number): DV {
     for (let i = 0; i < files.length; i++) {
       fileRow.push(head.length);
       const ok = existsSync(files[i]);
-      head.push("  " + fg(C.accent) + CSI + "1m" + "[" + (i + 1) + "]" + RST + " " + fg(ok ? C.text : C.dim) + home(files[i]) + RST + (ok ? "" : fg(C.red) + "  (missing)" + RST));
+      head.push("  " + fg(C.accent) + CSI + "1m" + "[" + (i + 1) + "]" + RST + " " + fg(ok ? C.text : C.dim) + link(fileUrl(files[i]), home(files[i])) + RST + (ok ? "" : fg(C.red) + "  (missing)" + RST));
     }
   }
   const foldRow = foldRows.map((r) => r + head.length);

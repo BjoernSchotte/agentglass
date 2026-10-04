@@ -9,15 +9,27 @@ export interface Tab { name: string; render: () => void; key: (k: string) => boo
 // full-screen feature view: shown while S.mode === "view" && S.fview === name; its keys arrive via H.keys with mode "view"
 export interface View { name: string; render: () => void }
 
+// the palette's origin snapshot: what an action sees when it runs (the same state a key press there would see)
+export interface Ctx { mode: string; prevMode: string; tab: number; fview: string; sel: number; psel: number; sess: Sess | null; ev: number }
+// a named action (palette): keys = display hint ("" = palette only), when = valid in the origin context
+export interface Action { id: string; title: string; group: string; keys: string; when: (c: Ctx) => boolean; run: (c: Ctx) => void }
+
 export const H = {
   cli: [] as ((args: string[]) => boolean)[], // before the TUI starts, with argv[2..]; true = handled, the TUI does not start
+  start: [] as (() => void)[], // once, after the TUI's first scan/buildView and before its first frame (agentglass open: the link's target)
+  tui: [] as (() => void)[], // main.ts: starts the TUI (startTui) — for a CLI handler that decides later (link hand-off fallback)
   onTick: [] as (() => void)[], // ledger, ticker, cache, prices, callgraph: cadence follows the activity level (500 ms … 5 s; 250 ms while the ledger indexes), before render
   onWatch: [] as (() => void)[], // alarms (watchdog, rules): 1.5 s while any agent is live, else 5 s, at every level
+  redraw: [] as (() => void)[], // main.ts: draw a frame now (a link applied from a timer, outside input and the render cadence)
   onQuit: [] as (() => void)[], // right before the TUI exits (flush caches); keep it fast
   onFastTick: [] as (() => boolean)[], // every 50ms while any fastArmed source is armed (and the user is around); true = re-render
   onHeaderTick: [] as (() => boolean)[], // like onFastTick, but true = only the header row changed (marquee): redraws that row alone
   fastArmed: [] as (() => boolean)[], // true = this source needs 50ms frames now (marquee overflows, replay plays)
   keys: [] as ((mode: string, key: string) => boolean)[], // list/transcript/detail/view modes, before built-in keys; true = handled
+  modal: [] as ((mode: string, key: string) => boolean)[], // every mode, before everything else (the palette: ctrl-k and its own keys); true = handled
+  overlays: [] as (() => void)[], // drawn last, over the view and the footer (the palette box)
+  actions: [] as Action[], // named actions for the palette (src/features/palette/actions.ts and features)
+  sessionActions: [] as ((s: Sess) => Action | null)[], // extra entries of a session's palette actions (→); run gets the origin ctx
   mouse: [] as ((mode: string, b: number, x: number, y: number, press: boolean) => boolean)[], // raw SGR mouse (b 0 left, 2 right, 64/65 wheel; 0-based x/y) before built-ins; true = handled
   enrich: [] as ((s: Sess) => void)[], // before a session is shown in preview/transcript/detail (runs every frame: cache!)
   complete: [] as ((s: Sess) => void)[], // blocking full computation of a session's derived fields, for exports (CLI --json/--watch)
@@ -43,6 +55,7 @@ export const H = {
   emptyText: [] as ((where: string) => string)[], // the line an empty built-in list shows instead of the stock one ("" = stock)
   backlog: [] as (() => boolean)[], // true = a feature has background work its onTick slices through (filter head reads): tick at the indexing burst cadence
 };
+export function startTui(): void { for (const f of H.tui) f(); }
 export function backlog(): boolean { for (const f of H.backlog) if (f()) return true; return false; }
 export function boxChips(where: string, w: number): string { let o = ""; for (const f of H.boxChips) o += f(where, w); return o; }
 export function emptyText(where: string): string { for (const f of H.emptyText) { const t = f(where); if (t) return t; } return ""; }
