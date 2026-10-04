@@ -28,7 +28,7 @@ function support(attr: string, minSupport: number): number { return attr === "fi
 // rows with a ≥ minSupport and pS ≥ 1%, by diff (desc; under: asc), ties by support then value; ≤ cap per attr unless attr = expand
 export function rank(rows: TRow[], under: boolean, cap: number, minSupport: number, expand: string): TRow[] {
   const keep: TRow[] = [];
-  for (const r of rows) if (r.s.a >= support(r.attr, minSupport) && r.s.pS >= 0.01) keep.push(r);
+  for (const r of rows) if (r.s.a >= support(r.attr, minSupport) && r.s.pS >= 0.01 && (!under || r.s.diff < 0)) keep.push(r); // u: under-represented values only
   keep.sort((x: TRow, y: TRow): number => {
     const d = under ? x.s.diff - y.s.diff : y.s.diff - x.s.diff;
     if (d !== 0) return d;

@@ -10,7 +10,8 @@ import { initPins, localFor, setLocal } from "../query/scope.ts";
 import { fxBase } from "../query/fixture.ts";
 import { statsDrill, statsTabIndex } from "../usage/stats.ts";
 import { newRun, useTriageCfg } from "./run.ts";
-import { T, openTriage, viewLines, includeSel, selectRow, onInclude } from "./view.ts";
+import { T, openTriage, viewLines, includeSel, selectRow, onInclude, multiDims } from "./view.ts";
+import { score } from "./score.ts";
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 let saved = "";
@@ -60,6 +61,28 @@ if (!st) { bad++; console.log("FAIL no triage state"); } else {
   onInput("esc"); eq("esc closes calls", st.calls + "|" + S.mode, "|view");
   onInput("esc"); eq("esc leaves", S.mode === "view" ? "still view" : "left", "left");
 }
+
+// ── a preset narrows the origin's local filter (AND) instead of replacing it, and says so ──
+fxBase(); setLocal("Stats", parse("harness is codex").cs);
+openTriage(newRun("Stats", "call", [], localFor("Stats"), 2), () => { S.mode = "list"; });
+const sp = T.st;
+if (sp) {
+  S.toast = ""; onInput("s"); onInput("1");
+  eq("preset 1 narrows the Stats filter", print(sp.run.sel), "harness is codex and status is error");
+  eq("narrowing toast", S.toast, "preset errored calls narrows the Stats filter: harness is codex and status is error");
+  onInput("s"); onInput("4"); eq("preset 4 narrows too (the previous preset is replaced)", print(sp.run.sel), "harness is codex and cost > 5");
+  onInput("s"); onInput("6"); eq("preset 6 keeps the filter as the selection", print(sp.run.sel) + " " + sp.run.base, "harness is codex previous");
+  onInput("esc");
+}
+setLocal("Stats", []);
+// a filter already in the scope (Stats drill-down: the scope is pins ∧ local) is not repeated in the selection
+openTriage(newRun("Stats", "call", parse("harness is codex").cs, parse("tool is Bash").cs, 2), () => { S.mode = "list"; });
+setLocal("Stats", parse("harness is codex").cs);
+const sd = T.st; if (sd) { onInput("s"); onInput("1"); eq("scope clause not repeated", print(sd.run.sel), "status is error"); onInput("esc"); }
+setLocal("Stats", []);
+// the multi-valued note names only dimensions that have a row on screen
+eq("multi note: dims with rows", multiDims("call", ["program", "file", "ext", "tool"], [{ attr: "program", value: "npm", s: score(3, 10, 1, 10) }, { attr: "tool", value: "Bash", s: score(3, 10, 1, 10) }]).join(","), "program");
+eq("multi note: none", multiDims("session", ["model", "tool"], []).join(","), "");
 
 // ── + / − into the origin, p pins, o opens, r / R guards ──
 fxBase(); setLocal("Sessions", []);
