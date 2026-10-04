@@ -144,8 +144,10 @@ opts in.
    **current request** — the `chat` span whose request key (1.2) the line carries — together with the model that
    line booked. Turn roots carry no usage (1.4).
    - Kiro: the per-turn sidecar totals map by turn index onto the turn's single `chat` span.
-   - fx: no per-turn usage. Its `chat` spans carry no `gen_ai.usage.*`. The session total goes on the root of the
-     session's last exported turn as `agentglass.usage.session_total = true`, together with the totals.
+   - fx: no per-turn usage, only running session totals. They ride on the `chat` span of the session's newest turn in
+     an export, as the growth since the totals this endpoint last accepted (kept per session in the state file;
+     `--resend` sends the whole totals), marked `agentglass.usage.session_delta = true`. Re-exports send nothing twice,
+     and the deltas over all runs sum to the final totals (harness-correctness, #17).
 2. **Small additions to the usage port:**
    - `Acc.rs`, the reasoning tokens (a subset of `out`), set by a new `reasoning(a, d, n)` helper. Called by Gemini
      (`thoughts`), OpenCode (`reasoning`) and Codex (`reasoning_output_tokens`, when present). Persisted in the ledger
@@ -161,12 +163,13 @@ opts in.
 |---|---|---|
 | all | `gen_ai.conversation.id` | root session id (subagent spans too) |
 | all | `gen_ai.agent.name` | harness product name (`Claude Code`, `Codex`, `Gemini CLI`, `pi`, `OpenCode`, `Kiro`, `fx`); on `invoke_agent` and its tools: the subagent type (`s.kind`) |
-| all | `gen_ai.provider.name` | from the record's provider id when the harness logs one (OpenCode/pi), else from the model prefix: `claude-`→`anthropic`, `gpt-`/`o<digit>`/`codex-`→`openai`, `gemini-`→`gcp.gemini`, `grok-`→`x_ai`, `deepseek-`→`deepseek`, `mistral-`/`codestral-`/`devstral-`→`mistral_ai`, `kimi-`→`moonshot_ai`; omitted if unknown |
+| all | `gen_ai.provider.name` | one rule for every span of a trace (harness-correctness, #17): the model's vendor first — a known `vendor/` prefix (`anthropic/claude-…`) or the model prefix: `claude-`→`anthropic`, `gpt-`/`o<digit>`/`codex-`→`openai`, `gemini-`→`gcp.gemini`, `grok-`→`x_ai`, `deepseek-`→`deepseek`, `mistral-`/`codestral-`/`devstral-`→`mistral_ai`, `kimi-`→`moonshot_ai`; else the provider id the record logs (OpenCode/pi; aliases such as `google`→`gcp.gemini`); root and tool spans take what a `chat` span of the same model resolved; omitted if unknown. The `provider` input-token mode (6.) follows this name |
 | all | `process.working_directory` | session cwd (real, or faked under `--redact`) |
 | all | `vcs.repository.url.full`, `vcs.repository.name`, `vcs.owner.name`, `vcs.provider.name`, `vcs.ref.head.name`, `vcs.ref.head.type` | from repo-view's project identity (no git process) and `s.branch`; the URL goes through the parsing-fixes `scrubRemote` and is dropped if the scrub drops it; all `vcs.*` omitted under `--redact` |
 | chat, invoke_agent | `gen_ai.operation.name` | `chat` / `invoke_agent` |
 | chat | `gen_ai.request.model` | the request's own model, raw id as logged |
 | chat | `gen_ai.response.model` | answering model when the record names a different one (pi `responseModel`) |
+| chat | `agentglass.provider.id` | pi/OpenCode: the provider id the record logs (a gateway or router such as `cliproxyapi`, `openrouter`, `github-copilot`), kept apart from `gen_ai.provider.name` |
 | chat | `agentglass.billing.mode` | `api`, `plan`, `metered`, `gateway` or `unknown` (honest-costs), resolved per request: pi/OpenCode by that request's provider, other harnesses by the session's mode; next to `agentglass.usage.cost`, present also when the cost is unknown |
 | chat | `gen_ai.response.id` | the request key when it is a provider message id (Claude `message.id`, OpenCode/Gemini/pi message ids) |
 | invoke_agent | `gen_ai.request.model` | model of the last request in the turn (or subagent piece); omitted when unknown (Kiro) |
@@ -220,6 +223,8 @@ opts in.
 
    - Config `otlp.inputTokens: "inclusive" | "provider"`. Default `inclusive`, the semconv rule for every provider.
    - `provider` emits what the provider's API reports: exclusive for `anthropic`, inclusive for every other provider.
+     The provider is the span's `gen_ai.provider.name` (model first), so a Claude model through a gateway counts as
+     `anthropic` here too: the backend prices it under that name.
      It is meant for backends that compute cost per provider from raw API semantics.
    - The resource attribute `agentglass.usage.input_tokens.semantics` (`inclusive`/`provider`) states the choice in
      every request.

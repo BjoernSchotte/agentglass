@@ -57,6 +57,11 @@ eq("provider semantics", attrs(spans(req([turn("claude", "k#0")], { inputTokens:
   const ps = spans(req([t], {})); const r0 = attrs(ps[0] ?? {}); const c1 = attrs(ps[1] ?? {}); const b4 = attrs(ps[4] ?? {});
   eq("provider: same name on root, chat and tool spans; logged id on the chat span", [r0.get("gen_ai.provider.name"), c1.get("gen_ai.provider.name"), b4.get("gen_ai.provider.name"), c1.get("agentglass.provider.id"), String(r0.has("agentglass.provider.id"))].join(" "),
     "stringValue:\"openai\" stringValue:\"openai\" stringValue:\"openai\" stringValue:\"cliproxyapi\" false");
+  // a model with no known vendor: the logged provider names it on every span of the trace, not only on chat
+  const u = turn("pi", "k#0"); u.spans[1].provider = "ollama"; u.spans[1].provId = "ollama"; u.spans[1].model = "qwen3-coder:30b"; u.spans[0].model = "qwen3-coder:30b";
+  const us = spans(req([u], {}));
+  eq("provider: an unknown vendor's logged provider on root and tool spans too", [attrs(us[0] ?? {}).get("gen_ai.provider.name"), attrs(us[1] ?? {}).get("gen_ai.provider.name"), attrs(us[4] ?? {}).get("gen_ai.provider.name")].join(" "),
+    "stringValue:\"ollama\" stringValue:\"ollama\" stringValue:\"ollama\"");
   const f = turn("fx", "k#0"); f.spans[1].total = true;
   eq("fx: the delta marker", attrs(spans(req([f], {}))[1] ?? {}).get("agentglass.usage.session_delta") ?? "", "boolValue:true");
 }

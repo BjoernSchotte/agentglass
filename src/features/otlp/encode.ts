@@ -56,13 +56,20 @@ function usage(out: Attr[], t: XTurn, sp: XSpan, c: OtlpCfg): void {
   if (sp.rs > 0) out.push(attrI("gen_ai.usage.reasoning.output_tokens", sp.rs));
   if (!(sp.unk > 0 && sp.cost === 0)) out.push(attrD("agentglass.usage.cost", sp.cost)); // unknown cost is omitted, never 0
 }
+// gen_ai.provider.name of a root or tool span: the model's vendor, else what a chat span of that model resolved (the
+// provider its record logged), so a model no vendor rule knows names one provider across the trace
+function spanProv(t: XTurn, model: string): string {
+  const v = providerOf("", model); if (v || !model) return v;
+  for (const x of t.spans) if (x.op === "chat" && x.model === model && x.provider) return x.provider;
+  return "";
+}
 export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] {
   const a: Attr[] = [];
   const root = sp === t.spans[0];
   a.push(attrS("gen_ai.operation.name", sp.op));
   a.push(attrS("gen_ai.conversation.id", t.rootId));
   a.push(attrS("gen_ai.agent.name", sp.agent || agentName(t.h)));
-  const prov = sp.op === "chat" ? sp.provider || providerOf("", sp.model) : providerOf("", sp.op === "invoke_agent" ? sp.model : t.spans[0].model);
+  const prov = sp.op === "chat" ? sp.provider || providerOf("", sp.model) : spanProv(t, sp.op === "invoke_agent" ? sp.model : t.spans[0].model);
   if (prov) a.push(attrS("gen_ai.provider.name", prov));
   if (t.cwd) a.push(attrS("process.working_directory", t.cwd));
   for (const v of vcs) a.push(v);
