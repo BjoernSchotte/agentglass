@@ -125,6 +125,12 @@ eq("likely: too few samples", aw({ now, mtime: th.mtime, busy: true, evs: th.evs
 eq("likely: a tool command runs (approved)", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: th.cpu, cmds: [{ age: 10, name: "sleep" }], subsActive: false, mayGuess: true }), "absent");
 eq("likely: a subagent works", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: th.cpu, cmds: [], subsActive: true, mayGuess: true }), "absent");
 eq("likely: reply with text (idle): the turn_done guess, not this", aw({ now, mtime: th.mtime, busy: false, evs: [ev("user", "go"), ev("assistant", "I will run ls")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "absent");
+// a bare reply (no thoughts at all): the prompt (or a result) is the newest event, the log has an empty reply after it
+eq("likely: bare reply after the prompt", aw({ now, mtime: th.mtime, busy: true, evs: [ev("user", "go")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true, bare: true }), "25 approval dialog likely lv0");
+eq("likely: bare reply after a result", aw({ now, mtime: th.mtime, busy: true, evs: [ev("user", "go"), ev("tool", "list_directory\u0000app"), ev("result", "a")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true, bare: true }), "25 approval dialog likely lv0");
+eq("likely: prompt only, no reply yet (a slow model): nothing", aw({ now, mtime: th.mtime, busy: true, evs: [ev("user", "go")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "absent");
+eq("likely: bare reply in tmux: nothing", aw({ now, mtime: th.mtime, busy: true, evs: [ev("user", "go")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: false, bare: true }), "absent");
+eq("guess: bare reply", String(approvalGuess({ now, mtime: gq.mtime, busy: true, evs: [ev("user", "go")], cpu: gq.cpu, cmds: [], subsActive: false, bare: true }, true)), "true");
 eq("likely: Gemini wrote the call (it ran) since", aw({ now, mtime: now - 1000, busy: true, evs: [ev("user", "go"), ev("thinking", "x"), ev("tool", "run_shell_command\u0000ls"), ev("result", "a.txt")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "absent");
 console.log(bad ? bad + " failed" : "watchdog: all checks passed");
 if (bad) process.exit(1);

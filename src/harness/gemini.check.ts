@@ -154,6 +154,29 @@ for (let k = 0; k <= bytes(FULL); k++) {
   const ms = read(sess(p), 0, bytes(t)).k.filter((k: string) => k.startsWith("meta:")).join(" | ");
   ok("drop counts: hidden messages not counted, a message with calls is", ms === "meta:rewound: 1 message dropped | meta:rewound: 2 messages dropped", ms);
 }
+// a bare reply (no thoughts, text or calls: gemini's approval dialog without thoughts) is the newest message → bareReply,
+// read from the index, never a transcript event; its calls arriving, a note or a new prompt end it
+{
+  let n = 0; let s = sess(DIR + "/bare0.jsonl"); // a fresh file per state: the index follows appends only
+  const u = (id: string): string => "{\"id\":\"" + id + "\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"user\",\"content\":[{\"text\":\"go\"}]}";
+  const bare = (id: string, calls: string): string => "{\"id\":\"" + id + "\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\",\"content\":\"\",\"thoughts\":[]" + calls + "}";
+  const br = gemini.bareReply; const isBare = (): boolean => br ? br(s) : false;
+  const step = (ls: string[]): string[] => { n++; const p = DIR + "/bare" + String(n) + ".jsonl"; s = sess(p); const t = ls.join("\n") + "\n"; write(p, t); const r = src.lines(s, 0, bytes(t)); const evs: Ev[] = []; for (const l of r.lines) { const o = parseJson(l); if (o) gemini.parse(o, evs, s); } return evs.map((e: Ev) => e.kind); };
+  const base = [L[0], u("w1"), "{\"$set\":{\"lastUpdated\":\"" + TS + "1.000Z\"}}"];
+  ok("bare: prompt only: no", (step(base), !isBare()), "yes");
+  const k1 = step(base.concat([bare("g1", "")]));
+  ok("bare: newest message: yes", isBare(), "no");
+  ok("bare: no transcript event", k1.join(",") === "user", k1.join(","));
+  const k2 = step(base.concat([bare("g1", ""), "{\"$set\":{\"lastUpdated\":\"" + TS + "2.000Z\"}}"]));
+  ok("bare: a patch after it: still", isBare() && k2.join(",") === "user", k2.join(","));
+  step(base.concat([bare("g1", ""), bare("g1", ",\"toolCalls\":[" + call("k9", "write_file", "{}") + "]")]));
+  ok("bare: its calls arrived: no", !isBare(), "yes");
+  step(base.concat([bare("g1", ""), "{\"id\":\"i9\",\"timestamp\":\"" + TS + "3.000Z\",\"type\":\"info\",\"content\":\"Request cancelled.\"}"]));
+  ok("bare: cancelled (a note after it): no", !isBare(), "yes");
+  step(base.concat([bare("g1", ""), "{\"$rewindTo\":\"g1\"}"]));
+  ok("bare: rewound away: no", !isBare(), "yes");
+  ok("bare: an unread session: no", !(br ? br(sess(DIR + "/none.jsonl")) : false), "yes");
+}
 { const st = src.stat(sess(P)); ok("stat size", !!st && st.size === bytes(FULL + PART + PART2), JSON.stringify(st)); }
 
 // ── scan / meta / spawnOf / files on a temp ~/.gemini (GEMINI_CLI_HOME, as gemini itself honors it) ──

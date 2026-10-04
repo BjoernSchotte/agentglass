@@ -45,6 +45,7 @@ function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, s
   const asks = !!at && title !== undefined && at(title);
   const o: Obs = { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!h.noApproval };
   o.mayGuess = !!h.hiddenApproval && title === undefined;
+  const br = h.bareReply; o.bare = o.mayGuess && br ? br(s) : false;
   o.guess = approvalGuess(o, o.mayGuess);
   return o;
 }
@@ -146,7 +147,7 @@ H.previewSections.push((s: Sess, w: number) => {
     if (a.acked) continue;
     const r = ruleOf(R.set, a.rule); if (!r) continue;
     if (a.level === 1) {
-      const lk = r.builtin && r.id === "approval" && a.message.endsWith(LIKELY); // Gemini outside tmux, thoughts only (detect.ts thoughtsOnly)
+      const lk = r.builtin && r.id === "approval" && a.message.endsWith(LIKELY); // Gemini outside tmux, a reply without text or calls (detect.ts unlogged)
       const d = r.builtin && r.id === "approval" ? (lk ? "approval? (likely) · " + a.message.slice(0, a.message.length - LIKELY.length) : "approval? · " + a.message)
         : r.builtin && r.id === "waiting" ? "waiting for you · " + a.message + " " + ago(a.since) + " ago" : r.id + " · " + a.message;
       out.push(fg(C.yellow) + B + "◆ " + RST + fg(C.yellow) + d + RST + labelText(a));

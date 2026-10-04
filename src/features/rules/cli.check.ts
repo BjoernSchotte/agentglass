@@ -87,6 +87,12 @@ lt += 1500; eq("likely: Gemini writes (text): resolves", apOf(watchStep(ls, tob(
 lt += 1500; watchStep(ls, tob(lt, 0, true, think), b, lt);
 lt += 1500; eq("likely: fires again", apOf(watchStep(ls, tob(lt, 22, true, think), b, lt)), "fire");
 lt += 1500; eq("likely: Gemini writes another thought: resolves", apOf(watchStep(ls, tob(lt, 0, true, ev("thinking", "still")), b, lt)), "resolve");
+// the same with a bare reply (no thoughts at all): the prompt stays the newest event
+const bs = newSess("gemini", "gm5", "/fx/gm5.json", false); bs.pid = 4848; sessions.set(bs.path, bs);
+const bob = (t: number, silent: number, bare: boolean): Obs => ({ now: t, mtime: t - silent * 1000, busy: true, evs: [ev("user", "go")], cpu: quiet, cmds: [], subsActive: false, asks: false, mayGuess: true, bare });
+lt += 1500; eq("bare: 15 s: nothing", apOf(watchStep(bs, bob(lt, 15, true), b, lt)), "");
+lt += 1500; eq("bare: 21 s: fires", apOf(watchStep(bs, bob(lt, 21, true), b, lt)), "fire");
+lt += 1500; eq("bare: its calls arrive: resolves", apOf(watchStep(bs, { now: lt, mtime: lt, busy: true, evs: [ev("user", "go"), ev("tool", "write_file\u0000a"), ev("result", "ok")], cpu: quiet, cmds: [], subsActive: false, asks: false, mayGuess: true, bare: false }, b, lt)), "resolve");
 const ts2 = newSess("gemini", "gm3", "/fx/gm3.json", false); ts2.pid = 4646; sessions.set(ts2.path, ts2);
 lt += 1500; eq("likely: in tmux (title read): never", apOf(watchStep(ts2, tob(lt, 60, false, think), b, lt)), "");
 // the threshold is the approval rule's: degraded "30s" waits 30 s
