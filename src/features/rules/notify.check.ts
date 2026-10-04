@@ -50,14 +50,32 @@ onTrans(s, ap, { at: 2000000, path: s.path, rule: "approval", from: 1, to: 2, st
 onTrans(s, ap, tr("resolve"), false, false, true, cfg(["sh", counter], ["resolve"]), v, "m", 0);
 onTrans(s, ap, tr("fire"), false, false, true, cfg(["sh", counter], ["resolve"]), v, "m", 0); // fire not listed
 onTrans(s, ap, tr("fire"), false, true, false, cfg(["sh", counter], ["fire"]), v, "m", 0); // --watch without --notify
-// ≤ 4 at once: the fifth is dropped
+// ≤ 4 at once; more wait in a queue (≤ 32, oldest first) and start as slots free; past that they are dropped
 CMD.killMs = 1500; CMD.graceMs = 500;
 const slp = script("sleep", "trap '' TERM; while :; do sleep 0.2; done"); // ignores SIGTERM: SIGKILL ends it
 const c4 = cfg(["sh", slp], ["fire"]);
-const started = CMD.running;
-let drop = "";
-for (let i = started; i < 5; i++) drop = runCommand(c4, j, cmdSubs(ap, v, tr("fire"), s));
-eq("fifth dropped", drop, "4 notify commands running — dropped");
+for (let i = CMD.running; i < 4; i++) runCommand(c4, j, cmdSubs(ap, v, tr("fire"), s));
+eq("4 running", String(CMD.running), "4");
+writeFileSync(dir + "/queue.txt", "");
+const qs = script("q", "echo \"$1\" >> " + dir + "/queue.txt; if [ \"$1\" = 0 ]; then env > " + dir + "/qenv.txt; fi");
+let queued = "";
+for (let i = 0; i < 32; i++) queued += runCommand(cfg(["sh", qs, String(i)], ["fire"]), j, cmdSubs(ap, v, tr("fire"), s));
+eq("32 queued", queued + String(CMD.queue.length), "32");
+eq("33rd dropped", runCommand(cfg(["sh", qs, "x"], ["fire"]), j, cmdSubs(ap, v, tr("fire"), s)), "notify queue full (32 waiting) — dropped");
+onTrans(s, ap, tr("fire"), false, true, true, cfg(["sh", qs, "y"], ["fire"]), v, "m", 0);
+eq("dropped from a transition: a warning", toasts.splice(0).join("|"), "rules: notify queue full (32 waiting) — dropped");
+eq("still 32 queued", String(CMD.queue.length), "32");
+// the desktop notification carries a guess (Gemini outside tmux: "approval?") before the title
+const desks: string[] = []; IO.desk = (t: string, sub: string, body: string): void => { desks.push(body); };
+const wt = rs.rules[0]; const hv = absent(); hv.v = 3; hv.hint = "approval?";
+const gs = newSess("gemini", "n2", "/n/2", false); gs.title = "build the todo app"; applyMeta(gs);
+const wtr = (p: string): Trans => ({ at: 3000000, path: p, rule: "waiting", from: 0, to: 1, state: "fire", v: 3, thr: 0 });
+const ne = process.env.AGENTGLASS_NOTIFY ?? ""; process.env.AGENTGLASS_NOTIFY = "1";
+onTrans(gs, wt, wtr(gs.path), false, false, false, defaultNotify(), hv, "turn finished · approval?", 0);
+const ps = newSess("claude", "n3", "/n/3", false); ps.title = "build the todo app"; applyMeta(ps);
+onTrans(ps, wt, wtr(ps.path), false, false, false, defaultNotify(), v, "turn finished", 0);
+process.env.AGENTGLASS_NOTIFY = ne || "0";
+eq("desktop: hint first, plain without", desks.map((d: string) => d.startsWith("approval? ") ? "hint" : d.indexOf("approval") < 0 ? "plain" : d).join(","), "hint,plain");
 // permission check of the rules file
 const rf = dir + "/rules.json"; writeFileSync(rf, "{}"); chmodSync(rf, 0o664);
 eq("664 unsafe", String(fileSafe(rf)), "false");
@@ -83,8 +101,14 @@ setTimeout(() => {
 // the sleeps are killed after killMs: all slots free again
 setTimeout(() => {
   eq("killed: slots free", String(CMD.running), "0");
+  const ran = readText(dir + "/queue.txt", 0, 4096).split("\n").filter((l: string) => l !== "").map((l: string) => Number(l)).sort((a: number, b: number) => a - b);
+  let want = ""; for (let i = 0; i < 32; i++) want += (i ? "," : "") + String(i);
+  eq("queue drained: every queued command ran once", ran.join(","), want);
+  eq("queue empty", String(CMD.queue.length), "0");
+  const qe = readText(dir + "/qenv.txt", 0, 262144);
+  eq("queued command env: no secrets", String(qe.indexOf("hunter2") < 0 && qe.indexOf("sk-check") < 0 && qe.indexOf("PATH=") >= 0), "true");
   eq("killed in time", String(Date.now() - t0 < 4500), "true");
   run("rm", ["-rf", dir]);
   console.log(bad ? bad + " failed" : "rules notify: all checks passed");
   process.exit(bad ? 1 : 0);
-}, 3000);
+}, 3500);

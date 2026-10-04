@@ -58,6 +58,7 @@ export interface HarnessAdapter {
   liveRegistry?: (alive: (pid: number) => boolean, harnessOfPid: (pid: number) => string) => Live[]; // the harness writes a pid ↔ session registry (harnessOfPid: "" = no agent process)
   noApproval?: boolean; // it never asks before running a tool call (pi): no approval wait is ever guessed for it
   approvalTitle?: (title: string) => boolean; // its terminal title (read from its tmux pane) says it waits for the user to approve a tool call
+  hiddenApproval?: boolean; // it logs a tool call only once it ran: outside tmux its approval dialog looks like a finished turn (detect.ts approvalGuess)
   daemon?: string; // its registry pids are one shared daemon running many sessions: never signalled from here; how the user stops it
 
   // ── steering: args after bin; leave out what the CLI can't do ──

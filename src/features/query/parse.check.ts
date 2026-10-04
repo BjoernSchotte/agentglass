@@ -110,6 +110,18 @@ const CASES: string[][] = [
   ["-x", "text !~ x", "", "0"],
   ["\"-x\"", "text ~ -x", "", "0"],
   ["day.cost > 1 and day.tools >= 3", "day.cost > 1 and day.tools >= 3", "", "0"],
+  // a connector joins two filters: a dangling one is a typo, never silently dropped
+  ["tool is Bash and", "", "\"and\" needs a filter after it", "13"],
+  ["foo AND", "", "\"AND\" needs a filter after it", "4"],
+  ["foo,", "", "\",\" needs a filter after it", "3"],
+  ["and foo", "", "\"and\" needs a filter before it", "0"],
+  ["foo and and bar", "", "\"and\" needs a filter before it", "8"],
+  ["tool is Bash, and cost > 2", "tool is Bash and cost > 2", "", "0"],
+  ["foo, and and bar", "", "\"and\" needs a filter before it", "9"],
+  ["foo and, bar", "", "\",\" needs a filter before it", "7"],
+  ["foo, and", "", "\"and\" needs a filter after it", "5"],
+  ["foo and not", "", "\"not\" needs a filter after it", "8"],
+  ["foo \"and\"", "text ~ foo and text ~ \"and\"", "", "0"],
   ["", "", "", "0"],
 ];
 for (const c of CASES) {

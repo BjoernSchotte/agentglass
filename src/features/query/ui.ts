@@ -145,12 +145,14 @@ function check(text: string, typing: boolean): { cs: Clause[]; err: string } {
   if (typing) for (const c of p.cs) if (c.key === "content" && !contentKnown(c.vals[0] ?? "")) return { cs: [], err: "↵ runs the full-text search" };
   return { cs: p.cs, err: "" };
 }
-// typing "too", "tool" or "tool " is the start of a clause, not a text search: the last valid filter stays until it parses
+// typing "too", "tool" or "tool " is the start of a clause, not a text search, and "an" after a filter the start of
+// "and": the last valid filter stays until it parses
 function startsClause(text: string, cs: Clause[]): boolean {
   const last = cs.length ? cs[cs.length - 1] : null;
   if (!last || last.key !== "text" || last.op !== "~") return false;
   const w = (last.vals.join(" ")).toLowerCase(); const tail = text.trimEnd();
   if (!w || !tail.toLowerCase().endsWith(w) || tail.endsWith("\"")) return false;
+  if (cs.length > 1 && "and".startsWith(w)) return true;
   for (const k of keys().concat(aliases())) if (k.startsWith(w)) return true;
   return false;
 }
