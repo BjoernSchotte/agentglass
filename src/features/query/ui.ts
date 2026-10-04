@@ -140,7 +140,7 @@ export function openFilterInput(tab: string): void {
 function changed(): void { S.sel = 0; buildView(); S.dirty = true; }
 // a typed expression → its clauses, or the error to show; typing never starts a full-text search
 function check(text: string, typing: boolean): { cs: Clause[]; err: string } {
-  const p = parse(text);
+  const p = parse(text); S.inputErrCol = p.err ? p.err.col : -1; // the footer marks it (the caret of the CLI)
   if (p.err) return { cs: [], err: p.err.msg + (p.err.col > 0 ? " (column " + String(p.err.col + 1) + ")" : "") };
   const r = compile(effective(S.pins, p.cs).cs, ctxOf(editTab));
   if (r.err) return { cs: [], err: r.err.msg };
@@ -172,7 +172,7 @@ function onQuery(ev: string, text: string): boolean {
     if (!r.err && !startsClause(text, r.cs)) applyTyped(editTab, r.cs);
     return false;
   }
-  if (ev === "esc") { typedGen++; S.inputErr = ""; setLocal(editTab, before); return false; }
+  if (ev === "esc") { typedGen++; S.inputErr = ""; S.inputErrCol = -1; setLocal(editTab, before); return false; }
   if (ev === "enter") {
     typedGen++;
     const r = check(text, false);
@@ -188,7 +188,7 @@ function onQuery(ev: string, text: string): boolean {
 }
 function onPins(ev: string, text: string): boolean {
   if (ev === "change" && !completing) cyc.cands = [];
-  if (ev === "change") { const p = parse(text); S.inputErr = p.err ? p.err.msg : ""; return false; }
+  if (ev === "change") { const p = parse(text); S.inputErr = p.err ? p.err.msg : ""; S.inputErrCol = p.err ? p.err.col : -1; return false; }
   if (ev === "enter") {
     const e = setPins(text);
     if (e) { S.inputErr = e.msg; return true; }
@@ -277,7 +277,7 @@ const cyc: Cyc = { base: "", cands: [], i: 0, last: "" };
 let completing = false; // a change made by tab itself keeps the cycle; any other edit starts over
 function tabComplete(): void {
   const t: string = S.inputText;
-  if (cyc.cands.length && t === cyc.last) cyc.i = (cyc.i + 1) % cyc.cands.length;
+  if (cyc.cands.length > 1 && t === cyc.last) cyc.i = (cyc.i + 1) % cyc.cands.length; // a unique one: tab goes on to the next word
   else {
     const cands = complete(t, true); if (!cands.length) return;
     const w = words(t); const cur: string = w[w.length - 1] ?? "";

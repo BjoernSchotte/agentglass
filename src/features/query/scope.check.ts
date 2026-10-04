@@ -18,6 +18,9 @@ r = addClause(P("tool is_one_of Bash Edit"), one("tool is_one_of Edit Grep")); e
 r = addClause(P("tool is_not Bash"), one("tool is_not Edit")); eq("not+not", T(r.cs), "tool is_not_one_of Bash Edit"); eq("not+not toast", r.note, "merged: tool is_not_one_of Bash Edit");
 r = addClause(P("tool is Bash"), one("tool is_not Bash")); eq("is vs is_not same value", T(r.cs), "tool is_not Bash"); eq("replace toast", r.note, "replaced: tool is_not Bash");
 r = addClause(P("tool is_not Bash"), one("tool is Bash")); eq("is_not vs is same value", T(r.cs), "tool is Bash");
+r = addClause(P("harness is_one_of pi opencode gemini"), one("harness is_not gemini")); eq("one_of minus is_not narrows", T(r.cs), "harness is_one_of pi opencode"); eq("narrow toast", r.note, "narrowed: harness is_one_of pi opencode");
+r = addClause(P("harness is_one_of pi gemini"), one("harness is_not_one_of gemini pi")); eq("one_of minus all of it: newer replaces", T(r.cs), "harness is_not_one_of gemini pi");
+r = addClause(P("harness is_one_of pi gemini"), one("harness is_not Gemini")); eq("narrow ignores case", T(r.cs), "harness is pi");
 r = addClause(P("tool is Bash"), one("tool is_not Edit")); eq("is vs is_not other value: AND", T(r.cs), "tool is Bash and tool is_not Edit");
 r = addClause(P("cost > 2"), one("cost > 5")); eq("same direction", T(r.cs), "cost > 5"); eq("same dir toast", r.note, "replaced: cost > 5");
 r = addClause(P("cost > 2"), one("cost >= 1")); eq("same direction >=", T(r.cs), "cost >= 1");

@@ -38,6 +38,12 @@ export function addClause(scope: Clause[], c: Clause): { cs: Clause[]; note: str
       cs[i] = m; return { cs, note: "merged: " + shownClause(m) };
     }
     if (on && cn && canUnion(c.key)) { const vs = union(o.vals, c.vals); const m = withVals(o, vs.length > 1 ? "is_not_one_of" : "is_not", vs); cs[i] = m; return { cs, note: "merged: " + shownClause(m) }; }
+    // is_one_of a b c minus is_not a → is_one_of b c: an exclude narrows, it never drops the rest of the set (a pinned
+    // or triage scope "harness is_one_of pi opencode gemini" − gemini would else widen to every other harness)
+    if (oe && cn && canUnion(c.key)) {
+      const lc = lowerAll(c.vals); const rest: string[] = []; for (const v of o.vals) if (lc.indexOf(v.toLowerCase()) < 0) rest.push(v);
+      if (rest.length && rest.length < o.vals.length) { const m = withVals(o, rest.length > 1 ? "is_one_of" : "is", rest); cs[i] = m; return { cs, note: "narrowed: " + shownClause(m) }; }
+    }
     if (((oe && cn) || (on && ce)) && overlap(o.vals, c.vals)) { cs[i] = c; return { cs, note: "replaced: " + shownClause(c) }; }
     if (o.neg === c.neg && ((UP.indexOf(o.op) >= 0 && UP.indexOf(c.op) >= 0) || (DOWN.indexOf(o.op) >= 0 && DOWN.indexOf(c.op) >= 0))) { cs[i] = c; return { cs, note: "replaced: " + shownClause(c) }; }
   }
