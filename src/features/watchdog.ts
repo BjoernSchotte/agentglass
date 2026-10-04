@@ -8,7 +8,7 @@ import { sessions, loadTail, working, current, sessAt, titleOf } from "../model/
 import { allProcs, hist, rootOf, refreshProcs, paneTitles, ttyOf } from "../model/procs.ts";
 import { harnessOf } from "../harness/index.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, alarmOf, stuckOf } from "./detect.ts";
+import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf } from "./detect.ts";
 import { accOf, complete as ledgerComplete } from "./usage/ledger.ts";
 import type { Call } from "./usage/facts.ts";
 import { sessMatches } from "./query/eval.ts";
@@ -17,7 +17,7 @@ import { metricOf } from "./rules/metrics.ts";
 import { type Trans, type Alert, LOG, stepSession, unwatch, prune, ackLook, flags, firing, stateOf, watching, snapshot, render, severityOf } from "./rules/engine.ts";
 import { onTrans, forget } from "./rules/notify.ts";
 import { R, rules } from "./rules/state.ts";
-export { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, alarmOf, stuckOf };
+export { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf };
 
 // ── live state ────────────────────────────────────────────────────────────────
 // busy/prompt: last look; turnAt: when this run saw the last turn finish (0 = none, or busy since)
@@ -36,9 +36,12 @@ function kidsMap(): Map<number, Proc[]> {
 function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, string>): Obs {
   const r = rootOf(s.pid); const rp = r ? r.pid : s.pid;
   let subs = false; for (const c of s.subs) if (Date.now() - c.mtime < 45000) subs = true;
-  const at = harnessOf(s.h).approvalTitle; const tty = at ? ttyOf(s.pid) : "";
-  const asks = !!at && tty !== "" && at(titles().get(tty) ?? "");
-  return { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!harnessOf(s.h).noApproval };
+  const h = harnessOf(s.h); const at = h.approvalTitle; const tty = at ? ttyOf(s.pid) : "";
+  const title = at && tty !== "" ? titles().get(tty) : undefined; // undefined: not in a tmux pane
+  const asks = !!at && title !== undefined && at(title);
+  const o: Obs = { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!h.noApproval };
+  o.guess = approvalGuess(o, !!h.hiddenApproval && title === undefined);
+  return o;
 }
 // one look at every live session per alarm tick: the process tree and (lazily) the tmux pane titles
 export interface Looker { kids: Map<number, Proc[]>; titles: () => Map<string, string> }
@@ -148,19 +151,35 @@ H.headerWidgets.push((w: number) => {
   for (const s of sessions.values()) { if (s.stuck) k++; else if (s.attention) a++; }
   return (a ? fg(C.yellow) + B + "◆ " + a + RST : "") + (a && k ? "  " : "") + (k ? fg(C.red) + B + "⚠ " + k + RST : "");
 });
-// ! → next row needing attention, then stuck ones (wraps)
+// ! cycle: every row with an unacked alert, critical (⚠) first, view order within a severity. sev[i]: 2 ⚠, 1 ◆, 0 none;
+// selSev: where the cursor stands in that order (0 = on no item: start at the first) → the next row, wrapping; -1 = none
+export function nextAlarm(sev: number[], sel: number, selSev: number): number {
+  let first = -1; let next = -1; let best = 0; // keys (3 − severity) · n + row: smaller = earlier in the cycle
+  const n = sev.length; const cur = selSev > 0 ? (3 - selSev) * n + sel : -1;
+  for (let i = 0; i < n; i++) {
+    const v = sev[i]; if (v <= 0) continue;
+    const key = (3 - v) * n + i;
+    if (first < 0 || key < (3 - (sev[first] ?? 0)) * n + first) first = i;
+    if (cur >= 0 && key > cur && (next < 0 || key < best)) { next = i; best = key; }
+  }
+  return next >= 0 ? next : first;
+}
+function sevOf(s: Sess | null): number { return !s ? 0 : s.stuck ? 2 : s.attention ? 1 : 0; }
+// the row ! last jumped to, and its severity then: looking at it acks a ◆ (ack look), and the cycle goes on after it
+let jumpPath = ""; let jumpSev = 0;
 H.keys.push((mode: string, k: string) => {
   if (k !== "!" || mode !== "list" || S.tab !== 0) return false;
-  const n = S.view.length;
-  for (const pass of [0, 1]) for (let d = 1; d <= n; d++) {
-    const i = (S.sel + d) % n; const s = sessAt(i);
-    if (s && (pass === 0 ? s.attention && !s.stuck : s.stuck !== "")) { S.sel = i; return true; }
-  }
-  say("info", "no session needs attention");
+  const sev: number[] = []; for (let i = 0; i < S.view.length; i++) sev.push(sevOf(sessAt(i)));
+  const cur = sessAt(S.sel); let cs = sevOf(cur);
+  if (cur && cur.path === jumpPath && jumpSev > cs) cs = jumpSev;
+  const i = nextAlarm(sev, S.sel, cs);
+  if (i < 0) { say("info", "no session needs attention"); return true; }
+  const s = sessAt(i);
+  S.sel = i; jumpPath = s ? s.path : ""; jumpSev = sev[i] ?? 0;
   return true;
 });
 H.helpSections.push({ name: "watchdog", ctx: "sessions", keys: [
-  ["!", "jump to next ◆ waiting, then ⚠ stuck"],
+  ["!", "cycle ⚠ stuck, then ◆ waiting (unacked)"],
   ["◆", "waiting for you: turn done / approval?"], ["", "bell + notification (AGENTGLASS_NOTIFY=0)"],
   ["⚠", "stuck: loop · stalled · long cmd · spin"],
   ["rules", "~/.agentglass/rules.json: agentglass rules check"] ] });

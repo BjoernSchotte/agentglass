@@ -335,6 +335,7 @@ function usage(a: Acc, l: string): void {
 export const gemini: HarnessAdapter = {
   // "✋  Action Required (<dir>)" while the tool-approval dialog is open: the log has the reply text but not the call yet
   approvalTitle: (t: string) => t.indexOf("✋") >= 0 || t.indexOf("Action Required") >= 0,
+  hiddenApproval: true,
   id: "gemini", label: "Gemini", glyph: "✦", mark: "✦", color: () => C.gemini,
   bin: "gemini", procs: ["gemini"],
   roots, scan, meta, refresh: meta, source, headBytes: 65536,

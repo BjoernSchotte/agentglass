@@ -78,6 +78,13 @@ eq("stays acked while firing", flags(BI, W)[0] ?? "", "");
 eq("a new turn re-fires", states(stepSession(BI, W, vals(BI, idle(now + 4500), now + 4000), now + 4500)), "waiting:resolve,waiting:fire");
 eq("re-fire shows", flags(BI, W)[0] ?? "", "1");
 eq("busy resolves", states(stepSession(BI, W, vals(BI, busy(now + 5000), 0), now + 5000)), "waiting:resolve");
+// a guessed approval (Gemini outside tmux) is no new alert: the same firing turn says "turn finished · approval?"
+const G = "/w/guess"; const gi = idle(now); gi.guess = true;
+stepSession(BI, G, vals(BI, idle(now), now), now);
+eq("guess: no new transition", states(stepSession(BI, G, vals(BI, gi, now), now + 1500)), "");
+eq("guess: message", firing(BI, newSess("gemini", "g", G, false)).map((a) => a.message).join(","), "turn finished · approval?");
+stepSession(BI, G, vals(BI, idle(now + 3000), now), now + 3000);
+eq("guess gone: plain again", firing(BI, newSess("gemini", "g", G, false)).map((a) => a.message).join(","), "turn finished");
 eq("idle again fires", states(stepSession(BI, W, vals(BI, idle(now + 6000), now + 6000), now + 6000)), "waiting:fire");
 
 // ── waiting degraded 5m: rings at the threshold, not at the transition ──

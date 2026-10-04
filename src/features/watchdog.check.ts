@@ -5,7 +5,7 @@ import { newSess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
 import { S } from "../state.ts";
 import { H } from "../hooks.ts";
-import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, stuckOf, alarmOf } from "./watchdog.ts";
+import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, stuckOf, alarmOf, approvalGuess, nextAlarm } from "./watchdog.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -76,5 +76,26 @@ fs.evs = [ev("assistant", "ok"), ev("meta", "turn complete")]; // the prompt scr
 tick(); eq("prompt out of the window: no alarm", String(fs.attention), "false");
 fs.evs = [ev("user", "go"), ev("meta", "turn started"), call, call, call];
 tick(); eq("loop flagged", fs.stuck, "loop");
+// ! cycles every unacked attention row, critical (⚠) before degraded (◆), view order within one severity; a ◆ that never
+// clears (a cost rule without ack) no longer hides the ⚠ rows behind it
+const sev = [0, 1, 0, 2, 1, 0, 2];
+eq("! from a plain row: the first critical", String(nextAlarm(sev, 0, 0)), "3");
+eq("! critical → next critical", String(nextAlarm(sev, 3, 2)), "6");
+eq("! last critical → first degraded", String(nextAlarm(sev, 6, 2)), "1");
+eq("! degraded → next degraded", String(nextAlarm(sev, 1, 1)), "4");
+eq("! last degraded wraps to the first critical", String(nextAlarm(sev, 4, 1)), "3");
+eq("! a row acked since the jump keeps its place", String(nextAlarm([0, 0, 0, 2, 1, 0, 2], 1, 1)), "4");
+eq("! only one item, on it: stays", String(nextAlarm([0, 1, 0], 1, 1)), "1");
+eq("! none", String(nextAlarm([0, 0, 0], 1, 0)), "-1");
+eq("! empty view", String(nextAlarm([], 0, 0)), "-1");
+// Gemini outside tmux: no title to read; idle reply text next to a call it has not logged yet may be an approval dialog
+const gq: Obs = { now, mtime: now - 4000, busy: false, evs: [ev("user", "go"), ev("assistant", "I will create index.html")], cpu: [5, 0.4, 0.3], cmds: [], subsActive: false };
+eq("guess: text, quiet 3 s", String(approvalGuess(gq, true)), "true");
+eq("guess: harness without that shape (claude) or a title was read", String(approvalGuess(gq, false)), "false");
+eq("guess: cpu busy", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: gq.evs, cpu: [0.3, 3], cmds: [], subsActive: false }, true)), "false");
+eq("guess: too few samples", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: gq.evs, cpu: [0.3], cmds: [], subsActive: false }, true)), "false");
+eq("guess: busy", String(approvalGuess({ now, mtime: gq.mtime, busy: true, evs: gq.evs, cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
+eq("guess: ends with an error note", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: [ev("assistant", "x"), ev("meta", "[error] quota")], cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
+eq("guess: the title already tells", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: gq.evs, cpu: gq.cpu, cmds: [], subsActive: false, asks: true }, true)), "false");
 console.log(bad ? bad + " failed" : "watchdog: all checks passed");
 if (bad) process.exit(1);

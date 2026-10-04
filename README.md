@@ -61,8 +61,9 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   calls and latest errors — `↵` on one opens its session at that call.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
-  Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux
-  (elsewhere it shows as a finished turn).
+  Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux.
+  Elsewhere there is no title to read, so it shows as a finished turn; when the reply ends in text and the agent is quiet
+  (< 2 % CPU for 3 s) the alert says `turn finished · approval?` — a guess: a real finished turn looks the same.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,
@@ -278,7 +279,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `P` (transcript) | replay the open transcript |
 | `c` | call graph (flame chart ⇄ call tree with `Tab`) |
 | `V` | git view: the session's commits, PRs/MRs, issues (see [Git linkage](#git-linkage)) |
-| `!` | jump to the next agent waiting for you |
+| `!` | cycle the agents needing you: stuck `⚠` first, then waiting `◆` (acknowledged ones skipped) |
 | `T` | cycle themes |
 | `Tab` `1` `2` `3` `4` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) ⇄ Repos |
 | `B` | in Stats: budget state and the config path |
@@ -365,7 +366,7 @@ model ~ opus and tool is Bash           tool is Bash and status is error     not
 harness is pi, day >= -7d               duration > 30s                       content ~ "npm test"
 ```
 
-- `key op value`; terms are ANDed (`and`, `,` or just a blank). Operators: `is` `=` `is_not` `!=` `is_one_of`
+- `key op value`; terms are ANDed (`and`, `,` or just a blank; a dangling `and` / `,` is an error). Operators: `is` `=` `is_not` `!=` `is_one_of`
   `is_not_one_of` `~` (contains) `!~` `>` `>=` `<` `<=`. `not` / `-` negates. Bare words search title, path, id,
   harness and branch, as `/` always did. OR exists only as `is_one_of`; no parentheses.
 - Values: `$0.50`, `40k`, `1.5M`, `100KB`, `500ms`, `30s`, `2m`, `1h`, `3d`, `20%`, `today`, `yesterday`, `-7d`,
@@ -606,7 +607,8 @@ no shell, placeholders are substituted per argument, `$(…)` stays literal. Std
 `AGENTGLASS_RULE`, `_SEVERITY`, `_STATE`, `_SESSION`, `_HARNESS`, `_VALUE` plus only `PATH`, `HOME`, `USER`, locale,
 `TZ`, `TMPDIR`, `TERM`, the desktop bus/display, `XDG_*` dirs and proxy settings — never the rest of agentglass's
 environment (API keys stay out; a script reads its own secrets). It gets SIGTERM after 10 s and SIGKILL 2 s later; at
-most 4 run at once (more are dropped with a warning). It runs only when `rules.json` is yours and not group- or world-writable
+most 4 run at once; more wait in a queue (up to 32, oldest first) and start as slots free, past that they are dropped
+with a warning. It runs only when `rules.json` is yours and not group- or world-writable
 (`chmod 600`; a chmod is picked up like an edit), and in `--watch` only with `--notify`. `--redact` fakes titles and projects there too.
 
 ## Palette and links

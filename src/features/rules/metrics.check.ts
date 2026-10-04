@@ -46,6 +46,10 @@ const wt = rule('{"id":"w","metric":"turn_done","degraded":0}');
 eq("turn_done idle", v(procMetric(wt, obs(0, false, [], []), now - 5000)), "5");
 eq("turn_done busy", v(procMetric(wt, obs(0, true, [], []), now - 5000)), "absent");
 eq("turn_done no transition", v(procMetric(wt, obs(0, false, [], []), 0)), "absent");
+// the guessed approval (Gemini outside tmux) rides on the finished turn as a hint, marked with "?"
+const gObs = obs(0, false, [], []); gObs.guess = true;
+eq("turn_done hint", procMetric(wt, gObs, now - 5000).hint + " " + v(procMetric(wt, gObs, now - 5000)), "approval? 5");
+eq("turn_done no hint", procMetric(wt, obs(0, false, [], []), now - 5000).hint, "");
 eq("params override", v(procMetric(rule('{"id":"s","metric":"stalled","critical":"1m","params":{"cpu_below":5}}'), obs(100, true, [], flat(7, 3)), 0)), "100");
 
 // session metrics
