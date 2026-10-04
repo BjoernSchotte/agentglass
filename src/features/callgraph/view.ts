@@ -57,6 +57,11 @@ function rebuild(): void {
   if (G.sel < 0) G.sel = G.sum.longest >= 0 ? G.sum.longest : G.g.spans.length ? 0 : -1;
   if (G.fitted) fitAll();
 }
+// the selected span's session, its events and the event index (related events' r); null = nothing selected
+export function graphAnchor(): { s: Sess; evs: Ev[]; i: number } | null {
+  const sp = spanAt(G.sel); if (!sp || sp.ev < 0) return null;
+  const t = tvAt(sp.src); return t && sp.ev < t.evs.length ? { s: t.s, evs: t.evs, i: sp.ev } : null;
+}
 // the call graph of a session (the c key; repo-view's project detail); esc returns to where it was opened
 export function openGraph(s: Sess): void { open(s); }
 function open(s: Sess): void {
@@ -355,7 +360,7 @@ H.keys.push((mode: string, k: string): boolean => {
     return true;
   }
   if (mode !== "view" || S.fview !== NAME) return false;
-  if (k === "?") return false;
+  if (k === "?" || k === "r") return false; // r: related events around the selected span (features/related)
   if (k === "esc" || k === "q" || k === "backspace") { back(); return true; }
   if (k === "tab") { G.tab = 1 - G.tab; return true; }
   if (G.tab === 1) {

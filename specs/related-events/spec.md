@@ -157,8 +157,9 @@ For each file `(top, rel)`, take the `write` events in the whole loaded range, b
 
 ### 7. CLI
 `agentglass --json --related <session-id-prefix> [--event <event id> | --at <iso>] [--minutes N]` prints:
-`{anchor:{session, harness, t, kind, text}, project:{key, label}, from, to, sessions:[…], events:[{t, session, harness, title, kind, tool, text, files:[rel], err, self, conflict:{kind:"conflict"|"overlap"|"clobber", with:[session]}|null}]}`.
-An ambiguous or unknown prefix exits 2 with the candidates.
+`{anchor:{session, harness, t, kind, text}, project:{key, label}, from, to, more, capped, sessions:[…], events:[{t, session, harness, title, kind, tool, text, files:[rel], err, self, conflict:{kind:"conflict"|"overlap"|"clobber", with:[session]}|null}]}`.
+An unknown prefix or event exits 3, an ambiguous prefix exits 4 with the candidates, a bad option 2 (the shared
+exit-code table of cli-agent-mode, `EXIT_CODES` in `src/features/clihelp.ts`).
 
 ### 8. Privacy
 Everything is local. Events go through `parseEvents()`, so `--redact` rewrites content through the existing
@@ -202,4 +203,8 @@ rebuilt on demand.
    section references instead of decision numbers where sections are meant (Today, Interactions).
 
 ## Open questions (to verify during implementation)
-1. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (section 4, uncertain).
+1. Codex, OpenCode, Gemini, Kiro and fx approval records in the logs (section 4, uncertain). **Resolved in review
+   (from the harnesses' sources and a live Gemini denial):** Codex `exec command|patch rejected by user`; OpenCode
+   `[error] The user rejected permission…` / `…has specified a rule which prevents…`; Gemini `[cancelled] [Operation
+   Cancelled] Reason: User denied execution.`; pi (no approvals; an extension's default block) `[error] Tool execution was
+   blocked`. Kiro and fx: none (`denied()` in `related/model.ts`).

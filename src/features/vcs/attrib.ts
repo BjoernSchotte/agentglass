@@ -15,7 +15,7 @@ import { L } from "../usage/record.ts";
 import type { VRef } from "../usage/vcs.ts";
 import { livePid } from "../query/eval.ts";
 import { identOf } from "../query/project.ts";
-import { type RefEv, readReflog, reflogStamp, isNew, worktreeDirs } from "./reflog.ts";
+import { type RefEv, readReflog, reflogStamp, isNew, worktreeGitdirs } from "./reflog.ts";
 
 // pad = git.tailPadMin (minutes after the last activity that still belong to the session: agents commit after a long test run);
 // spawn = git spawns allowed in the TUI; cli = allowed in a CLI run (--json --git only); gate = at most one per 500 ms (TUI);
@@ -222,7 +222,7 @@ export function allInfo(): Map<string, GitInfo> {
   for (const x of sessions.values()) {
     if (!ledger.has(x.path)) continue; const i = sessIn(x, now); if (!i) continue;
     ss.push(i); dirs.add(i.gitdir);
-    if (i.common && !peers.has(i.common)) { const ds = worktreeDirs(i.common); peers.set(i.common, ds); for (const d of ds) dirs.add(d); }
+    if (i.common && !peers.has(i.common)) { const ds = worktreeGitdirs(i.common); peers.set(i.common, ds); for (const d of ds) dirs.add(d); }
   }
   const logs = new Map<string, RefEv[]>();
   for (const d of dirs) { const st = reflogStamp(d); stamps += st + ","; if (st) logs.set(d, readReflog(d)); }

@@ -88,7 +88,7 @@ export function reflogStamp(gitdir: string): string {
   try { const st = statSync(join(gitdir, "logs", "HEAD")); return String(st.size) + ":" + String(st.mtimeMs); } catch (e) { return ""; }
 }
 // the gitdirs of every worktree of a repo: the common dir (the main worktree's) and <common>/worktrees/<name>
-export function worktreeDirs(common: string): string[] {
+export function worktreeGitdirs(common: string): string[] {
   if (!common) return [];
   const out = [common];
   for (const n of listDir(join(common, "worktrees")).sort()) out.push(join(common, "worktrees", n));
@@ -97,7 +97,7 @@ export function worktreeDirs(common: string): string[] {
 // the new-work shas of all worktrees' reflogs of a repo (enrichment: missing vs elsewhere)
 export function repoShas(gitdir: string, common: string): Set<string> {
   const out = new Set<string>();
-  const ds = worktreeDirs(common); if (ds.indexOf(gitdir) < 0) ds.push(gitdir);
+  const ds = worktreeGitdirs(common); if (ds.indexOf(gitdir) < 0) ds.push(gitdir);
   for (const d of ds) for (const e of readReflog(d)) out.add(e.sha);
   return out;
 }
