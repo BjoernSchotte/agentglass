@@ -18,14 +18,15 @@ import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCall
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
 // Runs that never read call rows (`cost`, `sessions`, `session`, plain --json / --watch) read a session's calls file only
-// right before that session grows (ledger.ts LAZY), not all of them up front: the rows they save stay whole. A --filter
-// or --pinned may need rows; `errors` and `triage` read them (every failed call within their retention).
+// right before that session grows (ledger.ts LAZY), not all of them up front: the rows they save stay whole. `errors` and
+// `triage` read the rows of the sessions in their window only (rowsOf). A --filter or --pinned may need every row.
 const GLOBAL = ["--agent", "--no-agent", "--redact"]; // flags of any command (main.ts moves them last)
 const ARGV = process.argv.slice(2).filter((a: string) => GLOBAL.indexOf(a) < 0);
 function lazyRows(): boolean {
   const filtered = ARGV.indexOf("--filter") >= 0 || ARGV.indexOf("--pinned") >= 0;
   if (ARGV[0] === "cost" || ARGV[0] === "sessions" || ARGV[0] === "session") return !filtered;
-  if (ARGV[0] === "triage") return false; // ranks call rows
+  if (ARGV[0] === "triage") return true; // its scope is cheap clauses: every session it ranks goes through rowsOf
+  if (ARGV[0] === "errors") return !filtered;
   const oneShot = ["--json", "--watch"].some((x: string) => ARGV.indexOf(x) >= 0);
   if (!oneShot || filtered) return false;
   // --json alerts / --watch alert lines of a rule on call rows (tool_calls, tool_errors, tool_error_rate)

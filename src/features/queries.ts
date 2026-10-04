@@ -7,7 +7,7 @@ import { H, complete, display, realCwd, screenOut } from "../hooks.ts";
 import { S } from "../state.ts";
 import { sessions, loadHead, loadTail, subActive } from "../model/sessions.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
-import { accOf, ledger } from "./usage/ledger.ts";
+import { accOf, ledger, rowsOf } from "./usage/ledger.ts";
 import { type Acc, modelUses, isoMs, dayKey, heavy } from "./usage/record.ts";
 import { type Call, ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
 import { callCutoff } from "./usage/callcache.ts";
@@ -22,6 +22,7 @@ import { loopRuns } from "./detect.ts";
 import { scrubText } from "./redact.ts";
 import { REDACT } from "./redact-on.ts";
 import { jsonSess, discover, JSON_FIELDS } from "./cli.ts";
+import { peers } from "./vcs/json.ts";
 import { type CmdRec, type OptRec, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 import { type Scope, agentHost, agentScope, visible, cliError, realDir } from "./agentenv.ts";
@@ -211,7 +212,7 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
   for (const s of ss) {
     if (cf.needsHead && !s.headDone) loadHead(s);
     if (!sessMatches(cf.f, s)) continue;
-    complete(s); fam.add(s.path);
+    rowsOf(s); complete(s); fam.add(s.path);
   }
   const items: ErrItem[] = []; const srcs: string[] = [];
   const cut = ROWS.on ? Math.max(callCutoff(), sinceMs) : Number.MAX_SAFE_INTEGER;
@@ -388,7 +389,9 @@ function list(args: string[]): void {
   const ss = cliSelect(cf, cands);
   ss.sort((a, b) => b.mtime - a.mtime);
   const rows: Obj[] = [];
-  for (const s of o.limit > 0 ? ss.slice(0, o.limit) : ss) { loadHead(s); loadTail(s, true); complete(s); const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = repoShown(s); rows.push(r); }
+  const sel = o.limit > 0 ? ss.slice(0, o.limit) : ss;
+  for (const s of sel) { loadHead(s); loadTail(s, true); complete(s); peers(s); } // all indexed first: the git attribution is built once (cli.ts snapshot)
+  for (const s of sel) { const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = repoShown(s); rows.push(r); }
   out(formatRows(rows, o.f, false, LIST_COLS, SESS_FIELDS, false));
 }
 function errors(args: string[]): void {

@@ -51,6 +51,9 @@ eq "cost calls offset" "$(off "$c"/calls/*.json)" "$size"
 e=$(run errors --format json --since 1d)
 echo "$e" | grep -q 'npm test' || { echo "FAIL errors lost the cached row"; echo "$e"; fail=1; }
 echo "$e" | grep -q 'make' || { echo "FAIL errors lacks the new row"; echo "$e"; fail=1; }
+# triage too reads the cached rows of the sessions in its period
+tr=$(run triage --preset errors --days 1 --json)
+echo "$tr" | grep -q '"selection":{"expr":"status is error","n":2}' || { echo "FAIL triage over cached rows"; echo "$tr"; fail=1; }
 
 # nothing new to index (and the head/tail memos of this log already kept): the cache is not rewritten
 inode() { ls -i "$1" | awk '{print $1}'; } # a save renames a new file into place

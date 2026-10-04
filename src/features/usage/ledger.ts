@@ -19,6 +19,11 @@ const BUDGET = 4194304; const CHUNK = 1048576; const SLICE_MS = 100;
 // the session grows, so its rows stay whole when it is saved; false = none or stale, the session is indexed from the start
 export const unread = new Set<string>();
 export const LAZY = { rows: (path: string, a: Acc): boolean => false };
+// a reader of call rows in such a run (errors, triage: only the sessions of their window): this session's rows, now
+export function rowsOf(s: Sess): void {
+  const a = ledger.get(s.path); if (!a || !unread.has(s.path)) return;
+  unread.delete(s.path); if (!LAZY.rows(s.path, a)) ledger.delete(s.path); // stale: accOf starts it over
+}
 export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);
   if (a && unread.has(s.path) && a.off < s.size) { unread.delete(s.path); if (!LAZY.rows(s.path, a)) a = undefined; }

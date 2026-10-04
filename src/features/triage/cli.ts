@@ -11,6 +11,7 @@ import { C, RST, fg } from "../../ui/theme.ts";
 import { gauge } from "../../ui/screen.ts";
 import { discover } from "../cli.ts";
 import { startOfDay } from "../usage/record.ts";
+import { rowsOf } from "../usage/ledger.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, quoteVal } from "../query/parse.ts";
 import { projectClause } from "../query/project.ts";
@@ -147,7 +148,7 @@ function triage(args: string[]): void {
     if (s.mtime < from) continue;
     if (cf.needsHead && !s.headDone) loadHead(s);
     if (!sessMatches(cf.cheap, s)) continue;
-    loadHead(s); complete(s);
+    loadHead(s); rowsOf(s); complete(s);
   }
   const res = runTriage(r);
   const rows = res.guard ? [] : rank(res.rows, false, 3, triageCfg().minSupport, "").slice(0, o.limit);
