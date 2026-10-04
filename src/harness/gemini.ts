@@ -13,6 +13,7 @@ import { price } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
 import { toolArg, isNoise, prompts } from "./common.ts";
+import { sawAgent } from "../hooks.ts";
 
 // ── normalizing source ──
 // Gemini upserts: a changed message is re-appended whole under the same id (tokens, then its completed tool calls),
@@ -280,6 +281,8 @@ function shellFail(out: string): Fail {
   return { tag, codes };
 }
 // invoke_agent, list_directory, update_topic, activate_skill name their subject outside the common keys
+// a call that ran a subagent (agentId, set when it completes) names it: invoke_agent {agent_name} or a tool named after it
+function spawned(tc: Obj, name: string, a: Obj | null): void { if (str(tc["agentId"])) sawAgent(name === "invoke_agent" ? (a ? str(a["agent_name"]) : "") : name); }
 function callArg(name: string, a: Obj | null): string { const d = a ? str(a["agent_name"]) || str(a["dir_path"]) || str(a["objective"]) || str(a["title"]) || str(a["name"]) : ""; return d ? d : toolArg(name, a, ""); }
 // does this message (version) become a transcript event? (what parse below emits)
 function visible(m: Obj): boolean {
@@ -312,6 +315,7 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   for (const v of arr(o["toolCalls"])) {
     const tc = obj(v); if (!tc) continue;
     const n = str(tc["name"]) || "tool"; const id = str(tc["id"]); const a = obj(tc["args"]);
+    spawned(tc, n, a);
     ev(out, "tool", n + "\u0000" + callArg(n, a), ts, id, a ? JSON.stringify(a) : "");
     const f = failOf(tc);
     ev(out, "result", (f.tag ? "[" + f.tag + "] " : "") + resultText(tc), str(tc["timestamp"]) || ts, id, "");
@@ -359,6 +363,7 @@ function usage(a: Acc, l: string): void {
   for (const v of arr(o["toolCalls"])) {
     const c = obj(v); if (!c) continue;
     const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
+    spawned(c, name, args);
     const st = tool(a, d, name, md || a.model, MQ_MSG);
     if (name === "activate_skill" && args) skill(d, "model", str(args["name"]));
     pend(a, d, st, name, id, t0, iso, callArg(name, args), name === "run_shell_command" && args ? [str(args["command"])] : []);

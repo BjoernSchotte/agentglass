@@ -4,7 +4,7 @@
 // expression with its caret, a missing argument, an id prefix under 6 characters, A = B), 3 an unknown session,
 // 4 an ambiguous id prefix (the candidates on stderr).
 import { writeSync } from "node:fs";
-import { H, complete, screenOut } from "../../hooks.ts";
+import { H, complete, screenOut, display } from "../../hooks.ts";
 import { S } from "../../state.ts";
 import { sessions, loadHead } from "../../model/sessions.ts";
 import type { Obj } from "../../util/json.ts";
@@ -116,7 +116,7 @@ function toJson(c: Cmp): Obj {
   const tools: Obj[] = [];
   for (const r of toolRows(c, all).rows) {
     if (r.server) continue;
-    tools.push({ tool: r.kid ? r.key : r.label, a: { n: r.nA, err: r.errA, p50: orNull(r.p50A), p95: orNull(r.p95A) }, b: { n: r.nB, err: r.errB, p50: orNull(r.p50B), p95: orNull(r.p95B) }, shareDiff: r6(r.shB - r.shA), chi2: r.chi2 < 0 ? null : Math.round(r.chi2 * 10) / 10 });
+    tools.push({ tool: display("tool", r.kid ? r.key : r.label, null), a: { n: r.nA, err: r.errA, p50: orNull(r.p50A), p95: orNull(r.p95A) }, b: { n: r.nB, err: r.errB, p50: orNull(r.p50B), p95: orNull(r.p95B) }, shareDiff: r6(r.shB - r.shA), chi2: r.chi2 < 0 ? null : Math.round(r.chi2 * 10) / 10 });
   }
   const programs: Obj[] = []; for (const r of cntRows(c, "prog")) programs.push({ program: shown("program", r.key), a: { n: r.nA, err: r.errA }, b: { n: r.nB, err: r.errB } });
   const fl = fileLists(c); const names = (xs: { shown: string }[]): string[] => xs.map((f: { shown: string }): string => f.shown);

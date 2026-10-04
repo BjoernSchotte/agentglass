@@ -315,7 +315,7 @@ function renderDetail(): void {
   const progs = worstProgs(r, 3); const tRows = Math.max(0, hT - 2 - (progs && hT - 2 > ts.length ? 1 : 0));
   listIn(2, lw + 1, y0 + hF + 1, fw, tRows, ts.length, (k: number, on: boolean): string => {
     const e = ts[k]; if (!e) return ""; const b = on ? bg(C.sel) : "";
-    return (on ? fg(C.text) + CSI + "1m" : fg(C.sub)) + fit(e[0], Math.max(6, fw - 2 - 7 - 7)) + RST + b + fg(C.text) + rj(grp(e[1].n), 7) + RST + b + errCell(e[1].err, e[1].n, 7);
+    return (on ? fg(C.text) + CSI + "1m" : fg(C.sub)) + fit(display("tool", e[0], null), Math.max(6, fw - 2 - 7 - 7)) + RST + b + fg(C.text) + rj(grp(e[1].n), 7) + RST + b + errCell(e[1].err, e[1].n, 7);
   }, "no tool calls");
   if (progs && hT - 2 > tRows) line(lw + 1, y0 + hF + 1 + tRows, fw, " " + fg(C.dim) + "failing: " + RST + progs);
   if (nb === 3 && hB >= 3) {

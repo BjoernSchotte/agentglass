@@ -64,9 +64,9 @@ function modelsOf(s: Sess): Val {
   return ss.length ? V(ss) : UNK;
 }
 // --redact: the real values (realMeta) — the screen shows fakes, filters (and pins saved without --redact) mean the real
-// ones; cwd and branch also take the session's own shown fake for exact matches (EXACT), so a value picked off the
+// ones; cwd, branch and agent also take the session's own shown fake for exact matches (EXACT), so a value picked off the
 // redacted screen still selects it
-function haystack(s: Sess, m: RealMeta): string { return (titleFrom(s, m.title, m.prompt) + " " + m.cwd + " " + s.id + " " + s.h + " " + m.name + " " + m.branch + " " + s.kind).toLowerCase(); }
+function haystack(s: Sess, m: RealMeta): string { return (titleFrom(s, m.title, m.prompt) + " " + m.cwd + " " + s.id + " " + s.h + " " + m.name + " " + m.branch + " " + m.kind).toLowerCase(); }
 function both(real: string, shown: string): Val { const a = real.toLowerCase(); const b = shown.toLowerCase(); return V(a === b ? [a] : [a, EXACT + b]); }
 export function sessVal(key: string, s: Sess): Val {
   const x = EXT.get(key); if (x && x.sess) { const f = x.sess; return f(s); }
@@ -78,7 +78,7 @@ export function sessVal(key: string, s: Sess): Val {
     case "model": return modelsOf(s);
     case "title": { const m = realMeta(s); return V([titleFrom(s, m.title, m.prompt).toLowerCase()]); }
     case "id": return V([s.id.toLowerCase()]);
-    case "agent": return V([s.kind.toLowerCase()]);
+    case "agent": return both(realMeta(s).kind, s.kind);
     case "subagent": return V([s.parent !== "" ? "true" : "false"]);
     case "live": return V([livePid(s) > 0 ? "true" : "false"]);
     case "archived": return V([s.archived ? "true" : "false"]);

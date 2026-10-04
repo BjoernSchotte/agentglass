@@ -3,6 +3,7 @@
 // (SessB keeps the cursor), so the one-shot export and the live sink share it.
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
+import { display } from "../../hooks.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
 import { type Acc, type Booking, newAcc, setBookTap } from "../usage/record.ts";
 import { setCallTap, program, norm, mcpServer } from "../usage/calls.ts";
@@ -103,7 +104,7 @@ function line(b: SessB, sd: Side, l: string, o: BuildOpts): void {
   const bs: Booking[] = []; const calls = new Map<string, CallRec>();
   const rs0 = a.rs;
   setBookTap((x: Booking) => { bs.push(x); });
-  setCallTap((id: string, d: number, err: boolean, codes: number[], name: string) => { calls.set(id, { ms: d, err, codes, name }); });
+  setCallTap((id: string, d: number, err: boolean, codes: number[], name: string) => { calls.set(id, { ms: d, err, codes, name: display("tool", name, null) }); }); // the name as the events show it (--redact)
   try { harnessOf(h).usage(a, l); } finally { setBookTap(null); setCallTap(null); }
   const q = requestOf(h, null, l, sd.rq);
   if (sd.top && !b.ver) { const m = /"(?:cli_)?version":"([^"]+)"/.exec(l.slice(0, 2000)); if (m && (h === "claude" || h === "codex")) b.ver = m[1] ?? ""; }

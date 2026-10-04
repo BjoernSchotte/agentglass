@@ -126,7 +126,7 @@ export function statsDrill(tool: string, local: Clause[], wk: boolean): void {
   const i = H.tabs.indexOf(tab); if (i >= 0) S.tab = i + 2;
   S.mode = "list"; week = wk; setLocal("Stats", local);
   const sv = tool.startsWith("mcp__") && tool.indexOf("__", 5) < 0;
-  dKey = tool; dServer = sv; dLabel = sv ? "⧉ " + tool.slice(5) : tool; dsel = 0; dCache = null;
+  dKey = tool; dServer = sv; dLabel = sv ? "⧉ " + tool.slice(5) : display("tool", tool, null); dsel = 0; dCache = null;
 }
 const BLK = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 const WD = "SuMoTuWeThFrSa";
@@ -304,7 +304,7 @@ export function toolRows(names: Map<string, Cnt>, skills: Map<string, Cnt>): Row
   const top: Row[] = []; const srv = new Map<string, Row>(); const kids = new Map<string, Row[]>();
   for (const [name, c] of names) {
     const sv = mcpServer(name);
-    if (!sv) { top.push({ key: name, label: name, n: c.n, err: c.err, kid: false, server: false, skill: false }); continue; }
+    if (!sv) { top.push({ key: name, label: display("tool", name, null), n: c.n, err: c.err, kid: false, server: false, skill: false }); continue; }
     const k = "mcp__" + sv;
     let r = srv.get(k);
     if (!r) { r = { key: k, label: sv, n: 0, err: 0, kid: false, server: true, skill: false }; srv.set(k, r); top.push(r); kids.set(k, []); }
@@ -422,7 +422,7 @@ function rowDrill(da: DA, f: Compiled, days: string[]): void {
 }
 function openDrill(r: Row): void {
   if (r.skill) { if (!r.kid) toggle(r, -1); return; } // no per-skill drill-down: ↵ on the group folds it like ␣
-  dKey = r.key; dServer = r.server; dLabel = r.server ? "⧉ " + r.label : r.key; dsel = 0; dCache = null; }
+  dKey = r.key; dServer = r.server; dLabel = r.server ? "⧉ " + r.label : display("tool", r.key, null); dsel = 0; dCache = null; }
 function top(m: Map<string, Cnt>, n: number): [string, Cnt][] { return [...m.entries()].sort((x, y) => y[1].n - x[1].n).slice(0, n); }
 // keep the end of long paths: the file name matters more than the root
 function tail(s: string, w: number): string { const a: string[] = []; for (const ch of s) a.push(ch); return a.length <= w ? fit(s, w) : "…" + a.slice(a.length - w + 1).join(""); }

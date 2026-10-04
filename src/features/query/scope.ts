@@ -6,6 +6,8 @@ import { str } from "../../util/json.ts";
 import type { Clause, QErr } from "./types.ts";
 import { parse, print, printClause, sameClause } from "./parse.ts";
 import { attrOf, isNumeric } from "./attrs.ts";
+import { display } from "../../hooks.ts";
+import { REDACT, PINNED } from "../redact-on.ts";
 
 const EQ = ["is", "is_one_of"]; const NE = ["is_not", "is_not_one_of"];
 const UP = [">", ">="]; const DOWN = ["<", "<="];
@@ -16,6 +18,13 @@ function withVals(c: Clause, op: string, vals: string[]): Clause { return { key:
 // a set of values can be written as is_one_of only for text-like attributes (numbers and booleans have no one_of)
 function canUnion(key: string): boolean { const a = attrOf(key); return !!a && !isNumeric(a.type) && a.type !== "bool" && key !== "content"; }
 
+// a clause as the screen shows it: values through display() (--redact: fakes, pinned values "…"); print() = the real one
+export function shownClause(c: Clause): string {
+  const vs: string[] = []; for (const v of c.vals) vs.push(display("filter:" + c.key, v, null));
+  return printClause({ key: c.key, op: c.op, vals: vs, neg: c.neg, pinned: c.pinned });
+}
+export function shownText(cs: Clause[], sep: string): string { const o: string[] = []; for (const c of cs) o.push(shownClause(c)); return o.join(sep); }
+
 // same-key merge inside one scope (§6.2); note = the toast text, "" when nothing was merged or replaced
 export function addClause(scope: Clause[], c: Clause): { cs: Clause[]; note: string } {
   const cs = scope.slice();
@@ -24,13 +33,13 @@ export function addClause(scope: Clause[], c: Clause): { cs: Clause[]; note: str
     const o = cs[i]; if (o.key !== c.key || c.key === "text" || c.key === "content") continue;
     const oe = EQ.indexOf(o.op) >= 0; const ce = EQ.indexOf(c.op) >= 0; const on = NE.indexOf(o.op) >= 0; const cn = NE.indexOf(c.op) >= 0;
     if (oe && ce) {
-      if (!canUnion(c.key)) { cs[i] = c; return { cs, note: "replaced: " + printClause(c) }; }
+      if (!canUnion(c.key)) { cs[i] = c; return { cs, note: "replaced: " + shownClause(c) }; }
       const vs = union(o.vals, c.vals); const m = withVals(o, vs.length > 1 ? "is_one_of" : "is", vs);
-      cs[i] = m; return { cs, note: "merged: " + printClause(m) };
+      cs[i] = m; return { cs, note: "merged: " + shownClause(m) };
     }
-    if (on && cn && canUnion(c.key)) { const vs = union(o.vals, c.vals); const m = withVals(o, vs.length > 1 ? "is_not_one_of" : "is_not", vs); cs[i] = m; return { cs, note: "merged: " + printClause(m) }; }
-    if (((oe && cn) || (on && ce)) && overlap(o.vals, c.vals)) { cs[i] = c; return { cs, note: "replaced: " + printClause(c) }; }
-    if (o.neg === c.neg && ((UP.indexOf(o.op) >= 0 && UP.indexOf(c.op) >= 0) || (DOWN.indexOf(o.op) >= 0 && DOWN.indexOf(c.op) >= 0))) { cs[i] = c; return { cs, note: "replaced: " + printClause(c) }; }
+    if (on && cn && canUnion(c.key)) { const vs = union(o.vals, c.vals); const m = withVals(o, vs.length > 1 ? "is_not_one_of" : "is_not", vs); cs[i] = m; return { cs, note: "merged: " + shownClause(m) }; }
+    if (((oe && cn) || (on && ce)) && overlap(o.vals, c.vals)) { cs[i] = c; return { cs, note: "replaced: " + shownClause(c) }; }
+    if (o.neg === c.neg && ((UP.indexOf(o.op) >= 0 && UP.indexOf(c.op) >= 0) || (DOWN.indexOf(o.op) >= 0 && DOWN.indexOf(c.op) >= 0))) { cs[i] = c; return { cs, note: "replaced: " + shownClause(c) }; }
   }
   cs.push(c);
   return { cs, note: "" };
@@ -65,7 +74,27 @@ export function setLocal(tab: string, cs: Clause[]): void { S.local.set(tab, pin
 export interface PinStore { load: () => string; save: (v: string) => void; remember: boolean }
 let store: PinStore = { load: () => "", save: (v: string) => {}, remember: false };
 function persist(): void { if (store.remember) { const sv = store.save; sv(print(S.pins)); } }
-export function chipText(cs: Clause[]): string { const o: string[] = []; for (const c of cs) o.push(printClause(c)); return o.join(" · "); }
+export function chipText(cs: Clause[]): string { return shownText(cs, " · "); }
+// --redact notes pinned values: the screen shows them as "…"
+function note(cs: Clause[]): void { if (REDACT) for (const c of cs) for (const v of c.vals) PINNED.add(c.key + "\t" + v.toLowerCase()); }
+function pinsTo(cs: Clause[]): void { note(cs); S.pins = pinned(cs, true); }
+// the `P` editor's text: the pins as shown (--redact: masked values stay "…", setPins maps them back)
+export function pinsText(): string { return shownText(S.pins, " and "); }
+const MASK = "…";
+// --redact: clauses of the edited text whose values are "…" → the pin they show unchanged (consumed in order); a "…"
+// anywhere else is an edit of a masked value, which needs the real one: refused
+function unmask(cs: Clause[], expr: string): QErr | null {
+  const left = S.pins.slice();
+  for (let i = 0; i < cs.length; i++) {
+    const c = cs[i]; let masked = false; for (const v of c.vals) if (v.indexOf(MASK) >= 0) masked = true;
+    if (!masked) continue;
+    const t = printClause(c); let hit = -1;
+    for (let j = 0; j < left.length && hit < 0; j++) if (shownClause(left[j]) === t) hit = j;
+    if (hit < 0) return { msg: "… is a masked pin value: leave --redact to edit this pin (deleting the clause works)", col: Math.max(0, expr.indexOf(MASK)) };
+    const p = left[hit]; cs[i] = { key: p.key, op: p.op, vals: p.vals.slice(), neg: p.neg, pinned: false }; left.splice(hit, 1);
+  }
+  return null;
+}
 // restores the saved pins; returns the start toast ("" when nothing was restored)
 export function initPins(st: PinStore): string {
   store = st; S.pins = [];
@@ -73,22 +102,25 @@ export function initPins(st: PinStore): string {
   const ld = st.load; const saved = ld().trim(); if (!saved) return "";
   const p = parse(saved);
   if (p.err) return "saved pinned filter dropped: " + p.err.msg;
-  S.pins = pinned(addAll([], p.cs).cs, true); changed();
-  return "pinned: " + chipText(S.pins) + " — P edits, P then enter on empty unpins";
+  pinsTo(addAll([], p.cs).cs); changed();
+  return restoredToast();
 }
+export function restoredToast(): string { return "pinned: " + chipText(S.pins) + " — P edits, P then enter on empty unpins"; }
 // `P` editor result: "" unpins all
 export function setPins(expr: string): QErr | null {
   const p = parse(expr);
   if (p.err) return p.err;
-  S.pins = pinned(addAll([], p.cs).cs, true); persist(); changed();
+  if (REDACT && expr.indexOf(MASK) >= 0) { const e = unmask(p.cs, expr); if (e) return e; }
+  pinsTo(addAll([], p.cs).cs); persist(); changed();
   return null;
 }
 // `p`: every local clause of the tab into the pins (merge rules apply); the toast
 export function pinAll(tab: string): string {
   const loc = localFor(tab);
   if (!loc.length) return "nothing to pin — / adds a filter, p pins it";
+  note(loc); // before the merge notes print them
   const r = addAll(S.pins, pinned(loc, true));
-  S.pins = pinned(r.cs, true); S.local.set(tab, []); persist(); changed();
+  pinsTo(r.cs); S.local.set(tab, []); persist(); changed();
   return "pinned: " + chipText(S.pins) + (r.notes.length ? " (" + r.notes.join("; ") + ")" : "") + " — P edits pins";
 }
 // sessions the pins alone exclude: total(local) − total(pins ∘ local)

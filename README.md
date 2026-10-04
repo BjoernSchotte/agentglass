@@ -97,8 +97,13 @@ neutral stand-ins, and scrubs your username, home path, e-mail addresses, secret
 in `~/.agentglass/redact.txt` from every pixel — at the same width, so the layout stays intact.
 `AGENTGLASS_REDACT_KEEP=<path-substring>` keeps chosen sessions readable (they are still scrubbed).
 Filters and pins keep meaning the real values (a pin saved without `--redact` selects the same sessions);
-a fake shown on screen (repo, cwd, branch) also selects its own session, but only exactly (`is`, `is_one_of`),
+a fake shown on screen (repo, cwd, branch, agent) also selects its own session, but only exactly (`is`, `is_one_of`),
 never by `~`, a glob or a bare word — fakes come from shared pools and would hit unrelated sessions.
+Pinned values (restored from the config on every start) show as `…` — `title ~ …` in the chip, the start toast and
+the `P` editor — and keep filtering on the real value; `P` can keep or delete a masked clause, editing one needs a
+run without `--redact`. Built-in subagent types (Explore, Plan, generalist, codebase_investigator, explore, worker…)
+stay; user-defined agent names get stable fakes of the same length in the list, detail, call graph, triage, compare,
+`--json` and OTLP export.
 Every screen in this README and the launch video was recorded this way.
 
 ## Tiny, fast, local

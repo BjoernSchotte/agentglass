@@ -19,7 +19,7 @@ import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
 import { type Ctx, type Compiled, EMPTY, compile, matchSession, beyondRetention, oldestDay } from "./eval.ts";
-import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
+import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, restoredToast, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
 import { repoOf, repoShown } from "./project.ts";
 import { REDACT } from "../redact-on.ts";
@@ -192,7 +192,7 @@ function onPins(ev: string, text: string): boolean {
   if (ev === "enter") {
     const e = setPins(text);
     if (e) { S.inputErr = e.msg; return true; }
-    S.inputErr = ""; say("info", S.pins.length ? "pinned: " + print(S.pins) : "pins cleared");
+    S.inputErr = ""; say("info", S.pins.length ? "pinned: " + shownText(S.pins, " and ") : "pins cleared");
     return false;
   }
   if (ev === "tab") { tabComplete(); return false; }
@@ -226,7 +226,7 @@ function frequent(key: string): string[] {
   const m = new Map<string, number>();
   if (key === "tool" || key === "server" || key === "program" || key === "ext") {
     for (const a of ledger.values()) for (const d of a.days.values()) {
-      if (key === "tool") for (const [n, st] of heavy(d).tt) bump(m, n, st.n);
+      if (key === "tool") { for (const [n, st] of heavy(d).tt) if (!REDACT || display("tool", n, null) === n) bump(m, n, st.n); } // --redact: a tool named after a custom agent is not offered
       else if (key === "server") for (const [n, st] of heavy(d).tt) bump(m, mcpServer(n), st.n);
       else if (key === "program") for (const [k, c] of heavy(d).prog) bump(m, k.slice(k.indexOf("\t") + 1), c.n);
       else for (const k of heavy(d).files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }
@@ -308,7 +308,7 @@ function contentQuery(tab: string): string { for (const c of localFor(tab)) if (
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list") return false;
   const tab = tabName();
-  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", print(S.pins)); return true; }
+  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", pinsText()); return true; }
   if (tab === "Stats" || tab === "Repos") {
     if (k === "/") { openFilterInput(tab); return true; }
     if (k === "p") { say("info", pinAll(tab)); return true; }
@@ -368,9 +368,11 @@ H.helpSections.push({ name: "filter  (/ on Sessions and Stats; the same grammar 
   ["esc (list)", "clear this tab's filter; pins stay"],
 ].concat(wrapKeys(64)) });
 
-// ── restored pins: announced on start so they never look like missing sessions ──
+// ── restored pins: announced on start so they never look like missing sessions; the info toast is built then, not
+// here: --redact's display hooks (they mask pinned values) may register after this module ──
 const startToast = initPins(configStore());
-if (startToast) { say(startToast.startsWith("saved") ? "warn" : "info", startToast); S.toastMs = 6000; }
+if (startToast.startsWith("saved")) { say("warn", startToast); S.toastMs = 6000; }
+else if (startToast) H.start.push(() => { say("info", restoredToast()); S.toastMs = 6000; });
 // "calls ≤ 90 d" while call clauses are active and the counted days (period: the view's, [] = all history) reach
 // before the oldest day that keeps call rows: those are kept that long, day buckets forever
 export function callsChip(f: Compiled, period: string[]): string {

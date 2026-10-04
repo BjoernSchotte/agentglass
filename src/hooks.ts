@@ -5,7 +5,7 @@ import type { Ev, Sess, Proc } from "./model/types.ts";
 import type { HelpSec } from "./state.ts";
 
 // a session's metadata as parsed, before H.meta replaced it for display (redact): filters match these
-export interface RealMeta { cwd: string; title: string; prompt: string; branch: string; name: string }
+export interface RealMeta { cwd: string; title: string; prompt: string; branch: string; name: string; kind: string }
 // mouse: left click inside the tab's body (0-based cell), dbl = second click on the same row within 450ms
 export interface Tab { name: string; render: () => void; key: (k: string) => boolean; mouse?: (x: number, y: number, dbl: boolean) => void }
 // full-screen feature view: shown while S.mode === "view" && S.fview === name; its keys arrive via H.keys with mode "view"
@@ -46,6 +46,7 @@ export const H = {
   helpSections: [] as HelpSec[], // appended to the ? popup
   views: [] as View[], // full-screen views a feature enters by setting S.fview + S.mode = "view"
   meta: [] as ((s: Sess) => void)[], // after log parsing / process linking (re)set a session's title, cwd, branch or name; may override them
+  agents: [] as ((name: string) => void)[], // a harness parsed a call that ran a subagent by name (Gemini: a tool named after it, invoke_agent's agent_name), before its events and ledger rows
   events: [] as ((s: Sess | null, evs: Ev[], from: number) => void)[], // after parseEvents appended evs[from..]; may rewrite them in place
   display: [] as ((kind: string, text: string, s: Sess | null) => string)[], // display-time rewrite of text that bypasses parseEvents (stats "tool:<name>"/"cmd"/"prog"/"file", process "args"/"cwd")
   realCwd: [] as ((s: Sess) => string)[], // the session's real cwd when H.meta replaced s.cwd for display (redact); "" = not replaced
@@ -71,9 +72,10 @@ export function complete(s: Sess): void { for (const f of H.complete) f(s); }
 // bounds-checked: in scriptc an out-of-range object read traps
 export function tabAt(i: number): Tab | null { return i >= 0 && i < H.tabs.length ? H.tabs[i] : null; }
 export function viewOf(name: string): View | null { for (const v of H.views) if (v.name === name) return v; return null; }
+export function sawAgent(name: string): void { if (name) for (const f of H.agents) f(name); }
 export function applyMeta(s: Sess): void { for (const f of H.meta) f(s); }
 export function display(kind: string, text: string, s: Sess | null): string { let t = text; for (const f of H.display) t = f(kind, t, s); return t; }
 export function armed(): boolean { for (const f of H.fastArmed) if (f()) return true; return false; }
-export function realMeta(s: Sess): RealMeta { for (const f of H.realMeta) { const r = f(s); if (r) return r; } return { cwd: s.cwd, title: s.title, prompt: s.prompt, branch: s.branch, name: s.name }; }
+export function realMeta(s: Sess): RealMeta { for (const f of H.realMeta) { const r = f(s); if (r) return r; } return { cwd: s.cwd, title: s.title, prompt: s.prompt, branch: s.branch, name: s.name, kind: s.kind }; }
 export function realCwd(s: Sess): string { for (const f of H.realCwd) { const r = f(s); if (r) return r; } return s.cwd; }
 export function screenOut(s: string): string { let t = s; for (const f of H.screenFilter) t = f(t); return t; }
