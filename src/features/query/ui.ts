@@ -373,6 +373,6 @@ if (startToast) { say(startToast.startsWith("saved") ? "warn" : "info", startToa
 export function callsChip(f: Compiled, period: string[]): string {
   if (!f.needsCalls) return "";
   const keep: string[] = lastDays(callDays()); const cut: string = keep.length ? keep[0] : "";
-  if (!beyondRetention(f.dayKeys, period, oldestDay(), cut)) return "";
+  if (!beyondRetention(f.dayKeys, period, oldestDay(f), cut)) return "";
   return fg(C.dim) + "calls ≤ " + String(callDays()) + " d" + RST;
 }

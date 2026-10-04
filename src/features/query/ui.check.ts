@@ -4,7 +4,7 @@ import { S } from "../../state.ts";
 import { sessions, buildView } from "../../model/sessions.ts";
 import { onInput } from "../../input.ts";
 import { boxChips, emptyText } from "../../hooks.ts";
-import { print } from "./parse.ts";
+import { parse, print } from "./parse.ts";
 import { initPins, localFor, setLocal } from "./scope.ts";
 import { complete, hiddenCount } from "./ui.ts";
 import { fxBase } from "./fixture.ts";
@@ -32,6 +32,10 @@ eq("enter applies", print(localFor("Sessions")) + "|" + ids() + "|" + S.mode, "t
 eq("chips: all history is inside the 90 days the fixture spans — no calls chip", plain(boxChips("sessions", 80)), "tool is Bash");
 setCallDaysForTest(1); // rows only for today: the fixture's yesterday reaches beyond
 eq("chips: calls chip when history reaches beyond the retention", plain(boxChips("sessions", 80)), "tool is Bash calls ≤ 1 d");
+// only the sessions the session clauses keep count: x1 (codex) has today only, c1's yesterday is not the list's
+setLocal("Sessions", parse("harness is codex and tool is Bash").cs);
+eq("chips: no calls chip when the sessions in question are all inside the retention", plain(boxChips("sessions", 80)), "harness is codex · tool is Bash");
+setLocal("Sessions", parse("tool is Bash").cs);
 setCallDaysForTest(90);
 onInput("p");
 eq("p pins all local", print(S.pins), "tool is Bash"); eq("local emptied", print(localFor("Sessions")), ""); eq("pin persisted", saved, "tool is Bash");

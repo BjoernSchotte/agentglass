@@ -244,12 +244,17 @@ export function beyondRetention(dayKeys: string[] | null, period: string[], olde
   const c: string = String(cutoff); const f0: string = String(first); // scriptc 0.1.7 lost these types across modules (SC1043)
   return f0 !== "" && f0 < c;
 }
-// the oldest day any session has a bucket for, "" = none; per ledger version
-const oldMemo = { ver: -1, day: "" };
-export function oldestDay(): string {
-  if (oldMemo.ver === L.ver) return oldMemo.day;
-  let o = ""; for (const a of ledger.values()) for (const k of a.days.keys()) if (o === "" || k < o) o = k;
-  oldMemo.ver = L.ver; oldMemo.day = o; return o;
+// the oldest day a listed session that passes f's session clauses has a bucket for, "" = none: the earliest day an
+// all-history view (the Sessions list) counts for f; per ledger version, filter and session count
+const oldMemo = { ver: -1, key: "", n: -1, day: "" };
+export function oldestDay(f: Compiled): string {
+  if (oldMemo.ver === L.ver && oldMemo.key === f.key && oldMemo.n === sessions.size) return oldMemo.day;
+  let o = "";
+  for (const s of sessions.values()) {
+    const a = ledger.get(s.path); if (!a || !all1(f.sess, s)) continue;
+    for (const k of a.days.keys()) if (o === "" || k < o) o = k;
+  }
+  oldMemo.ver = L.ver; oldMemo.key = f.key; oldMemo.n = sessions.size; oldMemo.day = o; return o;
 }
 function knownDays(): string[] {
   const set = new Set<string>([todayKey()]);
