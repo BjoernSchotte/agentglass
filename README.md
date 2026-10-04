@@ -178,6 +178,8 @@ Stats shows the current state. Invalid values are ignored with one warning.
 
 For Claude plan sessions the header also shows the plan allowance from Claude Code's own cache, `· cc 5h 15%
 7d 71%` (the fuller window highlighted); it hides itself when that cache is older than an hour or changes shape.
+Codex sessions on a ChatGPT plan show their rate limits the same way, `· cx 5h 3% 7d 12%` (the weekly window when the
+plan has one), from the newest `rate_limits` Codex logged. A narrow header keeps only the fuller window.
 
 ```sh
 agentglass cost                 # today / 7 days / month by mode, unpriced usage, projection, budget
@@ -713,7 +715,12 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
 - **Shape:** one trace per turn. The root `invoke_agent <harness>` span holds one `chat <model>` span per API request
   (tokens, cost, billing mode) and one `execute_tool <tool>` span per call; a subagent is an `invoke_agent <type>`
   span under the call that started it. Usage sits on `chat` spans only, so sums over all spans never count twice.
-  Kiro and fx log no per-request usage: one `chat` span per turn (fx: the session totals ride on the newest turn's `chat` span, marked `agentglass.usage.session_total`).
+  Kiro and fx log no per-request usage: one `chat` span per turn. fx keeps running session totals only: the newest
+  turn's `chat` span carries what they grew since the last accepted export to that endpoint (kept in the state file),
+  marked `agentglass.usage.session_delta`, so repeated exports never count usage twice.
+- **Provider:** `gen_ai.provider.name` follows one rule on every span: the model's vendor (`anthropic/claude-…`,
+  `claude-*`, `gpt-*`, `gemini-*` …), else the provider id the harness logged. pi and OpenCode `chat` spans also keep
+  that logged id (a gateway such as `cliproxyapi`, `openrouter`, `github-copilot`) as `agentglass.provider.id`.
 - **Options:** `--since 30m|24h|7d|YYYY-MM-DD|all` (default 7d) and `--until`, `--harness`, `--session <id>`,
   `--filter '<session clauses>'`, `--no-subagents`, `--batch N` (spans per request, default 512, at most 4 MB),
   `--compression gzip|none`, `--json` (summary on stdout). Exit codes: 0 sent, 1 some requests failed (run again to
@@ -848,7 +855,7 @@ Notes:
 - **Codex**: the preview and `--json` show the session's git remote (`remote`) with credentials, query and fragment
   removed; a remote that still looks suspicious is not shown. Skills you mention with `$name` count as command uses.
   OpenCode skills you activate count as command uses, its `skill` tool and Gemini `activate_skill` calls as model uses;
-  pi skills are not counted yet.
+  pi `/skill:name` prompts count as command uses and show as `/skill:name <args>` (not the expanded skill file).
 - **pi**: honors `PI_CODING_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR` and `sessionDir` in pi's `settings.json`.
   pi has no session registry, so a session is live when a pi process runs in its working directory.
   Cost comes from pi's own `usage.cost`. MCP calls (pi ≥ 0.99 native MCP, also inside `codemode` scripts, and the
@@ -868,7 +875,9 @@ Notes:
   sandbox). The cwd comes from each project's `.project_root`; legacy `.json` sessions and pre-0.29 hash dirs are not
   shown. Gemini rewrites history in place (re-appended messages, `/rewind`, resume and compression checkpoints):
   agentglass shows each message and tool call once, marks rewinds and rewritten history with the number of messages
-  dropped, and counts each response's tokens once. No cost in the files: priced with the built-in table (paid-tier
+  dropped, and counts each response's tokens once. Gemini logs every tool that ran as `success`: a shell command with a
+  non-zero `Exit Code`, a signal or a spawn error, a timeout, and any tool whose response carries an `error` count as
+  failed (Stats, `errors`, triage, filters, OTLP status and `process.exit.code`). No cost in the files: priced with the built-in table (paid-tier
   API prices; Pro models above 200k prompt tokens at the long-context rate, keys `<model>>200k`; dated price changes as
   `<model>@2027`; a `prices.json` price for a model replaces those tiers unless it names them too) or your price lists. Variants without
   a price of their own (`-lite`, `-image`, `-tts`) show as unpriced, not at their base model's rate. Helper calls (routing,
