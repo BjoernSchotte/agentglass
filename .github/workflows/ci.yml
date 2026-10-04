@@ -17,10 +17,15 @@ jobs:
     timeout-minutes: 15 # a hung test fails fast instead of holding the runner for 6 h (a cold shard takes ~2 min)
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14]
-        shard: [1, 2, 3, 4]
-        shards: [4]
+      matrix: # macOS: 3 shards, not 4 — macOS runners are scarce (5 per account) and shared by every open PR
+        include:
+          - { os: ubuntu-24.04, shard: 1, shards: 4 }
+          - { os: ubuntu-24.04, shard: 2, shards: 4 }
+          - { os: ubuntu-24.04, shard: 3, shards: 4 }
+          - { os: ubuntu-24.04, shard: 4, shards: 4 }
+          - { os: macos-14, shard: 1, shards: 3 }
+          - { os: macos-14, shard: 2, shards: 3 }
+          - { os: macos-14, shard: 3, shards: 3 }
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
