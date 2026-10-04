@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 limit() {
   s=$1; shift
   "$@" </dev/null & p=$!
-  ( sleep "$s"; kill -0 "$p" 2>/dev/null || exit 0; echo "TIMEOUT after ${s}s: $*"; pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null ) & w=$!
+  ( sleep "$s"; kill -0 "$p" 2>/dev/null || exit 0; echo "TIMEOUT after ${s}s: $*"; pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null ) 2>/dev/null & w=$! # quiet: killing its sleep must not print "Terminated" into the log
   wait "$p"; rc=$?
   pkill -P "$w" 2>/dev/null; wait "$w" 2>/dev/null # its sleep ends, the watchdog sees cmd gone and exits
   return $rc
