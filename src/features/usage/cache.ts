@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { readText } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
-import { sessions } from "../../model/sessions.ts";
-import { ledger, indexing, unread, LAZY } from "./ledger.ts";
+import { sessions, HEADS, type HeadMemo } from "../../model/sessions.ts";
+import type { Sess } from "../../model/types.ts";
+import { ledger, indexing, unread, LAZY, accOf } from "./ledger.ts";
+import { REDACT } from "../redact-on.ts";
 import { type Acc, L } from "./record.ts";
 import { ROWS } from "./facts.ts";
 import { rulesNeedRows } from "../rules/file.ts";
@@ -36,7 +38,7 @@ const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset 
 
 let loaded = false;
 function load(): void {
-  loaded = true; savedVer = L.ver; // nothing to save until something is indexed
+  loaded = true; savedIdx = L.idx; // nothing to save until something is indexed
   let size = 0;
   try { size = statSync(FILE).size; } catch (e) { return; }
   const root = parse(readText(FILE, 0, size).trim());
@@ -68,9 +70,9 @@ function saveCalls(): void {
   }
   sweepCalls(CALLS_DIR, keys);
 }
-let savedVer = -1; let lastSave = 0;
+let savedIdx = -1; let lastSave = 0;
 function save(): void {
-  if (!loaded || L.ver === savedVer || !ROWS.on) return; // without rows a save would leave calls files behind the ledger
+  if (!loaded || L.idx === savedIdx || !ROWS.on) return; // without rows a save would leave calls files behind the ledger
   const ss: Obj = {};
   for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) ss[s.path] = accOut(a, KEEP_IDS); } // only sessions that still exist
   saveCalls();
@@ -80,7 +82,7 @@ function save(): void {
     const tmp = FILE + ".tmp";
     const fd = openSync(tmp, "w"); writeSync(fd, body); closeSync(fd);
     renameSync(tmp, FILE); // atomic: a crash mid-write never leaves a torn cache
-    savedVer = L.ver;
+    savedIdx = L.idx;
   } catch (e) { /* read-only home etc.: keep indexing in memory */ }
 }
 
@@ -88,6 +90,15 @@ LAZY.rows = (path: string, a: Acc): boolean => {
   const calls = loadCallsFrom(CALLS_DIR, path, a); if (!calls) return false;
   a.calls = calls; a.lastCall = calls.length - 1; written.set(path, a.off); return true;
 };
+// head memos live in the session's ledger entry (reset with it when the log is rewritten); never under --redact, where a
+// read sees faked texts and a replay could show real ones
+if (!REDACT) {
+  HEADS.get = (s: Sess): HeadMemo | null => {
+    const a = ledger.get(s.path); if (!a || a.hd.length < 3 || a.ep !== s.ep) return null;
+    return { w: Number(a.hd[0]), h: Number(a.hd[1]), x: a.hd[2] ?? "", f: a.hd.slice(3) };
+  };
+  HEADS.put = (s: Sess, m: HeadMemo): void => { const a = accOf(s); a.hd = [String(m.w), String(m.h), m.x].concat(m.f); L.idx++; };
+}
 H.firstScan.push(load); // not at import: --help, --version and the agent help never read it
 // a one-shot CLI run keeps what it indexed for the next run (also on an error exit: what was saved is consistent)
 process.on("exit", () => { try { save(); } catch (e) { /* never block the exit */ } });

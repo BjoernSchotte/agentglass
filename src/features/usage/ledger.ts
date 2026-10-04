@@ -93,7 +93,7 @@ function tick(): void {
     applyAcc(s, a);
     if (budget <= 0 || Date.now() - t0 >= SLICE_MS) break;
   }
-  if (budget < BUDGET) L.ver++;
+  if (budget < BUDGET) { L.ver++; L.idx++; }
   for (const s of sessions.values()) { const a = accOf(s); total += s.size; done += Math.min(a.off, s.size); if (a.stall === s.size) done += s.size - a.off; }
   L.done = done; L.total = total;
 }
@@ -104,7 +104,7 @@ export function complete(s: Sess): void {
   const a = accOf(s);
   sidecar(s, a); // first: some adapters date log lines from it (kiro turn times)
   let n = 0; for (let k = step(s, a); k > 0; k = step(s, a)) n += k;
-  if (n > 0) L.ver++; // the ledger changed: a one-shot run saves it at exit (cache.ts)
+  if (n > 0) L.idx++; // not L.ver: per-session caches (git attribution) would be rebuilt for every completed session
   applyAcc(s, a);
 }
 

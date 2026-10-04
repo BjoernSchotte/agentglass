@@ -212,12 +212,16 @@ export function sessIn(s: Sess, now: number): SessIn | null {
   return { path: s.path, gitdir: id.gitdir, common: id.common, key: id.key, top: id.top, branch: s.branch, t0: w.length ? w[0] ?? 0 : 0, t1: w.length ? w[1] ?? 0 : 0, live, sub: s.parent !== "", refs: a ? a.vcs : [] };
 }
 // every session's attribution at once (one pass, per gitdir), rebuilt when sessions, identities or a reflog change, and
-// at most once a second while only the ledger moved (live sessions write all the time)
-const ALL = { key: "", ver: -1, at: 0, info: new Map<string, GitInfo>(), proj: new Map<string, SessIn[]>(), ins: new Map<string, SessIn>() };
+// at most once a second while only the ledger moved (live sessions write all the time). Whether anything changed takes a
+// pass over every session and reflog too: at most once a second while the ledger stands still (seen = its last pass;
+// a CLI asks once per listed session)
+const ALL = { key: "", ver: -1, at: 0, seen: 0, info: new Map<string, GitInfo>(), proj: new Map<string, SessIn[]>(), ins: new Map<string, SessIn>() };
+// sessions were indexed or placed outside the ledger's tick (a CLI completing a worktree's peers): look again at once
+export function gitStale(): void { ALL.at = 0; ALL.seen = 0; }
 export function allInfo(): Map<string, GitInfo> {
   const now = Date.now();
   const ss: SessIn[] = []; const dirs = new Set<string>(); let stamps = "";
-  if (ALL.ver === L.ver && now - ALL.at < 1000) return ALL.info;
+  if (ALL.ver === L.ver && now - Math.max(ALL.at, ALL.seen) < 1000) return ALL.info;
   const peers = new Map<string, string[]>(); // common dir → its worktrees' gitdirs (banners made in a sibling worktree)
   for (const x of sessions.values()) {
     if (!ledger.has(x.path)) continue; const i = sessIn(x, now); if (!i) continue;
@@ -227,7 +231,7 @@ export function allInfo(): Map<string, GitInfo> {
   const logs = new Map<string, RefEv[]>();
   for (const d of dirs) { const st = reflogStamp(d); stamps += st + ","; if (st) logs.set(d, readReflog(d)); }
   const key = String(P.ver) + "|" + String(sessions.size) + "|" + String(ss.length) + "|" + stamps;
-  if (key === ALL.key && (ALL.ver === L.ver || now - ALL.at < 1000)) return ALL.info;
+  if (key === ALL.key && (ALL.ver === L.ver || now - ALL.at < 1000)) { ALL.seen = now; return ALL.info; }
   ALL.info = attributeWith(ss, logs, peers); ALL.key = key; ALL.ver = L.ver; ALL.at = now;
   ALL.proj.clear(); ALL.ins.clear();
   for (const x of ss) { ALL.ins.set(x.path, x); if (x.sub) continue; const l = ALL.proj.get(x.key); if (l) l.push(x); else ALL.proj.set(x.key, [x]); }

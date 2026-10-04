@@ -7,7 +7,7 @@ import { home } from "../../util/text.ts";
 import { ledger } from "../usage/ledger.ts";
 import { type Cnt, HB, pct, mcpServer } from "../usage/calls.ts";
 import type { Call } from "../usage/facts.ts";
-import { dayKey } from "../usage/record.ts";
+import { dayKey, heavy } from "../usage/record.ts";
 import type { ToolT } from "../query/agg.ts";
 import { EMPTY, callsIn, callCutoff } from "../query/eval.ts";
 import { projectRoot } from "../query/project.ts";
@@ -170,7 +170,7 @@ function hoursOf(sd: Side, t0: number, out: number[]): void {
     const a = ledger.get(p); const ds = t.pdays.get(p); if (!a || !ds) continue;
     for (const dk of ds) {
       const d = a.days.get(dk); const base = dayStart(dk, t0); if (!d || base < 0) continue;
-      for (const st of d.tt.values()) for (let h = 0; h < 24; h++) { const n = st.h[h] ?? 0; if (n) bump(out, Math.floor((base + h * HOUR - h0) / HOUR), n); }
+      for (const st of heavy(d).tt.values()) for (let h = 0; h < 24; h++) { const n = st.h[h] ?? 0; if (n) bump(out, Math.floor((base + h * HOUR - h0) / HOUR), n); }
     }
   }
 }

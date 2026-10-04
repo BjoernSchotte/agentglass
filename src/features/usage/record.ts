@@ -14,10 +14,17 @@ export { dayKey };
 // cp = cost per provider ("" = the session's single provider), hc = cost per local hour,
 // mt = per model [in, out, cacheRead, cacheWrite, costUsd] (same model key as um)
 // act = active minutes, flat sorted merged [s0,e0,s1,e1,…] local minutes of the day (e exclusive, ≤ ACT_MAX intervals)
+// hx = the heavy part (heavy()); hv = that part as the cache stored it (JSON text), until something asks for it
 export interface Day {
-  tools: number; tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
+  tools: number; hx: Heavy | null; hv: string; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
   um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>; act: number[];
 }
+// per tool, per program, per command line, per file: ~90 % of the ledger cache. A run that never looks at them (cost,
+// --json) reads them back as text and writes that text out again; heavy() decodes a day's on first use (HEAVY: codec.ts)
+export interface Heavy { tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt> }
+export function newHeavy(): Heavy { return { tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>() }; }
+export const HEAVY = { decode: (raw: string): Heavy => newHeavy() };
+export function heavy(d: Day): Heavy { let h = d.hx; if (!h) { h = d.hv ? HEAVY.decode(d.hv) : newHeavy(); d.hx = h; d.hv = ""; } return h; }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Set<string>; days: Map<string, Day>; model: string;
@@ -37,13 +44,15 @@ export interface Acc {
   vcs: VRef[]; // git linkage: commits, PR/issue/commit links and git-call spans scraped from tool output (vcs.ts), oldest first
   dn: Pend[]; // calls the current line closed (not persisted: the scraper reads and clears it per line)
   vk: Set<string>; vkn: number; // "<k>\t<v>" of vcs (gcall spans aside) and the vcs length it mirrors (not persisted)
+  hd: string[]; // the head memo (model/sessions.ts HeadMemo) as [w, h, x, field, value, …]; [] none
 }
 // one scraped git reference: k = commit (v = sha as printed) | pr | issue | link (v = canonical URL; link = a commit URL) |
 // gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
 // br/subj = the banner's branch and subject; call/ts = the tool call to jump to
 export interface VRef { k: string; v: string; t: number; how: string; br: string; subj: string; call: string; ts: string }
 export interface RlWin { pct: number; min: number; reset: number } // a Codex rate-limit window: used %, length (minutes), reset (epoch ms)
-export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rl: [] as RlWin[], rlAt: 0 }; // rl = the latest Codex rate-limit windows, rlAt = their event time
+// idx: bumped whenever the cached state changed (log bytes booked, a head or tail memo kept): the cache saves when it moved
+export const L = { ver: 0, idx: 0, done: 0, total: 0, prio: "", prioAt: 0, rl: [] as RlWin[], rlAt: 0 }; // rl = the latest Codex rate-limit windows, rlAt = their event time
 
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 export function todayKey(): string { return dayKey(new Date()); }
@@ -59,7 +68,7 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0 };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [] };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -69,7 +78,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 }
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
-  return { tools: 0, tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
+  return { tools: 0, hx: newHeavy(), hv: "", skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
     um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [] };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
@@ -168,8 +177,8 @@ export function unionMin(lists: number[][]): number {
 // one call: counters + a fact row carrying the model of the message that issued it ("" unknown; mq: MQ_MSG | MQ_TURN | MQ_SESS)
 export function tool(a: Acc, d: Day, name: string, model: string, mq: number): TS {
   a.tools++; d.tools++;
-  let st = d.tt.get(name);
-  if (!st) { st = newTS(); d.tt.set(own(name), st); } // map keys live as long as the ledger: own() (util/own.ts)
+  const tt = heavy(d).tt; let st = tt.get(name);
+  if (!st) { st = newTS(); tt.set(own(name), st); } // map keys live as long as the ledger: own() (util/own.ts)
   st.n = st.n + 1;
   st.h[tsHour] = (st.h[tsHour] ?? 0) + 1;
   d.hours[tsHour] = (d.hours[tsHour] ?? 0) + 1;
@@ -188,7 +197,7 @@ export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number
   for (const c of cmds) {
     const n = norm(c); if (!n) continue;
     const pg = program(n);
-    sh.push(cnt(d.prog, name + "\t" + pg)); sh.push(cnt(d.cmds, name + "\t" + n));
+    const h = heavy(d); sh.push(cnt(h.prog, name + "\t" + pg)); sh.push(cnt(h.cmds, name + "\t" + n));
     if (row) { addId(row.progs, intern(DICT.prog, pg)); addId(row.cmds, intern(DICT.cmd, n)); }
   }
   if (row) row.cid = id;
@@ -201,13 +210,14 @@ export function retool(a: Acc, p: Pend, name: string): void {
   p.name = name;
   const d = bucket(a, p.t, p.ts);
   let key = ""; let found = false;
-  for (const [k, v] of d.tt) if (v === p.st) { key = k; found = true; break; }
+  const tt = heavy(d).tt;
+  for (const [k, v] of tt) if (v === p.st) { key = k; found = true; break; }
   if (!found || key === name) return;
   const h = tsHour; const o = p.st;
   o.n = o.n - 1; o.h[h] = Math.max(0, (o.h[h] ?? 0) - 1);
-  if (o.n <= 0) d.tt.delete(key);
-  let st = d.tt.get(name);
-  if (!st) { st = newTS(); d.tt.set(own(name), st); }
+  if (o.n <= 0) tt.delete(key);
+  let st = tt.get(name);
+  if (!st) { st = newTS(); tt.set(own(name), st); }
   st.n = st.n + 1; st.h[h] = (st.h[h] ?? 0) + 1;
   p.st = st;
   if (p.row) p.row.tool = intern(DICT.tool, name);
@@ -215,7 +225,7 @@ export function retool(a: Acc, p: Pend, name: string): void {
 // a changed file: the day's counter, and the newest call row when it is this tool's (adapters book files right after tool())
 export function file(a: Acc, d: Day, name: string, path: string, add: number, del: number): void {
   if (!path) return;
-  const c = cnt(d.files, name + "\t" + path);
+  const c = cnt(heavy(d).files, name + "\t" + path);
   c.add = c.add + add; c.del = c.del + del;
   const r = newest(a);
   if (r && nameOf(DICT.tool, r.tool) === name) addId(r.files, intern(DICT.file, path));

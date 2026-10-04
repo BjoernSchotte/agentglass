@@ -4,6 +4,8 @@ import { firstLine } from "../util/text.ts";
 import { own } from "../util/own.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
+import { FILE_SOURCE } from "../harness/source.ts";
+import { readBytes } from "../util/fs.ts";
 import { S } from "../state.ts";
 import { H, applyMeta } from "../hooks.ts";
 
@@ -48,14 +50,44 @@ export function scan(): void {
   for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, seen, parent));
   for (const k of [...sessions.keys()]) if (!seen.has(k)) sessions.delete(k);
 }
+// A log only grows: once it reaches past the head window, what reading the head did is final. That outcome — the session
+// fields it changed, the first prompt and the adapter's own head state (Claude's rename) — is kept as a memo (the ledger
+// cache stores it) and replayed instead of parsing up to 512 KB again; the first 4 KB must still hash the same.
+// f = [field, value, …]: the HEAD_FIELDS the read changed, and "prompt" (the head's first one; set only while the session
+// has none, like a real read).
+export interface HeadMemo { w: number; h: number; x: string; f: string[] }
+export const HEADS = { get: (s: Sess): HeadMemo | null => null, put: (s: Sess, m: HeadMemo): void => {} }; // cache.ts; off under --redact
+const HEAD_FIELDS = ["cwd", "title", "branch", "model", "remote", "name", "kind", "parent"];
+function fieldsOf(s: Sess): string[] { return [s.cwd, s.title, s.branch, s.model, s.remote, s.name, s.kind, s.parent]; }
+function setField(s: Sess, k: string, v: string): void {
+  if (k === "cwd") s.cwd = v; else if (k === "title") s.title = v; else if (k === "branch") s.branch = v; else if (k === "model") s.model = v;
+  else if (k === "remote") s.remote = v; else if (k === "name") s.name = v; else if (k === "kind") s.kind = v; else if (k === "parent") s.parent = v;
+  else if (k === "prompt") { if (!s.prompt) s.prompt = v; }
+}
+function headHash(path: string): number { const b = readBytes(path, 0, 4096); let h = 2166136261; for (let i = 0; i < b.length; i++) { h ^= b[i] ?? 0; h = Math.imul(h, 16777619) >>> 0; } return h; }
 export function loadHead(s: Sess): void {
   s.headDone = true;
-  const evs: Ev[] = [];
-  const src = sourceOf(s.h);
-  for (const l of src.lines(s, 0, window(src, harnessOf(s.h).headBytes)).lines) {
-    parseEvents(s.h, l, evs, s);
-    if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; }
+  const src = sourceOf(s.h); const ad = harnessOf(s.h);
+  const w = window(src, ad.headBytes); const final = src === FILE_SOURCE && s.size >= w;
+  const m = final ? HEADS.get(s) : null;
+  if (m && m.w === w && m.h === headHash(s.path)) {
+    const sh = ad.setHeadState; if (m.x && sh) sh(s, m.x);
+    for (let i = 0; i + 1 < m.f.length; i += 2) setField(s, m.f[i] ?? "", m.f[i + 1] ?? "");
+    applyMeta(s);
+    return;
   }
+  const f0 = fieldsOf(s);
+  const evs: Ev[] = []; let hp = ""; // the head's first prompt
+  for (const l of src.lines(s, 0, w).lines) {
+    parseEvents(s.h, l, evs, s);
+    if (!hp) for (const e of evs) if (e.kind === "user") { hp = firstLine(e.text, 200); if (!s.prompt) s.prompt = hp; break; }
+  }
+  if (!final) return;
+  const f: string[] = []; const f1 = fieldsOf(s);
+  for (let i = 0; i < HEAD_FIELDS.length; i++) if (f1[i] !== f0[i]) { f.push(HEAD_FIELDS[i] ?? ""); f.push(own(f1[i] ?? "")); }
+  if (hp) { f.push("prompt"); f.push(own(hp)); }
+  const hs = ad.headState;
+  HEADS.put(s, { w, h: headHash(s.path), x: hs ? hs(s) : "", f });
 }
 // the last events stay on the session until its next tail read: exact-size copies of their strings (util/own.ts)
 function keepEv(e: Ev): Ev { return { kind: e.kind, text: own(e.text), ts: own(e.ts), id: own(e.id), full: own(e.full) }; }
