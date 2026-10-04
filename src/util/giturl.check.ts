@@ -45,7 +45,12 @@ const rows: string[][] = [
   ["https://host/o/my-repo-name-2026", "https://host/o/my-repo-name-2026", "o", "my-repo-name-2026"],
   ["https://user:pass@/o/r", "", "", ""],
   ["https://host:8443/o/r.git", "https://host:8443/o/r", "o", "r"],
-  ["git@host:/abs/r", "", "", ""],
+  ["git@host:/abs/r", "ssh://host/abs/r", "abs", "r"],
+  ["nas:/srv/git/r.git", "ssh://nas/srv/git/r", "git", "r"],
+  ["C:/src/r", "", "", ""],
+  ["c:/src/r", "", "", ""],
+  ["git@c:/srv/r", "ssh://c/srv/r", "srv", "r"],
+  ["g:o/r", "ssh://g/o/r", "o", "r"], // a one-letter insteadOf alias is no drive (git resolves it)
   ["C:\\src\\r", "", "", ""],
   ["user@host:o/r", "ssh://host/o/r", "o", "r"],
 ];
