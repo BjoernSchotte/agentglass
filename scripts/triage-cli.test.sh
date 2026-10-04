@@ -1,6 +1,7 @@
 #!/bin/sh
 # agentglass triage: --json shape, guards as answers, no ANSI without a TTY, exit 2 on bad input
 set -e
+unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fake HOME decides, not the caller's overrides
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT

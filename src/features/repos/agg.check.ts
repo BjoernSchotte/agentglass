@@ -12,7 +12,8 @@ import { parse } from "../query/parse.ts";
 import { EMPTY, compile } from "../query/eval.ts";
 import { aggregate } from "../query/agg.ts";
 import { identOf } from "../query/project.ts";
-import { type RepoAgg, repoAgg, relFile, errPct, allDays } from "./agg.ts";
+import { type RepoAgg, type BranchAgg, repoAgg, relFile, errPct, allDays, periodCommits, bookBranches, ownPr } from "./agg.ts";
+import { type GitInfo, newInfo, tally } from "../vcs/attrib.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -104,6 +105,39 @@ eq("relFile abs", relFile("/r", "/r/src", "/r/src/a.ts"), "src/a.ts"); eq("relFi
 eq("relFile outside", relFile("/r", "/r", "/etc/x"), ""); eq("relFile prefix trap", relFile("/r", "/r", "/rx/a"), ""); eq("relFile ..", relFile("/r", "/r/src", "../x.ts"), "x.ts");
 eq("allDays", allDays().join(","), [YDAY, TODAY].join(","));
 eq("lastDays has today", lastDays(7).indexOf(TODAY) >= 0 ? "y" : "n", "y");
+
+// git linkage: ✓ commits per project, spend without commits, branches split by commit count
+mk("r6/.git/config", '[remote "origin"]\n\turl = https://github.com/me/six\n'); mk("r6/.git/HEAD", "ref: refs/heads/main\n");
+const nowMs = at(0, 10, 0);
+function gsess(id: string, cost: number, shas: string[], brs: string[]): void {
+  const s = newSess("claude", id, "/fx/claude/" + id + ".jsonl", false); s.cwd = T + "/r6"; s.headDone = true; s.mtime = Date.now(); s.branch = "main"; sessions.set(s.path, s);
+  const a = newAcc(); const d = bucket(a, 0, new Date(nowMs).toISOString()); d.cost = cost; a.cost = cost;
+  for (let i = 0; i < shas.length; i++) a.vcs.push({ k: "commit", v: shas[i] ?? "", t: nowMs, how: "observed", br: brs[i] ?? "", subj: "x", call: "c", ts: "" });
+  if (id === "g1") a.vcs.push({ k: "pr", v: "https://github.com/me/six/pull/4", t: nowMs, how: "created", br: "", subj: "", call: "c", ts: "" });
+  if (id === "g1") a.vcs.push({ k: "pr", v: "https://github.com/me/tap/pull/9", t: nowMs, how: "created", br: "", subj: "", call: "c", ts: "" }); // another repo's PR
+  ledger.set(s.path, a);
+}
+gsess("g1", 4, ["aaaaaaa", "bbbbbbb"], ["main", "main"]); gsess("g2", 1, [], []);
+for (const s of sessions.values()) identOf(s);
+resolveTick(1e9, 1e9, now, stub); L.ver++;
+const g6 = byKey(repoAgg([TODAY], null), "git:github.com/me/six");
+eq("repo commits", g6 ? String(g6.commits) : "-", "2"); eq("spend without commits", g6 ? String(g6.spendNoCommit) : "-", "1");
+const bm = g6 ? g6.branches.get("main") : undefined;
+eq("branch main commits + $/commit", bm ? String(bm.commits) + " " + (bm.cost / bm.commits).toFixed(2) + " sess " + String(bm.sess) : "-", "2 2.50 sess 2");
+eq("created PRs of the project's own remote", g6 ? g6.prs.join(",") : "-", "https://github.com/me/six/pull/4");
+eq("ownPr ssh remote", String(ownPr("https://github.com/Me/Six/pull/1", "ssh://github.com/me/six")) + String(ownPr("https://github.com/me/sixx/pull/1", "ssh://github.com/me/six")) + String(ownPr("https://x.io/a/b/pull/1", "")), "truefalsetrue");
+// one session, one commit on main and one on f, cost 2: one each
+const gi: GitInfo = newInfo();
+gi.commits.push({ sha: "a", br: "main", subj: "", at: nowMs, how: "observed", counted: true, status: "unknown", merge: false, add: -1, del: -1, files: -1, call: "", ts: "", path: "" });
+gi.commits.push({ sha: "b", br: "f", subj: "", at: nowMs, how: "observed", counted: true, status: "unknown", merge: false, add: -1, del: -1, files: -1, call: "", ts: "", path: "" });
+gi.commits.push({ sha: "c", br: "f", subj: "", at: nowMs, how: "reflog", counted: false, status: "present", merge: false, add: -1, del: -1, files: -1, call: "", ts: "", path: "" });
+gi.commits.push({ sha: "d", br: "main", subj: "", at: at(-1, 10, 0), how: "observed", counted: true, status: "unknown", merge: false, add: -1, del: -1, files: -1, call: "", ts: "", path: "" });
+tally(gi);
+const pc = periodCommits(gi, new Set<string>([TODAY]));
+eq("period commits: ✓ only, today only", String(pc.n), "2");
+const bm2 = new Map<string, BranchAgg>(); bookBranches(bm2, pc, "main", true, 2, 0);
+const bf = bm2.get("f"); const bmn = bm2.get("main");
+eq("split by commit count", (bmn ? String(bmn.cost) + "/" + String(bmn.commits) : "-") + " " + (bf ? String(bf.cost) + "/" + String(bf.commits) : "-"), "1/1 1/1");
 
 rmSync(T, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "repo agg ok");

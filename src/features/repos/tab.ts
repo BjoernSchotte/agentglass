@@ -22,7 +22,8 @@ import { EMPTY } from "../query/eval.ts";
 import { tabFilter, chips } from "../query/ui.ts";
 import { identOf, identSync } from "../query/project.ts";
 import { openGraph } from "../callgraph/view.ts";
-import { type RepoAgg, type HarnessAgg, type FileAgg, repoAgg, relFile, errPct, allDays, topFiles } from "./agg.ts";
+import { type RepoAgg, type HarnessAgg, type BranchAgg, type FileAgg, repoAgg, relFile, errPct, allDays, topFiles } from "./agg.ts";
+import { perCommit, openGit } from "../vcs/view.ts";
 export { topFiles };
 
 // ── pure helpers (checks) ──
@@ -171,10 +172,10 @@ function renderList(): void {
     fg(C.dim) + "   sort " + RST + fg(C.text) + RV.sort + RST + fg(C.dim) + " (s)" + RST);
   // columns: repo | sess live | cost | active | err% | harness mix | files | last
   const wide = iw >= 78; const mixW = iw >= 70 ? 8 : 0; const mkW = iw >= 86 ? 5 : 0;
-  const cS = 5; const cL = wide ? 5 : 0; const cC = 11; const cA = 7; const cE = 6; const cF = wide ? 6 : 0; const cT = 5;
-  const fixed = cS + cL + cC + cA + cE + (mixW ? mixW + 2 : 0) + mkW + cF + cT;
+  const cS = 5; const cL = wide ? 5 : 0; const cC = 11; const cG = iw >= 92 ? 8 : 0; const cA = 7; const cE = 6; const cF = wide ? 6 : 0; const cT = 5;
+  const fixed = cS + cL + cC + cG + cA + cE + (mixW ? mixW + 2 : 0) + mkW + cF + cT;
   const rw = Math.max(10, iw - 1 - fixed);
-  const hdr = fg(C.dim) + " " + fit("repo", rw) + rj("sess", cS) + (cL ? rj("live", cL) : "") + rj("cost", cC) + rj("active", cA) + rj("err%", cE) + (mixW ? "  " + fit("harness mix", mixW + mkW) : "") + (cF ? rj("files", cF) : "") + rj("last", cT) + RST;
+  const hdr = fg(C.dim) + " " + fit("repo", rw) + rj("sess", cS) + (cL ? rj("live", cL) : "") + rj("cost", cC) + (cG ? rj("commits", cG) : "") + rj("active", cA) + rj("err%", cE) + (mixW ? "  " + fit("harness mix", mixW + mkW) : "") + (cF ? rj("files", cF) : "") + rj("last", cT) + RST;
   line(1, 3, W - 2, " " + hdr);
   const y0 = 4; const vis = Math.max(0, Ht - 2 - y0);
   if (RV.selKey) for (let i = 0; i < rs.length; i++) if (rs[i]?.key === RV.selKey) { RV.sel = i; break; } // rows reorder as projects resolve: the cursor stays on its project
@@ -193,7 +194,7 @@ function renderList(): void {
     const nf = r.files.size + (r.outside.n > 0 ? 1 : 0);
     const s = (on ? fg(C.accent) + "▌" + RST + b : " ") + fitStyled(lab, rw) + fillTo(fitStyled(lab, rw), rw) + b +
       fg(C.text) + rj(String(r.sessions), cS) + RST + b + (cL ? (r.live ? fg(C.green) : fg(C.dim)) + rj(r.live ? String(r.live) : "·", cL) + RST + b : "") +
-      rjs(costCell(r, split(r.modes, true)), cC) + b + fg(C.text) + rj(r.activeMin > 0 ? hm(r.activeMin) : "·", cA) + RST + b + errCell(r.err, r.calls, cE) + b + mt +
+      rjs(costCell(r, split(r.modes, true)), cC) + b + (cG ? (r.commits ? fg(C.green) : fg(C.dim)) + rj(r.commits ? grp(r.commits) : "·", cG) + RST + b : "") + fg(C.text) + rj(r.activeMin > 0 ? hm(r.activeMin) : "·", cA) + RST + b + errCell(r.err, r.calls, cE) + b + mt +
       (cF ? fg(C.sub) + rj(nf ? grp(nf) : "·", cF) + RST + b : "") + fg(C.dim) + rj(r.last > 0 ? ago(r.last) : "", cT) + RST;
     line(1, y0 + i, W - 2, b + s + b);
   }
@@ -275,13 +276,16 @@ function renderDetail(): void {
   const l2 = fg(C.dim) + (r.worktrees.size > 1 ? "worktrees (" + String(r.worktrees.size) + ") " : "worktree ") + RST + wts.join(dot);
   const l3 = costCell(r, split(r.modes, false)) + dot + fg(C.cyan) + "↑" + kfmt(r.inTok) + RST + fg(C.sub) + " in " + RST + fg(C.purple) + "↓" + kfmt(r.outTok) + RST + fg(C.sub) + " out" + RST + dot +
     fg(C.text) + hm(r.activeMin) + RST + fg(C.sub) + " active" + RST + fg(C.dim) + " (" + hm(r.agentMin) + (iw >= 100 ? " agent-hours)" : " agents)") + RST + dot + fg(C.text) + grp(r.calls) + RST + fg(C.sub) + (iw >= 100 ? " tool calls" : " calls") + RST + dot + (r.calls < 10 ? fg(C.dim) + "err% · (< 10 calls)" + RST : errCell(r.err, r.calls, 0) + fg(C.sub) + " errors" + RST);
-  line(1, 2, W - 2, " " + l1); line(1, 3, W - 2, " " + l2); line(1, 4, W - 2, " " + l3);
+  const pc = perCommit(r.cost - r.spendNoCommit, 0, r.commits, single(r.modes));
+  const l4 = fg(r.commits ? C.green : C.dim) + grp(r.commits) + RST + fg(C.sub) + (r.commits === 1 ? " commit" : " commits") + RST + (pc ? dot + fg(C.yellow) + pc + RST : "") +
+    (r.spendNoCommit > 0 ? dot + fg(C.yellow) + money(r.spendNoCommit, single(r.modes)) + RST + fg(C.sub) + " without commits" + RST : "") + (r.prs.length ? dot + fg(C.accent) + String(r.prs.length) + (r.prs.length === 1 ? " PR" : " PRs") + RST + fg(C.sub) + " created" + RST : "");
+  line(1, 2, W - 2, " " + l1 + dot + l4); line(1, 3, W - 2, " " + l2); line(1, 4, W - 2, " " + l3);
   // boxes: sessions (left) | files, tools, branches (right)
   const y0 = 6; const bh = Ht - 1 - y0; if (bh < 4) return;
   const lw = Math.max(40, Math.floor(W * 0.56)); const rw2 = W - lw;
   if (RV.focus === 3 && !r.branches.size) RV.focus = 0;
   const ss = detailSessions(r, RV.file); let heads = 0;
-  box(0, y0, lw, bh, "sessions", String(ss.length) + (RV.file ? " touched it" : "") + " · ↵ transcript · c calls", RV.focus === 0);
+  box(0, y0, lw, bh, "sessions", String(ss.length) + (RV.file ? " touched it" : "") + " · ↵ transcript · c calls · V git", RV.focus === 0);
   // row = cursor 1 + mark 2 + title + gap 1 + where + branch + cost + active + err%
   const sw = lw - 2; const showBr = sw >= 78; const cW = 10; const aW = 7; const eW = 6; const brW = showBr ? 14 : 0; const whW = sw >= 56 ? 15 : 0;
   const tW = Math.max(8, sw - 4 - whW - brW - cW - aW - eW);
@@ -316,14 +320,19 @@ function renderDetail(): void {
   if (progs && hT - 2 > tRows) line(lw + 1, y0 + hF + 1 + tRows, fw, " " + fg(C.dim) + "failing: " + RST + progs);
   if (nb === 3 && hB >= 3) {
     const bs = branchRows(r);
-    box(lw, y0 + hF + hT, rw2, hB, "branches", String(bs.length), RV.focus === 3);
-    listIn(3, lw + 1, y0 + hF + hT + 1, fw, hB - 2, bs.length, (k: number, on: boolean): string => {
-      const e = bs[k]; if (!e) return ""; const b = on ? bg(C.sel) : "";
-      return fg(C.purple) + (on ? CSI + "1m" : "") + fit(clean(e[0]), Math.max(6, fw - 2 - 5 - 10)) + RST + b + fg(C.text) + rj(String(e[1].sess), 5) + RST + b + rjs(costCell(e[1], money(e[1].cost, single(rr.modes))), 10);
+    const prs = rr.prs.length ? " · " + String(rr.prs.length) + (rr.prs.length === 1 ? " PR" : " PRs") : "";
+    box(lw, y0 + hF + hT, rw2, hB, "branches", String(bs.length) + " · " + grp(rr.commits) + " ✓ · $/c" + prs, RV.focus === 3);
+    const gW = fw >= 44 ? 6 : 0; const pW2 = fw >= 52 ? 12 : 0; const room = hB - 2 - (rr.prs.length && hB - 2 > bs.length ? 1 : 0);
+    listIn(3, lw + 1, y0 + hF + hT + 1, fw, room, bs.length, (k: number, on: boolean): string => {
+      const e = bs[k]; if (!e) return ""; const b = on ? bg(C.sel) : ""; const ba = e[1];
+      return fg(C.purple) + (on ? CSI + "1m" : "") + fit(clean(e[0]), Math.max(6, fw - 2 - 5 - gW - pW2 - 10)) + RST + b + fg(C.text) + rj(String(ba.sess), 5) + RST + b +
+        (gW ? (ba.commits ? fg(C.green) : fg(C.dim)) + rj(ba.commits ? String(ba.commits) + "✓" : "·", gW) + RST + b : "") +
+        (pW2 ? fg(C.sub) + rj(perCommit(ba.cost, ba.unk, ba.commits, single(rr.modes)).replace(/\/commit$/, "/c"), pW2) + RST + b : "") + rjs(costCell(ba, money(ba.cost, single(rr.modes))), 10);
     }, "");
+    if (rr.prs.length && hB - 2 > bs.length) line(lw + 1, y0 + hF + hT + 1 + room, fw, " " + fg(C.dim) + "created " + RST + rr.prs.map((u: string) => fg(C.accent) + (u.indexOf("merge_requests") >= 0 ? "!" : "#") + u.slice(u.lastIndexOf("/") + 1) + RST).join(" "));
   }
 }
-function branchRows(r: RepoAgg): [string, HarnessAgg][] { const xs = [...r.branches.entries()]; xs.sort((x: [string, HarnessAgg], y: [string, HarnessAgg]) => y[1].cost - x[1].cost || y[1].sess - x[1].sess || (x[0] < y[0] ? -1 : 1)); return xs; }
+function branchRows(r: RepoAgg): [string, BranchAgg][] { const xs = [...r.branches.entries()]; xs.sort((x: [string, BranchAgg], y: [string, BranchAgg]) => y[1].cost - x[1].cost || y[1].sess - x[1].sess || (x[0] < y[0] ? -1 : 1)); return xs; }
 function worstProgs(r: RepoAgg, n: number): string {
   const xs = [...r.progErr.entries()]; xs.sort((x: [string, Cnt], y: [string, Cnt]) => y[1].err - x[1].err || y[1].n - x[1].n);
   return xs.slice(0, n).map((e: [string, Cnt]) => fg(C.text) + display("prog", e[0], null) + RST + fg(C.dim) + " " + String(e[1].err) + "/" + String(e[1].n) + RST).join(dot);
@@ -353,6 +362,7 @@ function key(k: string): boolean {
     else if (k === "G" || k === "end") setSel(f, Math.max(0, n - 1));
     else if (k === "enter") activate();
     else if (k === "c") { if (RV.focus === 0) { const s = curDetailSess(); if (s) openGraph(s); } }
+    else if (k === "V") { if (RV.focus === 0) { const s = curDetailSess(); if (s) openGit(s); } }
     else return false;
     return true;
   }
@@ -418,14 +428,16 @@ H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list") return [];
   if (S.tab === 0) return [["@", "project"]];
   if (!mine()) return [];
-  if (RV.detail) return RV.focus === 0 ? [["←→", "box"], ["↑↓", "session"], ["↵", "transcript"], ["c", "calls"], ["esc", RV.file ? "clear file" : "back"], ["d/w/m/a", "period"], ["/", "filter"]]
+  if (RV.detail) return RV.focus === 0 ? [["←→", "box"], ["↑↓", "session"], ["↵", "transcript"], ["c", "calls"], ["V", "git"], ["esc", RV.file ? "clear file" : "back"], ["d/w/m/a", "period"], ["/", "filter"]]
     : [["←→", "box"], ["↑↓", "select"], ["↵", RV.focus === 1 ? "sessions that changed it" : "—"], ["esc", RV.file ? "clear file" : "back"], ["d/w/m/a", "period"], ["/", "filter"]];
   return [["↑↓", "project"], ["↵", "details"], ["d/w/m/a", "period"], ["s", "sort"], ["/", "filter"], ["p", "pin"], ["P", "pins"]];
 });
 H.helpSections.push({ name: "repos", ctx: "Repos", keys: [["d w m a", "period: today, 7 days, 30 days, all time"], ["s", "sort: cost, active, sessions, err%, last"],
   ["↵  click", "project detail: sessions, files, tools, branches"], ["← →", "detail: move between the boxes"], ["↵", "detail: open the transcript · on a file: only sessions that changed it"],
-  ["c", "detail: call graph of the selected session"], ["esc  ⌫", "clear the file chip, then back to the list"], ["@", "Sessions list: open the selected session's project"],
+  ["c  V", "detail: call graph · git view (commits, PRs) of the selected session"], ["esc  ⌫", "clear the file chip, then back to the list"], ["@", "Sessions list: open the selected session's project"],
   ["/  p  P", "filter the sessions before grouping (harness is codex = each project's Codex share) · pin · pins"],
+  ["", "commits = the sessions' own (✓) commits in the period; $/commit = cost of the sessions that committed ÷ commits;"],
+  ["", "  without commits = cost of sessions that made none; a branch's cost is split by its sessions' commits"],
   ["", "one project = worktrees and clones of one remote (origin, else upstream, else the first); forks are separate"],
   ["", "active = union of the sessions' active minutes (lines ≤ repo.idleGapMin apart, default 5, plus tool runs);"],
   ["", "  agent-hours = their sum; a changed gap applies to newly indexed lines; differs from the call graph's span-based active"],

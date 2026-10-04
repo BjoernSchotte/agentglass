@@ -1,6 +1,7 @@
 #!/bin/sh
 # agentglass cost + --json billing fields against a fake HOME (one Claude API-key session, one unpriced model): sh scripts/cost.test.sh
 set -e
+unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fake HOME decides, not the caller's overrides
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }

@@ -5,7 +5,7 @@ import type { Ev } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
 import { HOME } from "../util/fs.ts";
 import { width } from "../util/text.ts";
-import { H, applyMeta, screenOut } from "../hooks.ts";
+import { H, applyMeta, screenOut, display } from "../hooks.ts";
 import { REDACT, scrubText, fakeProject } from "./redact.ts";
 
 let bad = 0;
@@ -54,6 +54,15 @@ const all = evs.map((e) => e.text + e.full).join(" ");
 ok("content faked", all.indexOf("ACME") < 0 && all.indexOf("acme") < 0, all);
 ok("tool name kept", (evs[1] ?? evs[0]).text.startsWith("Bash\u0000"), (evs[1] ?? evs[0]).text);
 
+// git linkage (kind vcs): URL keeps host, kind, number; owner/repo faked; subjects come from the title pool, stably
+const pu = display("vcs", "https://github.com/me/x/pull/7", null);
+ok("vcs url keeps /pull/7", pu.startsWith("https://github.com/") && pu.endsWith("/pull/7") && pu.indexOf("me/x") < 0, pu);
+const mr = display("vcs", "https://gitlab.com/grp/sub/proj/-/merge_requests/12", null);
+ok("vcs gitlab MR", mr.endsWith("/-/merge_requests/12") && mr.indexOf("grp") < 0 && mr.indexOf("proj") < 0, mr);
+const cm = display("vcs", "https://github.com/me/x/commit/abc1234", null);
+ok("vcs commit keeps sha", cm.endsWith("/commit/abc1234") && cm.indexOf("me/x") < 0, cm);
+const sj = display("vcs", "fix the secret client thing", null);
+ok("vcs subject replaced + stable", sj !== "fix the secret client thing" && sj.length > 0 && sj === display("vcs", "fix the secret client thing", null), sj);
 // a line with an OSC 8 link: the escape (url) bytes stay as they are, only the visible text is scrubbed
 const esc = "\x1b]8;;agentglass://open/claude/" + user + "\x1b\\";
 const lk = "\x1b[1m" + esc + "home of " + user + "\x1b]8;;\x1b\\\x1b[0m";
