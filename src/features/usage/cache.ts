@@ -13,7 +13,7 @@ import { type Acc, L } from "./record.ts";
 import { ROWS } from "./facts.ts";
 import { rulesNeedRows } from "../rules/file.ts";
 import { PRICES_SIG } from "./pricing.ts";
-import { VERSION, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
+import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
@@ -43,13 +43,14 @@ function load(): void {
   let size = 0;
   try { size = statSync(FILE).size; } catch (e) { return; }
   const root = parse(readText(FILE, 0, size).trim());
-  if (!root || num(root["v"]) !== VERSION || str(root["prices"]) !== PRICES_SIG) return; // stale: re-index from scratch
+  const v = root ? num(root["v"]) : 0;
+  if (!root || !readable(v) || str(root["prices"]) !== PRICES_SIG) return; // stale: re-index from scratch
   rlIn(obj(root["rl"]));
   const ss = obj(root["sessions"]);
   if (!ss) return;
   for (const path of Object.keys(ss)) {
     const o = obj(ss[path]); if (!o) continue;
-    const a = accIn(o);
+    const a = accIn(o); if (v !== VERSION) { a.hd = []; a.tl = []; } // memos of pre-release builds, in another layout
     if (!ROWS.on) { ledger.set(path, a); continue; } // no rows built (checks): the day buckets alone are consistent with off
     if (LAZY_ROWS) { ledger.set(path, a); written.set(path, a.off); unread.add(path); continue; } // its calls file, as is, until it grows
     const calls = loadCallsFrom(CALLS_DIR, path, a);
@@ -94,19 +95,21 @@ LAZY.rows = (path: string, a: Acc): boolean => {
 // head and tail memos live in the session's ledger entry (reset with it when the log is rewritten); never under --redact,
 // where a read sees faked texts and a replay could show real ones
 if (!REDACT) {
+  // none for a log that shrank below what the ledger booked (rewritten: accOf starts that entry over)
+  const entry = (s: Sess): Acc | null => { const a = ledger.get(s.path); return a && a.ep === s.ep && s.size >= a.off ? a : null; };
   HEADS.get = (s: Sess): HeadMemo | null => {
-    const a = ledger.get(s.path); if (!a || a.hd.length < 3 || a.ep !== s.ep) return null;
-    return { w: Number(a.hd[0]), h: Number(a.hd[1]), x: a.hd[2] ?? "", f: a.hd.slice(3) };
+    const a = entry(s); if (!a || a.hd.length < 5) return null;
+    return { w: Number(a.hd[0]), h: Number(a.hd[1]), z: Number(a.hd[2]), t: Number(a.hd[3]), x: a.hd[4] ?? "", f: a.hd.slice(5) };
   };
-  HEADS.put = (s: Sess, m: HeadMemo): void => { const a = accOf(s); a.hd = [String(m.w), String(m.h), m.x].concat(m.f); L.idx++; };
+  HEADS.put = (s: Sess, m: HeadMemo): void => { const a = accOf(s); a.hd = [String(m.w), String(m.h), String(m.z), String(m.t), m.x].concat(m.f); L.idx++; };
   TAILS.get = (s: Sess): TailMemo | null => {
-    const a = ledger.get(s.path); const t = a ? a.tl : []; if (!a || t.length < 6 || a.ep !== s.ep) return null;
-    const k = t[2] ?? "";
-    return { size: Number(t[0]), x: t[1] ?? "", ev: k ? { kind: k, text: t[3] ?? "", ts: t[4] ?? "", id: t[5] ?? "", full: "" } : null, f: t.slice(6) };
+    const a = entry(s); const t = a ? a.tl : []; if (!a || t.length < 7) return null;
+    const k = t[3] ?? "";
+    return { size: Number(t[0]), t: Number(t[1]), x: t[2] ?? "", ev: k ? { kind: k, text: t[4] ?? "", ts: t[5] ?? "", id: t[6] ?? "", full: "" } : null, f: t.slice(7) };
   };
   TAILS.put = (s: Sess, m: TailMemo): void => {
     const a = accOf(s); const e = m.ev;
-    a.tl = [String(m.size), m.x, e ? e.kind : "", e ? e.text : "", e ? e.ts : "", e ? e.id : ""].concat(m.f); L.idx++;
+    a.tl = [String(m.size), String(m.t), m.x, e ? e.kind : "", e ? e.text : "", e ? e.ts : "", e ? e.id : ""].concat(m.f); L.idx++;
   };
 }
 H.firstScan.push(load); // not at import: --help, --version and the agent help never read it

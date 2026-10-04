@@ -8,8 +8,10 @@ import { own } from "../../util/own.ts";
 // spare capacity, and the loaded ledger lives for the whole run
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 12; // 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness), a day's tool/program/command/file maps as one JSON text "hv", decoded on first use (perf-baseline); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 13; // 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
+// v12 has the same parsing and the heavy maps inline (dayIn reads both forms): kept on upgrade, its memos are not trusted
+export function readable(v: number): boolean { return v === VERSION || v === 12; }
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function strsIn(v: unknown): string[] { const out: string[] = []; for (const x of arr(v)) out.push(own(str(x))); return out; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
@@ -49,7 +51,7 @@ function heavyOut(x: Heavy): string {
   return JSON.stringify({ tt, p: cntsOut(x.prog), m: cntsOut(x.cmds), f: cntsOut(x.files) });
 }
 function heavyIn(raw: string): Heavy { const o = parse(raw); return o ? heavyOf(o) : newHeavy(); }
-// the same keys as a day object of a cache written before "hv" (VERSION 12 builds of harness-correctness): read at once
+// the same keys as a day object of a cache written before "hv" (VERSION 12): read at once
 function heavyOf(o: Obj): Heavy {
   const tt = new Map<string, TS>();
   const n = obj(o["tt"]);

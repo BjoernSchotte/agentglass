@@ -52,10 +52,12 @@ export function scan(): void {
 // A log only grows: once it reaches past the head window, what reading the head did is final (a shorter log: until it
 // grows; a record source counts records). That outcome — the session fields it changed, the first prompt and the
 // adapter's own head state (Claude's rename) — is kept as a memo (the ledger cache stores it) and replayed instead of
-// parsing up to 512 KB again; the first 4 KB must still hash the same. w = the window, or the log's size when shorter.
+// parsing up to 512 KB again. A log rewritten in place must not replay a stale head: the first and the last 4 KB of the
+// window must still hash the same (h), the log must not have shrunk below its size then (z), and a log shorter than its
+// window must still have that mtime (t; it may change anywhere). w = the window, or the log's size when shorter.
 // f = [field, value, …]: the HEAD_FIELDS the read changed, and "prompt" (the head's first one; set only while the
 // session has none, like a real read).
-export interface HeadMemo { w: number; h: number; x: string; f: string[] }
+export interface HeadMemo { w: number; h: number; z: number; t: number; x: string; f: string[] }
 export const HEADS = { get: (s: Sess): HeadMemo | null => null, put: (s: Sess, m: HeadMemo): void => {} }; // cache.ts; off under --redact
 const HEAD_FIELDS = ["cwd", "title", "branch", "model", "remote", "name", "kind", "parent"];
 function fieldsOf(s: Sess): string[] { return [s.cwd, s.title, s.branch, s.model, s.remote, s.name, s.kind, s.parent]; }
@@ -64,14 +66,20 @@ function setField(s: Sess, k: string, v: string): void {
   else if (k === "remote") s.remote = v; else if (k === "name") s.name = v; else if (k === "kind") s.kind = v; else if (k === "parent") s.parent = v;
   else if (k === "prompt") { if (!s.prompt) s.prompt = v; }
 }
-// the first 4 KB of the log (a record source's pseudo path reads nothing: its memo is keyed by the source epoch alone)
-function headHash(path: string): number { const b = readBytes(path, 0, 4096); let h = 2166136261; for (let i = 0; i < b.length; i++) { h ^= b[i] ?? 0; h = Math.imul(h, 16777619) >>> 0; } return h; }
+// the first and the last 4 KB of the log's first w bytes (a record source's pseudo path reads nothing: its memo is keyed
+// by the source epoch and the record counts)
+function fnvOf(h: number, b: Uint8Array): number { for (let i = 0; i < b.length; i++) { h ^= b[i] ?? 0; h = Math.imul(h, 16777619) >>> 0; } return h; }
+function headHash(path: string, w: number): number {
+  const h = fnvOf(2166136261, readBytes(path, 0, Math.min(4096, w)));
+  return w > 4096 ? fnvOf(h, readBytes(path, Math.max(4096, w - 4096), Math.min(4096, w - 4096))) : h;
+}
+function mtimeOf(s: Sess): number { return Math.floor(s.mtime); } // whole ms: survives the cache's JSON round trip
 export function loadHead(s: Sess): void {
   s.headDone = true;
   const src = sourceOf(s.h); const ad = harnessOf(s.h);
   const w = window(src, ad.headBytes);
   const m = HEADS.get(s);
-  if (m && (s.size >= w ? m.w === w : m.w === s.size) && m.h === headHash(s.path)) {
+  if (m && (s.size >= w ? m.w === w && s.size >= m.z : m.w === s.size && m.t === mtimeOf(s)) && m.h === headHash(s.path, m.w)) {
     const sh = ad.setHeadState; if (m.x && sh) sh(s, m.x);
     for (let i = 0; i + 1 < m.f.length; i += 2) setField(s, m.f[i] ?? "", m.f[i + 1] ?? "");
     applyMeta(s);
@@ -87,14 +95,15 @@ export function loadHead(s: Sess): void {
   for (let i = 0; i < HEAD_FIELDS.length; i++) if (f1[i] !== f0[i]) { f.push(HEAD_FIELDS[i] ?? ""); f.push(own(f1[i] ?? "")); }
   if (hp) { f.push("prompt"); f.push(own(hp)); }
   const hs = ad.headState;
-  HEADS.put(s, { w: Math.min(w, s.size), h: headHash(s.path), x: hs ? hs(s) : "", f });
+  const hw = Math.min(w, s.size);
+  HEADS.put(s, { w: hw, h: headHash(s.path, hw), z: s.size, t: mtimeOf(s), x: hs ? hs(s) : "", f });
 }
 // the last events stay on the session until its next tail read: exact-size copies of their strings (util/own.ts)
 function keepEv(e: Ev): Ev { return { kind: e.kind, text: own(e.text), ts: own(e.ts), id: own(e.id), full: own(e.full) }; }
-// The tail's outcome is kept too, for a log of the same size: the fields it changed, a prompt it found (the head had
+// The tail's outcome is kept too, for a log of the same size and mtime: the fields it changed, a prompt it found (the head had
 // none), the adapter's state and the last event — enough for a one-shot list (lite: --json, sessions), which then reads no
 // tail of a log that has not grown. Never for a live session (its alarms need the recent events).
-export interface TailMemo { size: number; x: string; ev: Ev | null; f: string[] }
+export interface TailMemo { size: number; t: number; x: string; ev: Ev | null; f: string[] }
 export const TAILS = { get: (s: Sess): TailMemo | null => null, put: (s: Sess, m: TailMemo): void => {} }; // cache.ts; off under --redact
 export function loadTail(s: Sess, lite = false): void {
   if (s.tailSize === s.size) return;
@@ -102,7 +111,7 @@ export function loadTail(s: Sess, lite = false): void {
   const ad = harnessOf(s.h); const rf = ad.refresh; if (rf) { rf(s); applyMeta(s); }
   const src = sourceOf(s.h);
   const m = lite && s.pid <= 0 ? TAILS.get(s) : null;
-  if (m && m.size === s.size) {
+  if (m && m.size === s.size && m.t === mtimeOf(s)) {
     const sh = ad.setHeadState; if (m.x && sh) sh(s, m.x);
     for (let i = 0; i + 1 < m.f.length; i += 2) setField(s, m.f[i] ?? "", m.f[i + 1] ?? "");
     s.evs = m.ev ? [m.ev] : [];
@@ -119,7 +128,7 @@ export function loadTail(s: Sess, lite = false): void {
   for (let i = 0; i < HEAD_FIELDS.length; i++) if (f1[i] !== f0[i]) { f.push(HEAD_FIELDS[i] ?? ""); f.push(own(f1[i] ?? "")); }
   if (!p0 && s.prompt) { f.push("prompt"); f.push(own(s.prompt)); }
   const last = s.evs.length ? s.evs[s.evs.length - 1] : null; const hs = ad.headState;
-  TAILS.put(s, { size: s.size, x: hs ? hs(s) : "", ev: last ? { kind: last.kind, text: last.text, ts: last.ts, id: last.id, full: "" } : null, f });
+  TAILS.put(s, { size: s.size, t: mtimeOf(s), x: hs ? hs(s) : "", ev: last ? { kind: last.kind, text: last.text, ts: last.ts, id: last.id, full: "" } : null, f });
 }
 export function titleOf(s: Sess): string { return titleFrom(s, s.title, s.prompt); }
 // the title from these title/prompt values (realMeta()'s under --redact: what filters match)

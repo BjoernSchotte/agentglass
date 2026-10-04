@@ -73,6 +73,35 @@ eq("small log unchanged: replayed", small().prompt + "|" + String(puts - n0), "s
 appendFileSync(q, asst("05", "claude-opus-5-5") + "\n");
 eq("small log grew: read again", small().model + "|" + String(puts - n0), "claude-opus-5-5|2");
 
+// rewritten in place with the same first 4 KB: a /rename near the end of the head window changed, the log grew
+const fill = (n: number): string => "{\"type\":\"progress\",\"data\":\"" + "y".repeat(n - 32) + "\"}\n"; // exactly n bytes
+const r = dir + "/r.jsonl"; const W = 131072;
+const body = (t: string, more: number): string => { const a = user("build the todo app", "00") + "\n" + pad(100000); return a + fill(W - 2000 - a.length) + custom(t, "50") + "\n" + pad(more); };
+writeFileSync(r, body("Old name", 20000));
+const rs = (mt: number): Sess => { const x = newSess("claude", "r", r, false); x.size = statSync(r).size; x.mtime = mt; loadHead(x); return x; };
+let n2 = puts; rs(1);
+eq("window-end rename: stored", String(puts - n2), "1");
+writeFileSync(r, body("New name", 30000)); n2 = puts;
+eq("same first 4 KB, the window's end changed: read again", rs(2).title + "|" + String(puts - n2), "New name|1");
+// …or shrank below the size it had when the memo was kept (a rewrite the two hashed ends cannot see)
+const big = statSync(r).size; writeFileSync(r, body("New name", 30000).slice(0, big - 8000) + "\n"); n2 = puts; rs(4);
+eq("shrunk log: read again", String(puts - n2), "1");
+// a log shorter than its window: rewritten at the same size and the same ends (a mid-file edit): mtime tells
+const u = dir + "/u.jsonl"; const short = (t: string): string => user("small", "00") + "\n" + pad(9000) + custom(t, "10") + "\n" + pad(9000);
+writeFileSync(u, short("aaaa"));
+const us = (mt: number): Sess => { const x = newSess("claude", "u", u, false); x.size = statSync(u).size; x.mtime = mt; loadHead(x); return x; };
+us(10); n2 = puts;
+eq("short log, same mtime: replayed", us(10).title + "|" + String(puts - n2), "aaaa|0");
+writeFileSync(u, short("bbbb"));
+eq("short log rewritten (same size, new mtime): read again", us(11).title + "|" + String(puts - n2), "bbbb|1");
+// the tail memo: same size but another mtime (rewritten) is read again
+const v = dir + "/v.jsonl"; writeFileSync(v, user("tail one", "00") + "\n" + asst("01", "claude-sonnet-4-5") + "\n");
+const vt = (mt: number): Sess => { const x = newSess("claude", "v", v, false); x.size = statSync(v).size; x.mtime = mt; loadHead(x); loadTail(x, true); return x; };
+vt(20); let n3 = tputs; vt(20);
+eq("tail memo, same size and mtime: replayed", String(tputs - n3), "0");
+writeFileSync(v, user("tail one", "00") + "\n" + asst("01", "claude-sonnet-4-6") + "\n"); n3 = tputs;
+eq("tail memo, same size, new mtime: read again", vt(21).model + "|" + String(tputs - n3), "claude-sonnet-4-6|1");
+
 rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "headmemo: all checks passed");
 if (bad) process.exit(1);

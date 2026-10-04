@@ -44,8 +44,8 @@ export interface Acc {
   vcs: VRef[]; // git linkage: commits, PR/issue/commit links and git-call spans scraped from tool output (vcs.ts), oldest first
   dn: Pend[]; // calls the current line closed (not persisted: the scraper reads and clears it per line)
   vk: Set<string>; vkn: number; // "<k>\t<v>" of vcs (gcall spans aside) and the vcs length it mirrors (not persisted)
-  hd: string[]; // the head memo (model/sessions.ts HeadMemo) as [w, h, x, field, value, …]; [] none
-  tl: string[]; // the tail memo (TailMemo) as [size, x, kind, text, ts, id, field, value, …] (kind "" = no event); [] none
+  hd: string[]; // the head memo (model/sessions.ts HeadMemo) as [w, h, z, t, x, field, value, …]; [] none
+  tl: string[]; // the tail memo (TailMemo) as [size, t, x, kind, text, ts, id, field, value, …] (kind "" = no event); [] none
 }
 // one scraped git reference: k = commit (v = sha as printed) | pr | issue | link (v = canonical URL; link = a commit URL) |
 // gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
