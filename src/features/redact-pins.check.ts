@@ -82,6 +82,9 @@ ok("filter: the own fake matches exactly", m("agent is " + k1, c1) === "true", k
 ok("filter: a bare word finds the real name", m("billing", c1) === "true", "");
 ok("fakeAgent stable", fakeAgent("acme-billing-auditor") === k1 && fakeAgent("Explore") === "Explore", fakeAgent("acme-billing-auditor"));
 ok("scrubber swaps the name on screen", scrubText("invoke acme_ticket_triager now").indexOf("acme_ticket_triager") < 0 && screenOut("⑂ acme-billing-auditor").indexOf("acme-billing") < 0, scrubText("invoke acme_ticket_triager now"));
+const cp = newSess("claude", "77777777-ffff", "/tmp/cp.jsonl", false); cp.parent = "11111111-aaaa"; cp.kind = "providers"; applyMeta(cp);
+ok("a plain-word name inside a team subagent id", scrubText("agent-aproviders-36784878b70cbf7c.jsonl").indexOf("providers") < 0, scrubText("agent-aproviders-36784878b70cbf7c.jsonl"));
+ok("inside a team subagent id", scrubText("agent-aacme-billing-auditor-38c013df92a65487.jsonl").indexOf("billing") < 0, scrubText("agent-aacme-billing-auditor-38c013df92a65487.jsonl"));
 ok("a tool named after the agent", display("tool", "acme_ticket_triager", null) === g.kind && display("tool", "Bash", null) === "Bash", display("tool", "acme_ticket_triager", null));
 ok("triage/compare dims show the fake", display("filter:agent", c1.kind, null) === k1, display("filter:agent", c1.kind, null));
 console.log(bad ? bad + " failed" : "redact pins and agents: all checks passed");

@@ -151,6 +151,7 @@ export function fakeAgent(real: string): string {
   if (!out) out = stretch(pick(AGENT_POOL, k), n);
   agentMemo.set(k, out); agentUsed.add(out);
   if (k.length >= 3 && !common.has(k) && !GENERIC.has(k)) addWord(real, out, true); // its name in tool names, arguments, OTLP strings
+  addWord("a" + real, "a" + out, true); // Claude team subagents: id a<name>-<hex>, transcript agent-a<name>-<hex>.jsonl
   return out;
 }
 function fakePerson(real: string, first: boolean): string {

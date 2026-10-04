@@ -19,7 +19,7 @@ import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
 import { type Ctx, type Compiled, EMPTY, compile, matchSession, beyondRetention, oldestDay } from "./eval.ts";
-import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
+import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, restoredToast, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
 import { repoOf, repoShown } from "./project.ts";
 import { REDACT } from "../redact-on.ts";
@@ -367,9 +367,11 @@ H.helpSections.push({ name: "filter  (/ on Sessions and Stats; the same grammar 
   ["esc (list)", "clear this tab's filter; pins stay"],
 ].concat(wrapKeys(64)) });
 
-// ── restored pins: announced on start so they never look like missing sessions ──
+// ── restored pins: announced on start so they never look like missing sessions; the info toast is built then, not
+// here: --redact's display hooks (they mask pinned values) may register after this module ──
 const startToast = initPins(configStore());
-if (startToast) { say(startToast.startsWith("saved") ? "warn" : "info", startToast); S.toastMs = 6000; }
+if (startToast.startsWith("saved")) { say("warn", startToast); S.toastMs = 6000; }
+else if (startToast) H.start.push(() => { say("info", restoredToast()); S.toastMs = 6000; });
 // "calls ≤ 90 d" while call clauses are active and the counted days (period: the view's, [] = all history) reach
 // before the oldest day that keeps call rows: those are kept that long, day buckets forever
 export function callsChip(f: Compiled, period: string[]): string {

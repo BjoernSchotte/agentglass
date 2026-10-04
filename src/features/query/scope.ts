@@ -103,8 +103,9 @@ export function initPins(st: PinStore): string {
   const p = parse(saved);
   if (p.err) return "saved pinned filter dropped: " + p.err.msg;
   pinsTo(addAll([], p.cs).cs); changed();
-  return "pinned: " + chipText(S.pins) + " — P edits, P then enter on empty unpins";
+  return restoredToast();
 }
+export function restoredToast(): string { return "pinned: " + chipText(S.pins) + " — P edits, P then enter on empty unpins"; }
 // `P` editor result: "" unpins all
 export function setPins(expr: string): QErr | null {
   const p = parse(expr);
