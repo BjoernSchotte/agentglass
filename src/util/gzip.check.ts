@@ -1,4 +1,5 @@
 // agentglass — self-check for the pure-TS gzip: scriptc build src/util/gzip.check.ts -o gz && ./gz
+// check: timing — a throughput floor: scripts/check.sh builds this one -O2 and runs it alone, not -O0 under parallel load
 // SPDX-License-Identifier: Apache-2.0
 // The round trips through the system gzip live in scripts/gzip.test.sh.
 import { rmSync, mkdirSync } from "node:fs";

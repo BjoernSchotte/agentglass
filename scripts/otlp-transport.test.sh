@@ -2,7 +2,7 @@
 # OTLP POST against a local mock server: header arrives, gzip body decodes, the token never shows in curl's argv: sh scripts/otlp-transport.test.sh
 set -e
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
-here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'kill $srv $snoop 2>/dev/null || true; rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; snoop=""; trap '{ kill $srv $snoop; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT # reaped quietly: no "Terminated"
 command -v python3 > /dev/null || { echo "skipped: no python3"; exit 0; }
 . "$here/scripts/toolchain.sh"
 scriptc build "$here/testdata/otlp/post-driver.ts" -o "$t/post" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
@@ -28,10 +28,12 @@ python3 "$t/srv.py" "$t" & srv=$!
 i=0; while [ ! -s "$t/port" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
 port=$(cat "$t/port")
 awk 'BEGIN { printf "{\"resourceSpans\":["; for (i = 0; i < 400; i++) printf "{\"traceId\":\"%032x\",\"name\":\"execute_tool Bash git\"},", i; printf "{}]}" }' > "$t/req.json"
-# sample every curl's command line while the request runs (Linux /proc)
-( while :; do for p in $(pgrep -f -- '-q -sS -K -' 2>/dev/null); do tr '\0' ' ' < "/proc/$p/cmdline" >> "$t/argv" 2>/dev/null && echo >> "$t/argv"; done; sleep 0.05; done ) 2>/dev/null & snoop=$!
+# sample every curl's command line while the request runs (Linux /proc; elsewhere nothing to sample)
+if [ -d /proc/self ]; then
+  ( while :; do for p in $(pgrep -f -- '-q -sS -K -' 2>/dev/null); do tr '\0' ' ' < "/proc/$p/cmdline" >> "$t/argv" 2>/dev/null && echo >> "$t/argv"; done; sleep 0.05; done ) 2>/dev/null & snoop=$!
+fi
 OTLP_TEST_TOKEN=t0k3n AGENTGLASS_OTLP_DIR="$t/otlp" "$t/post" "http://127.0.0.1:$port/v1/traces" "$t/req.json" > "$t/out" || { echo "FAIL post: $(cat "$t/out")"; fail=1; }
-kill $snoop 2>/dev/null || true
+[ -z "$snoop" ] || { kill $snoop; wait $snoop; } 2>/dev/null || true
 eq auth "$(grep -i '^authorization:' "$t/headers" | tr -d '\r')" "Authorization: Bearer t0k3n"
 eq encoding "$(grep -i '^content-encoding:' "$t/headers" | tr -d '\r')" "Content-Encoding: gzip"
 cmp -s "$t/body" "$t/req.json" || { echo "FAIL body differs"; fail=1; }
