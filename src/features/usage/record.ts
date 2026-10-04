@@ -33,7 +33,14 @@ export interface Acc {
   t0: number; // first activity (epoch ms), 0 unknown
   al: number; // latest activity booked into Day.act (epoch ms), 0 none
   sp: number[]; // finished calls' [start, end] pairs (epoch ms) not yet in Day.act (not persisted: flushed per line and per chunk)
+  vcs: VRef[]; // git linkage: commits, PR/issue/commit links and git-call spans scraped from tool output (vcs.ts), oldest first
+  dn: Pend[]; // calls the current line closed (not persisted: the scraper reads and clears it per line)
+  vk: Set<string>; vkn: number; // "<k>\t<v>" of vcs (gcall spans aside) and the vcs length it mirrors (not persisted)
 }
+// one scraped git reference: k = commit (v = sha as printed) | pr | issue | link (v = canonical URL; link = a commit URL) |
+// gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
+// br/subj = the banner's branch and subject; call/ts = the tool call to jump to
+export interface VRef { k: string; v: string; t: number; how: string; br: string; subj: string; call: string; ts: string }
 export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rlPct: -1, rlWin: 0, rlReset: 0, rlAt: 0 }; // rl* = latest Codex primary rate limit
 
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
@@ -50,7 +57,7 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [] };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0 };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -172,6 +179,8 @@ export function tool(a: Acc, d: Day, name: string, model: string, mq: number): T
 function newest(a: Acc): Call | null { return a.lastCall >= 0 && a.lastCall < a.calls.length ? a.calls[a.lastCall] : null; }
 function addId(xs: number[], i: number): void { if (i >= 0 && xs.indexOf(i) < 0) xs.push(i); }
 // remember a call until its result shows up; shell commands are counted now, their errors on the result
+// a call's shell command line(s) for the git-linkage scraper, ≤ 4 KB (one command: no copy)
+function cmdOf(cmds: string[]): string { const c = cmds.length === 1 ? cmds[0] ?? "" : cmds.join("\n"); return c.length > 4096 ? c.slice(0, 4096) : c; }
 export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number, ts: string, arg: string, cmds: string[]): void {
   const sh: Cnt[] = []; const row = newest(a);
   for (const c of cmds) {
@@ -183,7 +192,7 @@ export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number
   if (row) row.cid = id;
   if (!id) return;
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
-  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row, sp: a.sp, name });
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row, sp: a.sp, name, cmd: cmdOf(cmds), id, end: 0, dn: a.dn });
 }
 // the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
 export function retool(a: Acc, p: Pend, name: string): void {

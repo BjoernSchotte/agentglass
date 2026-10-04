@@ -1,12 +1,10 @@
-// agentglass — a worktree's HEAD reflog (<gitdir>/logs/HEAD) read as plain text, no git spawn
+// agentglass — git linkage: a worktree's HEAD reflog (<gitdir>/logs/HEAD) read as plain text, no git spawn (spec git-linkage 3)
 // SPDX-License-Identifier: Apache-2.0
-// ponytail: TEMPORARY copy of git-linkage's reader (PR #26, src/features/vcs/reflog.ts, same exports and shapes: readReflog,
-// RefEv, isNew, opOf, parseReflog, headBranch, reflogStamp). Once #26 is on main: delete this file and import those from
-// ../vcs/reflog.ts in build.ts (worktreeGitdirs below stays unless git-linkage offers the same; build.check covers it).
-// Name and email of each line are skipped by the parser: never stored, shown or exported.
-import { statSync, readdirSync } from "node:fs";
+// One line per HEAD move: `<old> <new> <name> <<email>> <epoch> <tz>\t<message>`. Name and email are skipped by the parser:
+// they are never stored, shown or exported.
+import { statSync } from "node:fs";
 import { join } from "node:path";
-import { readText } from "../../util/fs.ts";
+import { readText, listDir } from "../../util/fs.ts";
 
 // at = epoch ms; sha = the new HEAD (the spec's "new": a keyword here); op = commit | amend | merge | cherry-pick | revert |
 // checkout | rebase | reset | other; branch = the branch HEAD was on ("" detached or unknown); amended = a later
@@ -89,11 +87,17 @@ export function readReflog(gitdir: string): RefEv[] {
 export function reflogStamp(gitdir: string): string {
   try { const st = statSync(join(gitdir, "logs", "HEAD")); return String(st.size) + ":" + String(st.mtimeMs); } catch (e) { return ""; }
 }
-
-// every worktree's gitdir of a repository: the common dir itself and <common>/worktrees/*
+// the gitdirs of every worktree of a repo: the common dir (the main worktree's) and <common>/worktrees/<name>
 export function worktreeGitdirs(common: string): string[] {
   if (!common) return [];
   const out = [common];
-  try { for (const n of readdirSync(join(common, "worktrees"))) out.push(join(common, "worktrees", n)); } catch (e) { /* no linked worktrees */ }
+  for (const n of listDir(join(common, "worktrees")).sort()) out.push(join(common, "worktrees", n));
+  return out;
+}
+// the new-work shas of all worktrees' reflogs of a repo (enrichment: missing vs elsewhere)
+export function repoShas(gitdir: string, common: string): Set<string> {
+  const out = new Set<string>();
+  const ds = worktreeGitdirs(common); if (ds.indexOf(gitdir) < 0) ds.push(gitdir);
+  for (const d of ds) for (const e of readReflog(d)) out.add(e.sha);
   return out;
 }

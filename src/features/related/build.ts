@@ -14,7 +14,7 @@ import { dayKey } from "../usage/record.ts";
 import { LOG, severityOf } from "../rules/engine.ts";
 import { ms } from "../callgraph/model.ts";
 import { type RelEv, type RelSt, type Spawn, newSt, row, toRelShown, markConflicts } from "./model.ts";
-import { readReflog, isNew, worktreeGitdirs } from "./reflog.ts";
+import { readReflog, isNew, worktreeGitdirs } from "../vcs/reflog.ts";
 import { REDACT } from "../redact-on.ts";
 
 export const CAP_BYTES = 16777216; // read budget per build

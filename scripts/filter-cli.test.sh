@@ -1,6 +1,7 @@
 #!/bin/sh
 # --filter for --json/--watch, exit codes and caret, --harness/--live sugar, --pinned, filter keys in --help
 set -e
+unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fake HOME decides, not the caller's overrides
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
