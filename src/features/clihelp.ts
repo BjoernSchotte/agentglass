@@ -21,7 +21,10 @@ export function addCmd(c: CmdRec, before = ""): void {
 export function cmdOf(cmd: string): CmdRec | null { for (const c of REG) if (c.group === "cmd" && c.cmd === cmd) return c; return null; }
 export function opt(flag: string, arg: string, summary: string, def: string, values: string[]): OptRec { return { flag, arg, summary, def, values }; }
 
+// the one exit-code table of every command (text help, JSON help exitCodes, README "Exit codes"); EXIT_EXTRA = the
+// command-specific meanings on top of it
 export const EXIT_CODES: Obj = { "0": "ok (an empty result is ok)", "1": "runtime failure", "2": "usage error", "3": "not found", "4": "ambiguous reference" };
+const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed";
 export const EXAMPLES: string[] = [
   "agentglass session current --fields costUsd,tools,errors",
   "agentglass errors --since 24h --limit 5",
@@ -44,7 +47,9 @@ function table(rs: string[][], col: number): string { return rs.map((r: string[]
 export function textHelp(head: string, tail: string): string {
   const cr = rows("cmd"); const or = rows("opt");
   let col = 0; for (const r of cr.concat(or)) col = Math.max(col, (r[0] ?? "").length + 2);
-  return head + "\n\nusage:\n" + table(cr, col) + "\n\noptions for --json / --watch:\n" + table(or, col) + "\n\n" + tail;
+  const ex = Object.keys(EXIT_CODES).map((k: string) => k + " " + String(EXIT_CODES[k])).join(" · ");
+  return head + "\n\nusage:\n" + table(cr, col) + "\n\noptions for --json / --watch:\n" + table(or, col) +
+    "\n\nexit codes: " + ex + "\n  (command-specific: " + EXIT_EXTRA + ")\n\n" + tail;
 }
 // one command's text help (agentglass <cmd> --help outside agent mode)
 export function cmdText(c: CmdRec): string {

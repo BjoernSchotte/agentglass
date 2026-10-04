@@ -226,7 +226,7 @@ function fmtResult(L: string[], P: string[], e: Ev, w: number): void {
   const body = full || e.text;
   if (body.indexOf("\n@@ ") >= 0 || body.startsWith("diff --git")) dDiff(L, P, body, w, "js"); else dOutput(L, P, body, w);
 }
-function filesOf(texts: string[], cwd: string): string[] {
+export function filesOf(texts: string[], cwd: string): string[] {
   const out: string[] = [];
   const add = (p0: string): void => {
     const p = p0.replace(/\\\//g, "/").trim();

@@ -11,11 +11,21 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# limit S cmd…: run cmd with stdin from /dev/null, kill it (and its children) after S seconds: a hang fails fast
+limit() {
+  s=$1; shift
+  "$@" </dev/null & p=$!
+  ( sleep "$s"; kill -0 "$p" 2>/dev/null || exit 0; echo "TIMEOUT after ${s}s: $*"; pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null ) & w=$!
+  wait "$p"; rc=$?
+  pkill -P "$w" 2>/dev/null; wait "$w" 2>/dev/null # its sleep ends, the watchdog sees cmd gone and exits
+  return $rc
+}
+
 run_check() { # run_check <id> <executable> <log>: sets rc
   # hermetic: a fresh temp HOME/XDG per check and no agent-dir or agentglass path overrides from the caller, so no check
   # can read or write the user's real home (sessions, ~/.agentglass config, cache, run dir, palette, theme)
   h="$CHECK_OUT/$1.home"; mkdir -p "$h"; rc=0
-  env -u GEMINI_CLI_HOME -u OPENCODE_DB -u PI_CODING_AGENT_DIR -u PI_CODING_AGENT_SESSION_DIR -u AGENTGLASS_CACHE_DIR \
+  limit 300 env -u GEMINI_CLI_HOME -u OPENCODE_DB -u PI_CODING_AGENT_DIR -u PI_CODING_AGENT_SESSION_DIR -u AGENTGLASS_CACHE_DIR \
     -u AGENTGLASS_CONFIG -u AGENTGLASS_RUN_DIR -u AGENTGLASS_PALETTE_FILE -u AGENTGLASS_OTLP_DIR -u AGENTGLASS_THEME \
     HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" XDG_STATE_HOME="$h/.local/state" \
     XDG_CACHE_HOME="$h/.cache" AGENTGLASS_HERMETIC=1 \
@@ -48,7 +58,7 @@ if [ "${1:-}" = --job ]; then
            [ "$(cat "$CHECK_OUT/bin.done")" = 0 ] || { echo "skipped: agentglass build failed" > "$log"; rc=1; }
          fi
          # hermetic via their own temp HOME: no agentglass path overrides from the caller
-         [ $rc != 0 ] || env -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR sh "$f" >"$log" 2>&1 || rc=$? ;;
+         [ $rc != 0 ] || limit 600 env -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR sh "$f" >"$log" 2>&1 || rc=$? ;;
   esac
   echo "$rc $(($(date +%s) - t0))" > "$CHECK_OUT/$id.status"; exit 0
 fi
