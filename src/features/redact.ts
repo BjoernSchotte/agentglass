@@ -464,4 +464,5 @@ if (REDACT) {
 }
 H.helpSections.push({ name: "privacy (--redact)", ctx: "", keys: [
   ["--redact", "fake titles, projects, content; scrub names"], ["…REDACT=1", "AGENTGLASS_REDACT=1: the same via env"],
-  ["…REDACT_KEEP", "cwd substrings whose content stays real"], ["redact.txt", "~/.agentglass/: extra words (w or w=repl)"] ] });
+  ["…REDACT_KEEP", "cwd substrings whose content stays real"], ["redact.txt", "~/.agentglass/: extra words (w or w=repl)"],
+  ["filters", "match the real values; a shown fake repo/cwd/branch only exactly (is, is_one_of), never by ~ or a bare word"] ] });
