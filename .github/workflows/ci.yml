@@ -10,7 +10,8 @@ permissions: { contents: read }
 concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
 jobs:
   check:
-    # every check and test runs on both OSes, split across shards (scripts/check.sh CHECK_SHARD)
+    # every check and test, and the release build + smoke test, on both OSes, split across shards balanced by
+    # scripts/check-plan.mjs (scripts/check.sh CHECK_SHARD)
     name: check ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.shards }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15 # a hung test fails fast instead of holding the runner for 6 h (a cold shard takes ~2 min)
@@ -18,8 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-14]
-        shard: [1, 2, 3]
-        shards: [3]
+        shard: [1, 2, 3, 4]
+        shards: [4]
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -27,34 +28,15 @@ jobs:
         uses: ./.github/actions/scriptc
         with: { lane: "${{ matrix.shard }}of${{ matrix.shards }}" }
       - run: sh scripts/check.sh
-        env: { CHECK_SHARD: "${{ matrix.shard }}/${{ matrix.shards }}", SCRIPTC_CACHE_MAX_MB: "4096" }
+        env: { CHECK_SHARD: "${{ matrix.shard }}/${{ matrix.shards }}", CHECK_RELEASE_OUT: agentglass, SCRIPTC_CACHE_MAX_MB: "4096" }
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
-  build:
-    # the release build (-O2, as shipped), in parallel with the checks, and a smoke test of it
-    name: build ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix: { os: [ubuntu-24.04, macos-14] }
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - id: scriptc
-        uses: ./.github/actions/scriptc
-        with: { lane: build }
-      - run: ./build.sh
-      - run: ./agentglass --version && ./agentglass --version --json && ./agentglass --json --limit 1 >/dev/null
-      - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
-  # one status for the whole run: green only when every shard and build on both OSes passed
+  # one status for the whole run: green only when every shard on both OSes passed
   ci:
     if: ${{ always() }}
-    needs: [check, build]
+    needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - run: test "${{ needs.check.result }}" = success && test "${{ needs.build.result }}" = success
+      - run: test "${{ needs.check.result }}" = success

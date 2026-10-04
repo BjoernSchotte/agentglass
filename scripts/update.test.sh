@@ -1,5 +1,6 @@
 #!/bin/sh
 # end-to-end tests for `agentglass update` against file:// fixture releases (two real builds): sh scripts/update.test.sh
+# check: builds 2 (shard weight for scripts/check-plan.mjs)
 set -e
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'chmod -R u+w "$t" 2>/dev/null; rm -rf "$t"' EXIT

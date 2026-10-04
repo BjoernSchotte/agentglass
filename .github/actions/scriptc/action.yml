@@ -1,7 +1,7 @@
 name: scriptc toolchain
 description: Node 24, scriptc from a cached prefix, clang + sqlite3, and scriptc's build cache restored for one cache lane
 inputs:
-  lane: { description: "build-cache lane (one per job kind: shard, build)", required: true }
+  lane: { description: "build-cache lane (one per shard)", required: true }
 outputs:
   cache-dir: { description: "scriptc's build cache directory", value: "${{ steps.dir.outputs.dir }}" }
   cache-hit: { description: "exact build-cache hit (nothing new to save)", value: "${{ steps.cache.outputs.cache-hit }}" }
