@@ -38,9 +38,11 @@ export function scrubRemote(raw: string): Remote | null {
   }
   if (s.startsWith("/")) return local(s);
   if (s.startsWith("~/")) return build("file", "", s);
-  const scp = /^(?:[^@/\s]+@)?([^:/\s@]+):([^\s]+)$/.exec(s); // [user@]host:path, user dropped
+  // [user@]host:path, user dropped; host:/abs/path too (ssh to that path); X:/… is a DOS drive (git's rule on Windows;
+  // a one-letter host with a relative path, g:o/r, stays: an insteadOf alias that git resolves)
+  const scp = /^(?:[^@/\s]+@)?([^:/\s@]+):([^\s]+)$/.exec(s);
   const sp = scp ? scp[2] ?? "" : "";
-  if (scp && !sp.startsWith("/") && !sp.startsWith("\\")) return build("ssh", (scp[1] ?? "").toLowerCase(), sp);
+  if (scp && !sp.startsWith("\\") && !/^[A-Za-z]:\//.test(s)) return build("ssh", (scp[1] ?? "").toLowerCase(), sp);
   return null;
 }
 // preview form: github.com/o/r, a local path for file:// remotes

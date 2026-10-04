@@ -4,9 +4,13 @@ import { mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { run } from "../util/fs.ts";
 import { home } from "../util/text.ts";
 import { readFileSync } from "node:fs";
+import { SSH } from "../util/sshcfg.ts";
 import { iniRemotes, hasInclude, pickRemote, normRemote, type Ident, resolveCwd, subOf, real, cfgMtime,
-  P, identOfCwd, resolveTick, labelOf, rememberSess, cwdOfSess, loadProjects, saveProjects, resetProjects } from "./project.ts";
+  P, identOfCwd, identNow, resolveTick, labelOf, rememberSess, cwdOfSess, loadProjects, saveProjects, resetProjects } from "./project.ts";
 
+// ssh aliases come from a fixture config, never the user's ~/.ssh (missing until the ssh section writes it)
+const SH = real("/tmp") + "/agpc-ssh-" + String(process.pid); SSH.file = SH + "/.ssh/config"; SSH.home = SH;
+rmSync(SH, { recursive: true, force: true });
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 function N(raw: string): string { const n = normRemote(raw); return n ? n.key + " | " + n.label : "null"; }
@@ -34,6 +38,37 @@ const l1 = normRemote("/srv/git/x.git"); const l2 = normRemote("file:///srv/git/
 eq("local path label", l1 ? l1.label : "", "x");
 eq("local path key", l1 ? l1.key : "", "git:file/srv/git/x");
 eq("file:// = path", l2 ? l2.key : "", l1 ? l1.key : "?");
+
+// ssh aliases (~/.ssh/config Host → HostName), scp with an absolute path, explicit-scheme hosts without a dot
+eq("alias without ssh config → null", N("github-work:me/x"), "null");
+mkdirSync(SH + "/.ssh", { recursive: true });
+writeFileSync(SSH.file, "Host github-work gh-*\n  HostName github.com\nHost github.com\n  HostName ssh.github.com\n  Port 443\n" +
+  "Host gitea\n  HostName git.example.com\n  Port 2222\nHost nas\n  User git\nHost lan-*\n  HostName %h.example.com\n" +
+  "Host github.com-work\n  HostName github.com\nHost git.corp.example.com\n  HostName 10.0.0.5\n  Port 2222\n"); chmodSync(SSH.file, 0o600); // any umask
+eq("ssh alias", N("github-work:Me/X.git"), "git:github.com/me/x | Me/X");
+eq("ssh alias with user", N("git@gh-2:me/x"), "git:github.com/me/x | me/x");
+eq("ssh alias, ssh://", N("ssh://git@github-work/me/x"), "git:github.com/me/x | me/x");
+eq("ssh alias, git+ssh://", N("git+ssh://github-work/me/x"), "git:github.com/me/x | me/x");
+const al = normRemote("github-work:me/x"); eq("ssh alias url is the real host", al ? al.url : "", "ssh://github.com/me/x");
+eq("ssh.github.com over 443 = github.com", N("git@github.com:me/x"), "git:github.com/me/x | me/x");
+eq("ssh.github.com url form", N("ssh://git@ssh.github.com:443/me/x"), "git:github.com/me/x | me/x");
+eq("altssh gitlab", N("ssh://git@altssh.gitlab.com:443/g/p"), "git:gitlab.com/g/p | g/p");
+eq("ssh config port", N("gitea:team/app"), "git:git.example.com:2222/team/app | team/app");
+eq("= explicit port form", N("ssh://git@git.example.com:2222/team/app.git"), "git:git.example.com:2222/team/app | team/app");
+eq("url port beats config port", N("ssh://gitea:2200/team/app"), "git:git.example.com:2200/team/app | team/app");
+eq("wildcard + %h", N("lan-a:o/r"), "git:lan-a.example.com/o/r | o/r");
+eq("dotted alias", N("git@github.com-work:me/x"), "git:github.com/me/x | me/x");
+// a real host name keeps its name (its https clones use it), whatever HostName/Port ssh connects to
+eq("real name: HostName/Port ignored", N("git@git.corp.example.com:o/r"), "git:git.corp.example.com/o/r | o/r");
+eq("= its https clone", N("https://git.corp.example.com/o/r"), "git:git.corp.example.com/o/r | o/r");
+eq("https ignores ssh config", N("https://github-work/me/x"), "git:github-work/me/x | me/x");
+eq("Host without HostName, relative path → alias", N("nas:o/r"), "null");
+eq("scp absolute path", N("nas:/srv/git/x.git"), "git:nas/srv/git/x | git/x");
+eq("scp absolute path with dot", N("git@host.example.com:/srv/x.git"), "git:host.example.com/srv/x | srv/x");
+eq("= ssh:// absolute", N("ssh://nas/srv/git/x"), "git:nas/srv/git/x | git/x");
+eq("explicit scheme, dotless host", N("https://gitea-lan/o/r"), "git:gitea-lan/o/r | o/r");
+eq("insteadOf alias still null", N("gh:owner/repo"), "null");
+eq("one-letter drive", N("C:/src/r"), "null");
 
 // ── INI ──
 const up = iniRemotes('[remote "upstream"]\n\turl = https://a/u\n[remote "origin"]\n\turl = https://a/o\n');
@@ -99,6 +134,8 @@ mk("r10/.git/config", "[include]\n\tpath = ../other\n"); reply = "git@github.com
 eq("include → git", R("r10").key, "git:github.com/me/inc"); eq("include one call", String(calls.length), "2");
 mk("r11/.git/config", cfg("origin", "gh:nope")); reply = "";
 const r11 = R("r11"); eq("alias unresolved → gitdir", r11.kind, "gitdir"); eq("alias unresolved label", r11.label, "r11");
+const nc = calls.length; mk("r12/.git/config", cfg("origin", "github-work:me/x")); const r12 = R("r12");
+eq("ssh alias repo = https clone", r12.key, r1.key); eq("ssh alias: no git call", String(calls.length - nc), "0"); eq("ssh alias remote", r12.remote, "ssh://github.com/me/x");
 // non-git, gone, broken worktree
 dir("plain/sub"); const pl = R("plain/sub"); eq("non-git", pl.kind + " " + pl.key, "path path:" + T + "/plain/sub");
 const gone = R("missing/dir"); eq("gone", gone.gone ? "gone" : "here", "gone"); eq("gone label", gone.label.endsWith(" (gone)") ? "y" : gone.label, "y"); eq("gone key", gone.key, "path:" + T + "/missing/dir");
@@ -127,6 +164,8 @@ tk = 0; let fast = 0; const slowClock = (): number => { fast += 7; return fast; 
 const n2 = resolveTick(20, 25, slowClock, stub); eq("budget stops at 20 ms", n2 <= 3 ? "ok" : String(n2), "ok");
 for (let i = 0; i < 20 && P.todo > 0; i++) { tk = 0; resolveTick(20, 25, clock, stub); }
 eq("converges", String(P.todo), "0");
+// one tick with room for all revalidates every due entry (the walk's start must not move under it)
+const rv = resolveTick(1e9, 1e9, (): number => Date.now() + 11 * 60000, stub); eq("revalidates all due", String(rv), "100");
 resetProjects();
 eq("unknown → null", identOfCwd(T + "/r1") === null ? "null" : "x", "null");
 const v0 = P.ver; resolveTick(1e9, 1e9, nowF, stub);
@@ -138,6 +177,12 @@ resolveTick(1e9, 1e9, nowF, stub); const c2 = identOfCwd(T + "/r1"); eq("not rev
 const later = (): number => Date.now() + 11 * 60000;
 function nowF(): number { return Date.now(); }
 resolveTick(1e9, 1e9, later, stub); const c3 = identOfCwd(T + "/r1"); eq("revalidated", c3 ? c3.key : "", "git:github.com/me/renamed");
+// an ssh config edit re-resolves on revalidation although the repo's config did not change
+mk("r13/.git/config", cfg("origin", "work2:me/y")); identOfCwd(T + "/r13"); resolveTick(1e9, 1e9, nowF, stub);
+const c4 = identOfCwd(T + "/r13"); eq("unknown alias → gitdir", c4 ? c4.kind : "", "gitdir");
+writeFileSync(SSH.file, readFileSync(SSH.file, "utf8") + "Host work2\n  HostName github.com\n"); run("touch", ["-d", "+7 seconds", SSH.file]);
+resolveTick(1e9, 1e9, later, stub); const c5 = identOfCwd(T + "/r13");
+eq("ssh config edit re-resolved", c5 ? c5.key : "", "git:github.com/me/y");
 // a cwd that disappears keeps its identity
 dir("tmpc"); mk("tmpc/.git/config", cfg("origin", "https://github.com/me/tmp")); identOfCwd(T + "/tmpc"); resolveTick(1e9, 1e9, nowF, stub);
 rmSync(T + "/tmpc", { recursive: true, force: true });
@@ -166,6 +211,30 @@ mk("back/.git/config", cfg("origin", "https://github.com/me/back"));
 resolveTick(1e9, 1e9, (): number => Date.now() + 44 * 60000, stub); const bk3 = identOfCwd(T + "/back"); eq("reappeared cwd re-resolved", bk3 ? bk3.key + (bk3.gone ? " gone" : "") : "", "git:github.com/me/back");
 eq("sess kept", cwdOfSess("/logs/a.jsonl"), T + "/w1"); eq("sess dropped", cwdOfSess("/logs/dead.jsonl"), "");
 rememberSess("/logs/b.jsonl", T + "/w1"); eq("read-only target", saveProjects("/proc/nope/projects.json", new Set<string>()) ? "y" : "n", "n");
+// projects.json v1 (before ssh aliases): identities are kept but due (a deleted worktree keeps its identity), session cwds too
+resetProjects();
+const v1 = JSON.stringify({ v: 1, cwds: {
+  [T + "/r12"]: { key: "gitdir:" + T + "/r12/.git", label: "r12", kind: "gitdir", top: T + "/r12", common: T + "/r12/.git", cfgMtime: cfgMtime(T + "/r12/.git"), checked: Date.now() },
+  [T + "/deleted-wt"]: { key: "git:github.com/me/old", label: "me/old", kind: "git", top: T + "/deleted-wt", common: T + "/r12/.git", cfgMtime: 1, checked: Date.now() },
+}, sess: { "/logs/v1.jsonl": T + "/r12" } });
+writeFileSync(PF, v1);
+loadProjects(PF); const v1k = identOfCwd(T + "/r12"); eq("v1 identity kept until revalidated", v1k ? v1k.kind : "null", "gitdir"); eq("v1 sessions kept", cwdOfSess("/logs/v1.jsonl"), T + "/r12");
+resolveTick(1e9, 1e9, nowF, stub); const v1r = identOfCwd(T + "/r12"); eq("v1 re-resolved on the next tick", v1r ? v1r.key : "", "git:github.com/me/x");
+const v1g = identOfCwd(T + "/deleted-wt"); eq("v1 deleted worktree keeps its identity", v1g ? v1g.key : "", "git:github.com/me/old");
+// one-shot CLI runs (sync, no tick) re-resolve a due entry on first ask
+resetProjects(); writeFileSync(PF, v1); loadProjects(PF); P.sync = true;
+const v1s = identOfCwd(T + "/r12"); eq("v1 due entry, CLI", v1s ? v1s.key : "", "git:github.com/me/x");
+const v1n = identNow(T + "/r12"); eq("identNow after re-resolve", v1n.key, "git:github.com/me/x");
+P.sync = false; resolveTick(1e9, 1e9, nowF, stub);
+eq("saved as v2", saveProjects(PF, new Set<string>(["/logs/v1.jsonl"])) && readFileSync(PF, "utf8").startsWith('{"v":2,') ? "y" : readFileSync(PF, "utf8").slice(0, 8), "y");
+// a projects.json saved under another ssh config: its git identities revalidate on the next tick, not after 10 min
+mk("r14/.git/config", cfg("origin", "work4:me/w")); identOfCwd(T + "/r14"); resolveTick(1e9, 1e9, nowF, stub);
+const w4a = identOfCwd(T + "/r14"); eq("r14 before", w4a ? w4a.kind : "", "gitdir");
+saveProjects(PF, new Set<string>()); resetProjects(); loadProjects(PF); resolveTick(1e9, 1e9, nowF, stub);
+const w4b = identOfCwd(T + "/r14"); eq("same ssh config: cached", w4b ? w4b.kind : "", "gitdir");
+resetProjects(); writeFileSync(SSH.file, readFileSync(SSH.file, "utf8") + "Host work4\n  HostName github.com\n"); run("touch", ["-d", "+9 seconds", SSH.file]);
+loadProjects(PF); resolveTick(1e9, 1e9, nowF, stub);
+const w4c = identOfCwd(T + "/r14"); eq("ssh config changed since save: re-resolved", w4c ? w4c.key : "", "git:github.com/me/w");
 // label collisions get the host prefix
 resetProjects();
 mk("ga/.git/config", cfg("origin", "https://github.com/a/x")); mk("gl/.git/config", cfg("origin", "https://gitlab.com/a/x")); mk("gy/.git/config", cfg("origin", "https://github.com/a/y"));
@@ -173,7 +242,7 @@ for (const d of ["ga", "gl", "gy"]) identOfCwd(T + "/" + d);
 resolveTick(1e9, 1e9, nowF, stub);
 const ga = identOfCwd(T + "/ga"); const gl = identOfCwd(T + "/gl"); const gy = identOfCwd(T + "/gy");
 eq("collision github", ga ? labelOf(ga) : "", "github.com/a/x"); eq("collision gitlab", gl ? labelOf(gl) : "", "gitlab.com/a/x"); eq("lone label", gy ? labelOf(gy) : "", "a/y");
-rmSync(T, { recursive: true, force: true });
+rmSync(T, { recursive: true, force: true }); rmSync(SH, { recursive: true, force: true });
 
 console.log(bad ? bad + " failed" : "project ok");
 if (bad) process.exit(1);

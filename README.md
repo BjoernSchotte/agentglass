@@ -306,7 +306,10 @@ rate, an 8-cell harness mix (by cost, by sessions when nothing is priced), chang
 - Identity, from the filesystem only (no network; the one git call is `git remote get-url` for an `insteadOf` alias
   or an `[include]`d config): the remote `origin`, else `upstream`, else the first one, normalized
   (`https://`, `ssh://` and `git@host:` forms, default ports, `.git` merge; paths compare case-insensitively only on
-  github.com, gitlab.com and bitbucket.org). Forks are separate projects. Without a remote, the worktrees of one
+  github.com, gitlab.com and bitbucket.org). An ssh host alias (`github-work:me/x`, `ssh://git@gh-alt/me/x`) is
+  the host `~/.ssh/config` names for it (`Host`/`HostName`/`Port`, wildcards, one `Include` level; read only, re-read
+  when it changes; a real host name like `git.example.com` keeps its name), and GitHub's `ssh.github.com:443` is github.com, so all clones of one repo stay one project; an
+  scp remote with an absolute path (`nas:/srv/x.git`) is `nas/srv/x`. Forks are separate projects. Without a remote, the worktrees of one
   local repo merge (`gitdir:`); a non-git directory is its own `~/…` row. Remotes are stored without credentials.
   Identities are cached in `~/.agentglass/cache/projects.json`; a worktree that was deleted keeps the identity it
   had while it existed. A deleted worktree never seen before is matched to the repo around it (Claude's
