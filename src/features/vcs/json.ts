@@ -32,7 +32,7 @@ export function costPerCommit(cost: number, unk: number, produced: number): numb
 // back as the earliest window asked for; each worktree is completed back to the earliest window start done so far.
 const PEER = { n: -1, order: [] as Sess[], next: 0, dirs: new Map<string, Sess[]>(), done: new Map<string, number>() };
 export function peers(s: Sess): void {
-  const me = sessIn(s, Date.now()); if (!me || me.t1 <= me.t0) return;
+  const me = sessIn(s, Date.now()); if (!me || !me.gitdir || me.t1 <= me.t0) return; // a removed worktree has no peers to read
   if (PEER.n !== sessions.size) { // another session set (a scan in between): start over
     PEER.n = sessions.size; PEER.order = [...sessions.values()].sort((a, b) => b.mtime - a.mtime); PEER.next = 0; PEER.dirs.clear(); PEER.done.clear();
   }

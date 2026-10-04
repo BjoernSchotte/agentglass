@@ -86,6 +86,7 @@ export function readReflog(gitdir: string): RefEv[] {
 }
 // size + mtime of the reflog (cache keys of what is derived from it); "" missing
 export function reflogStamp(gitdir: string): string {
+  if (!gitdir) return ""; // never relative to the process cwd
   try { const st = statSync(join(gitdir, "logs", "HEAD")); return String(st.size) + ":" + String(st.mtimeMs); } catch (e) { return ""; }
 }
 // the gitdirs of every worktree of a repo: the common dir (the main worktree's) and <common>/worktrees/<name>

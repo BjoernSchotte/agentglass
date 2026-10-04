@@ -204,8 +204,9 @@ GIT.pad = intSetting("git", "tailPadMin", 0, 120, 10);
 const GITS: GitRun[] = [run]; // the runner (checks swap in a stub)
 export function setGitRun(g: GitRun): void { GITS[0] = g; }
 export function gitRun(): GitRun { return GITS[0] ?? run; }
+// a git session whose worktree was removed since (gitdir ""): no reflog, but its own banners and links still count
 export function sessIn(s: Sess, now: number): SessIn | null {
-  const id = identOf(s); if (!id || !id.gitdir) return null;
+  const id = identOf(s); if (!id || !(id.gitdir || (id.gone && id.kind === "git"))) return null;
   const a = ledger.get(s.path);
   const live = livePid(s) > 0;
   const w = a ? windowOf(a.t0, a.al, live, GIT.pad, now) : [];
@@ -225,7 +226,7 @@ export function allInfo(): Map<string, GitInfo> {
   const peers = new Map<string, string[]>(); // common dir → its worktrees' gitdirs (banners made in a sibling worktree)
   for (const x of sessions.values()) {
     if (!ledger.has(x.path)) continue; const i = sessIn(x, now); if (!i) continue;
-    ss.push(i); dirs.add(i.gitdir);
+    ss.push(i); if (i.gitdir) dirs.add(i.gitdir);
     if (i.common && !peers.has(i.common)) { const ds = worktreeGitdirs(i.common); peers.set(i.common, ds); for (const d of ds) dirs.add(d); }
   }
   const logs = new Map<string, RefEv[]>();
