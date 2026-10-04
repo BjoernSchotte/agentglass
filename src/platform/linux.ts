@@ -73,6 +73,7 @@ export const linux: Platform = {
   sha256File: (path: string) => (run("sha256sum", [path]).split(" ")[0] ?? "").trim(),
   trashName: "the trash (~/.local/share/Trash)",
   fileInfo: (path: string) => fileInfoOf(run("stat", ["-c", "%u %a %F", "--", path])),
+  procOwner: (pid: number) => { const t = run("stat", ["-c", "%u", "--", "/proc/" + String(pid)]).trim(); return /^\d+$/.test(t) ? Number(t) : -1; },
   ownerMode: (path: string) => ownerModeOf(run("stat", ["-L", "-c", "%u %a", path])),
   envOf: (pid: number) => readBytes("/proc/" + String(pid) + "/environ", 0, 262144),
 };
