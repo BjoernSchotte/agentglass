@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
 import { HOME, readText, listDir } from "../../util/fs.ts";
 import { intSetting } from "../../util/config.ts";
-import { type Acc, startOfDay, num } from "./record.ts";
+import { type Acc, startOfDay, num, heavy } from "./record.ts";
 import { type Call, type Dict, DICT, intern, nameOf } from "./facts.ts";
 
 // AGENTGLASS_CACHE_DIR: a separate ledger cache (test builds of other branches must not rewrite the real one)
@@ -45,7 +45,7 @@ function textHash(s: string): number { return fnv(s, 2166136261); }
 function refTable(a: Acc, cmds: boolean): Map<number, string> {
   const m = new Map<number, string>();
   for (const d of a.days.values()) {
-    for (const k of (cmds ? d.cmds : d.files).keys()) {
+    for (const k of (cmds ? heavy(d).cmds : heavy(d).files).keys()) {
       const x = k.slice(k.indexOf("\t") + 1); const h = textHash(x); const o = m.get(h);
       if (o === undefined) m.set(h, x); else if (o !== x) m.set(h, AMBIG);
     }

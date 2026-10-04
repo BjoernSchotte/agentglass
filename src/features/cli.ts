@@ -18,7 +18,7 @@ import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmd
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 import { identSync } from "./query/project.ts";
-import { gitJson, gitCli } from "./vcs/json.ts";
+import { gitJson, gitCli, peers } from "./vcs/json.ts";
 import { saveVcs } from "./vcs/enrich.ts";
 import { labelOf } from "../model/project.ts";
 import { keyShown, reposCli } from "./repos/cli.ts";
@@ -189,7 +189,11 @@ function snapshot(o: Opts): void {
   const cf = o.cf; for (const s of cf ? cliSelect(cf, cands) : cands) list.push(s);
   list.sort((a, b) => b.mtime - a.mtime);
   const res: Obj[] = [];
-  for (const s of o.limit > 0 ? list.slice(0, o.limit) : list) { loadHead(s); loadTail(s); complete(s); for (const c of s.subs) complete(c); res.push(jsonSess(s)); }
+  const sel = o.limit > 0 ? list.slice(0, o.limit) : list;
+  // everything indexed first (git: each worktree's peers too), then the rows: the git attribution is built once, not
+  // again for every session that changed the picture
+  for (const s of sel) { loadHead(s); loadTail(s, true); complete(s); for (const c of s.subs) complete(c); peers(s); }
+  for (const s of sel) res.push(jsonSess(s));
   if (o.git) saveVcs(); // closed sessions' git log results: the next run reads them instead of spawning
   out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS, o.json));
   if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run

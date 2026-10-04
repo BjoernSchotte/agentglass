@@ -22,7 +22,7 @@ set +e
 run export > /dev/null 2> "$t/err"; rc=$?
 eq "no endpoint exit" "$rc" 2
 grep -q "no endpoint" "$t/err" || { echo "FAIL no endpoint message: $(cat "$t/err")"; fail=1; }
-AGENTGLASS_CURL=/nonexistent run export --otlp http://localhost:1 --since all > /dev/null 2> "$t/err"; rc=$?
+(AGENTGLASS_CURL=/nonexistent run export --otlp http://localhost:1 --since all) > /dev/null 2> "$t/err"; rc=$? # subshell: macOS sh keeps an assignment before a function call
 eq "no curl exit" "$rc" 2
 grep -q "export needs curl (AGENTGLASS_CURL)" "$t/err" || { echo "FAIL no curl message: $(cat "$t/err")"; fail=1; }
 run export --otlp http://localhost:4318 --filter 'tool is Bash' > /dev/null 2> "$t/err"; rc=$?

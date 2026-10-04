@@ -8,7 +8,7 @@ import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
 import { type Acc, L, newAcc, bucket, usageExact } from "../features/usage/record.ts";
 import { price, cost } from "../features/usage/pricing.ts";
-import { skillUses } from "../features/usage/record.ts";
+import { skillUses, heavy } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
 import { accOf } from "../features/usage/ledger.ts";
 import { buildGraph, summary } from "../features/callgraph/model.ts";
@@ -123,7 +123,7 @@ for (const sm of SAMPLES) {
   ok(sm.h + " no pending calls left", a.pend.size === 0, String(a.pend.size));
   // one fact row per counted call; closed rows match the per-tool counters (error count, timed count)
   let tn = 0; let te = 0; let tdn = 0;
-  for (const dd of a.days.values()) for (const st of dd.tt.values()) { tn += st.n; te += st.err; tdn += st.dn; }
+  for (const dd of a.days.values()) for (const st of heavy(dd).tt.values()) { tn += st.n; te += st.err; tdn += st.dn; }
   let rn = 0; let re = 0; let rdn = 0; for (const c of a.calls) { rn++; if (c.err === 1) re++; if (c.ms >= 0) rdn++; }
   ok(sm.h + " rows = TS.n", rn === tn && rn === a.tools, rn + " vs " + tn);
   ok(sm.h + " rows err = TS.err", re === te, re + " vs " + te);
@@ -277,7 +277,7 @@ function skills(lines: string[], resumeAt: number): string {
   const res = "{\"type\":\"user\",\"promptId\":\"p2\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu1\",\"content\":\"Launching skill\"}]}}";
   const ma = newAcc(); for (const l of [skCmd("p0", "other:thing"), call, res, skMeta("p2", "brainstorming", "tu1", false)]) harnessOf("claude").usage(ma, l);
   const s3 = skillUses(ma, null).map((x) => x.source + "\t" + x.name + "=" + String(x.n)).join(",");
-  let skRow = 0; for (const d of ma.days.values()) { const t = d.tt.get("Skill"); if (t) skRow += t.n; }
+  let skRow = 0; for (const d of ma.days.values()) { const t = heavy(d).tt.get("Skill"); if (t) skRow += t.n; }
   ok("skill: model-invoked", s3 === "model\tsuperpowers:brainstorming=1" && skRow === 1, s3 + " Skill row " + String(skRow));
   const local = "{\"type\":\"user\",\"promptId\":\"p3\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":\"<local-command-stdout>Compacted</local-command-stdout>\"}}";
   const s4 = skills([skCmd("p3", "compact"), local], -1); ok("skill: /compact is none", s4 === "", s4);

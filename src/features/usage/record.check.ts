@@ -1,7 +1,7 @@
 // agentglass — self-check for the usage record primitives: scriptc build src/features/usage/record.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
-import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines, type Booking, setBookTap, reasoning } from "./record.ts";
+import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines, type Booking, setBookTap, reasoning, heavy } from "./record.ts";
 import { accOut, accIn } from "./cache.ts";
 import { type Dict, DICT, ROWS, nameOf, MQ_MSG, MQ_SESS, localOf, extOf } from "./facts.ts";
 import { done, setCallTap } from "./calls.ts";
@@ -22,8 +22,8 @@ pend(a, d, tool(a, d, "mcp", "", MQ_SESS), "mcp", "c1", 0, iso, "", []);
 const p1 = a.pend.get("c1");
 ok("pending", !!p1, "");
 if (p1) retool(a, p1, "mcp__s__t");
-const row = d.tt.get("mcp__s__t");
-ok("old row gone", !d.tt.has("mcp"), String(d.tt.size));
+const row = heavy(d).tt.get("mcp__s__t");
+ok("old row gone", !heavy(d).tt.has("mcp"), String(heavy(d).tt.size));
 ok("new row n", !!row && row.n === 1, row ? String(row.n) : "none");
 ok("new row hour", !!row && (row.h[hr] ?? 0) === 1, row ? row.h.join(",") : "none");
 ok("totals unchanged", a.tools === 1 && d.tools === 1 && (d.hours[hr] ?? 0) === 1, [a.tools, d.tools, d.hours[hr] ?? 0].join(","));
@@ -33,13 +33,13 @@ pend(a, d, tool(a, d, "mcp", "", MQ_SESS), "mcp", "c2", 0, iso, "", []);
 pend(a, d, tool(a, d, "mcp", "", MQ_SESS), "mcp", "c3", 0, iso, "", []);
 const p3 = a.pend.get("c3");
 if (p3) retool(a, p3, "mcp__s__t");
-const old = d.tt.get("mcp"); const nw = d.tt.get("mcp__s__t");
+const old = heavy(d).tt.get("mcp"); const nw = heavy(d).tt.get("mcp__s__t");
 ok("kept row", !!old && old.n === 1 && (old.h[hr] ?? 0) === 1, old ? String(old.n) : "none");
 ok("moved row", !!nw && nw.n === 2 && (nw.h[hr] ?? 0) === 2, nw ? String(nw.n) : "none");
 ok("totals after two moves", a.tools === 3 && d.tools === 3, [a.tools, d.tools].join(","));
 // same name: no-op
 if (p3) retool(a, p3, "mcp__s__t");
-const nw2 = d.tt.get("mcp__s__t");
+const nw2 = heavy(d).tt.get("mcp__s__t");
 ok("same name no-op", !!nw2 && nw2.n === 2, nw2 ? String(nw2.n) : "none");
 
 // unpriced tokens per model (gemini's "?" marker stripped), credits apart, cost per provider, per hour and per model
@@ -131,7 +131,7 @@ rmSync("/tmp/agentglass-record-check", { recursive: true, force: true });
 ROWS.on = false;
 const ro = newAcc(); const rd = bucket(ro, 0, "2026-10-01T10:00:00.000Z");
 pend(ro, rd, tool(ro, rd, "Bash", "m", MQ_MSG), "Bash", "r1", 0, "", "", ["ls"]); file(ro, rd, "Bash", "/w/x", 1, 0);
-ok("rows off: counted, no row", ro.tools === 1 && ro.calls.length === 0 && ro.lastCall === -1 && (rd.tt.get("Bash")?.n ?? 0) === 1, String(ro.calls.length));
+ok("rows off: counted, no row", ro.tools === 1 && ro.calls.length === 0 && ro.lastCall === -1 && (heavy(rd).tt.get("Bash")?.n ?? 0) === 1, String(ro.calls.length));
 ROWS.on = true;
 
 // otlp export taps: one Booking per tokens()/usageExact() call with the cost it added; reasoning is a subset of out
