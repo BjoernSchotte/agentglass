@@ -50,14 +50,18 @@ onTrans(s, ap, { at: 2000000, path: s.path, rule: "approval", from: 1, to: 2, st
 onTrans(s, ap, tr("resolve"), false, false, true, cfg(["sh", counter], ["resolve"]), v, "m", 0);
 onTrans(s, ap, tr("fire"), false, false, true, cfg(["sh", counter], ["resolve"]), v, "m", 0); // fire not listed
 onTrans(s, ap, tr("fire"), false, true, false, cfg(["sh", counter], ["fire"]), v, "m", 0); // --watch without --notify
-// ≤ 4 at once: the fifth is dropped
+// ≤ 4 at once; more wait in a queue (≤ 32, oldest first) and start as slots free; past that they are dropped
 CMD.killMs = 1500; CMD.graceMs = 500;
 const slp = script("sleep", "trap '' TERM; while :; do sleep 0.2; done"); // ignores SIGTERM: SIGKILL ends it
 const c4 = cfg(["sh", slp], ["fire"]);
-const started = CMD.running;
-let drop = "";
-for (let i = started; i < 5; i++) drop = runCommand(c4, j, cmdSubs(ap, v, tr("fire"), s));
-eq("fifth dropped", drop, "4 notify commands running — dropped");
+for (let i = CMD.running; i < 4; i++) runCommand(c4, j, cmdSubs(ap, v, tr("fire"), s));
+eq("4 running", String(CMD.running), "4");
+writeFileSync(dir + "/queue.txt", "");
+const qs = script("q", "echo \"$1\" >> " + dir + "/queue.txt");
+let queued = "";
+for (let i = 0; i < 32; i++) queued += runCommand(cfg(["sh", qs, String(i)], ["fire"]), j, cmdSubs(ap, v, tr("fire"), s));
+eq("32 queued", queued + String(CMD.queue.length), "32");
+eq("33rd dropped", runCommand(cfg(["sh", qs, "x"], ["fire"]), j, cmdSubs(ap, v, tr("fire"), s)), "notify queue full (32 waiting) — dropped");
 // permission check of the rules file
 const rf = dir + "/rules.json"; writeFileSync(rf, "{}"); chmodSync(rf, 0o664);
 eq("664 unsafe", String(fileSafe(rf)), "false");
@@ -83,8 +87,12 @@ setTimeout(() => {
 // the sleeps are killed after killMs: all slots free again
 setTimeout(() => {
   eq("killed: slots free", String(CMD.running), "0");
+  const ran = readText(dir + "/queue.txt", 0, 4096).split("\n").filter((l: string) => l !== "").map((l: string) => Number(l)).sort((a: number, b: number) => a - b);
+  let want = ""; for (let i = 0; i < 32; i++) want += (i ? "," : "") + String(i);
+  eq("queue drained: every queued command ran once", ran.join(","), want);
+  eq("queue empty", String(CMD.queue.length), "0");
   eq("killed in time", String(Date.now() - t0 < 4500), "true");
   run("rm", ["-rf", dir]);
   console.log(bad ? bad + " failed" : "rules notify: all checks passed");
   process.exit(bad ? 1 : 0);
-}, 3000);
+}, 3500);
