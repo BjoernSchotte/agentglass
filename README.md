@@ -284,6 +284,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `@` | in Sessions: open the selected session's project in the Repos tab |
 | `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
 | `m` `C` | mark A / B · compare two sessions or periods (see [Compare](#compare)) |
+| `r` | in a transcript, event detail or call graph: everything around that event in the same project (see [Related events](#related-events)) |
 | `y` `Y` | copy the session id · copy a link to the session (list) or to the event under the cursor (transcript) |
 
 ## Repos
@@ -417,6 +418,54 @@ agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 're
 In `--json`, `metrics.cost` is the total and `costByMode` its split by billing mode (`api` is real spend, the rest
 list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an unknown or ambiguous id
 (the candidates are listed) or A = B exits 2.
+
+## Related events
+
+"Why did my test suddenly fail?" Often another agent edited the file a minute earlier, and one agent's transcript
+cannot show that. Press `r` on an event (transcript cursor, event detail, or the selected span in the call graph) for
+a timeline of everything within ±10 minutes in the same project: every session and harness, every worktree and clone
+of the repo, interleaved by time.
+
+```
+ related · acme/shop · ±10m around 14:06:43 · 3 sessions · 9 events · ‼ 2
+   -04:12 14:02:31 ✻ fix-auth-flow     ✎ Edit   src/auth/login.ts             +12 −3
+   -00:40 14:06:03 › add-tests  …-wt2  $ shell  npm test -- login             ✗
+ ▶  00:00 14:06:43 ✻ fix-auth-flow     ✎ Edit   src/auth/login.ts             +4 −1
+ ‼ +01:10 14:07:53 π refactor-api      ✎ edit   src/auth/login.ts             also edited by ✻ fix-auth-flow 1m10s earlier
+   +03:30 14:10:13 ✻ fix-auth-flow     ● commit 3f2a91c fix login redirect
+```
+
+- Rows: prompts, writes, shell commands, subagent spawns, alerts from the rules engine (this run), and commits:
+  `[branch sha]` banners in the sessions' output, plus reflog commits of the project's worktrees no session printed
+  (`commit (no session)`, usually your own). `k` adds reads, web and MCP calls, or shows writes only.
+- `‼` **conflict**: two sessions wrote the same file (same worktree) within 10 minutes. A parent and its own subagent
+  are exempt, unless the parent wrote while the subagent ran (`parent wrote while its subagent ran`).
+  `≈` **overlap**: the same repo-relative file in another worktree or clone (no clash on disk, a likely merge
+  conflict). `‼` **clobber**: `git stash`, `git checkout .` / `-- .`, `git restore .`, `git reset --hard`,
+  `git clean -f`, or `git switch` / `git checkout <branch>` after another session wrote in the same worktree.
+  The note says with whom and how far apart; the bottom line shows the selected row in full.
+- `↵` opens that session's transcript at the event (`esc` comes back), `+` `-` window 2 / 5 / 10 / 30 / 60 min,
+  `f` only events touching the anchor's files, `o` own session on/off, `n` `N` next / previous flagged row,
+  `/` a filter (`tool is Bash`, `harness is codex`, `file ~ src/`: call keys match tool rows, session keys the
+  row's session), `esc` back. When the window reaches into the future and an agent runs, new events stream in.
+- It reads only the window of each session (a time bisect over the log), at most 40 sessions and 16 MB per build,
+  in slices that keep the UI responsive; nothing is stored.
+- Limits: writes through shell commands (`sed -i`, redirects, formatters) are not seen as writes. A denied tool call
+  becomes a `denied <tool>` row where the log records the decision: Claude Code, Codex (`rejected by user`),
+  OpenCode (rejected permission, or a permission rule), Gemini CLI (cancelled: `User denied execution`) and pi (a
+  call an extension blocked with the default reason or `Blocked by user`). Kiro and fx record none; approval waits still come in through
+  the alert rules. Logs without timestamps (Kiro) are read from their tail and
+  their events cannot be placed. Under `--redact` conflicts are found on the real files and commands exactly as
+  without it; only fakes are shown (file names, a clobber's generic `git` form, a commit's sha without its subject).
+- Config: `"related": {"minutes": 10, "conflictMinutes": 10}` (integers 1–240).
+
+```sh
+agentglass --json --related 3f2a91 --at 2026-09-30T14:06:43Z    # around a time
+agentglass --json --related current --event toolu_01abc --minutes 30 | jq '.events[] | select(.conflict)'
+```
+`--related` takes a session reference like `agentglass session` (`current`, `last`, an id prefix ≥ 6,
+`<harness>:<id>`); without `--event` / `--at` it anchors on the session's last event. An unknown session or event
+exits 3, an ambiguous prefix 4 (with the candidates), a bad option 2 ([exit codes](#exit-codes)).
 
 ## Alert rules
 
@@ -590,6 +639,21 @@ agentglass sessions --since 7d --format table                       # json | jso
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
 ```
 
+### Exit codes
+
+One table for every command (`agentglass --help` prints it, the JSON help carries it as `exitCodes`):
+
+| Code | Meaning |
+|------|---------|
+| 0 | ok (an empty result is ok) |
+| 1 | runtime failure |
+| 2 | usage error (bad option or value, an id prefix shorter than 6) |
+| 3 | not found (unknown session, event or `current` outside an agent) |
+| 4 | ambiguous reference (an id prefix that matches several sessions; the candidates go to stderr) |
+
+Command-specific on top: `cost --check` exits 3 when the month is over budget, `rules check` 1 on warnings and 2 on
+errors, `export` 1 when some requests failed.
+
 ## Send to an OTLP backend
 
 agentglass sends your sessions to any OpenTelemetry backend that takes OTLP/HTTP (Jaeger, Grafana Tempo, SigNoz,
@@ -682,8 +746,8 @@ agentglass --watch --for 30s                                # inside an agent --
 ```
 
 A `<ref>` is `current` (found through the agent's session variable or the process tree), `last`, `parent`, an id,
-a unique id prefix of 6+ characters, or `<harness>:<id>`. Exit codes: 0 ok (also when empty), 1 runtime failure,
-2 usage error, 3 not found, 4 ambiguous reference. As JSON, `errors` and `cost` rows come in
+a unique id prefix of 6+ characters, or `<harness>:<id>`. [Exit codes](#exit-codes): 0 ok (also when empty),
+1 runtime failure, 2 usage error, 3 not found, 4 ambiguous reference. As JSON, `errors` and `cost` rows come in
 `{"rows":[…],"source":"…","scope":"…"}`.
 
 Agent output lands in the agent's context and goes to its model provider, so inside an agent the queries only see

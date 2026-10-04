@@ -1,6 +1,6 @@
 // agentglass — self-check for styled-text widths: scriptc build src/util/text.check.ts -o tc && ./tc
 // SPDX-License-Identifier: Apache-2.0
-import { width, vwidth, fillTo, fitStyled, ESC_RE } from "./text.ts";
+import { width, vwidth, fillTo, fitStyled, ESC_RE, localDay, localHM } from "./text.ts";
 import { link, hyperMode, fileUrl, setHyper } from "./hyper.ts";
 import { RST } from "../ui/theme.ts";
 
@@ -12,6 +12,9 @@ ok("width() counts escape bodies (why vwidth exists)", width(st) > vwidth(st), S
 ok("wide glyphs", vwidth("\x1b[1m≈$1 ✦ 日本\x1b[0m") === 10, String(vwidth("\x1b[1m≈$1 ✦ 日本\x1b[0m")));
 ok("fillTo pads to the visible width", fillTo(st, 20).length === 7, String(fillTo(st, 20).length));
 ok("fitStyled keeps escapes, cuts visible", vwidth(fitStyled(st, 4)) === 4, String(vwidth(fitStyled(st, 4))));
+// the local day and the local clock name the same moment (TZ=Pacific/Kiritimati / America/Adak differ from UTC by a day here)
+const at = "2026-10-03T22:16:00.000Z"; const d = new Date(at);
+ok("localDay is the local calendar day", localDay(at) === String(d.getFullYear()) + "-10-" + String(d.getDate()).padStart(2, "0") && localHM(at).length === 5, localDay(at));
 
 // OSC 8 links: escape bytes take no columns, a cut inside a link closes it before RST
 setHyper(true);

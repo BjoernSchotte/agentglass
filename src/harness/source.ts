@@ -26,3 +26,31 @@ export const FILE_SOURCE: SessionSource = {
   },
   unit: 1,
 };
+
+// ── seek by time: bisect the cursor range for the first window holding timestamps ≥ t0 ──
+// at = aligned cursor to read forward from (one window of margin before the probe that crossed t0: logs are not strictly
+// time-ordered); reads = lines() calls; found = some timestamp was seen (else the caller reads the tail and filters).
+// A probe without any timestamp goes left: re-reading is safe, skipping is not.
+export interface Seek { at: number; reads: number; found: boolean }
+export function seekTime(s: Sess, src: SessionSource, size: number, t0: number, win: number, tsOf: (line: string) => number): Seek {
+  let lo = 0; let hi = size; let reads = 0; let found = false;
+  const probe = (from: number): number => { // first timestamp in up to 4 windows from `from`, 0 none
+    let p = from;
+    for (let k = 0; k < 4 && p < size; k++) {
+      const r = src.lines(s, p, Math.min(size, p + win)); reads++;
+      for (const l of r.lines) { const t = tsOf(l); if (t > 0) return t; }
+      if (r.next <= p) break; // one record longer than a window: give up on this probe
+      p = r.next;
+    }
+    return 0;
+  };
+  while (hi - lo > win) {
+    const mid = src.align(s, lo + Math.floor((hi - lo) / 2));
+    if (mid >= hi) break;
+    const t = probe(mid);
+    if (t > 0) found = true;
+    if (t === 0 || t >= t0) hi = mid; else lo = mid;
+  }
+  if (!found && probe(0) > 0) found = true; // every probe missed (or none ran): timestamps may still sit at the start
+  return { at: src.align(s, Math.max(0, lo - win)), reads, found };
+}

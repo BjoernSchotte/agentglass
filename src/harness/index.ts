@@ -49,6 +49,19 @@ export function parseEvents(h: string, line: string, out: Ev[], s: Sess | null):
   if (s) applyMeta(s);
   if (out.length > n) for (const f of H.events) f(s, out, n);
 }
+// parseEvents without the H.events hooks: the real content (redaction off) for identity work like file and command matching
+export function parseRaw(h: string, line: string, out: Ev[], s: Sess | null): void {
+  const o = parse(line);
+  if (!o) return;
+  harnessOf(h).parse(o, out, s);
+  if (s) applyMeta(s);
+}
+// copies of raw events with the H.events hooks applied (what parseEvents would have produced); raw stays untouched
+export function hookedCopy(s: Sess | null, raw: Ev[]): Ev[] {
+  const out = raw.map((e: Ev): Ev => ({ kind: e.kind, text: e.text, ts: e.ts, id: e.id, full: e.full }));
+  if (out.length) for (const f of H.events) f(s, out, 0);
+  return out;
+}
 export function busy(s: Sess): boolean { const f = harnessOf(s.h).busy; return f ? f(s) : turnBusy(s, false); }
 // the user's claude/codex are often shell functions: AGENTGLASS_<ID> overrides the command
 export function cmdOf(h: string): string[] {

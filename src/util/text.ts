@@ -82,6 +82,8 @@ export function firstLine(s: string, n: number): string {
   const f = i >= 0 ? t.slice(0, i) : t;
   return f.length > n ? f.slice(0, n) + "…" : f;
 }
+// the local calendar day of an ISO time, YYYY-MM-DD (toISOString().slice(0, 10) is the UTC day)
+export function localDay(iso: string): string { const d = new Date(iso); const m = d.getMonth() + 1; const n = d.getDate(); return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (n < 10 ? "0" : "") + n; }
 export function localHM(iso: string): string {
   const d = new Date(iso);
   const h = d.getHours(); const m = d.getMinutes();

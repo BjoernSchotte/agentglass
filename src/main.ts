@@ -43,6 +43,7 @@ import "./features/repos/tab.ts";
 import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
 import "./features/query/ui.ts";
 import "./features/callgraph/view.ts";
+import "./features/related/view.ts"; // after the call graph: its view lets r fall through to here
 import "./features/palette/actions.ts";
 import "./features/palette/view.ts";
 import "./features/palette/links.ts";
