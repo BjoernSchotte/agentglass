@@ -9,5 +9,8 @@ export interface QErr { msg: string; col: number /* 0-based column into the inpu
 export interface Parsed { cs: Clause[]; err: QErr | null; notes: string[] /* semantic warnings */ }
 // an attribute's value: a number, or lowercase strings (multi-valued attributes have several); unk = unknown (unpriced, untimed, …)
 export interface Val { n: number; ss: string[]; unk: boolean }
+// a value prefix: matched by is / is_one_of (and their negations) only, never by ~ or a glob (--redact: a session's own
+// shown fake, so a value taken off the redacted screen selects it, while a typed word never hits a fake by accident)
+export const EXACT = "\u0001";
 // registry entry; enumFn names a dynamic value list ("harness"), ops [] = the type's default operators
 export interface Attr { key: string; aliases: string[]; ent: Ent; type: AType; multi: boolean; enumVals: string[]; enumFn: string; ops: string[] }

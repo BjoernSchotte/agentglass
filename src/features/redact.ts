@@ -12,7 +12,7 @@ import { H, type RealMeta } from "../hooks.ts";
 import { isErr } from "./callgraph/model.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { REDACT } from "./redact-on.ts";
-import { ESC_RE } from "../util/text.ts";
+import { ESC_RE, firstLine } from "../util/text.ts";
 
 export { REDACT };
 const envKeep = process.env.AGENTGLASS_REDACT_KEEP;
@@ -282,7 +282,7 @@ function meta(s: Sess): void {
   if (s.cwd && s.cwd !== r.cwd) { r.real = s.cwd; learnPath(s.cwd, false); r.cwd = fakeCwd(s.cwd); s.cwd = r.cwd; }
   if (s.title !== r.title) r.rt = s.title;
   s.title = r.title;
-  if (s.prompt && s.prompt !== r.title) r.rp = s.prompt;
+  if (s.prompt && !s.prompt.startsWith(r.title)) r.rp = s.prompt; // a faked user event's text starts with the fake title
   if (s.prompt) s.prompt = r.title;
   if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
   if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
@@ -444,6 +444,8 @@ if (REDACT) {
     for (let i = from; i < evs.length; i++) {
       const e = evs[i];
       if (!e) continue;
+      // the first prompt, before it is faked: a title read from it (loadTail) is what filters match (realMeta)
+      if (s && e.kind === "user") { const r = recOf(s); if (!r.rp) { r.rp = firstLine(e.text, 200); recs.set(s.path, r); } }
       if (!keep) { fakeEv(e, evs, i, title); continue; }
       e.text = scrubText(e.text);
       if (!e.full.startsWith("@file:") && e.full.length < 1048576) e.full = scrubText(e.full);
@@ -454,7 +456,7 @@ if (REDACT) {
   // filters match the real values; a field parsing rewrote since the last H.meta is real as it stands
   H.realMeta.push((s: Sess): RealMeta | null => {
     const r = recs.get(s.path); if (!r) return null;
-    return { cwd: s.cwd !== r.cwd ? s.cwd : r.real || s.cwd, title: s.title !== r.title ? s.title : r.rt, prompt: s.prompt && s.prompt !== r.title ? s.prompt : r.rp,
+    return { cwd: s.cwd !== r.cwd ? s.cwd : r.real || s.cwd, title: s.title !== r.title ? s.title : r.rt, prompt: s.prompt && !s.prompt.startsWith(r.title) ? s.prompt : r.rp,
       branch: s.branch !== r.branch ? s.branch : r.rb, name: s.name !== r.name ? s.name : r.rn };
   });
   H.screenFilter.push(scrubStyled);

@@ -11,7 +11,7 @@ import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
 import { accOf, ledger } from "../usage/ledger.ts";
 import { callCutoff } from "../usage/callcache.ts";
-import type { Attr, Clause, QErr, Val } from "./types.ts";
+import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
 import { printClause, suggest } from "./parse.ts";
 import { repoVals } from "./project.ts";
@@ -64,9 +64,10 @@ function modelsOf(s: Sess): Val {
   return ss.length ? V(ss) : UNK;
 }
 // --redact: the real values (realMeta) — the screen shows fakes, filters (and pins saved without --redact) mean the real
-// ones; cwd and branch also take the session's own shown fake, so a value picked off the redacted screen still selects it
+// ones; cwd and branch also take the session's own shown fake for exact matches (EXACT), so a value picked off the
+// redacted screen still selects it
 function haystack(s: Sess, m: RealMeta): string { return (titleFrom(s, m.title, m.prompt) + " " + m.cwd + " " + s.id + " " + s.h + " " + m.name + " " + m.branch + " " + s.kind).toLowerCase(); }
-function both(real: string, shown: string): Val { const a = real.toLowerCase(); const b = shown.toLowerCase(); return V(a === b ? [a] : [a, b]); }
+function both(real: string, shown: string): Val { const a = real.toLowerCase(); const b = shown.toLowerCase(); return V(a === b ? [a] : [a, EXACT + b]); }
 export function sessVal(key: string, s: Sess): Val {
   const x = EXT.get(key); if (x && x.sess) { const f = x.sess; return f(s); }
   switch (key) {
@@ -203,10 +204,11 @@ function matcher(a: Attr, c: Clause, vals: string[]): (v: Val) => boolean {
   }
   const path = a.type === "path";
   const ws: string[] = []; for (const w of vals) ws.push(path ? home(w).toLowerCase() : w.toLowerCase());
-  const one = (s: string): boolean => {
+  const one = (s0: string): boolean => {
+    const ex = s0.startsWith(EXACT); const s = ex ? s0.slice(EXACT.length) : s0;
     for (const w of ws) {
-      if (op === "~" || op === "!~") { if (s.indexOf(w) >= 0) return true; }
-      else if (path && w.indexOf("*") >= 0) { if (glob(w, s)) return true; }
+      if (op === "~" || op === "!~") { if (!ex && s.indexOf(w) >= 0) return true; }
+      else if (path && w.indexOf("*") >= 0) { if (!ex && glob(w, s)) return true; }
       else if (s === w) return true;
     }
     return false;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { dirname } from "node:path";
 import type { Sess } from "../../model/types.ts";
+import { EXACT } from "./types.ts";
 import { parentOf, loadHead, loadTail } from "../../model/sessions.ts";
 import { type Ident, identOfCwd, identNow, labelOf, rememberSess, cwdOfSess, normRemote } from "../../model/project.ts";
 import { base } from "../../util/json.ts";
@@ -52,14 +53,15 @@ export function identSync(s: Sess): Ident | null {
 // the session's project label (dimension value, Stats/triage grouping); the cwd basename while unresolved
 export function repoOf(s: Sess): string { const id = identOf(s); return id ? labelOf(id) : base(realCwd(s).replace(/\/+$/, "")) || "(no project)"; }
 // the repo attribute's values (lowercase): label and key; the cwd basename too for non-git dirs (clauses written against
-// basenames keep matching), and under --redact the faked label and cwd basename shown on screen
+// basenames keep matching), and under --redact the faked label and cwd basename shown on screen (exact matches only)
 export function repoVals(s: Sess): string[] {
   const out: string[] = [];
   const add = (v: string): void => { const l = v.toLowerCase(); if (l && out.indexOf(l) < 0) out.push(l); };
+  const fake = (v: string): void => { const l = v.toLowerCase(); if (l && out.indexOf(l) < 0) out.push(EXACT + l); };
   const id = identOf(s);
-  if (id) { const lb = labelOf(id); add(lb); add(id.key); if (id.kind === "path" || id.kind === "none") add(base(realCwd(s))); add(display("repo", lb, s)); }
+  if (id) { const lb = labelOf(id); add(lb); add(id.key); if (id.kind === "path" || id.kind === "none") add(base(realCwd(s))); if (REDACT) fake(display("repo", lb, s)); }
   else add(base(realCwd(s).replace(/\/+$/, "")));
-  if (REDACT && s.cwd) add(base(s.cwd.replace(/\/+$/, "")));
+  if (REDACT && s.cwd) fake(base(s.cwd.replace(/\/+$/, "")));
   return out;
 }
 // the project label as shown (faked under --redact): dimension values, cost rows
