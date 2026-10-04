@@ -30,7 +30,7 @@ for a in --help --version "cost --help" "triage --help"; do
   set +e; bounded $a; rc=$?; set -e
   eq "$a without the ledger" "$rc" 0
 done
-set +e; AGENTGLASS_AGENT=1 bounded; rc=$?; set -e
+set +e; (AGENTGLASS_AGENT=1 bounded); rc=$?; set -e # subshell: macOS sh (bash 3.2 --posix) keeps an assignment before a function call
 eq "agent help without the ledger" "$rc" 0
 rm -f "$c/ledger.json"
 
