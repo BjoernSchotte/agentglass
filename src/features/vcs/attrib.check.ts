@@ -1,6 +1,6 @@
 // agentglass — self-check for git-linkage attribution: scriptc build src/features/vcs/attrib.check.ts -o ac && ./ac
 // SPDX-License-Identifier: Apache-2.0
-import { type SessIn, type GitInfo, type GCommit, attribute, windowOf, windowLog, userEmail, parseLog } from "./attrib.ts";
+import { type SessIn, type GitInfo, type GCommit, attribute, attributeWith, windowOf, windowLog, userEmail, parseLog } from "./attrib.ts";
 import type { RefEv } from "./reflog.ts";
 import type { VRef } from "../usage/vcs.ts";
 import { intOf } from "../../util/config.ts";
@@ -54,10 +54,20 @@ eq("amend chain", show(m, "A"), "a:observed(am) b:observed(am) c:observed+ =1");
 m = attribute([si("A", "X", 0, 10000, [vr("commit", "ddddddd", 1000)])], logs("X", []));
 const g0 = m.get("A"); const r0: GCommit | null = g0 && g0.commits.length ? g0.commits[0] : null;
 eq("absent banner", r0 ? r0.status + (r0.counted ? "+" : "") : "-", "unknown+");
-// a banner sha the reflog should hold (it reaches back before the banner) but does not: made elsewhere, not counted
+// a banner sha in no reflog although the reflog reaches back before it: still unknown and counted (a removed worktree took
+// its reflog along; seen on real data) — only enrichment's object-DB check can say elsewhere
 m = attribute([si("A", "X", 0, 10000, [vr("commit", "fffffff", 5000)])], logs("X", [ev("a", 1000, "commit", "main")]));
 const ge = m.get("A"); let re0: GCommit | null = null; if (ge) for (const c of ge.commits) if (c.sha === "fffffff") re0 = c;
-eq("elsewhere", re0 ? re0.status + (re0.counted ? "+" : "") : "-", "elsewhere");
+eq("absent banner, reflog reaching back", re0 ? re0.status + (re0.counted ? "+" : "") : "-", "unknown+");
+// a banner made in another worktree of the same repo (cd ../wt && git commit): found in that worktree's reflog —
+// observed and counted there, never ≈ for a session working in that worktree
+{ const lg = logs("X", [ev("a", 1000, "commit", "main")]); lg.set("W", [ev("w", 5000, "commit", "feat")]);
+  const pe = new Map<string, string[]>(); pe.set("C", ["X", "W"]);
+  const a0 = si("A", "X", 0, 10000, [vr("commit", "wwwwwww", 5000)]); a0.common = "C"; const b0 = si("B", "W", 0, 10000, []); b0.common = "C";
+  m = attributeWith([a0, b0], lg, pe);
+  const gw = m.get("A"); let rw: GCommit | null = null; if (gw) for (const c of gw.commits) if (c.sha.startsWith("w")) rw = c;
+  eq("peer worktree banner", rw ? rw.how + ":" + rw.status + (rw.counted ? "+" : "") + ":" + rw.br : "-", "observed:present+:main");
+  eq("peer worktree: not ≈ for its own sessions", show(m, "B"), " =0"); }
 // byBranch: one counted commit on main, one on f
 m = attribute([si("A", "X", 0, 10000, [vr("gcall", "1-9000", 1)])], logs("X", [ev("a", 1000, "commit", "main"), ev("b", 2000, "commit", "f")]));
 const gb = m.get("A");

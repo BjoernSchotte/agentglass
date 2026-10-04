@@ -4,7 +4,7 @@
 // they are never stored, shown or exported.
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import { readText } from "../../util/fs.ts";
+import { readText, listDir } from "../../util/fs.ts";
 
 // at = epoch ms; sha = the new HEAD (the spec's "new": a keyword here); op = commit | amend | merge | cherry-pick | revert |
 // checkout | rebase | reset | other; branch = the branch HEAD was on ("" detached or unknown); amended = a later
@@ -86,4 +86,18 @@ export function readReflog(gitdir: string): RefEv[] {
 // size + mtime of the reflog (cache keys of what is derived from it); "" missing
 export function reflogStamp(gitdir: string): string {
   try { const st = statSync(join(gitdir, "logs", "HEAD")); return String(st.size) + ":" + String(st.mtimeMs); } catch (e) { return ""; }
+}
+// the gitdirs of every worktree of a repo: the common dir (the main worktree's) and <common>/worktrees/<name>
+export function worktreeDirs(common: string): string[] {
+  if (!common) return [];
+  const out = [common];
+  for (const n of listDir(join(common, "worktrees")).sort()) out.push(join(common, "worktrees", n));
+  return out;
+}
+// the new-work shas of all worktrees' reflogs of a repo (enrichment: missing vs elsewhere)
+export function repoShas(gitdir: string, common: string): Set<string> {
+  const out = new Set<string>();
+  const ds = worktreeDirs(common); if (ds.indexOf(gitdir) < 0) ds.push(gitdir);
+  for (const d of ds) for (const e of readReflog(d)) out.add(e.sha);
+  return out;
 }

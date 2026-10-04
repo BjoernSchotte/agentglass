@@ -16,7 +16,7 @@ import { asBill } from "../usage/billing.ts";
 import { type GitInfo, type GCommit, type GLink, gitInfo, sessIn, gitRun, merged, sessGit } from "./attrib.ts";
 export { merged, sessGit };
 import { enrich, saveVcs, gitFailed, VF } from "./enrich.ts";
-import { readReflog } from "./reflog.ts";
+import { repoShas } from "./reflog.ts";
 
 // ── pure (checks) ──
 // "$0.84/commit" ("≈$" unless API spend), "?/commit" when only unpriced usage, "" without commits
@@ -114,7 +114,7 @@ function refresh(): void {
   const g = sessGit(s);
   if (g) for (const x of [s].concat(s.subs)) { // one gated spawn per session view: the rest follow on later ticks
     const gi = gitInfo(x); const i = sessIn(x, Date.now()); if (!gi || !i || !gi.commits.length) continue;
-    const rl = new Set<string>(); for (const e of readReflog(i.gitdir)) rl.add(e.sha);
+    const rl = repoShas(i.gitdir, i.common);
     enrich(x.path, gi, i.top, closedNow(x), rl, gitRun());
   }
   V.g = g ? sessGit(s) : null; // re-merge: enrichment wrote into the per-session infos

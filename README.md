@@ -331,12 +331,13 @@ transcript at the tool call that made the commit or printed the link, `y` copies
   activity − 2 min … last activity + `git.tailPadMin`, default 10, `~/.agentglass/config.json`
   `"git": {"tailPadMin": 10}`, 0–120; live sessions until now). The person may have made them.
   **`? shared`**: the same, covered by several sessions of the worktree — listed on each, counted on none.
-- A banner whose sha the worktree's reflog should hold but does not (`git -C ../other commit`) is `elsewhere`, not
-  counted. Without a reflog (deleted, `core.logAllRefUpdates=false`, expired) the view says "no reflog — matched by
+- A banner made in another worktree of the same repo is found in that worktree's reflog and counts. One that is in no
+  reflog (the worktree was removed since) counts too; `--git` and the git view then check the repo's objects: a sha
+  that is not there (`git -C ../other commit`) is `elsewhere`, not counted. Without a reflog (deleted, `core.logAllRefUpdates=false`, expired) the view says "no reflog — matched by
   time" and lists the commits of the session's branch in its window by your `user.email` (≈, and only when no other
   session of the project was active then).
 - PR/MR, issue and commit URLs of GitHub, GitLab (nested groups, `/-/merge_requests/`), Bitbucket and Gitea/Forgejo
-  are collected from tool output: `created` when `gh pr create`, `glab mr create`, `hub pull-request`, `tea pr
+  are collected from tool output (not from prompts or the agent's own text): `created` when `gh pr create`, `glab mr create`, `hub pull-request`, `tea pr
   create`, `gh/glab issue create` or an MCP `create_pull_request`/`create_merge_request`/`create_issue` tool printed
   them, else `mentioned`, from the first 64 KB of each log line (file dumps beyond that are skipped). The `git push`
   hint `…/pull/new/<branch>` is no PR. URLs are stored without credentials, query or fragment; one with a

@@ -29,8 +29,8 @@ export function parseShow(out: string): Stat[] {
   return st;
 }
 function inLog(shas: Set<string>, sha: string): boolean { for (const x of shas) if (x.startsWith(sha)) return true; return false; }
-// short → full sha with stats; not returned: missing (rewritten/squashed, still counted when observed) when this worktree's
-// reflog knows it, else elsewhere (another repo: `git -C ../other commit`), never counted
+// short → full sha with stats; not returned: missing (rewritten/squashed, still counted when observed) when a reflog of
+// the repo knows it, else elsewhere (another repo: `git -C ../other commit`), never counted
 export function applyStats(g: GitInfo, st: Stat[], inReflog: Set<string>): void {
   for (const c of g.commits) {
     let hit: Stat | null = null; for (const s of st) if (s.sha.startsWith(c.sha)) { hit = s; break; }
@@ -38,7 +38,7 @@ export function applyStats(g: GitInfo, st: Stat[], inReflog: Set<string>): void 
       c.sha = hit.sha; c.merge = hit.merge; c.add = hit.add; c.del = hit.del; c.files = hit.files;
       if (hit.subj) c.subj = hit.subj;
       if (c.at <= 0) c.at = hit.at;
-      if (c.status !== "amended" && c.status !== "elsewhere") c.status = "present"; // elsewhere: another worktree of the same object store
+      if (c.status !== "amended") { c.status = "present"; if (c.how === "observed") c.counted = true; } // in this repo (an attribution "elsewhere" was another clone)
     } else if (c.status === "amended") continue;
     else if (inLog(inReflog, c.sha)) c.status = "missing";
     else { c.status = "elsewhere"; c.counted = false; }

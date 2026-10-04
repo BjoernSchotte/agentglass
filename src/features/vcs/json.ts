@@ -8,7 +8,7 @@ import { identOf } from "../query/project.ts";
 import { type Obj } from "../../util/json.ts";
 import { type GitInfo, type GLink, GIT, gitInfo, sessIn, sessGit, gitRun } from "./attrib.ts";
 import { enrich } from "./enrich.ts";
-import { readReflog } from "./reflog.ts";
+import { repoShas } from "./reflog.ts";
 
 // --git: enrichment spawns allowed, ungated (one per listed session); without it no spawn at all (no window git log either)
 export const GJ = { full: false };
@@ -16,7 +16,7 @@ export function gitCli(full: boolean): void { GJ.full = full; GIT.cli = full; GI
 function enrichAll(s: Sess): void {
   for (const x of [s].concat(s.subs)) {
     const g = gitInfo(x); const i = sessIn(x, Date.now()); if (!g || !i || !g.commits.length) continue;
-    const rl = new Set<string>(); for (const e of readReflog(i.gitdir)) rl.add(e.sha);
+    const rl = repoShas(i.gitdir, i.common);
     enrich(x.path, g, i.top, !i.live && i.t1 > 0 && Date.now() - i.t1 > 600000, rl, gitRun());
   }
 }

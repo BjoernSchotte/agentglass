@@ -15,7 +15,7 @@ import { L } from "../usage/record.ts";
 import type { VRef } from "../usage/vcs.ts";
 import { livePid } from "../query/eval.ts";
 import { identOf } from "../query/project.ts";
-import { type RefEv, readReflog, reflogStamp, isNew } from "./reflog.ts";
+import { type RefEv, readReflog, reflogStamp, isNew, worktreeDirs } from "./reflog.ts";
 
 // pad = git.tailPadMin (minutes after the last activity that still belong to the session: agents commit after a long test run);
 // spawn = git spawns allowed in the TUI; cli = allowed in a CLI run (--json --git only); gate = at most one per 500 ms (TUI);
@@ -75,11 +75,14 @@ function evIndex(evs: RefEv[], sha: string): number { // a printed (short) sha �
   return -1;
 }
 
-// pure: sessions (each with its window, refs and gitdir) + each gitdir's reflog → per session path its git info
-export function attribute(ss: SessIn[], logs: Map<string, RefEv[]>): Map<string, GitInfo> {
+// pure: sessions (each with its window, refs and gitdir) + each gitdir's reflog → per session path its git info. peers =
+// common dir → the gitdirs of all its worktrees (their reflogs in logs): a banner made in a sibling worktree is found there
+export function attribute(ss: SessIn[], logs: Map<string, RefEv[]>): Map<string, GitInfo> { return attributeWith(ss, logs, new Map<string, string[]>()); }
+export function attributeWith(ss: SessIn[], logs: Map<string, RefEv[]>, pm: Map<string, string[]>): Map<string, GitInfo> {
   const out = new Map<string, GitInfo>();
   const owner = new Map<string, string[]>(); // "<gitdir>\t<event index>" → the sessions observing it
   const evOf = (s: SessIn): RefEv[] => { const e = logs.get(s.gitdir); return e ? e : []; };
+  const seen = new Set<string>(); // sibling gitdirs holding a banner commit
   const own = (k: string, p: string): void => { const o = owner.get(k); if (!o) owner.set(k, [p]); else if (o.indexOf(p) < 0) o.push(p); };
   // 1. banners: observed wherever their sha is; spans: reflog new work inside the session's own git calls
   for (const s of ss) {
@@ -90,12 +93,14 @@ export function attribute(ss: SessIn[], logs: Map<string, RefEv[]>): Map<string,
     for (const r of s.refs) {
       if (r.k !== "commit") continue;
       const i = evIndex(evs, r.v);
-      if (i >= 0) own(s.gitdir + "\t" + String(i), s.path);
-      else { // not in this worktree's reflog: made elsewhere (git -C ../other) when the reflog reaches back to it, else unknown
-        const c = row(r.v, r.br, r.subj, r.t, "observed", r.call, r.ts, s.path);
-        if (evs.length && r.t > 0 && evs[0].at <= r.t) { c.status = "elsewhere"; c.counted = false; }
-        g.commits.push(c);
-      }
+      if (i >= 0) { own(s.gitdir + "\t" + String(i), s.path); continue; }
+      let pd = ""; let j = -1; // a sibling worktree of the same repo (cd ../wt && git commit)
+      for (const d of pm.get(s.common) ?? []) { if (d === s.gitdir) continue; j = evIndex(logs.get(d) ?? [], r.v); if (j >= 0) { pd = d; break; } }
+      if (pd) { own(pd + "\t" + String(j), s.path); seen.add(pd); continue; }
+      // in no reflog of the repo: unknown, counted (a banner is observed work). Not "elsewhere" yet: removed worktrees take
+      // their reflogs with them and unreachable entries expire, so only enrichment (the object DB) can tell
+      const c = row(r.v, r.br, r.subj, r.t, "observed", r.call, r.ts, s.path);
+      g.commits.push(c);
     }
     if (sp.length) for (let i = 0; i < evs.length; i++) { const e = evs[i]; if (isNew(e) && inSpans(sp, e.at)) own(s.gitdir + "\t" + String(i), s.path); }
   }
@@ -107,7 +112,7 @@ export function attribute(ss: SessIn[], logs: Map<string, RefEv[]>): Map<string,
   };
   // 2. per gitdir: observed events go to their observers (several span observers without a banner = shared); the rest of
   // the new work goes to the windows covering it — one session ≈, several ? shared
-  const dirs = new Set<string>(); for (const s of ss) if (s.gitdir && logs.has(s.gitdir)) dirs.add(s.gitdir);
+  const dirs = new Set<string>(); for (const d of seen) dirs.add(d); for (const s of ss) if (s.gitdir && logs.has(s.gitdir)) dirs.add(s.gitdir);
   for (const gd of dirs) {
     const evs = logs.get(gd) ?? [];
     const here: SessIn[] = []; for (const s of ss) if (s.gitdir === gd) here.push(s);
@@ -213,12 +218,17 @@ export function allInfo(): Map<string, GitInfo> {
   const now = Date.now();
   const ss: SessIn[] = []; const dirs = new Set<string>(); let stamps = "";
   if (ALL.ver === L.ver && now - ALL.at < 1000) return ALL.info;
-  for (const x of sessions.values()) { if (!ledger.has(x.path)) continue; const i = sessIn(x, now); if (i) { ss.push(i); dirs.add(i.gitdir); } }
+  const peers = new Map<string, string[]>(); // common dir → its worktrees' gitdirs (banners made in a sibling worktree)
+  for (const x of sessions.values()) {
+    if (!ledger.has(x.path)) continue; const i = sessIn(x, now); if (!i) continue;
+    ss.push(i); dirs.add(i.gitdir);
+    if (i.common && !peers.has(i.common)) { const ds = worktreeDirs(i.common); peers.set(i.common, ds); for (const d of ds) dirs.add(d); }
+  }
   const logs = new Map<string, RefEv[]>();
   for (const d of dirs) { const st = reflogStamp(d); stamps += st + ","; if (st) logs.set(d, readReflog(d)); }
   const key = String(P.ver) + "|" + String(sessions.size) + "|" + String(ss.length) + "|" + stamps;
   if (key === ALL.key && (ALL.ver === L.ver || now - ALL.at < 1000)) return ALL.info;
-  ALL.info = attribute(ss, logs); ALL.key = key; ALL.ver = L.ver; ALL.at = now;
+  ALL.info = attributeWith(ss, logs, peers); ALL.key = key; ALL.ver = L.ver; ALL.at = now;
   ALL.proj.clear(); ALL.ins.clear();
   for (const x of ss) { ALL.ins.set(x.path, x); if (x.sub) continue; const l = ALL.proj.get(x.key); if (l) l.push(x); else ALL.proj.set(x.key, [x]); }
   return ALL.info;

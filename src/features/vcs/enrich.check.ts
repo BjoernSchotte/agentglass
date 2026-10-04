@@ -21,6 +21,11 @@ applyStats(g, st, rl);
 function row(c: GCommit): string { return c.sha.slice(0, 1) + (c.sha.length === 40 ? "F" : "s") + ":" + c.status + (c.counted ? "+" : "") + (c.add >= 0 ? " +" + String(c.add) + "-" + String(c.del) : ""); }
 eq("applyStats", g.commits.map(row).join(" | "), "bF:present+ +10-2 | ds:missing+ | es:elsewhere | cF:present +4-0");
 eq("produced after: present + missing", String(g.produced), "2");
+// attribution said elsewhere (in no reflog of the repo), but the object DB has it (made in another clone of the same
+// project, then fetched): in the session's repo, so present and counted (spec 9)
+g = info([gc("bbbbbbb", "observed", "elsewhere")]); g.commits[0].counted = false; tally(g);
+applyStats(g, st, rl);
+eq("elsewhere found in the repo", g.commits.map(row).join(" | ") + " =" + String(g.produced), "bF:present+ +10-2 =1");
 
 // enrich: stub git, gate, failure, cache in vcs.json for closed sessions
 const tmp = "/tmp/agentglass-enrich-check-" + String(process.pid) + ".json"; setVcsFile(tmp);
