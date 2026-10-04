@@ -78,10 +78,11 @@ export AGENTGLASS_BIN
 own=""; nobin=""; usebin=""
 for f in $tests; do
   if grep -q AGENTGLASS_BIN "$f"; then usebin="$usebin test:$f"
-  elif grep -qE 'build\.sh|scriptc build' "$f"; then own="$own test:$f"
+  elif grep -q 'build\.sh' "$f"; then own="test:$f $own" # whole-agentglass builds: the heaviest, first
+  elif grep -q 'scriptc build' "$f"; then own="$own test:$f"
   else nobin="$nobin test:$f"; fi
 done
-k=0; mine="" # this shard's jobs: shard 1 has the binary and its users, the rest round-robin from shard 2
+k=1; mine="" # this shard's jobs: shard 1 has the binary and its users, the rest round-robin from shard 2
 for j in $own $nobin $(for f in $checks; do echo "check:$f"; done); do
   [ $((k % sn + 1)) != "$si" ] || mine="$mine $j"; k=$((k + 1))
 done

@@ -1,0 +1,37 @@
+name: scriptc toolchain
+description: Node 24, scriptc from a cached prefix, clang + sqlite3, and scriptc's build cache restored for one cache lane
+inputs:
+  lane: { description: "build-cache lane (one per job kind: shard, build)", required: true }
+outputs:
+  cache-dir: { description: "scriptc's build cache directory", value: "${{ steps.dir.outputs.dir }}" }
+  cache-hit: { description: "exact build-cache hit (nothing new to save)", value: "${{ steps.cache.outputs.cache-hit }}" }
+  cache-key: { description: "the build-cache key to save under", value: "${{ steps.cache.outputs.cache-primary-key }}" }
+runs:
+  using: composite
+  steps:
+    - id: node
+      uses: actions/setup-node@v4
+      with: { node-version: 24 }
+    # scriptc itself, installed once per scriptc + Node + OS + arch into its own prefix
+    - id: tool
+      uses: actions/cache@v4
+      with: { path: ~/.scriptc-tool, key: "scriptc-tool-0.1.7-${{ steps.node.outputs.node-version }}-${{ runner.os }}-${{ runner.arch }}" }
+    - if: steps.tool.outputs.cache-hit != 'true'
+      shell: sh
+      run: npm i -g --prefix ~/.scriptc-tool --no-audit --no-fund scriptc@0.1.7
+    - shell: sh
+      run: echo "$HOME/.scriptc-tool/bin" >> "$GITHUB_PATH"
+    - if: runner.os == 'Linux' # the runner image usually has both
+      shell: sh
+      run: command -v clang >/dev/null && command -v sqlite3 >/dev/null || { sudo apt-get update && sudo apt-get install -y clang sqlite3; }
+    - id: dir # scriptc's default cache root
+      shell: sh
+      run: if [ "$RUNNER_OS" = macOS ]; then echo "dir=$HOME/Library/Caches/scriptc" >> "$GITHUB_OUTPUT"; else echo "dir=$HOME/.cache/scriptc" >> "$GITHUB_OUTPUT"; fi
+    # scriptc's persistent build cache (validated per input, keyed on the output path): unchanged builds skip codegen
+    # and linking. Exact key = this tree's sources; otherwise the newest cache of this lane
+    - id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.dir.outputs.dir }}
+        key: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-${{ inputs.lane }}-${{ hashFiles('src/**', 'testdata/**', 'scripts/*.sh', 'build.sh') }}
+        restore-keys: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-${{ inputs.lane }}-
