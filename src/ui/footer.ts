@@ -25,53 +25,76 @@ export function renderFooter(): void {
     return;
   }
   footX0.length = 0; footX1.length = 0; footKey.length = 0;
-  // feature hints right after "? keys": they are the mode-specific ones (e.g. replay) and are dropped last
-  const ks: string[] = []; const ws: string[] = [];
-  const k = (key: string, what: string): void => { ks.push(key); ws.push(what); };
+  // hints in display order, each with a tier (0 never dropped … 3 dropped first, see tierOf); when the row is too
+  // narrow the lowest tier goes first, the last of a tier before the earlier ones, and the shown ones keep this order
+  const ks: string[] = []; const ws: string[] = []; const ps: number[] = [];
+  const k = (key: string, what: string, tier = -1): void => { ks.push(key); ws.push(what); ps.push(tier >= 0 ? tier : tierOf(key)); };
   k("?", "keys"); if (mode === "list" || mode === "transcript" || mode === "detail" || mode === "view") k("^K", "palette"); // everywhere Ctrl+K works
-  for (const f of H.footerHints) for (const kd of f(mode)) k(kd[0] ?? "", kd[1] ?? "");
-  if (mode === "detail") { k("↑↓/jk", "scroll"); k("[/]", "prev/next event"); k("1-9", "open file"); k("tab", "select file"); k("o", "pager"); k("e", "edit"); k("z", "fold all"); k("w", "wrap"); k("v", "all in pager"); k("y", "copy"); k("esc", "back"); }
-  else if (mode === "view") k("esc", "back");
-  else if (mode === "palette") { k("↵", "run"); k("→", "session actions"); k("tab", "scope"); k("esc", "close"); }
-  else if (mode === "transcript") { k("↑↓/jk", "event"); k("↵", "details"); k("g/G", "top/end"); k("f", "follow"); k("t", "expand tools"); k("n/N", "subagents"); k("u", "parent"); k("s", "send"); k("R", "resume"); k("esc", "back"); }
-  else if (S.tab === 0) { k("↵", "open"); k("␣", "subagents"); k("/", "filter"); k("p", "pin"); k("P", "pins"); k("F", "full-text"); k("h", "harness"); k("l", "live"); k("s", "send"); k("R", "resume"); k("x", "kill"); k("D", "trash"); }
-  else if (S.tab === 1) { k("↵", "session"); k("s", "send"); k("x", "SIGTERM"); k("X", "SIGKILL"); k("a", "attach tmux"); k("P", "pins"); k("q", "quit"); }
-  else k("q", "quit");
-  const ft = fitHints(ks, ws, W - 1); const gap = ft.gap;
+  // the view's own keys; a closing esc / q is held back to stay last
+  let tk = ""; let tw = "";
+  if (mode === "detail") { k("↑↓/jk", "scroll"); k("[/]", "prev/next event"); k("1-9", "open file"); k("tab", "select file"); k("o", "pager"); k("e", "edit"); k("z", "fold all"); k("w", "wrap"); k("v", "all in pager"); k("y", "copy"); tk = "esc"; tw = "back"; }
+  else if (mode === "view") { tk = "esc"; tw = "back"; }
+  else if (mode === "palette") { k("↵", "run"); k("→", "session actions"); k("tab", "scope"); tk = "esc"; tw = "close"; }
+  else if (mode === "transcript") { k("↑↓/jk", "event"); k("↵", "details"); k("g/G", "top/end"); k("f", "follow"); k("t", "expand tools"); k("n/N", "subagents"); k("u", "parent"); k("s", "send"); k("R", "resume"); tk = "esc"; tw = "back"; }
+  else if (S.tab === 0) { k("↵", "open"); k("/", "filter"); k("␣", "subagents"); k("p", "pin"); k("P", "pins"); k("F", "full-text"); k("h", "harness"); k("l", "live"); k("s", "send"); k("R", "resume"); k("x", "kill", 3); k("D", "trash", 3); }
+  else if (S.tab === 1) { k("↵", "session"); k("s", "send"); k("x", "SIGTERM"); k("X", "SIGKILL", 3); k("a", "attach tmux"); k("P", "pins"); tk = "q"; tw = "quit"; }
+  else { tk = "q"; tw = "quit"; }
+  // feature hints ([key, label, tier?]) after the built-in ones (in a full-screen view they are all of its keys); a
+  // feature's esc renames the closing one (e.g. "back to related")
+  for (const f of H.footerHints) for (const kd of f(mode)) {
+    const key = kd[0] ?? ""; const t = Number(kd[2] ?? "-1");
+    if (key === "esc" && tk === "esc") { tw = kd[1] ?? ""; continue; }
+    k(key, kd[1] ?? "", t >= 0 && t <= 3 ? t : -1);
+  }
+  if (tk) k(tk, tw, 0);
+  const ft = fitHints(ks, ws, ps, W - 1); const gap = ft.gap; const last = ks.length - 1;
+  const tail = ft.cut && tk !== "" && ft.show[last] === true;
   let hints = ""; let fx = 0;
   for (let i = 0; i < ks.length; i++) {
-    if (i >= ft.n && !(ft.tail && i === ks.length - 1)) continue;
+    if (!ft.show[i]) continue;
     const key = ks[i]; const what = ws[i];
-    if (ft.cut && ft.tail && i === ks.length - 1) { hints += fg(C.dim) + "…" + RST + " ".repeat(gap); fx += 1 + gap; }
+    if (tail && i === last) { hints += fg(C.dim) + "…" + RST + " ".repeat(gap); fx += 1 + gap; }
     const w = width(key) + 1 + width(what);
     // clickable: the hint's key, when it maps to one keystroke
-    const k0 = key.split("/")[0];
+    const k0 = key === "/" ? key : key.split("/")[0]; // "/ filter" is a key itself, "n/N" two of them
     const act = key === "^K" ? "ctrl-k" : key === "↵" ? "enter" : key === "␣" ? " " : key === "esc" ? "esc" : key === "tab" ? "tab" : width(k0) === 1 && k0.length === 1 ? k0 : "";
     if (act) { footX0.push(fx); footX1.push(fx + w); footKey.push(act); }
     fx += w + gap;
     hints += fg(C.accent) + CSI + "1m" + key + RST + fg(C.sub) + " " + what + " ".repeat(gap) + RST;
   }
-  if (ft.cut && !ft.tail) hints += fg(C.dim) + "…" + RST;
+  if (ft.cut && !tail) hints += fg(C.dim) + "…" + RST;
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
   if (DBG.on && DBG.line) { const d = " " + fit(DBG.line, Math.min(width(DBG.line), W - 2)) + " "; put(W - width(d), y, bg(C.panel) + fg(C.dim) + d + RST); } // over the hints' tail
   renderToast();
 }
-// the hints that fit the room (keys ks, labels ws): all with two-space gaps, else one-space gaps and hints dropped from
-// the end ("? keys" stays first, a closing esc/q stays last; "…" marks the cut: ? lists every key of the view).
-// Shown: the first n hints, then the last one when tail
-export function hintsWidth(ks: string[], ws: string[], n: number, tail: boolean, gap: number, cut: boolean): number {
+// a hint's tier when its provider names none: 0 "? keys" (never dropped), 1 the essentials (↵ open, / filter, esc / q),
+// 3 the arrow keys everyone tries anyway, 2 the rest
+export function tierOf(key: string): number {
+  if (key === "?") return 0;
+  if (key === "↵" || key === "/" || key === "esc" || key === "q") return 1;
+  return key.startsWith("↑↓") || key.startsWith("←→") ? 3 : 2;
+}
+// the width of the shown hints (show[i]) with these gaps, plus "…" and a gap when cut
+export function hintsWidth(ks: string[], ws: string[], show: boolean[], gap: number, cut: boolean): number {
   let w = 0; let m = 0;
-  for (let i = 0; i < ks.length; i++) if (i < n || (tail && i === ks.length - 1)) { w += width(ks[i]) + 1 + width(ws[i]); m++; }
+  for (let i = 0; i < ks.length; i++) if (show[i]) { w += width(ks[i]) + 1 + width(ws[i]); m++; }
   return w + gap * Math.max(0, m - 1) + (cut ? 1 + (m ? gap : 0) : 0);
 }
-export function fitHints(ks: string[], ws: string[], room: number): { n: number; gap: number; cut: boolean; tail: boolean } {
-  const all = ks.length;
-  if (hintsWidth(ks, ws, all, false, 2, false) <= room) return { n: all, gap: 2, cut: false, tail: false };
-  if (hintsWidth(ks, ws, all, false, 1, false) <= room) return { n: all, gap: 1, cut: false, tail: false };
-  const last = all - 1; const keep = all > 1 && (ks[last] === "esc" || ks[last] === "q");
-  let n = keep ? last : all;
-  while (n > 1 && hintsWidth(ks, ws, n, keep, 1, true) > room) n--;
-  return { n, gap: 1, cut: true, tail: keep };
+// the hints that fit the room (keys ks, labels ws, tiers ps): all with two-space gaps, else all with one-space gaps,
+// else by tier (tier 0 always, then 1, 2, 3; within a tier the earlier first) as long as they fit, "…" marking the
+// cut (? lists every key of the view). The shown ones keep their display order
+export function fitHints(ks: string[], ws: string[], ps: number[], room: number): { show: boolean[]; gap: number; cut: boolean } {
+  const all: boolean[] = []; for (let i = 0; i < ks.length; i++) all.push(true);
+  if (hintsWidth(ks, ws, all, 2, false) <= room) return { show: all, gap: 2, cut: false };
+  if (hintsWidth(ks, ws, all, 1, false) <= room) return { show: all, gap: 1, cut: false };
+  const show: boolean[] = []; for (let i = 0; i < ks.length; i++) show.push(ps[i] === 0);
+  let full = false;
+  for (let t = 1; t <= 3 && !full; t++) for (let i = 0; i < ks.length && !full; i++) {
+    if (ps[i] !== t) continue;
+    show[i] = true;
+    if (hintsWidth(ks, ws, show, 1, true) > room) { show[i] = false; full = true; }
+  }
+  return { show, gap: 1, cut: true };
 }
 // a toast's text in lines of ≤ w columns, broken at blanks (a longer word is split), at most max lines, the last cut with …
 export function toastLines(t: string, w: number, max: number): string[] {

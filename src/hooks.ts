@@ -40,7 +40,7 @@ export const H = {
   previewSections: [] as ((s: Sess, w: number) => string[])[], // styled lines after the preview's metadata block
   headerWidgets: [] as ((w: number) => string)[], // styled segments between the tabs and the header stats; w = free width
   headerFlex: [] as ((w: number) => string)[], // laid out after headerWidgets, filling the width they leave (e.g. a ticker)
-  footerHints: [] as ((mode: string) => string[][])[], // extra [key, label] footer hints (clickable when key is one keystroke)
+  footerHints: [] as ((mode: string) => string[][])[], // extra [key, label, tier?] footer hints (clickable when key is one keystroke; tier "0"–"3", see ui/footer.ts tierOf)
   tabs: [] as Tab[], // extra top-level tabs 3, 4, … after Sessions / Processes
   helpSections: [] as HelpSec[], // appended to the ? popup
   views: [] as View[], // full-screen views a feature enters by setting S.fview + S.mode = "view"
