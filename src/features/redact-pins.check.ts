@@ -3,11 +3,12 @@
 // Pinned values come back from the config on every start: shown as "…" (filters still match the real ones), a masked
 // pin can be kept or deleted in the P editor but not edited. User-defined subagent names get stable same-length fakes,
 // built-in agent types stay.
-import type { Sess } from "../model/types.ts";
+import type { Ev, Sess } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
 import { S } from "../state.ts";
-import { HOME } from "../util/fs.ts";
+import { HOME, readText } from "../util/fs.ts";
 import { applyMeta, display, screenOut } from "../hooks.ts";
+import { parseEvents } from "../harness/index.ts";
 import { REDACT, scrubText, fakeAgent } from "./redact.ts";
 import { parse, print } from "./query/parse.ts";
 import { compile, matchSession } from "./query/eval.ts";
@@ -87,5 +88,23 @@ ok("a plain-word name inside a team subagent id", scrubText("agent-aproviders-36
 ok("inside a team subagent id", scrubText("agent-aacme-billing-auditor-38c013df92a65487.jsonl").indexOf("billing") < 0, scrubText("agent-aacme-billing-auditor-38c013df92a65487.jsonl"));
 ok("a tool named after the agent", display("tool", "acme_ticket_triager", null) === g.kind && display("tool", "Bash", null) === "Bash", display("tool", "acme_ticket_triager", null));
 ok("triage/compare dims show the fake", display("filter:agent", c1.kind, null) === k1, display("filter:agent", c1.kind, null));
+// a dictionary-word agent name stays out of the word scrubber (ordinary text): its tool is faked where it is parsed
+const gp = newSess("gemini", "88888888-aaaa", "/tmp/gp.jsonl", false); const gevs: Ev[] = [];
+parseEvents("gemini", "{\"id\":\"g9\",\"timestamp\":\"2026-10-04T10:06:02.000Z\",\"type\":\"gemini\",\"content\":\"\",\"model\":\"gemini-2.5-flash\",\"toolCalls\":[" +
+  "{\"id\":\"translator__1\",\"name\":\"translator\",\"agentId\":\"aaaaaaaa-1111\",\"args\":{\"objective\":\"translate docs\"},\"status\":\"success\",\"timestamp\":\"2026-10-04T10:06:30.000Z\"}," +
+  "{\"id\":\"invoke_agent__2\",\"name\":\"invoke_agent\",\"agentId\":\"bbbbbbbb-2222\",\"args\":{\"agent_name\":\"cartographer\"},\"status\":\"success\",\"timestamp\":\"2026-10-04T10:06:31.000Z\"}," +
+  "{\"id\":\"read_file__3\",\"name\":\"read_file\",\"args\":{\"file_path\":\"a.md\"},\"status\":\"success\",\"timestamp\":\"2026-10-04T10:06:32.000Z\"}]}", gevs, gp);
+const gtools = gevs.filter((e: Ev) => e.kind === "tool").map((e: Ev) => e.text.slice(0, e.text.indexOf("\u0000")));
+const ft = fakeAgent("translator");
+ok("a tool named after a dictionary-word agent is faked at parse", gtools.length === 3 && gtools[0] === ft && ft !== "translator" && ft.length === 10, gtools.join(","));
+ok("invoke_agent and built-in tools stay", gtools[1] === "invoke_agent" && gtools[2] === "read_file", gtools.join(","));
+ok("invoke_agent's agent learned before its subagent's meta", fakeAgent("cartographer") !== "cartographer" && display("tool", "cartographer", null) === fakeAgent("cartographer"), fakeAgent("cartographer"));
+for (const e of gevs) ok("no real agent name in parsed events", (e.text + e.full).indexOf("translator") < 0 && (e.text + e.full).indexOf("cartographer") < 0, e.text + " " + e.full);
+const gc = newSess("gemini", "aaaaaaaa-1111", "/tmp/gc.jsonl", false); gc.parent = "88888888-aaaa"; gc.kind = "translator"; applyMeta(gc);
+ok("its subagent gets the same fake", gc.kind === ft, gc.kind);
+ok("ledger tool rows and chips: the known agent's fake", display("filter:tool", "translator", null) === ft && display("filter:tool", "Bash", null) === "Bash", display("filter:tool", "translator", null));
+ok("an agent chip: the known agent's fake, a fake stays", display("filter:agent", "translator", null) === ft && display("filter:agent", ft, null) === ft, display("filter:agent", "translator", null));
+ok("its Gemini call ids are scrubbed", scrubText("translator__1 translator__call_2010876").indexOf("translator") < 0, scrubText("translator__1 translator__call_2010876"));
+if (readText("/usr/share/dict/words", 0, 4194304).split("\n").indexOf("translator") >= 0) ok("ordinary text keeps the dictionary word", scrubText("the translator said") === "the translator said", scrubText("the translator said"));
 console.log(bad ? bad + " failed" : "redact pins and agents: all checks passed");
 process.exit(bad ? 1 : 0);

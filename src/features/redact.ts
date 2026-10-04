@@ -137,6 +137,14 @@ export function fakeProject(real: string): string {
 }
 // a user-defined subagent name → a stable fake of the same length (the scrubber swaps it in place), one per real name
 const agentMemo = new Map<string, string>(); const agentUsed = new Set<string>();
+// tools named after a user-defined agent (Gemini; lowercase) → its fake, also where the word scrubber skips the name (a
+// dictionary word: ordinary text). Only those: a Claude agent called "read" must not rename OpenCode's read tool
+const agentTools = new Set<string>();
+function agentTool(name: string): string { return agentTools.has(name.toLowerCase()) ? fakeAgent(name) : name; }
+function toolAgent(name: string): void {
+  const f = fakeAgent(name); if (f === name || agentTools.has(name.toLowerCase())) return;
+  agentTools.add(name.toLowerCase()); addWord(name + "__", f + "__", false); // its call ids: <tool>__<n>, <tool>__call_<n>
+}
 export function builtinAgent(name: string): boolean { return AGENTS.has(name.toLowerCase()); }
 export function fakeAgent(real: string): string {
   const k = real.toLowerCase();
@@ -320,7 +328,7 @@ function meta(s: Sess): void {
   if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
   if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
   if (s.name && s.name !== r.name) { r.rn = s.name; r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
-  if (s.kind && s.kind !== r.kind) { r.rk = s.kind; r.kind = fakeAgent(s.kind); s.kind = r.kind; }
+  if (s.kind && s.kind !== r.kind) { r.rk = s.kind; r.kind = fakeAgent(s.kind); s.kind = r.kind; if (s.h === "gemini") toolAgent(r.rk); }
   recs.set(s.path, r); // scriptc may hand out a copy of an all-string record: store the updated one back (real cwd, kept fakes)
 }
 
@@ -437,7 +445,7 @@ function display(kind: string, text: string, s: Sess | null): string {
   if (kind === "repo") return fakeRepo(text);
   if (kind === "remote") return fakeRemote(text);
   if (kind === "vcs") return fakeVcs(text);
-  if (kind === "tool") return agentMemo.get(text.toLowerCase()) ?? text; // a tool name: Gemini runs a subagent as a tool named after it
+  if (kind === "tool") return agentTool(text); // a tool name: Gemini runs a subagent as a tool named after it
   if (kind.startsWith("filter:")) { // a filter chip's value, by its key
     const k = kind.slice(7);
     if (PINNED.has(k + "\t" + text.toLowerCase()) && maskPinned(k, text)) return "…";
@@ -445,7 +453,9 @@ function display(kind: string, text: string, s: Sess | null): string {
     if (k === "file") return text.indexOf("*") >= 0 ? scrubText(text) : uniq("file", text, FILES);
     if (k === "command") return uniq("cmd", text, CMDS);
     if (k === "repo") { learnSeg(text); return scrubText(text); }
-    if (k === "title" || k === "text" || k === "content" || k === "branch" || k === "id" || k === "agent") return scrubText(text);
+    if (k === "tool") return agentTool(text);
+    if (k === "agent") return agentMemo.get(text.toLowerCase()) ?? scrubText(text); // a fake or a partial name: scrubbed
+    if (k === "title" || k === "text" || k === "content" || k === "branch" || k === "id") return scrubText(text);
   }
   return text;
 }
@@ -483,6 +493,7 @@ function setup(): void {
 if (REDACT) {
   setup();
   H.meta.push(meta);
+  H.agents.push(toolAgent);
   H.events.push((s: Sess | null, evs: Ev[], from: number) => {
     const keep = s !== null && kept(s);
     const title = s ? recOf(s).title : pick(TITLES, "?");
@@ -491,6 +502,7 @@ if (REDACT) {
       if (!e) continue;
       // the first prompt, before it is faked: a title read from it (loadTail) is what filters match (realMeta)
       if (s && e.kind === "user") { const r = recOf(s); if (!r.rp) { r.rp = firstLine(e.text, 200); recs.set(s.path, r); } }
+      if (e.kind === "tool") { const j = e.text.indexOf("\u0000"); const n = j >= 0 ? e.text.slice(0, j) : e.text; const f = agentTool(n); if (f !== n) e.text = f + e.text.slice(n.length); }
       if (!keep) { fakeEv(e, evs, i, title); continue; }
       e.text = scrubText(e.text);
       if (!e.full.startsWith("@file:") && e.full.length < 1048576) e.full = scrubText(e.full);

@@ -106,7 +106,7 @@ export function toRelShown(evs: Ev[], shown: Ev[], red: boolean, sess: string, h
     const kind = CAT_KIND[cat] ?? "read";
     const cmd = kind === "shell" ? shellCmd(toolArg(e)) : ""; const form = cmd ? clobberForm(cmd) : "";
     const sa = toolArg(v);
-    const r = row(t, e.ts, sess, h, top, kind, name, firstLine(kind !== "shell" ? sa : red && form ? form : shellCmd(sa), 300), self);
+    const r = row(t, e.ts, sess, h, top, kind, toolName(v), firstLine(kind !== "shell" ? sa : red && form ? form : shellCmd(sa), 300), self);
     r.cat = cat; r.evKind = e.kind; r.evId = e.id; r.evText = v.text; r.clob = form !== "";
     for (const abs of filesOf([e.text, e.full], cwd)) { const f = fileRef(abs, top, alias); if (!r.files.some((x: FileRef) => x.top === f.top && x.rel === f.rel)) r.files.push(f); }
     if (r.kind === "write") { const lc = lineCounts(e.full); r.add = lc[0] ?? 0; r.del = lc[1] ?? 0; }

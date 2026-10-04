@@ -225,7 +225,7 @@ function frequent(key: string): string[] {
   const m = new Map<string, number>();
   if (key === "tool" || key === "server" || key === "program" || key === "ext") {
     for (const a of ledger.values()) for (const d of a.days.values()) {
-      if (key === "tool") for (const [n, st] of d.tt) bump(m, n, st.n);
+      if (key === "tool") { for (const [n, st] of d.tt) if (!REDACT || display("tool", n, null) === n) bump(m, n, st.n); } // --redact: a tool named after a custom agent is not offered
       else if (key === "server") for (const [n, st] of d.tt) bump(m, mcpServer(n), st.n);
       else if (key === "program") for (const [k, c] of d.prog) bump(m, k.slice(k.indexOf("\t") + 1), c.n);
       else for (const k of d.files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }

@@ -45,6 +45,7 @@ export const H = {
   helpSections: [] as HelpSec[], // appended to the ? popup
   views: [] as View[], // full-screen views a feature enters by setting S.fview + S.mode = "view"
   meta: [] as ((s: Sess) => void)[], // after log parsing / process linking (re)set a session's title, cwd, branch or name; may override them
+  agents: [] as ((name: string) => void)[], // a harness parsed a call that ran a subagent by name (Gemini: a tool named after it, invoke_agent's agent_name), before its events and ledger rows
   events: [] as ((s: Sess | null, evs: Ev[], from: number) => void)[], // after parseEvents appended evs[from..]; may rewrite them in place
   display: [] as ((kind: string, text: string, s: Sess | null) => string)[], // display-time rewrite of text that bypasses parseEvents (stats "tool:<name>"/"cmd"/"prog"/"file", process "args"/"cwd")
   realCwd: [] as ((s: Sess) => string)[], // the session's real cwd when H.meta replaced s.cwd for display (redact); "" = not replaced
@@ -70,6 +71,7 @@ export function complete(s: Sess): void { for (const f of H.complete) f(s); }
 // bounds-checked: in scriptc an out-of-range object read traps
 export function tabAt(i: number): Tab | null { return i >= 0 && i < H.tabs.length ? H.tabs[i] : null; }
 export function viewOf(name: string): View | null { for (const v of H.views) if (v.name === name) return v; return null; }
+export function sawAgent(name: string): void { if (name) for (const f of H.agents) f(name); }
 export function applyMeta(s: Sess): void { for (const f of H.meta) f(s); }
 export function display(kind: string, text: string, s: Sess | null): string { let t = text; for (const f of H.display) t = f(kind, t, s); return t; }
 export function armed(): boolean { for (const f of H.fastArmed) if (f()) return true; return false; }
