@@ -18,6 +18,7 @@ export interface Action { id: string; title: string; group: string; keys: string
 
 export const H = {
   cli: [] as ((args: string[]) => boolean)[], // before the TUI starts, with argv[2..]; true = handled, the TUI does not start
+  firstScan: [] as (() => void)[], // once, right before the first scan(): state only a run that reads sessions needs (the ledger cache; --help never loads it)
   start: [] as (() => void)[], // once, after the TUI's first scan/buildView and before its first frame (agentglass open: the link's target)
   tui: [] as (() => void)[], // main.ts: starts the TUI (startTui) — for a CLI handler that decides later (link hand-off fallback)
   onTick: [] as (() => void)[], // ledger, ticker, cache, prices, callgraph: cadence follows the activity level (500 ms … 5 s; 250 ms while the ledger indexes), before render

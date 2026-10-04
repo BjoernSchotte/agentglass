@@ -6,7 +6,7 @@ import { HOME } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
 import { sessions, titleFrom, working, parentOf } from "../../model/sessions.ts";
 import { type RealMeta, realMeta } from "../../hooks.ts";
-import { type Day, L, todayKey, dayKey, startOfDay } from "../usage/record.ts";
+import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/record.ts";
 import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
 import { accOf, ledger } from "../usage/ledger.ts";
@@ -52,7 +52,7 @@ function stateOf(s: Sess): string {
   if (pid && working(s)) return "busy";
   return pid ? "idle" : "ended";
 }
-function errorsOf(s: Sess): number { const a = ledger.get(s.path); let n = 0; if (a) for (const d of a.days.values()) for (const st of d.tt.values()) n += st.err; return n; }
+function errorsOf(s: Sess): number { const a = ledger.get(s.path); let n = 0; if (a) for (const d of a.days.values()) for (const st of heavy(d).tt.values()) n += st.err; return n; }
 // session model ∪ the models of its call rows, per (path, L.ver)
 const models = new Map<string, { ver: number; ss: string[] }>();
 function modelsOf(s: Sess): Val {

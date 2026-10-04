@@ -5,6 +5,7 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { readText, listDir } from "../../util/fs.ts";
+import { own } from "../../util/own.ts";
 
 // at = epoch ms; sha = the new HEAD (the spec's "new": a keyword here); op = commit | amend | merge | cherry-pick | revert |
 // checkout | rebase | reset | other; branch = the branch HEAD was on ("" detached or unknown); amended = a later
@@ -27,7 +28,7 @@ export function opOf(msg: string): string {
 export function isNew(e: RefEv): boolean { return e.op === "commit" || e.op === "amend" || e.op === "merge" || e.op === "cherry-pick" || e.op === "revert"; }
 const HEAD_RE = /^([0-9a-f]{40,64}) ([0-9a-f]{40,64}) .*> (\d+) [+-]\d{4}$/;
 const MOVE_RE = /^checkout: moving from (\S+) to (\S+)$/;
-function branchName(x: string): string { return /^[0-9a-f]{7,64}$/.test(x) ? "" : x; } // a sha = detached HEAD
+function branchName(x: string): string { return /^[0-9a-f]{7,64}$/.test(x) ? "" : own(x); } // a sha = detached HEAD
 
 // the branch of each event by replay: before the first checkout `moving from A to B` HEAD was on A (else on head, the
 // current branch); after it on B; `rebase (finish): returning to refs/heads/<b>` lands on b
@@ -47,9 +48,9 @@ export function parseReflog(text: string, head: string): RefEv[] {
     }
     if (mv) first = false;
     const c = msg.indexOf(": ");
-    const e: RefEv = { at: Number(m[3] ?? "0") * 1000, old: m[1] ?? "", sha: m[2] ?? "", op, branch: cur, subj: (c >= 0 ? msg.slice(c + 2) : msg).slice(0, 80), amended: false };
+    const e: RefEv = { at: Number(m[3] ?? "0") * 1000, old: own(m[1] ?? ""), sha: own(m[2] ?? ""), op, branch: cur, subj: (c >= 0 ? msg.slice(c + 2) : msg).slice(0, 80), amended: false };
     if (mv) { cur = branchName(mv[2] ?? ""); e.branch = cur; }
-    const fin = /^rebase.*\(finish\): returning to refs\/heads\/(\S+)$/.exec(msg); if (fin) { cur = fin[1] ?? ""; e.branch = cur; }
+    const fin = /^rebase.*\(finish\): returning to refs\/heads\/(\S+)$/.exec(msg); if (fin) { cur = own(fin[1] ?? ""); e.branch = cur; }
     if (op === "amend") { const i = last.get(e.old) ?? -1; if (i >= 0 && i < out.length) out[i].amended = true; }
     last.set(e.sha, out.length);
     out.push(e);
@@ -85,6 +86,7 @@ export function readReflog(gitdir: string): RefEv[] {
 }
 // size + mtime of the reflog (cache keys of what is derived from it); "" missing
 export function reflogStamp(gitdir: string): string {
+  if (!gitdir) return ""; // never relative to the process cwd
   try { const st = statSync(join(gitdir, "logs", "HEAD")); return String(st.size) + ":" + String(st.mtimeMs); } catch (e) { return ""; }
 }
 // the gitdirs of every worktree of a repo: the common dir (the main worktree's) and <common>/worktrees/<name>

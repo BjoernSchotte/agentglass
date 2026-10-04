@@ -5,7 +5,7 @@
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger } from "../usage/ledger.ts";
-import { type Day, L } from "../usage/record.ts";
+import { type Day, L, heavy } from "../usage/record.ts";
 import { type Call, type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
 import { type Compiled, sessMatches, dayMatches, callsIn, weekdayOf, livePid } from "./eval.ts";
@@ -141,7 +141,7 @@ function bucketCall(j: AggJob, s: Sess): void {
   const a = ledger.get(s.path); if (!a) return;
   for (const dk of j.days) {
     const d = a.days.get(dk); if (!d || !dayMatches(j.f, s, dk, d)) continue;
-    for (const [name, st] of d.tt) for (const ds of j.out) addTS(ds, s, dk, name, st, j.weight);
+    for (const [name, st] of heavy(d).tt) for (const ds of j.out) addTS(ds, s, dk, name, st, j.weight);
   }
 }
 // session entity: once per session with ≥ 1 selected day passing the filter
@@ -153,9 +153,9 @@ function bucketSess(j: AggJob, s: Sess): void {
   for (const dk of j.days) {
     const d = a.days.get(dk); if (!d || !dayMatches(j.f, s, dk, d)) continue;
     any = true; dks.push(dk);
-    for (const [name, st] of d.tt) { err += st.err; if (tools.indexOf(name) < 0) tools.push(name); if (weight === "duration") w += st.ms; }
-    for (const pk of d.prog.keys()) { const p = pk.slice(pk.indexOf("\t") + 1); if (progs.indexOf(p) < 0) progs.push(p); }
-    for (const fk of d.files.keys()) { const e = extOf(fk.slice(fk.indexOf("\t") + 1)); if (exts.indexOf(e) < 0) exts.push(e); }
+    for (const [name, st] of heavy(d).tt) { err += st.err; if (tools.indexOf(name) < 0) tools.push(name); if (weight === "duration") w += st.ms; }
+    for (const pk of heavy(d).prog.keys()) { const p = pk.slice(pk.indexOf("\t") + 1); if (progs.indexOf(p) < 0) progs.push(p); }
+    for (const fk of heavy(d).files.keys()) { const e = extOf(fk.slice(fk.indexOf("\t") + 1)); if (exts.indexOf(e) < 0) exts.push(e); }
     if (weight === "cost") { if (unpricedDay(d)) unp = true; w += d.cost; } else if (weight === "tokens") w += dayTok(d);
   }
   if (!any) return;
@@ -309,14 +309,14 @@ function bucketTotals(j: TotJob, s: Sess): void {
   for (const dk of j.days) {
     const d = a.days.get(dk); if (!d || !dayMatches(f, s, dk, d)) continue;
     sessSeen(t, s); dayMoney(t, s, dk, d, true); t.tools += d.tools;
-    for (const [name, st] of d.tt) {
+    for (const [name, st] of heavy(d).tt) {
       const x = toolT(t, name);
       x.n += st.n; x.err += st.err; x.dn += st.dn; x.ms += st.ms; x.out += st.out; if (st.max > x.max) x.max = st.max; addHist(x.hist, st.hist);
       t.errors += st.err; t.dn += st.dn; t.ms += st.ms; if (st.max > t.max) t.max = st.max; addHist(t.hist, st.hist);
     }
-    for (const [pk, c] of d.prog) addCnt(t.prog, pk, c);
-    for (const [ck, c] of d.cmds) addCnt(t.cmds, ck, c);
-    for (const [fk, c] of d.files) addCnt(t.files, fk.slice(fk.indexOf("\t") + 1), c);
+    for (const [pk, c] of heavy(d).prog) addCnt(t.prog, pk, c);
+    for (const [ck, c] of heavy(d).cmds) addCnt(t.cmds, ck, c);
+    for (const [fk, c] of heavy(d).files) addCnt(t.files, fk.slice(fk.indexOf("\t") + 1), c);
   }
 }
 // "<path>\t<day>" in j.seen: days with ≥ 1 matching row add their cost/tokens/lines once

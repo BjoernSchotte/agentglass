@@ -1,5 +1,6 @@
 // agentglass — per-call fact rows: compact call records with dictionary-encoded strings, shared by filters, triage, compare
 // SPDX-License-Identifier: Apache-2.0
+import { own } from "../../util/own.ts";
 export const MQ_MSG = 0; export const MQ_TURN = 1; export const MQ_SESS = 2; // model exact per message | per turn | per session
 // one tool call. String columns are ids into DICT; -1 = none/unknown. t = call time (epoch ms, never 0: falls back to the bucket's time).
 // ms -1 = untimed; err -1 = no result seen yet, 0 ok, 1 failed; out = result bytes; cid = the harness call id ("" none)
@@ -13,7 +14,7 @@ export const DICT = { tool: newDict(), model: newDict(), prog: newDict(), cmd: n
 export function intern(d: Dict, s: string): number {
   if (!s) return -1;
   const i = d.ids.get(s); if (i !== undefined) return i;
-  d.names.push(s); d.ids.set(s, d.names.length - 1);
+  const k = own(s); d.names.push(k); d.ids.set(k, d.names.length - 1); // kept for the run: own() (util/own.ts)
   return d.names.length - 1;
 }
 export function nameOf(d: Dict, i: number): string { const ns: string[] = d.names; if (i < 0 || i >= ns.length) return ""; return ns[i]; }

@@ -22,7 +22,7 @@ P.sync = true; // one-shot CLI runs resolve on first ask; the TUI's first tick s
 loadProjects(PROJECTS_FILE);
 
 const SAVE_MS = 30000;
-let ticked = false; let savedAt = 0;
+let ticked = false; let savedAt = 0; let scanned = false;
 function livePaths(): Set<string> { const o = new Set<string>(); for (const p of sessions.keys()) o.add(p); return o; }
 function now(): number { return Date.now(); }
 H.onTick.push(() => {
@@ -31,7 +31,11 @@ H.onTick.push(() => {
   if (now() - savedAt >= SAVE_MS) { savedAt = now(); saveProjects(PROJECTS_FILE, livePaths()); } // false (read-only home): keep going in memory
 });
 H.backlog.push(() => P.todo > 0);
-H.onQuit.push(() => { if (ticked) saveProjects(PROJECTS_FILE, livePaths()); });
+// saved by every run that scanned (its session set is complete: entries of vanished sessions are dropped), one-shot CLI
+// runs too: the next run places their sessions, subagents included, without reading heads again
+H.firstScan.push(() => { scanned = true; });
+H.onQuit.push(() => { if (scanned) saveProjects(PROJECTS_FILE, livePaths()); });
+process.on("exit", () => { try { if (scanned) saveProjects(PROJECTS_FILE, livePaths()); } catch (e) { /* never block the exit */ } });
 
 // filter attributes (filter-language registry): worktree, project.kind
 function V(ss: string[]): Val { return { n: 0, ss, unk: false }; }

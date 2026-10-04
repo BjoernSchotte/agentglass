@@ -5,7 +5,7 @@ import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { P, real, resolveTick, setGit } from "../../model/project.ts";
 import { ledger } from "../usage/ledger.ts";
-import { type Acc, type Day, L, newAcc, newDay, todayKey, lastDays, bucket, tool, pend, flushSpans, startOfDay, dayKey } from "../usage/record.ts";
+import { type Acc, type Day, L, newAcc, newDay, todayKey, lastDays, bucket, tool, pend, flushSpans, startOfDay, dayKey, heavy } from "../usage/record.ts";
 import { MQ_MSG } from "../usage/facts.ts";
 import { newTS, newCnt, done } from "../usage/calls.ts";
 import { parse } from "../query/parse.ts";
@@ -35,8 +35,8 @@ function sess(h: string, id: string, cwd: string, parent: string, branch: string
   s.cwd = cwd; s.parent = parent; s.branch = branch; s.headDone = true; s.mtime = Date.now(); sessions.set(s.path, s);
   const a = newAcc(); const d: Day = newDay();
   d.cost = day.cost; d.unk = day.unk; d.act = day.act;
-  const st = newTS(); st.n = day.calls; st.err = day.err; d.tt.set("Bash", st);
-  for (const f of day.files) { const c = newCnt(); c.n = 1; c.add = 2; c.del = 1; d.files.set("Edit\t" + f, c); }
+  const st = newTS(); st.n = day.calls; st.err = day.err; heavy(d).tt.set("Bash", st);
+  for (const f of day.files) { const c = newCnt(); c.n = 1; c.add = 2; c.del = 1; heavy(d).files.set("Edit\t" + f, c); }
   a.days.set(TODAY, d); ledger.set(s.path, a);
   return s;
 }

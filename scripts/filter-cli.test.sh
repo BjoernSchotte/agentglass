@@ -20,7 +20,7 @@ ag() { HOME="$T/home" AGENTGLASS_AGENT=0 AGENTGLASS_CACHE_DIR="$T/cache" AGENTGL
 ids() { grep -o '"id":"[^"]*"' | sort | tr '\n' ' '; }
 [ "$(ag --json | grep -o '"id":"' | wc -l)" -eq 2 ] || { echo "FAIL two sessions: $(ag --json)"; exit 1; }
 plain=$(ag --json | ids)
-[ ! -e "$T/cache/ledger.json" ] || { echo "FAIL plain --json saved the ledger"; exit 1; }
+[ -s "$T/cache/ledger.json" ] && [ "$(ls "$T/cache/calls" | grep -c '\.json$')" -eq 2 ] || { echo "FAIL plain --json keeps its index: $(ls -R "$T/cache")"; exit 1; }
 [ "$(ag --json --filter 'tool is Bash and status is error' | ids)" = '"id":"c1" ' ] || { echo "FAIL same-call"; exit 1; }
 [ -s "$T/cache/ledger.json" ] && [ "$(ls "$T/cache/calls" | grep -c '\.json$')" -eq 2 ] || { echo "FAIL a ledger filter keeps its index: $(ls -R "$T/cache")"; exit 1; }
 [ "$(ag --json | ids)" = "$plain" ] || { echo "FAIL plain --json over a saved ledger (rows not loaded)"; exit 1; }

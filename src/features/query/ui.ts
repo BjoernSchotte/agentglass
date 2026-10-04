@@ -11,7 +11,7 @@ import { ask } from "../../actions.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { harnessIds, harnessOf } from "../../harness/index.ts";
 import { ledger } from "../usage/ledger.ts";
-import { L, todayKey, lastDays } from "../usage/record.ts";
+import { L, todayKey, lastDays, heavy } from "../usage/record.ts";
 import { DICT } from "../usage/facts.ts";
 import { mcpServer } from "../usage/calls.ts";
 import { callDays } from "../usage/callcache.ts";
@@ -50,12 +50,13 @@ function needsHeads(f: Compiled): boolean { for (const c of f.cs) if (HEADKEYS.i
 let headsLeft = 0;
 // ≤ 100 ms of head reads per tick while the Sessions filter needs them (the ledger's indexing slice); the list fills in as
 // they arrive. Pending reads count as backlog: the tick runs at the indexing burst cadence instead of its stretched idle one
-// (a restored repo pin would otherwise match nothing for minutes)
+// (a restored repo pin would otherwise match nothing for minutes). While a filter is being typed only ≤ 12 ms: a key must
+// never wait behind a 100 ms batch of head reads (#19)
 H.onTick.push(() => {
   const f = tabFilter("Sessions", "list"); headsLeft = 0;
   if (f === EMPTY || !needsHeads(f)) return;
-  const t0 = Date.now(); let read = 0;
-  for (const s of sessions.values()) { if (s.headDone) continue; if (Date.now() - t0 < 100) { loadHead(s); read++; } else headsLeft++; }
+  const t0 = Date.now(); let read = 0; const slice = S.mode === "input" ? 12 : 100;
+  for (const s of sessions.values()) { if (s.headDone) continue; if (Date.now() - t0 < slice) { loadHead(s); read++; } else headsLeft++; }
   if (read) S.dirty = true;
 });
 H.backlog.push(() => headsLeft > 0);
@@ -225,10 +226,10 @@ function frequent(key: string): string[] {
   const m = new Map<string, number>();
   if (key === "tool" || key === "server" || key === "program" || key === "ext") {
     for (const a of ledger.values()) for (const d of a.days.values()) {
-      if (key === "tool") { for (const [n, st] of d.tt) if (!REDACT || display("tool", n, null) === n) bump(m, n, st.n); } // --redact: a tool named after a custom agent is not offered
-      else if (key === "server") for (const [n, st] of d.tt) bump(m, mcpServer(n), st.n);
-      else if (key === "program") for (const [k, c] of d.prog) bump(m, k.slice(k.indexOf("\t") + 1), c.n);
-      else for (const k of d.files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }
+      if (key === "tool") { for (const [n, st] of heavy(d).tt) if (!REDACT || display("tool", n, null) === n) bump(m, n, st.n); } // --redact: a tool named after a custom agent is not offered
+      else if (key === "server") for (const [n, st] of heavy(d).tt) bump(m, mcpServer(n), st.n);
+      else if (key === "program") for (const [k, c] of heavy(d).prog) bump(m, k.slice(k.indexOf("\t") + 1), c.n);
+      else for (const k of heavy(d).files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }
     }
   } else if (key === "model") { for (const n of DICT.model.names) bump(m, n, 1); for (const s of sessions.values()) bump(m, s.model, 1); }
   else if (key === "session") { for (const s of sessions.values()) if (!s.parent) bump(m, s.h + ":" + s.id, Math.max(s.last, s.mtime)); } // newest first

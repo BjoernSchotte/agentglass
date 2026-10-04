@@ -28,6 +28,7 @@ interface Ix {
   drop: Map<number, number>; // offset of a rewind/checkpoint → messages it dropped from the history
   live: string[]; liveSet: Set<string>; // the history as of `at`, in order
   shown: Set<string>; // ids that become transcript events (not context blocks, not tool-result echoes): what drop counts
+  gem: Set<string>; // ids of gemini replies (bareReply: the newest one not shown yet)
 }
 const IX = new Map<string, Ix>();
 const CH = 4194304;
@@ -52,6 +53,7 @@ function seen(ix: Ix, m: Obj, x: number): void {
   const id = str(m["id"]); if (!id) return;
   if (!ix.msg.has(id)) ix.msg.set(id, x);
   if (!ix.shown.has(id) && visible(m)) ix.shown.add(id); // a bare gemini message becomes visible once its calls arrive
+  if (str(m["type"]) === "gemini") ix.gem.add(id);
   if (obj(m["tokens"]) && !ix.tok.has(id)) ix.tok.set(id, x);
   for (const c of arr(m["toolCalls"])) {
     const co = obj(c); if (!co) continue;
@@ -89,13 +91,16 @@ function indexTo(path: string, to: number): Ix {
   let ix = IX.get(path);
   let ino = -1; let size = -1; try { const st = statSync(path); ino = st.ino; size = st.size; } catch (e) { /* gone */ }
   if (!ix || size < ix.at || ino !== ix.ino) { // new, shrunk or replaced (gemini rewrites a file it could not read via rename)
-    ix = { at: 0, ino, msg: new Map<string, number>(), call: new Map<string, number>(), tok: new Map<string, number>(), spawn: new Map<string, string>(), spawnName: new Map<string, string>(), drop: new Map<number, number>(), live: [], liveSet: new Set<string>(), shown: new Set<string>() };
+    ix = { at: 0, ino, msg: new Map<string, number>(), call: new Map<string, number>(), tok: new Map<string, number>(), spawn: new Map<string, string>(), spawnName: new Map<string, string>(), drop: new Map<number, number>(), live: [], liveSet: new Set<string>(), shown: new Set<string>(), gem: new Set<string>() };
     IX.set(path, ix);
   }
   const cur = ix;
   if (to > cur.at) cur.at = eachLine(path, cur.at, to, (l: string, x: number) => record(cur, l, x));
   return cur;
 }
+// the newest message is a gemini reply with nothing in it yet: gemini writes it bare when it turns to tool calls and adds
+// the calls once they ran, so an approval dialog without thoughts leaves only this (as of the last read: loadTail)
+function bareReply(s: Sess): boolean { const ix = IX.get(s.path); const id = ix && ix.live.length ? ix.live[ix.live.length - 1] : ""; return !!ix && id !== "" && ix.gem.has(id) && !ix.shown.has(id); }
 function dropped(n: number): string { return n > 0 ? ": " + String(n) + (n === 1 ? " message" : " messages") + " dropped" : ""; }
 function metaLine(t: string): string { return "{\"$meta\":" + JSON.stringify(t) + "}"; }
 // a message reduced to what first appears at offset x ("" = nothing new)
@@ -379,7 +384,7 @@ function usage(a: Acc, l: string): void {
 export const gemini: HarnessAdapter = {
   // "✋  Action Required (<dir>)" while the tool-approval dialog is open: the log has the reply text but not the call yet
   approvalTitle: (t: string) => t.indexOf("✋") >= 0 || t.indexOf("Action Required") >= 0,
-  hiddenApproval: true,
+  hiddenApproval: true, bareReply,
   id: "gemini", label: "Gemini", glyph: "✦", mark: "✦", color: () => C.gemini,
   bin: "gemini", procs: ["gemini"],
   roots, scan, meta, refresh: meta, source, headBytes: 65536,
