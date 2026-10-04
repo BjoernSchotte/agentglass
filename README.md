@@ -67,8 +67,9 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   so: `turn finished · approval?`. A reply without text or calls that stays log-silent past the `approval` rule's
   threshold (20 s) with the tree quiet all that time raises the approval alarm itself, marked `approval? (likely)`: bell,
   notification, notify command and `--watch` line as for the exact one; it clears as soon as Gemini writes again (after
-  8 min also `stalled · … · approval?`). Both are guesses: a real finished turn looks the same, and so does a tool that
-  is not a shell command (web fetch, MCP) running over 20 s. So that the bell, notification, notify command and
+  8 min also `stalled · … · approval?`). Both are guesses: a real finished turn looks the same, and so can a tool that
+  is not a shell command (web fetch, MCP) running over 20 s, though Gemini's spinner usually keeps the CPU above 2 %
+  while one runs. So that the bell, notification, notify command and
   `--watch` line carry the guess, a finished Gemini turn outside tmux alerts once that quiet window is decided (up to
   3 s later). In tmux the title alone decides.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
