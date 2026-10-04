@@ -8,10 +8,10 @@ import { own } from "../../util/own.ts";
 // spare capacity, and the loaded ledger lives for the whole run
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 13; // 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 14; // 14: Claude messages booked at their final output_tokens (Acc.ids → booked output_tokens, persisted as io; a message's first, thinking line under-counts it): v12/v13 caches re-index; 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
 // v12 has the same parsing and the heavy maps inline (dayIn reads both forms): kept on upgrade, its memos are not trusted
-export function readable(v: number): boolean { return v === VERSION || v === 12; }
+export function readable(v: number): boolean { return v === VERSION; }
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function strsIn(v: unknown): string[] { const out: string[] = []; for (const x of arr(v)) out.push(own(str(x))); return out; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
@@ -95,14 +95,14 @@ export function accOut(a: Acc, keepIds = 64): Obj {
   const days: Obj = {};
   for (const k of [...a.days.keys()]) { const d = a.days.get(k); if (d) days[k] = dayOut(d); }
   return {
-    off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids].slice(-keepIds), x: a.x, xM: a.xM, pk: a.pk,
+    off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids.keys()].slice(-keepIds), io: [...a.ids.values()].slice(-keepIds), x: a.x, xM: a.xM, pk: a.pk,
     t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del, a.uc, a.rs], bill: a.bill, plan: a.plan, bs: a.billSrc, t0: a.t0, al: a.al, days, v: refsOut(a.vcs), hd: a.hd, tl: a.tl,
   };
 }
 export function accIn(o: Obj): Acc {
   const t = nums(o["t"]);
-  const ids = new Set<string>();
-  for (const x of arr(o["ids"])) ids.add(own(str(x)));
+  const ids = new Map<string, number>(); const io = nums(o["io"]);
+  arr(o["ids"]).forEach((x: unknown, i: number) => { ids.set(own(str(x)), at(io, i)); });
   const days = new Map<string, Day>();
   const dd = obj(o["days"]);
   if (dd) for (const k of Object.keys(dd)) { const d = obj(dd[k]); if (d) days.set(own(k), dayIn(d)); }

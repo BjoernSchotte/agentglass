@@ -258,6 +258,28 @@ function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: 
   const syn = newAcc(); feed(syn, [msg("m4", "[{\"model\":\"<synthetic>\",\"output_tokens\":5},{\"model\":\"claude-opus-4-8\",\"input_tokens\":1,\"output_tokens\":2}]", "")]);
   ok("fallback: <synthetic> attempt skipped", syn.outTok === 2 && syn.inTok === 1, syn.outTok + " " + syn.inTok);
 }
+// Claude streaming: a message's first line (thinking) is written with the output_tokens counted so far; a later line of
+// the same id carries the final count — the message is booked at its largest count, once, also across a resume
+{
+  const ln = (id: string, out: number, blk: string): string => "{\"type\":\"assistant\",\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"message\":{\"id\":\"" + id + "\",\"model\":\"claude-opus-4-8\",\"content\":[" + blk + "],"
+    + "\"usage\":{\"input_tokens\":2,\"output_tokens\":" + String(out) + ",\"cache_read_input_tokens\":1000,\"cache_creation_input_tokens\":0}}}";
+  const TH = "{\"type\":\"thinking\",\"thinking\":\"\"}"; const TU = "{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Read\",\"input\":{\"file_path\":\"/x\"}}";
+  // s2 and s3 stream concurrently (a subagent's parallel requests): their lines interleave
+  const L = [ln("s1", 8, TH), ln("s1", 1893, TU), ln("s1", 1893, "{\"type\":\"text\",\"text\":\"ok\"}"), ln("s2", 6, TH), ln("s3", 3, TH), ln("s2", 40, TU), ln("s3", 600, TU)];
+  const po = price("claude-opus-4-8"); const want = po ? cost(po, 6, 2533, 3000, 0, 0) : 0;
+  const run = (resumeAt: number): Acc => {
+    let a = newAcc();
+    for (let i = 0; i < L.length; i++) { if (i === resumeAt) a = accIn(JSON.parse(JSON.stringify(accOut(a)))); harnessOf("claude").usage(a, L[i] ?? ""); }
+    return a;
+  };
+  for (const at of [-1, 1, 4, 5]) {
+    const a = run(at); let dOut = 0; for (const d of a.days.values()) dOut += d.outTok;
+    ok("split message: final output_tokens (resume " + String(at) + ")", a.outTok === 2533 && dOut === 2533 && a.inTok === 6 && a.cr === 3000 && Math.abs(a.cost - want) < 1e-9,
+      [a.outTok, dOut, a.inTok, a.cr, a.cost, want].join(" "));
+  }
+  const a = run(-1); for (const l of L) harnessOf("claude").usage(a, l);
+  ok("split message: lines read again book nothing", a.outTok === 2533, String(a.outTok));
+}
 // Claude skills: a slash command paired with its base-directory meta line (same promptId) = command; a Skill tool call = model
 const SK_T = "\"timestamp\":\"2026-10-01T10:00:00.000Z\"";
 const skCmd = (pid: string, name: string): string => "{\"type\":\"user\",\"promptId\":\"" + pid + "\"," + SK_T + ",\"message\":{\"role\":\"user\",\"content\":" + JSON.stringify("<command-message>" + name + "</command-message>\n<command-name>/" + name + "</command-name>") + "}}";
