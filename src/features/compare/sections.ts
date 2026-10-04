@@ -11,6 +11,7 @@ import { dayKey } from "../usage/record.ts";
 import type { ToolT } from "../query/agg.ts";
 import { EMPTY, callsIn, callCutoff } from "../query/eval.ts";
 import { projectRoot } from "../query/project.ts";
+import { real } from "../../model/project.ts";
 import { score } from "../triage/score.ts";
 import type { Cmp, Side } from "./metrics.ts";
 
@@ -97,16 +98,30 @@ function sharedRoot(c: Cmp): string {
   }
   return root;
 }
+// the root as the sessions' cwds spell it: projectRoot() resolves symlinks (macOS /tmp → /private/tmp), the recorded
+// file paths keep the cwd's form. "<cwd>" whose real path is "<root>/<rel>" spells the root as cwd minus "/<rel>".
+function rootForms(c: Cmp, root: string): string[] {
+  const o: string[] = [];
+  for (const t of [c.a.t, c.b.t]) for (const p of t.paths) {
+    const s = sessions.get(p); if (!s || !s.cwd) continue;
+    const cwd = s.cwd.replace(/\/+$/, ""); const rc = real(cwd);
+    if (rc !== root && !rc.startsWith(root + "/")) continue;
+    const rel = rc.slice(root.length); if (!cwd.endsWith(rel)) continue;
+    const f = cwd.slice(0, cwd.length - rel.length); if (f && f !== root && o.indexOf(f) < 0) o.push(f);
+  }
+  return o;
+}
 export function fileLists(c: Cmp): { onlyA: FileRow[]; onlyB: FileRow[]; both: FileRow[]; root: string } {
   const root = sharedRoot(c); const fa = c.a.t.files; const fb = c.b.t.files;
-  const shown = (p: string): string => root && p.startsWith(root + "/") ? p.slice(root.length + 1) : home(p);
+  const forms = root ? rootForms(c, root).concat([root]) : [];
+  const shown = (p: string): string => { for (const r of forms) if (p.startsWith(r + "/")) return p.slice(r.length + 1); return home(p); };
   const row = (p: string): FileRow => { const a = fa.get(p); const b = fb.get(p); return { path: p, shown: shown(p), abs: p, editsA: a ? a.n : 0, editsB: b ? b.n : 0, addA: a ? a.add : 0, delA: a ? a.del : 0, addB: b ? b.add : 0, delB: b ? b.del : 0 }; };
   const onlyA: FileRow[] = []; const onlyB: FileRow[] = []; const both: FileRow[] = [];
   for (const p of fa.keys()) (fb.has(p) ? both : onlyA).push(row(p));
   for (const p of fb.keys()) if (!fa.has(p)) onlyB.push(row(p));
   const ord = (x: FileRow, y: FileRow): number => (y.editsA + y.editsB) - (x.editsA + x.editsB) || (x.shown < y.shown ? -1 : x.shown > y.shown ? 1 : 0);
   onlyA.sort(ord); onlyB.sort(ord); both.sort(ord);
-  return { onlyA, onlyB, both, root };
+  return { onlyA, onlyB, both, root: forms[0] ?? "" };
 }
 
 // ── models: tokens and cost from the per-model day buckets, calls from the rows ──
