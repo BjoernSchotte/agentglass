@@ -3,10 +3,10 @@
 // Filters match the REAL values (a pin saved without --redact keeps matching), the screen shows the fakes. cwd, branch
 // and repo also match the session's own shown fake, exactly (a value taken off the redacted screen, e.g. a triage
 // include), never by ~ (fake titles and branches come from shared pools: a typed word would hit unrelated sessions).
-import type { Sess } from "../model/types.ts";
+import type { Ev, Sess } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
 import { HOME } from "../util/fs.ts";
-import { applyMeta } from "../hooks.ts";
+import { H, applyMeta } from "../hooks.ts";
 import { REDACT } from "./redact.ts";
 import { parse } from "./query/parse.ts";
 import { compile, matchSession } from "./query/eval.ts";
@@ -36,5 +36,16 @@ ok("bare word: real cwd segment", m(s, "secretproj") === "true", "");
 // parsing writes the real values again before the next H.meta: still the real ones
 s.title = "Fix the thing for ACME"; ok("fresh real title", m(s, "title ~ acme") === "true", "");
 applyMeta(s); ok("faked again, still matches real", s.title === t1 && m(s, "title ~ acme") === "true", s.title);
+// a second top-level session titled by its first prompt (pi, Gemini): the prompt is kept real before H.events fakes
+// its event, then the faked text comes back as s.prompt and H.meta fakes the rest
+const s2 = newSess("pi", "33333333-4444", "/tmp/y.jsonl", false);
+s2.cwd = HOME + "/code/otherproj";
+const evs: Ev[] = [{ kind: "user", text: "Build a secret todo app", ts: "", id: "", full: "Build a secret todo app" }];
+for (const f of H.events) f(s2, evs, 0);
+s2.prompt = (evs[0] as Ev).text; applyMeta(s2);
+ok("second session faked", s2.cwd.indexOf("otherproj") < 0 && s2.prompt.indexOf("secret") < 0 && s2.prompt !== "", s2.prompt + " " + s2.cwd);
+ok("second session: real first prompt", m(s2, "title ~ \"secret todo\"") === "true", s2.prompt);
+ok("second session: real cwd", m(s2, "otherproj") === "true", s2.cwd);
+ok("second session: the first one's values do not leak into it", m(s2, "acme") === "false" && m(s, "otherproj") === "false", "");
 console.log(bad ? bad + " failed" : "redact filters: all checks passed");
 process.exit(bad ? 1 : 0);
