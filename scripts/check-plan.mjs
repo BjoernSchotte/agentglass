@@ -1,8 +1,8 @@
 // splits scripts/check.sh's jobs across CI shards: node scripts/check-plan.mjs <i> <n> <job>... prints shard i's jobs
 // A job's weight estimates its build time: the bytes of TypeScript it compiles (the entry and every relative import,
 // transitively; 0.97 correlated with measured build times). A test that builds agentglass weighs one src/main.ts per
-// "# check: builds <k>" (default 1); other tests are light. Greedy, heaviest first onto the least loaded shard (ties: lowest shard, then name), so the split is
-// deterministic and only moves when sources do. "bin" and the tests that use the shared binary stay on shard 1.
+// "# check: builds <k>" (default 1); other tests are light. "bin" and the tests that use the shared binary stay on
+// shard 1.
 import { readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -32,11 +32,18 @@ function weight(job) {
   return main / 50;
 }
 const pinned = (job) => job === "bin" || (job.startsWith("test:") && /AGENTGLASS_BIN/.test(readFileSync(job.slice(5), "utf8")));
-const load = Array(shards).fill(0); const mine = []; const last = [];
-for (const j of jobs.filter(pinned)) { load[0] += weight(j); if (shard === 1) (j.startsWith("test:") ? last : mine).push(j); }
-const rest = jobs.filter((j) => !pinned(j)).map((j) => [j, weight(j)]).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-for (const [j, w] of rest) {
-  let s = 0; for (let k = 1; k < shards; k++) if (load[k] < load[s]) s = k;
-  load[s] += w; if (s === shard - 1) mine.push(j);
+// contiguous runs of the jobs sorted by name, cut where the running weight crosses each shard's share: an edit moves only
+// the jobs at a boundary, so most jobs keep their shard, and its scriptc build cache, from run to run
+const w = new Map(jobs.map((j) => [j, weight(j)]));
+const key = (j) => j.slice(j.lastIndexOf("/") + 1) + "\0" + j; // by basename: the heavy tests and "release" spread out
+const pins = jobs.filter(pinned), rest = jobs.filter((j) => !pinned(j)).sort((a, b) => (key(a) < key(b) ? -1 : 1));
+const share = jobs.reduce((t, j) => t + w.get(j), 0) / shards;
+let run = pins.reduce((t, j) => t + w.get(j), 0); // shard 1 starts loaded with the binary and its tests
+const mine = shard === 1 ? pins.filter((j) => !j.startsWith("test:")) : [];
+for (const j of rest) {
+  const s = Math.min(shards - 1, Math.floor((run + w.get(j) / 2) / share)); run += w.get(j);
+  if (s === shard - 1) mine.push(j);
 }
-console.log(mine.concat(last).join("\n")); // heaviest first; the tests that wait for the shared binary last
+mine.sort((a, b) => (a === "bin" ? -1 : b === "bin" ? 1 : w.get(b) - w.get(a) || (a < b ? -1 : 1)));
+// heaviest first (the shared binary before all); the tests that wait for the shared binary last
+console.log(mine.concat(shard === 1 ? pins.filter((j) => j.startsWith("test:")) : []).join("\n"));
