@@ -133,12 +133,13 @@ export function approvalNote(o: Obs): string {
   return a.v > 20 ? a.tool + " pending " + dur(a.v) + ", cpu " + a.cpu + "%" : "";
 }
 // heuristic (no title to read: not in tmux): a harness that logs a call only once it ran (Gemini, may: the caller says so)
-// shows its approval dialog as a finished turn — idle, ending in reply text, the tree quiet (< 2 % CPU) for ≥ 3 s
-// (2 samples at the 1.5 s alarm cadence). A real finished turn looks the same: the alert only gets an "approval?" hint
+// shows its approval dialog as a finished turn when the reply has text (idle, ending in it), as thinking when it has none
+// (busy, ending in thoughts); either way the tree is quiet (< 2 % CPU) for ≥ 3 s (2 samples at the 1.5 s alarm cadence).
+// A real finished turn (or a slow model reply) looks the same: the alert that fires only gets an "approval?" hint
 export function approvalGuess(o: Obs, may: boolean): boolean {
-  if (!may || o.asks || o.busy || o.cpu.length < 2) return false;
+  if (!may || o.asks || o.cpu.length < 2) return false;
   const e = o.evs.length ? o.evs[o.evs.length - 1] : null;
-  if (!e || e.kind !== "assistant") return false;
+  if (!e || e.kind !== (o.busy ? "thinking" : "assistant")) return false;
   for (const c of o.cpu.slice(-2)) if (c >= 2) return false;
   return true;
 }

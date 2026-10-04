@@ -1,6 +1,6 @@
 // agentglass — self-check for the watchdog heuristics: scriptc build src/features/watchdog.check.ts -o wdc && AGENTGLASS_NOTIFY=0 ./wdc
 // SPDX-License-Identifier: Apache-2.0
-import type { Ev, Proc } from "../model/types.ts";
+import type { Ev, Proc, Sess } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
 import { S } from "../state.ts";
@@ -88,13 +88,27 @@ eq("! a row acked since the jump keeps its place", String(nextAlarm([0, 0, 0, 2,
 eq("! only one item, on it: stays", String(nextAlarm([0, 1, 0], 1, 1)), "1");
 eq("! none", String(nextAlarm([0, 0, 0], 1, 0)), "-1");
 eq("! empty view", String(nextAlarm([], 0, 0)), "-1");
+// the ! key: from a row the cursor was moved to, the most severe first; then on along the cycle, also past a row that
+// was acked by looking at it
+const rows: Sess[] = []; const flagsOf = ["", "◆", "", "⚠", "◆", "", "⚠"];
+for (let i = 0; i < flagsOf.length; i++) { const r = newSess("claude", "r" + String(i), "/bang/" + String(i), false); r.attention = flagsOf[i] !== ""; r.stuck = flagsOf[i] === "⚠" ? "loop" : ""; rows.push(r); }
+S.view = rows; S.mode = "list"; S.tab = 0; S.sel = 1;
+const bang = (): number => { for (const f of H.keys) if (f("list", "!")) break; return S.sel; };
+const seen: number[] = []; for (let i = 0; i < 6; i++) seen.push(bang());
+eq("! from a ◆ row the cursor sits on: ⚠ first, then cycles", seen.join(","), "3,6,1,4,3,6");
+S.sel = 3; eq("! on the first ⚠ (moved there): the next one", String(bang()), "6");
+bang(); rows[1].attention = false; // jumped to row 1, then looking at it acked it
+eq("! after an acked row: goes on after it", String(bang()), "4");
+S.view = [];
 // Gemini outside tmux: no title to read; idle reply text next to a call it has not logged yet may be an approval dialog
 const gq: Obs = { now, mtime: now - 4000, busy: false, evs: [ev("user", "go"), ev("assistant", "I will create index.html")], cpu: [5, 0.4, 0.3], cmds: [], subsActive: false };
 eq("guess: text, quiet 3 s", String(approvalGuess(gq, true)), "true");
 eq("guess: harness without that shape (claude) or a title was read", String(approvalGuess(gq, false)), "false");
 eq("guess: cpu busy", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: gq.evs, cpu: [0.3, 3], cmds: [], subsActive: false }, true)), "false");
 eq("guess: too few samples", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: gq.evs, cpu: [0.3], cmds: [], subsActive: false }, true)), "false");
-eq("guess: busy", String(approvalGuess({ now, mtime: gq.mtime, busy: true, evs: gq.evs, cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
+eq("guess: busy after text", String(approvalGuess({ now, mtime: gq.mtime, busy: true, evs: gq.evs, cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
+eq("guess: busy, thoughts only (no text, call not logged)", String(approvalGuess({ now, mtime: gq.mtime, busy: true, evs: [ev("user", "go"), ev("thinking", "plan")], cpu: gq.cpu, cmds: [], subsActive: false }, true)), "true");
+eq("guess: idle after thoughts", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: [ev("user", "go"), ev("thinking", "plan")], cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
 eq("guess: ends with an error note", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: [ev("assistant", "x"), ev("meta", "[error] quota")], cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
 eq("guess: the title already tells", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: gq.evs, cpu: gq.cpu, cmds: [], subsActive: false, asks: true }, true)), "false");
 console.log(bad ? bad + " failed" : "watchdog: all checks passed");

@@ -62,8 +62,9 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
   Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux.
-  Elsewhere there is no title to read, so it shows as a finished turn; when the reply ends in text and the agent is quiet
-  (< 2 % CPU for 3 s) the alert says `turn finished · approval?` — a guess: a real finished turn looks the same.
+  Elsewhere there is no title to read: a reply with text looks like a finished turn, one with only thoughts like a long
+  think. While the agent is quiet (< 2 % CPU for 3 s) the alert that fires says so: `turn finished · approval?`, or
+  `stalled · … · approval?` after 8 min — a guess, since a real finished turn or a slow reply looks the same.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,

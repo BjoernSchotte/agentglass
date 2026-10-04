@@ -165,14 +165,16 @@ export function nextAlarm(sev: number[], sel: number, selSev: number): number {
   return next >= 0 ? next : first;
 }
 function sevOf(s: Sess | null): number { return !s ? 0 : s.stuck ? 2 : s.attention ? 1 : 0; }
-// the row ! last jumped to, and its severity then: looking at it acks a ◆ (ack look), and the cycle goes on after it
+// the row ! last jumped to, and its severity then: on it the cycle goes on after it (looking at it may have acked it);
+// from anywhere else (the cursor moved) ! starts over at the most severe row
 let jumpPath = ""; let jumpSev = 0;
 H.keys.push((mode: string, k: string) => {
   if (k !== "!" || mode !== "list" || S.tab !== 0) return false;
   const sev: number[] = []; for (let i = 0; i < S.view.length; i++) sev.push(sevOf(sessAt(i)));
-  const cur = sessAt(S.sel); let cs = sevOf(cur);
-  if (cur && cur.path === jumpPath && jumpSev > cs) cs = jumpSev;
-  const i = nextAlarm(sev, S.sel, cs);
+  const cur = sessAt(S.sel);
+  const cs = cur && cur.path === jumpPath ? Math.max(jumpSev, sevOf(cur)) : 0;
+  let i = nextAlarm(sev, S.sel, cs);
+  if (i === S.sel && cs === 0) i = nextAlarm(sev, S.sel, sev[i] ?? 0); // already on the first: the next one
   if (i < 0) { say("info", "no session needs attention"); return true; }
   const s = sessAt(i);
   S.sel = i; jumpPath = s ? s.path : ""; jumpSev = sev[i] ?? 0;

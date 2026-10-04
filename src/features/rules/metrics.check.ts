@@ -50,6 +50,10 @@ eq("turn_done no transition", v(procMetric(wt, obs(0, false, [], []), 0)), "abse
 const gObs = obs(0, false, [], []); gObs.guess = true;
 eq("turn_done hint", procMetric(wt, gObs, now - 5000).hint + " " + v(procMetric(wt, gObs, now - 5000)), "approval? 5");
 eq("turn_done no hint", procMetric(wt, obs(0, false, [], []), now - 5000).hint, "");
+const st = rule('{"id":"s","metric":"stalled","critical":"8m"}');
+const gs = obs(500, true, [ev("thinking", "plan")], flat(7, 0.2)); gs.guess = true;
+eq("stalled hint", procMetric(st, gs, 0).hint + " " + v(procMetric(st, gs, 0)), "approval? 500");
+eq("stalled no hint", procMetric(st, obs(500, true, [ev("thinking", "plan")], flat(7, 0.2)), 0).hint, "");
 eq("params override", v(procMetric(rule('{"id":"s","metric":"stalled","critical":"1m","params":{"cpu_below":5}}'), obs(100, true, [], flat(7, 3)), 0)), "100");
 
 // session metrics

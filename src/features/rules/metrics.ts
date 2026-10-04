@@ -21,7 +21,7 @@ export function procMetric(r: Rule, o: Obs, turnAt: number): MVal {
     case "approval_wait": return approvalWait(o, prm(r, "cpu_below"), prm(r, "samples"), prm(r, "grace"));
     case "repeat_run": return repeatRun(o);
     case "command_age": return commandAge(o);
-    case "stalled": return stalledFor(o, prm(r, "cpu_below"), prm(r, "samples"));
+    case "stalled": { const m = stalledFor(o, prm(r, "cpu_below"), prm(r, "samples")); if (o.guess && m.v >= 0) m.hint = "approval?"; return m; }
     case "spinning": return spinningFor(o, prm(r, "cpu_above"), prm(r, "samples"));
   }
   return absent();
