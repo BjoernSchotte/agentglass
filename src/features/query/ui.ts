@@ -19,7 +19,7 @@ import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
 import { type Ctx, type Compiled, EMPTY, compile, matchSession, beyondRetention, oldestDay } from "./eval.ts";
-import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
+import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
 import { repoOf, repoShown } from "./project.ts";
 import { REDACT } from "../redact-on.ts";
@@ -191,7 +191,7 @@ function onPins(ev: string, text: string): boolean {
   if (ev === "enter") {
     const e = setPins(text);
     if (e) { S.inputErr = e.msg; return true; }
-    S.inputErr = ""; say("info", S.pins.length ? "pinned: " + print(S.pins) : "pins cleared");
+    S.inputErr = ""; say("info", S.pins.length ? "pinned: " + shownText(S.pins, " and ") : "pins cleared");
     return false;
   }
   if (ev === "tab") { tabComplete(); return false; }
@@ -307,7 +307,7 @@ function contentQuery(tab: string): string { for (const c of localFor(tab)) if (
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list") return false;
   const tab = tabName();
-  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", print(S.pins)); return true; }
+  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", pinsText()); return true; }
   if (tab === "Stats" || tab === "Repos") {
     if (k === "/") { openFilterInput(tab); return true; }
     if (k === "p") { say("info", pinAll(tab)); return true; }

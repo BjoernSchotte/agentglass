@@ -11,7 +11,8 @@ import type { Ev, Sess } from "../model/types.ts";
 import { H, type RealMeta } from "../hooks.ts";
 import { isErr } from "./callgraph/model.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
-import { REDACT } from "./redact-on.ts";
+import { REDACT, PINNED } from "./redact-on.ts";
+import { attrOf } from "./query/attrs.ts";
 import { ESC_RE, firstLine } from "../util/text.ts";
 
 export { REDACT };
@@ -97,6 +98,19 @@ const GENERIC = new Set<string>(["code", "src", "app", "apps", "packages", "web"
   "downloads", "library", "projects", "work", "dev", "private", "var", "opt", "usr", "bin", "home", "users", "workspace", "repos", "main", "claude",
   "codex", "fx", "agents", "agent", "sessions", "agentglass", "node_modules", "vendor", "public", "assets", "site", "mobile", "infra", "icloud", "mnt"]);
 for (const ad of HARNESSES) GENERIC.add(ad.id); // harness dirs (.kiro, .pi, …) are never secrets
+// built-in subagent types and roles (lowercase), from the harness sources: Claude Code, Codex (roles, other sources), Gemini
+// CLI, OpenCode, pi's subagent packages (pi-subagents, @tintinweb, the example extension); kiro and fx kinds are system
+// values. Shown as they are; any other name is user-defined and gets a fake (fakeAgent)
+const AGENTS = new Set<string>(["subagent", "agent", "general-purpose", "explore", "plan", "statusline-setup", "output-style-setup",
+  "claude-code-guide", "fork", "workflow-subagent", "verification", "magic-docs", // claude
+  "default", "explorer", "worker", "awaiter", "review", "compact", "memory_consolidation", "guardian", // codex
+  "codebase_investigator", "generalist", "cli_help", "confucius", "browser_agent", // gemini
+  "build", "general", "compaction", "title", "summary", // opencode
+  "scout", "planner", "reviewer", "delegate", "researcher", "oracle", "evidence-auditor", "context-builder", "claude-code",
+  "claude-code-writer", "codex-exec", "codex-exec-writer", "cursor-agent", "cursor-agent-writer"]); // pi
+const AGENT_POOL = ["helper", "checker", "auditor", "builder", "runner", "tester", "fixer", "mapper", "linter", "porter", "triager", "drafter",
+  "sweeper", "indexer", "profiler", "migrator", "verifier", "analyst", "curator", "scribe", "courier", "tracker", "grader", "sorter",
+  "janitor", "watcher", "prober", "bisector", "packer", "stager"];
 const FIRST = ["sam", "alex", "robin", "jordan", "charlie", "harrison", "alexander", "maximilian"];
 const LAST = ["lee", "park", "smith", "miller", "johnson", "anderson", "rodriguez", "richardson"];
 
@@ -119,6 +133,24 @@ export function fakeProject(real: string): string {
   let out = cands.length ? pick(cands, k) : "";
   if (!out) out = stretch(pick(pool, k) + "-" + pick(pool, k + "1"), n);
   projMemo.set(k, out);
+  return out;
+}
+// a user-defined subagent name → a stable fake of the same length (the scrubber swaps it in place), one per real name
+const agentMemo = new Map<string, string>(); const agentUsed = new Set<string>();
+export function builtinAgent(name: string): boolean { return AGENTS.has(name.toLowerCase()); }
+export function fakeAgent(real: string): string {
+  const k = real.toLowerCase();
+  if (!k || AGENTS.has(k)) return real;
+  const hit = agentMemo.get(k); if (hit !== undefined) return hit;
+  const n = real.length; const free = (c: string): boolean => c !== k && !agentUsed.has(c) && !AGENTS.has(c);
+  const cands = AGENT_POOL.filter((p: string) => p.length === n);
+  if (!cands.length) for (const a of AGENT_POOL) for (const b of AGENT_POOL) if (a !== b && a.length + 1 + b.length === n) cands.push(a + "-" + b);
+  let out = ""; const h = hash("agent\t" + k);
+  for (let i = 0; i < cands.length && !out; i++) { const c = cands[(h + i) % cands.length] ?? ""; if (free(c)) out = c; }
+  for (let i = 0; i < 64 && !out; i++) { const c = stretch(pick(AGENT_POOL, k + i) + "-" + pick(AGENT_POOL, k + "#" + i), n); if (free(c)) out = c; }
+  if (!out) out = stretch(pick(AGENT_POOL, k), n);
+  agentMemo.set(k, out); agentUsed.add(out);
+  if (k.length >= 3 && !common.has(k) && !GENERIC.has(k)) addWord(real, out, true); // its name in tool names, arguments, OTLP strings
   return out;
 }
 function fakePerson(real: string, first: boolean): string {
@@ -224,12 +256,12 @@ function scrubStyled(s: string): string {
 }
 
 // ── identity layer: per session, fakes that win over whatever parsing (re)writes ────────────────────────
-// rt/rp/rb/rn: the real title, prompt, branch and name as last parsed (filters match them: realMeta)
-interface Rec { cwd: string; real: string; title: string; branch: string; name: string; remote: string; rt: string; rp: string; rb: string; rn: string }
+// rt/rp/rb/rn/rk: the real title, prompt, branch, name and subagent kind as last parsed (filters match them: realMeta)
+interface Rec { cwd: string; real: string; title: string; branch: string; name: string; remote: string; kind: string; rt: string; rp: string; rb: string; rn: string; rk: string }
 const recs = new Map<string, Rec>();
 function recOf(s: Sess): Rec {
   let r = recs.get(s.path);
-  if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "", remote: "", rt: "", rp: "", rb: "", rn: "" }; recs.set(s.path, r); }
+  if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "", remote: "", kind: "", rt: "", rp: "", rb: "", rn: "", rk: "" }; recs.set(s.path, r); }
   return r;
 }
 // ~/code/<fake project>/<generic or faked deeper segments>; outside ~/code only the basename survives (faked)
@@ -287,6 +319,7 @@ function meta(s: Sess): void {
   if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
   if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
   if (s.name && s.name !== r.name) { r.rn = s.name; r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
+  if (s.kind && s.kind !== r.kind) { r.rk = s.kind; r.kind = fakeAgent(s.kind); s.kind = r.kind; }
   recs.set(s.path, r); // scriptc may hand out a copy of an all-string record: store the updated one back (real cwd, kept fakes)
 }
 
@@ -384,6 +417,15 @@ function uniq(kind: string, text: string, pool: string[]): string {
   return out;
 }
 const SAFE_PROGS = new Set<string>(PROGS.concat(["sed", "awk", "grep", "find", "head", "tail", "echo", "python3", "python", "wc", "sort", "mkdir", "rm", "cp", "mv", "tmux", "sleep", "tsc", "rtk", "brew", "open"]));
+// a pinned value shown as "…": free text, paths and user names; harness vocabulary (enums, built-in tools, safe programs,
+// built-in agents), models and extensions stay readable
+function maskPinned(k: string, v: string): boolean {
+  const a = attrOf(k); if (!a || (a.type !== "text" && a.type !== "path") || k === "model" || k === "ext") return false;
+  if (k === "tool") return /mcp|__/i.test(v) || agentMemo.has(v.toLowerCase());
+  if (k === "program") return !SAFE_PROGS.has(v);
+  if (k === "agent") return !builtinAgent(v);
+  return true;
+}
 function display(kind: string, text: string, s: Sess | null): string {
   if (kind.startsWith("tool:")) return s && kept(s) ? text : fakeArg(kind.slice(5), kind + text);
   if (kind === "cmd") return uniq(kind, text, CMDS);
@@ -394,8 +436,10 @@ function display(kind: string, text: string, s: Sess | null): string {
   if (kind === "repo") return fakeRepo(text);
   if (kind === "remote") return fakeRemote(text);
   if (kind === "vcs") return fakeVcs(text);
+  if (kind === "tool") return agentMemo.get(text.toLowerCase()) ?? text; // a tool name: Gemini runs a subagent as a tool named after it
   if (kind.startsWith("filter:")) { // a filter chip's value, by its key
     const k = kind.slice(7);
+    if (PINNED.has(k + "\t" + text.toLowerCase()) && maskPinned(k, text)) return "…";
     if (k === "cwd") { const p = text.startsWith("~/") ? HOME + text.slice(1) : text; learnPath(p, false); return p.indexOf("*") >= 0 ? scrubText(text) : fakeCwd(p); }
     if (k === "file") return text.indexOf("*") >= 0 ? scrubText(text) : uniq("file", text, FILES);
     if (k === "command") return uniq("cmd", text, CMDS);
@@ -457,7 +501,7 @@ if (REDACT) {
   H.realMeta.push((s: Sess): RealMeta | null => {
     const r = recs.get(s.path); if (!r) return null;
     return { cwd: s.cwd !== r.cwd ? s.cwd : r.real || s.cwd, title: s.title !== r.title ? s.title : r.rt, prompt: s.prompt && !s.prompt.startsWith(r.title) ? s.prompt : r.rp,
-      branch: s.branch !== r.branch ? s.branch : r.rb, name: s.name !== r.name ? s.name : r.rn };
+      branch: s.branch !== r.branch ? s.branch : r.rb, name: s.name !== r.name ? s.name : r.rn, kind: s.kind !== r.kind ? s.kind : r.rk };
   });
   H.screenFilter.push(scrubStyled);
   H.headerWidgets.unshift((w: number) => (w >= 10 ? bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST : ""));
@@ -465,4 +509,6 @@ if (REDACT) {
 H.helpSections.push({ name: "privacy (--redact)", ctx: "", keys: [
   ["--redact", "fake titles, projects, content; scrub names"], ["…REDACT=1", "AGENTGLASS_REDACT=1: the same via env"],
   ["…REDACT_KEEP", "cwd substrings whose content stays real"], ["redact.txt", "~/.agentglass/: extra words (w or w=repl)"],
-  ["filters", "match the real values; a shown fake repo/cwd/branch only exactly (is, is_one_of), never by ~ or a bare word"] ] });
+  ["filters", "match the real values; a shown fake repo/cwd/branch/agent only exactly (is, is_one_of), never by ~ or a bare word"],
+  ["pins", "values shown as … (they still filter); P keeps or deletes them, editing one needs a run without --redact"],
+  ["subagents", "built-in types (Explore, generalist, …) stay; user-defined agent names get stable fakes"] ] });

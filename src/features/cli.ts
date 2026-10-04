@@ -204,7 +204,7 @@ function oneLine(t: string): string {
 function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string): void {
   const w: WEv = {
     ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd),
-    parent: s.parent ? s.parent : null, kind, tool, text: oneLine(text),
+    parent: s.parent ? s.parent : null, kind, tool: tool === null ? null : display("tool", tool, s), text: oneLine(text),
   };
   out(JSON.stringify(w));
   lastOut = Date.now();

@@ -85,7 +85,7 @@ export function toolRows(ss: Sess[], max: number): Obj[] {
   const n = (k: string): number => { const t = by.get(k); return t ? t.n : 0; };
   ks.sort((x, y) => n(y) - n(x) || (x < y ? -1 : x > y ? 1 : 0));
   const out: Obj[] = [];
-  for (const k of ks.slice(0, max)) { const t = by.get(k) ?? newTS(); const p = pct(t.hist, 0.5, t.max); out.push({ name: k, calls: t.n, errors: t.err, p50Ms: t.dn > 0 && p >= 0 ? p : null, maxMs: t.dn > 0 ? t.max : null }); }
+  for (const k of ks.slice(0, max)) { const t = by.get(k) ?? newTS(); const p = pct(t.hist, 0.5, t.max); out.push({ name: display("tool", k, null), calls: t.n, errors: t.err, p50Ms: t.dn > 0 && p >= 0 ? p : null, maxMs: t.dn > 0 ? t.max : null }); }
   return out;
 }
 // changed files over sessions (+/- lines), most changed first
@@ -132,11 +132,11 @@ export function sessionObj(s: Sess): Obj {
   for (const x of fam) er = er.concat(errRecs(x, accOf(x)));
   er.sort((x, y) => recMs(y.r) - recMs(x.r));
   const errs: Obj[] = [];
-  for (const e of er.slice(0, 10)) { const t = e.r.id ? texts.get(e.r.id) : undefined; errs.push({ ts: e.r.ts || null, tool: e.tool, arg: argOf(e.tool, e.r.arg, e.s), text: t === undefined ? null : errText(t), session: e.s.id }); }
+  for (const e of er.slice(0, 10)) { const t = e.r.id ? texts.get(e.r.id) : undefined; errs.push({ ts: e.r.ts || null, tool: display("tool", e.tool, e.s), arg: argOf(e.tool, e.r.arg, e.s), text: t === undefined ? null : errText(t), session: e.s.id }); }
   o["errors"] = errs;
   o["files"] = fileRows(fam, 15);
   const reps: Obj[] = [];
-  for (let i = 0; i < fam.length; i++) for (const r of loopRuns(evs[i] ?? [], 3)) reps.push({ tool: r.tool, arg: argOf(r.tool, r.arg, fam[i]), n: r.n, ts: r.ts || null, session: fam[i].id });
+  for (let i = 0; i < fam.length; i++) for (const r of loopRuns(evs[i] ?? [], 3)) reps.push({ tool: display("tool", r.tool, fam[i]), arg: argOf(r.tool, r.arg, fam[i]), n: r.n, ts: r.ts || null, session: fam[i].id });
   o["repeats"] = reps;
   const subs: Obj[] = [];
   for (const k of fam.slice(1)) subs.push({ id: k.id, kind: k.kind, costUsd: k.cost < 0 ? null : r6(k.cost), tools: k.tools });
@@ -246,7 +246,7 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
     const key = e.s.path + "\u0000" + e.id;
     const t = e.id ? texts.get(key) : undefined;
     const a = e.argKnown ? e.arg : e.id ? args.get(key) : undefined;
-    rows.push({ ts: e.ts || null, harness: e.s.h, session: e.s.id, tool: e.tool, arg: a === undefined ? null : argOf(e.tool, a, e.s), text: t === undefined ? null : errText(t), durationMs: e.ms >= 0 ? e.ms : null });
+    rows.push({ ts: e.ts || null, harness: e.s.h, session: e.s.id, tool: display("tool", e.tool, e.s), arg: a === undefined ? null : argOf(e.tool, a, e.s), text: t === undefined ? null : errText(t), durationMs: e.ms >= 0 ? e.ms : null });
   }
   return { rows, source: srcs.join("+") };
 }

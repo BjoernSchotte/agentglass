@@ -21,7 +21,7 @@ import { callDays } from "../usage/callcache.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, printClause } from "../query/parse.ts";
 import { compile, callCutoff } from "../query/eval.ts";
-import { addClause, effective, localFor } from "../query/scope.ts";
+import { addClause, effective, localFor, shownClause } from "../query/scope.ts";
 import { complete } from "../query/ui.ts";
 import { shown, newRun } from "../triage/run.ts";
 import { openTriage, onInclude } from "../triage/view.ts";
@@ -337,7 +337,7 @@ function triageAB(st: CState): void {
 onInclude("Compare", (cl: Clause): string => {
   const st = CV.st; if (!st) return "";
   const cs = addClause(st.A.cs, cl).cs; st.A = { label: print(cs), cs, single: null }; st.note = ""; changed(st);
-  return "group A: + " + printClause(cl);
+  return "group A: + " + shownClause(cl);
 });
 function cycle(st: CState, d: number): void {
   const n = hasTimeline(st) ? 7 : 6;
