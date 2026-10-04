@@ -50,6 +50,7 @@ const rows: string[][] = [
   ["C:/src/r", "", "", ""],
   ["c:/src/r", "", "", ""],
   ["git@c:/srv/r", "ssh://c/srv/r", "srv", "r"],
+  ["g:o/r", "ssh://g/o/r", "o", "r"], // a one-letter insteadOf alias is no drive (git resolves it)
   ["C:\\src\\r", "", "", ""],
   ["user@host:o/r", "ssh://host/o/r", "o", "r"],
 ];
