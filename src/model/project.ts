@@ -3,9 +3,11 @@
 // Linked worktrees and clones of one remote are one project: key git:<host>/<path> from the chosen remote (origin →
 // upstream → first), else gitdir:<common dir> (worktrees of one local repo merge), else path:<cwd>. Every remote goes
 // through scrubRemote first; .git is read only; the one git spawn is `git remote get-url` for aliases and [include]s.
+// ssh remotes name the host ~/.ssh/config's HostName gives their alias (github-work:me/x is github.com/me/x).
 import { existsSync, realpathSync, statSync, readdirSync, openSync, writeSync, closeSync, renameSync, mkdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { scrubRemote } from "../util/giturl.ts";
+import { SSH, sshTarget, sshStamp } from "../util/sshcfg.ts";
 import { HOME, readText, run } from "../util/fs.ts";
 import { type Obj, obj, str } from "../util/json.ts";
 import { home } from "../util/text.ts";
@@ -14,6 +16,8 @@ export interface RemoteEntry { name: string; url: string }
 // path segments compare case-insensitively only on these exact hosts (spec decision 2)
 export const CI_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
 const DEF_PORTS = ["22", "443", "80"];
+// the forges' ssh-over-443 endpoints are the forge itself (GitHub's documented `Host github.com / HostName ssh.github.com`)
+const SSH443: string[][] = [["ssh.github.com", "github.com"], ["altssh.gitlab.com", "gitlab.com"], ["altssh.bitbucket.org", "bitbucket.org"]];
 
 function unquote(v: string): string {
   let s = v.trim();
@@ -49,6 +53,8 @@ export function real(p: string): string {
 }
 function lastTwo(segs: string[]): string { const n = segs.length; return n >= 2 ? (segs[n - 2] ?? "") + "/" + (segs[n - 1] ?? "") : segs[0] ?? ""; }
 // a remote URL → comparison key + label; null = dropped by the scrub, or no recognizable host (an alias like gh:o/r)
+// ssh hosts go through ~/.ssh/config first; a dotless host counts as a host in an explicit URL, scp with an absolute
+// path, or once ssh config names its HostName; a dotless scp host:path otherwise is an insteadOf alias (git resolves it)
 export function normRemote(raw: string): Norm | null {
   const r = scrubRemote(raw); if (!r) return null;
   if (!r.host) { // local repo as remote: the scrub stripped .git and wrote ~ for $HOME
@@ -59,12 +65,19 @@ export function normRemote(raw: string): Norm | null {
   }
   let host = r.host.toLowerCase(); let port = "";
   const ci = host.lastIndexOf(":"); if (ci > 0 && /^\d+$/.test(host.slice(ci + 1))) { port = host.slice(ci + 1); host = host.slice(0, ci); }
-  if (host.indexOf(".") < 0 && host !== "localhost" && !port) return null; // no dot, no port: an insteadOf alias
+  const scheme = r.url.slice(0, r.url.indexOf("://")); let moved = false; let named = false;
+  if (scheme === "ssh" || scheme === "git+ssh") {
+    const t = sshTarget(host, SSH.file);
+    if (t.host) { moved = t.host !== host || (!port && t.port !== ""); host = t.host; if (!port) port = t.port; named = true; }
+    for (const f of SSH443) if (host === f[0]) { host = f[1] ?? host; moved = true; }
+  }
+  const scpRel = !/^[^:]*:\//.test(raw.trim()); // host:path, not scheme:// nor host:/abs
+  if (host.indexOf(".") < 0 && host !== "localhost" && !port && !named && scpRel) return null; // an insteadOf alias
   const hp = host + (port && DEF_PORTS.indexOf(port) < 0 ? ":" + port : "");
   const segs = r.path.replace(/\.git$/, "").split("/").filter((x) => x.length > 0);
   if (!segs.length) return null;
   const path = segs.join("/");
-  return { key: "git:" + hp + "/" + (CI_HOSTS.indexOf(host) >= 0 ? path.toLowerCase() : path), label: lastTwo(segs), host: hp, url: r.url };
+  return { key: "git:" + hp + "/" + (CI_HOSTS.indexOf(host) >= 0 ? path.toLowerCase() : path), label: lastTwo(segs), host: hp, url: moved ? scheme + "://" + hp + "/" + path : r.url };
 }
 
 // gitdir = the per-worktree git dir (<top>/.git or a .git file's target; "" non-git) for reflogs; worktree = linked
@@ -154,7 +167,7 @@ export function subOf(id: Ident, cwd: string): string {
 }
 
 // ── cache: per cwd, resolved within a per-tick budget, revalidated after 10 min, persisted in projects.json ──
-interface Ent { id: Ident; mt: number; checked: number } // mt = config mtime at resolve time
+interface Ent { id: Ident; mt: number; checked: number; ssh: string } // mt = config mtime, ssh = ssh config stamp at resolve time
 const cwds = new Map<string, Ent>();
 const queue: string[] = []; const queued = new Set<string>();
 const sessCwd = new Map<string, string>(); // session path → cwd (Claude/Codex heads need not be re-read after a restart)
@@ -185,17 +198,17 @@ export function identNow(cwd: string): Ident {
 function same(a: Ident, b: Ident): boolean { return JSON.stringify(a) === JSON.stringify(b); }
 function store(cwd: string, id: Ident, now: number): void {
   const old = cwds.get(cwd);
-  cwds.set(cwd, { id, mt: id.common ? cfgMtime(id.common) : 0, checked: now });
+  cwds.set(cwd, { id, mt: id.common ? cfgMtime(id.common) : 0, checked: now, ssh: sshStamp(SSH.file) });
   if (!old || !same(old.id, id)) P.ver++;
   P.dirty = true;
 }
 // a re-resolve: a vanished cwd keeps its identity until it exists again; a git identity survives a broken .git link
 // (main repo deleted)
 function revalidate(cwd: string, e: Ent, now: number, git: GitRun): void {
-  cwds.set(cwd, { id: e.id, mt: e.mt, checked: now }); // a fresh record: scriptc may hand out copies of Map records
+  cwds.set(cwd, { id: e.id, mt: e.mt, checked: now, ssh: e.ssh }); // a fresh record: scriptc may hand out copies of Map records
   if (isDir(cwd) !== 1) return;
   if (e.id.gone) { store(cwd, resolveCwd(cwd, git), now); return; } // recreated (same path, maybe another repo)
-  if (e.id.common && cfgMtime(e.id.common) === e.mt && isDir(e.id.common) === 1) return;
+  if (e.id.common && cfgMtime(e.id.common) === e.mt && isDir(e.id.common) === 1 && e.ssh === sshStamp(SSH.file)) return;
   const id = resolveCwd(cwd, git);
   if (BROKEN.v && (e.id.kind === "git" || e.id.kind === "gitdir")) return;
   store(cwd, id, now);
@@ -211,11 +224,11 @@ export function resolveTick(maxMs: number, maxN: number, now: () => number, git:
   }
   P.todo = queue.length;
   if (queue.length) return n;
-  const ks = [...cwds.keys()]; const t = now();
+  const ks = [...cwds.keys()]; const t = now(); const st = rvAt; // walk from a fixed start: moving it mid-walk skips entries
   for (let i = 0; i < ks.length && n < maxN && now() - t0 < maxMs; i++) {
-    const k = ks[(rvAt + i) % ks.length] ?? ""; const e = cwds.get(k);
+    const k = ks[(st + i) % ks.length] ?? ""; const e = cwds.get(k);
     if (!e || t - e.checked <= REVALIDATE_MS) continue;
-    revalidate(k, e, now(), git); n++; rvAt = (rvAt + i + 1) % ks.length;
+    revalidate(k, e, now(), git); n++; rvAt = (st + i + 1) % ks.length;
   }
   return n;
 }
@@ -248,16 +261,21 @@ function identIn(o: Obj): Ident {
   return id;
 }
 function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
+// v2: ssh aliases and scp absolute paths resolve (v1 identities of those were gitdir:); a v1 file keeps only its session cwds
+const PVER = 2;
 export function loadProjects(file: string): void {
   const sz = sizeOf(file); if (sz <= 0) return;
   let root: Obj | null = null; try { root = obj(JSON.parse(readText(file, 0, sz))); } catch (e) { root = null; }
-  if (!root || num(root["v"]) !== 1) return;
-  const cs = obj(root["cwds"]);
+  const v = root ? num(root["v"]) : 0;
+  if (!root || (v !== 1 && v !== PVER)) return;
+  // saved under another ssh config: git identities are due for revalidation now
+  const ssh = str(root["ssh"]); const due = ssh !== sshStamp(SSH.file);
+  const cs = v === PVER ? obj(root["cwds"]) : null;
   if (cs) for (const k of Object.keys(cs)) {
     const o = obj(cs[k]); if (!o || !str(o["key"]) || cwds.has(k)) continue;
     const id = identIn(o);
     if (id.remote && !scrubRemote(id.remote)) { id.remote = ""; } // never trust a stored remote that no longer passes the scrub
-    cwds.set(k, { id, mt: num(o["cfgMtime"]), checked: num(o["checked"]) });
+    cwds.set(k, { id, mt: num(o["cfgMtime"]), checked: due && id.common ? 0 : num(o["checked"]), ssh });
   }
   const ss = obj(root["sess"]);
   if (ss) for (const k of Object.keys(ss)) { const c = str(ss[k]); if (c && !sessCwd.has(k)) sessCwd.set(k, c); }
@@ -279,7 +297,7 @@ export function saveProjects(file: string, live: Set<string>): boolean {
   try {
     mkdirSync(dirname(file), { recursive: true });
     const tmp = file + ".tmp";
-    const fd = openSync(tmp, "w"); writeSync(fd, JSON.stringify({ v: 1, cwds: cs, sess: ss })); closeSync(fd);
+    const fd = openSync(tmp, "w"); writeSync(fd, JSON.stringify({ v: PVER, ssh: sshStamp(SSH.file), cwds: cs, sess: ss })); closeSync(fd);
     renameSync(tmp, file);
   } catch (e) { return false; }
   P.dirty = false;
