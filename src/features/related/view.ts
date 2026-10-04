@@ -14,7 +14,7 @@ import { identOf } from "../query/project.ts";
 import { ask } from "../../actions.ts";
 import { C, RST, fg, bg } from "../../ui/theme.ts";
 import { put, spin } from "../../ui/screen.ts";
-import { openTranscript, shown } from "../../ui/transcript.ts";
+import { openTranscript, openTranscriptAt, shown } from "../../ui/transcript.ts";
 import { ms } from "../callgraph/model.ts";
 import { graphAnchor } from "../callgraph/view.ts";
 import { parse } from "../query/parse.ts";
@@ -263,8 +263,10 @@ function enter(st: RState): void {
   if (!r.sess) { say("info", "no session recorded this commit (it came from the reflog)"); return; }
   const s = sessions.get(r.sess); if (!s) { say("warn", "that session is gone"); return; }
   const ts = tailStart(s);
-  if (ts && r.t < ts) { say("info", "event is older than the loaded transcript (last 6 MB)"); return; }
-  openTranscript(s);
+  if (ts && r.t < ts) { // older than the transcript's last 6 MB: open it from the window the row was read from
+    if (r.at < 0) { say("info", "event is older than the loaded transcript (last 6 MB)"); return; }
+    openTranscriptAt(s, r.at);
+  } else openTranscript(s);
   const t = S.tv; if (t) { t.focusKind = r.evKind; t.focusTs = r.ts; t.focusText = r.evId || r.evText; }
   st.inTx = true;
 }

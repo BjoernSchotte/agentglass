@@ -218,9 +218,10 @@ function readWindow(b: Build, s: Sess): boolean {
   const evs: Ev[] = [];
   for (const l of r.lines) parseRaw(s.h, l, evs, s);
   const red = H.events.length > 0; // --redact: rows match the real events, show the hooked copies
-  b.st.last = b.last.get(s.path) ?? 0;
+  b.st.last = b.last.get(s.path) ?? 0; const n0 = b.all.length;
   toRelShown(evs, red ? hookedCopy(s, evs) : evs, red, s.path, s.h, realCwd(s), b.tops.get(s.path) ?? "", b.alias.get(s.path) ?? "", s.path === b.anchor.sess, b.t0, b.t1, b.st, b.all);
   b.last.set(s.path, b.st.last);
+  for (let i = n0; i < b.all.length; i++) b.all[i].at = at;
   let past = false; for (const e of evs) if (ms(e.ts) > b.t1) { past = true; break; }
   return past || next >= end;
 }

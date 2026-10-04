@@ -90,6 +90,7 @@ const bb = startBuild(b0, [ev(iso(0))], 0, 10, 10);
 if (!bb) { bad++; console.log("FAIL budget: no build"); } else {
   let clock = 0; const fake = (): number => { clock += 20; return clock; };
   stepBuild(bb, 50, fake);
+  eq("rows know the window they were read from", String(bb.rows.filter((r: RelEv) => r.sess === b0.path && r.kind === "prompt" && r.mark !== "anchor").every((r: RelEv) => r.at >= 0)), "true");
   eq("budget: a session still being read already shows its rows", String(bb.next === 0 && bb.rows.filter((r: RelEv) => r.sess === b0.path).length > 10), "true");
   let steps = 0; let maxWin = 0; let more = true;
   while (more && steps < 100000) {

@@ -20,6 +20,7 @@ export interface RelEv {
   t: number; ts: string; sess: string; h: string; top: string; kind: string; cat: number; tool: string; text: string; files: FileRef[];
   add: number; del: number; err: boolean; self: boolean; mark: string; withS: string[]; dt: number; race: boolean;
   evKind: string; evId: string; evText: string; sha: string; rt: number; // rt = its result's time (0 none yet)
+  at: number; // the cursor of the window it was read from (-1 = not from a window read): enter opens the transcript there
   clob: boolean; // a shell row whose real command is a workspace-wide git command (clobberCmd), also when text is a fake
 }
 // per-session read state across batches: dedup keys, and open calls (call id → row index in the append-only out)
@@ -39,7 +40,7 @@ export function fileRef(abs: string, top: string, alias = ""): FileRef {
   return top && alias && abs.startsWith(alias + "/") ? { top, rel: abs.slice(alias.length + 1) } : { top: "", rel: abs };
 }
 export function row(t: number, ts: string, sess: string, h: string, top: string, kind: string, tool: string, text: string, self: boolean): RelEv {
-  return { t, ts, sess, h, top, kind, cat: -1, tool, text, files: [], add: 0, del: 0, err: false, self, mark: "", withS: [], dt: 0, race: false, evKind: "", evId: "", evText: "", sha: "", rt: 0, clob: false };
+  return { t, ts, sess, h, top, kind, cat: -1, tool, text, files: [], add: 0, del: 0, err: false, self, mark: "", withS: [], dt: 0, race: false, evKind: "", evId: "", evText: "", sha: "", rt: 0, at: -1, clob: false };
 }
 // +added/−removed lines of an edit call from its arguments (Claude/Gemini old_string/new_string, OpenCode oldString/newString,
 // pi oldText/newText and edits[], content of a whole-file write) or a Codex patch
