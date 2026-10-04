@@ -179,6 +179,8 @@ export function tool(a: Acc, d: Day, name: string, model: string, mq: number): T
 function newest(a: Acc): Call | null { return a.lastCall >= 0 && a.lastCall < a.calls.length ? a.calls[a.lastCall] : null; }
 function addId(xs: number[], i: number): void { if (i >= 0 && xs.indexOf(i) < 0) xs.push(i); }
 // remember a call until its result shows up; shell commands are counted now, their errors on the result
+// a call's shell command line(s) for the git-linkage scraper, ≤ 4 KB (one command: no copy)
+function cmdOf(cmds: string[]): string { const c = cmds.length === 1 ? cmds[0] ?? "" : cmds.join("\n"); return c.length > 4096 ? c.slice(0, 4096) : c; }
 export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number, ts: string, arg: string, cmds: string[]): void {
   const sh: Cnt[] = []; const row = newest(a);
   for (const c of cmds) {
@@ -190,7 +192,7 @@ export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number
   if (row) row.cid = id;
   if (!id) return;
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
-  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row, sp: a.sp, name, cmd: cmds.join("\n").slice(0, 4096), id, end: 0, dn: a.dn });
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row, sp: a.sp, name, cmd: cmdOf(cmds), id, end: 0, dn: a.dn });
 }
 // the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
 export function retool(a: Acc, p: Pend, name: string): void {

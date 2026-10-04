@@ -1,6 +1,6 @@
 // agentglass — self-check for git linkage scraping: scriptc build src/features/usage/vcs.check.ts -o vc && ./vc
 // SPDX-License-Identifier: Apache-2.0
-import { prefilter, unesc, banners, forgeUrls, isBannerCmd, isGitCall, createdBy, scrape, addRef, MAX_REFS } from "./vcs.ts";
+import { prefilter, unesc, banners, forgeUrls, rawUrls, gitSubs, isBannerCmd, isGitCall, createdBy, scrape, addRef, MAX_REFS } from "./vcs.ts";
 import { type Acc, newAcc, bucket, tool, pend } from "./record.ts";
 import { done } from "./calls.ts";
 import { accOut, accIn } from "./codec.ts";
@@ -78,6 +78,9 @@ yes("git commit --quiet is a git call", isGitCall("git commit --quiet -m q"));
 yes("git am / rebase are git calls", isGitCall("git am x.patch") && isGitCall("git rebase main"));
 yes("git amend-notes is no git call", !isGitCall("git amend-notes"));
 yes("git status is no git call", !isGitCall("git status"));
+eq("git subcommands per chain", gitSubs("cd /r && git -c a=b -C ../o commit -qm x; /usr/bin/git push && (git merge f)").join(" "), "commit push merge");
+yes("github / .git paths are no git words", !isGitCall("cat .git/COMMIT_EDITMSG && open https://github.com/o/r/commit/abc1234"));
+yes("git am after a tab", isGitCall("git\tam x.patch") && !isGitCall("git status --name-only # am"));
 yes("gh pr create", createdBy("gh pr create --fill", "Bash"));
 yes("mcp create_pull_request", createdBy("", "mcp__github__create_pull_request"));
 yes("gh pr view is no create", !createdBy("gh pr view 3", "Bash"));
@@ -129,11 +132,9 @@ eq("pi by toolCallId", refs(a), "commit:7777ccc:observed@p1 gcall:span:observed@
 // gemini: call and result in one record
 a = feed("gemini", ["{\"id\":\"m2\",\"timestamp\":\"2026-10-02T10:00:01.000Z\",\"type\":\"gemini\",\"content\":\"\",\"model\":\"gemini-2.5-pro\",\"toolCalls\":[{\"id\":\"g1\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"git commit -m g\"},\"result\":[{\"functionResponse\":{\"id\":\"g1\",\"name\":\"run_shell_command\",\"response\":{\"output\":\"[main 8888ddd] g\\n 1 file changed\"}}}],\"status\":\"success\",\"timestamp\":\"2026-10-02T10:00:04.000Z\"}]}"]);
 eq("gemini same record", refs(a), "commit:8888ddd:observed@g1 gcall:span:observed@g1");
-// OpenCode-style record with its own command field and no closed call (adapter-independent fallback)
+// a line that closed no call is no tool output: skipped unread, even with a command field and a banner
 a = newAcc(); scrape(a, "{\"type\":\"tool\",\"state\":{\"input\":{\"command\":\"git commit -m x\"},\"output\":\"[main 9999eee] x\\n 1 file changed, 2 insertions(+)\\n\"}}");
-eq("same-line command field", refs(a), "commit:9999eee:observed");
-a = newAcc(); scrape(a, "{\"type\":\"tool\",\"state\":{\"input\":{\"command\":\"cat x\"},\"output\":\"[main 9999eee] x\\n 1 file changed, 2 insertions(+)\\n\"}}");
-eq("same-line cat", refs(a), "");
+eq("no closed call: no commit", refs(a), "");
 
 // ── created vs mentioned, dedup, upgrade, cap ──
 a = feed("claude", [claudeUse("toolu_6", "gh pr create --fill", "01"), claudeRes("toolu_6", "https://github.com/o/r/pull/12\n", "02"),
@@ -143,14 +144,19 @@ a = feed("claude", [claudeUse("toolu_8", "gh pr list", "01"), claudeRes("toolu_8
   claudeUse("toolu_9", "gh pr create -t y", "03"), claudeRes("toolu_9", "https://github.com/o/r/pull/13", "04")]);
 eq("mentioned upgraded to created", refs(a), "pr:https://github.com/o/r/pull/13:created@toolu_9");
 a = newAcc(); scrape(a, "{\"text\":\"PR https://github.com/o/r/pull/14 by MCP\"}");
-eq("assistant text is mentioned", refs(a), "pr:https://github.com/o/r/pull/14:mentioned");
+eq("assistant text is no tool output", refs(a), "");
 a = newAcc();
 { const d = bucket(a, 0, "2026-10-02T10:00:00.000Z"); const st = tool(a, d, "mcp__github__create_pull_request", "m", MQ_MSG); pend(a, d, st, "mcp__github__create_pull_request", "mc1", 1, "", "{}", []);
   const p = a.pend.get("mc1"); if (p) { a.pend.delete("mc1"); done(p, 5, false, 0, "mc1", []); }
   scrape(a, "{\"tool_use_id\":\"mc1\",\"content\":\"{\\\"html_url\\\":\\\"https:\\\\/\\\\/github.com\\\\/o\\\\/r\\\\/pull\\\\/15\\\"}\"}"); }
 eq("MCP create tool + escaped URL", refs(a), "pr:https://github.com/o/r/pull/15:created@mc1");
-a = newAcc(); scrape(a, "{\"content\":\"https:\\/\\/github.com\\/o\\/r\\/issues\\/5\"}");
-eq("escaped issue URL in raw JSON", refs(a), "issue:https://github.com/o/r/issues/5:mentioned");
+eq("escaped issue URL in raw JSON", rawUrls("{\"content\":\"https:\\/\\/github.com\\/o\\/r\\/issues\\/5\"}").join(" "), "https://github.com/o/r/issues/5");
+eq("double-escaped URL (nested JSON)", rawUrls("{\"output\":\"https:\\\\\\/\\\\\\/github.com\\\\\\/o\\\\\\/r\\\\\\/pull\\\\\\/9\\\\n\"}").join(" "), "https://github.com/o/r/pull/9");
+eq("URL ends at an escaped newline", rawUrls("{\"c\":\"ok\\nhttps://github.com/o/r/pull/18\\n5ac488f\"}").join(" "), "https://github.com/o/r/pull/18");
+// a long URL-rich line: every URL whole (a fixed window after an earlier URL once cut /pull/18 into a bogus /pull/1)
+eq("no URL cut short", rawUrls("https://x.io/a " + "y".repeat(570) + " https://github.com/o/r/pull/18 and https://github.com/o/r/pull/20").join(" "), "https://github.com/o/r/pull/18 https://github.com/o/r/pull/20");
+a = feed("claude", [claudeUse("toolu_e", "gh api repos/o/r/issues/5", "01"), claudeRes("toolu_e", "{\"html_url\":\"https:\\/\\/github.com\\/o\\/r\\/issues\\/5\"}", "02")]);
+eq("escaped issue URL in tool output", refs(a), "issue:https://github.com/o/r/issues/5:mentioned@toolu_e");
 a = newAcc();
 for (let i = 0; i < 210; i++) { addRef(a, { k: "pr", v: "https://h.io/o/r/pull/" + String(i), t: i, how: "mentioned", br: "", subj: "", call: "", ts: "" }); if (i === 5) addRef(a, { k: "pr", v: "https://h.io/o/r/pull/c", t: i, how: "created", br: "", subj: "", call: "", ts: "" }); }
 addRef(a, { k: "commit", v: "abc1234", t: 1, how: "observed", br: "", subj: "", call: "", ts: "" });
@@ -163,8 +169,8 @@ let up = ""; for (const r of a.vcs) if (r.v === "https://h.io/o/r/pull/7") up = 
 eq("upgrade through the key index", up, "createdx");
 
 // big lines: URLs in the first 64 KB only; a banner after a known git call anywhere
-a = newAcc(); scrape(a, "{\"text\":\"https://github.com/o/r/pull/21 " + "x".repeat(70000) + " https://github.com/o/r/pull/22\"}");
-eq("big line: head URL only", refs(a), "pr:https://github.com/o/r/pull/21:mentioned");
+a = feed("claude", [claudeUse("toolu_h", "curl -s x", "01"), claudeRes("toolu_h", "https://github.com/o/r/pull/21 " + "x".repeat(70000) + " https://github.com/o/r/pull/22", "02")]);
+eq("big line: head URL only", refs(a), "pr:https://github.com/o/r/pull/21:mentioned@toolu_h");
 eq("big banner output", refs(feed("claude", [claudeUse("toolu_b", "git commit -m big", "01"), claudeRes("toolu_b", "hook output\n" + "y".repeat(70000) + "\n[main abcdef0] big\n 1 file changed, 1 insertion(+)", "02")])), "commit:abcdef0:observed@toolu_b gcall:span:observed@toolu_b");
 // ── persistence round trip ──
 a = feed("claude", [claudeUse("toolu_1", "git commit -m one", "01"), claudeRes("toolu_1", BAN + "\nhttps://github.com/o/r/pull/12", "03")]);
