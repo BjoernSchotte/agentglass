@@ -5,7 +5,7 @@ import { newSess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
 import { S } from "../state.ts";
 import { H } from "../hooks.ts";
-import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, stuckOf, alarmOf, approvalGuess, nextAlarm } from "./watchdog.ts";
+import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, approvalWait, stuckOf, alarmOf, approvalGuess, nextAlarm } from "./watchdog.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -111,5 +111,20 @@ eq("guess: busy, thoughts only (no text, call not logged)", String(approvalGuess
 eq("guess: idle after thoughts", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: [ev("user", "go"), ev("thinking", "plan")], cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
 eq("guess: ends with an error note", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: [ev("assistant", "x"), ev("meta", "[error] quota")], cpu: gq.cpu, cmds: [], subsActive: false }, true)), "false");
 eq("guess: the title already tells", String(approvalGuess({ now, mtime: gq.mtime, busy: false, evs: gq.evs, cpu: gq.cpu, cmds: [], subsActive: false, asks: true }, true)), "false");
+// Gemini outside tmux, a reply with only thoughts (its call is logged once it ran): log-silent with the tree quiet → the
+// approval rule's value, marked likely; the title (tmux) path and every other shape stay as they were
+const th: Obs = { now, mtime: now - 25000, busy: true, evs: [ev("user", "go"), ev("thinking", "I will run ls")], cpu: flat(10, 0.3), cmds: [], subsActive: false, asks: false, mayGuess: true };
+const aw = (o: Obs): string => { const a = approvalWait(o, 2, 7, 5); return a.v < 0 ? "absent" : String(Math.round(a.v)) + " " + a.tool + " " + a.hint + " lv" + String(a.lv); };
+eq("likely: thoughts only, quiet 25 s", aw(th), "25 approval dialog likely lv0");
+eq("likely: note", approvalNote(th), "approval dialog pending 25s, cpu 0% · likely");
+eq("likely: 10 s silent: value below the 20 s threshold", aw({ now, mtime: now - 10000, busy: true, evs: th.evs, cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "10 approval dialog likely lv0");
+eq("likely: in tmux (title read, not asking): nothing", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: th.cpu, cmds: [], subsActive: false, asks: false, mayGuess: false }), "absent");
+eq("likely: in tmux, title asks: exact", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: th.cpu, cmds: [], subsActive: false, asks: true, mayGuess: false }), "25 approval dialog  lv1");
+eq("likely: cpu busy", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: flat(10, 5), cmds: [], subsActive: false, mayGuess: true }), "absent");
+eq("likely: too few samples", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: flat(3, 0.3), cmds: [], subsActive: false, mayGuess: true }), "absent");
+eq("likely: a tool command runs (approved)", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: th.cpu, cmds: [{ age: 10, name: "sleep" }], subsActive: false, mayGuess: true }), "absent");
+eq("likely: a subagent works", aw({ now, mtime: th.mtime, busy: true, evs: th.evs, cpu: th.cpu, cmds: [], subsActive: true, mayGuess: true }), "absent");
+eq("likely: reply with text (idle): the turn_done guess, not this", aw({ now, mtime: th.mtime, busy: false, evs: [ev("user", "go"), ev("assistant", "I will run ls")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "absent");
+eq("likely: Gemini wrote the call (it ran) since", aw({ now, mtime: now - 1000, busy: true, evs: [ev("user", "go"), ev("thinking", "x"), ev("tool", "run_shell_command\u0000ls"), ev("result", "a.txt")], cpu: th.cpu, cmds: [], subsActive: false, mayGuess: true }), "absent");
 console.log(bad ? bad + " failed" : "watchdog: all checks passed");
 if (bad) process.exit(1);

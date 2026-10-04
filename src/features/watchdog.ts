@@ -138,6 +138,7 @@ export function alertsOf(s: Sess): Alert[] { return watching(s.path) ? firing(R.
 const B = CSI + "1m";
 H.rowBadges.push((s: Sess) => s.stuck ? fg(C.red) + B + "⚠" + RST : s.attention ? fg(C.yellow) + B + "◆" + RST : "");
 function labelText(a: Alert): string { let o = ""; for (const [k, v] of a.labels) o += " " + k + "=" + v; return o ? fg(C.sub) + o + RST : ""; }
+const LIKELY = " · likely"; // render's hint suffix of a likely approval
 // one line per unacknowledged firing alert; built-ins keep their wording
 H.previewSections.push((s: Sess, w: number) => {
   const out: string[] = [];
@@ -145,7 +146,8 @@ H.previewSections.push((s: Sess, w: number) => {
     if (a.acked) continue;
     const r = ruleOf(R.set, a.rule); if (!r) continue;
     if (a.level === 1) {
-      const d = r.builtin && r.id === "approval" ? "approval? · " + a.message
+      const lk = r.builtin && r.id === "approval" && a.message.endsWith(LIKELY); // Gemini outside tmux, thoughts only (detect.ts thoughtsOnly)
+      const d = r.builtin && r.id === "approval" ? (lk ? "approval? (likely) · " + a.message.slice(0, a.message.length - LIKELY.length) : "approval? · " + a.message)
         : r.builtin && r.id === "waiting" ? "waiting for you · " + a.message + " " + ago(a.since) + " ago" : r.id + " · " + a.message;
       out.push(fg(C.yellow) + B + "◆ " + RST + fg(C.yellow) + d + RST + labelText(a));
     } else out.push(fg(C.red) + B + "⚠ " + RST + fg(C.red) + r.reason + fg(C.sub) + " · " + a.message + RST + labelText(a));

@@ -80,6 +80,8 @@ function spawnJob(job: Job): string {
   } catch (e) { return "notify command failed: " + String(e); }
   return "";
 }
+// the desktop body's lead: a guess (approval?) leads, like the approval rule's prefix; "likely" qualifies the prefix
+function lead(r: Rule, v: MVal): string { return v.hint === "likely" ? r.prefix.trimEnd() + " (likely) " : (v.hint ? v.hint + " " : "") + r.prefix; }
 // one transition: bell + desktop (fire/escalate, notify rules, not acked, not in --watch, throttled per session), the command
 // on every state in notify.on regardless of acknowledgement (in --watch only with --notify)
 export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boolean, cmdOn: boolean, cfg: NotifyCfg, v: MVal, message: string, since: number): void {
@@ -88,7 +90,7 @@ export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boo
     if (t.at - last >= cfg.throttleSec * 1000) {
       lastBell.set(s.path, t.at);
       if (cfg.bell) IO.bell();
-      if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), (v.hint ? v.hint + " " : "") + r.prefix + titleOf(s).slice(0, 120)); // a guess (approval?) leads, like the approval rule's prefix
+      if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), lead(r, v) + titleOf(s).slice(0, 120));
     }
   }
   if (cmdOn && r.notify && cfg.command.length && cfg.on.indexOf(t.state) >= 0) {

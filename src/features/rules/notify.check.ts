@@ -74,6 +74,12 @@ const ne = process.env.AGENTGLASS_NOTIFY ?? ""; process.env.AGENTGLASS_NOTIFY = 
 onTrans(gs, wt, wtr(gs.path), false, false, false, defaultNotify(), hv, "turn finished · approval?", 0);
 const ps = newSess("claude", "n3", "/n/3", false); ps.title = "build the todo app"; applyMeta(ps);
 onTrans(ps, wt, wtr(ps.path), false, false, false, defaultNotify(), v, "turn finished", 0);
+// the likely approval (Gemini outside tmux, thoughts only): marked after the rule's prefix
+const ls = newSess("gemini", "n4", "/n/4", false); ls.title = "build the todo app"; applyMeta(ls);
+const lv = absent(); lv.v = 21; lv.hint = "likely";
+onTrans(ls, ap, { at: 3000000, path: ls.path, rule: "approval", from: 0, to: 1, state: "fire", v: 21, thr: 20 }, false, false, false, defaultNotify(), lv, "approval dialog pending 21s, cpu 0% · likely", 0);
+eq("desktop: likely after the prefix", (desks[desks.length - 1] ?? "").slice(0, 19), "approval? (likely) ");
+desks.pop();
 process.env.AGENTGLASS_NOTIFY = ne || "0";
 eq("desktop: hint first, plain without", desks.map((d: string) => d.startsWith("approval? ") ? "hint" : d.indexOf("approval") < 0 ? "plain" : d).join(","), "hint,plain");
 // permission check of the rules file

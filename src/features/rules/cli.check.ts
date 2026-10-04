@@ -7,6 +7,7 @@ import { loadRules } from "./config.ts";
 import { checkText, defaultsText, thrText } from "./cli.ts";
 import { type Obs, watchStep } from "../watchdog.ts";
 import { firing } from "./engine.ts";
+import { H } from "../../hooks.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -67,5 +68,31 @@ eq("gemini: quiet at once: fires at once", tsOf(step(gs, gobs(false, true, true)
 const cs = newSess("claude", "cl1", "/fx/cl1.jsonl", false); cs.pid = 4444; sessions.set(cs.path, cs);
 watchStep(cs, gobs(true, false, false), b, gt);
 eq("claude: fires on the first idle look", watchStep(cs, gobs(false, false, false), b, gt + 1500).filter((x) => x.rule === "waiting").map((x) => x.state).join(","), "fire");
+// Gemini outside tmux, thoughts only (no text, no call): log-silent > 20 s with the tree quiet raises the approval rule
+// (◆, bell/notify/--watch like the exact title) marked likely; < 20 s nothing; Gemini writes again → it resolves
+const ls = newSess("gemini", "gm2", "/fx/gm2.json", false); ls.pid = 4545; sessions.set(ls.path, ls);
+const quiet: number[] = []; for (let i = 0; i < 10; i++) quiet.push(0.3);
+const tob = (t: number, silent: number, may: boolean, last: Ev): Obs => ({ now: t, mtime: t - silent * 1000, busy: last.kind !== "assistant", evs: [ev("user", "go"), last], cpu: quiet, cmds: [], subsActive: false, asks: false, mayGuess: may, guess: may });
+const apOf = (t: ReturnType<typeof watchStep>): string => t.filter((x) => x.rule === "approval").map((x) => x.state).join(",");
+let lt = Date.now();
+const think = ev("thinking", "I will run ls");
+eq("likely: 10 s quiet: nothing yet", apOf(watchStep(ls, tob(lt, 10, true, think), b, lt)), "");
+lt += 1500; eq("likely: 19 s: nothing yet", apOf(watchStep(ls, tob(lt, 19, true, think), b, lt)), "");
+lt += 1500; eq("likely: 21 s: fires", apOf(watchStep(ls, tob(lt, 21, true, think), b, lt)), "fire");
+eq("likely: message", firing(b, ls).filter((a) => a.rule === "approval").map((a) => a.severity + " " + a.message).join(","), "degraded approval dialog pending 21s, cpu 0% · likely");
+const pv = (): string => { const o2: string[] = []; for (const f of H.previewSections) for (const l of f(ls, 100)) o2.push(l.replace(/\x1b\[[0-9;]*m/g, "")); return o2.join("|"); };
+eq("likely: preview line", pv(), "◆ approval? (likely) · approval dialog pending 21s, cpu 0%");
+eq("likely: ◆ not ⚠", firing(b, ls).filter((a) => a.level === 2).length + "", "0");
+lt += 1500; eq("likely: Gemini writes (text): resolves", apOf(watchStep(ls, tob(lt, 0, true, ev("assistant", "done")), b, lt)), "resolve");
+lt += 1500; watchStep(ls, tob(lt, 0, true, think), b, lt);
+lt += 1500; eq("likely: fires again", apOf(watchStep(ls, tob(lt, 22, true, think), b, lt)), "fire");
+lt += 1500; eq("likely: Gemini writes another thought: resolves", apOf(watchStep(ls, tob(lt, 0, true, ev("thinking", "still")), b, lt)), "resolve");
+const ts2 = newSess("gemini", "gm3", "/fx/gm3.json", false); ts2.pid = 4646; sessions.set(ts2.path, ts2);
+lt += 1500; eq("likely: in tmux (title read): never", apOf(watchStep(ts2, tob(lt, 60, false, think), b, lt)), "");
+// the threshold is the approval rule's: degraded "30s" waits 30 s
+const b30 = loadRules('{"rules":[{"id":"approval","degraded":"30s"}]}', true);
+const ls30 = newSess("gemini", "gm4", "/fx/gm4.json", false); ls30.pid = 4747; sessions.set(ls30.path, ls30);
+lt += 1500; eq("likely: degraded 30s: 25 s nothing", apOf(watchStep(ls30, tob(lt, 25, true, think), b30, lt)), "");
+lt += 1500; eq("likely: degraded 30s: 31 s fires", apOf(watchStep(ls30, tob(lt, 31, true, think), b30, lt)), "fire");
 console.log(bad ? bad + " failed" : "rules cli: all checks passed");
 if (bad) process.exit(1);

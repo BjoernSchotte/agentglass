@@ -63,10 +63,13 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
   Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux.
   Elsewhere there is no title to read: a reply with text looks like a finished turn, one with only thoughts like a long
-  think. While the agent is quiet (< 2 % CPU for 3 s) the alert that fires says so: `turn finished · approval?`, or
-  `stalled · … · approval?` after 8 min — a guess, since a real finished turn or a slow reply looks the same. So that the
-  bell, notification, notify command and `--watch` line carry it, a finished Gemini turn outside tmux alerts once that
-  quiet window is decided (up to 3 s later).
+  think. While the agent is quiet (< 2 % CPU for 3 s) the alert that fires says so: `turn finished · approval?`. A reply
+  with only thoughts that stays log-silent past the `approval` rule's threshold (20 s) with the tree quiet raises the
+  approval alarm itself, marked `approval? (likely)`: bell, notification, notify command and `--watch` line as for the
+  exact one; it clears as soon as Gemini writes again (after 8 min also `stalled · … · approval?`). Both are guesses: a
+  real finished turn looks the same, and a reply that takes over 20 s to start writing raises a `(likely)` that clears
+  when it arrives. So that the bell, notification, notify command and `--watch` line carry the guess, a finished Gemini
+  turn outside tmux alerts once that quiet window is decided (up to 3 s later). In tmux the title alone decides.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,
@@ -560,7 +563,7 @@ A rule with a built-in `id` changes only the fields it names: `{"id":"approval",
 | metric | unit | value (no value when …) | params |
 |---|---|---|---|
 | `turn_done` | duration | since a turn finished, seen in this run (busy, or no finished turn seen) | |
-| `approval_wait` | duration | age of an open tool call while the process tree is quiet (idle, < `samples` CPU samples, a subagent active, CPU ≥ `cpu_below`, a tool command started within `grace`). Gemini's approval title in tmux raises the degraded level at once | `cpu_below` 2, `samples` 7, `grace` 5 |
+| `approval_wait` | duration | age of an open tool call while the process tree is quiet (idle, < `samples` CPU samples, a subagent active, CPU ≥ `cpu_below`, a tool command started within `grace`). Gemini's approval title in tmux raises the degraded level at once; Gemini outside tmux, a reply with only thoughts counts as a likely approval dialog (log-silent seconds, hint `likely`) | `cpu_below` 2, `samples` 7, `grace` 5 |
 | `repeat_run` | count | identical consecutive tool calls at the end; with call keys in `where`, the repeated call must match them | |
 | `command_age` | duration | age of the oldest tool shell command (no call pending) | |
 | `stalled` | duration | log silence while busy (fewer samples, CPU avg ≥ `cpu_below`, a tool command running) | `cpu_below` 1, `samples` 7 |

@@ -92,19 +92,25 @@ function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 export interface MVal { v: number; tool: string; cmd: string; cpu: string; at: number; lv: number; hint: string }
 export function absent(): MVal { return { v: -1, tool: "", cmd: "", cpu: "", at: 0, lv: 0, hint: "" }; }
 function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal { return { v, tool, cmd, cpu, at, lv: 0, hint: "" }; }
-// seconds a tool call has been open while the tree is quiet (avg over samples < cpuBelow) and no tool command started
-// within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once
+// seconds a tool call has been open (or, likely, an unlogged one: thoughtsOnly) while the tree is quiet (avg over samples
+// < cpuBelow) and no tool command started within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once
 export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec: number): MVal {
   if (o.noAsk) return absent(); // a quiet long call there is just a long call (pi execs `sleep` & co. without a shell)
   const pend = (o.now - o.mtime) / 1000;
   if (o.asks) { const m = mv(pend, pendingTool(o.evs) || "approval dialog", "", avgTail(o.cpu, samples).toFixed(0), o.mtime); m.lv = 1; return m; }
-  const t = pendingTool(o.evs);
+  const call = pendingTool(o.evs); const t = call || (thoughtsOnly(o) ? "approval dialog" : "");
   if (!o.busy || !t || o.cpu.length < samples || o.subsActive) return absent();
   const cpu = avgTail(o.cpu, samples);
   if (cpu >= cpuBelow) return absent();
   for (const c of o.cmds) if (c.age < pend + graceSec) return absent();
-  return mv(pend, t, "", cpu.toFixed(0), o.mtime);
+  const m = mv(pend, t, "", cpu.toFixed(0), o.mtime);
+  if (!call) m.hint = "likely";
+  return m;
 }
+// no title to read (mayGuess: Gemini outside tmux) and the reply so far is only thoughts: Gemini logs a call once it ran,
+// so its approval dialog looks like a long think. Log-silent past the approval rule's threshold (20 s) with the tree quiet
+// it likely is one; a slow reply looks the same until Gemini writes again, hence the "likely" hint
+function thoughtsOnly(o: Obs): boolean { const e = o.evs.length ? o.evs[o.evs.length - 1] : null; return o.mayGuess === true && !!e && e.kind === "thinking"; }
 // age of the oldest tool shell command while a tool call is pending
 export function commandAge(o: Obs): MVal {
   if (!pendingTool(o.evs)) return absent();
@@ -130,7 +136,7 @@ export function repeatRun(o: Obs): MVal { const n = loopRun(o.evs); return n > 0
 export function approvalNote(o: Obs): string {
   const a = approvalWait(o, 2, 7, 5);
   if (a.lv > 0) return "approval dialog open"; // the agent says so itself (Gemini logs the call only once it ran)
-  return a.v > 20 ? a.tool + " pending " + dur(a.v) + ", cpu " + a.cpu + "%" : "";
+  return a.v > 20 ? a.tool + " pending " + dur(a.v) + ", cpu " + a.cpu + "%" + (a.hint ? " · " + a.hint : "") : "";
 }
 // heuristic (no title to read: not in tmux): a harness that logs a call only once it ran (Gemini, may: the caller says so)
 // shows its approval dialog as a finished turn when the reply has text (idle, ending in it), as thinking when it has none
