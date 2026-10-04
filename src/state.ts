@@ -31,7 +31,7 @@ interface State {
   tv: TV | null; dv: DV | null;
   wrapCode: boolean; // detail: wrap wide code/diff/output lines, or cut them at the edge (w)
   foldOpen: number[]; foldAll: boolean; // detail: blocks the user unfolded / z = everything open
-  helpScroll: number;
+  helpScroll: number; helpJump: boolean; // helpJump: the next frame scrolls the ? popup to the current view's section
   prevSess: Sess | null; prevY0: number; prevX0: number; prevX1: number; // preview panel, for mouse hits
   lastClickY: number; lastClickAt: number;
   cli: boolean; // --json / --watch: no screen, say() warnings go to stderr
@@ -51,7 +51,7 @@ export const S: State = {
   tv: null, dv: null,
   wrapCode: true,
   foldOpen: [], foldAll: false,
-  helpScroll: 0,
+  helpScroll: 0, helpJump: false,
   prevSess: null, prevY0: 0, prevX0: 0, prevX1: 0,
   lastClickY: -1, lastClickAt: 0,
   cli: false, cliJson: false,

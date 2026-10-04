@@ -61,19 +61,31 @@ function helpLines(sec: HelpSec, w: number, ctx: string): string[] {
   out.push("");
   return out;
 }
-export function renderHelp(): void {
-  const W = S.W; const Ht = S.H;
+// the popup's columns (two from 96 columns) and the rows where the current view's section starts and ends (0 0 = none)
+export function helpLayout(W: number): { left: string[]; right: string[]; w: number; cw1: number; two: boolean; at: number; end: number } {
   const w = Math.min(W - 4, 120);
   const two = w >= 96;
   const cw1 = two ? Math.floor((w - 5) / 2) : w - 4;
   const ctx = helpContext();
-  const blocks = HELP.concat(H.helpSections).map((sec) => helpLines(sec, cw1, ctx));
+  const secs = HELP.concat(H.helpSections);
+  const blocks = secs.map((sec) => helpLines(sec, cw1, ctx));
   let total = 0; for (const b of blocks) total += b.length;
-  const left: string[] = []; const right: string[] = [];
-  for (const b of blocks) { const tgt = two && left.length >= total / 2 ? right : left; for (const l of b) tgt.push(l); }
+  const left: string[] = []; const right: string[] = []; let at = 0; let end = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    const tgt = two && left.length >= total / 2 ? right : left;
+    const sc = secs[i]; const b = blocks[i] ?? [];
+    if (sc && ctx !== "" && sc.ctx === ctx && end === 0) { at = tgt.length; end = at + b.length - 2; } // its last key (the block ends in a blank line)
+    for (const l of b) tgt.push(l);
+  }
+  return { left, right, w, cw1, two, at, end };
+}
+export function renderHelp(): void {
+  const W = S.W; const Ht = S.H;
+  const lay = helpLayout(W); const left = lay.left; const right = lay.right; const w = lay.w; const cw1 = lay.cw1; const two = lay.two;
   const rows = Math.max(left.length, right.length);
   const h = Math.min(rows + 4, Ht - 3); // leave the footer row free for the drop shadow
   const view2 = h - 4;
+  if (S.helpJump) { S.helpJump = false; S.helpScroll = lay.end > view2 ? lay.at : 0; } // the current view's keys in sight: scrolled to them when the first page cuts them
   S.helpScroll = Math.max(0, Math.min(S.helpScroll, rows - view2));
   const hs = S.helpScroll;
   const x0 = Math.floor((W - w) / 2); const y0 = Math.max(1, Math.floor((Ht - h) / 2));

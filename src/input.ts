@@ -84,7 +84,7 @@ export function onInput(k: string): void {
   }
   if (k === "ctrl-c") quit();
   for (const f of H.keys) if (f(S.mode, k)) return; // feature keys win over built-ins
-  if (k === "?") { S.prevMode = S.mode; S.mode = "help"; return; }
+  if (k === "?") { S.prevMode = S.mode; S.mode = "help"; S.helpJump = true; return; }
 
   const tv = S.tv;
   if (S.mode === "transcript" && tv) {
