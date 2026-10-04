@@ -315,10 +315,10 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash", "", calls.join(","))]);
   setCallTap(null);
   const d = day0(a);
-  const row = (k: string): string => { const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err].join(",") : "none"; };
+  const row = (k: string): string => { const v = d ? heavy(d).tt.get(k) : undefined; return v ? [v.n, v.err].join(",") : "none"; };
   ok("failed calls: non-zero exit code, signal, response error, timeout count as errors", row("run_shell_command") === "10,5" && row("read_file") === "1,1", row("run_shell_command") + " " + row("read_file"));
   ok("failed calls: the tap gets the error flag and the exit code", codes.join(" ") === "f1!:1 f2 f3 f4! f5! f6! f7 f8 f9 f10!:2 f11!:3", codes.join(" "));
-  const pg = d ? d.prog.get("run_shell_command\tcat") : undefined;
+  const pg = d ? heavy(d).prog.get("run_shell_command\tcat") : undefined;
   ok("failed calls: the shell program's error count", !!pg && pg.err === 5, pg ? String(pg.err) : "none");
   ok("failed calls: call rows carry the error", a.calls.map((c) => String(c.err)).join("") === "10011100011", a.calls.map((c) => String(c.err)).join(""));
   const e = evs(["{\"id\":\"q\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\",\"toolCalls\":[" + calls.join(",") + "]}"], null);
