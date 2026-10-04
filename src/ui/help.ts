@@ -15,6 +15,7 @@ export const HELP: HelpSec[] = [
     ["↵  →", "open live transcript"], ["space", "fold / unfold subagents"],
     ["/", "filter: repo is x · tool is Bash · cost > 2 · words (see filter)"], ["F", "full-text search (content ~ …, ripgrep)"],
     ["p  P", "pin the filter (every tab, remembered) · edit pins"], ["t", "triage: what is different about the filtered sessions"],
+    ["m", "mark A / B for compare (again: unmark; a third replaces B)"], ["C", "compare: the marks · mark vs selected · selected vs its previous run"],
     ["h", "harness: all → " + harnessIds().join(" → ")], ["l", "live sessions only"], ["esc", "clear the filter (pins stay)"],
     ["s", "send prompt (tmux if live, else headless)"], ["R", "resume interactively"],
     ["x", "SIGTERM the session's agent"], ["D", "move session to the trash"], ["y", "copy session id"], ["Y", "copy link (agentglass://open/…)"] ] },

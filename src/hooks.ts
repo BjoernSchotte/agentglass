@@ -34,6 +34,7 @@ export const H = {
   enrich: [] as ((s: Sess) => void)[], // before a session is shown in preview/transcript/detail (runs every frame: cache!)
   complete: [] as ((s: Sess) => void)[], // blocking full computation of a session's derived fields, for exports (CLI --json/--watch)
   rowBadges: [] as ((s: Sess) => string)[], // styled glyphs in a 2-col slot before each session row's title
+  rowPrefix: [] as ((s: Sess) => string)[], // styled text right before a session row's title (compare marks); its width comes off the title
   previewSections: [] as ((s: Sess, w: number) => string[])[], // styled lines after the preview's metadata block
   headerWidgets: [] as ((w: number) => string)[], // styled segments between the tabs and the header stats; w = free width
   headerFlex: [] as ((w: number) => string)[], // laid out after headerWidgets, filling the width they leave (e.g. a ticker)
@@ -60,6 +61,7 @@ export function boxChips(where: string, w: number): string { let o = ""; for (co
 export function emptyText(where: string): string { for (const f of H.emptyText) { const t = f(where); if (t) return t; } return ""; }
 
 export const BADGE_SLOT = 2;
+export function rowPrefix(s: Sess): string { let o = ""; for (const f of H.rowPrefix) o += f(s); return o; }
 export function enrich(s: Sess): void { for (const f of H.enrich) f(s); }
 export function complete(s: Sess): void { for (const f of H.complete) f(s); }
 // bounds-checked: in scriptc an out-of-range object read traps

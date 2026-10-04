@@ -70,10 +70,14 @@ export function jsonHelp(cmd: string, agent: Obj): string {
   for (const e of EXAMPLES) if (!cmd || e.startsWith("agentglass " + cmd + " ")) ex.push(e);
   return JSON.stringify({ name: "agentglass", version: BUILD.version, agentMode: agent, commands: cs, formats: FORMATS, exitCodes: EXIT_CODES, examples: ex });
 }
-// TUI-only and maintenance commands: --help lists them
-const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--update-prices", "update", "rules check", "rules defaults"];
-// the summary's first clause (before a parenthesis or semicolon), at most 70 characters
-function brief(s: string): string { const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); return t.length > 70 ? t.slice(0, 69) + "…" : t; }
+// TUI-only, maintenance and version commands: --help lists them
+const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults"];
+// the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word
+function brief(s: string): string {
+  const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); if (t.length <= 36) return t;
+  const cut = t.slice(0, 36); const sp = cut.lastIndexOf(" ");
+  return (sp > 16 ? cut.slice(0, sp) : cut.slice(0, 35)).replace(/[,:/ ]+$/, "") + "…";
+}
 // bare agentglass inside an agent: what exists and three examples, no option tables (target ≤ 1 KB: it costs the agent tokens)
 export function compactHelp(agent: Obj): string {
   const cs: Obj[] = [];

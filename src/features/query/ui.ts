@@ -228,6 +228,7 @@ function frequent(key: string): string[] {
       else for (const k of d.files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }
     }
   } else if (key === "model") { for (const n of DICT.model.names) bump(m, n, 1); for (const s of sessions.values()) bump(m, s.model, 1); }
+  else if (key === "session") { for (const s of sessions.values()) if (!s.parent) bump(m, s.h + ":" + s.id, Math.max(s.last, s.mtime)); } // newest first
   else for (const s of sessions.values()) bump(m, key === "repo" ? repoOf(s) : key === "branch" ? s.branch : key === "agent" ? s.kind : "", 1);
   const vals = topOf(m); freq.set(key, { ver: L.ver, vals });
   return vals;

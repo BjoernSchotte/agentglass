@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // List (one row per project) and, in the same tab, a project's detail: its sessions, most-changed files, failing tools
 // and branches. The active and pinned filters apply to the sessions before grouping.
-import { fit, fitStyled, fillTo, width, vwidth, clean, numAt, ago } from "../../util/text.ts";
+import { fit, fitTail, fitStyled, fillTo, width, vwidth, clean, numAt, ago } from "../../util/text.ts";
 import { basename } from "node:path";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
@@ -294,7 +294,7 @@ function renderDetail(): void {
     if (!s.headDone && heads < 40) { loadHead(s); heads++; S.dirty = true; } // titles of visible rows (Claude/Codex: from the head)
     const x = sessRow(s, rr.days); const ad = isHarness(s.h) ? harnessOf(s.h) : null; const b = on ? bg(C.sel) : "";
     const mk = ad ? fg(ad.color()) + ad.mark + RST + b + " " : "  ";
-    return mk + (on ? fg(C.text) + CSI + "1m" : fg(C.sub)) + fit(clean(titleOf(s)), tW) + RST + b + " " + (whW ? fg(C.dim) + fitL(whereOf(s, rr.worktrees.size > 1), whW - 1) + " " + RST + b : "") +
+    return mk + (on ? fg(C.text) + CSI + "1m" : fg(C.sub)) + fit(clean(titleOf(s)), tW) + RST + b + " " + (whW ? fg(C.dim) + fitTail(whereOf(s, rr.worktrees.size > 1), whW - 1) + " " + RST + b : "") +
       (brW ? fg(C.purple) + fit(clean(s.branch), brW - 1) + " " + RST + b : "") + rjs(costCell(x, money(x.cost, asBill(s.bill))), cW) + b + fg(C.text) + rj(x.act > 0 ? hm(x.act) : "·", aW) + RST + b + errCell(x.err, x.calls, eW);
   }, RV.file ? "no session of this period changed it" : "no sessions");
   // right column heights
@@ -308,7 +308,7 @@ function renderDetail(): void {
     const e = fs[k]; if (!e) return ""; const b = on ? bg(C.sel) : ""; const fa = e[1];
     const name = e[0] ? clean(display("file", e[0], null)) : "(outside the repo)";
     const lines = fg(C.green) + "+" + kfmt(fa.add) + RST + b + " " + fg(C.red) + "−" + kfmt(fa.del) + RST + b;
-    return (on ? fg(C.text) + CSI + "1m" : e[0] ? fg(C.sub) : fg(C.dim)) + fitL(name, pW) + RST + b + fg(C.text) + rj(grp(fa.n), eW2) + RST + b + (dW ? rjs(lines, dW) + b : "") + (mW ? " " + fitStyled(marks([...fa.by]), mW - 1) : "");
+    return (on ? fg(C.text) + CSI + "1m" : e[0] ? fg(C.sub) : fg(C.dim)) + fitTail(name, pW) + RST + b + fg(C.text) + rj(grp(fa.n), eW2) + RST + b + (dW ? rjs(lines, dW) + b : "") + (mW ? " " + fitStyled(marks([...fa.by]), mW - 1) : "");
   }, "no changed files");
   const ts = topErrTools(r, 8);
   box(lw, y0 + hF, rw2, hT, "tools", "by errors", RV.focus === 2);
@@ -331,12 +331,6 @@ function renderDetail(): void {
     }, "");
     if (rr.prs.length && hB - 2 > bs.length) line(lw + 1, y0 + hF + hT + 1 + room, fw, " " + fg(C.dim) + "created " + RST + rr.prs.map((u: string) => fg(C.accent) + (u.indexOf("merge_requests") >= 0 ? "!" : "#") + u.slice(u.lastIndexOf("/") + 1) + RST).join(" "));
   }
-}
-// paths: keep the end (the file name)
-function fitL(s: string, w: number): string {
-  if (width(s) <= w) return fit(s, w);
-  const cs: string[] = []; for (const ch of s) cs.push(ch);
-  return fit("…" + cs.slice(Math.max(0, cs.length - (w - 1))).join(""), w);
 }
 function branchRows(r: RepoAgg): [string, BranchAgg][] { const xs = [...r.branches.entries()]; xs.sort((x: [string, BranchAgg], y: [string, BranchAgg]) => y[1].cost - x[1].cost || y[1].sess - x[1].sess || (x[0] < y[0] ? -1 : 1)); return xs; }
 function worstProgs(r: RepoAgg, n: number): string {

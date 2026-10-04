@@ -1,10 +1,10 @@
 // agentglass — Sessions tab: the session/subagent list and the preview panel
 // SPDX-License-Identifier: Apache-2.0
 import { base } from "../util/json.ts";
-import { width, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM, localDay } from "../util/text.ts";
+import { width, vwidth, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM, localDay } from "../util/text.ts";
 import type { Sess } from "../model/types.ts";
 import { S } from "../state.ts";
-import { H, BADGE_SLOT, enrich, boxChips, emptyText } from "../hooks.ts";
+import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current } from "../model/sessions.ts";
 import { tmuxTarget } from "../model/procs.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
@@ -58,20 +58,21 @@ export function renderSessions(): void {
     const b = on ? bg(C.sel) : "";
     const cursor = b + (on ? fg(C.accent) + "❯" : " ") + RST + b;
     const tstyle = on ? fg(C.text) + CSI + "1m" : fg(C.sub);
+    const pre = rowPrefix(s); const pw = pre ? vwidth(pre) : 0; const px = pre ? pre + RST + b : "";
     if (s.depth === 1) {
       const nx = sessAt(top + r + 1);
       const branch = nx && nx.depth === 1 ? "├─" : "└─";
       const glyph = subActive(s) ? fg(C.cyan) + spin() : fg(C.dim) + "·";
       const who = s.name ? s.name + " · " : "";
-      put(1, 2 + r, cursor + "   " + fg(C.line) + branch + " " + glyph + RST + b + " " + fg(C.purple) + fit(s.kind, 16) + fg(C.dim) + fit(ago(s.mtime), 5) + RST + b + badgeSlot(s, b) + tstyle + fit(clean(who + titleOf(s)), iw - 30 - slot) + RST);
+      put(1, 2 + r, cursor + "   " + fg(C.line) + branch + " " + glyph + RST + b + " " + fg(C.purple) + fit(s.kind, 16) + fg(C.dim) + fit(ago(s.mtime), 5) + RST + b + badgeSlot(s, b) + px + tstyle + fit(clean(who + titleOf(s)), iw - 30 - slot - pw) + RST);
       continue;
     }
     const proj = base(s.cwd) || "?";
     const chip = s.subs.length ? (isOpen(s) ? "▾" : "▸") + "⑂" + activeSubs(s) + "/" + s.subs.length : "";
     const cw2 = chip ? Math.min(12, width(chip) + 1) : 0;
-    const tw = iw - 21 - BADGE_W - cw2 - slot;
+    const tw = iw - 21 - BADGE_W - cw2 - slot - pw;
     const row = cursor + statusGlyph(s) + b + " " + badge(s.h) + b + fg(C.dim) + fit(ago(s.last), 4) + RST + b + fg(C.purple) + fit(proj, 13) + RST + b + " " + badgeSlot(s, b) +
-      tstyle + fit(clean(titleOf(s)), tw) + RST + b + (activeSubs(s) ? fg(C.cyan) : fg(C.dim)) + fit(chip, cw2) + RST;
+      px + tstyle + fit(clean(titleOf(s)), tw) + RST + b + (activeSubs(s) ? fg(C.cyan) : fg(C.dim)) + fit(chip, cw2) + RST;
     put(1, 2 + r, row);
   }
   const s = current();

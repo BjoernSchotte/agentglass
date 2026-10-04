@@ -1,4 +1,5 @@
 // agentglass — self-check for the pure-TS SHA-256: scriptc build src/util/sha256.check.ts -o sc && ./sc
+// check: timing — a µs/id bench: scripts/check.sh builds this one -O2 and runs it alone, not -O0 under parallel load
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
