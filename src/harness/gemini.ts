@@ -236,8 +236,8 @@ function resultText(c: Obj): string {
   return str(c["resultDisplay"]);
 }
 // a call's failure, "" = ok, else the transcript's [tag]; codes = a shell command's exit code. Gemini writes status
-// "success" for every tool that ran: an error in the functionResponse, or the trailer run_shell_command appends after the
-// output ("Exit Code: N" only when non-zero, "Signal: …", "Error: …"; older versions write "(none)") is the failure
+// "error" when a tool returns an error (read_file on a missing file, a failed write or edit, a shell spawn error) and
+// "success" for every shell command that ran: there the trailer run_shell_command appends after the output is the failure
 interface Fail { tag: string; codes: number[] }
 function failOf(c: Obj): Fail {
   const st = str(c["status"]); if (st && st !== "success") return { tag: st, codes: [] };
@@ -248,18 +248,29 @@ function failOf(c: Obj): Fail {
   }
   return { tag: "", codes: [] };
 }
+// gemini's shell trailer, in this order, each line at most once (tools/shell.ts): "Error: …" (a spawn error: current
+// gemini records that call with status "error"), "Exit Code: N" (only when non-zero), "Signal: …", "Background PIDs: …",
+// "Process Group PGID: N". Older versions ("Command: …" first) write every line, "(none)" when empty, "Exit Code: 0"
 const TRAILER = /^(Error|Exit Code|Signal|Background PIDs|Process Group PGID): (.*)$/;
+const RANK = ["Error", "Exit Code", "Signal", "Background PIDs", "Process Group PGID"];
 function shellFail(out: string): Fail {
   const t = out.replace(/^\s*<untrusted_context>\s*/, "");
   if (t.startsWith("Command was automatically cancelled because it exceeded the timeout")) return { tag: "timeout", codes: [] };
   if (t.startsWith("Command was cancelled by user")) return { tag: "cancelled", codes: [] };
+  const old = t.startsWith("Command: ");
   const ls = t.replace(/\s*<\/untrusted_context>\s*$/, "").split("\n");
-  let tag = ""; const codes: number[] = [];
-  for (let i = ls.length - 1; i >= 0; i--) { // the trailer only: the output above it may print anything
+  let tag = ""; const codes: number[] = []; let above = RANK.length;
+  for (let i = ls.length - 1; i >= 0; i--) { // the trailer only, bottom-up: the output above it may print anything
     const m = TRAILER.exec(ls[i] ?? ""); if (!m) break;
-    const k = m[1] ?? ""; const v = (m[2] ?? "").trim(); if (v === "(none)") continue;
-    if (k === "Exit Code") { const n = Number(v); if (Number.isInteger(n) && n !== 0) { codes.push(n); tag = "error"; } }
+    const k = m[1] ?? ""; const v = (m[2] ?? "").trim(); const rk = RANK.indexOf(k);
+    if (rk >= above || (k === "Error" && !old)) break; // out of order, repeated, or an Error line on a ran command: output
+    if (v === "(none)") { above = rk; continue; }
+    if (k === "Exit Code") {
+      const n = Number(v); if (!/^-?\d+$/.test(v) || (n === 0 && !old)) break;
+      if (n !== 0) { codes.push(n); tag = "error"; }
+    } else if ((k === "Process Group PGID" && !/^\d+$/.test(v)) || (k === "Background PIDs" && !/^\d+(, \d+)*$/.test(v))) break;
     else if (k === "Signal" || k === "Error") tag = "error";
+    above = rk;
   }
   return { tag, codes };
 }

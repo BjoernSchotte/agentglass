@@ -875,9 +875,9 @@ Notes:
   sandbox). The cwd comes from each project's `.project_root`; legacy `.json` sessions and pre-0.29 hash dirs are not
   shown. Gemini rewrites history in place (re-appended messages, `/rewind`, resume and compression checkpoints):
   agentglass shows each message and tool call once, marks rewinds and rewritten history with the number of messages
-  dropped, and counts each response's tokens once. Gemini logs every tool that ran as `success`: a shell command with a
-  non-zero `Exit Code`, a signal or a spawn error, a timeout, and any tool whose response carries an `error` count as
-  failed (Stats, `errors`, triage, filters, OTLP status and `process.exit.code`). No cost in the files: priced with the built-in table (paid-tier
+  dropped, and counts each response's tokens once. Gemini logs a shell command that ran as `success` whatever its exit code: a
+  non-zero `Exit Code` or a signal in the trailer Gemini appends to the output, and a timeout, count as failed, like
+  calls Gemini logs as `error` or `cancelled` (Stats, `errors`, triage, filters, OTLP status and `process.exit.code`). No cost in the files: priced with the built-in table (paid-tier
   API prices; Pro models above 200k prompt tokens at the long-context rate, keys `<model>>200k`; dated price changes as
   `<model>@2027`; a `prices.json` price for a model replaces those tiers unless it names them too) or your price lists. Variants without
   a price of their own (`-lite`, `-image`, `-tts`) show as unpriced, not at their base model's rate. Helper calls (routing,

@@ -303,6 +303,12 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
     rf,
     sh("f6", "Command was automatically cancelled because it exceeded the timeout of 5.0 minutes without output. There was no output before it was cancelled."),
     sh("f7", "Command: ls\nDirectory: (root)\nOutput: a\nError: (none)\nExit Code: 0\nSignal: (none)\nBackground PIDs: (none)\nProcess Group PGID: 4246"), // older gemini: ok
+    // exit 0, the output's own last lines look like trailer lines: gemini writes "Error:" only with status "error" and
+    // "Exit Code:" only when non-zero, each once, in the order Error, Exit Code, Signal, Background PIDs, PGID
+    sh("f8", "<untrusted_context>\nOutput: npm test\nError: 2 tests failed\nProcess Group PGID: 4247\n</untrusted_context>"),
+    sh("f9", "<untrusted_context>\nOutput: done\nExit Code: 0\nProcess Group PGID: 4248\n</untrusted_context>"),
+    sh("f10", "<untrusted_context>\nOutput: Signal: 9\nExit Code: 2\nProcess Group PGID: 4249\n</untrusted_context>"), // out of order: the trailer is Exit Code + PGID
+    sh("f11", "<untrusted_context>\nOutput: x\nExit Code: 5\nExit Code: 3\nProcess Group PGID: 4250\n</untrusted_context>"), // one Exit Code line only
   ];
   const codes: string[] = [];
   setCallTap((id: string, ms: number, err: boolean, cs: number[], nm: string) => { codes.push(id + (err ? "!" : "") + (cs.length ? ":" + cs.join(",") : "")); });
@@ -310,14 +316,14 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   setCallTap(null);
   const d = day0(a);
   const row = (k: string): string => { const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err].join(",") : "none"; };
-  ok("failed calls: non-zero exit code, signal, response error, timeout count as errors", row("run_shell_command") === "6,3" && row("read_file") === "1,1", row("run_shell_command") + " " + row("read_file"));
-  ok("failed calls: the tap gets the error flag and the exit code", codes.join(" ") === "f1!:1 f2 f3 f4! f5! f6! f7", codes.join(" "));
+  ok("failed calls: non-zero exit code, signal, response error, timeout count as errors", row("run_shell_command") === "10,5" && row("read_file") === "1,1", row("run_shell_command") + " " + row("read_file"));
+  ok("failed calls: the tap gets the error flag and the exit code", codes.join(" ") === "f1!:1 f2 f3 f4! f5! f6! f7 f8 f9 f10!:2 f11!:3", codes.join(" "));
   const pg = d ? d.prog.get("run_shell_command\tcat") : undefined;
-  ok("failed calls: the shell program's error count", !!pg && pg.err === 3, pg ? String(pg.err) : "none");
-  ok("failed calls: call rows carry the error", a.calls.map((c) => String(c.err)).join("") === "1001110", a.calls.map((c) => String(c.err)).join(""));
+  ok("failed calls: the shell program's error count", !!pg && pg.err === 5, pg ? String(pg.err) : "none");
+  ok("failed calls: call rows carry the error", a.calls.map((c) => String(c.err)).join("") === "10011100011", a.calls.map((c) => String(c.err)).join(""));
   const e = evs(["{\"id\":\"q\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\",\"toolCalls\":[" + calls.join(",") + "]}"], null);
   const tags = e.filter((v: Ev) => v.kind === "result").map((v: Ev) => { const m = /^\[[a-z]+\]/.exec(v.text); return m ? m[0] : "-"; }).join(" ");
-  ok("failed calls: the transcript marks them", tags === "[error] - - [error] [error] [timeout] -", tags);
+  ok("failed calls: the transcript marks them", tags === "[error] - - [error] [error] [timeout] - - - [error] [error]", tags);
 }
 // the issuing message's model reaches each call row, also when the calls arrive in a later version of the message
 {
