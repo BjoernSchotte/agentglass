@@ -53,8 +53,10 @@ export function real(p: string): string {
 }
 function lastTwo(segs: string[]): string { const n = segs.length; return n >= 2 ? (segs[n - 2] ?? "") + "/" + (segs[n - 1] ?? "") : segs[0] ?? ""; }
 // a remote URL → comparison key + label; null = dropped by the scrub, or no recognizable host (an alias like gh:o/r)
-// ssh hosts go through ~/.ssh/config first; a dotless host counts as a host in an explicit URL, scp with an absolute
-// path, or once ssh config names its HostName; a dotless scp host:path otherwise is an insteadOf alias (git resolves it)
+// ssh aliases go through ~/.ssh/config first; a real host name (git.example.com: ends in an alphabetic TLD) keeps its name,
+// whatever HostName/Port ssh connects to, so it stays one project with its https clones. A dotless host counts as a host in
+// an explicit URL, scp with an absolute path, or once ssh config names its HostName; a dotless scp host:path otherwise is
+// an insteadOf alias (git resolves it)
 export function normRemote(raw: string): Norm | null {
   const r = scrubRemote(raw); if (!r) return null;
   if (!r.host) { // local repo as remote: the scrub stripped .git and wrote ~ for $HOME
@@ -67,7 +69,7 @@ export function normRemote(raw: string): Norm | null {
   const ci = host.lastIndexOf(":"); if (ci > 0 && /^\d+$/.test(host.slice(ci + 1))) { port = host.slice(ci + 1); host = host.slice(0, ci); }
   const scheme = r.url.slice(0, r.url.indexOf("://")); let moved = false; let named = false;
   if (scheme === "ssh" || scheme === "git+ssh") {
-    const t = sshTarget(host, SSH.file);
+    const t = /\.[a-z]{2,63}$/.test(host) ? { host: "", port: "" } : sshTarget(host, SSH.file);
     if (t.host) { moved = t.host !== host || (!port && t.port !== ""); host = t.host; if (!port) port = t.port; named = true; }
     for (const f of SSH443) if (host === f[0]) { host = f[1] ?? host; moved = true; }
   }
@@ -183,7 +185,7 @@ export const PROJECTS_FILE = join(process.env.AGENTGLASS_CACHE_DIR || join(HOME,
 
 export function identOfCwd(cwd: string): Ident | null {
   if (!cwd) return NONE;
-  const e = cwds.get(cwd); if (e) return e.id;
+  const e = cwds.get(cwd); if (e && (e.checked > 0 || !P.sync)) return e.id; // a due one: the TUI's ticks revalidate it
   if (P.sync) return identNow(cwd);
   if (!queued.has(cwd)) { queued.add(cwd); queue.push(cwd); P.todo = queue.length; }
   return null;
@@ -191,8 +193,10 @@ export function identOfCwd(cwd: string): Ident | null {
 // cached, else resolved now (callers that cannot wait: CLI agent-mode scope, projectRoot)
 export function identNow(cwd: string): Ident {
   if (!cwd) return NONE;
-  const e = cwds.get(cwd); if (e) return e.id;
-  const g = GIT[0] ?? run; const id = resolveCwd(cwd, g); store(cwd, id, Date.now());
+  const e = cwds.get(cwd); if (e && e.checked > 0) return e.id;
+  const g = GIT[0] ?? run;
+  if (e) { revalidate(cwd, e, Date.now(), g); return (cwds.get(cwd) ?? e).id; } // due since load (v1 file, another ssh config)
+  const id = resolveCwd(cwd, g); store(cwd, id, Date.now());
   return id;
 }
 function same(a: Ident, b: Ident): boolean { return JSON.stringify(a) === JSON.stringify(b); }
@@ -261,16 +265,17 @@ function identIn(o: Obj): Ident {
   return id;
 }
 function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
-// v2: ssh aliases and scp absolute paths resolve (v1 identities of those were gitdir:); a v1 file keeps only its session cwds
+// v2: ssh aliases and scp absolute paths resolve (v1 identities of those were gitdir:): a v1 file loads with every git
+// identity due, like one saved under another ssh config (a deleted worktree keeps its identity: revalidate keeps it)
 const PVER = 2;
 export function loadProjects(file: string): void {
   const sz = sizeOf(file); if (sz <= 0) return;
   let root: Obj | null = null; try { root = obj(JSON.parse(readText(file, 0, sz))); } catch (e) { root = null; }
   const v = root ? num(root["v"]) : 0;
   if (!root || (v !== 1 && v !== PVER)) return;
-  // saved under another ssh config: git identities are due for revalidation now
-  const ssh = str(root["ssh"]); const due = ssh !== sshStamp(SSH.file);
-  const cs = v === PVER ? obj(root["cwds"]) : null;
+  // saved under another ssh config (v1: none): git identities are due for revalidation now (checked 0)
+  const ssh = str(root["ssh"]); const due = v !== PVER || ssh !== sshStamp(SSH.file);
+  const cs = obj(root["cwds"]);
   if (cs) for (const k of Object.keys(cs)) {
     const o = obj(cs[k]); if (!o || !str(o["key"]) || cwds.has(k)) continue;
     const id = identIn(o);

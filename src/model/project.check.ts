@@ -6,7 +6,7 @@ import { home } from "../util/text.ts";
 import { readFileSync } from "node:fs";
 import { SSH } from "../util/sshcfg.ts";
 import { iniRemotes, hasInclude, pickRemote, normRemote, type Ident, resolveCwd, subOf, real, cfgMtime,
-  P, identOfCwd, resolveTick, labelOf, rememberSess, cwdOfSess, loadProjects, saveProjects, resetProjects } from "./project.ts";
+  P, identOfCwd, identNow, resolveTick, labelOf, rememberSess, cwdOfSess, loadProjects, saveProjects, resetProjects } from "./project.ts";
 
 // ssh aliases come from a fixture config, never the user's ~/.ssh (missing until the ssh section writes it)
 const SH = real("/tmp") + "/agpc-ssh-" + String(process.pid); SSH.file = SH + "/.ssh/config"; SSH.home = SH;
@@ -43,7 +43,8 @@ eq("file:// = path", l2 ? l2.key : "", l1 ? l1.key : "?");
 eq("alias without ssh config → null", N("github-work:me/x"), "null");
 mkdirSync(SH + "/.ssh", { recursive: true });
 writeFileSync(SSH.file, "Host github-work gh-*\n  HostName github.com\nHost github.com\n  HostName ssh.github.com\n  Port 443\n" +
-  "Host gitea\n  HostName git.example.com\n  Port 2222\nHost nas\n  User git\nHost lan-*\n  HostName %h.example.com\n");
+  "Host gitea\n  HostName git.example.com\n  Port 2222\nHost nas\n  User git\nHost lan-*\n  HostName %h.example.com\n" +
+  "Host github.com-work\n  HostName github.com\nHost git.corp.example.com\n  HostName 10.0.0.5\n  Port 2222\n"); chmodSync(SSH.file, 0o600); // any umask
 eq("ssh alias", N("github-work:Me/X.git"), "git:github.com/me/x | Me/X");
 eq("ssh alias with user", N("git@gh-2:me/x"), "git:github.com/me/x | me/x");
 eq("ssh alias, ssh://", N("ssh://git@github-work/me/x"), "git:github.com/me/x | me/x");
@@ -56,6 +57,10 @@ eq("ssh config port", N("gitea:team/app"), "git:git.example.com:2222/team/app | 
 eq("= explicit port form", N("ssh://git@git.example.com:2222/team/app.git"), "git:git.example.com:2222/team/app | team/app");
 eq("url port beats config port", N("ssh://gitea:2200/team/app"), "git:git.example.com:2200/team/app | team/app");
 eq("wildcard + %h", N("lan-a:o/r"), "git:lan-a.example.com/o/r | o/r");
+eq("dotted alias", N("git@github.com-work:me/x"), "git:github.com/me/x | me/x");
+// a real host name keeps its name (its https clones use it), whatever HostName/Port ssh connects to
+eq("real name: HostName/Port ignored", N("git@git.corp.example.com:o/r"), "git:git.corp.example.com/o/r | o/r");
+eq("= its https clone", N("https://git.corp.example.com/o/r"), "git:git.corp.example.com/o/r | o/r");
 eq("https ignores ssh config", N("https://github-work/me/x"), "git:github-work/me/x | me/x");
 eq("Host without HostName, relative path → alias", N("nas:o/r"), "null");
 eq("scp absolute path", N("nas:/srv/git/x.git"), "git:nas/srv/git/x | git/x");
@@ -206,11 +211,21 @@ mk("back/.git/config", cfg("origin", "https://github.com/me/back"));
 resolveTick(1e9, 1e9, (): number => Date.now() + 44 * 60000, stub); const bk3 = identOfCwd(T + "/back"); eq("reappeared cwd re-resolved", bk3 ? bk3.key + (bk3.gone ? " gone" : "") : "", "git:github.com/me/back");
 eq("sess kept", cwdOfSess("/logs/a.jsonl"), T + "/w1"); eq("sess dropped", cwdOfSess("/logs/dead.jsonl"), "");
 rememberSess("/logs/b.jsonl", T + "/w1"); eq("read-only target", saveProjects("/proc/nope/projects.json", new Set<string>()) ? "y" : "n", "n");
-// projects.json v1 (before ssh aliases): identities re-resolve, session cwds are kept
+// projects.json v1 (before ssh aliases): identities are kept but due (a deleted worktree keeps its identity), session cwds too
 resetProjects();
-writeFileSync(PF, JSON.stringify({ v: 1, cwds: { [T + "/r12"]: { key: "gitdir:" + T + "/r12/.git", label: "r12", kind: "gitdir", top: T + "/r12", common: T + "/r12/.git", cfgMtime: cfgMtime(T + "/r12/.git"), checked: Date.now() } }, sess: { "/logs/v1.jsonl": T + "/r12" } }));
-loadProjects(PF); eq("v1 identities dropped", identOfCwd(T + "/r12") === null ? "null" : "kept", "null"); eq("v1 sessions kept", cwdOfSess("/logs/v1.jsonl"), T + "/r12");
-resolveTick(1e9, 1e9, nowF, stub); const v1r = identOfCwd(T + "/r12"); eq("v1 re-resolved", v1r ? v1r.key : "", "git:github.com/me/x");
+const v1 = JSON.stringify({ v: 1, cwds: {
+  [T + "/r12"]: { key: "gitdir:" + T + "/r12/.git", label: "r12", kind: "gitdir", top: T + "/r12", common: T + "/r12/.git", cfgMtime: cfgMtime(T + "/r12/.git"), checked: Date.now() },
+  [T + "/deleted-wt"]: { key: "git:github.com/me/old", label: "me/old", kind: "git", top: T + "/deleted-wt", common: T + "/r12/.git", cfgMtime: 1, checked: Date.now() },
+}, sess: { "/logs/v1.jsonl": T + "/r12" } });
+writeFileSync(PF, v1);
+loadProjects(PF); const v1k = identOfCwd(T + "/r12"); eq("v1 identity kept until revalidated", v1k ? v1k.kind : "null", "gitdir"); eq("v1 sessions kept", cwdOfSess("/logs/v1.jsonl"), T + "/r12");
+resolveTick(1e9, 1e9, nowF, stub); const v1r = identOfCwd(T + "/r12"); eq("v1 re-resolved on the next tick", v1r ? v1r.key : "", "git:github.com/me/x");
+const v1g = identOfCwd(T + "/deleted-wt"); eq("v1 deleted worktree keeps its identity", v1g ? v1g.key : "", "git:github.com/me/old");
+// one-shot CLI runs (sync, no tick) re-resolve a due entry on first ask
+resetProjects(); writeFileSync(PF, v1); loadProjects(PF); P.sync = true;
+const v1s = identOfCwd(T + "/r12"); eq("v1 due entry, CLI", v1s ? v1s.key : "", "git:github.com/me/x");
+const v1n = identNow(T + "/r12"); eq("identNow after re-resolve", v1n.key, "git:github.com/me/x");
+P.sync = false; resolveTick(1e9, 1e9, nowF, stub);
 eq("saved as v2", saveProjects(PF, new Set<string>(["/logs/v1.jsonl"])) && readFileSync(PF, "utf8").startsWith('{"v":2,') ? "y" : readFileSync(PF, "utf8").slice(0, 8), "y");
 // a projects.json saved under another ssh config: its git identities revalidate on the next tick, not after 10 min
 mk("r14/.git/config", cfg("origin", "work4:me/w")); identOfCwd(T + "/r14"); resolveTick(1e9, 1e9, nowF, stub);
