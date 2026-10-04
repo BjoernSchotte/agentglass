@@ -54,6 +54,7 @@ if (ct.length === 2) {
   eq("claude keys", ct[0].key + " " + ct[1].key, "2026-09-01T10:00:00.000Z#0 2026-09-01T10:05:00.000Z#0");
   const m = ct[0].spans[1];
   eq("streamed chat window", String((m.t1 - m.t0) / 1000) + " " + m.respId + " " + m.provider, "3 msg_a anthropic");
+  eq("streamed chat: one span at the final output_tokens", String(m.nOut) + " " + String(m.nIn), "14 10");
   eq("bash", ct[0].spans[2].prog + " " + String((ct[0].spans[2].t1 - ct[0].spans[2].t0) / 1000), "git 1.5");
   eq("mcp", ct[0].spans[3].mcp, "ctx");
 }

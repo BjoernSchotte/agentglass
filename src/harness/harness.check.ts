@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { width } from "../util/text.ts";
 import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
-import { type Acc, L, newAcc, bucket, usageExact } from "../features/usage/record.ts";
+import { type Acc, type ModelUse, L, newAcc, bucket, usageExact, modelUses } from "../features/usage/record.ts";
 import { price, cost } from "../features/usage/pricing.ts";
 import { skillUses, heavy } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
@@ -255,6 +255,12 @@ function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: 
   const r = newAcc(); feed(r, L3.slice(1)); same("resumed mid-message: booked once", r);
   const one = newAcc(); feed(one, [msg("m3", "[{\"type\":\"message\",\"model\":\"claude-opus-4-8\",\"input_tokens\":3,\"output_tokens\":350,\"cache_read_input_tokens\":938889}]", "")]);
   ok("fallback: one iteration books the top level", one.outTok === 350 && one.cw === 1200 && one.cr === 938889, one.outTok + " " + one.cw);
+  // the answering attempt streams on: a later line's larger top-level output_tokens books its growth on that attempt's model
+  const l3 = L3[2] ?? ""; const o3 = l3.indexOf("\"output_tokens\":350"); // the top level comes before the iterations
+  const grown = L3.slice(0, 2).concat([l3.slice(0, o3) + "\"output_tokens\":400" + l3.slice(o3 + 19)]);
+  const g = newAcc(); feed(g, grown); const gm = modelUses(g, null).find((u: ModelUse) => u.model === "claude-opus-4-8");
+  ok("fallback: streamed growth on the answering attempt", g.outTok === 877 && g.cr === 1877778 && g.inTok === 6 && (gm ? gm.outTok : 0) === 400 && Math.abs(g.cost - want - (po ? cost(po, 0, 50, 0, 0, 0) : 0)) < 1e-9,
+    [g.outTok, g.cr, gm ? gm.outTok : -1, g.cost].join(" "));
   const syn = newAcc(); feed(syn, [msg("m4", "[{\"model\":\"<synthetic>\",\"output_tokens\":5},{\"model\":\"claude-opus-4-8\",\"input_tokens\":1,\"output_tokens\":2}]", "")]);
   ok("fallback: <synthetic> attempt skipped", syn.outTok === 2 && syn.inTok === 1, syn.outTok + " " + syn.inTok);
 }
