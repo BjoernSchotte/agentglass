@@ -11,7 +11,8 @@ const H = "/tmp/agsc-" + String(process.pid);
 rmSync(H, { recursive: true, force: true });
 const D = H + "/.ssh"; mkdirSync(D + "/conf.d", { recursive: true });
 const F = D + "/config";
-function put(p: string, body: string): void { writeFileSync(p, body); }
+// 0600 as ssh wants it, whatever the umask (ssh and the reader refuse group/other-writable files)
+function put(p: string, body: string): void { writeFileSync(p, body); chmodSync(p, 0o600); }
 let bump = 10;
 // a distinct mtime per edit, also on coarse clocks (touch -t: GNU and BSD)
 function touch(p: string): void { bump++; run("touch", ["-t", "2001010112" + String(bump), p]); }
@@ -112,6 +113,26 @@ chmodSync(F, 0o644);
 // an oversized file is not read
 put(F, "Host big\n  HostName big.example.com\n" + "#".repeat(300000) + "\n"); touch(F);
 eq("oversized file", T("big"), "");
+// trailing comments end the arguments (OpenSSH 8.7+); `Match all` is unconditional
+put(F, "Host cm # work box\n  HostName cm.example.com # the real one\nHost x\n  HostName x.example.com\nMatch all\n  HostName all.example.com\n"); touch(F);
+eq("trailing comment", T("cm"), "cm.example.com");
+eq("Match all applies", T("y"), "all.example.com");
+eq("Match all after a Host: first value still wins", T("x"), "x.example.com");
+// ssh refuses a config writable by group/others ("Bad owner or permissions"): no mapping either
+put(F, "Host gw\n  HostName gw.example.com\n"); chmodSync(F, 0o664); touch(F);
+eq("group-writable config", T("gw"), "");
+chmodSync(F, 0o644); touch(F); eq("fixed permissions", T("gw"), "gw.example.com");
+// an Include in a world-writable directory (sticky or not) is never read; nor a group-writable included file
+mkdirSync(H + "/ww"); chmodSync(H + "/ww", 0o1777); put(H + "/ww/f", "Host ww\n  HostName ww.example.com\n");
+put(D + "/gwf", "Host gwf\n  HostName gwf.example.com\n"); chmodSync(D + "/gwf", 0o660);
+put(F, "Include " + H + "/ww/f " + H + "/ww/*\nInclude gwf\n"); touch(F);
+eq("include from a world-writable dir", T("ww"), ""); eq("group-writable include", T("gwf"), "");
+// a huge glob: bounded files read and stamped
+mkdirSync(D + "/many");
+for (let i = 0; i < 100; i++) put(D + "/many/" + String(1000 + i), "Host m" + String(i) + "\n  HostName m" + String(i) + ".example.com\n");
+put(F, "Include many/*\n"); touch(F);
+eq("glob within the cap", T("m3"), "m3.example.com"); eq("glob beyond the cap", T("m99"), "");
+eq("stamped files bounded", sshStamp(F).split("|").length <= 66 ? "y" : String(sshStamp(F).split("|").length), "y");
 // directory instead of a file
 rmSync(F); mkdirSync(F); eq("config is a directory", T("u"), "");
 

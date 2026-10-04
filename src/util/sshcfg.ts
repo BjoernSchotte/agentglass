@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Host patterns (* ? !negation, case-insensitive), first value per keyword wins, a section before the first Host applies
 // to every host, Include one level deep (relative to ~/.ssh, ~, globs in the last path part; inside a Host block it
-// applies to that block's hosts only), Match blocks never apply (their criteria need ssh itself). Parsed once per
+// applies to that block's hosts only), Match blocks never apply (their criteria need ssh itself) except `Match all`.
+// Files ssh itself would refuse (owner/permissions) and includes from world-writable dirs are not read. Parsed once per
 // (file, included files and glob dirs) mtime.
 import { statSync, readdirSync } from "node:fs";
+import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
+import { OS } from "../platform/index.ts";
 import { HOME, readText } from "./fs.ts";
 
 // file/home: checks point them at a fixture home
@@ -14,13 +17,17 @@ export const SSH = { file: join(HOME, ".ssh", "config"), home: HOME };
 export interface SshTarget { host: string; port: string } // host "" = no HostName for this alias
 interface Block { conds: string[][]; never: boolean; hostname: string; port: string }
 interface Parsed { deps: string[]; stamp: string; blocks: Block[] }
-const MAX_FILE = 262144; const MAX_INCLUDES = 64;
+const MAX_FILE = 262144; const MAX_DEPS = 65; // the config + 64 included files and glob dirs
 const cache = new Map<string, Parsed>();
 
 // mtime, ctime (chmod) and size; "-" = missing
 function stampOf(p: string): string { try { const s = statSync(p); return String(s.mtimeMs) + ":" + String(s.ctimeMs) + ":" + String(s.size); } catch (e) { return "-"; } }
+// ssh's own rule (readconf.c "Bad owner or permissions"): ours or root's, not writable by group/others (scriptc's Stats
+// has no uid/mode: the stat CLI, once per file per re-parse)
+function trusted(p: string): boolean { const om = OS.ownerMode(p); return om.length === 2 && (om[0] === 0 || om[0] === userInfo().uid) && ((om[1] ?? 0) & 0o022) === 0; }
+function worldWritable(d: string): boolean { const om = OS.ownerMode(d); return om.length !== 2 || ((om[1] ?? 0) & 0o002) !== 0; }
 function fileText(p: string): string {
-  try { const s = statSync(p); if (!s.isFile() || s.size > MAX_FILE) return ""; return readText(p, 0, s.size); } catch (e) { return ""; }
+  try { const s = statSync(p); if (!s.isFile() || s.size > MAX_FILE || !trusted(p)) return ""; return readText(p, 0, s.size); } catch (e) { return ""; }
 }
 // whitespace-separated words, "double quotes" group; HostName/Port take exactly one (ssh rejects trailing garbage)
 function words(s: string): string[] {
@@ -28,6 +35,7 @@ function words(s: string): string[] {
   for (const ch of s) {
     if (ch === '"') { q = !q; has = true; continue; }
     if (!q && (ch === " " || ch === "\t")) { if (has) out.push(cur); cur = ""; has = false; continue; }
+    if (!q && !has && ch === "#") break; // a trailing comment
     cur += ch; has = true;
   }
   if (has) out.push(cur);
@@ -36,18 +44,21 @@ function words(s: string): string[] {
 function globRe(p: string): RegExp { return new RegExp("^" + p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$"); }
 function wild(p: string): boolean { return p.indexOf("*") >= 0 || p.indexOf("?") >= 0; }
 // an Include argument → existing paths in glob order; deps gets every file and glob dir whose change must re-parse
+// (at most MAX_DEPS: the rest of a huge glob is neither read nor stamped)
 function includePaths(arg: string, base: string, deps: string[]): string[] {
   const p = arg.startsWith("~/") ? SSH.home + arg.slice(1) : arg.startsWith("/") ? arg : join(base, arg);
   const d = dirname(p); const b = p.slice(d.length + 1);
-  if (wild(d)) return []; // wildcards in directory parts: not followed
+  if (wild(d) || deps.length >= MAX_DEPS) return []; // wildcards in directory parts: not followed
+  if (worldWritable(d)) { deps.push(d); return []; } // anyone could plant an alias there (a chmod re-parses)
   if (!wild(b)) { deps.push(p); return [p]; }
   deps.push(d);
   let names: string[] = []; try { names = readdirSync(d); } catch (e) { return []; }
   const re = globRe(b); const out: string[] = [];
   for (const n of names) if ((b.startsWith(".") || !n.startsWith(".")) && re.test(n)) out.push(join(d, n));
   out.sort();
-  for (const f of out) deps.push(f);
-  return out;
+  const kept = out.slice(0, Math.max(0, MAX_DEPS - deps.length));
+  for (const f of kept) deps.push(f);
+  return kept;
 }
 // blocks are pushed when complete: scriptc may copy a record on push, so a pushed block is never mutated
 function parseInto(text: string, base: string, outer: string[][], never: boolean, depth: number, blocks: Block[], deps: string[]): void {
@@ -57,12 +68,12 @@ function parseInto(text: string, base: string, outer: string[][], never: boolean
     const m = /^([A-Za-z]+)(?:\s*=\s*|\s+)(.*)$/.exec(l); if (!m) continue;
     const k = (m[1] ?? "").toLowerCase(); const args = words(m[2] ?? "");
     if (k === "host") { blocks.push(cur); cur = { conds: outer.concat([args.map((a) => a.toLowerCase())]), never, hostname: "", port: "" }; }
-    else if (k === "match") { blocks.push(cur); cur = { conds: outer, never: true, hostname: "", port: "" }; }
+    else if (k === "match") { const all = args.length === 1 && (args[0] ?? "").toLowerCase() === "all"; blocks.push(cur); cur = { conds: outer, never: never || !all, hostname: "", port: "" }; }
     else if (k === "hostname") { if (!cur.hostname && args.length === 1) cur.hostname = args[0] ?? ""; }
     else if (k === "port") { if (!cur.port && args.length === 1) cur.port = args[0] ?? ""; }
     else if (k === "include" && depth === 0) {
       blocks.push(cur); // later lines of this block come after the included ones
-      for (const a of args) for (const f of includePaths(a, base, deps)) if (deps.length <= MAX_INCLUDES) parseInto(fileText(f), base, cur.conds, cur.never, 1, blocks, deps);
+      for (const a of args) for (const f of includePaths(a, base, deps)) parseInto(fileText(f), base, cur.conds, cur.never, 1, blocks, deps);
       cur = { conds: cur.conds, never: cur.never, hostname: "", port: "" };
     }
   }
