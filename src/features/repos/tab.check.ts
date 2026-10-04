@@ -7,7 +7,7 @@ import { H } from "../../hooks.ts";
 import { sessions, buildView } from "../../model/sessions.ts";
 import { P, real, resolveTick, setGit } from "../../model/project.ts";
 import { ledger } from "../usage/ledger.ts";
-import { type Day, L, newAcc, newDay, todayKey } from "../usage/record.ts";
+import { type Day, L, newAcc, newDay, todayKey, heavy } from "../usage/record.ts";
 import { newTS, newCnt } from "../usage/calls.ts";
 import { identOf } from "../query/project.ts";
 import { type RepoAgg, type HarnessAgg, repoAgg } from "./agg.ts";
@@ -41,8 +41,8 @@ function sess(h: string, id: string, cwd: string, cost: number, calls: number, e
   const s = newSess(h, id, "/fx/" + h + "/" + id + ".jsonl", false);
   s.cwd = cwd; s.headDone = true; s.mtime = mtime; s.last = mtime; sessions.set(s.path, s);
   const a = newAcc(); const d: Day = newDay(); d.cost = cost; d.act = act;
-  const st = newTS(); st.n = calls; st.err = err; d.tt.set(h === "codex" ? "exec" : "Bash", st);
-  for (const f of files) { const c = newCnt(); c.n = 2; d.files.set("Edit\t" + f, c); }
+  const st = newTS(); st.n = calls; st.err = err; heavy(d).tt.set(h === "codex" ? "exec" : "Bash", st);
+  for (const f of files) { const c = newCnt(); c.n = 2; heavy(d).files.set("Edit\t" + f, c); }
   a.days.set(TODAY, d); ledger.set(s.path, a); return s;
 }
 const now = Date.now();

@@ -14,7 +14,7 @@ import { put, box, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { harnessOf, isHarness } from "../../harness/index.ts";
 import { ledger, pending as pendingBytes } from "../usage/ledger.ts";
-import { type Acc, todayKey, lastDays, spanMin, startOfDay } from "../usage/record.ts";
+import { type Acc, todayKey, lastDays, spanMin, startOfDay, heavy } from "../usage/record.ts";
 import type { Cnt } from "../usage/calls.ts";
 import { kfmt, grp, money, split, single } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
@@ -79,7 +79,7 @@ export function detailSessions(r: RepoAgg, file: string): string[] {
 function touched(s: Sess, r: RepoAgg, file: string): boolean {
   const a = ledger.get(s.path); const id = identOf(s); if (!a || !id || id.key !== r.key) return false;
   const cwd = realCwd(s);
-  for (const dk of r.days) { const d = a.days.get(dk); if (!d) continue; for (const k of d.files.keys()) if (relFile(id.top, cwd, k.slice(k.indexOf("\t") + 1)) === file) return true; }
+  for (const dk of r.days) { const d = a.days.get(dk); if (!d) continue; for (const k of heavy(d).files.keys()) if (relFile(id.top, cwd, k.slice(k.indexOf("\t") + 1)) === file) return true; }
   return false;
 }
 // tools by errors, then calls
@@ -216,7 +216,7 @@ function sessRow(s: Sess, days: string[]): SRow {
   const o: SRow = { s, cost: 0, unk: 0, act: 0, calls: 0, err: 0 };
   const add = (x: Sess): void => {
     const a = ledger.get(x.path); if (!a) return;
-    for (const dk of days) { const d = a.days.get(dk); if (!d) continue; o.cost += d.cost; o.unk += d.unk; o.act += spanMin(d.act); for (const st of d.tt.values()) { o.calls += st.n; o.err += st.err; } }
+    for (const dk of days) { const d = a.days.get(dk); if (!d) continue; o.cost += d.cost; o.unk += d.unk; o.act += spanMin(d.act); for (const st of heavy(d).tt.values()) { o.calls += st.n; o.err += st.err; } }
   };
   add(s); for (const k of s.subs) if (!k.cwd) add(k); // subagents without a cwd of their own book here (as in the aggregation)
   return o;

@@ -86,6 +86,14 @@ function userEvs(o: Obj, t: string, ts: string, out: Ev[]): void {
   }
 }
 const renamed = new Map<string, string[]>(); // path → [custom title ("" = renamed to empty), its timestamp]: /rename wins over the ai-title Claude re-appends after it
+// the head memo (model/sessions.ts) keeps a rename its head held: "<timestamp>\t<title>"
+function headState(s: Sess): string { const r = renamed.get(s.path); return r ? (r[1] ?? "") + "\t" + (r[0] ?? "") : ""; }
+function setHeadState(s: Sess, x: string): void {
+  const i = x.indexOf("\t"); if (i < 0) return;
+  const ts = x.slice(0, i); const prev = renamed.get(s.path);
+  if (prev && ts && (prev[1] ?? "") > ts) return; // like a replayed custom-title line: never roll back a newer rename
+  renamed.set(s.path, [x.slice(i + 1), ts]);
+}
 function parse(o: Obj, out: Ev[], s: Sess | null): void {
   const ts = str(o["timestamp"]); const type = str(o["type"]);
   if (type === "custom-title") {
@@ -233,5 +241,5 @@ export const claude: HarnessAdapter = {
   liveRegistry,
   headless: (s: Sess, msg: string) => ["-p", "--resume", s.id, msg],
   resume: (s: Sess) => ["--resume", s.id],
-  files, usage,
+  files, usage, headState, setHeadState,
 };

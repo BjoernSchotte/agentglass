@@ -3,10 +3,11 @@
 // Refs and the reflog need no spawn and are always there; status/add/del only with --git, which allows the git log spawns.
 import type { Sess } from "../../model/types.ts";
 import { sessions, loadHead } from "../../model/sessions.ts";
-import { complete, display } from "../../hooks.ts";
+import { display } from "../../hooks.ts";
+import { complete as ledgerComplete } from "../usage/ledger.ts";
 import { identOf } from "../query/project.ts";
 import { type Obj } from "../../util/json.ts";
-import { type GitInfo, type GLink, GIT, gitInfo, sessIn, sessGit, gitRun } from "./attrib.ts";
+import { type GitInfo, type GLink, GIT, gitInfo, sessIn, sessGit, gitRun, gitStale } from "./attrib.ts";
 import { enrich } from "./enrich.ts";
 import { repoShas } from "./reflog.ts";
 
@@ -27,16 +28,25 @@ export function costPerCommit(cost: number, unk: number, produced: number): numb
   return Math.round((cost / produced) * 1e6) / 1e6;
 }
 // ≈ vs ? shared needs every session of the worktree indexed: those written to since the window opened are completed
-// (a one-shot run completes only the listed sessions)
-const peered = new Set<string>();
-function peers(s: Sess): void {
-  const me = sessIn(s, Date.now()); if (!me || me.t1 <= me.t0 || peered.has(me.gitdir + "\t" + String(me.t0))) return;
-  peered.add(me.gitdir + "\t" + String(me.t0));
-  for (const x of sessions.values()) {
-    if (x === s || x.mtime < me.t0) continue;
-    if (!x.headDone) loadHead(x);
-    const id = identOf(x); if (id && id.gitdir === me.gitdir) complete(x);
+// (a one-shot run completes only the listed sessions). Sessions are indexed by worktree once, newest first and only as far
+// back as the earliest window asked for; each worktree is completed back to the earliest window start done so far.
+const PEER = { n: -1, order: [] as Sess[], next: 0, dirs: new Map<string, Sess[]>(), done: new Map<string, number>() };
+export function peers(s: Sess): void {
+  const me = sessIn(s, Date.now()); if (!me || !me.gitdir || me.t1 <= me.t0) return; // a removed worktree has no peers to read
+  if (PEER.n !== sessions.size) { // another session set (a scan in between): start over
+    PEER.n = sessions.size; PEER.order = [...sessions.values()].sort((a, b) => b.mtime - a.mtime); PEER.next = 0; PEER.dirs.clear(); PEER.done.clear();
   }
+  const d = PEER.done.get(me.gitdir); if (d !== undefined && d <= me.t0) return;
+  PEER.done.set(me.gitdir, me.t0);
+  for (; PEER.next < PEER.order.length; PEER.next++) {
+    const x = PEER.order[PEER.next]; if (x.mtime < me.t0) break;
+    let id = identOf(x); // without its head when projects.json remembers its cwd
+    if (!id && !x.headDone) { loadHead(x); id = identOf(x); gitStale(); }
+    if (!id || !id.gitdir) continue;
+    const l = PEER.dirs.get(id.gitdir); if (l) l.push(x); else PEER.dirs.set(id.gitdir, [x]);
+  }
+  for (const x of PEER.dirs.get(me.gitdir) ?? []) if (x !== s && x.mtime >= me.t0) ledgerComplete(x); // the ledger alone: no alert or billing work
+  gitStale();
 }
 // null = no git worktree known for the session
 export function gitJson(s: Sess): Obj | null {

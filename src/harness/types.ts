@@ -50,6 +50,8 @@ export interface HarnessAdapter {
   // ── transcript ──
   parse: (o: Obj, out: Ev[], s: Sess | null) => void; // one parsed JSONL line → 0..n events; may update s (cwd, model, title)
   title?: (s: Sess) => string; // title from elsewhere (codex thread index) when the log sets none
+  headState?: (s: Sess) => string; // module state a head read leaves besides the session's fields ("" none): kept with the head memo
+  setHeadState?: (s: Sess, x: string) => void; // …and restored when the memo replaces the head read (model/sessions.ts)
   busy?: (s: Sess) => boolean; // mid-turn right now? default: turnBusy(s, false) (turn started … complete/aborted markers)
   spawnOf?: (s: Sess) => string; // subagent s: the parent's tool-call id that spawned it (call graph), "" if unknown
 

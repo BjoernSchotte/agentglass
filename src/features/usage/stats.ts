@@ -9,7 +9,7 @@ import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { ledger, accOf, pending } from "./ledger.ts";
-import { type Day, L, todayKey, lastDays, startOfDay, skillUses, newDay } from "./record.ts";
+import { type Day, L, todayKey, lastDays, startOfDay, skillUses, newDay, heavy } from "./record.ts";
 import { PRICES_FROM } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
 import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText } from "./costs.ts";
@@ -84,7 +84,7 @@ function aggF(days: string[], f: Compiled): Agg {
       for (const x of [r, tot]) { x.tools += nt; x.inTok += d.inTok; x.outTok += d.outTok; x.cr += d.cr; x.cw += d.cw; x.cost += d.cost; x.unk += d.unk; x.add += d.add; x.del += d.del; addDay(x.ms, d, (p: string): Bill => modeOf(s, p)); }
       st += nt; sc += d.cost;
       g.perDay[i] = numAt(g.perDay, i, 0) + nt; g.dayCost[i] = numAt(g.dayCost, i, 0) + d.cost;
-      if (m) for (const [n, c] of m.names) addCnt(g.names, n, c.n, c.err, 0, 0); else for (const [n, c] of d.tt) addCnt(g.names, n, c.n, c.err, 0, 0);
+      if (m) for (const [n, c] of m.names) addCnt(g.names, n, c.n, c.err, 0, 0); else for (const [n, c] of heavy(d).tt) addCnt(g.names, n, c.n, c.err, 0, 0);
       if (!m) for (const [n, c] of d.skills) addCnt(g.skills, n, c.n, 0, 0, 0);
       const hs = m ? m.hours : d.hours;
       for (let hh = 0; hh < 24; hh++) g.hours[hh] = numAt(g.hours, hh, 0) + numAt(hs, hh, 0);
@@ -362,7 +362,7 @@ function dagg(days: string[]): DA {
       const dk = days[i] ?? ""; const d = a.days.get(dk); if (!d) continue;
       if (f !== EMPTY && !dayMatches(f, s, dk, d)) continue;
       da.all = da.all + d.tools;
-      for (const [name, st] of d.tt) {
+      for (const [name, st] of heavy(d).tt) {
         if (dServer ? !name.startsWith(dKey + "__") : name !== dKey) continue;
         da.n = da.n + st.n; da.err = da.err + st.err; da.dn = da.dn + st.dn; da.ms = da.ms + st.ms; da.out = da.out + st.out;
         if (st.max > da.max) da.max = st.max;
@@ -374,7 +374,7 @@ function dagg(days: string[]): DA {
         for (const r of st.slow) da.slow.push({ path: s.path, h: s.h, r, err: false });
         for (const r of st.errs) da.errs.push({ path: s.path, h: s.h, r, err: true });
       }
-      if (!dServer) { prefixed(d.prog, pre, da.prog); prefixed(d.cmds, pre, da.cmds); prefixed(d.files, pre, da.files); }
+      if (!dServer) { prefixed(heavy(d).prog, pre, da.prog); prefixed(heavy(d).cmds, pre, da.cmds); prefixed(heavy(d).files, pre, da.files); }
     }
   }
   da.slow = da.slow.sort((x, y) => y.r.ms - x.r.ms).slice(0, 10);
@@ -410,7 +410,7 @@ function rowDrill(da: DA, f: Compiled, days: string[]): void {
     const s = sessions.get(p); const a = ledger.get(p); if (!s || !a) continue;
     for (const dk of days) {
       const d = a.days.get(dk); if (!d) continue;
-      for (const [name, st] of d.tt) {
+      for (const [name, st] of heavy(d).tt) {
         if (dServer ? !name.startsWith(dKey + "__") : name !== dKey) continue;
         for (const r of st.slow) if (ids.has(r.id)) da.slow.push({ path: s.path, h: s.h, r, err: false });
         for (const r of st.errs) if (ids.has(r.id)) da.errs.push({ path: s.path, h: s.h, r, err: true });

@@ -8,7 +8,7 @@ import type { Sess } from "../../model/types.ts";
 import { sessions, parentOf } from "../../model/sessions.ts";
 import { P, labelOf, real } from "../../model/project.ts";
 import { ledger } from "../usage/ledger.ts";
-import { L, unionMin, spanMin } from "../usage/record.ts";
+import { L, unionMin, spanMin, heavy } from "../usage/record.ts";
 import { type Cnt, newCnt } from "../usage/calls.ts";
 import { type Call, DICT, nameOf, localOf } from "../usage/facts.ts";
 import { type ModeSum, newSum, addDay } from "../usage/costs.ts";
@@ -144,9 +144,9 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
       r.cost += d.cost; r.unk += d.unk; r.inTok += d.inTok; r.outTok += d.outTok; cost += d.cost; unk += d.unk;
       addDay(r.modes, d, (p: string): Bill => modeOf(s, p));
       if (m) { r.calls += m.n; r.err += m.err; for (const [n, c] of m.names) { const t = cntOf(r.tools, n); t.n += c.n; t.err += c.err; } }
-      else for (const [n, st] of d.tt) { r.calls += st.n; r.err += st.err; const t = cntOf(r.tools, n); t.n += st.n; t.err += st.err; }
-      for (const [k, c] of d.prog) { if (c.err <= 0) continue; const pe = cntOf(r.progErr, k.slice(k.indexOf("\t") + 1)); pe.n += c.n; pe.err += c.err; }
-      for (const [k, c] of d.files) {
+      else for (const [n, st] of heavy(d).tt) { r.calls += st.n; r.err += st.err; const t = cntOf(r.tools, n); t.n += st.n; t.err += st.err; }
+      for (const [k, c] of heavy(d).prog) { if (c.err <= 0) continue; const pe = cntOf(r.progErr, k.slice(k.indexOf("\t") + 1)); pe.n += c.n; pe.err += c.err; }
+      for (const [k, c] of heavy(d).files) {
         const rel = relFile(id.top, rc, k.slice(k.indexOf("\t") + 1));
         const fa = rel ? fileOf(r.files, rel) : r.outside;
         fa.n += c.n; fa.add += c.add; fa.del += c.del; fa.by.add(s.h);

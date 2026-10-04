@@ -4,13 +4,14 @@ import { spawn } from "node:child_process";
 import { existsSync, renameSync } from "node:fs";
 import { join, basename } from "node:path";
 import { run } from "../util/fs.ts";
+import { own } from "../util/own.ts";
 import type { ProcRow, FileInfo } from "./types.ts";
 
 export function psProcs(): ProcRow[] {
   const out: ProcRow[] = [];
   for (const l of run("ps", ["-axo", "pid=,ppid=,pcpu=,rss=,etime=,tty=,args="]).split("\n")) {
     const m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/.exec(l);
-    if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]), rss: Number(m[4]) * 1024, etime: m[5], tty: m[6], args: m[7] });
+    if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]), rss: Number(m[4]) * 1024, etime: own(m[5] ?? ""), tty: own(m[6] ?? ""), args: own(m[7] ?? "") }); // kept until the next refresh
   }
   return out;
 }

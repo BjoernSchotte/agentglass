@@ -74,6 +74,6 @@ export function reposCli(days: number, f: Compiled | null, cheap: Compiled | nul
   const rows = repoAggIn(dks, f ?? EMPTY, allow, scoped ? "scope:" + sc.key : "").slice().sort((x: RepoAgg, y: RepoAgg) => y.cost - x.cost || y.unk - x.unk || (x.label < y.label ? -1 : 1));
   const out: Obj[] = []; for (const r of rows) out.push(obj(JSON.parse(JSON.stringify(repoJson(r)))) ?? {});
   try { writeSync(1, screenOut(formatRows(out, fm, false, REPO_COLS, REPO_FIELDS, legacyJson)) + "\n"); } catch (e) { /* closed pipe */ }
-  for (const q of H.onQuit) q(); // keep the indexing work for the next run (a no-op without call rows)
+  for (const q of H.onQuit) q(); // keep the indexing work for the next run
   process.exit(0);
 }

@@ -110,7 +110,9 @@ Every screen in this README and the launch video was recorded this way.
   exceptions are explicit: an opt-in community price list (see [Prices](#prices)), and
   `agentglass update`, which asks GitHub for releases only when you run it.
 - **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
-  is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off.
+  is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off —
+  one-shot commands (`--json`, `cost`, `sessions`, …) too: the next run reads only what was written
+  since.
 - **Light enough to leave open all day.** Refresh follows activity: fast while an agent streams or
   you type, slower when nothing happens, and at most one frame per second while the terminal is in
   the background. Alarms (waiting for you, approval, stuck) keep a 1.5 s cadence whenever an agent

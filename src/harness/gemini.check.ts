@@ -4,7 +4,7 @@ import { openSync, writeSync, closeSync, mkdirSync, rmSync, appendFileSync, copy
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
-import { type Acc, type Day, newAcc, skillUses } from "../features/usage/record.ts";
+import { type Acc, type Day, newAcc, skillUses, heavy } from "../features/usage/record.ts";
 import { applyUserPrices } from "../features/usage/pricing.ts";
 import { setCallTap } from "../features/usage/calls.ts";
 import { DICT, nameOf } from "../features/usage/facts.ts";
@@ -306,11 +306,11 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   const wf = "{\"id\":\"k3\",\"name\":\"write_file\",\"args\":{\"file_path\":\"b.js\",\"content\":\"1\\n2\\n\"},\"status\":\"success\",\"timestamp\":\"2026-10-01T10:00:01.000Z\"}";
   const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash", "", sh + "," + rp + "," + wf)]);
   const d = day0(a);
-  const row = (k: string): string => { const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err, v.dn, v.ms].join(",") : "none"; };
+  const row = (k: string): string => { const v = d ? heavy(d).tt.get(k) : undefined; return v ? [v.n, v.err, v.dn, v.ms].join(",") : "none"; };
   ok("tools: one row each, duration from the message, error from status", a.tools === 3 && row("run_shell_command") === "1,1,1,2500" && row("replace") === "1,0,1,1000", row("run_shell_command") + " " + row("replace"));
-  const progs: string[] = []; if (d) for (const k of d.prog.keys()) progs.push(k);
+  const progs: string[] = []; if (d) for (const k of heavy(d).prog.keys()) progs.push(k);
   ok("shell program", progs.join("|") === "run_shell_command\tnpm", progs.join("|"));
-  const fs: string[] = []; if (d) for (const [k, v] of d.files) fs.push(k + ":" + String(v.add) + "/" + String(v.del));
+  const fs: string[] = []; if (d) for (const [k, v] of heavy(d).files) fs.push(k + ":" + String(v.add) + "/" + String(v.del));
   ok("lines: diffStat preferred, write_file from its content", a.add === 5 && a.del === 1 && fs.sort().join(" ") === "replace\t/w/a.js:3/1 write_file\tb.js:2/0", a.add + "/" + a.del + " " + fs.join(" "));
   ok("no pending calls", a.pend.size === 0, String(a.pend.size));
 }
@@ -338,10 +338,10 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   const a = acc([gm("2026-10-01T10:00:00.000Z", "gemini-2.5-flash", "", calls.join(","))]);
   setCallTap(null);
   const d = day0(a);
-  const row = (k: string): string => { const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err].join(",") : "none"; };
+  const row = (k: string): string => { const v = d ? heavy(d).tt.get(k) : undefined; return v ? [v.n, v.err].join(",") : "none"; };
   ok("failed calls: non-zero exit code, signal, response error, timeout count as errors", row("run_shell_command") === "10,5" && row("read_file") === "1,1", row("run_shell_command") + " " + row("read_file"));
   ok("failed calls: the tap gets the error flag and the exit code", codes.join(" ") === "f1!:1 f2 f3 f4! f5! f6! f7 f8 f9 f10!:2 f11!:3", codes.join(" "));
-  const pg = d ? d.prog.get("run_shell_command\tcat") : undefined;
+  const pg = d ? heavy(d).prog.get("run_shell_command\tcat") : undefined;
   ok("failed calls: the shell program's error count", !!pg && pg.err === 5, pg ? String(pg.err) : "none");
   ok("failed calls: call rows carry the error", a.calls.map((c) => String(c.err)).join("") === "10011100011", a.calls.map((c) => String(c.err)).join(""));
   const e = evs(["{\"id\":\"q\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\",\"toolCalls\":[" + calls.join(",") + "]}"], null);

@@ -1,6 +1,6 @@
 // agentglass — self-check for the pi adapter (MCP, nested calls, subagents): scriptc build src/harness/pi.check.ts -o pc && ./pc
 // SPDX-License-Identifier: Apache-2.0
-import { type Acc, type Day, newAcc } from "../features/usage/record.ts";
+import { type Acc, type Day, newAcc, heavy } from "../features/usage/record.ts";
 import { pi } from "./pi.ts";
 import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -23,7 +23,7 @@ function day(a: Acc): Day | null { let d: Day | null = null; for (const v of a.d
 // "name:n/err" per tool row, sorted
 function rows(a: Acc): string {
   const d = day(a); if (!d) return "";
-  const out: string[] = []; for (const [k, v] of d.tt) out.push(k + ":" + String(v.n) + "/" + String(v.err));
+  const out: string[] = []; for (const [k, v] of heavy(d).tt) out.push(k + ":" + String(v.n) + "/" + String(v.err));
   return out.sort().join(" ");
 }
 
@@ -48,9 +48,9 @@ const plain = feed([call("c1", "bash", "{\"command\":\"ls\"}"), result("c1", "ba
 ok("plain tool unchanged", rows(plain) === "bash:1/0", rows(plain));
 
 // ── nested calls (spec decision 3) ──
-function row(a: Acc, k: string): string { const d = day(a); const v = d ? d.tt.get(k) : undefined; return v ? [v.n, v.err, v.dn, v.ms].join(",") : "none"; }
-function progs(a: Acc): string { const d = day(a); if (!d) return ""; const o: string[] = []; for (const k of d.prog.keys()) o.push(k); return o.sort().join("|"); }
-function files(a: Acc): string { const d = day(a); if (!d) return ""; const o: string[] = []; for (const [k, v] of d.files) o.push(k + ":" + String(v.add) + "/" + String(v.del)); return o.sort().join("|"); }
+function row(a: Acc, k: string): string { const d = day(a); const v = d ? heavy(d).tt.get(k) : undefined; return v ? [v.n, v.err, v.dn, v.ms].join(",") : "none"; }
+function progs(a: Acc): string { const d = day(a); if (!d) return ""; const o: string[] = []; for (const k of heavy(d).prog.keys()) o.push(k); return o.sort().join("|"); }
+function files(a: Acc): string { const d = day(a); if (!d) return ""; const o: string[] = []; for (const [k, v] of heavy(d).files) o.push(k + ":" + String(v.add) + "/" + String(v.del)); return o.sort().join("|"); }
 const NESTED = "[{\"id\":\"cm/1\",\"name\":\"mcp__everything__echo\",\"status\":\"ok\",\"arguments\":{\"message\":\"hi\"},\"durationMs\":412}," +
   "{\"id\":\"cm/2\",\"name\":\"bash\",\"status\":\"ok\",\"arguments\":{\"command\":\"wc -l notes.txt\"},\"durationMs\":7}," +
   "{\"id\":\"cm/3\",\"name\":\"write\",\"status\":\"ok\",\"arguments\":{\"path\":\"notes.txt\",\"content\":\"a\\nb\\n\"},\"durationMs\":1}," +
