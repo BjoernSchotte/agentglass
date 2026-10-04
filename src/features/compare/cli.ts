@@ -1,7 +1,8 @@
 // agentglass — `agentglass compare`: two sessions or two expressions side by side, as a text table or --json (spec §7)
 // SPDX-License-Identifier: Apache-2.0
-// Pins are not applied (scripts stay reproducible, as with --json). Bad input exits 2: an expression (message + caret),
-// an unknown or ambiguous session id, a missing argument, or A = B.
+// Pins are not applied (scripts stay reproducible, as with --json). Exit codes per the one table: 2 usage (a bad
+// expression with its caret, a missing argument, an id prefix under 6 characters, A = B), 3 an unknown session,
+// 4 an ambiguous id prefix (the candidates on stderr).
 import { writeSync } from "node:fs";
 import { H, complete, screenOut } from "../../hooks.ts";
 import { S } from "../../state.ts";
@@ -19,7 +20,7 @@ import { addAll } from "../query/scope.ts";
 import { compile, sessMatches } from "../query/eval.ts";
 import { cliFilter } from "../query/cli.ts";
 import { shown } from "../triage/run.ts";
-import { resolveSession, sessionOf } from "./key.ts";
+import { resolveSession, sessionOf, sessionErrCode } from "./key.ts";
 import { type Group, type Side, type Cmp, groupOfSession, groupOfExpr, groupClauses, compareGroups } from "./metrics.ts";
 import { toolRows, cntRows, fileLists } from "./sections.ts";
 
@@ -37,10 +38,12 @@ const HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--
   --json              {a:{expr, n, metrics}, b:{…}, subagents, tools[], programs[], files{onlyA, onlyB, both}};
                       metrics.cost is the total, costByMode its split (api = real spend, the rest list-price
                       estimates), billing the one mode or "mixed"; wallMs = first event → last activity,
-                      activeMs = minutes with activity; unknown values (unpriced cost, untimed calls) are null`;
+                      activeMs = minutes with activity; unknown values (unpriced cost, untimed calls) are null
+
+  exit codes: 0 ok · 2 usage (bad expression or option, id prefix < 6, A = B) · 3 unknown session · 4 ambiguous prefix`;
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
-function fail(msg: string): never { process.stderr.write(screenOut("agentglass: compare: " + msg) + "\n"); process.exit(2); }
+function fail(msg: string, code = 2): never { process.stderr.write(screenOut("agentglass: compare: " + msg) + "\n"); process.exit(code); }
 
 interface Opts { pos: string[]; a: string; b: string; hasA: boolean; hasB: boolean; filters: string[]; subs: boolean; json: boolean }
 function parseArgs(args: string[]): Opts {
@@ -64,8 +67,8 @@ function parseArgs(args: string[]): Opts {
   return o;
 }
 function sessGroup(v: string): Group {
-  const r = resolveSession(v); if (r.err) fail(r.err);
-  const s = sessionOf(r.v); if (!s) fail("session \"" + v + "\": no such session");
+  const r = resolveSession(v); if (r.err) fail(r.err, sessionErrCode(r.err));
+  const s = sessionOf(r.v); if (!s) fail("session \"" + v + "\": no such session", 3);
   loadHead(s); // the title comes from the transcript's head for most harnesses
   return groupOfSession(s);
 }

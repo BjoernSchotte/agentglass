@@ -455,8 +455,8 @@ agentglass compare claude:3f2a9c… codex:7b11e0… --no-subagents --json | jq '
 agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 'repo is agentglass'
 ```
 In `--json`, `metrics.cost` is the total and `costByMode` its split by billing mode (`api` is real spend, the rest
-list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an unknown or ambiguous id
-(the candidates are listed) or A = B exits 2.
+list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an id prefix under 6 characters
+or A = B exits 2, an unknown session 3, an ambiguous prefix 4 (the candidates are listed; [exit codes](#exit-codes)).
 
 ## Related events
 

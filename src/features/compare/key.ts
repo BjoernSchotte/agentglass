@@ -44,6 +44,8 @@ export function resolveSession(v: string): { v: string; err: string } {
   hits.sort();
   return { v, err: "session \"" + v + "\" is ambiguous: " + hits.slice(0, 5).join(", ") + (hits.length > 5 ? " +" + String(hits.length - 5) : "") };
 }
+// the exit code of a resolveSession error, per the one table (agentglass --help): 4 ambiguous, 3 not found, 2 usage
+export function sessionErrCode(err: string): number { return err.indexOf("\" is ambiguous: ") >= 0 ? 4 : err.endsWith(": no such session") ? 3 : 2; }
 // a subagent's value list carries its parent's id: the parent's clause includes it
 function sessValOf(s: Sess): Val {
   const ss = [hid(s).toLowerCase()];

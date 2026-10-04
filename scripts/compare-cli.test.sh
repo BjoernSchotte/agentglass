@@ -34,13 +34,15 @@ grep -q '"files":{"onlyA":\[\],"onlyB":\[\],"both":\[\]}' "$T/c.json" || { echo 
 grep -q '"subagents":true' "$T/c.json" || { echo "FAIL subagents flag"; cat "$T/c.json"; exit 1; }
 ag compare claude:aaaaaa11 aaaaaa22 --no-subagents --json | grep -q '"subagents":false' || { echo "FAIL --no-subagents"; exit 1; }
 set +e; err=$(ag compare aaaaaa aaaaaa22 2>&1); rc=$?; set -e
-[ $rc = 2 ] && echo "$err" | grep -q 'is ambiguous: claude:aaaaaa11, claude:aaaaaa22' || { echo "FAIL ambiguous rc=$rc $err"; exit 1; }
+[ $rc = 4 ] && echo "$err" | grep -q 'is ambiguous: claude:aaaaaa11, claude:aaaaaa22' || { echo "FAIL ambiguous rc=$rc $err"; exit 1; }
+set +e; err=$(ag compare aaaaa aaaaaa22 2>&1); rc=$?; set -e; [ $rc = 2 ] && echo "$err" | grep -q 'at least 6 characters' || { echo "FAIL short prefix rc=$rc $err"; exit 1; }
 set +e; err=$(ag compare aaaaaa11 aaaaaa11 2>&1); rc=$?; set -e; [ $rc = 2 ] && echo "$err" | grep -q 'A and B are the same' || { echo "FAIL same rc=$rc $err"; exit 1; }
 set +e; err=$(ag compare aaaaaa11 2>&1); rc=$?; set -e; [ $rc = 2 ] && echo "$err" | grep -q 'needs two sessions' || { echo "FAIL missing rc=$rc $err"; exit 1; }
 set +e; err=$(ag compare --a 'harness is claude' 2>&1); rc=$?; set -e; [ $rc = 2 ] && echo "$err" | grep -q -- '--b is missing' || { echo "FAIL missing --b rc=$rc $err"; exit 1; }
 set +e; err=$(ag compare --a 'tol is Bash' --b 'harness is codex' 2>&1); rc=$?; set -e
 [ $rc = 2 ] && echo "$err" | grep -q 'did you mean tool' && echo "$err" | grep -q '^  \^' || { echo "FAIL bad expr rc=$rc $err"; exit 1; }
-set +e; err=$(ag compare zzzzzz99 aaaaaa22 2>&1); rc=$?; set -e; [ $rc = 2 ] && echo "$err" | grep -q 'session "zzzzzz99": no such session' || { echo "FAIL unknown rc=$rc $err"; exit 1; }
+set +e; err=$(ag compare zzzzzz99 aaaaaa22 2>&1); rc=$?; set -e; [ $rc = 3 ] && echo "$err" | grep -q 'session "zzzzzz99": no such session' || { echo "FAIL unknown rc=$rc $err"; exit 1; }
+set +e; err=$(ag compare claude:zzzzzz99 aaaaaa22 2>&1); rc=$?; set -e; [ $rc = 3 ] || { echo "FAIL unknown harness:id rc=$rc $err"; exit 1; }
 ag compare --a 'harness is claude' --b 'harness is codex' --json | grep -q '"expr":"harness is codex"' || { echo "FAIL exprs"; exit 1; }
 ag compare --a 'harness is claude' --b 'harness is codex' --json | grep -q '"b":{"expr":"harness is codex","n":1,"metrics":{"cost":0,' || { echo "FAIL codex side"; ag compare --a 'harness is claude' --b 'harness is codex' --json; exit 1; }
 ag compare --a 'harness is claude' --b 'harness is codex' --filter 'repo is app' | grep -q 'group B matched nothing: harness is codex' || { echo "FAIL scope"; exit 1; }
