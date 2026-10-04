@@ -4,7 +4,8 @@
 // matches all of them" (the same call), day clauses "has a day bucket that matches all of them" (the same day).
 import { HOME } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
-import { sessions, titleOf, working, parentOf } from "../../model/sessions.ts";
+import { sessions, titleFrom, working, parentOf } from "../../model/sessions.ts";
+import { type RealMeta, realMeta } from "../../hooks.ts";
 import { type Day, L, todayKey, dayKey, startOfDay } from "../usage/record.ts";
 import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
@@ -62,16 +63,19 @@ function modelsOf(s: Sess): Val {
   const ss = [...set]; models.set(s.path, { ver: L.ver, ss });
   return ss.length ? V(ss) : UNK;
 }
-function haystack(s: Sess): string { return (titleOf(s) + " " + s.cwd + " " + s.id + " " + s.h + " " + s.name + " " + s.branch + " " + s.kind).toLowerCase(); }
+// --redact: the real values (realMeta) — the screen shows fakes, filters (and pins saved without --redact) mean the real
+// ones; cwd and branch also take the session's own shown fake, so a value picked off the redacted screen still selects it
+function haystack(s: Sess, m: RealMeta): string { return (titleFrom(s, m.title, m.prompt) + " " + m.cwd + " " + s.id + " " + s.h + " " + m.name + " " + m.branch + " " + s.kind).toLowerCase(); }
+function both(real: string, shown: string): Val { const a = real.toLowerCase(); const b = shown.toLowerCase(); return V(a === b ? [a] : [a, b]); }
 export function sessVal(key: string, s: Sess): Val {
   const x = EXT.get(key); if (x && x.sess) { const f = x.sess; return f(s); }
   switch (key) {
     case "harness": return V([s.h]);
     case "repo": return V(repoVals(s));
-    case "cwd": return V([home(s.cwd).toLowerCase()]);
-    case "branch": return V([s.branch.toLowerCase()]);
+    case "cwd": return both(home(realMeta(s).cwd), home(s.cwd));
+    case "branch": return both(realMeta(s).branch, s.branch);
     case "model": return modelsOf(s);
-    case "title": return V([titleOf(s).toLowerCase()]);
+    case "title": { const m = realMeta(s); return V([titleFrom(s, m.title, m.prompt).toLowerCase()]); }
     case "id": return V([s.id.toLowerCase()]);
     case "agent": return V([s.kind.toLowerCase()]);
     case "subagent": return V([s.parent !== "" ? "true" : "false"]);
@@ -91,7 +95,7 @@ export function sessVal(key: string, s: Sess): Val {
     case "lines.added": return N(s.linesAdd);
     case "lines.removed": return N(s.linesDel);
     case "age": return N(Date.now() - Math.max(s.last, s.mtime));
-    case "text": return V([haystack(s)]);
+    case "text": return V([haystack(s, realMeta(s))]);
   }
   return V([]);
 }
@@ -225,6 +229,25 @@ function resolveVals(a: Attr, c: Clause): { vals: string[]; err: string } {
     out.push(v);
   }
   return { vals: out, err: "" };
+}
+// does the counted period reach before cutoff (the oldest local day that keeps call rows)? dayKeys: the clauses' days
+// (null = no day clause), period: the view's days oldest first ([] = all history), oldest: the oldest known day
+export function beyondRetention(dayKeys: string[] | null, period: string[], oldest: string, cutoff: string): boolean {
+  let first: string = period.length ? period[0] : oldest;
+  if (dayKeys) {
+    first = "";
+    if (!period.length) { if (dayKeys.length) first = dayKeys[0]; }
+    else { const ks = new Set<string>(dayKeys); for (const d of period) if (ks.has(d)) { first = d; break; } }
+  }
+  const c: string = String(cutoff); const f0: string = String(first); // scriptc 0.1.7 lost these types across modules (SC1043)
+  return f0 !== "" && f0 < c;
+}
+// the oldest day any session has a bucket for, "" = none; per ledger version
+const oldMemo = { ver: -1, day: "" };
+export function oldestDay(): string {
+  if (oldMemo.ver === L.ver) return oldMemo.day;
+  let o = ""; for (const a of ledger.values()) for (const k of a.days.keys()) if (o === "" || k < o) o = k;
+  oldMemo.ver = L.ver; oldMemo.day = o; return o;
 }
 function knownDays(): string[] {
   const set = new Set<string>([todayKey()]);

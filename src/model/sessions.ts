@@ -65,10 +65,12 @@ export function loadTail(s: Sess): void {
   s.evs = evs.slice(-60);
   if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; } // head was read before the first prompt
 }
-export function titleOf(s: Sess): string {
-  if (s.title) return s.title; // an H.meta override wins over the harness's out-of-band title
+export function titleOf(s: Sess): string { return titleFrom(s, s.title, s.prompt); }
+// the title from these title/prompt values (realMeta()'s under --redact: what filters match)
+export function titleFrom(s: Sess, title: string, prompt: string): string {
+  if (title) return title; // an H.meta override wins over the harness's out-of-band title
   const tf = harnessOf(s.h).title; if (tf) { const t = tf(s); if (t) return t; }
-  return s.prompt || "(no prompt yet)";
+  return prompt || "(no prompt yet)";
 }
 // mid-turn right now (the harness adapter decides how to tell)
 export function working(s: Sess): boolean { return busy(s); }

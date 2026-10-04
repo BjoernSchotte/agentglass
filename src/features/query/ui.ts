@@ -11,17 +11,18 @@ import { ask } from "../../actions.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { harnessIds, harnessOf } from "../../harness/index.ts";
 import { ledger } from "../usage/ledger.ts";
-import { L, todayKey } from "../usage/record.ts";
+import { L, todayKey, lastDays } from "../usage/record.ts";
 import { DICT } from "../usage/facts.ts";
 import { mcpServer } from "../usage/calls.ts";
 import { callDays } from "../usage/callcache.ts";
 import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
-import { type Ctx, type Compiled, EMPTY, compile, matchSession } from "./eval.ts";
+import { type Ctx, type Compiled, EMPTY, compile, matchSession, beyondRetention, oldestDay } from "./eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, initPins, configStore, hiddenByPins, onScopeChange } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
-import { repoOf } from "./project.ts";
+import { repoOf, repoShown } from "./project.ts";
+import { REDACT } from "../redact-on.ts";
 
 // ── compiled filters per tab ──
 const comp = new Map<string, Compiled>();
@@ -229,7 +230,8 @@ function frequent(key: string): string[] {
     }
   } else if (key === "model") { for (const n of DICT.model.names) bump(m, n, 1); for (const s of sessions.values()) bump(m, s.model, 1); }
   else if (key === "session") { for (const s of sessions.values()) if (!s.parent) bump(m, s.h + ":" + s.id, Math.max(s.last, s.mtime)); } // newest first
-  else for (const s of sessions.values()) bump(m, key === "repo" ? repoOf(s) : key === "branch" ? s.branch : key === "agent" ? s.kind : "", 1);
+  // --redact: the shown (fake) repo labels and branches, which match their own sessions too: no real name on the input line
+  else for (const s of sessions.values()) bump(m, key === "repo" ? (REDACT ? repoShown(s) : repoOf(s)) : key === "branch" ? s.branch : key === "agent" ? s.kind : "", 1);
   const vals = topOf(m); freq.set(key, { ver: L.ver, vals });
   return vals;
 }
@@ -333,8 +335,8 @@ H.boxChips.push((where: string, w: number): string => {
   if (where === "processes") return chips("Processes", "procs", w);
   if (where !== "sessions") return "";
   const f = tabFilter("Sessions", "list"); if (f === EMPTY) return "";
-  const hid = hiddenCount("Sessions");
-  const tail = (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (f.needsCalls ? " " + callsChip(f) : "");
+  const hid = hiddenCount("Sessions"); const all: string[] = []; const cc = callsChip(f, all);
+  const tail = (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (cc ? " " + cc : "");
   return chips("Sessions", "list", Math.max(8, w - vwidth(tail))) + tail;
 });
 H.emptyText.push((where: string): string => {
@@ -366,5 +368,11 @@ H.helpSections.push({ name: "filter  (/ on Sessions and Stats; the same grammar 
 // ── restored pins: announced on start so they never look like missing sessions ──
 const startToast = initPins(configStore());
 if (startToast) { say(startToast.startsWith("saved") ? "warn" : "info", startToast); S.toastMs = 6000; }
-// "calls ≤ 90 d" while call clauses are active: call rows are kept that long, day buckets forever
-export function callsChip(f: Compiled): string { return f.needsCalls ? fg(C.dim) + "calls ≤ " + String(callDays()) + " d" + RST : ""; }
+// "calls ≤ 90 d" while call clauses are active and the counted days (period: the view's, [] = all history) reach
+// before the oldest day that keeps call rows: those are kept that long, day buckets forever
+export function callsChip(f: Compiled, period: string[]): string {
+  if (!f.needsCalls) return "";
+  const keep: string[] = lastDays(callDays()); const cut: string = keep.length ? keep[0] : "";
+  if (!beyondRetention(f.dayKeys, period, oldestDay(), cut)) return "";
+  return fg(C.dim) + "calls ≤ " + String(callDays()) + " d" + RST;
+}

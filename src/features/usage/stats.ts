@@ -199,7 +199,8 @@ function renderStats(): void {
   const pj = projLine(); const bst = costNow("").bs.state;
   const pjs = (bst === "over" ? fg(C.red) : bst === "watch" ? fg(C.yellow) : fg(C.sub)) + pj + RST;
   // the projection is about all spend: under a filter the line shows the busiest matching session instead
-  const l3 = f !== EMPTY ? busiest + (g.scoped ? dot + callsChip(f) : "") : wide ? (b ? busiest + dot : "") + pjs : pjs;
+  const cc = g.scoped ? callsChip(f, days) : "";
+  const l3 = f !== EMPTY ? busiest + (cc ? dot + cc : "") : wide ? (b ? busiest + dot : "") + pjs : pjs;
   for (const [i, l] of [l1, l2, l3].entries()) put(1, 2 + i, " " + fitStyled(l, W - 4) + fillTo(fitStyled(l, W - 4), W - 4) + " ");
   const pm = periodMessage(f, days);
   if (pm) { // the period and the day clauses do not intersect: say so instead of empty tables

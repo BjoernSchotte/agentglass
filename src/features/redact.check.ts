@@ -7,6 +7,8 @@ import { HOME } from "../util/fs.ts";
 import { width } from "../util/text.ts";
 import { H, applyMeta, screenOut, display } from "../hooks.ts";
 import { REDACT, scrubText, fakeProject } from "./redact.ts";
+import { parse } from "./query/parse.ts";
+import { compile, matchSession } from "./query/eval.ts";
 
 let bad = 0;
 function ok(what: string, cond: boolean, got: string): void { if (!cond) { bad++; console.log("FAIL " + what + ": " + JSON.stringify(got)); } }
@@ -33,6 +35,23 @@ applyMeta(s);
 s.remote = "https://github.com/acmecorp/secretproj";
 applyMeta(s);
 ok("stable", s.title === t1 && s.cwd === c1 && s.remote === rm1, s.title + " " + s.cwd + " " + s.remote);
+
+// filters match the REAL values (a pin saved without --redact keeps matching), the screen shows the fakes; cwd and branch
+// also match the session's own shown fake (a value taken from the redacted screen, e.g. a triage include); titles and
+// bare words do not (fake titles come from a shared pool: they would select unrelated sessions)
+function m(src: string): string { const p = parse(src); if (p.err) return "ERR " + p.err.msg; const r = compile(p.cs, "list"); return r.f ? String(matchSession(r.f, s, null)) : "ERR " + (r.err ? r.err.msg : ""); }
+ok("real title", m("title ~ \"thing for acme\"") === "true", m("title ~ \"thing for acme\""));
+ok("fake title no", m("title is \"" + t1 + "\"") === "false", m("title is \"" + t1 + "\""));
+ok("real cwd", m("cwd is ~/code/secretproj/src") === "true", m("cwd is ~/code/secretproj/src"));
+ok("own fake cwd", m("cwd is \"" + c1 + "\"") === "true", m("cwd is \"" + c1 + "\""));
+ok("real branch", m("branch is acme/login") === "true", m("branch is acme/login"));
+ok("own fake branch", m("branch is \"" + s.branch + "\"") === "true", m("branch is \"" + s.branch + "\""));
+ok("bare word: real", m("acme") === "true", m("acme"));
+ok("bare word: real cwd segment", m("secretproj") === "true", m("secretproj"));
+ok("not matched: other", m("branch is main") === "false", m("branch is main"));
+// parsing rewrites the real values again (a refresh before the next H.meta): still the real ones
+s.title = "Fix the thing for ACME"; ok("fresh real title", m("title ~ acme") === "true", m("title ~ acme"));
+applyMeta(s); ok("title faked again, still matches real", s.title === t1 && m("title ~ acme") === "true", s.title);
 
 // scrubber: same length, names and learned projects gone, box line stays aligned
 const line = "│ /Users/" + user + "/code/secretproj/web · " + user.toUpperCase() + " · me@example.org · sk-" + "Ab3".repeat(10) + " │";

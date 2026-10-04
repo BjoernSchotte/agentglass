@@ -8,7 +8,7 @@ import { OS } from "../platform/index.ts";
 import { HARNESSES } from "../harness/index.ts";
 import { base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
-import { H } from "../hooks.ts";
+import { H, type RealMeta } from "../hooks.ts";
 import { isErr } from "./callgraph/model.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { REDACT } from "./redact-on.ts";
@@ -224,11 +224,12 @@ function scrubStyled(s: string): string {
 }
 
 // ── identity layer: per session, fakes that win over whatever parsing (re)writes ────────────────────────
-interface Rec { cwd: string; real: string; title: string; branch: string; name: string; remote: string }
+// rt/rp/rb/rn: the real title, prompt, branch and name as last parsed (filters match them: realMeta)
+interface Rec { cwd: string; real: string; title: string; branch: string; name: string; remote: string; rt: string; rp: string; rb: string; rn: string }
 const recs = new Map<string, Rec>();
 function recOf(s: Sess): Rec {
   let r = recs.get(s.path);
-  if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "", remote: "" }; recs.set(s.path, r); }
+  if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "", remote: "", rt: "", rp: "", rb: "", rn: "" }; recs.set(s.path, r); }
   return r;
 }
 // ~/code/<fake project>/<generic or faked deeper segments>; outside ~/code only the basename survives (faked)
@@ -279,11 +280,13 @@ function kept(s: Sess): boolean {
 function meta(s: Sess): void {
   const r = recOf(s);
   if (s.cwd && s.cwd !== r.cwd) { r.real = s.cwd; learnPath(s.cwd, false); r.cwd = fakeCwd(s.cwd); s.cwd = r.cwd; }
+  if (s.title !== r.title) r.rt = s.title;
   s.title = r.title;
+  if (s.prompt && s.prompt !== r.title) r.rp = s.prompt;
   if (s.prompt) s.prompt = r.title;
-  if (s.branch && s.branch !== r.branch) { r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
+  if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
   if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
-  if (s.name && s.name !== r.name) { r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
+  if (s.name && s.name !== r.name) { r.rn = s.name; r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
   recs.set(s.path, r); // scriptc may hand out a copy of an all-string record: store the updated one back (real cwd, kept fakes)
 }
 
@@ -448,6 +451,12 @@ if (REDACT) {
   });
   H.display.push(display);
   H.realCwd.push((s: Sess): string => { const r = recs.get(s.path); return r ? r.real : ""; }); // agent-mode scope compares real projects
+  // filters match the real values; a field parsing rewrote since the last H.meta is real as it stands
+  H.realMeta.push((s: Sess): RealMeta | null => {
+    const r = recs.get(s.path); if (!r) return null;
+    return { cwd: s.cwd !== r.cwd ? s.cwd : r.real || s.cwd, title: s.title !== r.title ? s.title : r.rt, prompt: s.prompt && s.prompt !== r.title ? s.prompt : r.rp,
+      branch: s.branch !== r.branch ? s.branch : r.rb, name: s.name !== r.name ? s.name : r.rn };
+  });
   H.screenFilter.push(scrubStyled);
   H.headerWidgets.unshift((w: number) => (w >= 10 ? bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST : ""));
 }
