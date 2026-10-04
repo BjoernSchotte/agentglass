@@ -8,8 +8,8 @@ trap cleanup EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 has() { case "$2" in *"$3"*) ;; *) echo "FAIL $1: '$3' not in: $2"; fail=1 ;; esac; }
 command -v python3 > /dev/null 2>&1 || { echo "open: skipped (needs python3 for a PTY)"; exit 0; }
-AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
-sh "$here/scripts/build-info.sh"
+# AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
+if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
 h="$t/h"; p1="$h/w/p1"; mkdir -p "$p1/.git"
 A=abcdef01-0000-4000-8000-000000000001; B=abcdef02-0000-4000-8000-000000000002
 cp="$h/.claude/projects/-w-p1"; mkdir -p "$cp"

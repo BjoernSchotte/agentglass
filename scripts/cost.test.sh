@@ -5,8 +5,8 @@ unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fa
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
-AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
-sh "$here/scripts/build-info.sh"
+# AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
+if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
 p="$t/home/.claude/projects/-w-app"; mkdir -p "$p" "$t/home/.agentglass"
 now=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 printf '{"type":"user","sessionId":"s1","cwd":"/w/app","timestamp":"%s","message":{"role":"user","content":"hi"}}\n' "$now" > "$p/s1.jsonl"

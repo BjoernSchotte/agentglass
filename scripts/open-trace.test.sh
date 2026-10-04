@@ -5,8 +5,8 @@ set -e
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
 command -v python3 > /dev/null 2>&1 || { echo "open-trace: skipped (needs python3)"; exit 0; }
-AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
-sh "$here/scripts/build-info.sh"
+# AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
+if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
 fail=0; total=0
 for h in claude codex gemini opencode pi kiro fx; do
   home="$t/$h"; mkdir -p "$home"; cp -R "$here/testdata/otlp/fixtures/$h/." "$home/"

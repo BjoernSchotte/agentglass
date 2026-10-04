@@ -1,5 +1,6 @@
 #!/bin/sh
 # end-to-end tests for `agentglass update` against file:// fixture releases (two real builds): sh scripts/update.test.sh
+# check: builds 2 (shard weight for scripts/check-plan.mjs)
 set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fake HOME decides, not the caller's overrides
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
@@ -8,10 +9,12 @@ fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; 
 os=$(uname -s | tr 'A-Z' 'a-z'); case "$(uname -m)" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; esac
 plat="$os-$arch"; asset="agentglass-$plat.tar.gz"
 if command -v sha256sum >/dev/null 2>&1; then H="sha256sum"; else H="shasum -a 256"; fi
-build() { AGENTGLASS_VERSION="$1" AGENTGLASS_CHANNEL="$2" AGENTGLASS_COMMIT="$3" AGENTGLASS_OUT="$4" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; }
-build 2026.9.1 stable 1111111111111111111111111111111111111111 "$t/old"
-build 2026.9.2 stable 2222222222222222222222222222222222222222 "$t/new"
-sh "$here/scripts/build-info.sh"   # back to a local build-info for whoever builds next
+# each build gets a private source copy (its build-info.ts) and output directory (scriptc writes main.ll beside the
+# binary), so both run at once and src/ stays untouched
+build() { mkdir -p "$4.src" && cp -R "$here/src/." "$4.src/" && AGENTGLASS_SRC="$4.src" AGENTGLASS_VERSION="$1" AGENTGLASS_CHANNEL="$2" AGENTGLASS_COMMIT="$3" AGENTGLASS_OUT="$4.src/agentglass" sh "$here/build.sh" > "$4.log" 2>&1 && mv "$4.src/agentglass" "$4" || { cat "$4.log"; return 1; }; }
+build 2026.9.1 stable 1111111111111111111111111111111111111111 "$t/old" & b1=$!
+build 2026.9.2 stable 2222222222222222222222222222222222222222 "$t/new" & b2=$!
+wait $b1 || exit 1; wait $b2 || exit 1
 fake() { printf '#!/bin/sh\nif [ "$2" = --json ]; then echo '"'"'{"version":"%s","channel":"%s"}'"'"'; else echo %s; fi\n' "$1" "$2" "$1" > "$3"; chmod 755 "$3"; }
 rel() { # rel <tag> <binary> <version> <channel> [corrupt]
   d="$t/dl/$1"; mkdir -p "$d/x"; cp "$2" "$d/x/agentglass"; tar -czf "$d/$asset" -C "$d/x" agentglass; rm -rf "$d/x"

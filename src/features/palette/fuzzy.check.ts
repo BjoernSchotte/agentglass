@@ -1,4 +1,5 @@
 // agentglass — self-check for the palette's fuzzy matcher: scriptc build src/features/palette/fuzzy.check.ts -o fz && ./fz
+// check: timing — a time budget: scripts/check.sh builds this one -O2 and runs it alone, not -O0 under parallel load
 // SPDX-License-Identifier: Apache-2.0
 import { type Hit, terms, scoreTerm, match, NO_MATCH } from "./fuzzy.ts";
 

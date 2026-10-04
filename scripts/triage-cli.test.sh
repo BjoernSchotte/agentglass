@@ -5,7 +5,8 @@ unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fa
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-BIN="$T/agentglass"; scriptc build src/main.ts -o "$BIN" >/dev/null
+# AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
+BIN="$T/agentglass"; if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$BIN"; else scriptc build src/main.ts -o "$BIN" >/dev/null; fi
 mkdir -p "$T/home/.claude/projects/-w-app" "$T/home/.agentglass"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 F="$T/home/.claude/projects/-w-app/c1.jsonl"
