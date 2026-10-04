@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { clean } from "../../util/text.ts";
 import type { Call } from "./facts.ts";
+import { own } from "../../util/own.ts";
 
 // one remembered call: t = call time (epoch ms), ms = duration (-1 unknown), ts/id = the transcript event to jump to
 export interface Rec { t: number; ms: number; id: string; ts: string; arg: string }
@@ -44,7 +45,7 @@ export function fmtMs(ms: number): string {
 // bounded top-k: when a day's map outgrows CAP, keep the PRUNE most used entries
 export function cnt(m: Map<string, Cnt>, k: string): Cnt {
   let c = m.get(k);
-  if (!c) { c = newCnt(); m.set(k, c); }
+  if (!c) { c = newCnt(); m.set(own(k), c); } // kept with the ledger: own() (util/own.ts)
   c.n++;
   if (m.size > CAP) {
     const keep = [...m.entries()].sort((x, y) => y[1].n - x[1].n).slice(0, PRUNE);
@@ -61,7 +62,7 @@ export function setCallTap(f: ((id: string, ms: number, err: boolean, codes: num
 export function done(p: Pend, ms: number, err: boolean, out: number, id: string, codes: number[]): void {
   const tap = callTap; if (tap) tap(id, ms, err, codes, p.name);
   const st = p.st;
-  const r: Rec = { t: p.t, ms, id, ts: p.ts, arg: p.arg };
+  const r: Rec = { t: p.t, ms, id: own(id), ts: p.ts, arg: p.arg }; // id: often a regex capture of the result line
   const row = p.row;
   if (row) { row.err = err ? 1 : 0; row.ms = ms >= 0 && ms < 86400000 ? ms : -1; row.out = out; }
   st.out = st.out + out;

@@ -6,6 +6,7 @@ import { price, cost } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 import { type Call, DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
 import { numAt } from "../../util/text.ts";
+import { own } from "../../util/own.ts";
 export { dayKey };
 
 // one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro); turns = human prompts
@@ -168,7 +169,7 @@ export function unionMin(lists: number[][]): number {
 export function tool(a: Acc, d: Day, name: string, model: string, mq: number): TS {
   a.tools++; d.tools++;
   let st = d.tt.get(name);
-  if (!st) { st = newTS(); d.tt.set(name, st); }
+  if (!st) { st = newTS(); d.tt.set(own(name), st); } // map keys live as long as the ledger: own() (util/own.ts)
   st.n = st.n + 1;
   st.h[tsHour] = (st.h[tsHour] ?? 0) + 1;
   d.hours[tsHour] = (d.hours[tsHour] ?? 0) + 1;
@@ -206,7 +207,7 @@ export function retool(a: Acc, p: Pend, name: string): void {
   o.n = o.n - 1; o.h[h] = Math.max(0, (o.h[h] ?? 0) - 1);
   if (o.n <= 0) d.tt.delete(key);
   let st = d.tt.get(name);
-  if (!st) { st = newTS(); d.tt.set(name, st); }
+  if (!st) { st = newTS(); d.tt.set(own(name), st); }
   st.n = st.n + 1; st.h[h] = (st.h[h] ?? 0) + 1;
   p.st = st;
   if (p.row) p.row.tool = intern(DICT.tool, name);
@@ -251,7 +252,7 @@ function count(a: Acc, d: Day, nIn: number, nOut: number, nCr: number, w5: numbe
 function mkey(model: string): string { const m = model.startsWith("?") ? model.slice(1) : model; return m || "unknown"; }
 function slot(d: Day, model: string): number[] {
   const k = mkey(model); let r = d.mt.get(k);
-  if (!r) { r = [0, 0, 0, 0, 0]; d.mt.set(k, r); }
+  if (!r) { r = [0, 0, 0, 0, 0]; d.mt.set(own(k), r); }
   return r;
 }
 // tokens into the day's per-model bucket (totals are count()'s or the adapter's own business)
@@ -262,14 +263,14 @@ export function modelTok(d: Day, model: string, nIn: number, nOut: number, nCr: 
 // a priced amount: session + day totals, the provider's share, the local hour of the last bucket() call, the model's bucket
 export function addCost(a: Acc, d: Day, usd: number, prov: string, model: string): void {
   a.cost = a.cost + usd; d.cost = d.cost + usd; // spelled out: SC1043
-  d.cp.set(prov, (d.cp.get(prov) ?? 0) + usd);
+  const c = d.cp.get(prov); d.cp.set(c === undefined ? own(prov) : prov, (c ?? 0) + usd);
   d.hc[tsHour] = (d.hc[tsHour] ?? 0) + usd;
   const r = slot(d, model); r[4] = (r[4] ?? 0) + usd;
 }
 // tokens without a price, per model
 export function unpriced(a: Acc, d: Day, model: string, n: number): void {
   a.unk = a.unk + n; d.unk = d.unk + n;
-  const k = mkey(model); d.um.set(k, (d.um.get(k) ?? 0) + n);
+  const k = mkey(model); const c = d.um.get(k); d.um.set(c === undefined ? own(k) : k, (c ?? 0) + n);
 }
 // credits without a $ rate (kiro): a unit of their own, never mixed into tokens
 export function credits(a: Acc, d: Day, n: number): void { a.uc = a.uc + n; d.uc = d.uc + n; }

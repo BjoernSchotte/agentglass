@@ -1,6 +1,7 @@
 // agentglass — session discovery, lazy log loading, and the filtered subagent tree shown in the list
 // SPDX-License-Identifier: Apache-2.0
 import { firstLine } from "../util/text.ts";
+import { own } from "../util/own.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
 import { S } from "../state.ts";
@@ -54,6 +55,8 @@ export function loadHead(s: Sess): void {
     if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; }
   }
 }
+// the last events stay on the session until its next tail read: exact-size copies of their strings (util/own.ts)
+function keepEv(e: Ev): Ev { return { kind: e.kind, text: own(e.text), ts: own(e.ts), id: own(e.id), full: own(e.full) }; }
 export function loadTail(s: Sess): void {
   if (s.tailSize === s.size) return;
   s.tailSize = s.size;
@@ -62,7 +65,7 @@ export function loadTail(s: Sess): void {
   const r = src.lines(s, src.align(s, Math.max(0, s.size - window(src, 98304))), s.size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
-  s.evs = evs.slice(-60);
+  s.evs = evs.slice(-60).map(keepEv);
   if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; } // head was read before the first prompt
 }
 export function titleOf(s: Sess): string { return titleFrom(s, s.title, s.prompt); }
