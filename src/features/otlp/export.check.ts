@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync }
 import { execFileSync } from "node:child_process";
 import { newSpan, type XTurn } from "./types.ts";
 import { cfgFrom } from "./config.ts";
-import { type ExOpts, parseExport, batches, timeArg, runExport, fxDelta, fxAccepted } from "./export.ts";
+import { type ExOpts, parseExport, batches, timeArg, runExport, fxDelta, fxAccepted, acks, ack } from "./export.ts";
 import { newState, markTurn, loadState, saveState } from "./state.ts";
 import { discover } from "../cli.ts";
 
@@ -54,6 +54,14 @@ const bs = batches([turnOf("a", 10, 0), turnOf("big", 700, 0), turnOf("b", 10, 0
 eq("batches", bs.map((b) => b.turns.map((t: XTurn) => t.key).join("+") + ":" + String(b.spans)).join(" "), "a:10 big:700 b+c:20");
 const huge = batches([turnOf("h", 400, 14000)], 512, 4194304, C);
 eq("5 MB turn split", String(huge.length >= 2) + " " + String(huge.every((b) => b.json.length <= 4194304 && b.turns[0].key === "h")) + " " + String(huge.reduce((n: number, b) => n + b.spans, 0)), "true true 400");
+{ // a turn counts as accepted (marked, fx base moved) only once every request with a part of it got through (one-shot and live)
+  const xs = batches([turnOf("h", 400, 14000), turnOf("s", 3, 0)], 512, 4194304, C); const k = (ts: XTurn[]): string => ts.map((t: XTurn) => t.key).join("+") || "-";
+  const a = acks(xs); const got: string[] = [];
+  for (let i = 0; i < xs.length; i++) got.push(k(ack(a, xs[i], i !== 0)));
+  eq("acks: a split turn whose first part failed is not accepted by its later parts", got.join(" "), "- ".repeat(xs.length - 1).trim() + " s");
+  const b = acks(xs); const ok: string[] = []; for (const x of xs) ok.push(k(ack(b, x, true)));
+  eq("acks: all parts through = accepted once, with its last part", ok.join(" "), "- ".repeat(xs.length - 2).trim() + " h s");
+}
 
 // fx keeps session totals only (usage-v2.json): the newest turn of a session in a send carries the growth since the
 // totals the endpoint already accepted; older turns of the same send carry none (a failed request loses nothing)

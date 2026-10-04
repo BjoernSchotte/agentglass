@@ -130,6 +130,26 @@ export function batches(turns: XTurn[], max: number, maxBytes: number, c: OtlpCf
   return out;
 }
 
+// a send's bookkeeping: a turn is accepted (marked, its fx totals the new base) once every request carrying a part of it
+// got through; a failed part keeps the whole turn for the retry
+export interface Acks { left: Map<string, number>; failed: Set<string> }
+function tkey(t: XTurn): string { return t.path + "\u0000" + t.key; }
+export function acks(bs: Batch[]): Acks {
+  const left = new Map<string, number>(); for (const x of bs) for (const t of x.turns) left.set(tkey(t), (left.get(tkey(t)) ?? 0) + 1);
+  return { left, failed: new Set<string>() };
+}
+// the turns this request completed
+export function ack(a: Acks, x: Batch, ok: boolean): XTurn[] {
+  const out: XTurn[] = [];
+  for (const t of x.turns) {
+    const k = tkey(t);
+    if (!ok) { a.failed.add(k); continue; }
+    const n = (a.left.get(k) ?? 1) - 1; a.left.set(k, n);
+    if (n <= 0 && !a.failed.has(k)) out.push(t);
+  }
+  return out;
+}
+
 // ── selection and building ──
 interface Sel { roots: Sess[]; warns: string[] }
 function select(o: ExOpts): Sel {
@@ -260,22 +280,18 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
     if (gz && !st.gzip && o.compression !== "gzip") { gz = false; err(safeUrl(o.url) + " takes uncompressed JSON only (" + (st.gzipNote || "recorded earlier") + "); --compression gzip tries again"); }
     if (gz) { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } if (!gzipProbe(d)) { gz = false; GZ.note = "this build cannot write compressed bodies: sending uncompressed"; err(GZ.note); } }
     const bs = batches(b.turns, o.batch, MAX_BYTES, c);
-    const left = new Map<string, number>(); const failed = new Set<string>();
-    const tk = (t: XTurn): string => t.path + "\u0000" + t.key;
-    for (const x of bs) for (const t of x.turns) left.set(tk(t), (left.get(tk(t)) ?? 0) + 1);
+    const ak = acks(bs);
     let spans = 0; let reqs = 0; let bad = 0; let rejected = 0; const msgs: string[] = []; const sent = new Set<string>(); const sess = new Set<string>();
     for (const x of bs) {
       const r = sendBatch({ url: o.url, headers: hx.headers, timeoutS: c.timeoutS, gzip: gz && !GZ.off, live: false }, x.json, realSleep);
       reqs++;
       if (r.gzipRefused) { gz = false; st.gzip = false; st.gzipNote = "refused gzip on " + new Date().toISOString().slice(0, 10); err(safeUrl(o.url) + " refused gzip: sending uncompressed JSON (remembered; --compression gzip tries again)"); }
+      const done = ack(ak, x, r.ok);
       if (r.ok) {
         spans += x.spans; rejected += r.rejected; if (r.msg) msgs.push(r.msg);
-        for (const t of x.turns) {
-          const k = tk(t); const n = (left.get(k) ?? 1) - 1; left.set(k, n);
-          if (n <= 0 && !failed.has(k)) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); sent.add(k); sess.add(t.path); }
-        }
+        for (const t of done) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); sent.add(tkey(t)); sess.add(t.path); }
         st.last = Date.now(); saveState(o.url, st); // an interrupted run keeps what got through
-      } else { bad++; msgs.push(r.msg); for (const t of x.turns) failed.add(tk(t)); }
+      } else { bad++; msgs.push(r.msg); }
     }
     if (o.compression === "gzip" && !st.gzip && bad === 0 && bs.length) { st.gzip = true; st.gzipNote = ""; }
     saveState(o.url, st);
@@ -327,12 +343,14 @@ function liveExport(args: string[]): number {
   const sendWith = (timeoutS: number) => (turns: XTurn[]): boolean => {
     let all = true;
     fxDelta(turns, st, false);
-    for (const x of batches(turns, batch, MAX_BYTES, c)) {
+    const bs = batches(turns, batch, MAX_BYTES, c); const ak = acks(bs);
+    for (const x of bs) {
       const r = sendBatch({ url, headers: hx.headers, timeoutS, gzip: gz && !GZ.off, live: true }, x.json, realSleep);
       if (r.gzipRefused) { gz = false; st.gzip = false; st.gzipNote = "refused gzip on " + new Date().toISOString().slice(0, 10); err(safeUrl(url) + " refused gzip: sending uncompressed JSON"); }
+      const done = ack(ak, x, r.ok);
       if (!r.ok) { all = false; if (L.fails === 0) err("otlp: " + r.msg + " — retrying with backoff"); continue; }
       if (r.msg) err("otlp: " + r.msg);
-      for (const t of x.turns) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); }
+      for (const t of done) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); }
       st.last = Date.now(); saveState(url, st);
     }
     return all;
