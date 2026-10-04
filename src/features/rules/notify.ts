@@ -88,7 +88,7 @@ export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boo
     if (t.at - last >= cfg.throttleSec * 1000) {
       lastBell.set(s.path, t.at);
       if (cfg.bell) IO.bell();
-      if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), r.prefix + titleOf(s).slice(0, 120));
+      if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), (v.hint ? v.hint + " " : "") + r.prefix + titleOf(s).slice(0, 120)); // a guess (approval?) leads, like the approval rule's prefix
     }
   }
   if (cmdOn && r.notify && cfg.command.length && cfg.on.indexOf(t.state) >= 0) {
