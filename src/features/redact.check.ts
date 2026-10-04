@@ -54,5 +54,12 @@ const all = evs.map((e) => e.text + e.full).join(" ");
 ok("content faked", all.indexOf("ACME") < 0 && all.indexOf("acme") < 0, all);
 ok("tool name kept", (evs[1] ?? evs[0]).text.startsWith("Bash\u0000"), (evs[1] ?? evs[0]).text);
 
+// a line with an OSC 8 link: the escape (url) bytes stay as they are, only the visible text is scrubbed
+const esc = "\x1b]8;;agentglass://open/claude/" + user + "\x1b\\";
+const lk = "\x1b[1m" + esc + "home of " + user + "\x1b]8;;\x1b\\\x1b[0m";
+const sl = screenOut(lk);
+ok("link escape untouched", sl.indexOf(esc) === 4 && sl.indexOf("\x1b]8;;\x1b\\") > 0, sl);
+ok("link text scrubbed", sl.slice(sl.indexOf(esc) + esc.length).indexOf(user) < 0, sl);
+
 console.log(bad ? bad + " failed" : "ok");
 process.exit(bad ? 1 : 0);

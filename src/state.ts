@@ -4,12 +4,13 @@ import type { Ev, Sess } from "./model/types.ts";
 import type { Clause } from "./features/query/types.ts";
 import { screenOut } from "./hooks.ts";
 
-export type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "help" | "view"; // view = a full-screen feature view (S.fview names it)
+export type Mode = "list" | "transcript" | "detail" | "input" | "confirm" | "help" | "view" | "palette"; // view = a full-screen feature view (S.fview names it); palette = Ctrl+K over the prevMode view
 export interface TV {
   s: Sess; evs: Ev[]; off: number; ep: string; scroll: number; follow: boolean; expand: boolean; lines: string[]; lw: number; ln: number; lexp: boolean;
   cur: number; lineEv: number[]; lineStart: number[]; // event cursor + rendered-line ↔ event maps
   focusKind: string; focusTs: string; focusText: string; // jump target when opened from the preview; focusText may instead be the event's id
   limit: number; // -1 = all events; else only evs[0..limit) are laid out (replay)
+  from: number; // -1 = the last 6 MB (tail); else opened by a link at this cursor: read from just before it (openTranscriptAt)
 }
 // detail layer: one event (tool call + its result) fully expanded
 export interface DV { idx: number; lines: string[]; plain: string; files: string[]; fileRow: number[]; foldRow: number[]; foldId: number[]; fsel: number; scroll: number; title: string; lw: number }

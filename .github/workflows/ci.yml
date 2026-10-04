@@ -1,41 +1,74 @@
 name: CI
+# one run per change: pushes to main, and pull requests (a branch push without a PR runs nothing; a PR push runs once)
 on:
-  push: { branches: ["**"] }
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**", "LICENSE"]
   pull_request:
+    paths-ignore: ["**/*.md", "docs/**", "LICENSE"]
 permissions: { contents: read }
 concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
 jobs:
   check:
-    name: check ${{ matrix.os }}
+    # every check and test runs on both OSes, split across shards (scripts/check.sh CHECK_SHARD); shard 1 builds the
+    # release binary, runs the tests that use it and smoke-tests it
+    name: check ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.shards }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20 # a hung test fails fast instead of holding the runner for 6 h (a cold run takes ~3 min)
+    timeout-minutes: 15 # a hung test fails fast instead of holding the runner for 6 h (a cold shard takes ~3 min)
     strategy:
       fail-fast: false
-      matrix: { os: [ubuntu-24.04, macos-14] }
+      matrix:
+        include:
+          - { os: ubuntu-24.04, shard: 1, shards: 3 }
+          - { os: ubuntu-24.04, shard: 2, shards: 3 }
+          - { os: ubuntu-24.04, shard: 3, shards: 3 }
+          - { os: macos-14, shard: 1, shards: 3 }
+          - { os: macos-14, shard: 2, shards: 3 }
+          - { os: macos-14, shard: 3, shards: 3 }
+    env:
+      SCRIPTC_CACHE: ${{ matrix.os == 'macos-14' && '~/Library/Caches/scriptc' || '~/.cache/scriptc' }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
+      - id: node
+        uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - uses: actions/cache@v4 # npm's download cache: the scriptc install skips the registry
-        with: { path: ~/.npm, key: "npm-scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}" }
-      - run: npm i -g --prefer-offline --no-audit --no-fund scriptc@0.1.7
+      # scriptc itself, installed once per scriptc + Node + OS + arch into its own prefix
+      - id: scriptc-tool
+        uses: actions/cache@v4
+        with: { path: ~/.scriptc-tool, key: "scriptc-tool-0.1.7-${{ steps.node.outputs.node-version }}-${{ runner.os }}-${{ runner.arch }}" }
+      - if: steps.scriptc-tool.outputs.cache-hit != 'true'
+        run: npm i -g --prefix ~/.scriptc-tool --no-audit --no-fund scriptc@0.1.7
+      - run: echo "$HOME/.scriptc-tool/bin" >> "$GITHUB_PATH"
       - if: runner.os == 'Linux' # the runner image usually has both
         run: command -v clang >/dev/null && command -v sqlite3 >/dev/null || { sudo apt-get update && sudo apt-get install -y clang sqlite3; }
       # scriptc's persistent build cache (validated per input, keyed on the output path): unchanged checks skip codegen
-      # and linking. Exact key = this tree's sources; otherwise the newest cache for this scriptc + OS + arch
+      # and linking. Exact key = this tree's sources; otherwise the newest cache for this shard
       - id: scriptc-cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ runner.os == 'macOS' && '~/Library/Caches/scriptc' || '~/.cache/scriptc' }}
-          key: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/**', 'testdata/**', 'scripts/*.sh', 'build.sh') }}
-          restore-keys: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-
-      # builds the release binary (./agentglass) in parallel with the checks; the shell tests run it
+          path: ${{ env.SCRIPTC_CACHE }}
+          key: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}of${{ matrix.shards }}-${{ hashFiles('src/**', 'testdata/**', 'scripts/*.sh', 'build.sh') }}
+          restore-keys: scriptc-0.1.7-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}of${{ matrix.shards }}-
       - run: sh scripts/check.sh
-        env: { AGENTGLASS_OUT: agentglass, CHECK_BIN_FLAGS: "", SCRIPTC_CACHE_MAX_MB: "2048" }
-      - if: ${{ !cancelled() && steps.scriptc-cache.outputs.cache-hit != 'true' && github.event_name == 'push' }}
+        env:
+          CHECK_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
+          AGENTGLASS_OUT: agentglass
+          CHECK_BIN_FLAGS: ""
+          SCRIPTC_CACHE_MAX_MB: "4096"
+      - run: du -sh ${{ env.SCRIPTC_CACHE }} || true
+      - if: ${{ !cancelled() && steps.scriptc-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
-          path: ${{ runner.os == 'macOS' && '~/Library/Caches/scriptc' || '~/.cache/scriptc' }}
+          path: ${{ env.SCRIPTC_CACHE }}
           key: ${{ steps.scriptc-cache.outputs.cache-primary-key }}
-      - run: ./agentglass --version && ./agentglass --version --json && ./agentglass --json --limit 1 >/dev/null
+      - if: matrix.shard == 1
+        run: ./agentglass --version && ./agentglass --version --json && ./agentglass --json --limit 1 >/dev/null
+  # one status for the whole matrix: green only when every shard on both OSes passed
+  ci:
+    if: ${{ always() }}
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: test "${{ needs.check.result }}" = success

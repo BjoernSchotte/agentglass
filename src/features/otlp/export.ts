@@ -336,7 +336,7 @@ function liveExport(args: string[]): number {
 // first in line: the generic CLI handler would take `export --json` for a --json snapshot (and --watch for plain JSONL)
 H.cli.unshift((args: string[]): boolean => {
   if (args.indexOf("--watch") >= 0 && args.indexOf("--otlp") >= 0) { S.cli = true; const rc = liveExport(args); if (rc >= 0) process.exit(rc); return true; }
-  if (args[0] !== "export") return false;
+  if (args[0] !== "export" || args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) return false; // export --help: the generic help handler
   S.cli = true;
   const c = loadCfg();
   const p = parseExport(args, c, Date.now(), envMap());
