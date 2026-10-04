@@ -22,7 +22,11 @@ eq("all", ids(), "c1,k1,x1");
 onInput("/"); eq("input open", S.mode + "/" + S.inputAction, "input/query");
 type("harness is codex");
 eq("live re-filter", ids(), "x1");
-type(" and tool is");                                   // incomplete: needs a value
+type(" an");                                            // on the way to "and": not a text search for "an"
+eq("partial and keeps last valid", ids(), "x1");
+type("d");
+eq("dangling and: error, last valid stays", ids() + " " + S.inputErr, "x1 \"and\" needs a filter after it (column 18)");
+type(" tool is");                                       // incomplete: needs a value
 eq("prefix keeps last valid", ids(), "x1"); eq("inline error", S.inputErr, "tool is …: needs a value (column 27)");
 onInput("enter"); eq("enter on invalid stays open", S.mode, "input");
 onInput("esc"); eq("esc cancels to previous", print(localFor("Sessions")), ""); eq("all back", ids(), "c1,k1,x1"); eq("error cleared", S.inputErr, "");

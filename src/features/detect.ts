@@ -84,13 +84,14 @@ function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {
   const i = sh.args.indexOf(" -c ");
   return i >= 0 ? sh.args.slice(i + 4, i + 34) : base(sh.args.split(" ")[0] ?? "");
 }
-export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean; noAsk?: boolean } // asks: the agent's terminal title says it waits for approval; noAsk: the harness never asks (pi)
+export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean; noAsk?: boolean; mayGuess?: boolean; guess?: boolean } // asks: the agent's terminal title says it waits for approval; noAsk: the harness never asks (pi); mayGuess: no title to read for a harness that hides its approval dialog (Gemini outside tmux); guess: approvalGuess holds
 function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 // a metric's value for a rule: v -1 = absent (its preconditions do not hold, the rule cannot fire); lv: the level the agent
-// itself asserts (1: Gemini's approval title), whatever the threshold; at: recorded time of the newest record behind v
-export interface MVal { v: number; tool: string; cmd: string; cpu: string; at: number; lv: number }
-export function absent(): MVal { return { v: -1, tool: "", cmd: "", cpu: "", at: 0, lv: 0 }; }
-function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal { return { v, tool, cmd, cpu, at, lv: 0 }; }
+// itself asserts (1: Gemini's approval title), whatever the threshold; at: recorded time of the newest record behind v;
+// hint: a guess appended to the alert's message ("approval?": approvalGuess)
+export interface MVal { v: number; tool: string; cmd: string; cpu: string; at: number; lv: number; hint: string }
+export function absent(): MVal { return { v: -1, tool: "", cmd: "", cpu: "", at: 0, lv: 0, hint: "" }; }
+function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal { return { v, tool, cmd, cpu, at, lv: 0, hint: "" }; }
 // seconds a tool call has been open while the tree is quiet (avg over samples < cpuBelow) and no tool command started
 // within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once
 export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec: number): MVal {
@@ -130,6 +131,17 @@ export function approvalNote(o: Obs): string {
   const a = approvalWait(o, 2, 7, 5);
   if (a.lv > 0) return "approval dialog open"; // the agent says so itself (Gemini logs the call only once it ran)
   return a.v > 20 ? a.tool + " pending " + dur(a.v) + ", cpu " + a.cpu + "%" : "";
+}
+// heuristic (no title to read: not in tmux): a harness that logs a call only once it ran (Gemini, may: the caller says so)
+// shows its approval dialog as a finished turn when the reply has text (idle, ending in it), as thinking when it has none
+// (busy, ending in thoughts); either way the tree is quiet (< 2 % CPU) for ≥ 3 s (2 samples at the 1.5 s alarm cadence).
+// A real finished turn (or a slow model reply) looks the same: the alert that fires only gets an "approval?" hint
+export function approvalGuess(o: Obs, may: boolean): boolean {
+  if (!may || o.asks || o.cpu.length < 2) return false;
+  const e = o.evs.length ? o.evs[o.evs.length - 1] : null;
+  if (!e || e.kind !== (o.busy ? "thinking" : "assistant")) return false;
+  for (const c of o.cpu.slice(-2)) if (c >= 2) return false;
+  return true;
 }
 // which alarm a look raises: approval first (a Gemini approval dialog looks like a finished turn in its log), then busy →
 // idle or a whole turn between two looks (fresh: a new prompt in the tail); "" = none

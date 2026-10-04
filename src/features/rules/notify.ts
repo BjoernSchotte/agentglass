@@ -1,5 +1,5 @@
 // agentglass — alert outputs (rules-config spec §5, §6): bell + desktop notification (throttled per session), and the
-// notify command: an argv (never a shell), the alert JSON on stdin, bounded (≤ 4 at once) and killed after 10 s
+// notify command: an argv (never a shell), the alert JSON on stdin, bounded (≤ 4 at once, ≤ 32 more queued) and killed after 10 s
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
 import { OS } from "../../platform/index.ts";
@@ -21,7 +21,10 @@ export const IO = {
   toast: (msg: string): void => { say("warn", msg); },
 };
 const lastBell = new Map<string, number>(); // path → last bell/notification (shared throttle)
-export const CMD = { running: 0, max: 4, killMs: 10000, graceMs: 2000 }; // SIGTERM at killMs, SIGKILL graceMs later
+interface Job { argv: string[]; env: { [k: string]: string }; input: string }
+// SIGTERM at killMs, SIGKILL graceMs later; past max running, jobs wait in queue (oldest first, ≤ qmax): a burst of
+// transitions (every live session's alert at TUI start) runs in turn instead of being dropped
+export const CMD = { running: 0, max: 4, killMs: 10000, graceMs: 2000, queue: [] as Job[], qmax: 32 };
 // the command's environment: what a notifier needs (PATH, locale, desktop bus, proxy) — never the rest of agentglass's
 // own environment, which can hold API keys and tokens
 const ENV_KEEP = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
@@ -49,23 +52,31 @@ export function cmdSubs(r: Rule, v: MVal, t: Trans, s: Sess): Map<string, string
   for (const k of ["title", "project"]) m.set(k, screenOut(m.get(k) ?? ""));
   return m;
 }
-// start the notify command for one transition: "" = started, else why not
+// start the notify command for one transition (or queue it): "" = started or queued, else why not
 export function runCommand(cfg: NotifyCfg, j: JAlert, subs: Map<string, string>): string {
   if (!cfg.command.length || cfg.on.indexOf(j.state) < 0) return "not configured for " + j.state;
-  if (CMD.running >= CMD.max) return String(CMD.max) + " notify commands running — dropped";
-  const argv = argvFor(cfg.command, subs);
-  const env = cmdEnv(j);
+  const job: Job = { argv: argvFor(cfg.command, subs), env: cmdEnv(j), input: screenOut(JSON.stringify(j)) + "\n" };
+  if (CMD.running < CMD.max) return spawnJob(job);
+  if (CMD.queue.length >= CMD.qmax) return "notify queue full (" + String(CMD.qmax) + " waiting) — dropped";
+  CMD.queue.push(job);
+  return "";
+}
+// a slot freed: start queued jobs in order (one that fails to start says so and the next one gets the slot)
+function drain(): void {
+  while (CMD.running < CMD.max && CMD.queue.length) { const why = spawnJob(CMD.queue.shift() as Job); if (why) IO.toast("rules: " + why); }
+}
+function spawnJob(job: Job): string {
   let done = false;
   try {
-    const ch = spawn(argv[0] ?? "", argv.slice(1), { stdio: ["pipe", "ignore", "ignore"], env });
+    const ch = spawn(job.argv[0] ?? "", job.argv.slice(1), { stdio: ["pipe", "ignore", "ignore"], env: job.env });
     CMD.running++;
-    const end = (): void => { if (done) return; done = true; CMD.running--; clearTimeout(k); };
+    const end = (): void => { if (done) return; done = true; CMD.running--; clearTimeout(k); drain(); };
     // SIGTERM first; a command that ignores it is killed for good, so it cannot hold a slot forever
     const k = setTimeout(() => { ch.kill(); setTimeout(() => { if (!done) ch.kill("SIGKILL"); }, CMD.graceMs); }, CMD.killMs);
     ch.on("exit", (c: number | null) => { end(); });
     ch.on("error", (e: Error) => { end(); });
     const w = ch.stdin;
-    if (w) { w.on("error", (e: Error) => { /* the command did not read its stdin */ }); w.write(screenOut(JSON.stringify(j)) + "\n"); w.end(); }
+    if (w) { w.on("error", (e: Error) => { /* the command did not read its stdin */ }); w.write(job.input); w.end(); }
   } catch (e) { return "notify command failed: " + String(e); }
   return "";
 }
@@ -77,7 +88,7 @@ export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boo
     if (t.at - last >= cfg.throttleSec * 1000) {
       lastBell.set(s.path, t.at);
       if (cfg.bell) IO.bell();
-      if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), r.prefix + titleOf(s).slice(0, 120));
+      if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), (v.hint ? v.hint + " " : "") + r.prefix + titleOf(s).slice(0, 120)); // a guess (approval?) leads, like the approval rule's prefix
     }
   }
   if (cmdOn && r.notify && cfg.command.length && cfg.on.indexOf(t.state) >= 0) {

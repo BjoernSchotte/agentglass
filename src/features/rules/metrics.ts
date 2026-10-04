@@ -13,11 +13,15 @@ function val(v: number, at: number): MVal { const m = absent(); m.v = v; m.at = 
 // turnAt: when this run saw the session's last turn finish (0 = none, or busy since)
 export function procMetric(r: Rule, o: Obs, turnAt: number): MVal {
   switch (r.metric) {
-    case "turn_done": return turnAt > 0 && !o.busy ? val(Math.max(0, (o.now - turnAt) / 1000), turnAt) : absent();
+    case "turn_done": {
+      if (turnAt <= 0 || o.busy) return absent();
+      const m = val(Math.max(0, (o.now - turnAt) / 1000), turnAt); if (o.guess) m.hint = "approval?";
+      return m;
+    }
     case "approval_wait": return approvalWait(o, prm(r, "cpu_below"), prm(r, "samples"), prm(r, "grace"));
     case "repeat_run": return repeatRun(o);
     case "command_age": return commandAge(o);
-    case "stalled": return stalledFor(o, prm(r, "cpu_below"), prm(r, "samples"));
+    case "stalled": { const m = stalledFor(o, prm(r, "cpu_below"), prm(r, "samples")); if (o.guess && m.v >= 0) m.hint = "approval?"; return m; }
     case "spinning": return spinningFor(o, prm(r, "cpu_above"), prm(r, "samples"));
   }
   return absent();

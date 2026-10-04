@@ -137,12 +137,16 @@ export function parse(src: string): Parsed {
   if (tk.err) return { cs: [], err: tk.err, notes: [] };
   const toks = tk.toks; const cs: Clause[] = [];
   let i = 0; let neg = false; let negCol = -1;
+  let conn: Tok | null = null; // the last connector while no filter followed it yet
   while (i < toks.length) {
     const t = toks[i];
     if (!t.q && (t.s === "," || t.s.toLowerCase() === "and")) {
       if (neg) return fail(cs, "\"not\" needs a filter after it", negCol);
-      i++; continue;
+      const andAfterComma = conn !== null && conn.s === "," && t.s.toLowerCase() === "and"; // "a, and b": one connector
+      if ((conn && !andAfterComma) || !cs.length) return fail(cs, "\"" + t.s + "\" needs a filter before it", t.col); // leading or doubled
+      conn = t; i++; continue;
     }
+    if (!word(t, "not")) conn = null;
     if (word(t, "or")) return fail(cs, "\"or\" is not supported; use is_one_of (tool is_one_of Bash Edit)", t.col);
     if (word(t, "not")) { neg = !neg; negCol = t.col; i++; continue; }
     // -<key> <op> … = not <key> <op> …; -word = text !~ word
@@ -179,6 +183,7 @@ export function parse(src: string): Parsed {
     neg = false;
   }
   if (neg) return fail(cs, "\"not\" needs a filter after it", negCol);
+  if (conn) return fail(cs, "\"" + conn.s + "\" needs a filter after it", conn.col);
   return { cs, err: null, notes: [] };
 }
 
