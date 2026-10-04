@@ -3,7 +3,7 @@
 import { width, vwidth, fitStyled } from "../../util/text.ts";
 import { S, say } from "../../state.ts";
 import { H, tabAt, display } from "../../hooks.ts";
-import type { Proc } from "../../model/types.ts";
+import type { Proc, Sess } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
 import { sessions, buildView, loadHead } from "../../model/sessions.ts";
 import { buildProcView } from "../../model/procs.ts";
@@ -325,8 +325,7 @@ H.keys.push((mode: string, k: string): boolean => {
 });
 
 // ── hooks into the list and the process table ──
-H.listFilter.push((s) => { const f = tabFilter("Sessions", "list"); return f === EMPTY || matchingPaths(f).has(s.path); });
-H.listFiltering.push(() => tabFilter("Sessions", "list") !== EMPTY);
+H.listFilter.push(() => { const f = tabFilter("Sessions", "list"); if (f === EMPTY) return null; const m = matchingPaths(f); return (s: Sess): boolean => m.has(s.path); });
 H.procFilter.push((p: Proc): boolean => {
   if (!S.pins.length) return true;
   const f = compiledOf(S.pins, "procs"); if (f === EMPTY) return true;
