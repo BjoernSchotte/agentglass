@@ -94,7 +94,7 @@ export function accOut(a: Acc, keepIds = 64): Obj {
   for (const k of [...a.days.keys()]) { const d = a.days.get(k); if (d) days[k] = dayOut(d); }
   return {
     off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids].slice(-keepIds), x: a.x, xM: a.xM, pk: a.pk,
-    t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del, a.uc, a.rs], bill: a.bill, plan: a.plan, bs: a.billSrc, t0: a.t0, al: a.al, days, v: refsOut(a.vcs), hd: a.hd,
+    t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del, a.uc, a.rs], bill: a.bill, plan: a.plan, bs: a.billSrc, t0: a.t0, al: a.al, days, v: refsOut(a.vcs), hd: a.hd, tl: a.tl,
   };
 }
 export function accIn(o: Obj): Acc {
@@ -107,6 +107,6 @@ export function accIn(o: Obj): Acc {
   return {
     off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: own(str(o["model"])), pend: new Map<string, Pend>(), ep: own(str(o["ep"])), x: nums(o["x"]), xM: num(o["xM"]), pk: own(str(o["pk"])), sub: false,
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
-    bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), calls: [], lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]),
+    bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), calls: [], lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
   };
 }

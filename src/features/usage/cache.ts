@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { readText } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
-import { sessions, HEADS, type HeadMemo } from "../../model/sessions.ts";
+import { sessions, HEADS, TAILS, type HeadMemo, type TailMemo } from "../../model/sessions.ts";
 import type { Sess } from "../../model/types.ts";
 import { ledger, indexing, unread, LAZY, accOf } from "./ledger.ts";
 import { REDACT } from "../redact-on.ts";
@@ -90,14 +90,23 @@ LAZY.rows = (path: string, a: Acc): boolean => {
   const calls = loadCallsFrom(CALLS_DIR, path, a); if (!calls) return false;
   a.calls = calls; a.lastCall = calls.length - 1; written.set(path, a.off); return true;
 };
-// head memos live in the session's ledger entry (reset with it when the log is rewritten); never under --redact, where a
-// read sees faked texts and a replay could show real ones
+// head and tail memos live in the session's ledger entry (reset with it when the log is rewritten); never under --redact,
+// where a read sees faked texts and a replay could show real ones
 if (!REDACT) {
   HEADS.get = (s: Sess): HeadMemo | null => {
     const a = ledger.get(s.path); if (!a || a.hd.length < 3 || a.ep !== s.ep) return null;
     return { w: Number(a.hd[0]), h: Number(a.hd[1]), x: a.hd[2] ?? "", f: a.hd.slice(3) };
   };
   HEADS.put = (s: Sess, m: HeadMemo): void => { const a = accOf(s); a.hd = [String(m.w), String(m.h), m.x].concat(m.f); L.idx++; };
+  TAILS.get = (s: Sess): TailMemo | null => {
+    const a = ledger.get(s.path); const t = a ? a.tl : []; if (!a || t.length < 6 || a.ep !== s.ep) return null;
+    const k = t[2] ?? "";
+    return { size: Number(t[0]), x: t[1] ?? "", ev: k ? { kind: k, text: t[3] ?? "", ts: t[4] ?? "", id: t[5] ?? "", full: "" } : null, f: t.slice(6) };
+  };
+  TAILS.put = (s: Sess, m: TailMemo): void => {
+    const a = accOf(s); const e = m.ev;
+    a.tl = [String(m.size), m.x, e ? e.kind : "", e ? e.text : "", e ? e.ts : "", e ? e.id : ""].concat(m.f); L.idx++;
+  };
 }
 H.firstScan.push(load); // not at import: --help, --version and the agent help never read it
 // a one-shot CLI run keeps what it indexed for the next run (also on an error exit: what was saved is consistent)

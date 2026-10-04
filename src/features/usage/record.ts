@@ -45,6 +45,7 @@ export interface Acc {
   dn: Pend[]; // calls the current line closed (not persisted: the scraper reads and clears it per line)
   vk: Set<string>; vkn: number; // "<k>\t<v>" of vcs (gcall spans aside) and the vcs length it mirrors (not persisted)
   hd: string[]; // the head memo (model/sessions.ts HeadMemo) as [w, h, x, field, value, …]; [] none
+  tl: string[]; // the tail memo (TailMemo) as [size, x, kind, text, ts, id, field, value, …] (kind "" = no event); [] none
 }
 // one scraped git reference: k = commit (v = sha as printed) | pr | issue | link (v = canonical URL; link = a commit URL) |
 // gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
@@ -68,7 +69,7 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Set<string>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [] };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [] };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time

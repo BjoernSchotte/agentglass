@@ -52,11 +52,17 @@ e=$(run errors --format json --since 1d)
 echo "$e" | grep -q 'npm test' || { echo "FAIL errors lost the cached row"; echo "$e"; fail=1; }
 echo "$e" | grep -q 'make' || { echo "FAIL errors lacks the new row"; echo "$e"; fail=1; }
 
-# nothing new to index: the cache is not rewritten
+# nothing new to index (and the head/tail memos of this log already kept): the cache is not rewritten
 inode() { ls -i "$1" | awk '{print $1}'; } # a save renames a new file into place
+run --json > /dev/null
 before=$(inode "$c/ledger.json")
 run --json > /dev/null
 eq "unchanged cache kept" "$(inode "$c/ledger.json")" "$before"
+
+# a warm run (heads and tails replayed from their memos) prints what a cold one does
+rm -rf "$c"; cold=$(run --json); warm=$(run --json)
+eq "warm --json = cold --json" "$warm" "$cold"
+echo "$warm" | grep -q '"title":"hi"' || { echo "FAIL warm title: $warm"; fail=1; }
 
 [ $fail = 0 ] && echo "cache cli: all checks passed"
 exit $fail

@@ -192,7 +192,7 @@ function snapshot(o: Opts): void {
   const sel = o.limit > 0 ? list.slice(0, o.limit) : list;
   // everything indexed first (git: each worktree's peers too), then the rows: the git attribution is built once, not
   // again for every session that changed the picture
-  for (const s of sel) { loadHead(s); loadTail(s); complete(s); for (const c of s.subs) complete(c); peers(s); }
+  for (const s of sel) { loadHead(s); loadTail(s, true); complete(s); for (const c of s.subs) complete(c); peers(s); }
   for (const s of sel) res.push(jsonSess(s));
   if (o.git) saveVcs(); // closed sessions' git log results: the next run reads them instead of spawning
   out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS, o.json));

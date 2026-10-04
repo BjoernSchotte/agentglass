@@ -50,12 +50,13 @@ function needsHeads(f: Compiled): boolean { for (const c of f.cs) if (HEADKEYS.i
 let headsLeft = 0;
 // ≤ 100 ms of head reads per tick while the Sessions filter needs them (the ledger's indexing slice); the list fills in as
 // they arrive. Pending reads count as backlog: the tick runs at the indexing burst cadence instead of its stretched idle one
-// (a restored repo pin would otherwise match nothing for minutes)
+// (a restored repo pin would otherwise match nothing for minutes). While a filter is being typed only ≤ 12 ms: a key must
+// never wait behind a 100 ms batch of head reads (#19)
 H.onTick.push(() => {
   const f = tabFilter("Sessions", "list"); headsLeft = 0;
   if (f === EMPTY || !needsHeads(f)) return;
-  const t0 = Date.now(); let read = 0;
-  for (const s of sessions.values()) { if (s.headDone) continue; if (Date.now() - t0 < 100) { loadHead(s); read++; } else headsLeft++; }
+  const t0 = Date.now(); let read = 0; const slice = S.mode === "input" ? 12 : 100;
+  for (const s of sessions.values()) { if (s.headDone) continue; if (Date.now() - t0 < slice) { loadHead(s); read++; } else headsLeft++; }
   if (read) S.dirty = true;
 });
 H.backlog.push(() => headsLeft > 0);

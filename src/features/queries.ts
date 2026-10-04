@@ -388,7 +388,7 @@ function list(args: string[]): void {
   const ss = cliSelect(cf, cands);
   ss.sort((a, b) => b.mtime - a.mtime);
   const rows: Obj[] = [];
-  for (const s of o.limit > 0 ? ss.slice(0, o.limit) : ss) { loadHead(s); loadTail(s); complete(s); const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = repoShown(s); rows.push(r); }
+  for (const s of o.limit > 0 ? ss.slice(0, o.limit) : ss) { loadHead(s); loadTail(s, true); complete(s); const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = repoShown(s); rows.push(r); }
   out(formatRows(rows, o.f, false, LIST_COLS, SESS_FIELDS, false));
 }
 function errors(args: string[]): void {
