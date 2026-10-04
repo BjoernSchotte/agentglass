@@ -150,8 +150,18 @@ eq("gemini conservation", sum(gt, GS.id), ledger(GS, false));
 const PS = sess("pi", "55555555-5555-4555-8555-555555555555", F + "pi/.pi/agent/sessions/--home-u-proj--/2026-09-01T10-00-00-000Z_55555555-5555-4555-8555-555555555555.jsonl", "");
 const pt = finish(newSessB(PS, []), O);
 eq("pi", pt.length ? tree(pt[0]) : "", "invoke_agent pi<-1, chat anthropic/claude-sonnet-4.5<0, execute_tool bash npm<0, chat claude-haiku-4-5<0");
-if (pt.length) eq("pi response model + providers", pt[0].spans[1].respModel + " " + pt[0].spans[1].provider + " " + pt[0].spans[3].provider, "anthropic/claude-4.5-sonnet-20250929 openrouter anthropic");
+if (pt.length) eq("pi response model + providers (the model's vendor; the logged id kept apart)", pt[0].spans[1].respModel + " " + pt[0].spans[1].provider + "@" + pt[0].spans[1].provId + " " + pt[0].spans[3].provider + "@" + pt[0].spans[3].provId, "anthropic/claude-4.5-sonnet-20250929 anthropic@openrouter anthropic@anthropic");
 eq("pi conservation", sum(pt, PS.id), ledger(PS, false));
+{ // a /skill:name prompt names its skill on the turn root, as a Claude slash-command skill does
+  const pd = tmp + "/pi-skill/--home-u-proj--"; mkdirSync(pd, { recursive: true });
+  const pp = pd + "/2026-09-01T10-00-00-000Z_66666666-6666-4666-8666-666666666666.jsonl";
+  const blk = "<skill name=\"todo-style\" location=\"/home/u/.pi/agent/skills/todo-style/SKILL.md\">\nReferences are relative to /home/u/.pi/agent/skills/todo-style.\n\n# Todo style\n</skill>\n\nbuild it";
+  writeFileSync(pp, "{\"type\":\"session\",\"version\":3,\"id\":\"66666666-6666-4666-8666-666666666666\",\"timestamp\":\"2026-09-01T10:00:00.000Z\",\"cwd\":\"/home/u/proj\"}\n" +
+    "{\"type\":\"message\",\"id\":\"u1\",\"timestamp\":\"2026-09-01T10:00:01.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":" + JSON.stringify(blk) + "}]}}\n" +
+    "{\"type\":\"message\",\"id\":\"a1\",\"timestamp\":\"2026-09-01T10:00:05.000Z\",\"message\":{\"role\":\"assistant\",\"provider\":\"cliproxy\",\"model\":\"claude-sonnet-5-5\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"usage\":{\"input\":5,\"output\":2,\"cost\":{\"total\":0.001}},\"stopReason\":\"stop\"}}\n");
+  const st = finish(newSessB(sess("pi", "66666666-6666-4666-8666-666666666666", pp, ""), []), O);
+  eq("pi /skill: the turn root names the skill", st.length ? st[0].spans[0].skill + " " + st[0].spans[1].provider + "@" + st[0].spans[1].provId : "", "todo-style anthropic@cliproxy");
+}
 
 // ── opencode 2.x rows: one chat per assistant message ──
 const db = tmp + "/opencode.db";
@@ -175,6 +185,7 @@ if (kt.length === 2) eq("kiro times + usage", new Date(kt[0].t1).toISOString() +
 const FS = sess("fx", "fx-77777777", F + "fx/.fx/sessions/fx-77777777/events.jsonl", "");
 const ft = finish(newSessB(FS, []), O);
 eq("fx", ft.map((t: XTurn) => tree(t) + " " + String((t.t1 - t.t0) / 1000)).join(" ; "), "invoke_agent fx<-1, chat fx-large<0 est, execute_tool shell wc<0 est 30 ; invoke_agent fx<-1, chat fx-large<0 est, execute_tool shell wc<0 !tool_error est 12");
+if (ft.length === 2) eq("fx cumulative totals on the newest turn (the exporter sends their growth)", ft[0].fx.join("/") + " | " + ft[1].fx.join("/"), " | 3000/" + String(ft[1].spans[1].nOut) + "/" + String(ft[1].spans[1].cr) + "/" + String(ft[1].spans[1].cw) + "/" + String(ft[1].spans[1].cost) + "/" + String(ft[1].spans[1].unk));
 if (ft.length === 2) eq("fx totals", String(ft[0].spans[1].total) + " " + String(ft[1].spans[1].total) + " " + String(ft[1].spans[1].nIn) + " " + String(ft[1].spans[1].hasUsage) + " " + String(ft[0].spans[1].hasUsage) + " " + String(ft[1].spans[0].hasUsage || ft[1].spans[0].total), "false true 3000 true false false");
 
 rmSync(tmp, { recursive: true, force: true });

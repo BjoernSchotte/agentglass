@@ -4,7 +4,7 @@ import { type Req, requestOf, newReqState, providerOf, inputTokens } from "./req
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
-function show(r: Req | null): string { return r ? [r.key, r.model, r.respModel, r.provider, String(r.providerId), String(r.t0), String(r.t), r.err].join("|") : "null"; }
+function show(r: Req | null): string { return r ? [r.key, r.model, r.respModel, r.provider + (r.logged ? "@" + r.logged : ""), String(r.providerId), String(r.t0), String(r.t), r.err].join("|") : "null"; }
 const TS = "2026-09-01T10:00:02.000Z"; const T = Date.parse(TS);
 
 // claude: one request per message.id (streamed lines share it); API-error lines carry their error type, no model
@@ -27,18 +27,23 @@ eq("gemini", show(requestOf("gemini", null, "{\"id\":\"g1\",\"timestamp\":\"" + 
 eq("gemini calls only", show(requestOf("gemini", null, "{\"id\":\"g1\",\"timestamp\":\"" + TS + "\",\"type\":\"gemini\",\"toolCalls\":[]}", x)), "null");
 
 // opencode 2.x: an assistant row (id from the source, provider logged, start = created); copied fork rows are none
-eq("opencode", show(requestOf("opencode", null, "{\"type\":\"assistant\",\"seq\":1,\"id\":\"msg_1\",\"time\":{\"created\":1000,\"completed\":5000},\"model\":{\"id\":\"gpt-5.2\",\"providerID\":\"openai\"},\"tokens\":{}}", x)), "msg_1|gpt-5.2||openai|true|1000|5000|");
-eq("opencode no id", show(requestOf("opencode", null, "{\"type\":\"assistant\",\"seq\":4,\"time\":{\"created\":1000,\"completed\":5000},\"model\":{\"id\":\"m\",\"providerID\":\"p\"},\"tokens\":{}}", x)), "seq:4|m||p|false|1000|5000|");
+eq("opencode", show(requestOf("opencode", null, "{\"type\":\"assistant\",\"seq\":1,\"id\":\"msg_1\",\"time\":{\"created\":1000,\"completed\":5000},\"model\":{\"id\":\"gpt-5.2\",\"providerID\":\"openai\"},\"tokens\":{}}", x)), "msg_1|gpt-5.2||openai@openai|true|1000|5000|");
+eq("opencode no id", show(requestOf("opencode", null, "{\"type\":\"assistant\",\"seq\":4,\"time\":{\"created\":1000,\"completed\":5000},\"model\":{\"id\":\"m\",\"providerID\":\"p\"},\"tokens\":{}}", x)), "seq:4|m||p@p|false|1000|5000|");
 eq("opencode copied", show(requestOf("opencode", null, "{\"type\":\"assistant\",\"seq\":1,\"copied\":1,\"time\":{\"created\":1},\"tokens\":{}}", x)), "null");
-eq("opencode 1.x step-finish", show(requestOf("opencode", null, "{\"v1\":1,\"role\":\"assistant\",\"model\":\"claude-x\",\"prov\":\"anthropic\",\"t\":1000,\"mid\":\"msg_9\",\"part\":{\"type\":\"step-finish\",\"tokens\":{}}}", x)), "msg_9|claude-x||anthropic|true|1000|1000|");
+eq("opencode 1.x step-finish", show(requestOf("opencode", null, "{\"v1\":1,\"role\":\"assistant\",\"model\":\"claude-x\",\"prov\":\"anthropic\",\"t\":1000,\"mid\":\"msg_9\",\"part\":{\"type\":\"step-finish\",\"tokens\":{}}}", x)), "msg_9|claude-x||anthropic@anthropic|true|1000|1000|");
 
 // pi: assistant entries with usage; responseModel kept apart
-eq("pi", show(requestOf("pi", null, "{\"type\":\"message\",\"id\":\"e2\",\"timestamp\":\"" + TS + "\",\"message\":{\"role\":\"assistant\",\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4.5\",\"responseModel\":\"anthropic/claude-4.5-sonnet-20250929\",\"usage\":{\"input\":1}}}", x)), "e2|anthropic/claude-sonnet-4.5|anthropic/claude-4.5-sonnet-20250929|openrouter|true|0|" + String(T) + "|");
+eq("pi", show(requestOf("pi", null, "{\"type\":\"message\",\"id\":\"e2\",\"timestamp\":\"" + TS + "\",\"message\":{\"role\":\"assistant\",\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4.5\",\"responseModel\":\"anthropic/claude-4.5-sonnet-20250929\",\"usage\":{\"input\":1}}}", x)), "e2|anthropic/claude-sonnet-4.5|anthropic/claude-4.5-sonnet-20250929|anthropic@openrouter|true|0|" + String(T) + "|");
 eq("pi compaction", show(requestOf("pi", null, "{\"type\":\"compaction\",\"id\":\"c1\",\"timestamp\":\"" + TS + "\",\"model\":\"m\",\"usage\":{\"input\":1}}", x)), "c1|m|||true|0|" + String(T) + "|");
 eq("pi tool result", show(requestOf("pi", null, "{\"type\":\"message\",\"id\":\"e3\",\"timestamp\":\"" + TS + "\",\"message\":{\"role\":\"toolResult\",\"usage\":{\"input\":1}}}", x)), "null");
 eq("kiro/fx: turn grain", show(requestOf("kiro", null, "{\"kind\":\"AssistantMessage\"}", x)) + show(requestOf("fx", null, "{\"event\":{}}", x)), "nullnull");
 
-// providers: logged id first (aliases mapped to semconv names), else by model prefix
+// gen_ai.provider.name, one rule on every span: the model's vendor (a vendor prefix or a known family), else the logged id
+// (aliases mapped to semconv names); a gateway's id (cliproxyapi, openrouter, github-copilot) stays as agentglass.provider.id
+eq("providers: the model's vendor wins over a gateway id", [providerOf("cliproxyapi", "gpt-5.2"), providerOf("openrouter", "anthropic/claude-x"), providerOf("github-copilot", "claude-sonnet-4"), providerOf("cliproxyapi", "my-local-model"), providerOf("vertex", "gemini-2.5-pro"), providerOf("anthropic", "<synthetic>")].join(","),
+  "openai,anthropic,anthropic,cliproxyapi,gcp.gemini,anthropic");
+eq("claude: no logged id kept", show(requestOf("claude", null, "{\"type\":\"assistant\",\"timestamp\":\"" + TS + "\",\"message\":{\"id\":\"msg_x\",\"model\":\"claude-opus-4-5\"}}", x)), "msg_x|claude-opus-4-5||anthropic|true|0|" + String(T) + "|");
+// providers: by model, else the logged id
 eq("providers", [providerOf("", "o3-mini"), providerOf("", "claude-opus-4-5"), providerOf("", "gemini-2.5-pro"), providerOf("", "kimi-k2"), providerOf("openrouter", "x"), providerOf("", "llama3"), providerOf("", "gpt-5.2-codex"), providerOf("google", "x"), providerOf("", "anthropic/claude-x"), providerOf("", "devstral-small"), providerOf("", "grok-4"), providerOf("", "deepseek-v3")].join(","),
   "openai,anthropic,gcp.gemini,moonshot_ai,openrouter,,openai,gcp.gemini,anthropic,mistral_ai,x_ai,deepseek");
 

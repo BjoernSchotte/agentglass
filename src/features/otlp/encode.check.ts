@@ -16,7 +16,7 @@ let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + got + " want " + want); } }
 const T0 = 1767225600123;
 function turn(h: string, key: string): XTurn {
-  const t: XTurn = { h, rootId: "s1", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: T0, t1: T0 + 5000, closed: true, closedBy: "next", compacted: false, ver: "2.1.90", cwd: "/w/app", branch: "main", remote: "", spans: [] };
+  const t: XTurn = { h, rootId: "s1", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: T0, t1: T0 + 5000, closed: true, closedBy: "next", compacted: false, ver: "2.1.90", cwd: "/w/app", branch: "main", remote: "", spans: [], fx: [], fxOn: false };
   const r = newSpan("invoke_agent", "invoke_agent Claude Code", "aaaaaaaaaaaaaaaa", "", T0, "s1"); r.t1 = T0 + 5000; r.model = "claude-sonnet-4-5"; r.models = ["claude-opus-4-5", "claude-sonnet-4-5"]; r.input = "fix the build"; r.output = "done";
   const c = newSpan("chat", "chat claude-sonnet-4-5", "bbbbbbbbbbbbbbbb", r.spanId, T0 + 10, "s1"); c.t1 = T0 + 900; c.model = "claude-sonnet-4-5"; c.provider = "anthropic"; c.respId = "msg_a";
   c.nIn = 10; c.nOut = 5; c.cr = 100; c.cw = 5; c.rs = 0; c.cost = 0.01; c.hasUsage = true; c.bill = "plan"; c.output = "x".repeat(40);
@@ -52,6 +52,14 @@ const ca = attrs(chat);
 eq("chat usage inclusive", [ca.get("gen_ai.usage.input_tokens"), ca.get("gen_ai.usage.output_tokens"), ca.get("gen_ai.usage.cache_read.input_tokens"), ca.get("gen_ai.usage.cache_write.input_tokens"), ca.get("agentglass.usage.cost"), ca.get("agentglass.billing.mode"), ca.get("gen_ai.response.id"), String(ca.has("gen_ai.usage.reasoning.output_tokens"))].join(" "),
   "intValue:\"115\" intValue:\"5\" intValue:\"100\" intValue:\"5\" doubleValue:0.01 stringValue:\"plan\" stringValue:\"msg_a\" false");
 eq("provider semantics", attrs(spans(req([turn("claude", "k#0")], { inputTokens: "provider" }))[1] ?? {}).get("gen_ai.usage.input_tokens") ?? "", "intValue:\"10\"");
+{ // one provider rule across the trace: gen_ai.provider.name from the model; the record's own provider id kept apart
+  const t = turn("pi", "k#0"); t.spans[1].provider = "openai"; t.spans[1].provId = "cliproxyapi"; t.spans[1].model = "gpt-5.2"; t.spans[0].model = "gpt-5.2";
+  const ps = spans(req([t], {})); const r0 = attrs(ps[0] ?? {}); const c1 = attrs(ps[1] ?? {}); const b4 = attrs(ps[4] ?? {});
+  eq("provider: same name on root, chat and tool spans; logged id on the chat span", [r0.get("gen_ai.provider.name"), c1.get("gen_ai.provider.name"), b4.get("gen_ai.provider.name"), c1.get("agentglass.provider.id"), String(r0.has("agentglass.provider.id"))].join(" "),
+    "stringValue:\"openai\" stringValue:\"openai\" stringValue:\"openai\" stringValue:\"cliproxyapi\" false");
+  const f = turn("fx", "k#0"); f.spans[1].total = true;
+  eq("fx: the delta marker", attrs(spans(req([f], {}))[1] ?? {}).get("agentglass.usage.session_delta") ?? "", "boolValue:true");
+}
 const ua = attrs(unp);
 eq("unpriced: no cost, billing mode kept", String(ua.has("agentglass.usage.cost")) + " " + (ua.get("agentglass.billing.mode") ?? ""), "false stringValue:\"unknown\"");
 eq("billing mode only on chat", String(attrs(mcp).has("agentglass.billing.mode") || attrs(bash).has("agentglass.billing.mode")), "false");

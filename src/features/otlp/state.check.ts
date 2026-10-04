@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { statePath, loadState, saveState, lock, unlock, markTurn, marked } from "./state.ts";
+import { statePath, loadState, saveState, lock, unlock, markTurn, marked, markFx } from "./state.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + got + " want " + want); } }
@@ -19,6 +19,7 @@ const st = loadState(U);
 eq("fresh", String(st.sessions.size) + " " + String(st.gzip) + " " + st.endpoint, "0 true https://h.example/v1/traces");
 markTurn(st, "/p/a.jsonl", "claude", "s1", "", "2026-09-01T10:00:00.000Z#0");
 markTurn(st, "/p/a.jsonl", "claude", "s1", "", "2026-09-01T10:05:00.000Z#0");
+markTurn(st, "/f/events.jsonl", "fx", "fx-1", "", "2026-09-01T10:00:00.000Z#0"); markFx(st, "/f/events.jsonl", [100, 10, 50, 5, 0.5, 0], 1788256800000);
 st.gzip = false; st.nativeSince.set("codex", 1788256800000); st.last = 1788256900000;
 saveState(U, st);
 const txt = readFileSync(statePath(U), "utf8");
@@ -27,6 +28,8 @@ eq("no tmp left", readdirSync(dir).filter((f: string) => f.indexOf(".tmp") >= 0)
 eq("mode 0600", execFileSync("stat", process.platform === "darwin" ? ["-f", "%Lp", statePath(U)] : ["-c", "%a", statePath(U)], { encoding: "utf8" }).trim(), "600");
 const back = loadState(U);
 eq("round trip", [String(marked(back, "/p/a.jsonl", "2026-09-01T10:05:00.000Z#0")), String(marked(back, "/p/a.jsonl", "x")), String(back.gzip), String(back.nativeSince.get("codex") ?? 0), String(back.last)].join(" "), "true false false 1788256800000 1788256900000");
+const fm = back.sessions.get("/f/events.jsonl"); const am = back.sessions.get("/p/a.jsonl");
+eq("fx accepted totals round trip; none for other sessions", (fm ? fm.fx.join("/") + "@" + String(fm.fxAt) : "-") + " " + (am ? String(am.fx.length) : "-"), "100/10/50/5/0.5/0@1788256800000 0");
 // a changed cursor epoch keeps the marks (ids do not depend on offsets)
 markTurn(back, "/p/a.jsonl", "claude", "s1", "seq", "2026-09-01T10:09:00.000Z#0");
 eq("epoch change keeps marks", String(marked(back, "/p/a.jsonl", "2026-09-01T10:00:00.000Z#0")), "true");

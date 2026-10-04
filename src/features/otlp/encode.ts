@@ -72,7 +72,8 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
     if (sp.respId) a.push(attrS("gen_ai.response.id", sp.respId));
     a.push(attrS("agentglass.billing.mode", sp.bill || "unknown"));
     if (sp.hasUsage) usage(a, t, sp, c);
-    if (sp.total) a.push(attrB("agentglass.usage.session_total", true)); // fx: the session's totals, not this request's
+    if (sp.provId) a.push(attrS("agentglass.provider.id", sp.provId));
+    if (sp.total) a.push(attrB("agentglass.usage.session_delta", true)); // fx: the growth of the session's totals since the last export, not one request's
     if (sp.superseded) a.push(attrB("agentglass.chat.superseded", true));
     if (c.content && sp.output) a.push(attrS("gen_ai.output.messages", msgs("assistant", sp.output, c.contentMax)));
   } else if (sp.op === "invoke_agent") {

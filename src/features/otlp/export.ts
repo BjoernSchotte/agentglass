@@ -19,10 +19,10 @@ import { discover, opts as watchOpts, watch } from "../cli.ts";
 import { agentScope, visible } from "../agentenv.ts";
 import { newLive, liveTick, liveStop } from "./live.ts";
 import { type XTurn } from "./types.ts";
-import { newSessB, finish } from "./build.ts";
+import { newSessB, finish, fxChat } from "./build.ts";
 import { encodeRequest } from "./encode.ts";
 import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl } from "./config.ts";
-import { type ExpState, loadState, saveState, lock, unlock, marked, markTurn } from "./state.ts";
+import { type ExpState, loadState, saveState, lock, unlock, marked, markTurn, markFx } from "./state.ts";
 import { type Native, detectNative, applyPolicy } from "./native.ts";
 import { GZ, sendBatch } from "./send.ts";
 
@@ -104,7 +104,7 @@ export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<st
 // body alone exceeds maxBytes (its requests share the turn: it is marked when all of them got through)
 export interface Batch { turns: XTurn[]; json: string; spans: number }
 function part(t: XTurn, from: number, to: number): XTurn {
-  return { h: t.h, rootId: t.rootId, path: t.path, key: t.key, index: t.index, traceId: t.traceId, t0: t.t0, t1: t.t1, closed: t.closed, closedBy: t.closedBy, compacted: t.compacted, ver: t.ver, cwd: t.cwd, branch: t.branch, remote: t.remote, spans: t.spans.slice(from, to) };
+  return { h: t.h, rootId: t.rootId, path: t.path, key: t.key, index: t.index, traceId: t.traceId, t0: t.t0, t1: t.t1, closed: t.closed, closedBy: t.closedBy, compacted: t.compacted, ver: t.ver, cwd: t.cwd, branch: t.branch, remote: t.remote, spans: t.spans.slice(from, to), fx: t.fx, fxOn: t.fxOn };
 }
 export function batches(turns: XTurn[], max: number, maxBytes: number, c: OtlpCfg): Batch[] {
   const out: Batch[] = []; let cur: XTurn[] = []; let n = 0; let bytes = 0;
@@ -147,6 +147,26 @@ function select(o: ExOpts): Sel {
   roots.sort((a, b) => a.mtime - b.mtime || (a.path < b.path ? -1 : 1));
   return { roots, warns: [] };
 }
+// fx keeps session totals only (usage-v2.json): the newest turn of a session in a send carries what grew since the totals
+// this endpoint already accepted (all of it with resend); the session's older turns carry none, so a failed request loses
+// nothing and no sum over the backend counts twice. A turn older than the accepted one sends nothing (it was covered);
+// a newer one with smaller totals means a rewritten usage file: it sends its totals whole. Recomputed from the turn's own
+// totals on every call: a retry sends the same delta.
+export function fxDelta(turns: XTurn[], st: ExpState | null, resend: boolean): void {
+  const top = new Map<string, XTurn>();
+  for (const t of turns) { if (!t.fx.length) continue; const p = top.get(t.path); if (!p || t.t0 >= p.t0) top.set(t.path, t); }
+  for (const t of turns) {
+    const c = t.fx.length ? fxChat(t) : null; if (!c) continue;
+    const m = !resend && st ? st.sessions.get(t.path) : undefined; const base = m ? m.fx : []; const at = m ? m.fxAt : 0;
+    let back = false; for (let i = 0; i < t.fx.length; i++) if ((t.fx[i] ?? 0) < (base[i] ?? 0)) back = true;
+    const on = top.get(t.path) === t && t.t0 >= at;
+    const d = t.fx.map((v: number, i: number) => !on ? 0 : back ? v : v - (base[i] ?? 0));
+    c.nIn = d[0] ?? 0; c.nOut = d[1] ?? 0; c.cr = d[2] ?? 0; c.cw = d[3] ?? 0; c.cost = d[4] ?? 0; c.unk = d[5] ?? 0;
+    c.hasUsage = d.some((v: number) => v > 0); c.total = c.hasUsage; t.fxOn = on;
+  }
+}
+// a turn the endpoint accepted (after markTurn): the totals it carried the delta up to become the new base
+export function fxAccepted(st: ExpState, t: XTurn): void { if (t.fxOn) markFx(st, t.path, t.fx, t.t0); }
 export interface Built { turns: XTurn[]; sessions: number; marked: number; native: number; warns: string[] }
 // every selected session's closed turns that start in [since, until), not yet marked (unless resend), not left to the harness
 export function build(o: ExOpts, st: ExpState | null, skipFrom: Map<string, number>, now: number): Built {
@@ -187,6 +207,7 @@ function realSleep(ms: number): void { try { execFileSync("sleep", [String(Math.
 export function dryRun(o: ExOpts, c: OtlpCfg, now: number): string[] {
   const st = o.url ? loadState(o.url) : null;
   const b = build(o, st, new Map<string, number>(), now);
+  fxDelta(b.turns, st, o.resend);
   c.content = o.content;
   return batches(b.turns, o.batch, MAX_BYTES, c).map((x: Batch) => x.json);
 }
@@ -233,6 +254,7 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
     for (const n of pol.notes) err(n);
     const b = build(o, st, pol.skipFrom, now);
     for (const w of b.warns) err(w);
+    fxDelta(b.turns, st, o.resend);
     // compression: config/flag, the endpoint's record, and whether this runtime can write the bytes
     let gz = (o.compression || c.compression) === "gzip";
     if (gz && !st.gzip && o.compression !== "gzip") { gz = false; err(safeUrl(o.url) + " takes uncompressed JSON only (" + (st.gzipNote || "recorded earlier") + "); --compression gzip tries again"); }
@@ -250,7 +272,7 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
         spans += x.spans; rejected += r.rejected; if (r.msg) msgs.push(r.msg);
         for (const t of x.turns) {
           const k = tk(t); const n = (left.get(k) ?? 1) - 1; left.set(k, n);
-          if (n <= 0 && !failed.has(k)) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); sent.add(k); sess.add(t.path); }
+          if (n <= 0 && !failed.has(k)) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); sent.add(k); sess.add(t.path); }
         }
         st.last = Date.now(); saveState(o.url, st); // an interrupted run keeps what got through
       } else { bad++; msgs.push(r.msg); for (const t of x.turns) failed.add(tk(t)); }
@@ -304,12 +326,13 @@ function liveExport(args: string[]): number {
   L.skip = (t: XTurn): boolean => { const sk = skipFrom.get(t.h); return marked(st, t.path, t.key) || (sk !== undefined && t.t0 >= sk); };
   const sendWith = (timeoutS: number) => (turns: XTurn[]): boolean => {
     let all = true;
+    fxDelta(turns, st, false);
     for (const x of batches(turns, batch, MAX_BYTES, c)) {
       const r = sendBatch({ url, headers: hx.headers, timeoutS, gzip: gz && !GZ.off, live: true }, x.json, realSleep);
       if (r.gzipRefused) { gz = false; st.gzip = false; st.gzipNote = "refused gzip on " + new Date().toISOString().slice(0, 10); err(safeUrl(url) + " refused gzip: sending uncompressed JSON"); }
       if (!r.ok) { all = false; if (L.fails === 0) err("otlp: " + r.msg + " — retrying with backoff"); continue; }
       if (r.msg) err("otlp: " + r.msg);
-      for (const t of x.turns) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); }
+      for (const t of x.turns) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); }
       st.last = Date.now(); saveState(url, st);
     }
     return all;
