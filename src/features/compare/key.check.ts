@@ -5,7 +5,7 @@ import { sessions } from "../../model/sessions.ts";
 import { parse, print, printClause } from "../query/parse.ts";
 import { compile, matchSession } from "../query/eval.ts";
 import { fxReset, fxSession } from "../query/fixture.ts";
-import { sessionClause, sessionClauseList, sessionOf } from "./key.ts";
+import { sessionClause, sessionClauseList, sessionOf, resolveSession, sessionErrCode } from "./key.ts";
 
 let bad = 0;
 function idOf(s: Sess | null): string { return s ? s.id : "none"; }
@@ -34,6 +34,13 @@ eq("exact id beats a longer one it prefixes", ids("session is eeeeee"), "eeeeee"
 eq("ambiguous lists at most 5", ids("session is dddddd"), "ERR session \"dddddd\" is ambiguous: pi:dddddd0, pi:dddddd1, pi:dddddd2, pi:dddddd3, pi:dddddd4 +2");
 eq("short prefix", ids("session is abc"), "ERR session \"abc\": id prefix needs at least 6 characters");
 eq("unknown", ids("session is codex:nope"), "ERR session \"codex:nope\": no such session");
+// exit codes per the one table (agentglass --help): 4 ambiguous, 3 not found, 2 usage
+const code = (v: string): string => { const r = resolveSession(v); return r.err ? String(sessionErrCode(r.err)) : "ok"; };
+eq("exit: ambiguous → 4", code("abc123"), "4");
+eq("exit: unknown id → 3", code("zzzzzz99"), "3");
+eq("exit: unknown harness:id → 3", code("codex:nope"), "3");
+eq("exit: short prefix → 2", code("abc"), "2");
+eq("exit: resolved", code("abc123def"), "ok");
 eq("is_not", ids("session is_not claude:abc123def and harness is claude"), "abc123zzz");
 eq("is_one_of", ids("session is_one_of claude:abc123zzz ffffff"), "abc123zzz,ffffff01");
 eq("no ~", ids("session ~ abc"), "PARSE \"~\" does not apply to session; use is, is_not, is_one_of, is_not_one_of");
