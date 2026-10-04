@@ -82,7 +82,7 @@ H.headerWidgets.push((w: number) => {
 
 H.footerHints.push((mode: string) => {
   if (mode !== "transcript") return [];
-  return R.on && R.tv === S.tv ? [["␣", "pause"], ["+/-", "speed"], ["←/→", "step"], ["P", "stop"]] : [["P", "replay"]];
+  return R.on && R.tv === S.tv ? [["␣", "pause", "1"], ["+/-", "speed"], ["←/→", "step"], ["P", "stop", "1"]] : [["P", "replay"]]; // tier 1 while it plays: kept before the transcript's own keys
 });
 
 H.helpSections.push({ name: "replay", ctx: "transcript", keys: [

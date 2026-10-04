@@ -33,6 +33,15 @@ run_check() { # run_check <id> <executable> <log>: sets rc
   rm -rf "$h"
 }
 
+# summary <log>: the job's own last line; shell job-status lines a killed child leaves after it ("Terminated", bash's
+# "x.sh: line 9: 123 Terminated  sleep 9", "Killed") and blank lines are skipped (the last line wins if all are noise)
+summary() {
+  awk '{ l = $0; sub(/^.*: line [0-9]+: +[0-9]+ +/, "", l) }
+       !/^[[:space:]]*$/ && l !~ /^(Terminated|Killed|Hangup|Alarm clock|Interrupt)([: ].*)?$/ { s = $0 }
+       NF { last = $0 } END { print (s != "" ? s : last) }' "$1"
+}
+if [ "${1:-}" = --summary ]; then summary "$2"; exit 0; fi
+
 # one job (internal): bin, check:<file> or test:<file>; writes $CHECK_OUT/<id>.status ("<rc> <seconds>", rc 0, an exit
 # code, "build", or "deferred": a timing check, built, to run alone after the pool) and $CHECK_OUT/<id>.log
 if [ "${1:-}" = --job ]; then
@@ -110,7 +119,7 @@ done
 fail=0
 report() { # report <job> <file>
   id=$(printf %s "$1" | tr '/:.' '___'); set -- "$1" "$2" $(cat "$CHECK_OUT/$id.status" 2>/dev/null || echo missing "?"); rc=$3
-  if [ "$rc" = 0 ]; then echo "ok   $2 ($4 s): $(tail -1 "$CHECK_OUT/$id.log")"
+  if [ "$rc" = 0 ]; then echo "ok   $2 ($4 s): $(summary "$CHECK_OUT/$id.log")"
   elif [ "$rc" = build ]; then echo "BUILD FAIL $2 ($4 s)"; cat "$CHECK_OUT/$id.log"; fail=1
   else echo "FAIL $2 (exit $rc, $4 s)"; cat "$CHECK_OUT/$id.log" 2>/dev/null || true; fail=1; fi
 }

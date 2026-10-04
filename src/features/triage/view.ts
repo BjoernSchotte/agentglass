@@ -162,12 +162,18 @@ function callLines(st: TState, W: number, n: number): string[] {
   }
   return o;
 }
+// the multi-valued dimensions the shares note names: only those with a row on screen (above the minimum support)
+export function multiDims(entity: string, used: string[], rows: TRow[]): string[] {
+  const o: string[] = []; const ms = entity === "call" ? MULTI_CALL : MULTI_SESS;
+  for (const d of used) if (ms.indexOf(d) >= 0 && rows.some((x: TRow) => x.attr === d)) o.push(d);
+  return o;
+}
 function banners(st: TState, res: Result): string[] {
   const o: string[] = []; const r = st.run;
   if (res.partial) o.push(fg(C.yellow) + spin() + " partial: still indexing · refreshes every 2 s" + RST);
   if (res.small && !res.guard) o.push(fg(C.yellow) + "small sample: " + grp(Math.min(res.selN, res.baseN)) + " rows, percentages are unreliable" + RST);
   if (r.weight === "cost" && res.unpriced > 0) o.push(fg(C.sub) + "+" + grp(res.unpriced) + " unpriced (cost 0)" + RST);
-  const multi: string[] = []; for (const d of res.dimsUsed) if ((r.entity === "call" ? MULTI_CALL : MULTI_SESS).indexOf(d) >= 0) multi.push(d);
+  const multi = multiDims(r.entity, res.dimsUsed, V.rows);
   if (multi.length && !res.guard) o.push(fg(C.dim) + multi.join(", ") + ": shares of " + entWord(r) + " with ≥ 1 value, they may sum over 100%" + RST);
   return o;
 }
@@ -279,7 +285,11 @@ function choosePreset(st: TState, n: number): void {
   const p = presetOf(n); if (!p) return;
   if (n === 7) { ask("triage selection", "triage", print(st.run.sel)); return; }
   const r = st.run;
-  r.preset = n; r.sel = p.sel(); r.slow = p.slow; r.base = p.base;
+  // the tab's own filter stays: the preset narrows it (AND), never replaces it (clauses the scope holds are not repeated)
+  const loc = isTab(r.origin) ? without(localFor(r.origin), r.scope) : [];
+  const ps = p.sel(); const m = addAll(loc, ps);
+  r.preset = n; r.sel = loc.length ? m.cs : ps; r.slow = p.slow; r.base = p.base;
+  if (loc.length && ps.length) say("info", "preset " + p.name + " narrows the " + r.origin + " filter: " + expr(r.sel) + (m.notes.length ? " (" + m.notes.join("; ") + ")" : ""));
   if (n <= 5) r.entity = p.entity;
   if (p.slow) r.entity = "call";
   fixWeight(r); st.picker = false; st.expand = ""; changed(st);

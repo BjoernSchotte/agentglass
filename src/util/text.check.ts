@@ -29,6 +29,12 @@ ok("cut inside a link: visible", vwidth(cut) === 4 && cut.replace(ESC_RE, "") ==
 ok("cut inside a link: closed before RST", cut.endsWith("\x1b]8;;\x1b\\" + RST) && cut.indexOf("gh") < 0, JSON.stringify(cut));
 const whole = fitStyled(link("u", "ab") + "cd", 10);
 ok("no extra close when the link ended", whole.split("\x1b]8;;").length === 3, JSON.stringify(whole));
+// a url longer than any fixed lookahead: still one zero-width escape, the cut still closes the link
+const longL = link("https://x/" + "a".repeat(5000), "abcdef") + "gh";
+const lcut = fitStyled(longL, 4);
+ok("long url: visible", lcut.replace(ESC_RE, "") === "abcd" && lcut.indexOf("aaaa") > 0, String(lcut.replace(ESC_RE, "").length));
+ok("long url: closed", lcut.endsWith("\x1b]8;;\x1b\\" + RST), JSON.stringify(lcut.slice(-20)));
+ok("unterminated OSC: its bytes count as text, nothing hangs", vwidth(fitStyled("\x1b]8;;u" + "b".repeat(3000), 5)) <= 5, "");
 ok("link() strips control chars from the url", link("a\x1bb\x07c\nd", "t").indexOf("abcd") > 0, JSON.stringify(link("a\x1bb\x07c\nd", "t")));
 setHyper(false);
 ok("off → plain text", link("u", "abc") === "abc", link("u", "abc"));

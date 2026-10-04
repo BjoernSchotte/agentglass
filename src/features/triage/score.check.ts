@@ -25,6 +25,8 @@ const rows: TRow[] = [R("program", "npm", 34, 100, 6, 100), R("program", "git", 
   R("branch", "wip", 3, 100, 1, 100), R("ext", "md", 2, 100, 0, 100), R("hour", "14", 1, 200, 0, 100), R("file", "/a", 4, 100, 0, 100), R("program", "cargo", 0, 100, 40, 100)];
 eq("rank", rank(rows, false, 3, 3, "").map((r) => r.value).join(","), "npm,make,git,wip");
 eq("expand lifts the cap", rank(rows, false, 3, 3, "program").map((r) => r.value).join(","), "npm,make,git,wip,ls");
-eq("under-represented", rank(rows, true, 3, 3, "").map((r) => r.value).slice(0, 1).join(","), "ls");
+eq("under-represented: only negative diffs (no over-represented rows trailing below)", rank(rows, true, 3, 3, "").map((r) => r.value).join(","), "");
+const rows2 = rows.concat([R("program", "node", 5, 100, 30, 100), R("ext", "ts", 8, 100, 12, 100)]);
+eq("under-represented: most negative first", rank(rows2, true, 3, 3, "").map((r) => r.value).join(","), "node,ts");
 console.log(bad ? bad + " failed" : "triage scoring: all checks passed");
 if (bad) process.exit(1);

@@ -35,6 +35,8 @@ export interface Platform {
   // the entry itself (lstat semantics: a symlink is "link"), via the stat CLI (scriptc: Stats has no uid/mode); null = missing.
   // kind: dir | file | socket | link | fifo | other; mode = permission bits
   fileInfo(path: string): FileInfo | null;
+  // the uid that owns a process, -1 when it is gone or cannot be told
+  procOwner(pid: number): number;
   // where trash() puts things, for messages ("~/.Trash")
   trashName: string;
 }

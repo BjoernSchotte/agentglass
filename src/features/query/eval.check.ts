@@ -9,7 +9,7 @@ import { DICT, nameOf, localOf, MQ_MSG } from "../usage/facts.ts";
 import { setCallDaysForTest } from "../usage/callcache.ts";
 import { parse, printClause } from "./parse.ts";
 import { register } from "./attrs.ts";
-import { type Compiled, EMPTY, compile, matchSession, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf } from "./eval.ts";
+import { type Compiled, EMPTY, compile, matchSession, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf, beyondRetention } from "./eval.ts";
 import { projectOf, projectRoot } from "./project.ts";
 import { real } from "../../model/project.ts";
 import { fxBase, pathOf, isoAt } from "./fixture.ts";
@@ -114,5 +114,16 @@ if (c1) {
   eq("retention: rows cut", S0("tool is Bash and day is " + ok), "");
   eq("retention: bucket stays", S0("day is " + ok), "c1");
 }
+// the "calls ≤ N d" chip: only when the period the view counts reaches before the oldest day that keeps call rows
+const cut = "2026-07-06";
+eq("7-day period inside retention", String(beyondRetention(null, ["2026-09-28", "2026-10-04"], "2025-01-01", cut)), "false");
+eq("period reaching before", String(beyondRetention(null, ["2026-07-01", "2026-10-04"], "2025-01-01", cut)), "true");
+eq("all history, old sessions", String(beyondRetention(null, [], "2025-01-01", cut)), "true");
+eq("all history, nothing that old", String(beyondRetention(null, [], "2026-09-01", cut)), "false");
+eq("all history, empty ledger", String(beyondRetention(null, [], "", cut)), "false");
+eq("day clauses inside", String(beyondRetention(["2026-10-01", "2026-10-02"], [], "2025-01-01", cut)), "false");
+eq("day clauses before", String(beyondRetention(["2026-01-01", "2026-10-02"], [], "2025-01-01", cut)), "true");
+eq("day clauses ∩ period: the old day is outside the period", String(beyondRetention(["2026-01-01", "2026-10-02"], ["2026-09-28", "2026-10-02"], "2025-01-01", cut)), "false");
+eq("no day left", String(beyondRetention([], [], "2025-01-01", cut)), "false");
 console.log(bad ? bad + " failed" : "filter eval: all checks passed");
 if (bad) process.exit(1);

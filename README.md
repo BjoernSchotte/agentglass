@@ -91,6 +91,9 @@ paths, branches and subagent tasks for consistent fakes, replaces the content of
 neutral stand-ins, and scrubs your username, home path, e-mail addresses, secrets and anything listed
 in `~/.agentglass/redact.txt` from every pixel — at the same width, so the layout stays intact.
 `AGENTGLASS_REDACT_KEEP=<path-substring>` keeps chosen sessions readable (they are still scrubbed).
+Filters and pins keep meaning the real values (a pin saved without `--redact` selects the same sessions);
+a fake shown on screen (repo, cwd, branch) also selects its own session, but only exactly (`is`, `is_one_of`),
+never by `~`, a glob or a bare word — fakes come from shared pools and would hit unrelated sessions.
 Every screen in this README and the launch video was recorded this way.
 
 ## Tiny, fast, local

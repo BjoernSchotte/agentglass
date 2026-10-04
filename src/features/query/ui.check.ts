@@ -4,10 +4,11 @@ import { S } from "../../state.ts";
 import { sessions, buildView } from "../../model/sessions.ts";
 import { onInput } from "../../input.ts";
 import { boxChips, emptyText } from "../../hooks.ts";
-import { print } from "./parse.ts";
+import { parse, print } from "./parse.ts";
 import { initPins, localFor, setLocal } from "./scope.ts";
 import { complete, hiddenCount } from "./ui.ts";
 import { fxBase } from "./fixture.ts";
+import { setCallDaysForTest } from "../usage/callcache.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -32,10 +33,17 @@ onInput("esc"); eq("esc cancels to previous", print(localFor("Sessions")), ""); 
 onInput("/"); type("too"); eq("a key prefix is not a text search yet", ids(), "c1,k1,x1"); eq("no error for a key prefix", S.inputErr, "");
 type("l is Bash"); onInput("enter");
 eq("enter applies", print(localFor("Sessions")) + "|" + ids() + "|" + S.mode, "tool is Bash|c1|list");
-eq("chips", plain(boxChips("sessions", 80)), "tool is Bash calls ≤ 90 d");
+eq("chips: all history is inside the 90 days the fixture spans — no calls chip", plain(boxChips("sessions", 80)), "tool is Bash");
+setCallDaysForTest(1); // rows only for today: the fixture's yesterday reaches beyond
+eq("chips: calls chip when history reaches beyond the retention", plain(boxChips("sessions", 80)), "tool is Bash calls ≤ 1 d");
+// only the sessions the session clauses keep count: x1 (codex) has today only, c1's yesterday is not the list's
+setLocal("Sessions", parse("harness is codex and tool is Bash").cs);
+eq("chips: no calls chip when the sessions in question are all inside the retention", plain(boxChips("sessions", 80)), "harness is codex · tool is Bash");
+setLocal("Sessions", parse("tool is Bash").cs);
+setCallDaysForTest(90);
 onInput("p");
 eq("p pins all local", print(S.pins), "tool is Bash"); eq("local emptied", print(localFor("Sessions")), ""); eq("pin persisted", saved, "tool is Bash");
-eq("pinned chip + hidden count", plain(boxChips("sessions", 80)), "⚲ tool is Bash · pins hide 2 calls ≤ 90 d");
+eq("pinned chip + hidden count", plain(boxChips("sessions", 80)), "⚲ tool is Bash · pins hide 2");
 eq("hidden count", String(hiddenCount("Sessions")), "2");
 onInput("esc"); eq("esc keeps pins", print(S.pins), "tool is Bash");
 onInput("h"); eq("h cycles local harness", print(localFor("Sessions")), "harness is claude");

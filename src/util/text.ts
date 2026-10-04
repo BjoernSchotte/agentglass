@@ -50,18 +50,27 @@ export function wrap(s: string, w: number): string[] {
   }
   return out;
 }
-// escape sequences that take no columns: CSI, and OSC 8 hyperlinks (terminated by ST or BEL); ESC_HEAD for scanners
+// escape sequences that take no columns: CSI, and OSC 8 hyperlinks (terminated by ST or BEL); escAt() for scanners
 export const ESC_RE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
-export const ESC_HEAD = /^(?:\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\))/;
 const LINK_END = "\x1b]8;;\x1b\\";
+// the length of the zero-width escape (ESC_RE's forms) starting at s[i], 0 = none; an OSC 8 scans to its terminator,
+// however long the url (bounded by the line)
+export function escAt(s: string, i: number): number {
+  if (s.charCodeAt(i) !== 27) return 0;
+  if (s.charAt(i + 1) === "[") {
+    for (let j = i + 2; j < s.length; j++) { const c = s.charCodeAt(j); if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) return j + 1 - i; if (!((c >= 48 && c <= 57) || c === 59 || c === 63)) return 0; }
+    return 0;
+  }
+  if (!s.startsWith("]8;", i + 1)) return 0;
+  for (let j = i + 4; j < s.length; j++) { const c = s.charCodeAt(j); if (c === 7) return j + 1 - i; if (c === 27) return s.charAt(j + 1) === "\\" ? j + 2 - i : 0; }
+  return 0;
+}
 // truncate a styled line to w visible columns (keeps escapes); a cut inside a hyperlink closes it, so it cannot spill
 export function fitStyled(s: string, w: number): string {
   let out = ""; let n = 0; let i = 0; let inLink = false;
   while (i < s.length) {
-    if (s.charCodeAt(i) === 27) {
-      const m = ESC_HEAD.exec(s.slice(i, i + 2100)); // a link's url is ≤ 2 KB
-      if (m) { const e = m[0]; if (e.startsWith("\x1b]8;")) inLink = !/^\x1b\]8;[^;\x07\x1b]*;(?:\x07|\x1b\\)$/.test(e); out += e; i += e.length; continue; }
-    }
+    const el = escAt(s, i);
+    if (el > 0) { const e = s.slice(i, i + el); if (e.startsWith("\x1b]8;")) inLink = !/^\x1b\]8;[^;\x07\x1b]*;(?:\x07|\x1b\\)$/.test(e); out += e; i += el; continue; }
     const a = s.charCodeAt(i);
     const ch = a >= 0xd800 && a <= 0xdbff ? s.slice(i, i + 2) : s.slice(i, i + 1);
     const c = cw(cpOf(ch));

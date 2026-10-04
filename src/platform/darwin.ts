@@ -22,6 +22,7 @@ export const darwin: Platform = {
   trash: (path: string) => { moveInto(join(HOME, ".Trash"), path); },
   trashName: "~/.Trash",
   fileInfo: (path: string) => fileInfoOf(run("stat", ["-f", "%u %Lp %HT", "--", path])),
+  procOwner: (pid: number) => { const t = run("ps", ["-o", "uid=", "-p", String(pid)]).trim(); return /^\d+$/.test(t) ? Number(t) : -1; },
   ownerMode: (path: string) => ownerModeOf(run("stat", ["-L", "-f", "%u %Lp", path])),
   envOf: (pid: number) => new Uint8Array(0), // ps -E truncates and SIP hides it: config files only
 };
