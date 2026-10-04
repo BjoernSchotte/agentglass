@@ -64,7 +64,9 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
   Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux.
   Elsewhere there is no title to read: a reply with text looks like a finished turn, one with only thoughts like a long
   think. While the agent is quiet (< 2 % CPU for 3 s) the alert that fires says so: `turn finished · approval?`, or
-  `stalled · … · approval?` after 8 min — a guess, since a real finished turn or a slow reply looks the same.
+  `stalled · … · approval?` after 8 min — a guess, since a real finished turn or a slow reply looks the same. So that the
+  bell, notification, notify command and `--watch` line carry it, a finished Gemini turn outside tmux alerts once that
+  quiet window is decided (up to 3 s later).
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,

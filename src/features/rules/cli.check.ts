@@ -1,6 +1,6 @@
 // agentglass — self-check for `rules check|defaults` and the --watch engine step: scriptc build src/features/rules/cli.check.ts -o cc && ./cc
 // SPDX-License-Identifier: Apache-2.0
-import type { Ev } from "../../model/types.ts";
+import type { Ev, Sess } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { loadRules } from "./config.ts";
@@ -44,5 +44,28 @@ const ts = watchStep(s, o, b, Date.now());
 eq("watch: stalled fires", ts.map((t) => t.rule + ":" + t.state + ":" + String(t.to)).join(","), "stalled:fire:2");
 eq("watch: alert text", firing(b, s).map((a) => a.severity + " " + a.message.slice(0, 15)).join(","), "critical no log activity");
 eq("watch: second step quiet", String(watchStep(s, o, b, Date.now()).length), "0");
+// --watch / TUI: Gemini outside tmux (no title to read) holds a finished turn's alert until the quiet window is decided —
+// quiet at once, or 2 more looks (≈ 3 s at the 1.5 s cadence) — so the bell, notification, command and --watch line
+// carry the "approval?" guess; other harnesses fire on the first idle look
+const gs = newSess("gemini", "gm1", "/fx/gm1.json", false); gs.pid = 4343; sessions.set(gs.path, gs);
+const gobs = (busy: boolean, may: boolean, guess: boolean): Obs => ({ now: Date.now(), mtime: Date.now(), busy, evs: [ev("user", "go"), ev("assistant", "I will create index.html")], cpu: [5, 5], cmds: [], subsActive: false, asks: false, mayGuess: may, guess });
+const tsOf = (t: ReturnType<typeof watchStep>): string => t.filter((x) => x.rule === "waiting").map((x) => x.state).join(",");
+const msgOf = (): string => firing(b, gs).filter((a) => a.rule === "waiting").map((a) => a.message).join(",");
+let gt = Date.now();
+const step = (so: Sess, o2: Obs): ReturnType<typeof watchStep> => { gt = gt + 1500; return watchStep(so, o2, b, gt); };
+watchStep(gs, gobs(true, true, false), b, gt);
+eq("gemini: turn end, not quiet yet: held", tsOf(step(gs, gobs(false, true, false))), "");
+eq("gemini: quiet on the next look: fires with the hint", tsOf(step(gs, gobs(false, true, true))), "fire");
+eq("gemini: fired message", msgOf(), "turn finished · approval?");
+step(gs, gobs(true, true, false));
+eq("gemini: never quiet: held 1", tsOf(step(gs, gobs(false, true, false))), "");
+eq("gemini: never quiet: held 2", tsOf(step(gs, gobs(false, true, false))), "");
+eq("gemini: never quiet: fires after 2 more looks", tsOf(step(gs, gobs(false, true, false))), "fire");
+eq("gemini: plain message", msgOf(), "turn finished");
+step(gs, gobs(true, true, false));
+eq("gemini: quiet at once: fires at once", tsOf(step(gs, gobs(false, true, true))), "fire");
+const cs = newSess("claude", "cl1", "/fx/cl1.jsonl", false); cs.pid = 4444; sessions.set(cs.path, cs);
+watchStep(cs, gobs(true, false, false), b, gt);
+eq("claude: fires on the first idle look", watchStep(cs, gobs(false, false, false), b, gt + 1500).filter((x) => x.rule === "waiting").map((x) => x.state).join(","), "fire");
 console.log(bad ? bad + " failed" : "rules cli: all checks passed");
 if (bad) process.exit(1);

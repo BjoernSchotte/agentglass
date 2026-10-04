@@ -84,7 +84,7 @@ function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {
   const i = sh.args.indexOf(" -c ");
   return i >= 0 ? sh.args.slice(i + 4, i + 34) : base(sh.args.split(" ")[0] ?? "");
 }
-export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean; noAsk?: boolean; guess?: boolean } // asks: the agent's terminal title says it waits for approval; noAsk: the harness never asks (pi); guess: approvalGuess holds
+export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean; noAsk?: boolean; mayGuess?: boolean; guess?: boolean } // asks: the agent's terminal title says it waits for approval; noAsk: the harness never asks (pi); mayGuess: no title to read for a harness that hides its approval dialog (Gemini outside tmux); guess: approvalGuess holds
 function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 // a metric's value for a rule: v -1 = absent (its preconditions do not hold, the rule cannot fire); lv: the level the agent
 // itself asserts (1: Gemini's approval title), whatever the threshold; at: recorded time of the newest record behind v;

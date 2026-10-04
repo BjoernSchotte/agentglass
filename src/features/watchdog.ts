@@ -20,8 +20,12 @@ import { R, rules } from "./rules/state.ts";
 export { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf };
 
 // ── live state ────────────────────────────────────────────────────────────────
-// busy/prompt: last look; turnAt: when this run saw the last turn finish (0 = none, or busy since)
-interface St { busy: boolean; prompt: string; turnAt: number }
+// busy/prompt: last look; turnAt: when this run saw the last turn finish (0 = none, or busy since); looks: looks since then
+interface St { busy: boolean; prompt: string; turnAt: number; looks: number }
+// a finished turn of a harness whose approval dialog may hide behind it (o.mayGuess) is held this many more looks (≈ 3 s at
+// the 1.5 s cadence: the quiet window of approvalGuess) unless the guess holds sooner, so the alert that fires (bell,
+// notification, command, --watch line) already says "approval?"; other harnesses fire on the first idle look
+const GUESS_LOOKS = 2;
 const st = new Map<string, St>();
 let selPath = ""; let selSince = 0;
 
@@ -40,7 +44,8 @@ function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, s
   const title = at && tty !== "" ? titles().get(tty) : undefined; // undefined: not in a tmux pane
   const asks = !!at && title !== undefined && at(title);
   const o: Obs = { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!h.noApproval };
-  o.guess = approvalGuess(o, !!h.hiddenApproval && title === undefined);
+  o.mayGuess = !!h.hiddenApproval && title === undefined;
+  o.guess = approvalGuess(o, o.mayGuess);
   return o;
 }
 // one look at every live session per alarm tick: the process tree and (lazily) the tmux pane titles
@@ -69,11 +74,12 @@ export function ruleVals(rs: RuleSet, s: Sess, o: Obs, turnAt: (r: Rule) => numb
 export function watchStep(s: Sess, o: Obs, rs: RuleSet, now: number): Trans[] {
   const pr = lastPrompt(s.evs);
   let x = st.get(s.path);
-  if (!x) { x = { busy: o.busy, prompt: pr, turnAt: 0 }; st.set(s.path, x); }
+  if (!x) { x = { busy: o.busy, prompt: pr, turnAt: 0, looks: 0 }; st.set(s.path, x); }
   else if (o.busy) x.turnAt = 0;
-  else if (alarmOf(x.busy, o.busy, pr !== "" && pr !== x.prompt, o.asks === true) === "turn finished") x.turnAt = Math.max(now, x.turnAt + 1); // strictly newer: the engine tells turns apart by it (Gemini's approval dialog looks like a finished turn: alarmOf)
+  else if (alarmOf(x.busy, o.busy, pr !== "" && pr !== x.prompt, o.asks === true) === "turn finished") { x.turnAt = Math.max(now, x.turnAt + 1); x.looks = -1; } // strictly newer: the engine tells turns apart by it (Gemini's approval dialog looks like a finished turn: alarmOf)
   x.busy = o.busy; if (pr) x.prompt = pr;
-  const ta = x.turnAt;
+  if (x.turnAt > 0 && x.looks < GUESS_LOOKS) x.looks++;
+  const ta = x.turnAt > 0 && o.mayGuess === true && !o.guess && x.looks < GUESS_LOOKS ? 0 : x.turnAt; // held: absent for now
   return stepSession(rs, s.path, ruleVals(rs, s, o, (r: Rule) => ta), now);
 }
 export function forgetSession(path: string): void { st.delete(path); unwatch(path); forget(path); }
