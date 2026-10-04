@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { type Obj, obj } from "../util/json.ts";
 import { width, cw, cpOf, clean } from "../util/text.ts";
 import { agentHost, cliError } from "./agentenv.ts";
+import { link, hyperOn, sessUrl } from "../util/hyper.ts";
 
 export const FORMATS = ["json", "jsonl", "csv", "table"];
 
@@ -118,9 +119,13 @@ function table(rows: Obj[], cols: string[], tty: boolean, cols0: number): string
   let cap = 0; for (let i = 0; i < w.length; i++) if (!num[i]) cap = Math.max(cap, w[i] ?? 0);
   while (cap > 4 && sumAt(cap) > room) cap--;
   for (let i = 0; i < w.length; i++) if (!num[i]) w[i] = Math.min(cap, w[i] ?? 0);
-  const line = (r: string[]): string => r.map((v: string, i: number) => pad(cut(v, w[i] ?? 0), w[i] ?? 0, num[i] ?? false)).join(" ".repeat(gap)).replace(/\s+$/, "");
-  const hd = line(cols);
-  return [tty ? B + hd + R : hd].concat(cells.map(line)).join("\n");
+  // a terminal with OSC 8: the id column links to the session (agentglass open takes it); the padding stays outside
+  const idc = tty && hyperOn() ? cols.indexOf("id") : -1;
+  const urls = flat.map((r: Obj): string => { const h = r["harness"]; const id = r["id"]; return idc >= 0 && typeof h === "string" && typeof id === "string" ? sessUrl(h as string, id as string) : ""; });
+  const line = (r: string[], url: string): string => r.map((v: string, i: number) => { const c = cut(v, w[i] ?? 0); if (i !== idc || !url) return pad(c, w[i] ?? 0, num[i] ?? false); const f = " ".repeat(Math.max(0, (w[i] ?? 0) - width(c))); return num[i] ? f + link(url, c) : link(url, c) + f; }).join(" ".repeat(gap)).replace(/\s+$/, "");
+  const hd = line(cols, "");
+  const body: string[] = []; for (let k = 0; k < cells.length; k++) body.push(line(cells[k], urls[k] ?? ""));
+  return [tty ? B + hd + R : hd].concat(body).join("\n");
 }
 // one object: key/value lines, values cut to the width
 function kv(row: Obj, cols: string[], tty: boolean, cols0: number): string {

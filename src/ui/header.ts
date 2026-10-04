@@ -1,6 +1,6 @@
 // agentglass — header bar: logo, tabs, feature widgets, live/cpu/mem stats
 // SPDX-License-Identifier: Apache-2.0
-import { width, fitStyled, bytes } from "../util/text.ts";
+import { width, fitStyled, bytes, ESC_RE } from "../util/text.ts";
 import { S } from "../state.ts";
 import { H } from "../hooks.ts";
 import { sessions, working } from "../model/sessions.ts";
@@ -34,7 +34,7 @@ export function renderHeader(): void {
   const right = fg(C.green) + "● " + live + " live" + RST + fg(C.dim) + " · " + RST + fg(C.yellow) + busy + " busy" + RST + fg(C.dim) + " · " + RST +
     fg(C.sub) + "cpu " + RST + fg(heat(cpu / 400)) + cpu.toFixed(1) + "% " + spark + RST + fg(C.dim) + " · " + RST +
     fg(C.text) + bytes(mem) + RST + fg(C.dim) + (W >= 190 ? "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions" : "") + " " + RST; // totals only when wide: widgets need the room
-  const rw = width(right.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
+  const rw = width(right.replace(ESC_RE, ""));
   const free = Math.max(0, W - x - rw);
   let wid = "";
   if ((H.headerWidgets.length || H.headerFlex.length) && free > 1) {
@@ -43,12 +43,12 @@ export function renderHeader(): void {
     for (const f of H.headerWidgets) {
       const w = f(Math.max(0, free - 1 - used));
       if (!w) continue;
-      parts.push(w); used += width(w.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")) + 1;
+      parts.push(w); used += width(w.replace(ESC_RE, "")) + 1;
     }
     const room = free - 1 - used - 2;
     if (room > 8) for (const f of H.headerFlex) { const w = f(room); if (w) { parts.push(fg(C.line) + "│" + RST + " " + w); break; } }
     if (parts.length) wid = fitStyled(parts.join(" "), free - 1);
   }
-  const ww = width(wid.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
+  const ww = width(wid.replace(ESC_RE, ""));
   put(0, 0, s + wid + " ".repeat(Math.max(0, free - ww)) + (W - x > rw ? right : ""));
 }

@@ -12,6 +12,7 @@ import { put, box, badge, BADGE_W, spin } from "./screen.ts";
 import { evLines } from "./transcript.ts";
 import { sourceOf } from "../harness/index.ts";
 import { scrubRemote, remoteLabel } from "../util/giturl.ts";
+import { link, sessUrl } from "../util/hyper.ts";
 
 // mouse hit map for the preview, rebuilt every frame
 export const prevKind: number[] = []; export const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
@@ -86,7 +87,8 @@ export function renderSessions(): void {
     enrich(s);
     lines.push(fg(C.text) + CSI + "1m" + fit(clean(titleOf(s)), iw2) + RST);
     const kv = (k: string, v: string, c: string): void => { lines.push(fg(C.dim) + fit(k, 9) + RST + fg(c) + fit(clean(v), iw2 - 9) + RST); };
-    kv("id", s.id, C.sub);
+    const idf = fit(clean(s.id), iw2 - 9); const idt = idf.trimEnd(); // the id links to the session (OSC 8 terminals)
+    lines.push(fg(C.dim) + fit("id", 9) + RST + fg(C.sub) + link(sessUrl(s.h, s.id), idt) + idf.slice(idt.length) + RST);
     kv("cwd", home(s.cwd), C.purple);
     if (s.branch) kv("branch", s.branch, C.green);
     if (s.remote) { const r = scrubRemote(s.remote); if (r) kv("remote", remoteLabel(r), C.green); }
