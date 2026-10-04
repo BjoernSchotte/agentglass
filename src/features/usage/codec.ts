@@ -1,14 +1,24 @@
 // agentglass — the ledger cache's JSON shape: Acc/Day ⇄ plain objects (IO lives in ./cache.ts)
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr } from "../../util/json.ts";
-import { type Acc, type Day, type VRef } from "./record.ts";
+import { type Acc, type Day, type VRef, type RlWin, L } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 11; // 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 12; // 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
+
+// the newest Codex rate limits (L.rl): runtime state the indexing finds, kept with the ledger so a warm start (which
+// reads no old codex line) still shows the gauge. {at, ws: [[pct, minutes, reset ms]…]}
+export function rlOut(): Obj { return { at: L.rlAt, ws: L.rl.map((w: RlWin) => [w.pct, w.min, w.reset]) }; }
+export function rlIn(o: Obj | null): void {
+  const at = o ? num(o["at"]) : 0; if (!o || at <= 0 || at < L.rlAt) return; // what this run already indexed is newer
+  const ws: RlWin[] = [];
+  for (const v of arr(o["ws"])) { const x = nums(v); const w: RlWin = { pct: x[0] ?? 0, min: x[1] ?? 0, reset: x[2] ?? 0 }; if (w.min > 0 && w.reset > 0 && w.pct >= 0 && w.pct <= 100) ws.push(w); }
+  if (ws.length) { L.rl = ws; L.rlAt = at; }
+}
 
 function recsOut(rs: Rec[]): Obj[] { const out: Obj[] = []; for (const r of rs) out.push({ t: r.t, m: r.ms, i: r.id, s: r.ts, a: r.arg }); return out; }
 function recsIn(v: unknown): Rec[] {

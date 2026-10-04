@@ -5,13 +5,13 @@ import { statSync } from "node:fs";
 import type { Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
 import { join } from "node:path";
-import { HOME, readText } from "../../util/fs.ts";
+import { HOME } from "../../util/fs.ts";
 import type { Obj } from "../../util/json.ts";
 import { OS } from "../../platform/index.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
 import { type Acc, stamp, startOfDay } from "./record.ts";
-import { type Bill, type Det, type Evid, asBill, newEvid, rule, provMode, configEv, configFiles, envSummary, type Allow, allowanceOf, cutObject } from "./billing.ts";
+import { type Bill, type Det, type Evid, asBill, newEvid, rule, provMode, configEv, configFiles, envSummary, type Allow, allowanceOf, claudeJson } from "./billing.ts";
 
 const RECHECK_MS = 60000;
 function mtimes(fs: string[]): string { let t = ""; for (const f of fs) { let m = 0; try { m = statSync(f).mtimeMs; } catch (e) { m = 0; } t += String(m) + ","; } return t; }
@@ -58,19 +58,17 @@ export function sessionBill(s: Sess): Det {
   const d = provDet(s, top);
   return { bill: d.bill, plan: d.bill === "plan" ? top : d.plan, why: d.why, src: d.src };
 }
-// Claude plan allowance gauge: only the cachedUsageUtilization block of ~/.claude.json, re-read at most once a minute
-// and only when its mtime moved; shown only while a live or today's Claude session is on a plan
+// Claude plan allowance gauge: only the cachedUsageUtilization block of ~/.claude.json, looked at most once a minute
+// (the read itself is shared with the plan evidence, cached by mtime + size); shown only while a live or today's Claude
+// session is on a plan
 const CJ = join(HOME, ".claude.json");
-let alAt = 0; let alSig = ""; let alObj: Obj | null = null;
+let alAt = 0; let alObj: Obj | null = null;
 export function allowance(): Allow | null {
   const sod = startOfDay(); let onPlan = false;
   for (const s of sessions.values()) if (s.h === "claude" && s.bill === "plan" && (s.pid > 0 || s.mtime >= sod)) { onPlan = true; break; }
   if (!onPlan) return null;
   const now = Date.now();
-  if (now - alAt >= RECHECK_MS) {
-    alAt = now; const sig = mtimes([CJ]);
-    if (sig !== alSig) { alSig = sig; const c = cutObject(readText(CJ, 0, 8388608), "cachedUsageUtilization"); alObj = null; if (c) { const o: Obj = {}; o["cachedUsageUtilization"] = c; alObj = o; } }
-  }
+  if (now - alAt >= RECHECK_MS) { alAt = now; const c = claudeJson(CJ).usage; alObj = null; if (c) { const o: Obj = {}; o["cachedUsageUtilization"] = c; alObj = o; } }
   return alObj ? allowanceOf(alObj, now) : null; // a rejected shape just hides the gauge (no debug log exists to note it in)
 }
 function label(s: Sess): void { const b = sessionBill(s); s.bill = b.bill; s.plan = b.plan; s.billSrc = b.src; }

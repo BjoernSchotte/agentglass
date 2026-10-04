@@ -10,6 +10,7 @@ import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { type Acc, L, bucket, tool, pend, tokens, reasoning, turn, skill, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
 import { MQ_TURN } from "../features/usage/facts.ts";
 import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
+import { rlWins } from "../features/usage/billing.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
 import { scrubRemote } from "../util/giturl.ts";
@@ -156,12 +157,10 @@ function usage(a: Acc, l: string): void {
     reasoning(a, d, Math.max(0, use[4] ?? 0)); // a subset of output_tokens (kept in x[4])
     a.x = cur;
   }
-  const rl = obj(p["rate_limits"]); const pr = rl ? obj(rl["primary"]) : null;
+  const rl = obj(p["rate_limits"]);
   const pt = rl ? str(rl["plan_type"]) : ""; if (pt) stamp(a, "plan", pt, "session"); // a ChatGPT plan's rate limits name it
-  if (pr) {
-    const at = new Date(iso).getTime();
-    if (at >= L.rlAt) { L.rlAt = at; L.rlPct = num(pr["used_percent"]); L.rlWin = num(pr["window_minutes"]); L.rlReset = num(pr["resets_at"]); }
-  }
+  const at = rl ? isoMs(iso) : 0; const ws = rl ? rlWins(rl, at) : [];
+  if (ws.length && at >= L.rlAt) { L.rlAt = at; L.rl = ws; } // the newest event across sessions: 5 h and, when the plan has it, 7 d
 }
 
 export const codex: HarnessAdapter = {

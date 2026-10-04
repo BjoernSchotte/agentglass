@@ -13,7 +13,7 @@ import { type Day, L, todayKey, lastDays, startOfDay, skillUses, newDay } from "
 import { PRICES_FROM } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
 import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText } from "./costs.ts";
-import { type Bill, MODES, tag, asBill, planLabel } from "./billing.ts";
+import { type Bill, type GW, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
 import { costNow, budget } from "./summary.ts";
 import { REDACT } from "../redact-on.ts";
@@ -656,6 +656,13 @@ H.previewSections.push((s: Sess, w: number): string[] => {
     .map((e) => fg(C.cyan) + e[0] + RST + (e[1] > 1 ? fg(C.dim) + " ×" + String(e[1]) + RST : "")).join(fg(C.dim) + ", " + RST) + (sk.size > 5 ? fg(C.dim) + " +" + String(sk.size - 5) + RST : ""));
   return out;
 });
+// an allowance gauge " · <tag> 5h 13% 7d 64%": every window, the fuller in heat colour + bold; narrow drops the others, then the gauge
+export function allowGauge(tag: string, ws: GW[], w: number): string {
+  const part = (x: GW): string => (x.hi ? fg(heat(x.pct / 100)) + CSI + "1m" : fg(C.dim)) + x.lbl + " " + String(x.pct) + "%" + RST;
+  const build = (xs: GW[]): string => { if (!xs.length) return ""; let t = fg(C.dim) + " · " + tag + RST; for (const x of xs) t += " " + part(x); return t; };
+  for (const xs of [ws, ws.filter((x: GW) => x.hi)]) { const g = build(xs); if (g && vwidth(g) <= w) return g; }
+  return "";
+}
 H.headerWidgets.push((w: number): string => {
   if (w < 14) return "";
   const cn = costNow(""); const st = cn.bs.state;
@@ -663,23 +670,9 @@ H.headerWidgets.push((w: number): string => {
   let fig = split(cn.today, w < 40);
   if (width(fig) + 6 > w) fig = split(cn.today, true); // a mixed split that does not fit shrinks to the ≈ total
   let s = col + fig + RST + fg(C.dim) + " today" + RST; let n = width(fig) + 6;
-  if (L.rlPct >= 0 && L.rlReset * 1000 > Date.now()) {
-    const win = L.rlWin >= 1440 ? Math.round(L.rlWin / 1440) + "d" : Math.round(L.rlWin / 60) + "h";
-    const pc = Math.round(L.rlPct) + "%";
-    if (n + 9 + win.length + pc.length <= w) { s += fg(C.dim) + " · cx " + win + " " + RST + fg(heat(L.rlPct / 100)) + pc + RST; n += 9; }
-  }
-  // Claude plan allowance: both windows, the fuller one in heat colour + bold; narrow drops the dim one, then the gauge
-  const al = allowance();
-  if (al) {
-    const part = (lbl: string, pct: number, hi: boolean): string => hi ? fg(heat(pct / 100)) + CSI + "1m" + lbl + " " + String(pct) + "%" + RST : fg(C.dim) + lbl + " " + String(pct) + "%" + RST;
-    const ws: string[][] = []; // [label, pct, hi]
-    if (al.h5) ws.push(["5h", String(al.h5.pct), al.hi === "5h" ? "1" : ""]);
-    if (al.d7) ws.push(["7d", String(al.d7.pct), al.hi === "7d" ? "1" : ""]);
-    const build = (xs: string[][]): string => { let t = fg(C.dim) + " · cc" + RST; for (const x of xs) t += " " + part(x[0] ?? "", Number(x[1] ?? "0"), x[2] === "1"); return t; };
-    let g = build(ws);
-    if (n + vwidth(g) > w) g = build(ws.filter((x: string[]) => x[2] === "1"));
-    if (n + vwidth(g) <= w) { s += g; n += vwidth(g); }
-  }
+  const cx = allowGauge("cx", gaugeWins(L.rl, Date.now()), w - n); s += cx; n += vwidth(cx); // Codex rate limits
+  const al = allowance(); // Claude plan allowance
+  if (al) { const cc = allowGauge("cc", claudeWins(al), w - n); s += cc; n += vwidth(cc); }
   return n <= w ? s : "";
 });
 H.footerHints.push((mode: string): string[][] => {

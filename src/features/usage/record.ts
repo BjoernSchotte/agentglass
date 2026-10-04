@@ -41,7 +41,8 @@ export interface Acc {
 // gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
 // br/subj = the banner's branch and subject; call/ts = the tool call to jump to
 export interface VRef { k: string; v: string; t: number; how: string; br: string; subj: string; call: string; ts: string }
-export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rlPct: -1, rlWin: 0, rlReset: 0, rlAt: 0 }; // rl* = latest Codex primary rate limit
+export interface RlWin { pct: number; min: number; reset: number } // a Codex rate-limit window: used %, length (minutes), reset (epoch ms)
+export const L = { ver: 0, done: 0, total: 0, prio: "", prioAt: 0, rl: [] as RlWin[], rlAt: 0 }; // rl = the latest Codex rate-limit windows, rlAt = their event time
 
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 export function todayKey(): string { return dayKey(new Date()); }

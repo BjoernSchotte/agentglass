@@ -1,10 +1,11 @@
 // agentglass — self-check for the Stats top-tools list (skill markers lead: a long name is cut, they are not): scriptc build src/features/usage/stats.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
-import { toolRows, open, statsTotalsFor, statsSummaryFor, periodMessage, statsPeriod } from "./stats.ts";
+import { toolRows, allowGauge, open, statsTotalsFor, statsSummaryFor, periodMessage, statsPeriod } from "./stats.ts";
 import { parse } from "../query/parse.ts";
 import { EMPTY, compile } from "../query/eval.ts";
 import { fxBase } from "../query/fixture.ts";
 import { type Cnt, newCnt } from "./calls.ts";
+import { vwidth } from "../../util/text.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -37,5 +38,15 @@ ok("call-scoped", cs.scoped && cs.tools === 1 && ct.callScoped && ct.tools === 1
 const old = compile(parse("day is 2020-01-01").cs, "stats").f ?? EMPTY;
 ok("empty period ∩ day", periodMessage(old, statsPeriod()) === "today does not match day is 2020-01-01", periodMessage(old, statsPeriod()));
 ok("period intersects", periodMessage(compile(parse("day is today").cs, "stats").f ?? EMPTY, statsPeriod()) === "", "");
+// allowance gauges (Codex rate limits, Claude plan): every window, the fuller bold; narrow drops the others, then the gauge
+{
+  const plain = (t: string): string => t.replace(/\x1b\[[0-9;]*m/g, "");
+  const ws = [{ lbl: "5h", pct: 13, hi: false }, { lbl: "7d", pct: 64, hi: true }];
+  const g = allowGauge("cx", ws, 80);
+  ok("gauge: both windows", plain(g) === " · cx 5h 13% 7d 64%" && vwidth(g) === 19, plain(g));
+  ok("gauge: the fuller one bold", g.indexOf("\x1b[1m7d 64%") >= 0 && g.indexOf("\x1b[1m5h") < 0, JSON.stringify(g));
+  ok("gauge: narrow keeps the fuller window", plain(allowGauge("cx", ws, 18)) === " · cx 7d 64%", plain(allowGauge("cx", ws, 18)));
+  ok("gauge: too narrow = nothing", allowGauge("cx", ws, 11) === "" && allowGauge("cx", [], 80) === "", allowGauge("cx", ws, 11));
+}
 console.log(bad ? bad + " failed" : "stats: all checks passed");
 if (bad) process.exit(1);

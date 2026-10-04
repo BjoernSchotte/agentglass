@@ -1,9 +1,10 @@
 // agentglass — self-check for billing-mode detection (rules, environ names, config readers): scriptc build src/features/usage/billing.check.ts -o bc && ./bc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { newAcc, stamp } from "./record.ts";
 import { type Obj, parse } from "../../util/json.ts";
-import { type Evid, type Bill, allowanceOf, rule, provRule, provMode, modelBill, envSummary, configEv, planLabel, tag, MODES } from "./billing.ts";
+import { type Evid, type Bill, allowanceOf, rlWins, gaugeWins, claudeWins, rule, provRule, provMode, modelBill, envSummary, configEv, claudeJson, planLabel, tag, MODES } from "./billing.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -87,6 +88,25 @@ ok("pi per provider", provRule("pi", "anthropic", pie, "config").bill === "plan"
 const oce = configEv("opencode", HOMED, "");
 ok("opencode gateway from config", provRule("opencode", "cliproxy", oce, "config").bill === "gateway" && provRule("opencode", "google", oce, "config").bill === "unknown" && provRule("opencode", "anthropic", oce, "config").bill === "plan" && kvs(oce).indexOf("SECRET") < 0 && kvs(oce).indexOf("8317") < 0, kvs(oce));
 ok("pi gateway from models.json", provRule("pi", "cliproxy", pie, "config").bill === "gateway" && provRule("pi", "openai", pie, "config").bill === "api" && kvs(pie).indexOf("8317") < 0, kvs(pie));
+// parsed config files are cached by mtime + size: a file whose stat did not move is not read again (~/.claude.json
+// moves every few seconds while Claude runs; each project folder's evidence and the allowance gauge read it)
+{
+  const sp = ROOT + "/proj2/.claude/settings.json";
+  write(sp, "{\"env\":{\"FOO_KEY\":\"1\"}}"); execFileSync("touch", ["-t", "202601011200.00", sp]);
+  const a1 = configEv("claude", HOMED, ROOT + "/proj2");
+  write(sp, "{\"env\":{\"BAR_KEY\":\"1\"}}"); execFileSync("touch", ["-t", "202601011200.00", sp]); // same size, same mtime
+  const a2 = configEv("claude", HOMED, ROOT + "/proj2");
+  execFileSync("touch", ["-t", "202601011201.00", sp]);
+  const a3 = configEv("claude", HOMED, ROOT + "/proj2");
+  ok("config cache: unchanged stat = cached, a moved mtime = read again", a1.names.indexOf("FOO_KEY") >= 0 && a2.names.indexOf("FOO_KEY") >= 0 && a3.names.indexOf("BAR_KEY") >= 0 && a3.names.indexOf("FOO_KEY") < 0, a1.names.join() + " / " + a2.names.join() + " / " + a3.names.join());
+  ok("config cache: callers get their own copy", (() => { a3.names.push("X"); return configEv("claude", HOMED, ROOT + "/proj2").names.indexOf("X") < 0; })(), "shared");
+  ok("config cache: user files shared by every project, same evidence", kvs(configEv("claude", HOMED, ROOT + "/proj2")) === kvs(ce) && rule("claude", configEv("claude", HOMED, ROOT + "/proj"), "config").bill === "metered", kvs(configEv("claude", HOMED, ROOT + "/proj2")));
+  write(HOMED + "/.claude.json", "{\"oauthAccount\":{\"billingType\":\"stripe_subscription\",\"organizationType\":\"claude_max\"},\"cachedUsageUtilization\":{\"fetchedAtMs\":1,\"utilization\":{}}}");
+  execFileSync("touch", ["-t", "202601011202.00", HOMED + "/.claude.json"]);
+  ok("config cache: ~/.claude.json read again when it moved", rule("claude", configEv("claude", HOMED, ROOT + "/proj2"), "config").plan === "max", kvs(configEv("claude", HOMED, ROOT + "/proj2")));
+  const cu = claudeJson(HOMED + "/.claude.json").usage;
+  ok("config cache: the allowance block from the same read", !!cu && cu["fetchedAtMs"] === 1, JSON.stringify(cu));
+}
 ok("redact plan", planLabel("", true) === "" && planLabel("team", true) === "team" && planLabel("Acme Corp", true) === "plan" && planLabel("Acme Corp", false) === "Acme Corp", "");
 rmSync(ROOT, { recursive: true, force: true });
 // stamp precedence: config never stamps; process fills an empty stamp; session evidence replaces process, never the reverse
@@ -121,5 +141,19 @@ ok("allowance microsecond resets_at", !!a5 && !!a5.h5 && !!a5.d7 && a5.h5.reset 
 ok("allowance bad resets", allowanceOf(cu(NOW - 60000, win("15", "soon"), win("71", "soon")), NOW) === null, "");
 ok("allowance past reset", allowanceOf(cu(NOW - 60000, win("15", iso(NOW - 1000)), ""), NOW) === null, "");
 ok("allowance no block", allowanceOf(parse("{\"x\":1}"), NOW) === null && allowanceOf(null, NOW) === null, "");
+// Codex rate limits (token_count.rate_limits, codex 0.5x shape): primary = 5 h, secondary = 7 d when the plan has one
+const rlo = (pr: string, se: string): Obj | null => parse("{\"primary\":" + pr + ",\"secondary\":" + se + ",\"credits\":{\"has_credits\":false},\"plan_type\":\"plus\"}");
+const rw = (pct: number, min: number, reset: number): string => "{\"used_percent\":" + String(pct) + ",\"window_minutes\":" + String(min) + ",\"resets_at\":" + String(Math.floor(reset / 1000)) + "}";
+const both = rlWins(rlo(rw(12.5, 300, NOW + 3600000), rw(64, 10080, NOW + 3 * 86400000)), NOW - 1000);
+ok("codex: both windows", both.map((w) => String(w.pct) + "/" + String(w.min)).join(" ") === "12.5/300 64/10080" && both.every((w) => w.reset > NOW), JSON.stringify(both));
+const gws = (ws: { lbl: string; pct: number; hi: boolean }[]): string => ws.map((w) => w.lbl + " " + String(w.pct) + (w.hi ? "*" : "")).join(", ");
+ok("codex gauge: 5h and 7d, the fuller marked", gws(gaugeWins(both, NOW)) === "5h 13, 7d 64*", gws(gaugeWins(both, NOW)));
+ok("codex: no secondary (null)", rlWins(rlo(rw(40, 300, NOW + 3600000), "null"), NOW).length === 1, "");
+const rel = rlWins(parse("{\"primary\":{\"used_percent\":5,\"window_minutes\":300,\"resets_in_seconds\":600},\"secondary\":{\"used_percent\":9,\"window_minutes\":10080,\"resets_in_seconds\":86400}}"), NOW);
+ok("codex: resets_in_seconds counts from the event", rel.length === 2 && rel[0].reset === NOW + 600000 && rel[1].reset === NOW + 86400000, JSON.stringify(rel));
+ok("codex gauge: a passed window is not shown", gws(gaugeWins(rlWins(rlo(rw(90, 300, NOW - 1000), rw(20, 10080, NOW + 86400000)), NOW - 5000), NOW)) === "7d 20*", "");
+ok("codex: shapeless or out of range = nothing", rlWins(rlo("{\"used_percent\":\"x\"}", rw(120, 10080, NOW + 1000)), NOW).length === 0 && rlWins(null, NOW).length === 0, "");
+const cw = al ? claudeWins(al) : [];
+ok("claude gauge: same shape", gws(cw) === "5h 15, 7d 71*", gws(cw));
 console.log(bad ? bad + " failed" : "billing: all checks passed");
 if (bad) process.exit(1);
