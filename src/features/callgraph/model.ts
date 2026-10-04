@@ -32,7 +32,7 @@ export function catOf(name: string): number {
 // ponytail: text heuristics — the parsed Ev keeps no is_error flag; add one to Ev if these miss too much
 export function isErr(text: string): boolean {
   const t = text.trimStart().slice(0, 200);
-  if (/^(<tool_use_error>|error|\[(error|failed|denied|cancel|timeout))/i.test(t) || /^Exit code:? [1-9]/.test(t) || /^The user doesn't want to proceed/.test(t)) return true;
+  if (/^(<tool_use_error>|error|\[(error|failed|denied|cancel|timeout))/i.test(t) || /^Exit code:? [1-9]/.test(t) || /^Process exited with code [1-9]/.test(t) || /^The user doesn't want to proceed/.test(t)) return true;
   return /"exit_code":\s*[1-9]/.test(text.slice(-300)); // codex: {"output": …, "metadata": {"exit_code": n}}
 }
 function span(t0: number, depth: number, kind: number, name: string, arg: string, src: number, ev: number, parent: number): Span {
