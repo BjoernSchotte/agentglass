@@ -1,5 +1,6 @@
 agentglass
 *.ll
+.scriptc/
 .claude/
 videos/*/renders/
 specs/internals/

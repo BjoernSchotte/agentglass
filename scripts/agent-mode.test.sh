@@ -4,8 +4,9 @@ set -e
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 # a stable version: a local build never counts as a downgrade
-AGENTGLASS_VERSION=2026.10.2 AGENTGLASS_CHANNEL=stable AGENTGLASS_COMMIT=3333333333333333333333333333333333333333 AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
-sh "$here/scripts/build-info.sh"
+# a private source copy (its build-info.ts) keeps src/ untouched while other builds run
+mkdir "$t/src" && cp -R "$here/src/." "$t/src/"
+AGENTGLASS_SRC="$t/src" AGENTGLASS_VERSION=2026.10.2 AGENTGLASS_CHANNEL=stable AGENTGLASS_COMMIT=3333333333333333333333333333333333333333 AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
 h="$t/h"; p1="$h/w/p1"; p2="$h/w/p2"; mkdir -p "$p1/.git" "$p2/.git"
 CL=abcdef01-0000-4000-8000-000000000001; CX=abcdef02-0000-4000-8000-000000000002; GM=99999999-0000-4000-8000-000000000003
 # portable (GNU + BSD): this minute, $1 = a tie-breaking second; file ages via touch -t
