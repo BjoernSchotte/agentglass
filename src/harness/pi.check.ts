@@ -156,6 +156,19 @@ ok("--no-session child usage booked on the parent", Math.abs(ex.cost - 0.01) < 1
 const ex2 = feed([result("call_1", "subagent", ",\"details\":{\"results\":[{\"sessionFile\":\"/x/s.jsonl\",\"usage\":{\"input\":10,\"output\":5,\"cost\":0.01},\"model\":\"m\"}]},\"isError\":false")]);
 ok("child with its own file: not booked twice", ex2.cost === 0 && ex2.inTok === 0, String(ex2.cost));
 
+// ── /skill:name [args]: pi expands the skill file into the prompt (agent-session expandSkillCommand, pi 0.99) ──
+{
+  const um = (text: string): string => "{\"type\":\"message\",\"id\":\"u1\",\"timestamp\":\"" + T1 + "\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":" + JSON.stringify(text) + "}]}}";
+  const blk = "<skill name=\"ponytail\" location=\"/home/u/.pi/agent/skills/ponytail/SKILL.md\">\nReferences are relative to /home/u/.pi/agent/skills/ponytail.\n\n# Ponytail\n\nBe lazy.\n</skill>";
+  const ls = [um(blk + "\n\nfix the build"), um(blk), um("explain <skill name=\"x\" location=\"y\"> tags")];
+  const out: Ev[] = []; for (const l of ls) { const o = parseJson(l); if (o) pi.parse(o, out, null); }
+  const got = out.map((e: Ev) => e.kind + ":" + e.text).join(" | ");
+  ok("skill prompt: shown as the command the user typed, not the skill file", got === "user:/skill:ponytail fix the build | user:/skill:ponytail | user:explain <skill name=\"x\" location=\"y\"> tags", got);
+  const a = feed(ls); const d = day(a);
+  const sk: string[] = []; if (d) for (const [k, v] of d.skills) sk.push(k + "=" + String(v.n));
+  ok("skill prompt: a command skill use each, still a turn each", sk.join(",") === "command\tponytail=2" && !!d && d.turns === 3, sk.join(",") + " turns " + (d ? String(d.turns) : "-"));
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "pi: all checks passed");
 if (bad) process.exit(1);
