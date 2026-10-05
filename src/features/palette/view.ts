@@ -86,7 +86,8 @@ function collect(c: Ctx): Item[] {
   const t0 = Date.now(); // titles come from the log's head: read the newest ones within a frame's budget (the list does the same lazily)
   for (const s of ss) { if (Date.now() - t0 > 60) break; if (!s.headDone) loadHead(s); }
   const out: Item[] = []; const now = Date.now(); STAND.clear();
-  // a project is live if one of its agents runs, gone if every one of its directories is
+  // a project is live if one of its agents runs, gone if every one of its directories is (its hint says so, unless a
+  // "~/… (gone)" path label does)
   const projs = new Map<string, { n: number; last: number; label: string; val: string; live: boolean; gone: boolean; remote: boolean }>();
   for (const s of ss) {
     const it = itemOfSess(s); out.push(it);
@@ -101,7 +102,7 @@ function collect(c: Ctx): Item[] {
   ps.sort((a, b) => (projs.get(b)?.last ?? 0) - (projs.get(a)?.last ?? 0));
   for (const k of ps) {
     const e = projs.get(k); if (!e) continue;
-    out.push({ id: "project:" + k, kind: "project", text: e.label, hint: String(e.n) + " · " + ago(e.last) + (e.gone ? " · gone" : ""), s: null, act: null, proj: e.val, tab: -1 });
+    out.push({ id: "project:" + k, kind: "project", text: e.label, hint: String(e.n) + " · " + ago(e.last) + (e.gone && e.label.indexOf("(gone)") < 0 ? " · gone" : ""), s: null, act: null, proj: e.val, tab: -1 });
     STAND.set("project:" + k, standing({ live: e.live, last: e.last, gone: e.gone, remote: e.remote, worktree: false }, now));
   }
   for (const a of H.actions) if (a.keys && a.when(c)) out.push(actItem(a)); // key bindings first, palette-only ones (themes) after
