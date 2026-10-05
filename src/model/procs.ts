@@ -218,10 +218,15 @@ function linkSessions(): void {
   for (const l of registry.values()) regPids.add(l.pid);
   for (const ad of HARNESSES) {
     if (!ad.liveCwd) continue;
-    const cp: CwdProc[] = [];
-    for (const p of procs) if (p.h === ad.id && p.cwd && !regPids.has(p.pid)) cp.push({ pid: p.pid, h: p.h, cwd: p.cwd });
-    const ss: { path: string; h: string; cwd: string; mtime: number; pid: number }[] = [];
-    for (const s of sessions.values()) if (s.h === ad.id && !s.parent) ss.push({ path: s.path, h: s.h, cwd: realCwd(s), mtime: s.mtime, pid: s.pid });
+    const cp: CwdProc[] = []; const st = ad.sessionStart; const ra = ad.resumeArgs ?? []; const now = Date.now();
+    for (const p of procs) {
+      if (p.h !== ad.id || !p.cwd || regPids.has(p.pid)) continue;
+      const resumes = ra.some((a: string) => (" " + p.args + " ").indexOf(" " + a + " ") >= 0);
+      // its start, with 10 s of slack (etime has whole seconds; the session header is written right after start)
+      cp.push({ pid: p.pid, h: p.h, cwd: p.cwd, after: st && !resumes && p.etime ? now - etimeSec(p.etime) * 1000 - 10000 : 0 });
+    }
+    const ss: { path: string; h: string; cwd: string; mtime: number; pid: number; start: number }[] = [];
+    for (const s of sessions.values()) if (s.h === ad.id && !s.parent) ss.push({ path: s.path, h: s.h, cwd: realCwd(s), mtime: s.mtime, pid: s.pid, start: st ? st(s) : 0 });
     for (const [path, pid] of linkByCwd(cp, ss)) {
       const s = sessions.get(path);
       if (s) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; }

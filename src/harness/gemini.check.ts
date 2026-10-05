@@ -59,6 +59,8 @@ write(P, FULL + PART);
 const END = bytes(FULL + PART);
 const starts: number[] = []; { let o = 0; for (const l of L) { starts.push(o); o += bytes(l) + 1; } }
 const sess = (p: string): Sess => newSess("gemini", "0000aaaa-1111-2222-3333-444455556666", p, false);
+// live linking: a session's start comes from its header (procs.ts links a live gemini only to sessions begun after it)
+{ const st = gemini.sessionStart; ok("session start from the header", !!st && st(sess(P)) === Date.parse(TS + "0.000Z"), st ? String(st(sess(P))) : "none"); }
 
 // what a normalized stream says, as countable keys: msg:<id> (message fields), call:<id>, tok:<id>, title:…, meta:…, hdr
 function keys(ls: string[]): string[] {

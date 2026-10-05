@@ -174,6 +174,15 @@ function headerId(path: string): string {
   if (id) hdrIds.set(path, id);
   return id;
 }
+// the header's startTime (epoch ms, 0 unknown), cached once read: live-process linking (procs.ts) takes only sessions
+// that began after the process started (Gemini rewrites an older session file of the project when it starts)
+const hdrStart = new Map<string, number>();
+function sessionStart(s: Sess): number {
+  const hit = hdrStart.get(s.path); if (hit !== undefined) return hit;
+  const o = header(s.path); const t = o ? Date.parse(str(o["startTime"])) : NaN; const v = t > 0 ? t : 0;
+  if (o) hdrStart.set(s.path, v);
+  return v;
+}
 const pathOf = new Map<string, string>(); // session id → its file (spawnOf, subagent kind)
 function scan(add: AddFn): void {
   const listed = new Set<string>();
@@ -380,7 +389,7 @@ export const gemini: HarnessAdapter = {
   bin: "gemini", procs: ["gemini"],
   roots, scan, meta, refresh: meta, source, headBytes: 65536,
   parse, busy, spawnOf,
-  liveCwd: true, // no lock, no registry, the file is opened per write
+  liveCwd: true, sessionStart, resumeArgs: ["--resume", "-r"], // no lock, no registry, the file is opened per write
   headless: (s: Sess, msg: string) => ["--resume", s.id, "-p", msg], // runs in s.cwd: gemini looks the id up in that project only
   resume: (s: Sess) => ["--resume", s.id],
   files,
