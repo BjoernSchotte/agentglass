@@ -244,8 +244,9 @@ to scratch dirs passed in and never print transcript text (ids, numbers and path
 
 ## Interactions with other specs
 - **model-prices** (Round 2): adds `Day.tp` and bumps `VERSION`. The per-session line format here carries it unchanged.
-  Whichever merges second rebases; when both ship in one release they share one bump. The migration of 2 applies only
-  when `v` matches, so after a bump the first run re-indexes once (as any bump does).
+  Independent specs: tui-footprint keeps `VERSION`, model-prices bumps it; whichever merges second rebases onto the
+  other's codec. The migration of 2 applies only when `v` matches, so after model-prices' bump the first run
+  re-indexes once (as any bump does).
 - **adaptive-refresh**: its level table and alarm bounds stay (`sched.ts:23-31,65-71`); its debug footer is the probe
   used here (`rss` added). The "procs slow" footer note should no longer appear on Linux.
 - **filter-language / triage / session-compare / rules-config**: their call-row readers move to `callsOf()` (4) and to

@@ -29,7 +29,8 @@ Kiro, Gemini CLI).
 
 | Spec | What it adds | Depends on |
 |---|---|---|
-| [tui-footprint](tui-footprint/spec.md) | TUI memory and CPU: streamed one-session-per-line ledger cache, lazy columnar call rows, ledger/scan/view/git work only on change, Linux `/proc` process scan instead of `ps`, frames on visible change, cold-start indexing gauge; golden comparison keeps every number identical (RSS ~820 → ≤ 300 MB, CPU 19 % → ≤ 2 %) | — (shares `codec.ts`/`VERSION` with model-prices) |
+| [model-prices](model-prices/spec.md) | price unknown models from the TUI (`$` in Stats, palette) and the CLI (`agentglass prices`), aliases (estimates, `≈`), per-model costs from pi/OpenCode configs, price sources in Stats/`--json`/OTLP, price changes re-price the ledger in memory (`Day.tp`, no re-index) | honest-costs (`Day.mt/um/cp/hc`), cli-agent-mode, command-palette (`H.dynActions`); independent of tui-footprint (model-prices bumps `VERSION`; tui-footprint keeps it) |
+| [tui-footprint](tui-footprint/spec.md) | TUI memory and CPU: streamed one-session-per-line ledger cache, lazy columnar call rows, ledger/scan/view/git work only on change, Linux `/proc` process scan instead of `ps`, frames on visible change, cold-start indexing gauge; golden comparison keeps every number identical (RSS ~820 → ≤ 300 MB, CPU 19 % → ≤ 2 %) | — ; independent of model-prices (tui-footprint keeps `VERSION`; model-prices bumps it, `Day.tp` stays a plain field in the cache line) |
 
 ## Why this order
 1. **Phase 1** fixes numbers people already read (cost, titles, turns) and is small — every later feature builds on
