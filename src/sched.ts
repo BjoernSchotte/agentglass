@@ -138,8 +138,10 @@ function dur(ms: number): string {
 }
 export const DBG = { on: false, line: "" }; // AGENTGLASS_DEBUG_REFRESH=1: footer.ts shows line
 // AGENTGLASS_DEBUG_REFRESH footer: lvl hot · procs 18ms/1s · scan 41ms/2s · …
-export function debugLine(sc: Sched, live: boolean, armed: boolean, why: string): string {
+// extra: process-wide parts (rss, ingest) right after the level, where a narrow footer does not cut them off
+export function debugLine(sc: Sched, live: boolean, armed: boolean, why: string, extra: string): string {
   const parts = ["lvl " + sc.lv + (why ? " (" + why + ")" : "") + (sc.unf ? " unfocused" : "") + (sc.fixed ? " fixed" : "")];
+  if (extra) parts.push(extra);
   for (const j of JOBS) {
     const e = every(sc, j, live, armed); if (e < 0) continue;
     const x = sc.js.get(j);
