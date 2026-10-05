@@ -7,7 +7,7 @@ import { sessions } from "../../model/sessions.ts";
 import { type Acc, dayKey } from "./record.ts";
 import { ledger, accOf, complete } from "./ledger.ts";
 import { accOut, accIn } from "./codec.ts";
-import { forget } from "./owners.ts";
+import { forget, OWN } from "./owners.ts";
 import { parse } from "../../util/json.ts";
 import { newSessB, finish } from "../otlp/build.ts";
 import "../../harness/index.ts";
@@ -101,6 +101,13 @@ for (const first of ["away", "home"]) {
   all(first === "away" ? [a, as, h, hs] : [h, hs, a, as]);
   eq("twins (" + first + " first): the home dir owns the shared history", show(h) + " | " + show(a), "cr 30 out 2 tools 0 turns 1 | cr 40 out 1 tools 0 turns 1");
   eq("twins (" + first + " first): a subagent too", String(cr(hs)) + "/" + String(cr(as)), "5/0");
+}
+
+// a head without a cwd yet (a new log, queued prompts first) decides nothing for good: the cwd that follows does
+{
+  const NEW = dir + "/-w-crab-box-codex/N.jsonl"; put(NEW, [QUEUED.slice(0, 200) + "\"}"]);
+  const h0 = OWN.home(NEW); appendFileSync(NEW, at(prompt("n1", D1), "/w/crab-box") + "\n");
+  eq("no cwd yet: at home, then the cwd decides", String(h0) + "/" + String(OWN.home(NEW)), "true/false");
 }
 
 // ── a forked subagent starts with a copy of its parent's last message (later or equal timestamp) ──
