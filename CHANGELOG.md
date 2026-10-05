@@ -2,6 +2,12 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.4
+
+### Fixes
+
+- **build:** macOS x64 release builds again — no Record<string, RegExp> for scriptc's C backend (#54) (1ca48a3, [#54](https://github.com/BjoernSchotte/agentglass/pull/54))
+
 ## 2026.10.3
 
 ### Features
