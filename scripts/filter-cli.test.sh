@@ -51,6 +51,9 @@ w=$(cat "$T/watch.out")
 echo "$w" | grep -q '"kind":"tool","tool":"Bash"' || { echo "FAIL watch tool: $w"; exit 1; }
 echo "$w" | grep -q '"kind":"result"' || { echo "FAIL watch result of the call: $w"; exit 1; }
 ! echo "$w" | grep -q '"kind":"user"' || { echo "FAIL watch user dropped: $w"; exit 1; }
+echo "$w" | grep -q '"kind":"tool","tool":"Bash","id":"t1"' || { echo "FAIL watch tool line carries its call id: $w"; exit 1; }
+echo "$w" | grep -q '"kind":"result","tool":null,"id":"t1"' || { echo "FAIL watch result line carries its call id: $w"; exit 1; }
+ag --watch --for 1s --filter 'event is alert' > /dev/null || { echo "FAIL event is alert"; exit 1; }
 ag --help | grep -q '^filter keys: harness repo' || { echo "FAIL help keys"; exit 1; }
 ag --help | grep -q -- "--filter '<expr>'" || { echo "FAIL help option"; exit 1; }
 echo "filter cli: all checks passed"

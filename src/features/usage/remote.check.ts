@@ -1,6 +1,6 @@
 // agentglass — self-check for price-list normalization and cost math: scriptc build src/features/usage/remote.check.ts -o rmc && ./rmc
 // SPDX-License-Identifier: Apache-2.0
-import { fromLitellm, fromModelsDev } from "./remote.ts";
+import { fromLitellm, fromModelsDev, pricesFile } from "./remote.ts";
 import { cost } from "./pricing.ts";
 
 let bad = 0;
@@ -24,6 +24,12 @@ const g = ll.get("gpt-5-codex"); if (g) eq("codex: no cache write → -1", g.cw,
 const md = fromModelsDev({ anthropic: { models: { "claude-sonnet-4-5": { cost: { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 } } } },
   openrouter: { models: { "x": { cost: { input: 1, output: 1 } } } }, openai: { models: { "free": { cost: { input: 0, output: 0 } } } } });
 ok("models.dev keeps first-party priced models only", md.size === 1 && md.has("claude-sonnet-4-5"));
+
+// the cached list lives in the ledger's cache dir: AGENTGLASS_CACHE_DIR moves it with the ledger (tests, isolated runs)
+process.env["AGENTGLASS_CACHE_DIR"] = "/tmp/agc-x";
+ok("cache dir honoured", pricesFile("litellm") === "/tmp/agc-x/prices-litellm.json");
+process.env["AGENTGLASS_CACHE_DIR"] = "";
+ok("default cache dir", pricesFile("litellm").endsWith("/.agentglass/cache/prices-litellm.json"));
 
 // 1h cache writes: own rate if listed, else 2× input — never the 5-minute rate
 eq("cw1 listed", cost({ p: "m", i: 5, o: 25, cr: -1, cw: 6.25, cw1: 10 }, 0, 0, 0, 0, 1e6), 10);

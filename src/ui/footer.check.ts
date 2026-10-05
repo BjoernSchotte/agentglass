@@ -75,5 +75,20 @@ const huge = toastLines("word ".repeat(100), 20, 3);
 ok("capped at 3, cut with …", huge.length === 3 && (huge[2] ?? "").endsWith("…") && width(huge[2] ?? "") <= 20, JSON.stringify(huge));
 const longw = toastLines("x".repeat(50), 20, 3);
 ok("a word longer than the line is split", longw.length === 3 && longw.every((l: string) => width(l) <= 20), JSON.stringify(longw));
+// the input line marks an error's column (red reverse): code points, not UTF-16 units; also when the text is scrolled
+function markedAt(text: string, col: number, W: number): string {
+  S.W = W; S.H = 30; S.mode = "input"; S.inputLabel = "filter sessions"; S.inputText = text; S.inputErr = "bad value"; S.inputErrCol = col; S.toast = "";
+  buf.length = 0; renderFooter();
+  const at = "\x1b[" + String(S.H) + ";1H"; let row = ""; for (const b of buf) if (b.startsWith(at)) row = b.slice(at.length);
+  const i = row.indexOf("\x1b[7m"); return i < 0 ? "" : Array.from(row.slice(i + 4))[0] ?? "";
+}
+ok("mark: the error's character", markedAt("status is bogus", 10, 80) === "b", markedAt("status is bogus", 10, 80));
+const emo = "title ~ \"😀\" and status is bogus";
+ok("mark: after an emoji", markedAt(emo, emo.indexOf("bogus"), 80) === "b", markedAt(emo, emo.indexOf("bogus"), 80));
+const long = "title ~ \"" + "a".repeat(60) + "\" and status is bogus";
+ok("mark: scrolled text", markedAt(long, long.indexOf("bogus"), 80) === "b", markedAt(long, long.indexOf("bogus"), 80));
+ok("mark: scrolled out of view", markedAt(long, 0, 80) === "", markedAt(long, 0, 80));
+ok("mark: at the end, the cursor", markedAt("status is", 9, 80) === "▏", markedAt("status is", 9, 80));
+S.inputErr = ""; S.inputErrCol = -1; S.mode = "list";
 console.log(bad ? bad + " failed" : "footer: all checks passed");
 process.exit(bad ? 1 : 0);
