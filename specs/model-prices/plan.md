@@ -16,7 +16,7 @@ from `tp`.
 **Tech Stack:** TypeScript → native binary via scriptc 0.1.7 (Node 24 to build), no runtime deps. Checks are
 standalone scriptc programs (`*.check.ts`), shell tests `scripts/*.test.sh`.
 
-**Spec:** [spec.md](spec.md) — read it first, including "Decisions" and "Open questions"; this plan argues from it.
+**Spec:** [spec.md](spec.md) — read it first, including "Decisions" (each with its why and cost if wrong) and "Open questions"; this plan argues from it.
 
 **Round:** 2 (after 2026.10.4). No earlier plan must be merged first. Coordinate the ledger `VERSION` with
 tui-footprint (Global Constraints).
@@ -332,6 +332,9 @@ Behavior per spec 6: list runs `complete()` like `cost`; `set/alias/unset` do no
 exactly as the spec; exit codes 0 / 1 (`prices_file`) / 2 (`usage`) / 4 (`--unpriced` with rows). Alias errors:
 `"<target> has no price — set one first (agentglass prices set <target> …)"`, `"aliases do not chain: <target> is an alias of <x>"`,
 `"<model> cannot be an alias of itself"`. `set` with only `--in` → usage error `"--out is needed"`.
+Harness-reported note (spec Decision 1): a row with `reportedCostUsd > 0` carries `note` =
+`"cost reported by <harness label> — a user price applies only to its unpriced messages"` (JSON), an indented note line
+in text output, and `set`/`alias` for such a model print the same note after the change line.
 
 - [ ] **Step 1: Failing test** `scripts/prices.test.sh` (pattern of `scripts/cost.test.sh`: fake `HOME`, `AGENTGLASS_PRICES="$t/p/prices.json"`):
   one Codex rollout with `turn_context.model = "gpt-6.1-sol"` and a `token_count` event, one Claude session
@@ -341,7 +344,10 @@ exactly as the spec; exit codes 0 / 1 (`prices_file`) / 2 (`usage`) / 4 (`--unpr
   then `prices alias x gpt-6.1-sol-mini` exit 2; `prices alias y nope` exit 2; `prices unset gpt-6.1-sol` exit 0 and
   `--unpriced` exit 4 again; invalid JSON in the file → `set` exit 1, file bytes unchanged (`cmp`); `AGENTGLASS_AGENT=1
   prices set z --in x --out 1` → stderr one JSON line with `.error.code == "usage"`, stdout empty;
-  `cost --by model --json | jq -r '.[] | select(.model=="claude-sonnet-4-5") | .priceSource'` → `built-in`.
+  `cost --by model --json | jq -r '.[] | select(.model=="claude-sonnet-4-5") | .priceSource'` → `built-in`;
+  a pi session fixture (`~/.pi/agent/sessions/--w--/<ts>_p1.jsonl`, assistant message with `usage.cost.total` 0.5,
+  provider `cliproxy`, model `claude-sonnet-5-5`): `prices --json` row has `reportedCostUsd` 0.5 and a `note` starting
+  `cost reported by pi`; `prices set claude-sonnet-5-5 --in 1 --out 1` prints that note.
 - [ ] **Step 2: Run** `sh scripts/prices.test.sh`. Expected: FAIL (`unknown command prices`).
 - [ ] **Step 3: Implement**.
 - [ ] **Step 4: Run** the test → no `FAIL`; `sh scripts/check.sh` PASS (`clihelp.check.ts` covers the new commands' help).
@@ -415,7 +421,9 @@ list), footer `stats.ts:721-724` (`$ prices`), help `stats.ts:726-733` ("prices"
   `S.inputText` pre-filled `1.25 10` for a priced model and empty for an unpriced one; the `price-set` enter handler with
   `abc 1` keeps the line open with `S.inputErr` `"abc" is not a number`; with `1.25 10` writes the file, the model's row
   source becomes `user`, and its cost is > 0 in the next `panelRows`; `x` then `y` removes it; the dynamic palette action
-  list contains `Set price for gpt-6.1-sol` while it is unpriced and not after.
+  list contains `Set price for gpt-6.1-sol` while it is unpriced and not after; for a model with harness-reported cost
+  the row tag is `harness`/`+harness`, the `price-set` input label contains `cost reported by` and so does the success
+  toast (spec Decision 1).
 - [ ] **Step 2: Run** `scriptc build src/features/usage/pricepanel.check.ts -o /tmp/pp && /tmp/pp`. Expected: build FAIL.
 - [ ] **Step 3: Implement**.
 - [ ] **Step 4: Run** → PASS; `nice ./build.sh && sh scripts/check.sh` PASS (`help.check.ts`, `footer.check.ts` green;
@@ -438,7 +446,7 @@ release flow expects manual entries (check `git log -p -3 -- CHANGELOG.md`).
   `unpriced.tokens` identical. Differences only in Gemini tier keys of `byModel` → list them in the PR.
 - [ ] **Step 2:** `nice ./build.sh && sh scripts/check.sh` PASS.
 - [ ] **Step 3: PR** `feat: model prices — editor, aliases, gateway prices, in-place re-pricing` from `feat/model-prices`
-  to `main`; body: measurements (Task 4 Step 5), contract result, manual captures, decision 1 as ruled by the user.
+  to `main`; body: measurements (Task 4 Step 5), contract result, manual captures, decisions as recorded in the spec.
 
 ## Self-review against the spec
 - Spec 1 → Task 1; 2 → Task 2; 3 → Task 4; 4 → Task 3 (+ wiring in 4/5/7); 5 → Task 7; 6 → Task 5; 7 → Task 4;

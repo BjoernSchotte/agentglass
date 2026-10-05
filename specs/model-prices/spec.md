@@ -193,7 +193,9 @@ list like the drill-down):
 ```
 - Rows: models with usage in the Stats period (today / 7 days, `d`/`w` switch it), unpriced first (by tokens), then by
   cost. SOURCE: `unpriced`, `user`, `≈ <target>` (alias), `gw <provider>`, `litellm` / `models.dev`, `built-in`,
-  `harness` (only harness-reported cost). A model with several sources (gateway for one provider, built-in for the rest)
+  `harness` (only harness-reported cost; `+harness` when part of it is). A model with harness-reported cost shows the
+  note `cost reported by <harness> — a user price applies only to its unpriced messages` under the row when selected,
+  in the `price-set` input label, and in the success toast (Decision 1). A model with several sources (gateway for one provider, built-in for the rest)
   shows the source of its largest share and `+1`.
 - At 80 columns the `$IN`/`$OUT` columns go first, then TOKENS; MODEL keeps ≥ 18 columns.
 - Keys: `↑↓ jk` select, `↵`/`e` edit price, `a` alias, `x` remove the user entry (confirm `y/n`), `esc`/`$` close.
@@ -226,10 +228,11 @@ agentglass prices update                # = --update-prices (kept as is)
   {"file":"…/prices.json","community":{"source":"litellm","fetched":"2026-10-04"}|null,
    "models":[{"model":"codex-auto-review","source":"alias","via":"gpt-6-sol","estimated":true,
      "price":{"in":1.25,"out":10,"cacheRead":0.125,"cacheWrite":1.5625,"cacheWrite1h":2.5}|null,
-     "tokens":{"in":0,"out":0,"cacheRead":0,"cacheWrite":0},"unpricedTokens":0,"costUsd":171.3,"reportedCostUsd":0,
+     "tokens":{"in":0,"out":0,"cacheRead":0,"cacheWrite":0},"unpricedTokens":0,"costUsd":171.3,"reportedCostUsd":0,"note":"",
      "providers":[{"provider":"cliproxy","source":"gateway","price":{…}}]}]}
   ```
-  `price` shows derived cache rates as numbers (never `-1`). `providers` lists only provider-scoped resolutions that
+  `note` is `"cost reported by pi — a user price applies only to its unpriced messages"` when `reportedCostUsd` > 0
+  (text output: the same note on an indented line under the row; `set`/`alias` print it too). `price` shows derived cache rates as numbers (never `-1`). `providers` lists only provider-scoped resolutions that
   differ from the row's own. Agent mode: `--json` is the default (cli-agent-mode rule) and the scope rule applies to
   the token and cost figures (models and prices are not project data).
 - `set` / `alias` / `unset`: write (4), print one line `gpt-6.1-sol: unpriced → user $1.25 in / $10 out (stored as
@@ -320,21 +323,76 @@ Nothing leaves the machine.
 - Per-session or per-project price overrides; currencies other than USD; tiered prices beyond `>200k`/`@2027`.
 
 ## Decisions
-1. **PROPOSED** — A user price does **not** override a harness-reported cost (pi/OpenCode `usage.cost` > 0, fx
-   `total_cost`): that cost is what the harness recorded, and those harnesses already use the same config file. The
-   user price applies to table-priced tokens only. Alternative: let user prices win everywhere (needs harness-reported
-   tokens in `tp` too; changes pi/OpenCode figures the harness itself shows).
-2. Precedence user price > user alias > gateway config (its provider only) > community > built-in (1). Decided: explicit
-   intent first, then the user's own route config, then public lists by freshness.
-3. Gateway prices are scoped to their provider, not applied to the same model id elsewhere (1, 2).
-4. Aliases do not chain and are always estimates (`≈`); user and gateway prices are exact (8).
-5. Re-pricing works on per-(hour, provider, model) token rows (`Day.tp`) with delta application, not on a re-index (3).
-   Per-hour rows keep the projection's hourly profile exact; about 200 KB on this machine.
-6. `prices set/alias/unset` work inside an agent (the user asked for agent JSON output); they print before/after so a
-   change is visible and reversible.
-7. The TUI editor is a panel plus the existing input line, not a multi-field form: one validated line per action fits
-   80 columns and reuses the input mode's error display.
-8. No built-in aliases or OpenAI rows (Out of scope).
+Format: question · options · decision · why · cost if wrong.
+
+1. **Does a price the user sets override a cost the harness reported itself** (pi/OpenCode `usage.cost` > 0, fx
+   `total_cost`)?
+   - Options: (a) no, the reported cost stays and user/alias/gateway prices apply only to tokens agentglass prices;
+     (b) yes, a user price wins everywhere.
+   - Decision: **(a)**.
+   - Why: agentglass must match what the harness itself shows. pi and OpenCode compute that cost from the same config
+     files the gateway layer reads, so (b) would mostly replace a number with itself. (a) needs no extra ledger rows for
+     harness-priced messages.
+   - UX requirement that comes with it: when a model has harness-reported cost, `agentglass prices` (text: a note under
+     the row; JSON: `reportedCostUsd` > 0 and `"note"`) and the TUI panel (row tag `harness` / `+harness`; on edit, the
+     input label and the success toast) say so, e.g. `cost reported by pi — a user price applies only to its unpriced
+     messages`. Without that a user sets a price, sees nothing change and thinks the editor is broken.
+   - Cost if wrong: a user who wants to override pi's own figure cannot. Fix later by booking harness-priced tokens into
+     `tp` with a flag and a `prices.json` switch, one more `VERSION` bump. No data is lost meanwhile.
+2. **Precedence of price layers?**
+   - Options: user > gateway > community > built-in (the brief's suggestion); gateway first; community before gateway.
+   - Decision: user price > user alias > gateway config > community > built-in.
+   - Why: `prices.json` is the only file written for agentglass on purpose, so it is the clearest intent. An explicit
+     price beats an alias of the same id because it is more specific. The user's own route config is closer to their
+     bill than a public list. A community list beats the built-in table because it is newer (unchanged from today).
+   - Cost if wrong: a few models priced from the "wrong" layer; `agentglass prices` shows each source, so it is visible.
+     Reordering is a one-line change in `resolve()` and a re-price, no re-index.
+3. **Do gateway prices apply only to their provider, or to the model id everywhere?**
+   - Options: provider-scoped; global by model id.
+   - Decision: provider-scoped.
+   - Why: pi's `cliproxy` row for `claude-sonnet-5-5` states what that route costs. Claude Code using the same model
+     directly is billed differently, and a global rule would silently re-price it.
+   - Cost if wrong: a model used only through another harness stays unpriced although a gateway config names it. The
+     user fixes it with one `prices set`, which the panel offers for every unpriced model.
+4. **Can aliases chain, and are they estimates?**
+   - Options: chains allowed; one hop only. Estimate marker `≈` always, or exact.
+   - Decision: one hop, always `≈`. User and gateway prices are exact.
+   - Why: an alias says "probably costs like X". That is a guess, and the figure must look like one. Chains hide where
+     the price comes from and invite cycles.
+   - Cost if wrong: a user with many variants writes a few more aliases. Allowing chains later is compatible.
+5. **How does a price change reach history?**
+   - Options: re-index logs (today); store all costs as derived and compute at read time; per-row deltas over stored
+     token rows.
+   - Decision: per-(hour, provider, model) token rows `Day.tp` with delta application.
+   - Why: a re-index takes 18 s here and loses sessions whose logs are gone. Read-time pricing would touch every
+     consumer of `cost`/`cp`/`hc`/`mt`. Deltas keep all of them consistent, and per-hour rows keep the projection's
+     hourly profile exact. Cost: about 200 KB on this machine.
+   - Cost if wrong: the ledger is larger than needed. Hour rows can later collapse to day rows plus a scaled `hc`
+     without a format break for consumers.
+6. **May `prices set/alias/unset` run inside a coding agent?**
+   - Options: allowed; read-only in agent mode; require `--yes`.
+   - Decision: allowed, with JSON before/after output.
+   - Why: the brief asks for agent JSON output on all subcommands. The change is local, reversible and printed with its
+     previous value.
+   - Cost if wrong: an agent changes a price without asking. That shows up in `prices` as source `user`, and one
+     `unset` reverts it. A later `--yes` gate is a small change.
+7. **What kind of TUI editor?**
+   - Options: multi-field form; panel plus the existing validated input line.
+   - Decision: panel plus input line.
+   - Why: it fits 80 columns, reuses the input mode's inline errors and keeps one key per action.
+   - Cost if wrong: entering four numbers on one line is less guided than a form. The pre-fill shows the order, and the
+     label names the fields.
+8. **Ship built-in aliases (`codex-auto-review → …`) or built-in OpenAI rows?**
+   - Options: ship guesses; ship none.
+   - Decision: none.
+   - Why: a guessed price shipped as a default looks authoritative and is not. The panel suggests an alias (the parent
+     session's model) instead, and the user confirms it.
+   - Cost if wrong: Codex users take one more step (`$`, `a`, enter) to get a figure.
+9. **Can a user price a model at $0?**
+   - Options: reject 0; allow an explicit 0.
+   - Decision: allow `0 0` when entered explicitly (shown as `user $0`).
+   - Why: local and free routes exist. The rule is "never silently $0": an explicit entry is not silent.
+   - Cost if wrong: a typo prices a model at $0. The source column shows `user $0`, and one `unset` reverts it.
 
 ## Open questions (to verify during implementation)
 1. OpenCode reads `opencode.jsonc` before or after `opencode.json` when both exist? Verify in OpenCode's config loader;
