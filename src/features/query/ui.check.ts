@@ -75,8 +75,14 @@ eq("completion enum", complete("status is ", true).join(","), "ok,error,unknown"
 eq("completion is_one_of list", complete("harness is_one_of claude c", true).join(","), "codex");
 eq("completion text values", complete("tool is B", true).join(","), "Bash");
 // a comma list completes like a blank-separated one (harness is_one_of claude,codex)
-eq("completion comma list", complete("harness is_one_of claude,c", true).join(","), "claude,codex");
-eq("completion comma + blank", complete("harness is_one_of claude, c", true).join(","), "codex");
+eq("completion comma list", complete("harness is_one_of claude,c", true)[0] ?? "", "claude,codex");
+eq("completion comma + blank", complete("harness is_one_of claude, c", true)[0] ?? "", "codex");
+// after a comma inside a list both readings stay open (pi, codex = a value; pi, cost > 2 = a new clause): values, then keys
+const ac = complete("harness is_one_of claude, co", true);
+eq("completion comma: values then keys", String(ac[0] === "codex") + " " + String(ac.indexOf("cost") > 0), "true true");
+const aa = complete("harness is_one_of claude,co", true);
+eq("completion attached comma: values then keys", String(aa[0] === "claude,codex") + " " + String(aa.indexOf("claude,cost") > 0), "true true");
+eq("completion blank list: values only", complete("harness is_one_of claude co", true).join(","), "codex");
 eq("completion after a comma connector", complete("tool is Bash,too", true).slice(0, 1).join(","), "Bash,tool");
 // restored pins are announced
 eq("start toast", initPins({ load: () => "repo is agentglass", save: (v: string) => {}, remember: true }), "pinned: repo is agentglass — P edits, P then enter on empty unpins");

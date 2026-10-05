@@ -278,7 +278,10 @@ export function complete(text: string, cursorAtEnd: boolean): string[] {
   const w = words(text); const last = w[w.length - 1] ?? ""; const k = last.lastIndexOf(",");
   const pre = last.slice(0, k + 1); const cur = last.slice(k + 1).toLowerCase();
   const before: string[] = []; for (const x of w.slice(0, -1).concat([pre])) for (const p of x.split(",")) if (p) before.push(p);
-  const out: string[] = []; for (const c of candidates(before)) if (c.toLowerCase().startsWith(cur) && out.indexOf(pre + c) < 0) out.push(pre + c);
+  // after a comma both readings stay open (pi, codex = one more value; pi, cost > 2 = a new clause): values, then keys
+  const comma = k >= 0 || (w[w.length - 2] ?? "").endsWith(",");
+  const cs = comma ? candidates(before).concat(keyList()) : candidates(before);
+  const out: string[] = []; for (const c of cs) if (c.toLowerCase().startsWith(cur) && out.indexOf(pre + c) < 0) out.push(pre + c);
   return out;
 }
 // repeated tab cycles through the candidates of the word the first tab completed (every filter input shares this)
