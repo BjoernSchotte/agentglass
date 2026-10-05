@@ -1,13 +1,16 @@
 // agentglass — self-check for the Stats price panel ($) and its palette entries: scriptc build src/features/usage/pricepanel.check.ts -o pp && ./pp
 // SPDX-License-Identifier: Apache-2.0
 // Writes prices.json under check.sh's temp HOME ($HOME/.agentglass/prices.json).
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { HOME } from "../../util/fs.ts";
 import { S } from "../../state.ts";
 import { H, type Action, type Ctx } from "../../hooks.ts";
 import { onInput } from "../../input.ts";
 import { vwidth } from "../../util/text.ts";
 import { fxBase, fxSession, isoAt } from "../query/fixture.ts";
-import { PRICES_FILE } from "./pricing.ts";
+import { PRICES_FILE, setGateway } from "./pricing.ts";
+import { loadGateway, gatewayEnv } from "./gwprices.ts";
 import { type PRow } from "./pricerows.ts";
 import { PP, panelRows, panelLines, panelKey, suggestAlias } from "./pricepanel.ts";
 import { todayKey } from "./record.ts";
@@ -23,6 +26,13 @@ const t = isoAt(0, 11, 0);
 fxSession("pi", "p1", "/w/pi", "", "claude-sonnet-5-5", [
   "{\"type\":\"session\",\"version\":3,\"id\":\"p1\",\"timestamp\":\"" + t + "\",\"cwd\":\"/w/pi\"}",
   "{\"type\":\"message\",\"id\":\"e1\",\"parentId\":null,\"timestamp\":\"" + t + "\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"model\":\"claude-sonnet-5-5\",\"provider\":\"cliproxy\",\"usage\":{\"input\":100,\"output\":10,\"cacheRead\":0,\"cacheWrite\":0,\"cost\":{\"total\":0.5}},\"stopReason\":\"stop\"}}"]);
+// a gateway-priced model (pi models.json, provider cliproxy) the harness booked at cost 0: priced by its gateway row only
+mkdirSync(join(HOME, ".pi", "agent"), { recursive: true });
+writeFileSync(join(HOME, ".pi", "agent", "models.json"), "{\"providers\":{\"cliproxy\":{\"models\":[{\"id\":\"pi-gw-model\",\"cost\":{\"input\":3,\"output\":15}}]}}}");
+setGateway(loadGateway(HOME, gatewayEnv()).rows);
+fxSession("pi", "p2", "/w/pi", "", "pi-gw-model", [
+  "{\"type\":\"session\",\"version\":3,\"id\":\"p2\",\"timestamp\":\"" + t + "\",\"cwd\":\"/w/pi\"}",
+  "{\"type\":\"message\",\"id\":\"e1\",\"parentId\":null,\"timestamp\":\"" + t + "\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"model\":\"pi-gw-model\",\"provider\":\"cliproxy\",\"usage\":{\"input\":100,\"output\":10,\"cacheRead\":0,\"cacheWrite\":0,\"cost\":{\"total\":0}},\"stopReason\":\"stop\"}}"]);
 const days = [todayKey()];
 PP.period = (): string[] => days;
 const names = (rs: PRow[]): string => rs.map((r: PRow) => r.model + ":" + r.src).join(" ");
@@ -93,9 +103,21 @@ ok("alias source label", strip(panelLines(rows, 100, 10, 0, 0).join("\n")).index
 
 // a harness-priced model: the label and the toast say what a user price does
 PP.sel = panelRows(days).findIndex((r: PRow) => r.model === "claude-sonnet-5-5"); panelKey("enter", days);
-ok("harness label", S.inputLabel.indexOf("cost reported by pi") >= 0, S.inputLabel);
+// the note comes before the field list: the footer cuts a long label from its end (80 columns keep ~56 cells of it)
+ok("harness label", S.inputLabel.indexOf("price claude-sonnet-5-5 · pi-reported cost stays (") === 0, S.inputLabel);
 onInput("ctrl-u"); for (const ch of Array.from("1 1")) onInput(ch); onInput("enter");
 ok("harness toast", S.toast.indexOf("cost reported by pi") >= 0, S.toast);
+// the pre-fill is the price the row shows (its gateway row), not the provider-less resolution (none here)
+PP.sel = panelRows(days).findIndex((r: PRow) => r.model === "pi-gw-model"); panelKey("enter", days);
+ok("gateway row pre-filled with its own price", S.inputText === "3 15", "[" + S.inputText + "] " + names(panelRows(days)));
+onInput("esc");
+// a broken prices.json: x says so and a price write changes nothing
+writeFileSync(PRICES_FILE, "{\"a\": 1,,}");
+PP.sel = 0; S.toast = ""; panelKey("x", days);
+ok("x on a broken file", S.toast.indexOf("fix it first") >= 0 && mode() !== "confirm", mode() + " " + S.toast);
+panelKey("enter", days); onInput("ctrl-u"); for (const ch of Array.from("1 1")) onInput(ch); onInput("enter");
+ok("write on a broken file: error, file as it was", S.toast.indexOf("not valid JSON") >= 0 && readFileSync(PRICES_FILE, "utf8") === "{\"a\": 1,,}", S.toast);
+writeFileSync(PRICES_FILE, "{}");
 // close
 panelKey("$", days); ok("$ closes", !PP.open, "open");
 const acts: Action[] = H.actions.filter((a: Action) => a.id === "prices.panel");

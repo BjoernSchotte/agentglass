@@ -82,6 +82,12 @@ export function reportedNote(r: PRow): string {
   if (r.rh === "Kiro" || r.rh === "kiro") return "cost from kiro credits × kiroCreditUsd — a user price does not change it";
   return "cost reported by " + (r.rh || "the harness") + " — a user price applies only to its unpriced messages";
 }
+// the same in a few words, for the price input line (the footer cuts a long label from its end): "" when none
+export function reportedShort(r: PRow): string {
+  if (r.reported <= 0) return "";
+  if (r.rh === "Kiro" || r.rh === "kiro") return "kiro credits stay";
+  return (r.rh || "harness") + "-reported cost stays";
+}
 // derived cache rates as numbers (never -1)
 export function rates(p: Price): number[] {
   return [p.i, p.o, p.cr >= 0 ? p.cr : p.i * 0.1, p.cw >= 0 ? p.cw : p.i * 1.25, p.cw1 >= 0 ? p.cw1 : p.i * 2];

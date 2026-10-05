@@ -11,8 +11,8 @@ import { sessions, parentOf } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
 import { todayKey, modelUses } from "./record.ts";
 import { kfmt, grp } from "./costs.ts";
-import { PRICES_FILE, resolve } from "./pricing.ts";
-import { type PRow, reportedNote, rates, srcLabel } from "./pricerows.ts";
+import { PRICES_FILE, resolve, readUserFile } from "./pricing.ts";
+import { type PRow, reportedNote, reportedShort, rates, srcLabel } from "./pricerows.ts";
 import { pricedRows } from "./summary.ts";
 import { parsePriceLine, entryOf, storedKey, setUserEntry, userEntry } from "./userprices.ts";
 import { reloadPrices, pricesWritten } from "./repricer.ts";
@@ -87,23 +87,24 @@ function periodCost(days: string[]): number {
   for (const s of sessions.values()) { const a = ledger.get(s.path); if (!a) continue; for (const k of days) { const d = a.days.get(k); if (d) c += d.cost; } }
   return c;
 }
-function priceText(model: string): string {
+// the pre-fill: the price the row shows (a gateway-priced row resolves only with its provider), else the provider-less one
+function priceText(model: string, row: PRow | null): string {
   const e = userEntry(PRICES_FILE, model);
-  const r = resolve(model, "");
-  if (!r) return "";
-  const xs = [num(r.p.i), num(r.p.o)];
+  const r0 = resolve(model, ""); const p = row && row.p ? row.p : r0 ? r0.p : null;
+  if (!p) return "";
+  const xs = [num(p.i), num(p.o)];
   const cr = e && typeof e["cacheRead"] === "number" ? (e["cacheRead"] as number) : -1; // only what the user wrote: derived rates stay derived
   const cw = e && typeof e["cacheWrite"] === "number" ? (e["cacheWrite"] as number) : -1;
   const c1 = e && typeof e["cacheWrite1h"] === "number" ? (e["cacheWrite1h"] as number) : -1;
-  if (cr >= 0 || cw >= 0 || c1 >= 0) xs.push(num(cr >= 0 ? cr : r.p.i * 0.1));
-  if (cw >= 0 || c1 >= 0) xs.push(num(cw >= 0 ? cw : r.p.i * 1.25));
+  if (cr >= 0 || cw >= 0 || c1 >= 0) xs.push(num(cr >= 0 ? cr : p.i * 0.1));
+  if (cw >= 0 || c1 >= 0) xs.push(num(cw >= 0 ? cw : p.i * 1.25));
   if (c1 >= 0) xs.push(num(c1));
   return xs.join(" ");
 }
 function noteFor(model: string): string { const r = rowOf(model, PP.period()); return r ? reportedNote(r) : ""; }
 export function openPrice(model: string): void {
-  PP.model = model; const n = noteFor(model);
-  ask("price " + model + " ($/Mtok: in out [cacheRead [cacheWrite [cacheWrite1h]]])" + (n ? " — " + n : ""), "price-set", priceText(model));
+  PP.model = model; const row = rowOf(model, PP.period()); const n = row ? reportedShort(row) : ""; // the full note: under the row, in the toast
+  ask("price " + model + (n ? " · " + n : "") + " ($/Mtok: in out [cacheRead [cacheWrite [cacheWrite1h]]])", "price-set", priceText(model, row));
   S.inputErr = "";
 }
 // an alias suggestion: the priced model the parent session used most (a subagent such as Codex's guardian reviews its
@@ -205,7 +206,9 @@ export function panelKey(k: string, days: string[]): boolean {
     if (!r) return true;
     PP.model = r.model;
     const e = userEntry(PRICES_FILE, r.model); PP.what = e && typeof e["alias"] === "string" && typeof e["input"] !== "number" ? "alias" : "price";
+    const bad = e ? "" : readUserFile(PRICES_FILE).bad; // a broken file: say so, not "nothing to remove"
     if (e) confirm("remove the user " + PP.what + " of " + r.model + "? (y/n)", "price-unset");
+    else if (bad) say("err", home(PRICES_FILE) + ": " + bad + " — fix it first (it was left as it is)");
     else say("info", r.model + ": nothing to remove (source: " + (r.dead ? "alias " + r.via : r.src) + ") — " + home(PRICES_FILE));
   } else return false;
   return true;
