@@ -23,6 +23,7 @@ import { type Hit, match } from "./fuzzy.ts";
 import { ctxNow, restore } from "./actions.ts";
 import { selectRow } from "./open.ts";
 import { mruLoad, mruSave, mruTouch, mruBoost, mruList } from "./mru.ts";
+import { standing } from "./rank.ts";
 
 // kind: action | session | project | tab; text = what is matched and shown (the visible, under --redact fake, text)
 export interface Item { id: string; kind: string; text: string; hint: string; s: Sess | null; act: Action | null; proj: string; tab: number }
@@ -47,6 +48,7 @@ function itemAt(i: number): Item { return P.items[i]; }
 function hayAt(i: number): string { return P.hays[i]; }
 function lowAt(i: number): string { return P.lows[i]; }
 function hitItem(k: number): Item { return itemAt(P.hits[k].i); }
+const STAND = new Map<string, number>(); // item id → standing (rank.ts) of the sessions and projects collected at open
 export const MRU_FILE = process.env.AGENTGLASS_PALETTE_FILE || join(HOME, ".agentglass", "palette.json");
 let loaded = false;
 
@@ -63,14 +65,16 @@ function sessText(s: Sess): string {
 function sessHint(s: Sess): string { return (s.cost >= 0 ? "$" + s.cost.toFixed(2) + " " : "") + ago(s.mtime) + (s.pid ? " ●" : ""); }
 // a session's project (repo-view identity: a repo and its worktrees are one): key groups, label is shown (faked under
 // --redact), val is the repo clause value (the identity key; under --redact the shown label, which the repo key also takes)
-function projOf(s: Sess): { key: string; label: string; val: string } {
+// gone: its directory no longer exists; remote: identified by its git remote; wt: a linked worktree's directory
+interface Proj { key: string; label: string; val: string; gone: boolean; remote: boolean; wt: boolean }
+function projOf(s: Sess): Proj {
   const rc = realCwd(s);
   const id = identOf(s) ?? (rc ? identNow(rc) : null); // not resolved yet (the Repos tab resolves in the background): now, cached
-  if (!id && !rc) return { key: "", label: "", val: "" };
+  if (!id && !rc) return { key: "", label: "", val: "", gone: false, remote: false, wt: false };
   const label = repoShown(s);
-  if (!id || id.kind === "none") return { key: "cwd:" + base(rc.replace(/\/+$/, "")), label, val: base(rc.replace(/\/+$/, "")).toLowerCase() };
+  if (!id || id.kind === "none") return { key: "cwd:" + base(rc.replace(/\/+$/, "")), label, val: base(rc.replace(/\/+$/, "")).toLowerCase(), gone: false, remote: false, wt: false };
   const k = id.key; const v = REDACT ? label : k;
-  return { key: k, label, val: v.toLowerCase() };
+  return { key: k, label, val: v.toLowerCase(), gone: id.gone, remote: id.kind === "git" && id.remote !== "", wt: id.worktree !== "" };
 }
 function itemOfSess(s: Sess): Item { return { id: "session:" + s.h + ":" + s.id, kind: "session", text: sessText(s), hint: sessHint(s), s, act: null, proj: "", tab: -1 }; }
 function actItem(a: Action): Item { return { id: "act:" + a.id, kind: "action", text: a.group + ": " + a.title, hint: a.keys, s: null, act: a, proj: "", tab: -1 }; }
@@ -81,16 +85,25 @@ function collect(c: Ctx): Item[] {
   ss.sort((a, b) => (b.pid ? 1 : 0) - (a.pid ? 1 : 0) || b.mtime - a.mtime);
   const t0 = Date.now(); // titles come from the log's head: read the newest ones within a frame's budget (the list does the same lazily)
   for (const s of ss) { if (Date.now() - t0 > 60) break; if (!s.headDone) loadHead(s); }
-  const out: Item[] = [];
-  for (const s of ss) out.push(itemOfSess(s));
-  const projs = new Map<string, { n: number; last: number; label: string; val: string }>();
+  const out: Item[] = []; const now = Date.now(); STAND.clear();
+  // a project is live if one of its agents runs, gone if every one of its directories is
+  const projs = new Map<string, { n: number; last: number; label: string; val: string; live: boolean; gone: boolean; remote: boolean }>();
   for (const s of ss) {
-    const p = projOf(s); if (!p.key) continue;
-    const e = projs.get(p.key); if (e) { e.n++; if (s.mtime > e.last) e.last = s.mtime; } else projs.set(p.key, { n: 1, last: s.mtime, label: p.label, val: p.val });
+    const it = itemOfSess(s); out.push(it);
+    const p = projOf(s);
+    STAND.set(it.id, standing({ live: s.pid !== 0, last: s.mtime, gone: p.gone, remote: false, worktree: p.wt }, now));
+    if (!p.key) continue;
+    const e = projs.get(p.key);
+    if (e) { e.n++; if (s.mtime > e.last) e.last = s.mtime; if (s.pid) e.live = true; if (!p.gone) e.gone = false; if (p.remote) e.remote = true; }
+    else projs.set(p.key, { n: 1, last: s.mtime, label: p.label, val: p.val, live: s.pid !== 0, gone: p.gone, remote: p.remote });
   }
   const ps: string[] = []; for (const k of projs.keys()) ps.push(k);
   ps.sort((a, b) => (projs.get(b)?.last ?? 0) - (projs.get(a)?.last ?? 0));
-  for (const k of ps) { const e = projs.get(k); if (e) out.push({ id: "project:" + k, kind: "project", text: e.label, hint: String(e.n) + " · " + ago(e.last), s: null, act: null, proj: e.val, tab: -1 }); }
+  for (const k of ps) {
+    const e = projs.get(k); if (!e) continue;
+    out.push({ id: "project:" + k, kind: "project", text: e.label, hint: String(e.n) + " · " + ago(e.last) + (e.gone ? " · gone" : ""), s: null, act: null, proj: e.val, tab: -1 });
+    STAND.set("project:" + k, standing({ live: e.live, last: e.last, gone: e.gone, remote: e.remote, worktree: false }, now));
+  }
   for (const a of H.actions) if (a.keys && a.when(c)) out.push(actItem(a)); // key bindings first, palette-only ones (themes) after
   for (const a of H.actions) if (!a.keys && a.when(c)) out.push(actItem(a));
   out.push(tabItem("Sessions", 0, "1")); out.push(tabItem("Processes", 1, "2"));
@@ -138,7 +151,7 @@ function rank(): void {
     P.hits = hits.slice(0, 200);
   } else {
     const hays: string[] = []; const lows: string[] = []; const bonus: number[] = [];
-    for (const i of idx) { hays.push(hayAt(i)); lows.push(lowAt(i)); bonus.push(mruBoost(itemAt(i).id, now)); }
+    for (const i of idx) { hays.push(hayAt(i)); lows.push(lowAt(i)); const id = itemAt(i).id; bonus.push(mruBoost(id, now) + (STAND.get(id) ?? 0)); } // standing: between comparable matches
     const key = String(sc) + "\u0000" + q;
     const prev = P.prevAll !== null && P.prevQ !== "" && key.startsWith(P.prevQ) ? P.prevAll : null; // a longer query only narrows
     const m = match(hays, lows, q, prev, 200, bonus);
