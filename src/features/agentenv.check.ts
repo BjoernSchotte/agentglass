@@ -47,7 +47,7 @@ eq("--no-agent beats --agent", host({}, ["--agent", "--no-agent"]), "false|||");
 eq("specific beats AI_AGENT", host({ AI_AGENT: "claude-code_2_agent", CODEX_CI: "1" }, []), "true|codex||env:CODEX_CI");
 
 // ── ancestry over a synthetic process table ──
-function pr(pid: number, ppid: number, h: string, sess: string): Proc { return { pid, ppid, cpu: 0, rss: 0, etime: "", tty: "", args: "", h, cwd: "", tcpu: 0, trss: 0, kids: 0, sess }; }
+function pr(pid: number, ppid: number, h: string, sess: string): Proc { return { pid, ppid, cpu: 0, rss: 0, etime: "", tty: "", args: "", h, start: 0, cwd: "", tcpu: 0, trss: 0, kids: 0, sess }; }
 function table(ps: Proc[]): Map<number, Proc> { const m = new Map<number, Proc>(); for (const p of ps) m.set(p.pid, p); return m; }
 const sessOf = (p: Proc): string => p.sess;
 function anc(pid: number, ps: Proc[]): string { const a = ancestry(pid, table(ps), sessOf); return [a.harness, a.session, String(a.pid)].join("|"); }

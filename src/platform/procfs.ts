@@ -136,7 +136,7 @@ export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: b
       if (!e) {
         // its command line once, whatever its name: an agent may run under any (node 24 names itself "MainThread", a
         // wrapper sets a title); the wait above already dropped the processes that live less than a pass
-        const row: ProcRow = { pid, ppid: st.ppid, cpu: 0, rss: args ? readRss(fs, pid, st.rssPages) : st.rssPages * fs.page, etime: own(etimeText((now - startMs) / 1000)), tty: own(ttyName(st.ttyNr)), args: readArgs(fs, st) };
+        const row: ProcRow = { pid, ppid: st.ppid, cpu: 0, rss: args ? readRss(fs, pid, st.rssPages) : st.rssPages * fs.page, etime: own(etimeText((now - startMs) / 1000)), tty: own(ttyName(st.ttyNr)), args: readArgs(fs, st), start: startMs };
         e = { row, start: st.start, startMs, tty: st.ttyNr, t: st.ticks, at: now, seen: pass, comm: st.comm, rssAt: args ? pass : -1 }; // -1: rss from stat, statm once tracked
         PF.ents.set(pid, e);
       } else {

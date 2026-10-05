@@ -15,6 +15,7 @@ export interface Sess {
 }
 export interface Proc {
   pid: number; ppid: number; cpu: number; rss: number; etime: string; tty: string; args: string; h: string;
+  start: number; // epoch ms (from etime: a lower bound, up to 1 s early)
   cwd: string; tcpu: number; trss: number; kids: number; sess: string;
 }
 

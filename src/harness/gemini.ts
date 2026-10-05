@@ -174,12 +174,52 @@ function headerId(path: string): string {
   if (id) hdrIds.set(path, id);
   return id;
 }
+// a session file without the header: another gemini's startup deleted it while it had no message yet (session retention
+// drops files with nothing to resume) and its next record recreated it. Its id: the filename's short one (session-<time>-
+// <id8>.jsonl); "" = not such a file (a first line still being written, a header)
+function headerlessId(path: string, name: string): string {
+  const o = header(path); if (!o || str(o["sessionId"]) || !(str(o["type"]) || obj(o["$set"]))) return "";
+  const id8 = name.slice(name.length - 14, name.length - 6);
+  return name.charAt(name.length - 15) === "-" && /^[0-9a-f]{8}$/.test(id8) ? id8 : "";
+}
+// the header's startTime (epoch ms, 0 unknown), cached once read: live-process linking (procs.ts) takes only sessions
+// that began after the process started (Gemini rewrites an older session file of the project when it starts)
+const hdrStart = new Map<string, number>();
+function sessionStart(s: Sess): number {
+  const hit = hdrStart.get(s.path); if (hit !== undefined) return hit;
+  const o = header(s.path); const t = o ? Date.parse(str(o["startTime"])) : NaN; const v = t > 0 ? t : 0;
+  if (o) hdrStart.set(s.path, v);
+  return v;
+}
+// the newest user/gemini message's timestamp (epoch ms, 0 none), from the log's end, cached per size: live linking takes an
+// older session a lone process wrote a message to since it started (an in-TUI resume); the startup rewrite of an older
+// session (its summary) appends only {"$set":…}. A window with no message doubles, up to 16 MB from the end
+const lastAt = new Map<string, { size: number; v: number }>();
+function lastMessage(s: Sess): number {
+  const n = statSize(s.path); if (n <= 0) return 0;
+  const hit = lastAt.get(s.path); if (hit && hit.size === n) return hit.v;
+  let v = 0;
+  for (let win = 65536; v === 0; win *= 2) {
+    const from = Math.max(0, n - win);
+    const ls = readText(s.path, from, n - from).split("\n");
+    for (let i = from > 0 ? 1 : 0; i < ls.length; i++) { // the first piece of a window inside the file is a partial line
+      const l = ls[i] ?? "";
+      if (l.indexOf('"type":"user"') < 0 && l.indexOf('"type":"gemini"') < 0) continue;
+      const o = parseJson(l); const ty = o ? str(o["type"]) : "";
+      if (o && (ty === "user" || ty === "gemini")) { const t = Date.parse(str(o["timestamp"])); if (t > v) v = t; }
+    }
+    if (from === 0 || win >= 16777216) break;
+  }
+  lastAt.set(s.path, { size: n, v });
+  return v;
+}
 const pathOf = new Map<string, string>(); // session id → its file (spawnOf, subagent kind)
 function scan(add: AddFn): void {
   const listed = new Set<string>();
   const add2 = (p: string, id: string, parent: string, ar: boolean): void => { listed.add(p); add(p, id, parent, ar); };
   scanRoots(add2);
   for (const k of [...IX.keys()]) if (!listed.has(k)) IX.delete(k); // trashed or expired: forget its index
+  for (const k of [...lastAt.keys()]) if (!listed.has(k)) lastAt.delete(k);
 }
 const QUIET = 3600000; // a dir unchanged for an hour: once a minute (a new agent wakes it: fs.ts WAKE_ALL)
 function scanRoots(add: AddFn): void {
@@ -190,7 +230,7 @@ function scanRoots(add: AddFn): void {
     const best = new Map<string, string>(); const size = new Map<string, number>();
     for (const f of names) {
       if (!f.startsWith("session-") || !f.endsWith(".jsonl")) continue;
-      const p = join(cd, f); const id = headerId(p); if (!id) continue;
+      const p = join(cd, f); const id = headerId(p) || headerlessId(p, f); if (!id) continue;
       const n = statSize(p); const b = size.get(id);
       if (b === undefined || n > b) { best.set(id, p); size.set(id, n); }
     }
@@ -380,7 +420,7 @@ export const gemini: HarnessAdapter = {
   bin: "gemini", procs: ["gemini"],
   roots, scan, meta, refresh: meta, source, headBytes: 65536,
   parse, busy, spawnOf,
-  liveCwd: true, // no lock, no registry, the file is opened per write
+  liveCwd: true, sessionStart, lastMessage, resumeArgs: ["--resume", "-r"], // no lock, no registry, the file is opened per write
   headless: (s: Sess, msg: string) => ["--resume", s.id, "-p", msg], // runs in s.cwd: gemini looks the id up in that project only
   resume: (s: Sess) => ["--resume", s.id],
   files,

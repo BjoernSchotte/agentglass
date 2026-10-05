@@ -13,7 +13,7 @@ export function parsePs(text: string): ProcRow[] {
   const out: ProcRow[] = [];
   for (const l of text.split("\n")) {
     const m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/.exec(l);
-    if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]), rss: Number(m[4]) * 1024, etime: own(m[5] ?? ""), tty: own(m[6] ?? ""), args: own(m[7] ?? "") }); // kept until the next refresh
+    if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]), rss: Number(m[4]) * 1024, etime: own(m[5] ?? ""), tty: own(m[6] ?? ""), args: own(m[7] ?? ""), start: 0 }); // kept until the next refresh
   }
   return out;
 }

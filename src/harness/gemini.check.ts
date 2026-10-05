@@ -59,6 +59,19 @@ write(P, FULL + PART);
 const END = bytes(FULL + PART);
 const starts: number[] = []; { let o = 0; for (const l of L) { starts.push(o); o += bytes(l) + 1; } }
 const sess = (p: string): Sess => newSess("gemini", "0000aaaa-1111-2222-3333-444455556666", p, false);
+// live linking: a session's start comes from its header (procs.ts links a live gemini only to sessions begun after it)
+{ const st = gemini.sessionStart; ok("session start from the header", !!st && st(sess(P)) === Date.parse(TS + "0.000Z"), st ? String(st(sess(P))) : "none"); }
+// and its newest message (an in-TUI resume): top-level user/gemini records only ($set histories and summaries are not
+// new messages; an unfinished last line is not one yet); a window that ends inside a long line still finds it
+{
+  const lm = gemini.lastMessage; const t7 = Date.parse(TS + "7.000Z");
+  ok("last message time", !!lm && lm(sess(P)) === t7, lm ? String(lm(sess(P))) : "none");
+  const Q = DIR + "/long.jsonl"; const big = "x".repeat(200000);
+  write(Q, (L[0] ?? "") + "\n" + (L[2] ?? "") + "\n{\"$set\":{\"summary\":\"" + big + "\"}}\n");
+  ok("last message behind a long line", !!lm && lm(sess(Q)) === Date.parse(TS + "1.000Z"), lm ? String(lm(sess(Q))) : "none");
+  const E = DIR + "/empty.jsonl"; write(E, (L[0] ?? "") + "\n{\"$set\":{\"summary\":\"s\"}}\n");
+  ok("no message: 0", !!lm && lm(sess(E)) === 0, lm ? String(lm(sess(E))) : "none");
+}
 
 // what a normalized stream says, as countable keys: msg:<id> (message fields), call:<id>, tok:<id>, title:…, meta:…, hdr
 function keys(ls: string[]): string[] {
@@ -196,6 +209,10 @@ for (let k = 0; k <= bytes(FULL); k++) {
   const D = "dddddddd-0000-4000-8000-000000000004"; // a migrated legacy session: summary in a header longer than 4 KB
   write(T + "/app/chats/session-2026-10-01T12-00-dddddddd.jsonl", "{\"sessionId\":\"" + D + "\",\"projectHash\":\"ab\",\"summary\":\"" + "s".repeat(9000) + "\",\"kind\":\"main\"}\n" + user);
   write(T + "/app/chats/" + A + "/" + SUB + ".jsonl", hdr(SUB, "subagent") + user);
+  // another gemini's startup deleted it while it had no message (session retention), the next message recreated it
+  // without the header: listed under the filename's short id. A first line still being written is not
+  write(T + "/app/chats/session-2026-10-01T13-00-eeeeeeee.jsonl", user + user);
+  write(T + "/app/chats/session-2026-10-01T14-00-ffffffff.jsonl", "{\"sessionId\":\"ffff");
   write(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl", hdr(B, "main") + user + user);
   write(T + "/app-1/chats/session-2026-10-01T11-00-bbbbbbbb.jsonl", hdr(B, "main")); // startup-only copy a resume leaves behind
   write(T + "/app-1/chats/session-2026-10-01T09-00-bbbbbbbb.json", "{}"); // legacy whole-file JSON: out of scope
@@ -207,7 +224,7 @@ for (let k = 0; k <= bytes(FULL); k++) {
   });
   ok("roots", gemini.roots().join(" ") === T, gemini.roots().join(" "));
   ok("scan: one entry per session, cwd dirs only, legacy and copies skipped", found.slice().sort().join(" | ") ===
-    "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl bbbbbbbb  | app/chats/aaaaaaaa-0000-4000-8000-000000000001/cccccccc-0000-4000-8000-000000000003.jsonl cccccccc aaaaaaaa | app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl aaaaaaaa  | app/chats/session-2026-10-01T12-00-dddddddd.jsonl dddddddd ", found.slice().sort().join(" | "));
+    "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl bbbbbbbb  | app/chats/aaaaaaaa-0000-4000-8000-000000000001/cccccccc-0000-4000-8000-000000000003.jsonl cccccccc aaaaaaaa | app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl aaaaaaaa  | app/chats/session-2026-10-01T12-00-dddddddd.jsonl dddddddd  | app/chats/session-2026-10-01T13-00-eeeeeeee.jsonl eeeeeeee ", found.slice().sort().join(" | "));
   const mA = byPath.get(T + "/app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl"); const mB = byPath.get(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl");
   const sub = byPath.get(T + "/app/chats/" + A + "/" + SUB + ".jsonl");
   const mt = gemini.meta;

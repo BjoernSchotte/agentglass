@@ -70,6 +70,9 @@ export interface HarnessAdapter {
   files?: (s: Sess) => string[]; // every file/dir that belongs to the session (moved to the trash together); absent = can't be trashed
   search?: (q: string) => string[]; // session paths whose content matches q (non-file sources); file harnesses are searched via roots() + rg
   liveCwd?: boolean; // no registry, no open transcript: link a live process to the newest session whose cwd equals the process cwd
+  sessionStart?: (s: Sess) => number; // liveCwd: when the session began (epoch ms, 0 unknown): only sessions begun since the process started are its own
+  resumeArgs?: string[]; // liveCwd + sessionStart: flags that continue an older session, with an optional id/index value (model/link.ts)
+  lastMessage?: (s: Sess) => number; // liveCwd + sessionStart: its newest message's time (epoch ms, 0 none): an in-TUI resume (model/link.ts)
   wakeDir?: (cwd: string) => string; // the dir its new session's log for this cwd goes into (scan: looked at while an agent there has none)
 
   // ── usage (tokens, cost, tools, lines, files → Stats tab, --json) ──

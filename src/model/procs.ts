@@ -8,9 +8,9 @@ import type { Live } from "../harness/types.ts";
 import type { Proc, Sess } from "./types.ts";
 import type { ProcRow } from "../platform/types.ts";
 import { etimeSec } from "../features/detect.ts";
-import { sessions, SG } from "./sessions.ts";
+import { sessions, SG, SCANNED } from "./sessions.ts";
 import { S } from "../state.ts";
-import { linkByCwd, daemonWarn, type CwdProc } from "./link.ts";
+import { linkByCwd, daemonWarn, type CwdProc, type CwdSess } from "./link.ts";
 import { H, applyMeta, realCwd } from "../hooks.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
@@ -33,15 +33,17 @@ const VAL_FLAGS = ["-r", "--require", "--import", "--loader", "--experimental-lo
 const INLINE = ["-e", "--eval", "-p", "--print"];
 // the script after node/bun/deno names the agent; runtime flags come first (gemini relaunches itself with --max-old-space-size=…)
 export function harnessOfArgs(args: string): string {
-  const t = args.split(" ");
-  let b = base(t[0]);
-  if (b === "node" || b === "bun" || b === "deno") {
-    let i = 1;
-    while (i < t.length && t[i].startsWith("-")) { if (INLINE.indexOf(t[i]) >= 0) return ""; i += VAL_FLAGS.indexOf(t[i]) >= 0 ? 2 : 1; }
-    if (i >= t.length) return "";
-    b = base(t[i]).replace(/\.(m?js|ts)$/, "");
-  }
+  const t = args.split(" "); const i = scriptAt(t); if (i < 0) return "";
+  const b = i > 0 ? base(t[i]).replace(/\.(m?js|ts)$/, "") : base(t[0]);
   return harnessOfProc(b) || (OTHER.indexOf(b) >= 0 ? b : "");
+}
+// the index of the token naming the program: 0, or the script after node/bun/deno and their flags; -1 = inline code or none
+function scriptAt(t: string[]): number {
+  const b = base(t[0]);
+  if (b !== "node" && b !== "bun" && b !== "deno") return 0;
+  let i = 1;
+  while (i < t.length && t[i].startsWith("-")) { if (INLINE.indexOf(t[i]) >= 0) return -1; i += VAL_FLAGS.indexOf(t[i]) >= 0 ? 2 : 1; }
+  return i < t.length ? i : -1;
 }
 // the process objects live across refreshes: one per pid, updated from its row (a full process table rebuilt every
 // 1.5 s was ~2,200 objects and a children map per refresh); the children map is rebuilt only when a pid came, went or
@@ -60,13 +62,16 @@ export function argsWorth(comm: string): boolean {
 // the platform's rows into the process objects; true = a pid came, went or moved. A new agent — a new pid, or a known
 // one that exec'd into one (zsh -c pi, npx gemini) — that is no agent's child wakes the session scan: its log may land
 // in a quiet dir
-export function applyRows(rows: ProcRow[]): boolean {
+// start: the row's, else from etime as a lower bound (whole seconds), estimated once (a later one only jitters)
+export function applyRows(rows: ProcRow[], now: number = Date.now()): boolean {
   let moved = false; const fresh: Proc[] = [];
   for (const r of rows) {
     let p = allProcs.get(r.pid);
-    if (!p) { p = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: harnessOfArgs(r.args), cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; allProcs.set(r.pid, p); moved = true; if (p.h) fresh.push(p); continue; }
+    const st = r.start > 0 ? r.start : r.etime ? now - (etimeSec(r.etime) + 1) * 1000 : 0;
+    if (!p) { p = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: harnessOfArgs(r.args), start: st, cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; allProcs.set(r.pid, p); moved = true; if (p.h) fresh.push(p); continue; }
     if (p.ppid !== r.ppid) { p.ppid = r.ppid; moved = true; }
-    if (p.args !== r.args) { const was = p.h; p.args = r.args; p.h = harnessOfArgs(r.args); if (p.h && !was) fresh.push(p); }
+    if (r.start > 0) p.start = r.start;
+    if (p.args !== r.args) { const was = p.h; p.args = r.args; p.h = harnessOfArgs(r.args); if (r.start <= 0) p.start = st; if (p.h && !was) fresh.push(p); }
     p.cpu = r.cpu; p.rss = r.rss; p.etime = r.etime; p.tty = r.tty;
   }
   for (const p of fresh) { const par = allProcs.get(p.ppid); if (!par || !par.h) { WAKE_ALL.at = Date.now(); break; } }
@@ -128,9 +133,14 @@ export function refreshProcs(discover: boolean = true): void {
     for (const l of ls) registry.set(ad.id + ":" + l.id, l);
     if (ad.daemon) daemonLive.set(ad.id, ls);
   }
-  const g = linkSig(); if (g !== lastLink) { lastLink = g; linkSessions(); }
+  relink();
   wakeScan(procs, Date.now());
 }
+function relink(): void { const g = linkSig(); if (g !== lastLink) { lastLink = g; linkSessions(); } }
+// a scan brought new sessions: link them now, from this pass's processes and registry (until the next process pass a new
+// OpenCode/pi/Gemini session showed with no process: ○/· before its spinner). Not before the first process pass: a
+// run's first scan (every one-shot CLI command) has no processes to link yet, and its refreshProcs links anyway
+SCANNED.push((): void => { if (passNo > 0) relink(); });
 // an agent process with no session yet may write a new log any moment (a first prompt), often in a dir quiet for long:
 // its harness's dirs (or just its session dir, when the harness names it from the cwd) are looked at every scan
 // PEND.young: such agents started within the last 10 min (main.ts scans every 2 s while there is one, in any level; an
@@ -218,17 +228,38 @@ function linkSessions(): void {
   for (const l of registry.values()) regPids.add(l.pid);
   for (const ad of HARNESSES) {
     if (!ad.liveCwd) continue;
-    const cp: CwdProc[] = [];
-    for (const p of procs) if (p.h === ad.id && p.cwd && !regPids.has(p.pid)) cp.push({ pid: p.pid, h: p.h, cwd: p.cwd });
-    const ss: { path: string; h: string; cwd: string; mtime: number; pid: number }[] = [];
-    for (const s of sessions.values()) if (s.h === ad.id && !s.parent) ss.push({ path: s.path, h: s.h, cwd: realCwd(s), mtime: s.mtime, pid: s.pid });
-    for (const [path, pid] of linkByCwd(cp, ss)) {
+    const cp: CwdProc[] = []; const st = ad.sessionStart; const ra = ad.resumeArgs ?? [];
+    for (const p of procs) if (p.h === ad.id && p.cwd && !regPids.has(p.pid)) cp.push({ pid: p.pid, h: p.h, cwd: p.cwd, start: st ? p.start : 0, resume: resumeOf(p.args, ra) });
+    const ss: CwdSess[] = [];
+    for (const s of sessions.values()) if (s.h === ad.id && !s.parent) ss.push({ path: s.path, id: s.id, h: s.h, cwd: realCwd(s), mtime: s.mtime, pid: s.pid, start: st ? st(s) : 0 });
+    const lm = ad.lastMessage; const lastMsg = (path: string): number => { const s = sessions.get(path); return lm && s ? lm(s) : 0; };
+    const held = (path: string, pid: number, since: number): boolean => { const h = heldBy.get(path); return !!h && h.pid !== pid && h.at >= since; };
+    for (const [path, pid] of linkByCwd(cp, ss, lastMsg, held)) {
       const s = sessions.get(path);
       if (s) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; }
     }
   }
   for (const p of procs) p.sess = "";
-  for (const s of sessions.values()) if (s.pid) { const r = rootOf(s.pid); if (r) r.sess = s.path; }
+  const now = Date.now();
+  for (const s of sessions.values()) if (s.pid) { const r = rootOf(s.pid); if (r) r.sess = s.path; heldBy.set(s.path, { pid: s.pid, at: now }); }
+  if (heldBy.size > sessions.size) for (const k of [...heldBy.keys()]) if (!sessions.has(k)) heldBy.delete(k);
+}
+// session → the last pid linked to it and when (linkByCwd: an older session a headless --resume run wrote to is not
+// taken by a lone TUI in that project for an in-TUI resume once the run ended)
+const heldBy = new Map<string, { pid: number; at: number }>();
+// the session a command line resumes: "" none, "latest" (the flag without a value), else the value (an id or an index).
+// Only arguments after the agent's script count (node's own -r is --require)
+export function resumeOf(args: string, flags: string[]): string {
+  if (!flags.length) return "";
+  const t = args.split(" "); let i = scriptAt(t); if (i < 0) return "";
+  for (i++; i < t.length; i++) {
+    const a = t[i] ?? "";
+    for (const f of flags) {
+      if (a.startsWith(f + "=")) return a.slice(f.length + 1) || "latest";
+      if (a === f) { const v = t[i + 1] ?? ""; return v && !v.startsWith("-") ? v : "latest"; }
+    }
+  }
+  return "";
 }
 // pid is a harness's shared daemon: the warning to show instead of signalling it ("" = fine to signal)
 export function sharedDaemon(pid: number): string {
