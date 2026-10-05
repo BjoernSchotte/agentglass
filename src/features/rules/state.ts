@@ -3,7 +3,7 @@
 import { statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { OS } from "../../platform/index.ts";
-import { readText } from "../../util/fs.ts";
+import { readWhole } from "../../util/fs.ts";
 import { home } from "../../util/text.ts";
 import { S, say } from "../../state.ts";
 import { HIST } from "../../model/procs.ts";
@@ -19,7 +19,8 @@ const CMD_UNSAFE = "notify.command ignored — chmod 600 " + home(RULES_FILE) + 
 function warn(msg: string): void { if (S.cli) process.stderr.write("agentglass: " + msg + "\n"); else say("warn", msg); }
 // the file's change stamp (ctime: content writes and chmod/chown alike, so fixing the mode re-runs the permission check), -1 = missing
 export function fileMtime(p: string): number { try { const st = statSync(p); return Math.max(st.mtimeMs, st.ctimeMs); } catch (e) { return -1; } }
-export function fileText(p: string): string { return readText(p, 0, 1048576); }
+// the file's text, or why it cannot be read (no permission, a directory, over 1 MiB): never an empty file in its place
+export function fileRead(p: string): { text: string; err: string } { const f = readWhole(p, 1048576); return { text: f.text, err: f.err }; }
 // owned by this user and (mode & 0o022) === 0 — the check ssh does for its config
 export function fileSafe(p: string): boolean { const om = OS.ownerMode(p); return om.length === 2 && om[0] === userInfo().uid && ((om[1] ?? 0) & 0o022) === 0; }
 function capOf(rs: RuleSet): number { let n = 120; for (const r of rs.rules) { const v = r.params.get("samples"); if (r.enabled && v !== undefined && v > n) n = v; } return n; }
@@ -35,7 +36,7 @@ function install(rs: RuleSet): void {
   HIST.cap = capOf(rs);
 }
 // every 2 s: an unchanged mtime is a no-op; a broken edit keeps the previous rules (one warning per mtime); true = replaced
-export function reload(now: number, text: (p: string) => string, mtimeOf: (p: string) => number, safeOf: (p: string) => boolean): boolean {
+export function reload(now: number, read: (p: string) => { text: string; err: string }, mtimeOf: (p: string) => number, safeOf: (p: string) => boolean): boolean {
   if (R.mtime !== -2 && now - R.checkedAt < 2000) return false;
   R.checkedAt = now;
   const mt = mtimeOf(RULES_FILE);
@@ -43,8 +44,14 @@ export function reload(now: number, text: (p: string) => string, mtimeOf: (p: st
   const first = R.mtime === -2;
   R.mtime = mt;
   if (mt < 0) { if (!first) install(loadRules("", false)); return !first; } // deleted: back to the built-ins
+  const f = read(RULES_FILE);
+  if (f.err) { // unreadable is not a syntax error: say which, as `rules check` does
+    if (first) { install(loadRules("", false)); warn("rules.json: cannot read the file (" + f.err + ") — using built-in rules"); return true; }
+    warn("rules.json: cannot read the file (" + f.err + ") — keeping the previous rules");
+    return false;
+  }
   R.safe = safeOf(RULES_FILE);
-  const rs = withSafety(loadRules(text(RULES_FILE), true), R.safe);
+  const rs = withSafety(loadRules(f.text, true), R.safe);
   if (rs.syntax) {
     if (first) { install(rs); warn("rules.json: " + rs.syntax + " — using built-in rules"); return true; }
     warn("rules.json: " + rs.syntax + " — keeping the previous rules");
@@ -58,4 +65,4 @@ export function reload(now: number, text: (p: string) => string, mtimeOf: (p: st
   return true;
 }
 // the rules in force (loads the file on first use, then hot-reloads)
-export function rules(): RuleSet { reload(Date.now(), fileText, fileMtime, fileSafe); return R.set; }
+export function rules(): RuleSet { reload(Date.now(), fileRead, fileMtime, fileSafe); return R.set; }
