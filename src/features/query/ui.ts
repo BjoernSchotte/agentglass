@@ -228,7 +228,7 @@ function frequent(key: string): string[] {
     for (const a of ledger.values()) for (const d of a.days.values()) {
       if (key === "tool") { for (const [n, st] of heavy(d).tt) if (!REDACT || display("tool", n, null) === n) bump(m, n, st.n); } // --redact: a tool named after a custom agent is not offered
       else if (key === "server") for (const [n, st] of heavy(d).tt) bump(m, mcpServer(n), st.n);
-      else if (key === "program") for (const [k, c] of heavy(d).prog) bump(m, k.slice(k.indexOf("\t") + 1), c.n);
+      else if (key === "program") for (const [k, c] of heavy(d).prog) bump(m, REDACT ? display("prog", k.slice(k.indexOf("\t") + 1), null) : k.slice(k.indexOf("\t") + 1), c.n); // --redact: the shown fakes, never a real name
       else for (const k of heavy(d).files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }
     }
   } else if (key === "model") { for (const n of DICT.model.names) bump(m, n, 1); for (const s of sessions.values()) bump(m, s.model, 1); }

@@ -517,7 +517,7 @@ if (REDACT) {
       branch: s.branch !== r.branch ? s.branch : r.rb, name: s.name !== r.name ? s.name : r.rn, kind: s.kind !== r.kind ? s.kind : r.rk };
   });
   H.screenFilter.push(scrubStyled);
-  H.headerWidgets.unshift((w: number) => (w >= 10 ? bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST : ""));
+  H.headerBadge.push(() => bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST); // at every width: a screencast must show it
 }
 H.helpSections.push({ name: "privacy (--redact)", ctx: "", keys: [
   ["--redact", "fake titles, projects, content; scrub names"], ["…REDACT=1", "AGENTGLASS_REDACT=1: the same via env"],

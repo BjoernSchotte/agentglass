@@ -5,7 +5,7 @@
 import { HOME } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
 import { sessions, titleFrom, working, parentOf } from "../../model/sessions.ts";
-import { type RealMeta, realMeta } from "../../hooks.ts";
+import { type RealMeta, realMeta, display } from "../../hooks.ts";
 import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/record.ts";
 import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
@@ -119,11 +119,17 @@ export function dayVal(key: string, s: Sess, dk: string, d: Day): Val {
   return sessVal(key, s);
 }
 function names(dc: { ids: Map<string, number>; names: string[] }, xs: number[]): string[] { const o: string[] = []; for (const x of xs) o.push(nameOf(dc, x).toLowerCase()); return o; }
+// program names, plus (--redact) each one's shown fake for exact matches: the completion offers only those
+function progVals(xs: number[]): string[] {
+  const o: string[] = [];
+  for (const x of xs) { const n = nameOf(DICT.prog, x); o.push(n.toLowerCase()); const sh = display("prog", n, null); if (sh !== n) o.push(EXACT + sh.toLowerCase()); }
+  return o;
+}
 export function callVal(key: string, s: Sess, c: Call): Val {
   switch (key) {
     case "tool": return V([nameOf(DICT.tool, c.tool).toLowerCase()]);
     case "server": return V([mcpServer(nameOf(DICT.tool, c.tool)).toLowerCase()]);
-    case "program": return V(names(DICT.prog, c.progs));
+    case "program": return V(progVals(c.progs));
     case "command": return V(names(DICT.cmd, c.cmds));
     case "file": return V(names(DICT.file, c.files));
     case "ext": { const o: string[] = []; for (const f of c.files) { const e = extOf(nameOf(DICT.file, f)); if (o.indexOf(e) < 0) o.push(e); } return V(o); }

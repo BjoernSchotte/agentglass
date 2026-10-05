@@ -23,6 +23,7 @@ export function renderHeader(): void {
   let x = 0;
   let s = bg(C.accent) + fg(C.panel) + CSI + "1m" + " ◈ agentglass " + RST + " ";
   x = 16;
+  for (const f of H.headerBadge) { const b = f(); if (b) { s += b + " "; x += width(b.replace(ESC_RE, "")) + 1; } } // never dropped: the tabs move over
   tabX0.length = 0; tabX1.length = 0;
   for (let i = 0; i < tabs.length; i++) {
     s += (i === S.tab ? bg(C.sel) + fg(C.text) + CSI + "1m" + CSI + "4m" : fg(C.sub)) + (i + 1) + tabs[i] + RST + " ";
@@ -45,7 +46,7 @@ export function renderHeader(): void {
   }
   const free = Math.max(0, W - x - rw); const wid = widgets(free);
   const ww = width(wid.replace(ESC_RE, ""));
-  put(0, 0, s + wid + " ".repeat(Math.max(0, free - ww)) + (W - x > rw ? right : ""));
+  put(0, 0, x > W ? fitStyled(s, W) : s + wid + " ".repeat(Math.max(0, free - ww)) + (W - x > rw ? right : "")); // a badge can push the last tabs off a very narrow row
 }
 // the fixed-size header widgets that fit in free columns ("" = none)
 function fixed(free: number): string {
