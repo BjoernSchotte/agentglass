@@ -6,7 +6,9 @@ import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { H } from "../../hooks.ts";
 import { L } from "./record.ts";
-import { ledger, indexing, indexState, reapplyAll, PACE, TICK_STATS } from "./ledger.ts";
+import { ledger, indexing, indexState, reapplyAll, complete, PACE, TICK_STATS } from "./ledger.ts";
+import { heavy } from "./record.ts";
+import "./codec.ts"; // the day-map text codec (packHeavy)
 import { gaugeText } from "./progress.ts";
 import "../../harness/index.ts";
 
@@ -84,6 +86,14 @@ eq("gauge 10", gaugeText(s1, 10, now), "⟳ 34%");
 eq("gauge 4: no room", gaugeText(s1, 4, now), "");
 eq("gauge never 100% while indexing", gaugeText({ done: 9999, total: 10000, left: 1, bps: 0, since: 0 }, 8, now), "⟳ 99%");
 
+// a one-shot complete() leaves the read logs' day maps as text (a cold index must not hold every day decoded); they decode
+// again on use, unchanged
+const call = (id: string): string => "{\"type\":\"assistant\",\"timestamp\":\"" + TS + "\",\"requestId\":\"rq" + id + "\",\"message\":{\"id\":\"mm" + id + "\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu" + id + "\",\"name\":\"Bash\",\"input\":{\"command\":\"make " + id + "\"}}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n";
+const e = sess("e", call("1") + call("2"));
+complete(e);
+const ea = ledger.get(e.path); let packed = 0; let cmds = 0;
+if (ea) for (const d of ea.days.values()) { if (!d.hx && d.hv) packed++; cmds += heavy(d).cmds.size; }
+eq("complete packs day maps to text, decodable", String(packed) + " " + String(cmds), "1 2");
 rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "ledger: all checks passed");
 if (bad) process.exit(1);

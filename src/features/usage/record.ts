@@ -26,9 +26,12 @@ export interface Day {
 // --json) reads them back as text and writes that text out again; heavy() decodes a day's on first use (HEAVY: codec.ts)
 export interface Heavy { tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt> }
 export function newHeavy(): Heavy { return { tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>() }; }
-export const HEAVY = { decode: (raw: string): Heavy => newHeavy() };
+export const HEAVY = { decode: (raw: string): Heavy => newHeavy(), encode: (h: Heavy): string => "" };
 export function heavy(d: Day): Heavy { let h = d.hx; if (!h) { h = d.hv ? HEAVY.decode(d.hv) : newHeavy(); d.hx = h; d.hv = ""; } return h; }
 // read-only look without keeping what it decoded (the day stays text): for passes over many days (call-row decoding)
+// back to text (one-shot runs, once a session is read to its end): the decoded maps are several times their text, and the
+// save writes this text as is instead of encoding them then
+export function packHeavy(d: Day): void { const h = d.hx; if (!h) return; const t = HEAVY.encode(h); if (!t) return; d.hv = own(t); d.hx = null; } // "": no codec in this program
 export function peekHeavy(d: Day): Heavy { const h = d.hx; return h ? h : d.hv ? HEAVY.decode(d.hv) : newHeavy(); }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left

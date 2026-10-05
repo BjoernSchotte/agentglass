@@ -63,7 +63,7 @@ function heavyOf(o: Obj): Heavy {
   }
   return { tt, prog: cntsIn(o["p"]), cmds: cntsIn(o["m"]), files: cntsIn(o["f"]) };
 }
-HEAVY.decode = heavyIn;
+HEAVY.decode = heavyIn; HEAVY.encode = heavyOut;
 function dayOut(d: Day): Obj {
   return { t: d.tools, hv: d.hx ? heavyOut(d.hx) : d.hv, k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del,
     um: numMapOut(d.um), uc: d.uc, cp: numMapOut(d.cp), hc: d.hc, mt: rowsOut(d.mt), ak: d.act, tp: rowsOut(d.tp) };

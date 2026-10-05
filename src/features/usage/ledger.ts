@@ -8,7 +8,7 @@ import { H } from "../../hooks.ts";
 import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
-import { type Acc, L, newAcc, startOfDay, flushSpans } from "./record.ts";
+import { type Acc, L, newAcc, startOfDay, flushSpans, packHeavy } from "./record.ts";
 import { type Rows, newRows } from "./rows.ts";
 import { scrape } from "./vcs.ts";
 import { OWN, reconcile, release } from "./owners.ts";
@@ -233,7 +233,12 @@ export function complete(s: Sess): void {
     const f = harnessOf(x.h).carriers; const a = ledger.get(x.path); if (!f || !a) continue;
     for (const p of f(x, a, sessions, g)) { const r = sessions.get(p); if (r && !seen.has(p)) { seen.add(p); q.push(r); } }
   }
+  // a one-shot run is done with these logs: their day detail maps go back to text (a cold full index holds every day of
+  // every log at once otherwise); a later reader decodes a day again on use
+  if (BLOCKING.on) for (const p of readNow) { const a = ledger.get(p); if (a) for (const d of a.days.values()) packHeavy(d); }
+  readNow.length = 0;
 }
+const readNow: string[] = []; // logs finish() read bytes of during this complete()
 // a log another one took messages from was read before: read it again now, so every completed number is settled
 function drain(): void {
   for (let guard = 0; redo.size && guard < 10000; guard++) {
@@ -245,7 +250,7 @@ function finish(s: Sess): void {
   const a = accOf(s);
   sidecar(s, a); // first: some adapters date log lines from it (kiro turn times)
   let n = 0; for (let k = step(s, a); k > 0 && ledger.get(s.path) === a; k = step(s, a)) n += k;
-  if (n > 0) L.idx++; // not L.ver: per-session caches (git attribution) would be rebuilt for every completed session
+  if (n > 0) { readNow.push(s.path); L.idx++; } // not L.ver: per-session caches (git attribution) would be rebuilt for every completed session
   applyAcc(s, ledger.get(s.path) ?? a); // restarted meanwhile: redo reads it again
 }
 
