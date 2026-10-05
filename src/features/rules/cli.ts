@@ -6,7 +6,8 @@ import { S } from "../../state.ts";
 import { type Rule, type RuleSet, loadRules, builtins, unitOf, thrText } from "./config.ts";
 export { thrText };
 import { RULES_FILE } from "./file.ts";
-import { fileText, fileMtime, fileSafe, withSafety } from "./state.ts";
+import { fileSafe, withSafety } from "./state.ts";
+import { readWhole } from "../../util/fs.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function thrJson(unit: string, v: number): string | number { return unit === "duration" || unit === "ratio" ? thrText(unit, v) : v; }
@@ -16,12 +17,13 @@ interface JCheck { file: string; exists: boolean; rules: JRule[]; diagnostics: J
 export interface Checked { lines: string[]; code: number; json: JCheck }
 function labelsOf(r: Rule): { [k: string]: string } { const o: { [k: string]: string } = {}; for (const [k, v] of r.labels) o[k] = v; return o; }
 // the pure core of `rules check`: effective rules (built-ins merged) and diagnostics; code 0 clean, 1 warnings, 2 errors
-export function checkText(text: string, exists: boolean, safe: boolean): Checked {
-  const rs: RuleSet = withSafety(loadRules(text, exists), safe);
+// readErr: the file is there but cannot be read (a directory, no permission, too large) — an error, never "empty file"
+export function checkText(text: string, exists: boolean, safe: boolean, readErr = ""): Checked {
+  const rs: RuleSet = readErr ? unreadable(readErr) : withSafety(loadRules(text, exists), safe);
   const lines: string[] = []; const jr: JRule[] = []; const jd: JDiag[] = [];
   let w = 4; for (const r of rs.rules) w = Math.max(w, r.id.length);
   let mw = 6; for (const r of rs.rules) mw = Math.max(mw, r.metric.length);
-  lines.push((exists ? RULES_FILE : RULES_FILE + " (missing: built-in rules)") + (rs.syntax ? " — syntax error, built-in rules in force" : ""));
+  lines.push((exists ? RULES_FILE : RULES_FILE + " (missing: built-in rules)") + (readErr ? " — unreadable, built-in rules in force" : rs.syntax ? " — syntax error, built-in rules in force" : ""));
   for (const r of rs.rules) {
     const u = unitOf(r.metric);
     const lv = (r.hasDeg ? thrText(u, r.deg) : "-") + "/" + (r.hasCrit ? thrText(u, r.crit) : "-");
@@ -33,11 +35,16 @@ export function checkText(text: string, exists: boolean, safe: boolean): Checked
   let errs = 0; let warns = 0;
   for (const d of rs.diags) {
     if (d.err) errs++; else warns++;
-    lines.push("rules.json:" + String(d.line) + ":" + String(d.col) + ": " + (d.rule || "-") + ": " + (d.err ? "" : "warning: ") + d.msg);
+    lines.push("rules.json:" + String(d.line) + ":" + String(d.col) + ": " + (d.rule ? d.rule + ": " : "") + (d.err ? "" : "warning: ") + d.msg);
     jd.push({ line: d.line, col: d.col, rule: d.rule, message: d.msg, severity: d.err ? "error" : "warning" });
   }
   if (rs.notify.command.length) lines.push("notify command: " + JSON.stringify(rs.notify.command) + " on " + rs.notify.on.join(", "));
   return { lines, code: errs ? 2 : warns ? 1 : 0, json: { file: RULES_FILE, exists, rules: jr, diagnostics: jd } };
+}
+
+function unreadable(err: string): RuleSet {
+  const rs = loadRules("", false); rs.syntax = "cannot read the file (" + err + ")";
+  rs.diags.push({ line: 1, col: 1, rule: "", msg: rs.syntax + " — using built-in rules", err: true }); return rs;
 }
 
 // ── defaults ──
@@ -70,7 +77,7 @@ export function defaultsText(examples: boolean): string {
 }
 
 const HELP = `usage: agentglass rules check [--json]     validate ${"~"}/.agentglass/rules.json; print the effective rules and every problem as
-                                           rules.json:<line>:<col>: <rule>: <message> (exit 0 clean, 1 warnings, 2 errors)
+                                           rules.json:<line>:<col>: [<rule>:] <message> (exit 0 clean, 1 warnings, 2 errors)
        agentglass rules defaults [--examples]  print the built-in rules as a ready-to-edit rules.json
                                            (--examples: plus disabled example rules: cost, error rate, repeats, per harness)
 the file: {"builtins": true, "notify": {...}, "rules": [{"id", "metric", "where", "op", "degraded", "critical", "for", ...}]}
@@ -83,8 +90,8 @@ H.cli.push((args: string[]): boolean => {
   S.cli = true;
   const sub = args[1] ?? "";
   if (sub === "check") {
-    const exists = fileMtime(RULES_FILE) >= 0;
-    const c = checkText(exists ? fileText(RULES_FILE) : "", exists, exists && fileSafe(RULES_FILE));
+    const f = readWhole(RULES_FILE, 1048576);
+    const c = checkText(f.text, !f.missing, !f.missing && fileSafe(RULES_FILE), f.err);
     if (args.indexOf("--json") >= 0) out(process.stdout.isTTY ? JSON.stringify(c.json, null, 2) : JSON.stringify(c.json));
     else for (const l of c.lines) out(l);
     process.exit(c.code);
