@@ -39,7 +39,7 @@ export interface SessB {
 const WIN = 1048576;
 
 function newSide(s: Sess, top: boolean): Side {
-  const a = newAcc(); a.sub = !top;
+  const a = newAcc(); a.sub = !top; a.p = s.path; a.ro = true; // its path: a Codex fork finds its parent's calls; ro: claims nothing
   const la = ledger.get(s.path); if (la) for (const [k, v] of la.mc) a.mc.set(k, v); // copies another log owns: no request of this one
   return { s, at: 0, ep: epochOf(s), acc: a, rq: newReqState(), top, last: 0, mark: 0, pend: new Map<string, XSpan>(), anon: [], chats: new Map<string, XSpan>(), lastChat: null, outBuf: "", lineTurn: "", lineAt: -1, pieces: new Map<string, XSpan>(), first: 0 };
 }

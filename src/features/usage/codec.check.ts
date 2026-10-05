@@ -35,12 +35,13 @@ ok("rs round trip", b.rs === 42, String(b.rs));
 ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan === "team" && b.billSrc === "session" && b.unk === a.unk && b.cost === a.cost, JSON.stringify(o["t"]));
 // owned message ids (with times) and skipped copies round-trip; the owned list stays text until something reads it
 {
-  const x = newAcc(); x.mo.set("msg_1", 1759312800000); x.mo.set("msg_2", 1759312800500); x.mo.set("u:abc", 1759312700000); x.mc.set("msg_0", "/p/o.jsonl");
+  const x = newAcc(); x.mo.set("msg_1", 1759312800000); x.mo.set("msg_2", 1759312800500); x.mo.set("u:abc", 1759312700000); x.mc.set("msg_0", "/p/o.jsonl"); x.xs.add("3c4e27dd-7185-40bd-a29f-8ca06a57d08c");
   const y = accIn(parse(JSON.stringify(accOut(x, 64))) ?? {});
   ok("mo stays text", y.mo.size === 0 && y.mv.length > 0, y.mv);
   const m = moIn(y.mv);
   ok("mo round trip", m.get("msg_1") === 1759312800000 && m.get("msg_2") === 1759312800500 && m.get("u:abc") === 1759312700000 && m.size === 3, y.mv);
   ok("mc round trip", y.mc.get("msg_0") === "/p/o.jsonl" && y.mc.size === 1, JSON.stringify(accOut(y, 64)["mc"]));
+  ok("xs round trip", y.xs.has("3c4e27dd-7185-40bd-a29f-8ca06a57d08c") && y.xs.size === 1, JSON.stringify(accOut(y, 64)["xs"]));
   ok("undecoded mo written back as is", JSON.stringify(accOut(y, 64)["mo"]) === JSON.stringify(y.mv), "");
 }
 // an older 9-element t: uc defaults to 0

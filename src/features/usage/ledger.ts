@@ -5,7 +5,7 @@
 import { readBytes } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
 import { type Acc, L, newAcc, startOfDay, flushSpans } from "./record.ts";
@@ -40,6 +40,7 @@ export function accOf(s: Sess): Acc {
 const redo = new Set<string>();
 function restart(path: string): void {
   const o = ledger.get(path); if (!o) return;
+  if (redo.has(path) && o.off === 0) return; // restarted already and not read since (a takeover of many messages at once)
   const a = newAcc(); a.ep = o.ep; a.hd = o.hd; a.tl = o.tl; a.sub = o.sub; a.p = path; // the head/tail memos stay valid
   unread.delete(path); ledger.set(path, a); redo.add(path); L.idx++;
 }
@@ -95,9 +96,12 @@ function rank(s: Sess, sod: number): number {
   if (s.pid) return 1;
   return s.mtime >= sod ? 2 : 3;
 }
+// the session set changed since the last reconcile(): a log that skipped copies of a removed owner re-reads
+let known = -1;
+function settle(): void { const g = SG.gen * 1048576 + sessions.size; if (g !== known) { known = g; reconcile(); } }
 function tick(): void {
   const t0 = Date.now();
-  reconcile(); redo.clear(); // restarted logs are pending: this and the next ticks read them in rank order
+  settle(); redo.clear(); // restarted logs are pending: this and the next ticks read them in rank order
   const sod = startOfDay();
   const q: Sess[] = [];
   let done = 0; let total = 0;
@@ -122,11 +126,20 @@ function tick(): void {
 // the first index (or a big append) is still being read: the refresh level stays hot so the gauge advances
 export function indexing(): boolean { return L.total > 0 && L.done < L.total; }
 // blocking: everything up to the end of the file (CLI exports)
-let known = -1; // sessions.size at the last reconcile() of complete()
 export function complete(s: Sess): void {
-  if (sessions.size !== known) { known = sessions.size; reconcile(); }
-  finish(s);
-  // a log this one took messages from was read before: read it again now, so every completed number is settled
+  settle();
+  // the logs that may own messages this one carries are read too, and theirs (adapter carriers): a one-shot command that
+  // reads only some sessions books every message where a full index does, whatever it read before
+  const g = SG.gen * 1048576 + sessions.size;
+  const seen = new Set<string>([s.path]); const q: Sess[] = [s];
+  for (let i = 0; i < q.length; i++) {
+    const x = q[i] ?? s; finish(x); drain();
+    const f = harnessOf(x.h).carriers; const a = ledger.get(x.path); if (!f || !a) continue;
+    for (const p of f(x, a, sessions, g)) { const r = sessions.get(p); if (r && !seen.has(p)) { seen.add(p); q.push(r); } }
+  }
+}
+// a log another one took messages from was read before: read it again now, so every completed number is settled
+function drain(): void {
   for (let guard = 0; redo.size && guard < 10000; guard++) {
     const p = [...redo][0] ?? ""; redo.delete(p);
     const r = sessions.get(p); if (r) finish(r);

@@ -183,6 +183,92 @@ reset();
   eq("multi-line message", show(m), "cr 100 out 8 tools 1 turns 0");
 }
 
+// ── a background continuation: the new file copies the whole history under the same timestamps, and every copied line
+// keeps the original's session_id (sessionId is the new file's). The original owns it although the copy sorts first ──
+const CA = "3c4e27dd-7185-40bd-a29f-8ca06a57d08c"; const CB = "3c00e05d-2078-4567-871d-d54d9b91d8c4";
+const CONT_A = dir + "/p1/" + CA + ".jsonl"; const CONT_B = dir + "/p1/" + CB + ".jsonl";
+const tag = (l: string, file: string, sid: string): string => l.slice(0, -1) + ",\"sessionId\":\"" + file + "\",\"session_id\":\"" + sid + "\"}";
+const CHIST = [prompt("ca1", D1), asst("ca-m1", D1, 1000, 5, ""), asst("ca-m2", D1b, 2000, 7, "")];
+const contA: string[] = []; const contB: string[] = []; for (const l of CHIST) { contA.push(tag(l, CA, CA)); contB.push(tag(l, CB, CA)); }
+put(CONT_A, contA);
+put(CONT_B, contB.concat([tag(prompt("cb1", D2), CB, CB), tag(asst("cb-m1", D2, 4000, 9, ""), CB, CB)]));
+for (const first of ["copy", "original"]) {
+  reset();
+  const a = sess(CONT_A, ""); const b = sess(CONT_B, "");
+  all(first === "copy" ? [b, a] : [a, b]);
+  eq("continuation (" + first + " first): the original owns its history", show(a) + " | " + show(b), "cr 3000 out 12 tools 0 turns 1 | cr 4000 out 9 tools 0 turns 1");
+}
+// a one-shot command that reads only the copy reads the session its lines name too: the same numbers as a full index
+reset();
+{ sess(CONT_A, ""); const b = sess(CONT_B, ""); complete(b); eq("continuation, copy alone: settled like a full index", show(b), "cr 4000 out 9 tools 0 turns 1"); }
+
+// a session started after /clear keeps its process's first session_id on its own lines: that names no copy, so the root
+// still owns what its forked subagent copied
+{
+  const RS = dir + "/p1/R"; mkdirSync(RS + "/subagents", { recursive: true });
+  const RP = RS + ".jsonl"; const RF = RS + "/subagents/agent-rfork.jsonl";
+  writeFileSync(RF.slice(0, -6) + ".meta.json", "{\"agentType\":\"fork\",\"isFork\":true}");
+  const other = (l: string): string => l.slice(0, -1) + ",\"session_id\":\"8995df07-86f2-4f93-92ea-be9d41b4d33b\"}";
+  put(RP, [other(prompt("rp1", D1)), other(asst("rm1", D1, 100, 1, "")), other(asst("rm2", D1b, 200, 1, ""))]);
+  put(RF, [asst("rm2", D1b, 200, 1, ""), asst("rf1", D2, 7, 1, "")]);
+  for (const first of ["fork", "root"]) {
+    reset();
+    const r = sess(RP, ""); const f = sess(RF, "R");
+    all(first === "fork" ? [f, r] : [r, f]);
+    eq("root after /clear (" + first + " first): the root owns its message", String(cr(r)) + "/" + String(cr(f)), "300/7");
+  }
+}
+
+// ── forks of a subagent: each starts with a copy of its parent agent's history (meta isFork + parentAgentId); the parent
+// agent owns it although a fork sorts first by path, and a fork read alone settles the same way ──
+const FS = dir + "/p1/F/subagents"; mkdirSync(FS, { recursive: true });
+const PA = FS + "/agent-zparent.jsonl"; const F1 = FS + "/agent-a1fork.jsonl"; const F2 = FS + "/agent-b2fork.jsonl";
+writeFileSync(FS + "/agent-zparent.meta.json", "{\"agentType\":\"general-purpose\"}");
+for (const f of [F1, F2]) writeFileSync(f.slice(0, -6) + ".meta.json", "{\"agentType\":\"fork\",\"isFork\":true,\"parentAgentId\":\"zparent\"}");
+put(dir + "/p1/F.jsonl", [prompt("fr1", D1)]);
+const FB = [asst("fb1", D1, 100, 1, "cf1"), result("cf1", D1), asst("fb2", D1b, 200, 1, "")];
+put(PA, FB.concat([asst("fp3", D2, 300, 1, "")]));
+put(F1, FB.concat([asst("f1own", D2, 10, 1, "")])); put(F2, FB.concat([asst("f2own", D2b, 20, 1, "")]));
+const fam = (): string => show(sessions.get(PA) ?? sess(PA, "F")) + " | " + show(sessions.get(F1) ?? sess(F1, "F")) + " | " + show(sessions.get(F2) ?? sess(F2, "F"));
+const FAM = "cr 600 out 3 tools 1 turns 0 | cr 10 out 1 tools 0 turns 0 | cr 20 out 1 tools 0 turns 0";
+for (const order of ["forks first", "parent first"]) {
+  reset(); sess(dir + "/p1/F.jsonl", "");
+  const pa = sess(PA, "F"); const f1 = sess(F1, "F"); const f2 = sess(F2, "F");
+  all(order === "forks first" ? [f2, f1, pa] : [pa, f1, f2]);
+  eq("subagent forks (" + order + "): the parent agent owns the copied block", fam(), FAM);
+}
+reset(); sess(dir + "/p1/F.jsonl", "");
+{ sess(PA, "F"); sess(F2, "F"); const f1 = sess(F1, "F"); complete(f1); eq("subagent fork alone: settled like a full index", show(f1), "cr 10 out 1 tools 0 turns 0"); }
+// the parent agent's log goes away: the first fork by path owns the block now, and that equals a cold rebuild
+{
+  reset(); sess(dir + "/p1/F.jsonl", "");
+  const pa = sess(PA, "F"); const f1 = sess(F1, "F"); const f2 = sess(F2, "F"); all([pa, f1, f2]);
+  sessions.delete(PA); all([f1, f2]);
+  const inc = show(f1) + " | " + show(f2);
+  reset(); sess(dir + "/p1/F.jsonl", ""); const g1 = sess(F1, "F"); const g2 = sess(F2, "F"); all([g2, g1]);
+  eq("parent agent gone: incremental equals a cold rebuild", inc, show(g1) + " | " + show(g2));
+  eq("parent agent gone: one fork books the block", inc, "cr 310 out 3 tools 1 turns 0 | cr 20 out 1 tools 0 turns 0");
+}
+
+// ── Codex: a fork's copied token_count totals are its parent's usage: the fork counts on from them ──
+reset();
+{
+  const PID = "019d24d0-0000-7d61-94aa-158608eb5206"; const FID = "019d24d1-0000-7452-a702-ead2b435dd14";
+  const PP = dir + "/p1/rollout-2026-03-25T12-45-43-" + PID + ".jsonl"; const FP = dir + "/p1/rollout-2026-03-25T12-46-14-" + FID + ".jsonl";
+  const meta = (id: string, ts: string, fork: string): string => "{\"timestamp\":\"" + ts + "\",\"type\":\"session_meta\",\"payload\":{\"id\":\"" + id + "\"" + (fork ? ",\"forked_from_id\":\"" + fork + "\"" : "") + ",\"timestamp\":\"" + ts + "\",\"cwd\":\"/w\"}}";
+  const tok = (ts: string, inp: number, out: number): string => "{\"timestamp\":\"" + ts + "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":" + String(inp) + ",\"cached_input_tokens\":0,\"output_tokens\":" + String(out) + ",\"reasoning_output_tokens\":0,\"total_tokens\":" + String(inp + out) + "}}}}";
+  const ask = (ts: string): string => "{\"timestamp\":\"" + ts + "\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"go on\"}]}}";
+  put(PP, [meta(PID, "2026-03-25T11:45:43.000Z", ""), ask("2026-03-25T11:45:44.000Z"), tok("2026-03-25T11:45:50.000Z", 1000, 10), tok("2026-03-25T11:46:00.000Z", 3000, 30), tok("2026-03-25T11:50:00.000Z", 9000, 90)]);
+  put(FP, [meta(FID, "2026-03-25T11:46:14.623Z", PID), meta(PID, "2026-03-25T11:46:14.624Z", ""), ask("2026-03-25T11:46:14.624Z"), tok("2026-03-25T11:46:14.624Z", 1000, 10), tok("2026-03-25T11:46:14.624Z", 3000, 30), ask("2026-03-25T11:46:16.000Z"), tok("2026-03-25T11:46:18.000Z", 3500, 35)]);
+  const p = sessOf("codex", PP, ""); const f = sessOf("codex", FP, "");
+  all([f, p]);
+  const fa = ledger.get(FP) ?? accOf(f);
+  eq("codex fork: copied totals book nothing, the fork's own delta does", String(fa.inTok) + "/" + String(fa.outTok), "500/5");
+  const ts = finish(newSessB(f, []), { now: Date.now() + 86400000, quietMs: 600000, content: false, subagents: true });
+  let n = 0; let ti = 0; for (const t of ts) for (const x of t.spans) if (x.op === "chat") { n++; ti += x.nIn; } // nIn: uncached input + cache reads
+  eq("codex fork otlp: one chat span, the fork's own request", String(n) + " span(s), in " + String(ti), "1 span(s), in 500");
+}
+
 rmSync(dir, { recursive: true, force: true });
 if (bad) { console.log(String(bad) + " check(s) failed"); process.exit(1); }
 console.log("all checks passed");

@@ -1,6 +1,6 @@
 // agentglass — Claude Code (~/.claude) adapter
 // SPDX-License-Identifier: Apache-2.0
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { CLAUDE, readText, listDir } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
@@ -9,7 +9,8 @@ import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, 
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
-import { claim } from "../features/usage/owners.ts";
+import { OWN, claim } from "../features/usage/owners.ts";
+import { own } from "../util/own.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise, leadTag, prompts } from "./common.ts";
 
@@ -158,8 +159,17 @@ function claudeResult(a: Acc, l: string): void {
   const s0 = tr >= 0 && tr < at ? tr : at; const end = l.indexOf("]},\"uuid\":\"", at); // result block ≈ up to the end of the message (JSON-escaped size)
   done(p, t > 0 && p.t > 0 ? t - p.t : -1, l.indexOf("\"is_error\":true") >= 0, end > s0 ? end - s0 : 0, id, []);
 }
+// false = the line names this log's own session (session_id: the session its process wrote it in; a background
+// continuation's copied lines keep the original's, sessionId is the new file's). Another session it names may own the
+// line's message (Acc.xs → carriers)
+function copied(a: Acc, o: Obj): boolean {
+  const sid = str(o["session_id"]); if (!sid || !a.p) return true;
+  if (a.p.indexOf(sid) >= 0) return false;
+  if (!a.xs.has(sid)) a.xs.add(own(sid));
+  return true;
+}
 // a user line another log carries too (same uuid): its owner books the prompt
-function owned(a: Acc, o: Obj): boolean { const u = str(o["uuid"]); return !u || claim(a, "u:" + u, str(o["timestamp"])); }
+function owned(a: Acc, o: Obj): boolean { const u = str(o["uuid"]); return !u || claim(a, "u:" + u, str(o["timestamp"]), copied(a, o)); }
 function userText(o: Obj): string { const m = obj(o["message"]); const c = m ? m["content"] : null; return typeof c === "string" ? c : blockText(c); }
 // slash-command skills: the command line, then an isMeta line "Base directory for this skill: …/skills/<name>" with the same
 // promptId and no sourceToolUseID (a model's Skill call has one). /compact & co. never get that line.
@@ -198,7 +208,7 @@ function usage(a: Acc, l: string): void {
   const iso = str(o["timestamp"]);
   const id = str(m["id"]) || str(o["requestId"]); const u = obj(m["usage"]);
   // a message another log carries too (fork, resume, a second project dir, a forked subagent) books in the first one only
-  if (id && !a.ids.has(id) && !claim(a, id, iso)) return;
+  if (id && !a.ids.has(id) && !claim(a, id, iso, copied(a, o))) return;
   const d = bucket(a, 0, iso);
   const md0 = str(m["model"]); const rowModel = md0 === "<synthetic>" ? "" : md0; // the model that issued this line's calls
   const was = id ? a.ids.get(id) : undefined;
@@ -240,6 +250,42 @@ function usage(a: Acc, l: string): void {
   }
 }
 
+// a subagent's fork mark from agent-<id>.meta.json: "" = no fork, "*" = a fork of the root session, else its parent agent's id
+const FORK = new Map<string, string>();
+function forkOf(path: string): string {
+  let f = FORK.get(path); if (f !== undefined) return f;
+  const m = readText(path.slice(0, -6) + ".meta.json", 0, 8192);
+  f = m.indexOf("\"isFork\":true") < 0 ? "" : "*";
+  if (f) { const pm = /"parentAgentId":"([^"]+)"/.exec(m); if (pm) f = pm[1] ?? "*"; }
+  FORK.set(path, f); return f;
+}
+OWN.fork = (path: string): boolean => forkOf(path) !== "";
+// a log's place under projects/: "<session>.jsonl", or "<session>/subagents/agent-<id>.jsonl"
+function tailOf(path: string): string {
+  const i = path.lastIndexOf("/subagents/"); const j = path.lastIndexOf("/", i >= 0 ? i - 1 : path.length - 1);
+  return path.slice(j + 1);
+}
+let twinsGen = -1; let twinsM = new Map<string, string[]>(); // tailOf → the paths with it (one per project dir)
+function twins(all: Map<string, Sess>, gen: number): Map<string, string[]> {
+  if (gen === twinsGen) return twinsM;
+  const m = new Map<string, string[]>();
+  for (const [p, s] of all) { if (s.h !== "claude") continue; const k = tailOf(p); const v = m.get(k); if (v) v.push(p); else m.set(k, [p]); }
+  twinsGen = gen; twinsM = m; return m;
+}
+// the same session under another project dir, the sessions its copied lines name, a subagent's root; a fork's parent agent
+// and the other forks of that parent (they start with the same copied block)
+function carriers(s: Sess, a: Acc, all: Map<string, Sess>, gen: number): string[] {
+  const tw = twins(all, gen); const out: string[] = [];
+  for (const p of tw.get(tailOf(s.path)) ?? []) if (p !== s.path) out.push(p);
+  for (const sid of a.xs) for (const p of tw.get(sid + ".jsonl") ?? []) out.push(p);
+  if (!s.parent) return out;
+  const sd = dirname(s.path); out.push(join(dirname(dirname(sd)), s.parent + ".jsonl"));
+  const f = forkOf(s.path); if (!f) return out;
+  if (f !== "*") out.push(join(sd, "agent-" + f + ".jsonl"));
+  for (const n of listDir(sd)) { const p = join(sd, n); if (n.endsWith(".jsonl") && p !== s.path && forkOf(p) === f) out.push(p); }
+  return out;
+}
+
 export const claude: HarnessAdapter = {
   id: "claude", label: "Claude", glyph: "✻", mark: "✻", color: () => C.claude,
   badge: () => fg(C.claude) + CSI + "1m" + "✻" + RST + fg(C.claude) + " Claude  " + RST, // terracotta spark
@@ -250,5 +296,5 @@ export const claude: HarnessAdapter = {
   liveRegistry,
   headless: (s: Sess, msg: string) => ["-p", "--resume", s.id, msg],
   resume: (s: Sess) => ["--resume", s.id],
-  files, usage, headState, setHeadState,
+  files, usage, carriers, headState, setHeadState,
 };
