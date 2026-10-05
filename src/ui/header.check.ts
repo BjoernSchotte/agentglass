@@ -23,5 +23,11 @@ for (const W of [60, 80, 120]) {
 }
 ok("80 columns keep the tab names", header(80).indexOf("2 Processes") >= 0 && header(80).indexOf("4 Repos") >= 0, header(80));
 S.tab = 2; ok("60 columns: the active tab keeps its name", header(60).indexOf("3 Stats") >= 0 && header(60).indexOf("Processes") < 0, header(60)); S.tab = 0;
+H.headerWidgets.length = 0; H.headerWidgets.push((w: number) => (w >= 14 ? "≈$119.72 today" : "")); // the cost widget sizes itself
+ok("80 columns: a widget that fits keeps the tab names", header(80).indexOf("2 Processes") >= 0 && header(80).indexOf("today") >= 0, header(80));
+ok("60 columns: the widget gets room", header(60).indexOf("today") >= 0 && header(60).indexOf("live") >= 0, header(60));
+H.headerWidgets.length = 0;
+ok("60 columns, no widgets: the live count gets room", header(60).indexOf("live") >= 0, header(60));
+ok("120 columns, no widgets: names", header(120).indexOf("4 Repos") >= 0, header(120));
 console.log(bad ? bad + " failed" : "header: all checks passed");
 if (bad) process.exit(1);

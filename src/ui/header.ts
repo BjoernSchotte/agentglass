@@ -27,10 +27,10 @@ export function renderHeader(): void {
   // place (wider: the established split, cpu and memory stay)
   const rights = [lv + sep + bz + sep + cpuS + sep + fg(C.text) + bytes(mem) + RST + fg(C.dim) + (W >= 190 ? "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions" : "") + " " + RST, // totals only when wide: widgets need the room
     lv + sep + bz + " ", lv + " ", ""];
-  // full tab names; when they leave no room for the live count or the alarms (60 columns), the other tabs show only
-  // their number key
+  // full tab names; when they leave no room for a widget with something to say (alarms, cost) or for anything at all
+  // on the right (60 columns), the other tabs show only their number key
   let L = layout(W, tabs, false, rights);
-  if (L.ri === rights.length - 1 || L.lost) L = layout(W, tabs, true, rights);
+  if (L.lost || (L.ri === rights.length - 1 && fixed(Math.max(0, W - L.x)) === "")) L = layout(W, tabs, true, rights);
   tabX0.length = 0; tabX1.length = 0;
   for (let i = 0; i < L.x0.length; i++) { tabX0.push(L.x0[i]); tabX1.push(L.x1[i]); }
   const right = rights[L.ri]; const rw = width(right.replace(ESC_RE, ""));
