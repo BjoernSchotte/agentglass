@@ -26,6 +26,11 @@ const IDLE_MS = 300000; const QUIET_MS = 3600000; // a session not written for 5
 // a live session (registry) whose log the scan does not know yet wakes every project dir for a minute, when it first
 // shows and whenever its registry entry moves (a first prompt creates the log); ids = the logs the scan lists
 const WAKE = { at: 0, ids: new Set<string>(), unknown: new Map<string, string>() };
+// the project dir Claude Code keeps a cwd's logs in: every character but letters and digits as "-"
+export function projectDirOf(cwd: string): string {
+  let o = ""; for (let i = 0; i < cwd.length; i++) { const c = cwd.charCodeAt(i); o += (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) ? cwd.charAt(i) : "-"; }
+  return join(PROJECTS, o);
+}
 function scan(add: AddFn): void {
   const quiet = Date.now() - WAKE.at < 60000 ? -1 : QUIET_MS; // a project dir unchanged for an hour: once a minute, unless a new live session is unknown (or a new agent: fs.ts WAKE_ALL)
   const top = listDirCached(PROJECTS);
@@ -35,7 +40,7 @@ function scan(add: AddFn): void {
   // look at every dir first (the cached listings, a stat where due); emit only when one changed or the caller has no copy
   for (let i = 0; i < TOP.pds.length; i++) {
     const pd = TOP.pds[i] ?? "";
-    const names = listDirCached(pd, quiet);
+    const names = listDirCached(pd, quiet, "claude");
     let m = i < TOP.ms.length ? TOP.ms[i] : null;
     if (!m || m.names !== names) {
       m = PJ.get(pd) ?? null;
@@ -52,7 +57,7 @@ function scan(add: AddFn): void {
     for (const d of m.subs) {
       const sd = d[0] ?? "";
       const pm = KNOWN.mtime(d[2] ?? ""); // its session idle (or gone): no new subagents now, the dir looked at once a minute
-      const ns = listDirCached(sd, pm === 0 || now - pm >= IDLE_MS ? 0 : -1);
+      const ns = listDirCached(sd, pm === 0 || now - pm >= IDLE_MS ? 0 : -1, "claude");
       const k = SD.get(sd);
       if (!k || k.names !== ns) { const kk = { names: ns, logs: [] as string[][] }; for (const a of ns) if (a.endsWith(".jsonl")) kk.logs.push([join(sd, a), a.slice(6, -6)]); SD.set(sd, kk); changed = true; }
     }
@@ -357,7 +362,7 @@ export const claude: HarnessAdapter = {
   roots: () => [PROJECTS], scan, meta, headBytes: 131072,
   parse, spawnOf: (s: Sess) => spawnCall(s),
   busy: (s: Sess) => s.status === "busy", // the registry knows; its logs carry no turn markers
-  liveRegistry,
+  liveRegistry, wakeDir: projectDirOf,
   headless: (s: Sess, msg: string) => ["-p", "--resume", s.id, msg],
   resume: (s: Sess) => ["--resume", s.id],
   files, usage, carriers, headState, setHeadState,

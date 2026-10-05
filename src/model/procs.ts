@@ -1,7 +1,7 @@
 // agentglass — harness processes (via the platform adapter, tmux) and their link to sessions
 // SPDX-License-Identifier: Apache-2.0
 import { base } from "../util/json.ts";
-import { run, WAKE_ALL } from "../util/fs.ts";
+import { run, WAKE_ALL, WAKE_H, WAKE_DIRS } from "../util/fs.ts";
 import { OS } from "../platform/index.ts";
 import { HARNESSES, harnessOfProc } from "../harness/index.ts";
 import type { Live } from "../harness/types.ts";
@@ -118,6 +118,17 @@ export function refreshProcs(): void {
     if (ad.daemon) daemonLive.set(ad.id, ls);
   }
   const g = linkSig(); if (g !== lastLink) { lastLink = g; linkSessions(); }
+  wakeScan(procs, Date.now());
+}
+// an agent process with no session yet may write a new log any moment (a first prompt), often in a dir quiet for long:
+// its harness's dirs (or just its session dir, when the harness names it from the cwd) are looked at every scan
+export function wakeScan(roots: Proc[], now: number): void {
+  WAKE_DIRS.clear();
+  for (const p of roots) {
+    if (!p.h || p.sess) continue;
+    let wd: ((cwd: string) => string) | null = null; for (const ad of HARNESSES) if (ad.id === p.h) { const f = ad.wakeDir; if (f) wd = f; }
+    if (wd && p.cwd) WAKE_DIRS.add(wd(p.cwd)); else WAKE_H.set(p.h, now);
+  }
 }
 // what linkSessions reads besides the open files (refreshSlow links after reading those): the registries, the agent
 // processes and their parents, the session set, and the newest session per cwd for harnesses linked by cwd

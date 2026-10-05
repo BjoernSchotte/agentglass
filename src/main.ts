@@ -28,6 +28,7 @@ import { replaying } from "./features/replay.ts";
 import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
 import { compactHelp } from "./features/clihelp.ts";
 import { debugExtras } from "./util/selfmem.ts";
+import { WAKE_ALL } from "./util/fs.ts";
 import { gitGen, gitTouches } from "./features/vcs/attrib.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
@@ -105,7 +106,7 @@ function bodySig(): string { return String(gitGen()) + "/" + String(gitTouches()
 // that row (the cpu graph and the stats move every process scan). head = also look at the header (the live probe
 // cannot move it: it only stats logs)
 const VIS = { head: "", body: "", turn: -1, hturn: -1, moved: false };
-let turnNo = 0; let headDirty = false;
+let turnNo = 0; let wakeSeen = 0; let headDirty = false;
 function shownMoved(head: boolean): boolean {
   if (head && VIS.hturn !== turnNo) { VIS.hturn = turnNo; const h = headSig(); if (h !== VIS.head) { VIS.head = h; headDirty = true; } }
   if (VIS.turn === turnNo) return VIS.moved;
@@ -135,7 +136,7 @@ function alarmSig(): string { let o = ""; for (const s of sessions.values()) if 
 function probe(): void { if (probeLive()) { act.grow = Date.now(); if (!listShown() || shownMoved(false)) S.dirty = true; } }
 function body(j: Job, now: number): () => void {
   if (j === "size") return sizeJob;
-  if (j === "procs") return () => { refreshProcs(); if (!listShown() || shownMoved(true)) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
+  if (j === "procs") return () => { refreshProcs(); if (WAKE_ALL.at !== wakeSeen) { wakeSeen = WAKE_ALL.at; const x = sc.js.get("scan"); if (x) x.last = 0; } /* a new agent: scan at once (its log may be there already) */ if (!listShown() || shownMoved(true)) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
   if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; } };
   if (j === "slow") return () => { refreshSlow(); S.dirty = true; };
   if (j === "probe") return probe;
