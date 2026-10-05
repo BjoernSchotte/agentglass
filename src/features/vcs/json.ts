@@ -56,7 +56,7 @@ export function gitJson(s: Sess): Obj | null {
   const cs: Obj[] = [];
   for (const c of g.commits) {
     const st = GJ.full || c.status === "amended" ? c.status : "unknown";
-    cs.push({ sha: c.sha, branch: display("filter:branch", c.br, s), subject: display("vcs", c.subj, s), at: c.at > 0 ? new Date(c.at).toISOString() : null,
+    cs.push({ sha: c.sha, branch: display("branch", c.br, s), subject: display("vcs", c.subj, s), at: c.at > 0 ? new Date(c.at).toISOString() : null,
       how: c.how, counted: c.counted, status: st, merge: c.merge, add: GJ.full && c.add >= 0 ? c.add : null, del: GJ.full && c.del >= 0 ? c.del : null });
   }
   let cost = s.cost > 0 ? s.cost : 0; let unk = s.unkTok; for (const x of s.subs) { cost += x.cost > 0 ? x.cost : 0; unk += x.unkTok; }

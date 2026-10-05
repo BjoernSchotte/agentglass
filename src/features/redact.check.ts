@@ -33,6 +33,21 @@ applyMeta(s);
 s.remote = "https://github.com/acmecorp/secretproj";
 applyMeta(s);
 ok("stable", s.title === t1 && s.cwd === c1 && s.remote === rm1, s.title + " " + s.cwd + " " + s.remote);
+// branches outside a session's own field (commit rows, the Repos branch list): faked one-to-one and the same fake as the
+// session's own branch, so a commit on the session's branch shows that branch; a fake passes through unchanged
+const bf = display("branch", "acme/login", null);
+ok("commit branch = session fake", bf === s.branch && display("branch", "acme/login", s) === s.branch, bf + " " + s.branch);
+const bo = display("branch", "acme/other-client", null);
+ok("other branch faked + stable", bo.startsWith("feat/") && bo.indexOf("acme") < 0 && bo !== bf && bo === display("branch", "acme/other-client", null), bo);
+ok("fake passes", display("branch", bf, null) === bf, display("branch", bf, null));
+ok("mainline", display("branch", "master", null) === "main" && display("branch", "", null) === "", display("branch", "master", null));
+// the transcript path encodes the real cwd (Claude: every non-alphanumeric → "-"; pi: --a-b--; Gemini: tmp/<basename>/)
+const cp = display("path", HOME + "/.claude/projects/" + (HOME + "/code/secretproj/src").replace(/[^A-Za-z0-9]/g, "-") + "/11111111-2222.jsonl", s);
+ok("claude path", cp.indexOf("secretproj") < 0 && cp.indexOf(scrubText(c1.replace(/[^A-Za-z0-9]/g, "-"))) >= 0, cp);
+const pp = display("path", HOME + "/.pi/agent/sessions/--" + (HOME + "/code/secretproj/src").slice(1).replace(/\//g, "-") + "--/x.jsonl", s);
+ok("pi path", pp.indexOf("secretproj") < 0, pp);
+const np = display("path", HOME + "/.claude/projects/" + (HOME + "/code/clientx-portal").replace(/[^A-Za-z0-9]/g, "-") + "/x.jsonl", null);
+ok("claude path without a known cwd", np.indexOf("clientx") < 0 && np.indexOf("portal") < 0 && np.endsWith("/x.jsonl"), np);
 
 // scrubber: same length, names and learned projects gone, box line stays aligned
 const line = "│ /Users/" + user + "/code/secretproj/web · " + user.toUpperCase() + " · me@example.org · sk-" + "Ab3".repeat(10) + " │";
@@ -61,6 +76,10 @@ const mr = display("vcs", "https://gitlab.com/grp/sub/proj/-/merge_requests/12",
 ok("vcs gitlab MR", mr.endsWith("/-/merge_requests/12") && mr.indexOf("grp") < 0 && mr.indexOf("proj") < 0, mr);
 const cm = display("vcs", "https://github.com/me/x/commit/abc1234", null);
 ok("vcs commit keeps sha", cm.endsWith("/commit/abc1234") && cm.indexOf("me/x") < 0, cm);
+const sh = display("vcs", "https://git.acmecorp.de/team/app/-/merge_requests/3", null);
+ok("vcs self-hosted host faked", sh.startsWith("https://git.example.com/") && sh.endsWith("/-/merge_requests/3") && sh.indexOf("acmecorp") < 0, sh);
+const rh = display("remote", "ssh://git@git.acmecorp.de:2222/team/app.git", null);
+ok("remote self-hosted host faked", rh.startsWith("ssh://git.example.com:2222/") && rh.indexOf("acmecorp") < 0, rh);
 const sj = display("vcs", "fix the secret client thing", null);
 ok("vcs subject replaced + stable", sj !== "fix the secret client thing" && sj.length > 0 && sj === display("vcs", "fix the secret client thing", null), sj);
 // a line with an OSC 8 link: the escape (url) bytes stay as they are, only the visible text is scrubbed

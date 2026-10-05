@@ -119,7 +119,7 @@ function toJson(c: Cmp): Obj {
     tools.push({ tool: display("tool", r.kid ? r.key : r.label, null), a: { n: r.nA, err: r.errA, p50: orNull(r.p50A), p95: orNull(r.p95A) }, b: { n: r.nB, err: r.errB, p50: orNull(r.p50B), p95: orNull(r.p95B) }, shareDiff: r6(r.shB - r.shA), chi2: r.chi2 < 0 ? null : Math.round(r.chi2 * 10) / 10 });
   }
   const programs: Obj[] = []; for (const r of cntRows(c, "prog")) programs.push({ program: shown("program", r.key), a: { n: r.nA, err: r.errA }, b: { n: r.nB, err: r.errB } });
-  const fl = fileLists(c); const names = (xs: { shown: string }[]): string[] => xs.map((f: { shown: string }): string => f.shown);
+  const fl = fileLists(c); const names = (xs: { shown: string }[]): string[] => xs.map((f: { shown: string }): string => display("file", f.shown, null));
   return {
     a: { expr: print(c.A.cs), n: c.a.n, metrics: metricsOf(c.a) }, b: { expr: print(c.B.cs), n: c.b.n, metrics: metricsOf(c.b) }, subagents: c.subs,
     tools, programs, files: { onlyA: names(fl.onlyA), onlyB: names(fl.onlyB), both: names(fl.both) },

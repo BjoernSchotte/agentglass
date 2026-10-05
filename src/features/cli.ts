@@ -163,7 +163,7 @@ export { usage };
 // the --json fields of one session (key order is the output order)
 export function jsonSess(s: Sess): Obj {
   return {
-    id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: s.path,
+    id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: display("path", s.path, s),
     updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
     parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
     tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },

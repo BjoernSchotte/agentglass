@@ -92,7 +92,7 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
 ## Privacy mode
 
 Streaming, screenshotting or demoing? `agentglass --redact` swaps session titles, project names,
-paths, branches and subagent tasks for consistent fakes, replaces the content of other sessions with
+paths (also the transcript `path` in `--json`), branches and subagent tasks for consistent fakes, replaces the content of other sessions with
 neutral stand-ins, and scrubs your username, home path, e-mail addresses, secrets and anything listed
 in `~/.agentglass/redact.txt` from every pixel — at the same width, so the layout stays intact.
 `AGENTGLASS_REDACT_KEEP=<path-substring>` keeps chosen sessions readable (they are still scrubbed).
@@ -375,8 +375,8 @@ transcript at the tool call that made the commit or printed the link, `y` copies
 - Local only: transcripts, `.git/logs/HEAD` read as a file (never written), and a few budgeted `git` calls — one
   `git log --no-walk` per opened git view for full shas and diff stats (closed sessions are cached in
   `~/.agentglass/cache/vcs.json`), at most one spawn per 500 ms. No `fetch`, no forge API. Committer names and emails
-  are never stored. Under `--redact` subjects and URLs are faked (numbers and short shas kept; a full 40-hex sha is
-  masked like any key-shaped string).
+  are never stored. Under `--redact` subjects, branches and URLs are faked (numbers and short shas kept, a self-hosted
+  forge's host becomes `git.example.com`; a full 40-hex sha is masked like any key-shaped string).
 - Kiro logs no per-call times: its banners count, its quiet commits show ≈. fx is matched by `call_id`.
 
 ## Filters
