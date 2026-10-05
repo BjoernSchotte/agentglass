@@ -8,6 +8,11 @@ export { thrText };
 import { RULES_FILE } from "./file.ts";
 import { fileText, fileMtime, fileSafe, withSafety } from "./state.ts";
 
+// a usage error: inside an agent one JSON line (S.cliJson, set by agentenv before any handler runs), else plain text
+function usage(msg: string): never {
+  process.stderr.write(S.cliJson ? JSON.stringify({ error: { code: "usage", message: msg, hint: "agentglass rules --help" } }) + "\n" : "agentglass " + msg + "\n" + HELP + "\n");
+  process.exit(2);
+}
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function thrJson(unit: string, v: number): string | number { return unit === "duration" || unit === "ratio" ? thrText(unit, v) : v; }
 interface JRule { id: string; metric: string; op: string; degraded: number | null; critical: number | null; for: number; where: string; enabled: boolean; builtin: boolean; ack: string; notify: boolean; message: string; labels: { [k: string]: string } }
@@ -82,15 +87,18 @@ H.cli.push((args: string[]): boolean => {
   if (args[0] !== "rules") return false;
   S.cli = true;
   const sub = args[1] ?? "";
+  if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(HELP); process.exit(0); } // rules check --help too
+  const bad = args.slice(2).filter((a: string) => ["--json", "--examples", "--all-projects", "--project-only", "--help", "-h"].indexOf(a) < 0);
+  if ((sub === "check" || sub === "defaults") && bad.length) usage("rules " + sub + ": unknown option " + (bad[0] ?? ""));
   if (sub === "check") {
     const exists = fileMtime(RULES_FILE) >= 0;
     const c = checkText(exists ? fileText(RULES_FILE) : "", exists, exists && fileSafe(RULES_FILE));
-    if (args.indexOf("--json") >= 0) out(process.stdout.isTTY ? JSON.stringify(c.json, null, 2) : JSON.stringify(c.json));
+    const agent = S.cliJson; // inside an agent: compact JSON by default
+    if (agent || args.indexOf("--json") >= 0) out(process.stdout.isTTY && !agent ? JSON.stringify(c.json, null, 2) : JSON.stringify(c.json));
     else for (const l of c.lines) out(l);
     process.exit(c.code);
   }
   if (sub === "defaults") { out(defaultsText(args.indexOf("--examples") >= 0)); process.exit(0); }
   if (sub === "--help" || sub === "-h" || sub === "help") { out(HELP); process.exit(0); }
-  process.stderr.write("agentglass rules: " + (sub ? "unknown command \"" + sub + "\"" : "which one? check or defaults") + "\n" + HELP + "\n");
-  process.exit(2);
+  usage("rules: " + (sub ? "unknown command \"" + sub + "\"" : "which one? check or defaults"));
 });

@@ -15,7 +15,7 @@ import { rowsOf } from "../usage/ledger.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, quoteVal } from "../query/parse.ts";
 import { projectClause } from "../query/project.ts";
-import { agentHost, agentScope } from "../agentenv.ts";
+import { agentHost, agentScope, cliError } from "../agentenv.ts";
 import { addAll } from "../query/scope.ts";
 import { sessMatches } from "../query/eval.ts";
 import { cliFilter } from "../query/cli.ts";
@@ -48,7 +48,7 @@ const HELP = `usage: agentglass triage [--select '<expr>' | --preset ${NAMES.joi
   config (~/.agentglass/config.json): { "triage": { "longCall": "30s", "expensiveUsd": 5, "minSupport": 3 } }`;
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
-function fail(msg: string): never { process.stderr.write(screenOut("agentglass: triage: " + msg) + "\n"); process.exit(2); }
+function fail(msg: string): never { cliError("usage", screenOut("triage: " + msg), "", 2); } // a JSON line inside an agent
 function intArg(v: string, name: string): number { const n = Number(v); if (!/^\d+$/.test(v) || n < 1) fail(name + " must be an integer ≥ 1, got \"" + v + "\""); return n; }
 function oneOf(v: string, name: string, ok: string[]): string { if (ok.indexOf(v) < 0) fail(name + " must be one of " + ok.join(", ") + (v ? ", got \"" + v + "\"" : "")); return v; }
 

@@ -67,7 +67,7 @@ function rewriteInstallJson(path: string, channel: string, version: string): voi
 
 async function update(args: string[]): Promise<number> {
   const o0 = opts(args);
-  if (typeof o0 === "string") return fail(o0, 1);
+  if (typeof o0 === "string") return fail(o0, 2); // a usage error (exit-code table)
   const o = o0;
   const exe = process.execPath;
   const method = installMethod(exe, BUILD.channel, readText(INSTALL_JSON, 0, 65536));
