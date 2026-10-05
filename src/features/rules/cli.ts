@@ -9,7 +9,8 @@ import { RULES_FILE } from "./file.ts";
 import { fileSafe, withSafety } from "./state.ts";
 import { readWhole } from "../../util/fs.ts";
 
-function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
+let rc = 0; // the exit code a failed write (closed reader, full disk) still reports: never 0 over errors
+function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(rc); } }
 function thrJson(unit: string, v: number): string | number { return unit === "duration" || unit === "ratio" ? thrText(unit, v) : v; }
 interface JRule { id: string; metric: string; op: string; degraded: number | null; critical: number | null; for: number; where: string; enabled: boolean; builtin: boolean; ack: string; notify: boolean; message: string; labels: { [k: string]: string } }
 interface JDiag { line: number; col: number; rule: string; message: string; severity: string }
@@ -92,6 +93,7 @@ H.cli.push((args: string[]): boolean => {
   if (sub === "check") {
     const f = readWhole(RULES_FILE, 1048576);
     const c = checkText(f.text, !f.missing, !f.missing && fileSafe(RULES_FILE), f.err);
+    rc = c.code;
     if (args.indexOf("--json") >= 0) out(process.stdout.isTTY ? JSON.stringify(c.json, null, 2) : JSON.stringify(c.json));
     else for (const l of c.lines) out(l);
     process.exit(c.code);

@@ -31,6 +31,8 @@ run rules check > "$t/out"; eq "trailing comma: exit" $? 2
 grep -q '^rules.json:1:21: syntax error: expected a quoted key' "$t/out" || { echo "FAIL trailing comma line"; cat "$t/out"; fail=1; }
 grep -q ': -: ' "$t/out" && { echo "FAIL stray -: in"; cat "$t/out"; fail=1; }
 run rules check --json > /dev/null; eq "trailing comma --json: exit" $? 2
+# a failed write (a full disk) never turns the errors' exit 2 into 0
+if [ -w /dev/full ]; then run rules check > /dev/full 2>/dev/null; eq "write error: exit" $? 2; fi
 rm -f "$rf"; mkdir "$rf"
 run rules check > "$t/out"; eq "a directory: exit" $? 2
 grep -q '^rules.json:1:1: cannot read the file' "$t/out" || { echo "FAIL directory line"; cat "$t/out"; fail=1; }
