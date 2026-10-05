@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //   expr = term { [and | ,] term }; term = [not | -] (key op value… | text)
 // A term is a clause only where a known key (or alias) is followed by an operator; anything else is a text term, so
-// today's plain `/foo` keeps working (`foo` = text ~ foo). OR exists only inside is_one_of; no parentheses.
+// today's plain `/foo` keeps working (`foo` = text ~ foo). OR exists only inside is_one_of (values by blanks or commas:
+// pi opencode = pi,opencode); no parentheses.
 import type { Attr, AType, Clause, Parsed, QErr } from "./types.ts";
 import { attrOf, keys, aliases, canonEnum, enumValues, opsOf, opHint, isNumeric } from "./attrs.ts";
 
@@ -166,10 +167,20 @@ export function parse(src: string): Parsed {
     i += 2;
     const vals: string[] = [];
     const multi = op === "is_one_of" || op === "is_not_one_of";
+    const ends = (j: number): boolean => { // toks[j] ends a list: a new clause, not, -clause
+      const t = toks[j];
+      return clauseStart(toks, j) || word(t, "not") || (!t.q && t.s.charAt(0) === "-" && j + 1 < toks.length && opOf(toks[j + 1]) !== "");
+    };
     while (i < toks.length) {
-      const v = toks[i];
+      let v = toks[i];
+      // inside a list a comma separates values (pi,opencode); before a new clause, not, and, another comma or the end it
+      // is the connector
+      if (multi && vals.length > 0 && !v.q && v.s === "," && i + 1 < toks.length) {
+        const n = toks[i + 1];
+        if (n.q || (n.s !== "," && ["and", "or"].indexOf(n.s.toLowerCase()) < 0 && !ends(i + 1))) { i++; v = n; }
+      }
       if (!v.q && (v.s === "," || v.s.toLowerCase() === "and" || v.s.toLowerCase() === "or")) break;
-      if (vals.length > 0 && (clauseStart(toks, i) || word(v, "not") || (!v.q && v.s.charAt(0) === "-" && i + 1 < toks.length && opOf(toks[i + 1]) !== ""))) break;
+      if (vals.length > 0 && ends(i)) break;
       if (vals.length === 0 && !v.q && clauseStart(toks, i)) break;
       const cv = value(a, op, v.s);
       if (cv.err) return fail(cs, cv.err, v.col);

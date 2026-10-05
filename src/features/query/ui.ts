@@ -265,17 +265,20 @@ function candidates(before: string[]): string[] {
   const la = attrOf(last); if (la && !isOp(prev)) return opsOf(la);               // key ▏ → its operators
   for (let j = n - 1; j >= 1; j--) {                                               // inside an is_one_of list → more values
     const t = (before[j] ?? "").toLowerCase();
-    if (t === "and" || t === ",") break;
+    if (t === "and") break;
     if (t.endsWith("one_of") && attrOf(before[j - 1] ?? "")) { const had = before.slice(j + 1); return valuesOf(before[j - 1] ?? "").map(quoteVal).filter((v: string) => had.indexOf(v) < 0); }
     if (isOp(t)) break;
   }
   return keyList();
 }
-// tab candidates for the word being typed: keys, then the key's operators, then values
+// tab candidates for the word being typed: keys, then the key's operators, then values; commas split words as blanks do
+// (harness is_one_of claude,c → claude,codex), the part before the word's last comma stays
 export function complete(text: string, cursorAtEnd: boolean): string[] {
   if (!cursorAtEnd) return [];
-  const w = words(text); const cur = (w[w.length - 1] ?? "").toLowerCase();
-  const out: string[] = []; for (const c of candidates(w.slice(0, -1))) if (c.toLowerCase().startsWith(cur) && out.indexOf(c) < 0) out.push(c);
+  const w = words(text); const last = w[w.length - 1] ?? ""; const k = last.lastIndexOf(",");
+  const pre = last.slice(0, k + 1); const cur = last.slice(k + 1).toLowerCase();
+  const before: string[] = []; for (const x of w.slice(0, -1).concat([pre])) for (const p of x.split(",")) if (p) before.push(p);
+  const out: string[] = []; for (const c of candidates(before)) if (c.toLowerCase().startsWith(cur) && out.indexOf(pre + c) < 0) out.push(pre + c);
   return out;
 }
 // repeated tab cycles through the candidates of the word the first tab completed (every filter input shares this)

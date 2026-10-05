@@ -74,6 +74,10 @@ eq("completion ops", complete("cost ", true).join(","), "is,is_not,>,>=,<,<=");
 eq("completion enum", complete("status is ", true).join(","), "ok,error,unknown");
 eq("completion is_one_of list", complete("harness is_one_of claude c", true).join(","), "codex");
 eq("completion text values", complete("tool is B", true).join(","), "Bash");
+// a comma list completes like a blank-separated one (harness is_one_of claude,codex)
+eq("completion comma list", complete("harness is_one_of claude,c", true).join(","), "claude,codex");
+eq("completion comma + blank", complete("harness is_one_of claude, c", true).join(","), "codex");
+eq("completion after a comma connector", complete("tool is Bash,too", true).slice(0, 1).join(","), "Bash,tool");
 // restored pins are announced
 eq("start toast", initPins({ load: () => "repo is agentglass", save: (v: string) => {}, remember: true }), "pinned: repo is agentglass — P edits, P then enter on empty unpins");
 buildView(); eq("restored pins filter", ids(), "c1");
