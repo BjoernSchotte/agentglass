@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
 import type { Obj } from "../../util/json.ts";
 import { OS } from "../../platform/index.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, SG } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
 import { type Acc, stamp, startOfDay } from "./record.ts";
 import { type Bill, type Det, type Evid, asBill, newEvid, rule, provMode, configEv, configFiles, envSummary, type Allow, allowanceOf, claudeJson } from "./billing.ts";
@@ -79,8 +79,20 @@ function label(s: Sess): void { BL.labels++; const b = sessionBill(s); s.bill = 
 // config evidence (re-checked by the minute: the epoch) or the environments
 interface LabelKey { s: Sess; pid: number; a: Acc | undefined; bill: string; plan: string; src: string; cost: number; cwd: string; cfg: number; env: number; ep: number }
 const labelled = new Map<string, LabelKey>();
+// every session when the minute, the config evidence, the environments or the session set moved; in between only the
+// live ones, those written within the minute (the ledger stamps and costs only logs that grew) and those live last time
+// (a pid that went): a key lookup per session and tick was most of the tick's billing cost
+const LA = { ep: -1, cfg: -1, env: -1, n: -1, gen: -1, live: [] as Sess[] };
 export function labelAll(now: number): void {
-  for (const s of sessions.values()) labelOnChange(s, now);
+  const ep = Math.floor(now / RECHECK_MS);
+  const all = ep !== LA.ep || BL.cfg !== LA.cfg || BL.env !== LA.env || sessions.size !== LA.n || SG.gen !== LA.gen;
+  LA.ep = ep; LA.cfg = BL.cfg; LA.env = BL.env; LA.n = sessions.size; LA.gen = SG.gen;
+  const was = LA.live; LA.live = [];
+  for (const s of sessions.values()) {
+    if (s.pid > 0) LA.live.push(s);
+    if (all || s.pid > 0 || now - s.mtime < RECHECK_MS) labelOnChange(s, now);
+  }
+  if (!all) for (const s of was) if (s.pid <= 0) labelOnChange(s, now);
   if (labelled.size > sessions.size) for (const k of [...labelled.keys()]) if (!sessions.has(k)) labelled.delete(k);
 }
 function labelOnChange(s: Sess, now: number): void {
