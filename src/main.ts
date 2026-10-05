@@ -101,16 +101,16 @@ function renderTop(step: boolean): void {
 function listShown(): boolean { return S.tab === 0 && S.mode === "list"; }
 function headSig(): string { const o: string[] = [statsKey(), String(S.tab)]; for (const f of H.headerWidgets) o.push(f(S.W)); return o.join("\n"); }
 function bodySig(): string { return String(gitGen()) + "/" + String(gitTouches()) + "\n" + listSig(); }
-// once per turn at most (several jobs ask in one turn): the body moved (a frame), only the header row moved (that row:
-// the cpu graph and the stats move every process scan), or nothing
-const VIS = { head: "", body: "", turn: -1, moved: false };
+// once per turn at most (several jobs ask in one turn): true = the body moved (a frame); a moved header alone marks only
+// that row (the cpu graph and the stats move every process scan). head = also look at the header (the live probe
+// cannot move it: it only stats logs)
+const VIS = { head: "", body: "", turn: -1, hturn: -1, moved: false };
 let turnNo = 0; let headDirty = false;
-function shownMoved(): boolean {
+function shownMoved(head: boolean): boolean {
+  if (head && VIS.hturn !== turnNo) { VIS.hturn = turnNo; const h = headSig(); if (h !== VIS.head) { VIS.head = h; headDirty = true; } }
   if (VIS.turn === turnNo) return VIS.moved;
-  VIS.turn = turnNo;
-  const h = headSig(); const b = bodySig();
-  VIS.moved = b !== VIS.body; if (!VIS.moved && h !== VIS.head) headDirty = true;
-  VIS.head = h; VIS.body = b;
+  VIS.turn = turnNo; const b = bodySig(); VIS.moved = b !== VIS.body; VIS.body = b;
+  if (VIS.moved) headDirty = false; // the frame draws the header too
   return VIS.moved;
 }
 const SAFETY_MS = 5000; // a full Sessions frame at least this often, whatever the signature says
@@ -131,21 +131,21 @@ function sizeJob(): void { if (termSize()) render(); } // a resize repaints at o
 function scanSum(): string { let n = 0; let z = 0; for (const s of sessions.values()) { n++; z += s.size; } return n + ":" + z; }
 // attention/stuck of the watched (live) sessions: an alarm that changes must be drawn
 function alarmSig(): string { let o = ""; for (const s of sessions.values()) if (s.pid > 0) o += s.path + (s.attention ? "!" : ".") + s.stuck + "|"; return o; }
-function probe(): void { if (probeLive()) { act.grow = Date.now(); if (!listShown() || shownMoved()) S.dirty = true; } }
+function probe(): void { if (probeLive()) { act.grow = Date.now(); if (!listShown() || shownMoved(false)) S.dirty = true; } }
 function body(j: Job, now: number): () => void {
   if (j === "size") return sizeJob;
-  if (j === "procs") return () => { refreshProcs(); if (!listShown() || shownMoved()) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
+  if (j === "procs") return () => { refreshProcs(); if (!listShown() || shownMoved(true)) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
   if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; } };
   if (j === "slow") return () => { refreshSlow(); S.dirty = true; };
   if (j === "probe") return probe;
   if (j === "tick") return () => {
     if (S.mode === "list" && S.tab === 0) buildView();
     const v = L.ver; for (const f of H.onTick) f();
-    if (L.ver !== v && (!listShown() || shownMoved())) S.dirty = true;
+    if (L.ver !== v && (!listShown() || shownMoved(true))) S.dirty = true;
   };
   // alarm latency = the watch interval: probe first (the probe may sleep up to 1 s, the tail follows the stat), and a
   // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap)
-  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved()) S.dirty = true; }; // the watchdog read tails: busy/idle glyphs
+  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved(true)) S.dirty = true; }; // the watchdog read tails: busy/idle glyphs
   if (j === "fast") return () => {
     let d = false; for (const f of H.onFastTick) if (f()) d = true;
     let hd = false; for (const f of H.onHeaderTick) if (f()) hd = true;
@@ -155,7 +155,7 @@ function body(j: Job, now: number): () => void {
   return () => { // render: build only when something changed, a toast is up, or the clock texts are due; else turn the spinners
     const toast = S.toast !== "" && now - S.toastAt < S.toastMs + 500; // includes the frame that removes it
     const list = listShown();
-    const clock = now - lastBuild >= forceMs(sc.lv) && (!list || now - lastBuild >= SAFETY_MS || shownMoved());
+    const clock = now - lastBuild >= forceMs(sc.lv) && (!list || now - lastBuild >= SAFETY_MS || shownMoved(true));
     if (sc.fixed || S.dirty || toast || clock || (S.animating && !list)) { lastBuild = now; S.frame++; render(); return; }
     if (headDirty) { headDirty = false; renderTop(false); } // the header row only
     if (S.animating) { S.frame++; flushSpin(spinGlyph(), (o: string) => { process.stdout.write(o); }); } // the spinner cells only

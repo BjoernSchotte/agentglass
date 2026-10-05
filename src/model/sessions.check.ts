@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { newSess } from "./types.ts";
-import { sessions, probeLive } from "./sessions.ts";
+import { sessions, probeLive, scan } from "./sessions.ts";
+import { CLAUDE } from "../util/fs.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -24,5 +25,16 @@ rmSync(pa);
 eq("deleted file: no change, no throw", String(probeLive()), "false");
 
 rmSync(dir, { recursive: true, force: true });
+
+// scan: new logs come, deleted ones go (counted, no set of paths per scan), a listed log whose file vanished goes
+sessions.clear();
+const pd = CLAUDE + "/projects/-tmp-scan"; mkdirSync(pd, { recursive: true });
+const u = (n: number): string => pd + "/0000000" + String(n) + "-aaaa-bbbb-cccc-dddddddddddd.jsonl";
+writeFileSync(u(1), "{}\n"); writeFileSync(u(2), "{}\n");
+scan(); eq("two logs", String(sessions.size), "2");
+writeFileSync(u(3), "{}\n"); scan(); eq("a new log", String(sessions.size), "3");
+scan(); eq("steady", String(sessions.size), "3");
+rmSync(u(2)); scan(); eq("a deleted log goes", String(sessions.size) + " " + String(sessions.has(u(2))), "2 false");
+rmSync(CLAUDE, { recursive: true, force: true }); scan(); eq("all gone", String(sessions.size), "0");
 console.log(bad ? bad + " failed" : "sessions: all checks passed");
 if (bad) process.exit(1);

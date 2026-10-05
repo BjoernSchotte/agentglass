@@ -62,7 +62,11 @@ export function listSig(): string {
     const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
     o.push(s.path + "|" + bytes(s.size) + "|" + (s.headDone ? "h" : "") + s.cwd + "|" + s.branch + "|" + s.remote + "|" + s.model + "|" + ago(s.mtime) + "|" + String(s.pid) + s.status + s.name + "|" +
       (s.pid ? tmuxTarget(s.pid) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
-    for (const c of s.subs) o.push(c.path + (subActive(c) ? "A" : "a") + ago(c.mtime) + "|" + titleOf(c) + "|" + activity(c) + "|" + usageKey(c));
+    // the preview lists the 6 most active subagents (renderSessions' order); the usage sums all of them
+    let u = 0; for (const c of s.subs) u += c.cost + c.inTok + c.outTok + c.cacheRTok + c.cacheWTok + c.tools + c.linesAdd + c.linesDel + c.unkTok;
+    o.push(String(s.subs.length) + ":" + String(u));
+    if (s.subs.length) for (const c of s.subs.slice().sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime).slice(0, 6))
+      o.push(c.path + (subActive(c) ? "A" : "a") + ago(c.mtime) + "|" + titleOf(c) + "|" + activity(c));
   }
   return o.join("\n");
 }
