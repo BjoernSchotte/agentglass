@@ -58,3 +58,23 @@ export function sumFor(sums: string, asset: string): string {
   }
   return "";
 }
+
+// the CA bundles the TLS runtime reads (scriptc's scr_tls_ca.c; curl looks in the same places): none = no HTTPS verifies
+export const CA_BUNDLES = ["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem"];
+// no CA certificate on this host (a slim container): has = file exists, extra = $NODE_EXTRA_CA_CERTS (the runtime reads it too)
+export function caMissing(has: (p: string) => boolean, extra: string, platform: string): boolean {
+  if (platform.startsWith("win")) return false;
+  if (extra && has(extra)) return false;
+  for (const p of CA_BUNDLES) if (has(p)) return false;
+  return true;
+}
+const CA_FIX = "no CA certificates on this host (" + CA_BUNDLES[1] + " and the like are missing) — install ca-certificates (e.g. apt install ca-certificates, apk add ca-certificates)";
+// a failed fetch for a person: it says only "fetch failed", so a missing CA bundle is named as the likely cause
+export function fetchErr(err: string, noCa: boolean): string {
+  return noCa ? "cannot reach GitHub: TLS certificate check failed — " + CA_FIX : "cannot reach GitHub: " + err + " (network, DNS or proxy)";
+}
+// a failed curl download: exit 60/77 are certificate errors (-1 = curl did not run or was stopped by the timeout)
+export function curlErr(what: string, code: number, noCa: boolean): string {
+  if (code === 60 || code === 77) return what + ": TLS certificate check failed (curl exit " + String(code) + ") — " + (noCa ? CA_FIX : "install or update ca-certificates (e.g. apt install ca-certificates)");
+  return code < 0 ? what + " (curl did not finish: not installed, or timed out)" : what + " (curl exit " + String(code) + ")";
+}

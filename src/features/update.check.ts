@@ -1,6 +1,6 @@
 // agentglass — self-check for update target selection: sh scripts/check.sh
 // SPDX-License-Identifier: Apache-2.0
-import { relsFromJson, pickTarget, isDowngrade, sumFor } from "./update-core.ts";
+import { relsFromJson, pickTarget, isDowngrade, sumFor, caMissing, fetchErr, curlErr } from "./update-core.ts";
 let bad = 0;
 function ok(w: string, c: boolean, g: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + g); } }
 const ALL = ["agentglass-linux-x64.tar.gz", "agentglass-linux-arm64.tar.gz", "agentglass-darwin-x64.tar.gz", "agentglass-darwin-arm64.tar.gz", "SHA256SUMS", "build-metadata.json"];
@@ -29,5 +29,22 @@ ok("no downgrade stable→newer stable", !isDowngrade("2026.9.9", "2026.9.10"), 
 ok("downgrade stable→older stable", isDowngrade("2026.9.10", "2026.9.9"), "");
 ok("local never a downgrade", !isDowngrade("2026.9.10-local+abcdef12-dirty", "2026.9.9"), "");
 ok("sumFor", sumFor("aa  agentglass-linux-x64.tar.gz\nbb *SHA256SUMS\n", "agentglass-linux-x64.tar.gz") === "aa" && sumFor("bb *x.tgz", "x.tgz") === "bb" && sumFor("", "x") === "", "");
+// a host without CA certificates: fetch says only "fetch failed" — the message names the cause and the fix
+const none = (p: string): boolean => p === "";
+const deb = (p: string): boolean => p === "/etc/ssl/certs/ca-certificates.crt";
+ok("no CA bundle", caMissing(none, "", "linux-x64"), "");
+ok("a CA bundle", !caMissing(deb, "", "linux-x64"), "");
+ok("NODE_EXTRA_CA_CERTS counts", !caMissing((p: string): boolean => p === "/x.pem", "/x.pem", "linux-x64"), "");
+ok("NODE_EXTRA_CA_CERTS missing file", caMissing(none, "/x.pem", "linux-x64"), "");
+const fm = fetchErr("TypeError: fetch failed", true);
+ok("fetch: no CA → cause and fix", fm.indexOf("cannot reach GitHub: TLS certificate check failed — no CA certificates") === 0 && fm.indexOf("install ca-certificates") > 0, fm);
+const fo = fetchErr("TypeError: fetch failed", false);
+ok("fetch: CA present → the error as is", fo === "cannot reach GitHub: TypeError: fetch failed (network, DNS or proxy)", fo);
+const c60 = curlErr("cannot download SHA256SUMS", 60, false);
+ok("curl 60 → TLS", c60.indexOf("cannot download SHA256SUMS: TLS certificate check failed (curl exit 60)") === 0 && c60.indexOf("install ca-certificates") > 0, c60);
+const c77 = curlErr("cannot download x", 77, true);
+ok("curl 77 → TLS, no CA", c77.indexOf("no CA certificates") > 0, c77);
+ok("curl other", curlErr("cannot download x", 22, false) === "cannot download x (curl exit 22)", curlErr("cannot download x", 22, false));
+ok("curl did not run", curlErr("cannot download x", -1, false) === "cannot download x (curl did not finish: not installed, or timed out)", curlErr("cannot download x", -1, false));
 console.log(bad ? bad + " failed" : "update: all checks passed");
 process.exit(bad ? 1 : 0);
