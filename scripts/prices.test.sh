@@ -62,13 +62,32 @@ grep -q "nothing to remove (source: unpriced)" "$t/out" || { echo "FAIL nothing 
 eq "unpriced again" "$(code prices --unpriced)" 4
 eq "--since" "$(run prices --since today --json | jq -r '.models | length')" 3
 eq "bad --since" "$(code prices --since soon)" 2
+# re-pricing in place = a cold index under the same prices, also for tokens the sessions book after the change
+rm -f "$t/p/prices.json"; run cost --json > /dev/null # the cache, under no user prices
+run prices set gpt-6.1-sol --in 2 --out 8 > /dev/null; run prices alias claude-sonnet-4-5 gpt-6.1-sol > /dev/null
+run cost --json > /dev/null # loads the cache saved under the old prices: re-priced in place, saved again
+later=$(date -u +%Y-%m-%dT%H:%M:%S.000Z) # live sessions book more under the new prices
+printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":260000,"cached_input_tokens":40000,"output_tokens":21000,"reasoning_output_tokens":0}}}}\n' "$later" >> "$X"
+printf '{"type":"assistant","sessionId":"c1aude00-0000-4000-8000-000000000001","cwd":"/w/app","timestamp":"%s","message":{"id":"m2","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":500,"output_tokens":50,"cache_read_input_tokens":2000}}}\n' "$later" >> "$C"
+cold() { HOME="$H" AGENTGLASS_CACHE_DIR="$t/cold" AGENTGLASS_CONFIG="$t/config.json" AGENTGLASS_RULES=/nonexistent AGENTGLASS_OFFLINE=1 AGENTGLASS_NOTIFY=0 "$t/ag" "$@"; }
+sj='[.[] | {id, costUsd, unpricedTokens, costEstimatedUsd}] | sort_by(.id)'
+w=$(run --json --subagents | jq -c "$sj"); c=$(cold --json --subagents | jq -c "$sj")
+eq "re-priced sessions = cold index" "$w" "$c"
+echo "$w" | jq -e '[.[] | select(.costEstimatedUsd > 0)] | length == 1' > /dev/null || { echo "FAIL alias share: $w"; fail=1; }
+cj='{t: .today, m: .month}'
+eq "re-priced cost = cold index" "$(run cost --json | jq -c "$cj")" "$(cold cost --json | jq -c "$cj")"
 # an invalid file is never overwritten
 printf '{"a": 1,,}' > "$t/p/prices.json"; cp "$t/p/prices.json" "$t/p/before"
 eq "invalid file exit" "$(code prices set q --in 1 --out 1)" 1
 cmp -s "$t/p/prices.json" "$t/p/before" || { echo "FAIL invalid file changed"; fail=1; }
 grep -q "not valid JSON" "$t/err" || { echo "FAIL invalid file message"; cat "$t/err"; fail=1; }
+# an unreadable file (here a directory) is an error for every write, never "nothing to remove"
+rm -f "$t/p/prices.json" "$t/p/before"; mkdir "$t/p/prices.json"
+eq "unreadable file: unset exit" "$(code prices unset gpt-6.1-sol)" 1
+grep -q "cannot be read" "$t/err" || { echo "FAIL unreadable message"; cat "$t/err"; fail=1; }
+eq "unreadable file: set exit" "$(code prices set q --in 1 --out 1)" 1
+rmdir "$t/p/prices.json"
 # agent mode: one JSON error line on stderr, nothing on stdout
-rm -f "$t/p/prices.json"
 set +e; (AGENTGLASS_AGENT=1 run prices set z --in x --out 1) > "$t/out" 2> "$t/err"; rc=$?; set -e
 eq "agent exit" "$rc" 2
 eq "agent stdout empty" "$(wc -c < "$t/out" | tr -d ' ')" 0
