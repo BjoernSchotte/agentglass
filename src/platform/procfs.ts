@@ -1,6 +1,7 @@
 // agentglass — Linux process table from /proc, read incrementally (no ps child): new, young and tracked pids every
 // pass, every pid on a full pass. Pure parsers plus a reader with an injectable root (checks use fixture trees).
 // SPDX-License-Identifier: Apache-2.0
+import { openSync, readSync, closeSync } from "node:fs";
 import { readBytes, readText, listDir } from "../util/fs.ts";
 import { own } from "../util/own.ts";
 import type { ProcRow } from "./types.ts";
@@ -52,8 +53,10 @@ export function btimeOf(root: string): number {
 export const YOUNG_MS = 10000;
 export const PROCFS_STATS = { stat: 0, cmdline: 0 }; // reads, for checks
 // per pid: the row handed out (kept across passes) and the last stat sample for the CPU delta
-interface Ent { row: ProcRow; start: number; startMs: number; tty: number; t: number; at: number; seen: number }
-const PF = { root: "", pass: 0, bootMs: 0, ents: new Map<number, Ent>() };
+// comm = the name from the last stat; args = its command line was read (only for processes that may be agents: want)
+interface Ent { row: ProcRow; start: number; startMs: number; tty: number; t: number; at: number; seen: number; comm: string; args: boolean; rssAt: number }
+const PF = { root: "", pass: 0, bootMs: 0, ents: new Map<number, Ent>(), out: [] as ProcRow[] };
+const RSS_EVERY = 4; // a tracked pid's resident size every 4th pass (~6 s): its cpu needs the stat every pass, not this
 // boot time in ms: now − /proc/uptime as ps computes elapsed time (btime is whole seconds: etime would run up to 1 s
 // ahead of ps); btime where there is no uptime file
 function bootMs(fs: ProcFs, now: number): number {
@@ -61,9 +64,13 @@ function bootMs(fs: ProcFs, now: number): number {
   return up > 0 ? now - up * 1000 : fs.btime * 1000;
 }
 
+// one buffer for every stat read (hundreds a pass)
+const SB = new Uint8Array(1024);
 function readStat(fs: ProcFs, pid: number): Stat | null {
   PROCFS_STATS.stat++;
-  const s = parseStat(readText(fs.root + "/" + String(pid) + "/stat", 0, 1024));
+  let n = 0;
+  try { const fd = openSync(fs.root + "/" + String(pid) + "/stat", "r"); try { n = readSync(fd, SB, 0, SB.length, 0); } finally { closeSync(fd); } } catch (e) { return null; }
+  const s = parseStat(new TextDecoder("utf-8").decode(SB.subarray(0, n)));
   return s && s.pid === pid ? s : null;
 }
 // resident pages from statm: what ps shows (VmRSS); stat's rss field can be far off on current kernels
@@ -86,30 +93,38 @@ function pidOf(name: string): number {
   for (let i = 0; i < name.length; i++) { const c = name.charCodeAt(i); if (c < 48 || c > 57) return -1; n = n * 10 + c - 48; }
   return name.length ? n : -1;
 }
-// one pass: rows of every pid under fs.root. Unchanged pids (not new, young, tracked, nor a full pass) keep their row as
-// it was; cpu is the recent % from the tick delta since the last sample (0 on the first one, as ps-free Linux had it)
-export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: boolean): ProcRow[] {
+// one pass: rows of every pid under fs.root. A pid is read when it is new, tracked (a harness tree: cpu, resident size),
+// young (< 10 s) while its name may be an agent's or a launcher's (exec chains), or on a full pass; a reused pid shows
+// in its start time. The command line is read only where want(comm) — an agent's or a launcher's name — or for a tracked
+// pid or its new child, and again when the name changed (an exec); other rows have args "". cpu is the recent % from
+// the tick delta since the last sample (0 on the first). The array is reused: callers read it before the next pass.
+export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: boolean, want: (comm: string) => boolean = (c: string): boolean => true): ProcRow[] {
   if (PF.root !== fs.root) { PF.root = fs.root; PF.ents.clear(); }
   if (full || !PF.bootMs) PF.bootMs = bootMs(fs, now); // again on full passes: the wall clock may have been stepped
-  PF.pass++; const pass = PF.pass; const out: ProcRow[] = [];
+  PF.pass++; const pass = PF.pass; const out = PF.out; out.length = 0;
   for (const name of listDir(fs.root)) {
     const pid = pidOf(name); if (pid < 0) continue;
     let e = PF.ents.get(pid);
-    const young = e !== undefined && now - e.startMs < YOUNG_MS;
-    if (!e || full || young || tracked.has(pid)) {
+    const tr = tracked.has(pid);
+    const young = e !== undefined && now - e.startMs < YOUNG_MS && want(e.comm);
+    if (!e || full || young || tr) {
       const st = readStat(fs, pid);
       if (!st) { if (e) PF.ents.delete(pid); continue; } // gone between the listing and the read
       if (e && e.start !== st.start) e = undefined; // pid reused
       const startMs = PF.bootMs + st.start / fs.hz * 1000;
+      const args = tr || want(st.comm) || tracked.has(st.ppid);
       if (!e) {
-        const row: ProcRow = { pid, ppid: st.ppid, cpu: 0, rss: readRss(fs, pid, st.rssPages), etime: own(etimeText((now - startMs) / 1000)), tty: own(ttyName(st.ttyNr)), args: readArgs(fs, st) };
-        e = { row, start: st.start, startMs, tty: st.ttyNr, t: st.ticks, at: now, seen: pass };
+        const row: ProcRow = { pid, ppid: st.ppid, cpu: 0, rss: args ? readRss(fs, pid, st.rssPages) : st.rssPages * fs.page, etime: own(etimeText((now - startMs) / 1000)), tty: own(ttyName(st.ttyNr)), args: args ? readArgs(fs, st) : "" };
+        e = { row, start: st.start, startMs, tty: st.ttyNr, t: st.ticks, at: now, seen: pass, comm: st.comm, args, rssAt: args ? pass : -1 }; // -1: rss from stat, statm once tracked
         PF.ents.set(pid, e);
       } else {
         const r = e.row;
-        r.ppid = st.ppid; r.rss = readRss(fs, pid, st.rssPages); r.etime = own(etimeText((now - startMs) / 1000));
+        r.ppid = st.ppid; r.etime = own(etimeText((now - startMs) / 1000));
+        if (tr && (pass - e.rssAt >= RSS_EVERY || e.rssAt < 0)) { r.rss = readRss(fs, pid, st.rssPages); e.rssAt = pass; }
         if (st.ttyNr !== e.tty) { e.tty = st.ttyNr; r.tty = own(ttyName(st.ttyNr)); }
-        if (full || young) r.args = readArgs(fs, st);
+        const exec = st.comm !== e.comm; if (exec) e.comm = own(st.comm);
+        if (args && (!e.args || exec || young || full)) { r.args = readArgs(fs, st); e.args = true; }
+        else if (exec && !args) { r.args = ""; e.args = false; }
         if (now - e.at >= 500) { r.cpu = Math.max(0, (st.ticks - e.t) / fs.hz / ((now - e.at) / 1000) * 100); e.t = st.ticks; e.at = now; } // a pass right after another: a 10 ms tick over a few ms would read as 1000%+
       }
     }

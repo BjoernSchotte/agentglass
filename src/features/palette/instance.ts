@@ -25,6 +25,6 @@ export function holderOf(args: string, owner: number, me: string, uid: number): 
 export function isOurs(pid: number): boolean {
   const uid = myUid(); if (OS.procOwner(pid) !== uid) return false; // cheap first: one stat, no process table
   const t = new Set<number>(); t.add(pid); // tracked: read fresh, a reused pid is told apart by its start time
-  for (const p of OS.listProcs(t)) if (p.pid === pid) return holderOf(p.args, uid, basename(process.execPath), uid);
+  for (const p of OS.listProcs(t, (c: string): boolean => true)) if (p.pid === pid) return holderOf(p.args, uid, basename(process.execPath), uid);
   return false;
 }

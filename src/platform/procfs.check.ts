@@ -116,6 +116,33 @@ writeFileSync(join(root, "uptime"), "1000.50 31000.00\n");
 rows = scanProcs(fs, (1700000000 + 1001) * 1000, none(), true);
 const u1 = byPid(rows, 1); eq("etime from uptime", u1 ? u1.etime : "", "16:39");
 
+// only processes whose name may be an agent's or a launcher's get their command line read (want); a tracked one and a
+// tracked pid's new child always; an exec (another comm) re-reads it
+const want = (c: string): boolean => c === "node" || c === "claude";
+proc(1100, "cron", 1, 0, 0, 100, "/usr/sbin/cron\0-f\0");
+proc(1101, "node", 1, 0, 0, 100, "node\0/x/claude\0");
+n0 = PROCFS_STATS.cmdline;
+rows = scanProcs(fs, T0 + 20000, none(), false, want);
+const cr = byPid(rows, 1100); const nd = byPid(rows, 1101);
+eq("not an agent's name: no cmdline", cr ? cr.args : "x", ""); eq("node: cmdline", nd ? nd.args : "", "node /x/claude"); eq("one cmdline read", String(PROCFS_STATS.cmdline - n0), "1");
+const t11 = new Set<number>(); t11.add(1100);
+proc(1102, "sh", 1100, 0, 0, 100, "sh\0-c\0ls\0");
+rows = scanProcs(fs, T0 + 21500, t11, false, want);
+const cr2 = byPid(rows, 1100); const ch = byPid(rows, 1102);
+eq("tracked: cmdline read", cr2 ? cr2.args : "", "/usr/sbin/cron -f"); eq("a tracked pid's new child: cmdline", ch ? ch.args : "", "sh -c ls");
+// a tracked pid's resident size every 4th pass, its cpu every pass
+writeFileSync(join(root, "1100", "statm"), "5000 9 2 1 0 3 0\n");
+rows = scanProcs(fs, T0 + 23000, t11, false, want); const r1 = byPid(rows, 1100);
+eq("rss not re-read on the next pass", r1 ? String(r1.rss) : "", String(7 * 4096));
+for (let i = 0; i < 4; i++) rows = scanProcs(fs, T0 + 24500 + i * 1500, t11, false, want);
+const r2 = byPid(rows, 1100); eq("rss after 4 passes", r2 ? String(r2.rss) : "", String(9 * 4096));
+// an old untracked process that execs into an agent: its new name shows on the full pass, then its command line
+const gone = join(root, "1100"); writeFileSync(join(gone, "stat"), statLine(1100, "node", "S", 1, 0, 10, 100, 10)); writeFileSync(join(gone, "cmdline"), "node\0/x/claude\0--resume\0");
+rows = scanProcs(fs, T0 + 32000, none(), false, want); const x1 = byPid(rows, 1100);
+eq("exec not seen between full passes", x1 ? x1.args : "", "/usr/sbin/cron -f");
+rows = scanProcs(fs, T0 + 33500, none(), true, want); const x2 = byPid(rows, 1100);
+eq("full pass: exec seen", x2 ? x2.args : "", "node /x/claude --resume");
+
 // ── fallback to ps: /proc missing or without a boot time ──
 ok("missing root → not usable", !procfsUsable({ root: join(root, "nope"), hz: 100, page: 4096, btime: 1 }), "usable");
 ok("no btime → not usable", !procfsUsable({ root, hz: 100, page: 4096, btime: btimeOf(join(root, "500")) }), "usable");

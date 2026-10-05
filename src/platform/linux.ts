@@ -14,12 +14,12 @@ const PFS: ProcFs = { root: "/proc", hz: 0, page: 0, btime: 0 };
 const FULL_MS = 30000;
 let useProc = -1; let lastFull = 0;
 function clkTck(): number { if (!PFS.hz) PFS.hz = Number(run("getconf", ["CLK_TCK"]).trim()) || 100; return PFS.hz; }
-function listProcs(tracked: Set<number>): ProcRow[] {
+function listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean): ProcRow[] {
   if (useProc < 0) { clkTck(); PFS.page = Number(run("getconf", ["PAGESIZE"]).trim()) || 4096; PFS.btime = btimeOf(PFS.root); useProc = procfsUsable(PFS) ? 1 : 0; }
   if (!useProc) return psProcs();
   const now = Date.now(); const full = now - lastFull >= FULL_MS;
   if (full) lastFull = now;
-  return scanProcs(PFS, now, tracked, full);
+  return scanProcs(PFS, now, tracked, full, wantArgs);
 }
 // ps %cpu on Linux is the lifetime average, so fresh helpers read as 100%+ and long-lived agents as idle →
 // diff utime+stime between refreshes instead: scanProcs already did from the stat it just read (reported); the ps

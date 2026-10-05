@@ -6,7 +6,7 @@ import { OS } from "../platform/index.ts";
 import { HARNESSES, harnessOfProc } from "../harness/index.ts";
 import type { Live } from "../harness/types.ts";
 import type { Proc, Sess } from "./types.ts";
-import { sessions } from "./sessions.ts";
+import { sessions, SG } from "./sessions.ts";
 import { S } from "../state.ts";
 import { linkByCwd, daemonWarn, type CwdProc } from "./link.ts";
 import { H, applyMeta, realCwd } from "../hooks.ts";
@@ -41,24 +41,37 @@ export function harnessOfArgs(args: string): string {
   }
   return harnessOfProc(b) || (OTHER.indexOf(b) >= 0 ? b : "");
 }
-// harnessOfArgs per pid while its args stay the same: most of ~2,000 processes never change between refreshes
-const harnessMemo = new Map<number, { args: string; h: string }>();
-function harnessOf(pid: number, args: string): string {
-  const m = harnessMemo.get(pid);
-  if (m && m.args === args) return m.h;
-  const h = harnessOfArgs(args); harnessMemo.set(pid, { args, h }); return h;
-}
+// the process objects live across refreshes: one per pid, updated from its row (a full process table rebuilt every
+// 1.5 s was ~2,200 objects and a children map per refresh); the children map is rebuilt only when a pid came, went or
+// moved; a pid's harness only when its args changed
 let tracked = new Set<number>(); // the harness trees' pids of the last refresh: the platform reads them fresh
+let kids = new Map<number, number[]>();
+// a process's command line is worth reading (it may be an agent) when its name (comm, ≤ 15 bytes) may be one: an agent's
+// own name, an interpreter that runs one, or a launcher that execs into one; the rest are read on the platform's full pass
+const LAUNCH = ["node", "bun", "deno", "npx", "npm", "pnpm", "env", "sh", "bash", "zsh", "dash", "fish", "python", "python3", "uv", "uvx"];
+export function argsWorth(comm: string): boolean {
+  return LAUNCH.indexOf(comm) >= 0 || harnessOfProc(comm) !== "" || OTHER.indexOf(comm) >= 0 || harnessOfArgs(comm) !== "";
+}
 export function refreshProcs(): void {
-  allProcs.clear();
-  const kids = new Map<number, number[]>();
-  for (const r of OS.listProcs(tracked)) {
-    const p: Proc = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: "", cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" };
-    p.h = harnessOf(p.pid, p.args);
-    allProcs.set(p.pid, p);
-    const k = kids.get(p.ppid);
-    if (k) k.push(p.pid); else kids.set(p.ppid, [p.pid]);
+  const rows = OS.listProcs(tracked, argsWorth);
+  let moved = false;
+  for (const r of rows) {
+    let p = allProcs.get(r.pid);
+    if (!p) { p = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: harnessOfArgs(r.args), cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; allProcs.set(r.pid, p); moved = true; continue; }
+    if (p.ppid !== r.ppid) { p.ppid = r.ppid; moved = true; }
+    if (p.args !== r.args) { p.args = r.args; p.h = harnessOfArgs(r.args); }
+    p.cpu = r.cpu; p.rss = r.rss; p.etime = r.etime; p.tty = r.tty;
   }
+  if (allProcs.size !== rows.length) { // pids went
+    const live = new Set<number>(); for (const r of rows) live.add(r.pid);
+    for (const k of [...allProcs.keys()]) if (!live.has(k)) allProcs.delete(k);
+    moved = true;
+  }
+  if (moved) {
+    kids = new Map<number, number[]>();
+    for (const p of allProcs.values()) { const k = kids.get(p.ppid); if (k) k.push(p.pid); else kids.set(p.ppid, [p.pid]); }
+  }
+  for (const p of procs) { p.tcpu = 0; p.trss = 0; p.kids = 0; } // last refresh's roots: their sums start again
   const out: Proc[] = [];
   let total = 0;
   const now = Date.now();
@@ -83,9 +96,8 @@ export function refreshProcs(): void {
     out.push(p);
   }
   tracked = tr;
-  for (const k of [...hist.keys()]) if (!allProcs.has(k)) hist.delete(k);
-  for (const k of [...harnessMemo.keys()]) if (!allProcs.has(k)) harnessMemo.delete(k);
-  OS.prune((pid: number) => allProcs.has(pid));
+  if (hist.size > out.length) for (const k of [...hist.keys()]) if (!allProcs.has(k)) hist.delete(k);
+  if (moved) OS.prune((pid: number) => allProcs.has(pid));
   cpuHist.push(total); if (cpuHist.length > 240) cpuHist.shift();
   out.sort((a, b) => b.tcpu - a.tcpu || a.pid - b.pid);
   procs = out;
@@ -99,7 +111,19 @@ export function refreshProcs(): void {
     for (const l of ls) registry.set(ad.id + ":" + l.id, l);
     if (ad.daemon) daemonLive.set(ad.id, ls);
   }
-  linkSessions();
+  const g = linkSig(); if (g !== lastLink) { lastLink = g; linkSessions(); }
+}
+// what linkSessions reads besides the open files (refreshSlow links after reading those): the registries, the agent
+// processes and their parents, the session set, and the newest session per cwd for harnesses linked by cwd
+let lastLink = "";
+function linkSig(): string {
+  const o: string[] = [String(SG.gen), String(sessions.size)];
+  for (const [k, l] of registry) o.push(k + "=" + String(l.pid) + l.status + l.name);
+  for (const p of allProcs.values()) if (p.h) o.push(String(p.pid) + ":" + String(p.ppid) + p.h + p.cwd);
+  for (const [f, pid] of filePid) if (allProcs.has(pid)) o.push(f);
+  let mt = 0; for (const ad of HARNESSES) if (ad.liveCwd) for (const s of sessions.values()) if (s.h === ad.id) mt += s.mtime;
+  o.push(String(mt));
+  return o.join("\n");
 }
 export function refreshSlow(): void {
   // cwd + open rollout files of every harness proc — nested ones too (codex app-server under its daemon holds the rollouts), tmux panes
@@ -116,20 +140,20 @@ export function refreshSlow(): void {
   }
   for (const p of procs) p.cwd = cwdByPid.get(p.pid) ?? "";
   if (S.pins.length) buildProcView(); // cwd known now: repo and cwd pins apply
-  linkSessions();
+  linkSessions(); lastLink = linkSig();
 }
 export function rootOf(pid: number): Proc | null {
   let q = allProcs.get(pid);
   while (q) { const par = allProcs.get(q.ppid); if (!par || !par.h) break; q = par; }
   return q ?? null;
 }
-// per session the registry name linkOne last set and the name H.meta turned it into (redact fakes it): applyMeta runs
-// again only when the link's name changed or something else rewrote s.name since. true = applyMeta ran
+// per session the registry name linkOne last set and the name H.meta turned it into: without --redact (no H.meta) the
+// link's fields are set again only when its name changed or something else rewrote s.name since. true = applyMeta ran
 const linked = new Map<string, { raw: string; out: string }>();
 export function linkOne(s: Sess, pid: number, status: string, name: string): boolean {
   s.pid = pid; s.status = status;
   const m = linked.get(s.path);
-  if (m && m.raw === name && m.out === s.name) return false;
+  if (m && m.raw === name && m.out === s.name && !H.meta.length) return false; // --redact (H.meta): every link applies it, as before
   s.name = name; applyMeta(s);
   linked.set(s.path, { raw: name, out: s.name });
   return true;

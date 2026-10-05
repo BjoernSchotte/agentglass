@@ -28,9 +28,13 @@ H.meta.push((s: Sess): void => { metas++; if (s.name && !s.name.startsWith("F-")
 const ls = newSess("codex", "l1", "/l/1", false);
 ok("first link runs meta", linkOne(ls, 42, "busy", "real") && ls.name === "F-real" && ls.pid === 42, ls.name);
 const m0 = metas;
-ok("same link: no meta, fake kept", !linkOne(ls, 42, "idle", "real") && ls.name === "F-real" && ls.status === "idle" && metas === m0, ls.name);
+ok("same link under H.meta (--redact): meta again, fake kept", linkOne(ls, 42, "idle", "real") && ls.name === "F-real" && ls.status === "idle" && metas === m0 + 1, ls.name);
 ok("other name: meta again", linkOne(ls, 42, "idle", "other") && ls.name === "F-other", ls.name);
 ls.name = "nick"; // a re-parse set it (codex nickname): the link wins again, as before
 ok("name rewritten elsewhere: relinked", linkOne(ls, 42, "idle", "other") && ls.name === "F-other", ls.name);
 ok("unlinked: name cleared", linkOne(ls, 0, "", "") && ls.name === "" && ls.pid === 0, ls.name);
-console.log(bad ? bad + " failed" : "procs: all checks passed (" + String(cases.length + 5) + " cases)"); process.exit(bad ? 1 : 0);
+H.meta.pop(); // without --redact: a link that did not change is skipped
+const ns = newSess("codex", "l2", "/l/2", false);
+ok("no meta: first link", linkOne(ns, 7, "busy", "x") && ns.name === "x", ns.name);
+ok("no meta: same link skipped", !linkOne(ns, 7, "idle", "x") && ns.status === "idle", ns.status);
+console.log(bad ? bad + " failed" : "procs: all checks passed (" + String(cases.length + 7) + " cases)"); process.exit(bad ? 1 : 0);

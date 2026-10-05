@@ -23,7 +23,7 @@ function rotOf(path: string): number {
 }
 function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>, parent: string): void {
   let s = sessions.get(path);
-  if (s && s.pid <= 0 && SCAN.now - s.mtime >= RECENT_MS && rotOf(path) !== SCAN.no % ROT) { seen.add(path); return; } // not its turn
+  if (s && s.pid <= 0 && SCAN.now - s.mtime >= RECENT_MS && rotOf(path) !== SCAN.no % ROT) { seen.add(path); if (H.meta.length) applyMeta(s); return; } // not its turn
   const fresh = !s;
   if (!s) { s = newSess(h, id, path, archived); s.parent = parent; }
   const st = sourceOf(h).stat(s);
@@ -32,7 +32,7 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
     sessions.set(path, s); SG.gen++;
     const m = harnessOf(h).meta; if (m) m(s);
   }
-  if (restat(s, st.size, st.mtime, epochOf(s)) || fresh) applyMeta(s); // head and tail reads apply it after they change fields
+  if (restat(s, st.size, st.mtime, epochOf(s)) || fresh || H.meta.length) applyMeta(s); // head and tail reads apply it after they change fields; --redact (H.meta) fakes every scanned session as before: a writer path that skips it must not leak
   seen.add(path);
 }
 // new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file.
