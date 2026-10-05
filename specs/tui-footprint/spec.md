@@ -102,7 +102,9 @@ all 14 ms; `stat` of 532 directories 0.4 ms. `flush()` writes the whole frame wh
   `duration > 30s`); `cost --json --by session --since 30d` rows of stable sessions. Modes: `--cold` (both empty),
   `--warm` (the new binary starts from a copy of the ref binary's cache: exercises load, migration and lazy rows),
   `--harness h` (passed through, for quicker runs). Exit 0 only with 0 differences; prints compared/skipped counts.
-- Debug footer (`AGENTGLASS_DEBUG_REFRESH=1`) gains `rss <MB>` (Linux: `/proc/self/statm`, no spawn; elsewhere absent).
+- Debug footer (`AGENTGLASS_DEBUG_REFRESH=1`) gains `rss <MB>` (Linux: `/proc/self/statm`, no spawn; elsewhere absent)
+  and `ingest <ms>/s · <KB>/s` (EWMA of the ledger's time and bytes spent on new transcript bytes, from 3): the part
+  of the CPU that Decision 2 counts apart.
 
 ### 2. Ledger cache: one session per line, streamed
 - File `ledger.jsonl` next to today's `ledger.json` (`cache.ts:37`). Line 1: header
@@ -128,7 +130,7 @@ all 14 ms; `stat` of 532 directories 0.4 ms. `flush()` writes the whole frame wh
 - `indexing()` means **history** indexing: bytes pending in a session that is not live, or more than 1 MB pending in
   any session. Live appends below that are ingest, not indexing (the level stays as adaptive-refresh decides; the
   30 s save cadence of 2 does not kick in for them).
-- Pace (Decision 1, PROPOSED): no 4 MB byte cap per tick; a 50 ms time slice per 250 ms tick while indexing, so
+- Pace (Decision 1): no 4 MB byte cap per tick; a 50 ms time slice per 250 ms tick while indexing, so
   indexing uses ≤ 20 % of one core and finishes this history in ~4 min instead of ~8. Ranking stays: the selected
   session, live sessions, today's, then newest first (`ledger.ts:94-98`).
 - Header widget (new `src/features/usage/progress.ts`, `H.headerWidgets`): while `indexing()`, `⟳ indexing 34% ·
@@ -272,21 +274,56 @@ to scratch dirs passed in and never print transcript text (ids, numbers and path
 - CLI progress output for long one-shot runs.
 
 ## Decisions
-1. **Indexing pace** — PROPOSED: no byte cap, 50 ms per 250 ms tick (≤ 20 % of one core, this history in ~4 min).
-   Options: (a) this; (b) 100 ms per tick (≤ 40 %, ~2 min); (c) keep today (4 MB per tick: 20–45 %, ~8 min).
-   Same total CPU in every option; only peak and duration differ.
-2. **CPU target accounting** — PROPOSED: ≤ 1 % of one core excluding the ledger's ingest and tail parsing of new
-   transcript bytes (work proportional to what the agents write, shown separately in the debug footer), ≤ 2 % in all
-   including child processes, on this host with 36 streaming agents. Option: a flat ≤ 1 % including ingest (not
-   reachable while 36 agents stream without slowing alarms or the ledger).
-3. Call rows columnar instead of evicted (technical): all rows of this history fit in ~35 MB; eviction thrashes.
-4. Cache file one session per line, JSON (technical): removes the whole-tree parse and the save spike, stays readable;
-   no binary codec (10).
-5. No `fs.watch` (technical): 10.
-6. Linux `/proc` lister replaces `ps` (technical): 27 ms full pass in process vs 70 ms `ps` child + 30 ms parse; the
-   incremental pass reads only new, young and tracked pids.
-7. Process discovery latency unchanged (technical): the incremental `/proc` pass is cheap enough to keep the 1.5 s
-   cadence while agents are live.
+Each: question · options · decision · why · cost if wrong.
+
+1. **Indexing pace on a cold cache.** Options: (a) no byte cap, 50 ms slice per 250 ms tick: ≤ 20 % of one core, this
+   history (12.1 GB) in ~4 min; (b) 100 ms per tick: ≤ 40 %, ~2 min; (c) today: 4 MB per tick, 20–45 %, ~8 min.
+   **Decision: (a).** Why: the user wants low CPU and memory on a shared machine; a cold index is rare (first start, a
+   `VERSION` bump), so a lower peak beats a shorter duration. All options do the same total work. The live view and
+   alarms stay responsive (live and today's sessions are indexed first, the slice bounds input latency) and the header
+   gauge (3) shows progress. Cost if wrong: on a cold start, full-history Stats arrive ~2 min later than with (b).
+2. **What the CPU target counts.** Options: (a) ≤ 1 % of one core excluding the ledger's ingest and tail parsing of
+   new transcript bytes, ≤ 2 % in all including child processes, ingest shown separately in the debug footer (1);
+   (b) a flat ≤ 1 % including ingest; (c) self only, children not counted. **Decision: (a).** Why: ingest scales with
+   how much the agents write, not with agentglass; holding it under a flat cap means throttling it, which delays alarms
+   and costs. Children count because `ps` was a quarter of today's cost and is invisible to `top -p`. Cost if wrong:
+   on very busy hosts total CPU is above 1 % — visible in the footer, not hidden.
+3. **Call rows: compact or evict?** Options: (a) columnar store, all rows that are loaded stay; (b) object rows with an
+   LRU memory budget; (c) lazy loading only. **Decision: (a) together with lazy loading (4, 5).** Why: lazy alone
+   gives 173 MB until a call-row filter (often pinned, remembered by default) loads every row (+217 MB → ~390 MB, over
+   target); eviction would re-decode on every sweep (1.2 s CPU per full pass); columns make all rows ~35 MB. Cost if
+   wrong: a wide reader refactor (T8) for ~180 MB that only matters to people with call-row filters — contained in one
+   task after the lazy one, which alone already meets the target without such a filter.
+4. **Cache file format.** Options: (a) JSON, one session per line, streamed; (b) a binary codec; (c) keep one JSON
+   object. **Decision: (a).** Why: the cost was the whole-file read + parse (+226 MB) and the one-string save
+   (+220 MB peak), not JSON itself; per-line streaming removes both (measured 173 MB), keeps the file readable and
+   diffable, isolates a corrupt line to one session, and migrates from today's file without a re-index. Cost if
+   wrong: load stays ~0.26 s of CPU where a binary codec might take ~0.1 s.
+5. **Event-driven refresh (`fs.watch`).** Options: (a) polling made cheap (mtime-gated listings, tiered stats); (b)
+   `fs.watch` with a polling fallback. **Decision: (a).** Why: in scriptc 0.1.7 the listener gets no file name, and
+   kqueue on a macOS directory does not report appends to files in it, so (b) still needs most of (a); after 8 the
+   polling costs < 0.2 %. Cost if wrong: a new session in an old, inactive project directory can take up to one scan
+   interval (3 s hot) longer than an inotify event — the same as today.
+6. **Process scan on Linux.** Options: (a) incremental `/proc` reads (new, young and tracked pids; full pass every
+   30 s); (b) keep `ps` at a slower cadence; (c) `ps` as is. **Decision: (a).** Why: `ps` costs 70 ms in a child plus
+   30 ms parsing per run (6.8 % + 4.7 %); a full `/proc` pass is 27 ms, the incremental one reads a few dozen files;
+   (b) would delay new agents in the live count and the alarms' CPU samples. Cost if wrong: a process that execs into
+   an agent more than 10 s after it started is classified up to 30 s late (the full pass); `/proc` parsing edge cases
+   are covered by fixtures and a `ps` agreement check.
+7. **Process discovery latency.** Options: (a) keep 1.5 s while agents are live; (b) slow discovery to 5–10 s to save
+   CPU. **Decision: (a).** Why: with (6) a discovery pass costs ≤ 4 ms, so the slower cadence would save < 0.2 % and
+   make a newly started agent appear late. Cost if wrong: ≤ 0.2 % CPU more than (b).
+8. **Git line freshness in the preview.** Options: (a) reflogs re-read at most every 5 s; (b) every second as today.
+   **Decision: (a).** Why: the per-second pass over every session and reflog was 130 ms per frame, the largest render
+   cost; a commit is not an alarm. Cost if wrong: a new commit shows in the preview up to 5 s after it was made.
+9. **Separate per-session files for the day detail maps (`hv`).** Options: (a) keep them in the ledger line as text,
+   decoded on use; (b) move them out. **Decision: (a).** Why: (b) saves 42 MB (173 → 131 MB), already under target,
+   and costs a second file per session plus a read on every Stats aggregation. Day fields that other specs re-price
+   (model-prices `Day.tp`) stay plain fields in the line either way. Cost if wrong: ~40 MB more resident than possible.
+10. **Cache `VERSION`.** Options: (a) unchanged (15); (b) bump with the new file. **Decision: (a).** Why: no cached
+   value changes meaning; the new file migrates from the old one, so upgrading costs one parse instead of a full
+   re-index (minutes). Cost if wrong: none for numbers — a wrong migration is caught by the golden `--warm` run, which
+   starts the new binary from the old binary's cache.
 
 ## Open questions (to verify during implementation)
 1. Do `Float64Array`/`Int32Array` exist in scriptc 0.1.7 with a cheap grow path? If not, `number[]` columns (5).
