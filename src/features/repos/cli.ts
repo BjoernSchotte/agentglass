@@ -38,7 +38,7 @@ export function repoJson(r: RepoAgg): JRepo {
   for (const [h, x] of r.byHarness) bh.push({ harness: h, sessions: x.sess, costUsd: usd(x.cost, x.unk) });
   bh.sort((x, y) => (y.costUsd ?? 0) - (x.costUsd ?? 0) || y.sessions - x.sessions);
   const br: { branch: string; sessions: number; commits: number; costUsd: number | null }[] = [];
-  for (const [b, x] of r.branches) br.push({ branch: display("filter:branch", b, null), sessions: x.sess, commits: x.commits, costUsd: usd(x.cost, x.unk) });
+  for (const [b, x] of r.branches) br.push({ branch: display("branch", b, null), sessions: x.sess, commits: x.commits, costUsd: usd(x.cost, x.unk) });
   br.sort((x, y) => (y.costUsd ?? 0) - (x.costUsd ?? 0) || y.sessions - x.sessions);
   return {
     key: keyShown(r.key), label: display("repo", r.label, null), kind: r.kind, worktrees: wts, sessions: r.sessions, live: r.live, last: r.last > 0 ? new Date(r.last).toISOString() : "",

@@ -268,6 +268,17 @@ function scrubStyled(s: string): string {
 // rt/rp/rb/rn/rk: the real title, prompt, branch, name and subagent kind as last parsed (filters match them: realMeta)
 interface Rec { cwd: string; real: string; title: string; branch: string; name: string; remote: string; kind: string; rt: string; rp: string; rb: string; rn: string; rk: string }
 const recs = new Map<string, Rec>();
+// branch names outside a session's own field (commit branches, the repo view's rows): the fake of the first session
+// on that branch, trunk names as "main", else a stable feature-branch fake (one per real name)
+const TRUNKS = ["main", "master", "develop", "dev", "trunk", "HEAD"];
+const brFake = new Map<string, string>(); const brShown = new Set<string>(); let brPool: string[] = [];
+function fakeBranch(b: string): string {
+  if (!b || b.startsWith("(") || brShown.has(b)) return b; // "(detached)", or a session's branch already shown faked
+  if (TRUNKS.indexOf(b) >= 0) return "main";
+  const f = brFake.get(b); if (f !== undefined) return f;
+  if (!brPool.length) for (const t of TITLES) brPool.push("feat/" + slug(t));
+  return uniq("branch", b, brPool);
+}
 function recOf(s: Sess): Rec {
   let r = recs.get(s.path);
   if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "", remote: "", kind: "", rt: "", rp: "", rb: "", rn: "", rk: "" }; recs.set(s.path, r); }
@@ -320,12 +331,12 @@ function kept(s: Sess): boolean {
 }
 function meta(s: Sess): void {
   const r = recOf(s);
-  if (s.cwd && s.cwd !== r.cwd) { r.real = s.cwd; learnPath(s.cwd, false); r.cwd = fakeCwd(s.cwd); s.cwd = r.cwd; }
+  if (s.cwd && s.cwd !== r.cwd) { r.real = s.cwd; learnPath(s.cwd, false); r.cwd = fakeCwd(s.cwd); s.cwd = r.cwd; slugs.set(slugKey(r.real), slugKey(r.cwd)); }
   if (s.title !== r.title) r.rt = s.title;
   s.title = r.title;
   if (s.prompt && !s.prompt.startsWith(r.title)) r.rp = s.prompt; // a faked user event's text starts with the fake title
   if (s.prompt) s.prompt = r.title;
-  if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = ["main", "master", "develop", "dev", "trunk", "HEAD"].indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; }
+  if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = TRUNKS.indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; if (!brFake.has(r.rb)) brFake.set(r.rb, r.branch); brShown.add(r.branch); }
   if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
   if (s.name && s.name !== r.name) { r.rn = s.name; r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
   if (s.kind && s.kind !== r.kind) { r.rk = s.kind; r.kind = fakeAgent(s.kind); s.kind = r.kind; if (s.h === "gemini") toolAgent(r.rk); }
@@ -397,8 +408,34 @@ function fakeEv(e: Ev, evs: Ev[], i: number, title: string): void {
     if (e.id) for (let j = i - 1; j >= 0 && j > i - 400; j--) { const c = evs[j]; if (c && c.kind === "tool" && c.id === e.id) { name = c.text.slice(0, Math.max(0, c.text.indexOf("\u0000"))); break; } }
     e.text = isErr(e.text) ? pick(ERRS, key) : fakeResult(name, key);
   } else if (e.kind === "meta" && e.text.startsWith("summary:")) e.text = "summary: " + title;
+  else if (e.kind === "meta") { e.text = fakeMeta(e.text, key, title); e.full = ""; return; }
   else { e.text = scrubText(e.text); return; }
   e.full = "";
+}
+// log paths name the project dir as a slug of the cwd (Claude "-home-u-code-x", pi "--home-u-code-x--"); the word
+// scrubber leaves ordinary words in it ("mayflower", the tool's own name): a slug of a known real cwd becomes its fake's
+const slugs = new Map<string, string>();
+function slugKey(p: string): string { return p.replace(/[^A-Za-z0-9]/g, "-").replace(/^-+|-+$/g, ""); }
+function fakeLogPath(p: string): string {
+  const segs = p.split("/");
+  for (let i = 0; i < segs.length; i++) {
+    const sg = segs[i] ?? ""; const k = slugKey(sg); const f = k ? slugs.get(k) : undefined;
+    if (f !== undefined) { const lead = sg.slice(0, sg.length - sg.replace(/^-+/, "").length); const tail = sg.slice(sg.replace(/-+$/, "").length); segs[i] = lead + f + tail; }
+  }
+  return segs.join("/");
+}
+// meta lines carry free text after a fixed label (--watch, the transcript): the label stays, the text is faked —
+// "! <shell command>", "⟲ <status> · <task summary>", "⇄ <peer> · <message>", "branch: <summary>", "[error] <message>",
+// "/command <args>"; anything else (turn complete, model → x, skill: x) is scrubbed
+function fakeMeta(t: string, key: string, title: string): string {
+  const dot = t.indexOf(" · ");
+  if (t.startsWith("! ")) return "! " + pick(CMDS, key);
+  if (t.startsWith("\u27f2 ")) return (dot > 0 ? t.slice(0, dot) + " · " + pick(SUBS, key) : t);
+  if (t.startsWith("\u21c4 ")) { const from = dot > 0 ? t.slice(2, dot) : "peer"; return "\u21c4 " + (from === "peer" || builtinAgent(from) ? from : fakeAgent(from)) + " · " + pick(SAYS, key); }
+  if (t.startsWith("branch: ")) return "branch: " + title;
+  const b = /^\[[A-Za-z_ -]+\] /.exec(t); if (b) return b[0] + (pick(ERRS, key).split("\n")[0] ?? "");
+  if (t.startsWith("/")) { const i = t.indexOf(" "); return i > 0 ? t.slice(0, i) : t; }
+  return scrubText(t);
 }
 // process args: the program, flags, ids and paths stay; free text (prompts) goes
 function fakeArgs(a: string): string {
@@ -445,6 +482,8 @@ function display(kind: string, text: string, s: Sess | null): string {
   if (kind === "repo") return fakeRepo(text);
   if (kind === "remote") return fakeRemote(text);
   if (kind === "vcs") return fakeVcs(text);
+  if (kind === "branch") return fakeBranch(text);
+  if (kind === "logpath") return fakeLogPath(text);
   if (kind === "tool") return agentTool(text); // a tool name: Gemini runs a subagent as a tool named after it
   if (kind.startsWith("filter:")) { // a filter chip's value, by its key
     const k = kind.slice(7);

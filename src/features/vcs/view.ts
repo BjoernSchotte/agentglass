@@ -74,7 +74,7 @@ export function viewRows(g: GitInfo, now: number, w: number): Row[] {
   for (const c of cs) {
     const st = c.add >= 0 && !c.merge ? "+" + String(c.add) + " −" + String(c.del) : ""; // a merge's diff is its branch's
     const note = statusNote(c);
-    out.push({ kind: "commit", text: fit(c.sha.slice(0, 7), 7) + "  " + fit(when(c.at, now), tW) + "  " + fit(c.br ? display("filter:branch", c.br, null) : "(detached)", bW) + " " + fit(st, sW) + " " + display("vcs", c.subj, null) + (note ? "  · " + note : ""),
+    out.push({ kind: "commit", text: fit(c.sha.slice(0, 7), 7) + "  " + fit(when(c.at, now), tW) + "  " + fit(c.br ? display("branch", c.br, null) : "(detached)", bW) + " " + fit(st, sW) + " " + display("vcs", c.subj, null) + (note ? "  · " + note : ""),
       dim: !c.counted, call: c.call, ts: c.ts, copy: c.sha, path: c.path, mark: MARK[c.how] ?? "?" });
   }
   for (const l of g.prs) out.push(linkRow("pr", (l.url.indexOf("merge_requests") >= 0 ? "MR !" : "PR #") + String(l.n), l));

@@ -53,6 +53,17 @@ for (const f of H.events) f(s, evs, 0);
 const all = evs.map((e) => e.text + e.full).join(" ");
 ok("content faked", all.indexOf("ACME") < 0 && all.indexOf("acme") < 0, all);
 ok("tool name kept", (evs[1] ?? evs[0]).text.startsWith("Bash\u0000"), (evs[1] ?? evs[0]).text);
+// meta lines (--watch, transcript): the label stays, the free text after it is faked
+const mt: Ev[] = [["! gh secret set TOKEN -R acmecorp/billing", "! "], ["\u27f2 completed · Agent \"Acme stages 3-5\" finished", "\u27f2 completed · "],
+  ["\u21c4 fixer-tester · rev for acme: need the repro", "\u21c4 "], ["[error] acme host down", "[error] "], ["/deploy acme prod", "/deploy"], ["branch: acme rollout", "branch: "], ["turn complete", "turn complete"]]
+  .map((x: string[]): Ev => ({ kind: "meta", text: x[0] ?? "", ts: "t", id: x[1] ?? "", full: "acme" }));
+for (const f of H.events) f(s, mt, 0);
+for (const e of mt) ok("meta faked: " + e.id, e.text.startsWith(e.id) && e.text.toLowerCase().indexOf("acme") < 0 && e.full === "" && e.text.indexOf("fixer-tester") < 0, e.text);
+// the log path's project slug follows the faked cwd (the word scrubber keeps ordinary words like the dir names)
+const lp = display("logpath", HOME + "/.claude/projects/" + (HOME + "/code/secretproj/src").replace(/[^A-Za-z0-9]/g, "-") + "/x.jsonl", s);
+ok("log path slug faked", lp.indexOf("secretproj") < 0 && lp.indexOf(c1.replace(/[^A-Za-z0-9]/g, "-").replace(/^-+/, "")) > 0, lp);
+const pp = display("logpath", HOME + "/.pi/agent/sessions/--" + (HOME + "/code/secretproj/src").slice(1).replace(/\//g, "-") + "--/y.jsonl", s);
+ok("pi log path slug faked", pp.indexOf("secretproj") < 0 && pp.indexOf("--/y.jsonl") > 0, pp);
 
 // git linkage (kind vcs): URL keeps host, kind, number; owner/repo faked; subjects come from the title pool, stably
 const pu = display("vcs", "https://github.com/me/x/pull/7", null);
@@ -63,6 +74,14 @@ const cm = display("vcs", "https://github.com/me/x/commit/abc1234", null);
 ok("vcs commit keeps sha", cm.endsWith("/commit/abc1234") && cm.indexOf("me/x") < 0, cm);
 const sj = display("vcs", "fix the secret client thing", null);
 ok("vcs subject replaced + stable", sj !== "fix the secret client thing" && sj.length > 0 && sj === display("vcs", "fix the secret client thing", null), sj);
+// branch names outside a session (commit branches, repo-view rows): never the real name; a session's own branch shows
+// as that session's fake, trunks as main, "(detached)" and already shown fakes as they are
+const bf = display("branch", "feat/acme-billing-export", null);
+ok("commit branch faked + stable", bf.startsWith("feat/") && bf.indexOf("acme") < 0 && bf === display("branch", "feat/acme-billing-export", null), bf);
+ok("other branch, other fake", display("branch", "fix/acme-login", null) !== bf, display("branch", "fix/acme-login", null));
+ok("session branch: its fake", display("branch", "acme/login", null) === s.branch, display("branch", "acme/login", null) + " vs " + s.branch);
+ok("shown fake kept", display("branch", s.branch, null) === s.branch, display("branch", s.branch, null));
+ok("trunk", display("branch", "master", null) === "main" && display("branch", "(detached)", null) === "(detached)", display("branch", "master", null));
 // a line with an OSC 8 link: the escape (url) bytes stay as they are, only the visible text is scrubbed
 const esc = "\x1b]8;;agentglass://open/claude/" + user + "\x1b\\";
 const lk = "\x1b[1m" + esc + "home of " + user + "\x1b]8;;\x1b\\\x1b[0m";

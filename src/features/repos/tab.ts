@@ -325,7 +325,7 @@ function renderDetail(): void {
     const gW = fw >= 44 ? 6 : 0; const pW2 = fw >= 52 ? 12 : 0; const room = hB - 2 - (rr.prs.length && hB - 2 > bs.length ? 1 : 0);
     listIn(3, lw + 1, y0 + hF + hT + 1, fw, room, bs.length, (k: number, on: boolean): string => {
       const e = bs[k]; if (!e) return ""; const b = on ? bg(C.sel) : ""; const ba = e[1];
-      return fg(C.purple) + (on ? CSI + "1m" : "") + fit(clean(e[0]), Math.max(6, fw - 2 - 5 - gW - pW2 - 10)) + RST + b + fg(C.text) + rj(String(ba.sess), 5) + RST + b +
+      return fg(C.purple) + (on ? CSI + "1m" : "") + fit(clean(display("branch", e[0], null)), Math.max(6, fw - 2 - 5 - gW - pW2 - 10)) + RST + b + fg(C.text) + rj(String(ba.sess), 5) + RST + b +
         (gW ? (ba.commits ? fg(C.green) : fg(C.dim)) + rj(ba.commits ? String(ba.commits) + "✓" : "·", gW) + RST + b : "") +
         (pW2 ? fg(C.sub) + rj(perCommit(ba.cost, ba.unk, ba.commits, single(rr.modes)).replace(/\/commit$/, "/c"), pW2) + RST + b : "") + rjs(costCell(ba, money(ba.cost, single(rr.modes))), 10);
     }, "");
