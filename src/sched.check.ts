@@ -108,7 +108,11 @@ eq("focused render hot", String(every(sc, "render", false, false)), "250");
 
 // ── due ──
 sc = newSched(false, false, t); sc.lv = "hot";
-eq("tick not due at 499", String(due(sc, t + 499, false, false).indexOf("tick")), "-1");
+// a data job due within a quarter of its interval (≤ 100 ms) shares a wake with one that is due; alone it waits
+eq("tick shares the wake at 450 (probe due)", String(due(sc, t + 450, false, false).indexOf("tick") >= 0), "true");
+{ const q = newSched(false, false, t); q.lv = "hot"; for (const j of ["size", "procs", "scan", "slow", "probe", "watch", "fast", "render"]) { const x = q.js.get(j); if (x) x.last = t + 440; }
+  eq("tick alone not early at 450", String(due(q, t + 450, false, false).length), "0");
+  eq("render never early (tick due at 680)", String(due(q, t + 680, false, false).indexOf("render")) + String(due(q, t + 680, false, false).indexOf("tick") >= 0), "-1true"); }
 const d250 = due(sc, t + 250, false, false);
 eq("probe due at 250", String(d250.indexOf("probe") >= 0 && d250.indexOf("tick") < 0), "true");
 eq("tick due at 500", String(due(sc, t + 500, false, false).indexOf("tick") >= 0), "true");

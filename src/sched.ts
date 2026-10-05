@@ -87,12 +87,21 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
 function lastOf(sc: Sched, j: Job): number { const x = sc.js.get(j); return x ? x.last : 0; }
 function jumped(last: number, now: number): boolean { return last > now || now - last > JUMP; }
 
+// a turn that runs anyway also runs the data jobs due within the next quarter of their interval (≤ 100 ms): every
+// wake of the loop costs the runtime ~0.1 ms by itself, so jobs share wakes; render and fast keep their own beat (the
+// spinner and marquee speed)
 export function due(sc: Sched, now: number, live: boolean, armed: boolean): Job[] {
   const out: Job[] = [];
   for (const j of JOBS) {
     const e = every(sc, j, live, armed); if (e < 0) continue;
     const last = lastOf(sc, j);
     if (jumped(last, now) || now - last >= e) out.push(j);
+  }
+  if (!out.length) return out;
+  for (const j of JOBS) {
+    if (j === "render" || j === "fast" || out.indexOf(j) >= 0) continue;
+    const e = every(sc, j, live, armed); if (e < 0) continue;
+    if (now - lastOf(sc, j) >= e - Math.min(100, e / 4)) out.push(j);
   }
   return out;
 }
