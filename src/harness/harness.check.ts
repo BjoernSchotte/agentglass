@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { width } from "../util/text.ts";
 import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
-import { type Acc, L, newAcc, bucket, usageExact } from "../features/usage/record.ts";
+import { type Acc, type ModelUse, L, newAcc, bucket, usageExact, modelUses } from "../features/usage/record.ts";
 import { price, cost } from "../features/usage/pricing.ts";
 import { skillUses, heavy } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
@@ -255,8 +255,36 @@ function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: 
   const r = newAcc(); feed(r, L3.slice(1)); same("resumed mid-message: booked once", r);
   const one = newAcc(); feed(one, [msg("m3", "[{\"type\":\"message\",\"model\":\"claude-opus-4-8\",\"input_tokens\":3,\"output_tokens\":350,\"cache_read_input_tokens\":938889}]", "")]);
   ok("fallback: one iteration books the top level", one.outTok === 350 && one.cw === 1200 && one.cr === 938889, one.outTok + " " + one.cw);
+  // the answering attempt streams on: a later line's larger top-level output_tokens books its growth on that attempt's model
+  const l3 = L3[2] ?? ""; const o3 = l3.indexOf("\"output_tokens\":350"); // the top level comes before the iterations
+  const grown = L3.slice(0, 2).concat([l3.slice(0, o3) + "\"output_tokens\":400" + l3.slice(o3 + 19)]);
+  const g = newAcc(); feed(g, grown); const gm = modelUses(g, null).find((u: ModelUse) => u.model === "claude-opus-4-8");
+  ok("fallback: streamed growth on the answering attempt", g.outTok === 877 && g.cr === 1877778 && g.inTok === 6 && (gm ? gm.outTok : 0) === 400 && Math.abs(g.cost - want - (po ? cost(po, 0, 50, 0, 0, 0) : 0)) < 1e-9,
+    [g.outTok, g.cr, gm ? gm.outTok : -1, g.cost].join(" "));
   const syn = newAcc(); feed(syn, [msg("m4", "[{\"model\":\"<synthetic>\",\"output_tokens\":5},{\"model\":\"claude-opus-4-8\",\"input_tokens\":1,\"output_tokens\":2}]", "")]);
   ok("fallback: <synthetic> attempt skipped", syn.outTok === 2 && syn.inTok === 1, syn.outTok + " " + syn.inTok);
+}
+// Claude streaming: a message's first line (thinking) is written with the output_tokens counted so far; a later line of
+// the same id carries the final count — the message is booked at its largest count, once, also across a resume
+{
+  const ln = (id: string, out: number, blk: string): string => "{\"type\":\"assistant\",\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"message\":{\"id\":\"" + id + "\",\"model\":\"claude-opus-4-8\",\"content\":[" + blk + "],"
+    + "\"usage\":{\"input_tokens\":2,\"output_tokens\":" + String(out) + ",\"cache_read_input_tokens\":1000,\"cache_creation_input_tokens\":0}}}";
+  const TH = "{\"type\":\"thinking\",\"thinking\":\"\"}"; const TU = "{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Read\",\"input\":{\"file_path\":\"/x\"}}";
+  // s2 and s3 stream concurrently (a subagent's parallel requests): their lines interleave
+  const L = [ln("s1", 8, TH), ln("s1", 1893, TU), ln("s1", 1893, "{\"type\":\"text\",\"text\":\"ok\"}"), ln("s2", 6, TH), ln("s3", 3, TH), ln("s2", 40, TU), ln("s3", 600, TU)];
+  const po = price("claude-opus-4-8"); const want = po ? cost(po, 6, 2533, 3000, 0, 0) : 0;
+  const run = (resumeAt: number): Acc => {
+    let a = newAcc();
+    for (let i = 0; i < L.length; i++) { if (i === resumeAt) a = accIn(JSON.parse(JSON.stringify(accOut(a)))); harnessOf("claude").usage(a, L[i] ?? ""); }
+    return a;
+  };
+  for (const at of [-1, 1, 4, 5]) {
+    const a = run(at); let dOut = 0; for (const d of a.days.values()) dOut += d.outTok;
+    ok("split message: final output_tokens (resume " + String(at) + ")", a.outTok === 2533 && dOut === 2533 && a.inTok === 6 && a.cr === 3000 && Math.abs(a.cost - want) < 1e-9,
+      [a.outTok, dOut, a.inTok, a.cr, a.cost, want].join(" "));
+  }
+  const a = run(-1); for (const l of L) harnessOf("claude").usage(a, l);
+  ok("split message: lines read again book nothing", a.outTok === 2533, String(a.outTok));
 }
 // Claude skills: a slash command paired with its base-directory meta line (same promptId) = command; a Skill tool call = model
 const SK_T = "\"timestamp\":\"2026-10-01T10:00:00.000Z\"";

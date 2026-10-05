@@ -50,7 +50,7 @@ function load(): void {
   if (!ss) return;
   for (const path of Object.keys(ss)) {
     const o = obj(ss[path]); if (!o) continue;
-    const a = accIn(o); if (v !== VERSION) { a.hd = []; a.tl = []; } // memos of pre-release builds, in another layout
+    const a = accIn(o);
     if (!ROWS.on) { ledger.set(path, a); continue; } // no rows built (checks): the day buckets alone are consistent with off
     if (LAZY_ROWS) { ledger.set(path, a); written.set(path, a.off); unread.add(path); continue; } // its calls file, as is, until it grows
     const calls = loadCallsFrom(CALLS_DIR, path, a);
