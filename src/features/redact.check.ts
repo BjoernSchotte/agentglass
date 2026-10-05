@@ -48,6 +48,14 @@ const pp = display("path", HOME + "/.pi/agent/sessions/--" + (HOME + "/code/secr
 ok("pi path", pp.indexOf("secretproj") < 0, pp);
 const np = display("path", HOME + "/.claude/projects/" + (HOME + "/code/clientx-portal").replace(/[^A-Za-z0-9]/g, "-") + "/x.jsonl", null);
 ok("claude path without a known cwd", np.indexOf("clientx") < 0 && np.indexOf("portal") < 0 && np.endsWith("/x.jsonl"), np);
+// Gemini: tmp/<basename>/; a Gemini or pi dir no known cwd spelled is faked as a whole
+const gs = newSess("gemini", "g1", "/tmp/g.json", false); gs.cwd = HOME + "/code/clientxapp"; applyMeta(gs);
+const gp = display("path", HOME + "/.gemini/tmp/clientxapp/chats/session-1.json", gs);
+ok("gemini path", gp.indexOf("clientxapp") < 0 && gp.indexOf("/.gemini/tmp/" + gs.cwd.slice(gs.cwd.lastIndexOf("/") + 1) + "/chats/") >= 0, gp);
+const gn = display("path", HOME + "/.gemini/tmp/clientyapp/chats/session-1.json", null);
+ok("gemini path without a known cwd", gn.indexOf("clientyapp") < 0 && gn.endsWith("/chats/session-1.json"), gn);
+const pn = display("path", HOME + "/.pi/agent/sessions/--" + (HOME + "/code/clientzapp").slice(1).replace(/\//g, "-") + "--/x.jsonl", null);
+ok("pi path without a known cwd", pn.indexOf("clientzapp") < 0 && pn.endsWith("--/x.jsonl"), pn);
 
 // scrubber: same length, names and learned projects gone, box line stays aligned
 const line = "│ /Users/" + user + "/code/secretproj/web · " + user.toUpperCase() + " · me@example.org · sk-" + "Ab3".repeat(10) + " │";

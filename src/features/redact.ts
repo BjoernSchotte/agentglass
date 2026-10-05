@@ -331,26 +331,25 @@ function fakeBranch(real: string): string {
   brFake.set(real, f); brFakes.add(f);
   return f;
 }
-// a transcript path names the real cwd in its directory (Claude: every non-alphanumeric → "-", pi: --a-b-c--, Gemini:
-// tmp/<basename>/): those spellings of the session's cwd become the fake cwd's, the rest is scrubbed
+// a transcript path names the real cwd in its store's project directory (Claude: every non-alphanumeric → "-", pi:
+// --a-b-c--, Gemini: tmp/<basename>/): the session's cwd spelled that way becomes the fake cwd's, a directory no known
+// cwd spells (a session without a cwd line, one that moved) is faked as a whole; only that segment, the rest is scrubbed
 function claudeDir(p: string): string { return p.replace(/[^A-Za-z0-9]/g, "-"); }
 function piDir(p: string): string { return "--" + p.slice(1).replace(/[\/\\:]/g, "-") + "--"; }
+const STORES: { at: string; spell: (cwd: string) => string; fake: (d: string) => string }[] = [
+  { at: "/.claude/projects/", spell: claudeDir, fake: (d: string): string => { const h = claudeDir(HOME) + "-"; return d.startsWith(h) ? h + fakeProject(d.slice(h.length)) : fakeProject(d); } },
+  { at: "/.pi/agent/sessions/", spell: piDir, fake: (d: string): string => { const h = piDir(HOME).slice(0, -1); return d.startsWith(h) && d.endsWith("--") ? h + fakeProject(d.slice(h.length, -2)) + "--" : fakeProject(d); } },
+  { at: "/.gemini/tmp/", spell: base, fake: fakeProject }, // older Gemini named it by a sha256 of the cwd: faked too
+];
 function fakePath(p: string, s: Sess | null): string {
   const r = s ? recs.get(s.path) : undefined;
-  let o = p;
-  if (r && r.real && r.cwd) {
-    o = o.split(claudeDir(r.real)).join(claudeDir(r.cwd)).split(piDir(r.real)).join(piDir(r.cwd));
-    const b = base(r.real);
-    if (b && !GENERIC.has(b.toLowerCase())) o = o.split("/" + b + "/").join("/" + base(r.cwd) + "/");
+  for (const st of STORES) {
+    const i = p.indexOf(st.at); if (i < 0) continue;
+    const a = i + st.at.length; const j = p.indexOf("/", a); const d = p.slice(a, j > 0 ? j : p.length); if (!d) continue;
+    const f = r && r.real && r.cwd && d === st.spell(r.real) ? st.spell(r.cwd) : st.fake(d);
+    return scrubText(p.slice(0, a) + f + p.slice(a + d.length));
   }
-  // a Claude project dir no known cwd spelled (a session without a cwd line, one that moved): faked as a whole
-  const cp = "/.claude/projects/"; const i = o.indexOf(cp);
-  if (i >= 0) {
-    const j = o.indexOf("/", i + cp.length); const d = o.slice(i + cp.length, j > 0 ? j : o.length);
-    const h = claudeDir(HOME) + "-"; const fk = r && r.cwd ? claudeDir(r.cwd) : "";
-    if (d && d !== fk && !(fk && d.startsWith(fk))) o = o.slice(0, i + cp.length) + (d.startsWith(h) ? h + fakeProject(d.slice(h.length)) : fakeProject(d)) + o.slice(i + cp.length + d.length);
-  }
-  return scrubText(o);
+  return scrubText(p);
 }
 function kept(s: Sess): boolean {
   const r = recs.get(s.path);
