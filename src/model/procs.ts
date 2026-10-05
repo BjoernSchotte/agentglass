@@ -1,7 +1,7 @@
 // agentglass — harness processes (via the platform adapter, tmux) and their link to sessions
 // SPDX-License-Identifier: Apache-2.0
 import { base } from "../util/json.ts";
-import { run } from "../util/fs.ts";
+import { run, WAKE_ALL } from "../util/fs.ts";
 import { OS } from "../platform/index.ts";
 import { HARNESSES, harnessOfProc } from "../harness/index.ts";
 import type { Live } from "../harness/types.ts";
@@ -56,14 +56,15 @@ export function argsWorth(comm: string): boolean {
 export function refreshProcs(): void {
   passNo++;
   const rows = OS.listProcs(tracked, argsWorth);
-  let moved = false;
+  let moved = false; const fresh: Proc[] = [];
   for (const r of rows) {
     let p = allProcs.get(r.pid);
-    if (!p) { p = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: harnessOfArgs(r.args), cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; allProcs.set(r.pid, p); moved = true; continue; }
+    if (!p) { p = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: harnessOfArgs(r.args), cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; allProcs.set(r.pid, p); moved = true; if (p.h) fresh.push(p); continue; }
     if (p.ppid !== r.ppid) { p.ppid = r.ppid; moved = true; }
     if (p.args !== r.args) { p.args = r.args; p.h = harnessOfArgs(r.args); }
     p.cpu = r.cpu; p.rss = r.rss; p.etime = r.etime; p.tty = r.tty;
   }
+  for (const p of fresh) { const par = allProcs.get(p.ppid); if (!par || !par.h) { WAKE_ALL.at = Date.now(); break; } } // a new agent: its log may land in a quiet dir
   if (allProcs.size !== rows.length) { // pids went
     const live = new Set<number>(); for (const r of rows) live.add(r.pid);
     for (const k of [...allProcs.keys()]) if (!live.has(k)) allProcs.delete(k);

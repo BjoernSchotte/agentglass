@@ -181,10 +181,11 @@ function scan(add: AddFn): void {
   scanRoots(add2);
   for (const k of [...IX.keys()]) if (!listed.has(k)) IX.delete(k); // trashed or expired: forget its index
 }
+const QUIET = 86400000; // a dir unchanged for a day: once a minute (a new agent wakes it: fs.ts WAKE_ALL)
 function scanRoots(add: AddFn): void {
   for (const root of roots()) for (const slug of listDirCached(root)) {
     const sd = join(root, slug); if (!cwdOf(sd)) continue;
-    const cd = join(sd, "chats"); const names = listDirCached(cd);
+    const cd = join(sd, "chats"); const names = listDirCached(cd, QUIET);
     // a resume leaves a startup-only file with the same id next to the real one: keep the larger
     const best = new Map<string, string>(); const size = new Map<string, number>();
     for (const f of names) {
@@ -196,7 +197,7 @@ function scanRoots(add: AddFn): void {
     for (const [id, p] of best) { pathOf.set(id, p); add(p, id, "", false); }
     for (const f of names) {
       if (f.endsWith(".jsonl") || f.endsWith(".json")) continue;
-      for (const c of listDirCached(join(cd, f))) if (c.endsWith(".jsonl")) add(join(cd, f, c), c.slice(0, -6), f, false);
+      for (const c of listDirCached(join(cd, f), QUIET)) if (c.endsWith(".jsonl")) add(join(cd, f, c), c.slice(0, -6), f, false);
     }
   }
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { listDirCached, FS_CLOCK, FS_STATS } from "./fs.ts";
+import { listDirCached, FS_CLOCK, FS_STATS, WAKE_ALL } from "./fs.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -43,6 +43,9 @@ eq("aged missing: one stat", String(FS_STATS.stats - st0), "1");
 // quiet for a day: a directory changed within the day is looked at every time
 now += 61000; setDirTime(now - 5000); listDirCached(dir, 86400000); st0 = FS_STATS.stats; listDirCached(dir, 86400000);
 eq("changed within the quiet span: stat", String(FS_STATS.stats - st0), "1");
+// a new agent wakes every quiet directory for a minute
+listDirCached(dir, 86400000); WAKE_ALL.at = now; st0 = FS_STATS.stats; listDirCached(dir, 0);
+eq("woken: quiet dir looked at", String(FS_STATS.stats - st0), "1"); WAKE_ALL.at = 0;
 // a missing directory lists as [] and is forgotten
 rmSync(dir, { recursive: true, force: true });
 eq("gone", names(), "");

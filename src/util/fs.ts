@@ -63,10 +63,13 @@ export const FS_STATS = { lists: 0, stats: 0 }; // real listings and directory s
 const DIRS = new Map<string, { mt: number; at: number; st: number; names: string[] }>();
 const FRESH_MS = 2000; const RELIST_MS = 60000;
 const NONE: string[] = [];
+// a new agent process was seen (procs.ts): every quiet directory is looked at each scan for a minute (its log may go
+// into a directory that was quiet for long)
+export const WAKE_ALL = { at: 0 };
 function sameNames(a: string[], b: string[]): boolean { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
 export function listDirCached(p: string, quietMs: number = -1): string[] {
   const now = FS_CLOCK.now(); const e = DIRS.get(p);
-  if (quietMs >= 0 && e && now - e.st < RELIST_MS && (e.mt < 0 || now - e.mt >= quietMs)) return e.names;
+  if (quietMs >= 0 && now - WAKE_ALL.at >= RELIST_MS && e && now - e.st < RELIST_MS && (e.mt < 0 || now - e.mt >= quietMs)) return e.names;
   let mt = 0; FS_STATS.stats++;
   try { mt = statSync(p).mtimeMs; } catch (x) { if (quietMs >= 0) DIRS.set(p, { mt: -1, at: now, st: now, names: NONE }); else DIRS.delete(p); return NONE; }
   if (e && e.mt === mt && now - mt >= FRESH_MS && now - e.at < RELIST_MS) { e.st = now; return e.names; }
