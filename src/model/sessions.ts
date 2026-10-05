@@ -4,7 +4,7 @@ import { firstLine } from "../util/text.ts";
 import { own } from "../util/own.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
-import { readBytes, KNOWN, FS_STATS } from "../util/fs.ts";
+import { readBytes, KNOWN, LISTING } from "../util/fs.ts";
 import { S } from "../state.ts";
 import { H, applyMeta } from "../hooks.ts";
 
@@ -12,15 +12,16 @@ export const sessions = new Map<string, Sess>();
 KNOWN.mtime = (path: string): number => { const s = sessions.get(path); return s ? s.mtime : 0; };
 export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 
-// a known log is stat'ed when it is pid-linked or written within a day; the rest in turns, 1/ROT of them per scan (~once a
-// minute at the hot scan interval): a history of thousands of old logs was most of a scan
-const ROT = 20; const RECENT_MS = 86400000;
+// a known log is stat'ed every scan when it is pid-linked or written within 10 min, every 4th when within a day; the rest
+// in turns, 1/ROT of them per scan (~once a minute at the hot scan interval): a history of old logs was most of a scan
+const ROT = 20; const RECENT_MS = 86400000; const WARM_MS = 600000; // written within 10 min: every scan; within a day: every 4th
 const SCAN = { no: 0, now: 0, seen: 0, gone: [] as string[], gen: -1, n: -1 };
 // a log's turn: from the characters before its extension (ids, random enough), no lookup per log and scan
 function rotOf(path: string): number { const n = path.length; let h = 0; for (let i = Math.max(0, n - 14); i < n - 6; i++) h = h * 7 + path.charCodeAt(i); return h % ROT; }
 // a known session at its turn: stat, new size/mtime; false = its log is gone
 function refresh(h: Harness, s: Sess, turn: number): boolean {
-  if (s.pid <= 0 && SCAN.now - s.mtime >= RECENT_MS && turn !== SCAN.no % ROT) { SCAN.seen++; if (H.meta.length) applyMeta(s); return true; } // not its turn
+  const age = SCAN.now - s.mtime;
+  if (s.pid <= 0 && (age >= RECENT_MS ? turn !== SCAN.no % ROT : age >= WARM_MS && turn % 4 !== SCAN.no % 4)) { SCAN.seen++; if (H.meta.length) applyMeta(s); return true; } // not its turn
   const st = sourceOf(h).stat(s);
   if (!st) { SCAN.gone.push(s.path); return false; }
   if (restat(s, st.size, st.mtime, epochOf(s)) || H.meta.length) applyMeta(s); // head and tail reads apply it after they change fields; --redact (H.meta) fakes every scanned session as before: a writer path that skips it must not leak
@@ -75,13 +76,14 @@ export function scan(): void {
     // while the walk repeats the last listing path by path nothing is copied; at the first difference the arrays start
     const paths: string[] = []; const ids: string[] = []; const pars: string[] = []; const arch: boolean[] = [];
     let same = m !== undefined; let n = 0;
-    const l0 = FS_STATS.lists;
+    LISTING.want = m !== undefined; LISTING.same = false;
     ad.scan((path: string, id: string, parent: string, archived: boolean) => {
       if (same && n < prev.length && prev[n] === path) { n++; return; }
       if (same) { same = false; for (let i = 0; i < n; i++) { paths.push(prev[i] ?? ""); ids.push(m ? m.ids[i] ?? "" : ""); pars.push(m ? m.pars[i] ?? "" : ""); arch.push(m ? m.arch[i] ?? false : false); } }
       paths.push(path); ids.push(id); pars.push(parent); arch.push(archived);
     });
-    if (m && same && n === prev.length && FS_STATS.lists === l0) { // the same listing: its sessions, in turns
+    const short = LISTING.same; LISTING.want = false; LISTING.same = false;
+    if (m && ((short && n === 0) || (same && n === prev.length))) { // the same listing: its sessions, in turns
       for (let i = 0; i < m.sess.length; i++) { const s = m.sess[i]; if (s && !refresh(ad.id, s, i % ROT)) m.sess[i] = null; }
       continue;
     }

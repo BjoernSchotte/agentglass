@@ -63,6 +63,7 @@ export const FS_STATS = { lists: 0, stats: 0 }; // real listings and directory s
 const DIRS = new Map<string, { mt: number; at: number; st: number; names: string[] }>();
 const FRESH_MS = 2000; const RELIST_MS = 60000;
 const NONE: string[] = [];
+function sameNames(a: string[], b: string[]): boolean { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
 export function listDirCached(p: string, quietMs: number = -1): string[] {
   const now = FS_CLOCK.now(); const e = DIRS.get(p);
   if (quietMs >= 0 && e && now - e.st < RELIST_MS && (e.mt < 0 || now - e.mt >= quietMs)) return e.names;
@@ -70,13 +71,17 @@ export function listDirCached(p: string, quietMs: number = -1): string[] {
   try { mt = statSync(p).mtimeMs; } catch (x) { if (quietMs >= 0) DIRS.set(p, { mt: -1, at: now, st: now, names: NONE }); else DIRS.delete(p); return NONE; }
   if (e && e.mt === mt && now - mt >= FRESH_MS && now - e.at < RELIST_MS) { e.st = now; return e.names; }
   FS_STATS.lists++;
-  const names = listDir(p);
+  let names = listDir(p);
+  if (e && sameNames(e.names, names)) names = e.names; // listed again, nothing new: the same array (callers key on it)
   DIRS.set(p, { mt, at: now, st: now, names });
   return names;
 }
 // the mtime of a session log the scan already knows (sessions.ts sets it; 0 = unknown): lets a harness scan tell an
 // old session's subagent dir (aged) from a working one's without a stat
 export const KNOWN = { mtime: (path: string): number => 0 };
+// a scan's shortcut (sessions.ts ↔ a harness scan): want = the caller holds the last listing; same = the scan found
+// every directory as before and listed nothing (the caller walks what it holds)
+export const LISTING = { want: false, same: false };
 export function run(cmd: string, args: string[]): string {
   try { return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 }); } catch (e) { return ""; }
 }

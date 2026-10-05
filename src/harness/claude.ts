@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join, dirname } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { CLAUDE, readText, readBytes, listDir, listDirCached, KNOWN } from "../util/fs.ts";
+import { CLAUDE, readText, readBytes, listDir, listDirCached, KNOWN, LISTING } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
@@ -19,7 +19,8 @@ const PROJECTS = join(CLAUDE, "projects");
 // ~/.claude/projects/<project>/<session>.jsonl, subagents in <project>/<session>/subagents/agent-<id>.jsonl
 // a project dir's logs and subagent dirs as paths, kept while its listing is the same (no path building per scan)
 const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][] }>();
-const TOP = { names: [] as string[], pds: [] as string[] }; // the project dirs' paths while the projects listing stands
+// the project dirs' paths and listings in the projects listing's order, while it stands
+const TOP = { names: [] as string[], pds: [] as string[], ms: [] as { names: string[]; logs: string[][]; subs: string[][] }[] };
 const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
 const IDLE_MS = 300000; const DAY_MS = 86400000; // a session not written for 5 min spawns no subagent (the spawning call is written first)
 // a live session (registry) whose log the scan does not know yet wakes every project dir for a minute, when it first
@@ -28,28 +29,38 @@ const WAKE = { at: 0, ids: new Set<string>(), unknown: new Map<string, string>()
 function scan(add: AddFn): void {
   const quiet = Date.now() - WAKE.at < 60000 ? -1 : DAY_MS; // a project dir unchanged for a day: once a minute, unless a new live session is unknown
   const top = listDirCached(PROJECTS);
-  if (top !== TOP.names) { TOP.names = top; TOP.pds = []; for (const proj of top) TOP.pds.push(join(PROJECTS, proj)); }
-  for (const pd of TOP.pds) {
+  let changed = top !== TOP.names;
+  if (changed) { TOP.names = top; TOP.pds = []; TOP.ms = []; for (const proj of top) TOP.pds.push(join(PROJECTS, proj)); }
+  const now = Date.now();
+  // look at every dir first (the cached listings, a stat where due); emit only when one changed or the caller has no copy
+  for (let i = 0; i < TOP.pds.length; i++) {
+    const pd = TOP.pds[i] ?? "";
     const names = listDirCached(pd, quiet);
-    let m = PJ.get(pd);
+    let m = i < TOP.ms.length ? TOP.ms[i] : null;
     if (!m || m.names !== names) {
-      m = { names, logs: [], subs: [] };
-      for (const f of names) {
-        if (f.endsWith(".jsonl")) { m.logs.push([join(pd, f), f.slice(0, -6)]); WAKE.ids.add(f.slice(0, -6)); }
-        else if (f.length === 36) m.subs.push([join(pd, f, "subagents"), f, join(pd, f + ".jsonl")]); // <session-uuid>/ dirs hold subagent transcripts
+      m = PJ.get(pd) ?? null;
+      if (!m || m.names !== names) {
+        m = { names, logs: [], subs: [] };
+        for (const f of names) {
+          if (f.endsWith(".jsonl")) { m.logs.push([join(pd, f), f.slice(0, -6)]); WAKE.ids.add(f.slice(0, -6)); }
+          else if (f.length === 36) m.subs.push([join(pd, f, "subagents"), f, join(pd, f + ".jsonl")]); // <session-uuid>/ dirs hold subagent transcripts
+        }
+        PJ.set(pd, m); changed = true;
       }
-      PJ.set(pd, m);
+      if (i < TOP.ms.length) TOP.ms[i] = m; else TOP.ms.push(m);
     }
-    for (const l of m.logs) add(l[0] ?? "", l[1] ?? "", "", false);
-    const now = Date.now();
     for (const d of m.subs) {
-      const sd = d[0] ?? ""; const f = d[1] ?? "";
+      const sd = d[0] ?? "";
       const pm = KNOWN.mtime(d[2] ?? ""); // its session idle (or gone): no new subagents now, the dir looked at once a minute
       const ns = listDirCached(sd, pm === 0 || now - pm >= IDLE_MS ? 0 : -1);
-      let k = SD.get(sd);
-      if (!k || k.names !== ns) { k = { names: ns, logs: [] }; for (const a of ns) if (a.endsWith(".jsonl")) k.logs.push([join(sd, a), a.slice(6, -6)]); SD.set(sd, k); }
-      for (const l of k.logs) add(l[0] ?? "", l[1] ?? "", f, false);
+      const k = SD.get(sd);
+      if (!k || k.names !== ns) { const kk = { names: ns, logs: [] as string[][] }; for (const a of ns) if (a.endsWith(".jsonl")) kk.logs.push([join(sd, a), a.slice(6, -6)]); SD.set(sd, kk); changed = true; }
     }
+  }
+  if (!changed && LISTING.want) { LISTING.same = true; return; } // the caller still holds what this would list
+  for (const m of TOP.ms) {
+    for (const l of m.logs) add(l[0] ?? "", l[1] ?? "", "", false);
+    for (const d of m.subs) { const k = SD.get(d[0] ?? ""); if (k) for (const l of k.logs) add(l[0] ?? "", l[1] ?? "", d[1] ?? "", false); }
   }
   if (PJ.size > 4096) PJ.clear();
   if (SD.size > 65536) SD.clear();
