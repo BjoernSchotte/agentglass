@@ -19,7 +19,6 @@ const URLS = new Map<string, string>([
   ["models.dev", "https://models.dev/api.json"],
 ]);
 export const SOURCES = [...URLS.keys()];
-const DIR = join(HOME, ".agentglass", "cache");
 const TIMEOUT_MS = 20000;
 const MIN_MODELS = 10; // a list with fewer first-party models is broken: keep the previous one
 
@@ -34,7 +33,9 @@ export function remoteCfg(): RemoteCfg {
   const h = typeof c["refreshHours"] === "number" ? (c["refreshHours"] as number) : 24;
   return { source: src, hours: Math.max(1, h), offline, error: "" };
 }
-function file(source: string): string { return join(DIR, "prices-" + source + ".json"); }
+// beside the ledger: AGENTGLASS_CACHE_DIR moves both (read per call: the env may change after import, e.g. in checks)
+function dir(): string { const e = process.env.AGENTGLASS_CACHE_DIR; return e ? e : join(HOME, ".agentglass", "cache"); }
+export function pricesFile(source: string): string { return join(dir(), "prices-" + source + ".json"); }
 
 // ── normalize: a raw list → first-party model id → $/Mtok ──
 function n(v: unknown, scale: number): number { return typeof v === "number" && isFinite(v as number) && (v as number) >= 0 ? (v as number) * scale : -1; }
@@ -76,7 +77,7 @@ function toObj(r: Remote): Obj {
   return { source: r.source, fetchedAt: r.fetchedAt, etag: r.etag, prices: ps };
 }
 export function loadCached(source: string): Remote | null {
-  const o = obj((() => { try { return JSON.parse(readText(file(source), 0, 4194304)); } catch (e) { return null; } })());
+  const o = obj((() => { try { return JSON.parse(readText(pricesFile(source), 0, 4194304)); } catch (e) { return null; } })());
   const ps = o ? obj(o["prices"]) : null;
   if (!o || !ps || str(o["source"]) !== source) return null;
   const prices = new Map<string, RPrice>();
@@ -89,8 +90,8 @@ export function loadCached(source: string): Remote | null {
   return { source, fetchedAt: typeof o["fetchedAt"] === "number" ? (o["fetchedAt"] as number) : 0, etag: str(o["etag"]), prices };
 }
 function save(r: Remote): void {
-  mkdirSync(DIR, { recursive: true });
-  const f = file(r.source); const tmp = f + ".tmp";
+  mkdirSync(dir(), { recursive: true });
+  const f = pricesFile(r.source); const tmp = f + ".tmp";
   const fd = openSync(tmp, "w"); writeSync(fd, JSON.stringify(toObj(r))); closeSync(fd);
   renameSync(tmp, f); // atomic: never a torn cache
 }
