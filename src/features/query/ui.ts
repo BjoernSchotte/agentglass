@@ -63,7 +63,9 @@ H.backlog.push(() => headsLeft > 0);
 interface MP { key: string; paths: Set<string> }
 const mp = new Map<string, MP>();
 let searchOk = true; // false while typing: a content clause never starts a search (enter does)
+export const MPS = { asks: 0 }; // matchingPaths calls (checks: a pass over sessions asks once, not per session — each ask walks them all)
 export function matchingPaths(f: Compiled): Set<string> {
+  MPS.asks++;
   const key = String(L.ver) + "|" + liveSig();
   const hit = mp.get(f.key); if (hit && hit.key === key) return hit.paths;
   const out = new Set<string>();
@@ -80,6 +82,11 @@ export function matchingPaths(f: Compiled): Set<string> {
   if (mp.size > 32) mp.clear();
   mp.set(f.key, { key, paths: out });
   return out;
+}
+// does a session path pass f's content (full-text) clauses? Made once per pass over sessions or calls, asked per item
+export function contentOk(f: Compiled): (path: string) => boolean {
+  if (!f.content.length) return (_p: string): boolean => true;
+  const m = matchingPaths(f); return (p: string): boolean => m.has(p);
 }
 // top-level rows a clause list leaves (a parent stays when a subagent matches)
 function countTop(cs: Clause[]): number {
