@@ -7,7 +7,7 @@ import { FX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, modelTok, addCost, unpriced } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, modelTok, addCost, tableTok } from "../features/usage/record.ts";
 import { MQ_SESS } from "../features/usage/facts.ts";
 import { done, patchFiles } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
@@ -115,7 +115,7 @@ function usageSidecar(s: Sess, a: Acc): void {
   const md = a.model || "fx:custom"; const nt = inp + out + cr + cw;
   if (nt > 0) modelTok(d, md, inp, out, cr, cw);
   if (c > 0) addCost(a, d, c, "", md);
-  else if ((cur[4] ?? 0) === 0 && nt > 0) unpriced(a, d, md, nt); // custom model connections report $0: their tokens are unpriced
+  else if ((cur[4] ?? 0) === 0 && nt > 0) tableTok(a, d, md, "", inp, out, cr, cw, 0); // custom model connections report $0: priced by the table (a user price), else unpriced
   lines(a, d, dl[5] ?? 0, dl[6] ?? 0);
 }
 

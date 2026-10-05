@@ -6,6 +6,7 @@ import { home } from "../util/text.ts";
 import { CONFIG_FILE } from "../util/config.ts";
 import { remoteCfg, loadCached, stale, refresh, SOURCES } from "./usage/remote.ts";
 import { pricesFrom } from "./usage/pricing.ts";
+import { reloadPrices } from "./usage/repricer.ts";
 
 const OPT_IN = "opt in: " + home(CONFIG_FILE) + ' → {"prices": {"source": "' + SOURCES.join('" | "') + '", "refreshHours": 24}}';
 
@@ -16,7 +17,11 @@ H.onTick.push(() => {
   const c = remoteCfg();
   if (c.error) { say("warn", c.error); return; }
   if (!c.source || c.offline || !stale(c, loadCached(c.source))) return;
-  refresh(c).then((msg: string) => say(msg.indexOf("failed") >= 0 || msg.indexOf("HTTP") >= 0 || msg.indexOf("timed out") >= 0 ? "warn" : "ok", msg));
+  refresh(c).then((msg: string) => {
+    const good = msg.indexOf("updated") >= 0; // applies at once: the ledger re-prices in place
+    if (good) { const usd = reloadPrices("community"); say("ok", msg + " — applied" + (Math.abs(usd) >= 0.005 ? ", history re-priced (" + (usd >= 0 ? "+" : "−") + "$" + Math.abs(usd).toFixed(2) + ")" : "")); return; }
+    say(msg.indexOf("failed") >= 0 || msg.indexOf("HTTP") >= 0 || msg.indexOf("timed out") >= 0 ? "warn" : "ok", msg);
+  });
 });
 
 H.cli.push((args: string[]): boolean => {

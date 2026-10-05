@@ -12,7 +12,9 @@ import { REDACT } from "../redact-on.ts";
 import { type Acc, L } from "./record.ts";
 import { ROWS } from "./facts.ts";
 import { rulesNeedRows } from "../rules/file.ts";
-import { pricesSig } from "./pricing.ts";
+import { pricesSig, kiroRate } from "./pricing.ts";
+import { repriceAll } from "./repricer.ts";
+import { isKiroLog } from "../../harness/kiro.ts";
 import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
@@ -44,12 +46,14 @@ function load(): void {
   try { size = statSync(FILE).size; } catch (e) { return; }
   const root = parse(readText(FILE, 0, size).trim());
   const v = root ? num(root["v"]) : 0;
-  if (!root || !readable(v) || str(root["prices"]) !== pricesSig()) return; // stale: re-index from scratch
+  if (!root || !readable(v)) return; // another format: re-index from scratch
   rlIn(obj(root["rl"]));
   const ss = obj(root["sessions"]);
   if (!ss) return;
+  const kiroOff = num(root["kiro"]) !== kiroRate(); // kiro credits are priced at booking, not per row: those sessions re-index
   for (const path of Object.keys(ss)) {
     const o = obj(ss[path]); if (!o) continue;
+    if (kiroOff && isKiroLog(path)) continue;
     const a = accIn(o);
     if (!ROWS.on) { ledger.set(path, a); continue; } // no rows built (checks): the day buckets alone are consistent with off
     if (LAZY_ROWS) { ledger.set(path, a); written.set(path, a.off); unread.add(path); continue; } // its calls file, as is, until it grows
@@ -58,6 +62,7 @@ function load(): void {
     a.calls = calls; a.lastCall = calls.length - 1;
     ledger.set(path, a); written.set(path, a.off);
   }
+  if (str(root["prices"]) !== pricesSig()) repriceAll(); // saved under other prices: re-price in place (no log is read again)
 }
 // ledger offset each session's calls file was last written at (= consistent with)
 const written = new Map<string, number>();
@@ -78,7 +83,7 @@ function save(): void {
   const ss: Obj = {};
   for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) ss[s.path] = accOut(a, KEEP_IDS); } // only sessions that still exist
   saveCalls();
-  const body = JSON.stringify({ v: VERSION, prices: pricesSig(), saved: Date.now(), rl: rlOut(), sessions: ss });
+  const body = JSON.stringify({ v: VERSION, prices: pricesSig(), kiro: kiroRate(), saved: Date.now(), rl: rlOut(), sessions: ss });
   try {
     mkdirSync(DIR, { recursive: true });
     const tmp = FILE + ".tmp";

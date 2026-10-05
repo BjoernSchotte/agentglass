@@ -17,6 +17,8 @@ import { toolArg, blockText, isNoise, prompts } from "./common.ts";
 
 // ~/.kiro/sessions/cli/<uuid>.jsonl (transcript), <uuid>.json (metadata + per-turn usage), <uuid>.lock ({pid} while open)
 const DIR = join(HOME, ".kiro", "sessions", "cli");
+// a kiro session log (its booked cost depends on the credit rate: the ledger cache re-indexes these when the rate changes)
+export function isKiroLog(path: string): boolean { return path.startsWith(DIR + "/"); }
 function scan(add: AddFn): void { for (const f of listDir(DIR)) if (f.length === 42 && f.endsWith(".jsonl")) add(join(DIR, f), f.slice(0, -6), "", false); }
 function side(s: Sess): Obj | null { return parseJson(readText(s.path.slice(0, -6) + ".json", 0, 4194304).trim()); }
 // {session_id, cwd, title, parent_session_id, session_created_reason: "subagent" | …}

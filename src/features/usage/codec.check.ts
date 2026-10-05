@@ -19,11 +19,12 @@ const o = accOut(a, 64); const js = JSON.stringify(o);
 const back = parse(js);
 const b = accIn(back ?? {});
 const e = b.days.get([...a.days.keys()][0] ?? "");
-ok("version", VERSION === 16, String(VERSION)); // 16 = Claude twins: the project dir its cwd names owns the shared messages (v15 caches gave them to the first path, re-index); 15 = cross-file message ownership (Acc.mo/mc: copies of a message another log owns book nothing; older caches double count, re-index); 14 = Claude messages at their final output_tokens (Acc.ids with booked output: v12/v13 caches under-count, re-index); 13 = perf-baseline (the heavy day maps as JSON text: a v12 build would read them empty; v12 caches still read); 12 = harness-correctness (Gemini call errors + models, pi /skill); 11 = Acc.vcs git refs (git-linkage); 10 = Acc.rs (otlp-export); 9 = repo-view Day.act + Acc.al; 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
-ok("reads its own version only", readable(VERSION) && !readable(15) && !readable(14) && !readable(13) && !readable(12) && !readable(VERSION + 1), "");
+ok("version", VERSION === 17, String(VERSION)); // 17 = Day.tp priced-token rows (model-prices: re-price in place); 16 = Claude twins: the project dir its cwd names owns the shared messages (v15 caches gave them to the first path, re-index); 15 = cross-file message ownership (Acc.mo/mc: copies of a message another log owns book nothing; older caches double count, re-index); 14 = Claude messages at their final output_tokens (Acc.ids with booked output: v12/v13 caches under-count, re-index); 13 = perf-baseline (the heavy day maps as JSON text: a v12 build would read them empty; v12 caches still read); 12 = harness-correctness (Gemini call errors + models, pi /skill); 11 = Acc.vcs git refs (git-linkage); 10 = Acc.rs (otlp-export); 9 = repo-view Day.act + Acc.al; 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
+ok("reads its own version only", readable(VERSION) && !readable(16) && !readable(15) && !readable(14) && !readable(13) && !readable(12) && !readable(VERSION + 1), "");
 ok("day present", !!e, [...b.days.keys()].join(","));
 if (e) {
   ok("unk", e.unk === d.unk, String(e.unk));
+  ok("tp round-trip", e.tp.size === d.tp.size && e.tp.size === 2 && (e.tp.get(h + "\t\tgpt-x-unknown") ?? []).join(",") === "900,0,0,0,0,-1" && Math.abs(((e.tp.get(h + "\t\tclaude-sonnet-4-5") ?? [])[5] ?? 0) - (1000 * 3 + 100 * 15) / 1e6) < 1e-12, [...e.tp.keys()].join("|"));
   ok("um", e.um.get("gpt-x-unknown") === 900, [...e.um.keys()].join(","));
   ok("uc", e.uc === 7, String(e.uc));
   ok("cp", (e.cp.get("openrouter") ?? 0) === 0.5 && Math.abs((e.cp.get("") ?? 0) - (d.cp.get("") ?? 0)) < 1e-12, [...e.cp.keys()].join(","));
