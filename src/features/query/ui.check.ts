@@ -130,6 +130,12 @@ eq("age < 2s: a second later it no longer does", String(matchingPaths(fa).has(yn
   matchingPaths(fb, "list"); eq("back to the call filter: deferred again", String(fillState(fb).left === st.total), "true");
   setLocal("Sessions", parse("tool is Bash").cs);
   eq("empty list says filtering", String(emptyText("sessions").indexOf("filtering") >= 0), "true");
+  // pinned: "pins hide n" counts only once the rows are in (unread sessions are not hidden ones)
+  setLocal("Sessions", []); const keepPins = S.pins; S.pins = parse("tool is Bash").cs.map((c) => ({ key: c.key, op: c.op, vals: c.vals, neg: c.neg, pinned: true }));
+  for (const g of H.listFilter) g(); // the list's pass queues the pinned filter's fill
+  const ch = boxChips("sessions", 200);
+  eq("while filling: no pins-hide count", String(ch.indexOf("filtering") >= 0) + " " + String(ch.indexOf("pins hide") >= 0), "true false");
+  S.pins = keepPins; setLocal("Sessions", parse("tool is Bash").cs);
   let guard = 0; while (fillStep(0) && guard < 50) { guard++; matchingPaths(fb, "list"); }
   eq("filled: equals the eager set", [...matchingPaths(fb, "list")].sort().join(",") + " left " + String(fillState(fb).left), eager + " left 0");
   eq("filled: no filtering text", String(emptyText("sessions").indexOf("filtering") >= 0), "false");

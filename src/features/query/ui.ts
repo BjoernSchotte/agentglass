@@ -410,15 +410,15 @@ H.boxChips.push((where: string, w: number): string => {
   if (where === "processes") return chips("Processes", "procs", w);
   if (where !== "sessions") return "";
   const f = tabFilter("Sessions", "list"); if (f === EMPTY) return "";
-  const hid = hiddenCount("Sessions"); const all: string[] = []; const cc = callsChip(f, all);
-  const fl = fillState(f);
+  // while the rows fill in, "pins hide n" would count the unread sessions as hidden: it shows once the fill is done
+  const fl = fillState(f); const hid = fl.left > 0 ? 0 : hiddenCount("Sessions"); const all: string[] = []; const cc = callsChip(f, all);
   const tail = (fl.left > 0 ? fg(C.yellow) + " · filtering " + String(fl.total - fl.left) + "/" + String(fl.total) + RST : "") + (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (cc ? " " + cc : "");
   return chips("Sessions", "list", Math.max(8, w - vwidth(tail))) + tail;
 });
 H.emptyText.push((where: string): string => {
   if (where !== "sessions" || tabFilter("Sessions", "list") === EMPTY) return "";
   const fl = fillState(tabFilter("Sessions", "list"));
-  if (fl.left > 0) return fg(C.yellow) + "filtering… " + String(fl.total - fl.left) + "/" + String(fl.total) + " sessions' call rows read — matches appear as they are" + RST;
+  if (fl.left > 0) return fg(C.yellow) + "filtering… " + String(fl.total - fl.left) + "/" + String(fl.total) + " — matches appear as call rows are read" + RST;
   const hid = hiddenCount("Sessions");
   return fg(C.sub) + "no sessions match" + (hid > 0 ? " — " + String(hid) + " hidden by pins (P edits)" : localFor("Sessions").length ? " — esc clears the filter" : "") + RST;
 });
@@ -441,7 +441,7 @@ H.helpSections.push({ name: "filter  (/ on Sessions and Stats; the same grammar 
   ["P", "edit the pins (empty + ↵ unpins); config filter.remember: false forgets them"],
   ["h  l  F", "harness is … (cycle) · live is true (toggle) · content ~ \"…\" (full-text)"],
   ["esc (list)", "clear this tab's filter; pins stay"],
-  ["filtering n/m", "a call filter reads call rows in the background; matches fill in"],
+  ["filtering n/m", "call rows read in the background; matches fill in"],
 ].concat(wrapKeys(64)) });
 
 // ── restored pins: announced on start so they never look like missing sessions; the info toast is built then, not
