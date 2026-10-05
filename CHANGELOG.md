@@ -2,6 +2,72 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.3
+
+### Features
+
+- session compare — A vs B side by side (marks, previous run, periods, CLI, triage A vs B) (#27) (610fae2, [#27](https://github.com/BjoernSchotte/agentglass/pull/27))
+- git linkage — commits, PRs and issues per session, $/commit (#26) (be22aae, [#26](https://github.com/BjoernSchotte/agentglass/pull/26))
+- related events — cross-agent timeline around an event, conflicts flagged (r, --json --related) (#24) (9526577, [#24](https://github.com/BjoernSchotte/agentglass/pull/24))
+- command palette (Ctrl+K), agentglass open deep links, single-instance hand-off, OSC 8 links (#23) (542271d, [#23](https://github.com/BjoernSchotte/agentglass/pull/23))
+- OTLP export — sessions as OpenTelemetry GenAI traces, history and live (#22) (04dfff4, [#22](https://github.com/BjoernSchotte/agentglass/pull/22))
+- Repos tab — project identity, per-project cost, active time, errors, files (#21) (d557312, [#21](https://github.com/BjoernSchotte/agentglass/pull/21))
+- **cli:** agent mode — JSON-first CLI inside coding agents, --format/--fields, session/sessions/errors/cost queries (#16) (e51d37a, [#16](https://github.com/BjoernSchotte/agentglass/pull/16))
+- triage — what is different about a selection vs a baseline (#18) (52b1ae8, [#18](https://github.com/BjoernSchotte/agentglass/pull/18))
+- configurable watchdog rules (rules.json, two severities, alerts in --json/--watch, notify command) (#19) (5fc0219, [#19](https://github.com/BjoernSchotte/agentglass/pull/19))
+- filter language, pins and per-call ledger rows (#17) (27e1d52, [#17](https://github.com/BjoernSchotte/agentglass/pull/17))
+- honest costs — billing modes, unpriced breakdown, projection, budget (#13) (366c810, [#13](https://github.com/BjoernSchotte/agentglass/pull/13))
+- **refresh:** adaptive refresh cadence follows activity (#14) (bdbf136, [#14](https://github.com/BjoernSchotte/agentglass/pull/14))
+
+### Fixes
+
+- **redact:** REDACTED at every width, live sessions stay live, program completion offers only fakes (#44) (d6316a4, [#44](https://github.com/BjoernSchotte/agentglass/pull/44))
+- comma sets in is_one_of, typed --fields lists, options in the agent help, CA hint for update, already-pinned toast (#53) (71010b0, [#53](https://github.com/BjoernSchotte/agentglass/pull/53))
+- **claude:** book each API message once across transcript files; Codex fork calls (#51) (e26f298, [#51](https://github.com/BjoernSchotte/agentglass/pull/51))
+- **redact:** fake commit branches, transcript paths, compare files and self-hosted forge hosts (#48) (e269754, [#48](https://github.com/BjoernSchotte/agentglass/pull/48))
+- **agent-mode:** compare/triage/rules/export/open/update behave inside an agent; nested agents report the inner harness (#52) (98c9611, [#52](https://github.com/BjoernSchotte/agentglass/pull/52))
+- **config:** a broken config.json warns and is never overwritten (#39) (77e8b72, [#39](https://github.com/BjoernSchotte/agentglass/pull/39))
+- **git:** a banner commit the repo does not have is elsewhere, not counted (#46) (3b9fb7d, [#46](https://github.com/BjoernSchotte/agentglass/pull/46))
+- **ui:** no lost prompt text, no box overflow, 80-column Stats and header (#40) (2bc7fde, [#40](https://github.com/BjoernSchotte/agentglass/pull/40))
+- **watch:** alert lines obey --filter, lines carry the call id, OTLP status sees Gemini project telemetry (#42) (a8e3379, [#42](https://github.com/BjoernSchotte/agentglass/pull/42))
+- **filter:** tab goes on after a unique completion, the error column is marked, an exclude narrows a set (#41) (075fedd, [#41](https://github.com/BjoernSchotte/agentglass/pull/41))
+- **prices:** keep the community price list in AGENTGLASS_CACHE_DIR (#49) (ad98dee, [#49](https://github.com/BjoernSchotte/agentglass/pull/49))
+- **themes:** AGENTGLASS_THEME_FILE moves the persisted theme (#50) (1baf41e, [#50](https://github.com/BjoernSchotte/agentglass/pull/50))
+- **compare:** a session's active time never exceeds its wall time (#47) (b64c6e9, [#47](https://github.com/BjoernSchotte/agentglass/pull/47))
+- no ⚠ stalled while Gemini's title asks for approval; palette ranks the main repo over removed worktrees (#43) (08f073c, [#43](https://github.com/BjoernSchotte/agentglass/pull/43))
+- **filter:** Sessions filter predicate once per list build — no n² over sessions (#38) (65aab74, [#38](https://github.com/BjoernSchotte/agentglass/pull/38))
+- **claude:** book each message at its final output_tokens (#37) (e6f3c43, [#37](https://github.com/BjoernSchotte/agentglass/pull/37))
+- **redact:** mask pinned filter values, fake user-defined subagent names (#36) (725be94, [#36](https://github.com/BjoernSchotte/agentglass/pull/36))
+- **watchdog:** Gemini outside tmux — reply without text or calls quiet past 20 s raises approval? (likely) (#35) (cb00b1b, [#35](https://github.com/BjoernSchotte/agentglass/pull/35))
+- harness correctness — Gemini failures, pi /skill, Codex 7d gauge, config cache, fx OTLP deltas, provider rule (#31) (890a7f9, [#31](https://github.com/BjoernSchotte/agentglass/pull/31))
+- ui polish — help jump, footer fit, wrapped toasts, calls chip, real-value filters under --redact, triage presets, stale locks (#33) (a6784bf, [#33](https://github.com/BjoernSchotte/agentglass/pull/33))
+- alarms UX — ! cycles critical-first, queued notify commands, dangling and rejected, Gemini approval? outside tmux (#32) (9f092a0, [#32](https://github.com/BjoernSchotte/agentglass/pull/32))
+- **identity:** ssh host aliases and scp absolute paths resolve to their real host (#30) (b4b7021, [#30](https://github.com/BjoernSchotte/agentglass/pull/30))
+- parsing fixes — rename titles, fallback attempts, turn markers, skills, scrubbed remotes (#12) (33976b7, [#12](https://github.com/BjoernSchotte/agentglass/pull/12))
+
+### Performance
+
+- one-shot runs keep the cache; warm --json 57 s → 1.2 s, cold RSS 4.1 → 0.7 GB (#34) (97a0e36, [#34](https://github.com/BjoernSchotte/agentglass/pull/34))
+
+### Build & CI
+
+- 45-minute job timeout (#25) (ac6539a, [#25](https://github.com/BjoernSchotte/agentglass/pull/25))
+
+### Refactoring & other
+
+- **compare:** exit codes 4/3/2 for ambiguous, unknown and short ids (#29) (f6599e8, [#29](https://github.com/BjoernSchotte/agentglass/pull/29))
+- check-plan: weighted contiguous split by basename, stable across edits (#28) (2a1498b, [#28](https://github.com/BjoernSchotte/agentglass/pull/28))
+- **config:** AGENTGLASS_CONFIG points to another config file (#20) (9fc2e5b, [#20](https://github.com/BjoernSchotte/agentglass/pull/20))
+- **cache:** AGENTGLASS_CACHE_DIR points the usage-ledger cache elsewhere (3fd989f, [#15](https://github.com/BjoernSchotte/agentglass/pull/15))
+
+### Docs
+
+- **specs:** implementation plans for the 13 roadmap specs; reconciled interfaces, dependencies and review decisions (45fcafe, [#11](https://github.com/BjoernSchotte/agentglass/pull/11))
+- **specs:** otlp-export decision numbering (e289486, [#10](https://github.com/BjoernSchotte/agentglass/pull/10))
+- **specs:** apply review decisions — decisions sections, design updates, remaining verification items (8194e55, [#10](https://github.com/BjoernSchotte/agentglass/pull/10))
+- **specs:** otlp-export — coexistence with the harnesses' built-in telemetry (1a93d72, [#10](https://github.com/BjoernSchotte/agentglass/pull/10))
+- **specs:** feature roadmap and 13 specs (costs, parsing fixes, filters, OTLP export, triage, compare, repos, git, rules, related events, agent mode, palette, refresh) (fbde550, [#10](https://github.com/BjoernSchotte/agentglass/pull/10))
+
 ## 2026.10.2
 
 ### Features
