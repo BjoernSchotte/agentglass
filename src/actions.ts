@@ -9,7 +9,7 @@ import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
 import { sessions, SG, scan, buildView, parentOf, current } from "./model/sessions.ts";
-import { refreshProcs, rootOf, tmuxTarget, procAt, procSess, sharedDaemon } from "./model/procs.ts";
+import { refreshProcs, rootOf, tmuxTarget, tmuxTargetNow, procAt, procSess, sharedDaemon } from "./model/procs.ts";
 import { harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
 import { realCwd } from "./hooks.ts";
@@ -87,7 +87,7 @@ export function sendPrompt(sub: Sess, msg: string): void {
   const s = owner(sub);
   if (!s) return;
   if (s.pid) {
-    const t = tmuxTarget(s.pid);
+    const t = tmuxTargetNow(s.pid);
     if (!t) { say("warn", "session is live outside tmux — cannot inject input safely"); return; }
     sendTmux(t, msg);
     return;
@@ -114,7 +114,7 @@ export function resume(sub: Sess): void {
   const s = owner(sub);
   if (!s) return;
   if (s.pid) {
-    const t = tmuxTarget(s.pid);
+    const t = tmuxTargetNow(s.pid);
     if (t && process.env.TMUX) { run("tmux", ["switch-client", "-t", t]); say("ok", "switched to " + t); }
     else say("warn", "already running (pid " + s.pid + ")" + (t ? " in tmux " + t : ""));
     return;

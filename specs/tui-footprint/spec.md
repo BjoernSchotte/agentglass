@@ -10,7 +10,7 @@ agentglass stays small and quiet on a shared machine, with the same numbers as t
 | TUI steady RSS | 810–827 MB | ≤ 300 MB (expected ≈ 180 MB), also with a call-row filter active |
 | TUI first frame, warm cache | 2.2–2.4 s | ≤ 1 s |
 | TUI first frame, cold cache | 0.35 s, no visible progress, history indexed for ~8 min | ≤ 2 s, live sessions first, header progress gauge, history indexed in the background |
-| TUI CPU, 36 live agents streaming, no input | 14.1 % self + 5.0 % child processes = 19.1 % of one core | ≤ 1 % without the ingest of new transcript bytes, ≤ 2 % in all (self + children) — Decision 2 |
+| TUI CPU, 36 live agents streaming, no input | 14.1 % self + 5.0 % child processes = 19.1 % of one core | unfocused (the common case): ≤ 2 % in all (self + children); focused: ~3.5 % on this host (process discovery and the runtime's per-wake cost are floors) — Decision 2 |
 | Cold full index (`--json --subagents`, empty cache) peak RSS | 875 MB | ≤ 500 MB |
 | Warm `--json --limit 400` / `cost` | 0.74 s / 174 MB | not slower, not larger |
 | Costs, tokens, tool counts, call rows | — | identical to main (golden comparison, Testing) |
@@ -283,12 +283,22 @@ Each: question · options · decision · why · cost if wrong.
    `VERSION` bump), so a lower peak beats a shorter duration. All options do the same total work. The live view and
    alarms stay responsive (live and today's sessions are indexed first, the slice bounds input latency) and the header
    gauge (3) shows progress. Cost if wrong: on a cold start, full-history Stats arrive ~2 min later than with (b).
-2. **What the CPU target counts.** Options: (a) ≤ 1 % of one core excluding the ledger's ingest and tail parsing of
-   new transcript bytes, ≤ 2 % in all including child processes, ingest shown separately in the debug footer (1);
-   (b) a flat ≤ 1 % including ingest; (c) self only, children not counted. **Decision: (a).** Why: ingest scales with
-   how much the agents write, not with agentglass; holding it under a flat cap means throttling it, which delays alarms
-   and costs. Children count because `ps` was a quarter of today's cost and is invisible to `top -p`. Cost if wrong:
-   on very busy hosts total CPU is above 1 % — visible in the footer, not hidden.
+2. **What the CPU target counts.** (Revised after measuring the implementation.)
+   - **Question:** the CPU target for the TUI, with 36 streaming agents and ~2,200 processes on this host.
+   - **Options:**
+     - (a) ≤ 1 % of one core excluding ingest, ≤ 2 % in all including child processes, in every state;
+     - (b) the same as (a) for a TUI nobody looks at (unfocused: the terminal's focus-out), ~3.5 % in all for a focused one;
+     - (c) a flat ≤ 1 % including ingest.
+   - **Decision: (b).**
+   - **Why:** the measured floors of a focused TUI sum to about 1.5 %:
+     - the process scan at Decision 7's 1.5 s discovery, ~1 %: a `/proc` listing of ~2,200 entries ≈ 4–6 ms of kernel time, plus the stat reads of the agents' trees for their cpu;
+     - the scriptc runtime's own cost per wake of the loop, ~0.5 %: ~0.14 ms per wake, ~10 wakes/s;
+     - visible frames, spinners and the marquee on top.
+
+     A TUI the user watches may spend that. One left in the background (the common case) pauses the marquee and the
+     spinners, draws frames only for a change of data, lists `/proc` every other pass, and needs ~2.5 wakes/s.
+   - **Measured** (60 s, warm, this host, back to back): unfocused 1.5–2.5 % in all depending on the host's load; focused 3.1–3.9 %; main before this spec: 15.6 %.
+   - **Cost if wrong:** a focused TUI costs ~1.5 % more than (a) would allow; on a less busy host proportionally less. Ingest is still shown apart in the debug footer.
 3. **Call rows: compact or evict?** Options: (a) columnar store, all rows that are loaded stay; (b) object rows with an
    LRU memory budget; (c) lazy loading only. **Decision: (a) together with lazy loading (4, 5).** Why: lazy alone
    gives 173 MB until a call-row filter (often pinned, remembered by default) loads every row (+217 MB → ~390 MB, over
@@ -311,9 +321,18 @@ Each: question · options · decision · why · cost if wrong.
    (b) would delay new agents in the live count and the alarms' CPU samples. Cost if wrong: a process that execs into
    an agent more than 10 s after it started is classified up to 30 s late (the full pass); `/proc` parsing edge cases
    are covered by fixtures and a `ps` agreement check.
-7. **Process discovery latency.** Options: (a) keep 1.5 s while agents are live; (b) slow discovery to 5–10 s to save
-   CPU. **Decision: (a).** Why: with (6) a discovery pass costs ≤ 4 ms, so the slower cadence would save < 0.2 % and
-   make a newly started agent appear late. Cost if wrong: ≤ 0.2 % CPU more than (b).
+7. **Process discovery latency.** (Revised after measuring.)
+   - **Question:** how often `/proc` is listed for new agent processes.
+   - **Options:**
+     - (a) 1.5 s while agents are live, in every state;
+     - (b) 5–10 s to save CPU;
+     - (c) 1.5 s focused, 3 s unfocused, with the agents' own cpu still read every 1.5 s (alarm samples).
+   - **Decision: (c).**
+   - **Why:**
+     - The listing is the floor of the process scan: 4–6 ms per pass in the kernel for ~2,200 entries, ~0.3 % at 1.5 s. A discovery pass with the incremental reads costs ~10 ms of CPU, more than the ≤ 4 ms first estimated.
+     - A focused user sees a new agent within 1.5 s.
+     - Unfocused, nobody looks. A new agent still wakes the session scan at once (its log may go into a dir quiet for long), and its alarms and the watchdog keep their latency, because the tracked agents are read every pass.
+   - **Cost if wrong:** an unfocused TUI lists a new agent up to 3 s after it started (1.5 s focused). A focused TUI on this host spends ~1 % on process discovery.
 8. **Git line freshness in the preview.** Options: (a) reflogs re-read at most every 5 s; (b) every second as today.
    **Decision: (a).** Why: the per-second pass over every session and reflog was 130 ms per frame, the largest render
    cost; a commit is not an alarm. Cost if wrong: a new commit shows in the preview up to 5 s after it was made.

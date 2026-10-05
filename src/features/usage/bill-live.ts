@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
 import type { Obj } from "../../util/json.ts";
 import { OS } from "../../platform/index.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, SG } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
 import { type Acc, stamp, startOfDay } from "./record.ts";
 import { type Bill, type Det, type Evid, asBill, newEvid, rule, provMode, configEv, configFiles, envSummary, type Allow, allowanceOf, claudeJson } from "./billing.ts";
@@ -28,7 +28,7 @@ function cfgOf(h: string, cwd: string): CfgHit {
   if (hit && hit.sig === sig) { hit.at = now; return hit; }
   const ev = configEv(h, HOME, h === "claude" ? cwd : "");
   const n: CfgHit = { at: now, sig, ev, det: rule(h, ev, "config") };
-  cfg.set(k, n);
+  cfg.set(k, n); if (hit) BL.cfg++; // changed evidence (a new key's sessions are labelled as they ask for it)
   return n;
 }
 // live environment names per pid (pi/OpenCode resolve each provider against them); names only, never values. g: a
@@ -36,6 +36,8 @@ function cfgOf(h: string, cwd: string): CfgHit {
 const envs = new Map<number, { at: number; ev: Evid; g: number; k: string }>();
 let envGen = 0;
 export function envSig(s: Sess): number { const e = s.pid > 0 ? envs.get(s.pid) : undefined; return e ? e.g : 0; }
+// generations of the config evidence and of the environments (label memo keys); labels: label() runs (checks)
+export const BL = { cfg: 0, env: 0, labels: 0 };
 
 function stamped(a: Acc | undefined): Det | null { return a && a.billSrc ? { bill: asBill(a.bill), plan: a.plan, why: "", src: a.billSrc } : null; }
 // the session's own mode: stamped evidence, else the current config's (src "config" = assumed)
@@ -74,7 +76,36 @@ export function allowance(): Allow | null {
   if (now - alAt >= RECHECK_MS) { alAt = now; const c = claudeJson(CJ).usage; alObj = null; if (c) { const o: Obj = {}; o["cachedUsageUtilization"] = c; alObj = o; } }
   return alObj ? allowanceOf(alObj, now) : null; // a rejected shape just hides the gauge (no debug log exists to note it in)
 }
-function label(s: Sess): void { const b = sessionBill(s); s.bill = b.bill; s.plan = b.plan; s.billSrc = b.src; }
+function label(s: Sess): void { BL.labels++; const b = sessionBill(s); s.bill = b.bill; s.plan = b.plan; s.billSrc = b.src; }
+// the tick's labels, per session only when an input of sessionBill moved: the session object, its pid, its ledger entry (another object
+// after a re-index, its stamp, its cost: pi/OpenCode take the provider with the largest), its cwd (project settings), the
+// config evidence (re-checked by the minute: the epoch) or the environments
+interface LabelKey { s: Sess; pid: number; a: Acc | undefined; bill: string; plan: string; src: string; cost: number; cwd: string; cfg: number; env: number; ep: number }
+const labelled = new Map<string, LabelKey>();
+// every session when the minute, the config evidence, the environments or the session set moved; in between only the
+// live ones, those written within the minute (the ledger stamps and costs only logs that grew) and those live last time
+// (a pid that went): a key lookup per session and tick was most of the tick's billing cost
+const LA = { ep: -1, cfg: -1, env: -1, n: -1, gen: -1, live: [] as Sess[] };
+export function labelAll(now: number): void {
+  const ep = Math.floor(now / RECHECK_MS);
+  const all = ep !== LA.ep || BL.cfg !== LA.cfg || BL.env !== LA.env || sessions.size !== LA.n || SG.gen !== LA.gen;
+  LA.ep = ep; LA.cfg = BL.cfg; LA.env = BL.env; LA.n = sessions.size; LA.gen = SG.gen;
+  const was = LA.live; LA.live = [];
+  for (const s of sessions.values()) {
+    if (s.pid > 0) LA.live.push(s);
+    if (all || s.pid > 0 || now - s.mtime < RECHECK_MS) labelOnChange(s, now);
+  }
+  if (!all) for (const s of was) if (s.pid <= 0) labelOnChange(s, now);
+  if (labelled.size > sessions.size) for (const k of [...labelled.keys()]) if (!sessions.has(k)) labelled.delete(k);
+}
+function labelOnChange(s: Sess, now: number): void {
+  const a = ledger.get(s.path); const k = labelled.get(s.path); const ep = Math.floor(now / RECHECK_MS);
+  const cost = a && multi(s.h) ? a.cost : 0; const env = multi(s.h) ? BL.env : 0; const cwd = realCwd(s);
+  if (k && k.s === s && k.pid === s.pid && k.a === a && k.cfg === BL.cfg && k.env === env && k.ep === ep && k.cwd === cwd &&
+      (!a || (k.bill === a.bill && k.plan === a.plan && k.src === a.billSrc && k.cost === cost))) return;
+  label(s);
+  labelled.set(s.path, { s, pid: s.pid, a, bill: a ? a.bill : "", plan: a ? a.plan : "", src: a ? a.billSrc : "", cost, cwd, cfg: BL.cfg, env, ep });
+}
 
 // the live process's environment, at most once a minute per pid (Linux /proc only; empty elsewhere)
 function probeOne(s: Sess, now: number): void {
@@ -87,6 +118,7 @@ function probeOne(s: Sess, now: number): void {
   const ev = newEvid(); ev.names = sm.names; ev.on = sm.on;
   const k = sm.names.join(",") + "|" + sm.on.join(",");
   envs.set(s.pid, { at: now, ev, g: e && e.k === k ? e.g : ++envGen, k });
+  if (!e || e.k !== k) BL.env++; // the labels look again only when the evidence changed
   if (!a || !sm.names.length) return;
   const d = rule(s.h, ev, "process");
   if (d.bill !== "unknown") stamp(a, d.bill, d.plan, "process");
@@ -100,7 +132,7 @@ let lastProbe = 0;
 H.onTick.push(() => {
   const now = Date.now();
   if (now - lastProbe >= 2000) { lastProbe = now; probe(); }
-  for (const s of sessions.values()) label(s);
+  labelAll(now);
 });
 // after the ledger's own complete (registered first): --json and `cost` carry billing, incl. the live process's evidence
 H.complete.push((s: Sess): void => { probeOne(s, Date.now()); label(s); });

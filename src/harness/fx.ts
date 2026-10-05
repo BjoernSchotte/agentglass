@@ -3,7 +3,7 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, parse as parseJson } from "../util/json.ts";
-import { FX, readText, listDir } from "../util/fs.ts";
+import { FX, readText, listDirCached } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
@@ -14,7 +14,7 @@ import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, turnBusy, prompts } from "./common.ts";
 
 const SESSIONS = join(FX, "sessions");
-function scan(add: AddFn): void { for (const id of listDir(SESSIONS)) add(join(SESSIONS, id, "events.jsonl"), id, "", false); }
+function scan(add: AddFn): void { for (const id of listDirCached(SESSIONS)) add(join(SESSIONS, id, "events.jsonl"), id, "", false); }
 // fx events.jsonl: {seq, timestamp_ms, event: {<kind>: {...}}} — one kind per line
 function fxResult(preview: string): string {
   const p = parseJson(preview);

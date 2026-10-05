@@ -3,7 +3,7 @@
 import { join, dirname, basename } from "node:path";
 import { statSync } from "node:fs";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { HOME, readText, readLines, listDir } from "../util/fs.ts";
+import { HOME, readText, readLines, listDirCached } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
 import { type Acc, type Day, bucket, tool, pend, retool, file, lines, usageExact, turn, skill, isoMs, nlines, num } from "../features/usage/record.ts";
@@ -40,19 +40,20 @@ function headerId(path: string, f: string): string {
 }
 // one dir of sessions; a session's sibling dir <base>/ holds its subagents: tasks/*.jsonl (@gotgenes/pi-subagents),
 // forks/*.jsonl and <runId>/run-<i>/session.jsonl (pi-subagents)
+const QUIET = 3600000; // a dir unchanged for an hour: once a minute (a new agent wakes it: fs.ts WAKE_ALL)
 function scanDir(dir: string, add: AddFn): void {
-  const names = listDir(dir); const has = new Set<string>(names);
+  const names = listDirCached(dir, QUIET, "pi"); const has = new Set<string>(names);
   for (const f of names) {
     if (!f.endsWith(".jsonl")) continue;
     const pid = fileId(f);
     add(join(dir, f), pid, "", false);
     const base = f.slice(0, -6); if (!has.has(base)) continue;
     const bd = join(dir, base);
-    for (const e of listDir(bd)) {
+    for (const e of listDirCached(bd, QUIET, "pi")) {
       const ed = join(bd, e);
-      if (e === "tasks" || e === "forks") { for (const c of listDir(ed)) if (c.endsWith(".jsonl")) add(join(ed, c), headerId(join(ed, c), c), pid, false); continue; }
-      for (const r of listDir(ed)) {
-        if (!r.startsWith("run-") || listDir(join(ed, r)).indexOf("session.jsonl") < 0) continue;
+      if (e === "tasks" || e === "forks") { for (const c of listDirCached(ed, QUIET, "pi")) if (c.endsWith(".jsonl")) add(join(ed, c), headerId(join(ed, c), c), pid, false); continue; }
+      for (const r of listDirCached(ed, QUIET, "pi")) {
+        if (!r.startsWith("run-") || listDirCached(join(ed, r), QUIET, "pi").indexOf("session.jsonl") < 0) continue;
         const p = join(ed, r, "session.jsonl");
         const id = headerId(p, ""); if (id) add(p, id, pid, false); // listed under its real id once the header is there
       }
@@ -62,7 +63,7 @@ function scanDir(dir: string, add: AddFn): void {
 function scan(add: AddFn): void {
   const root = sessionRoot();
   scanDir(root, add);
-  for (const d of listDir(root)) if (d.startsWith("--")) scanDir(join(root, d), add);
+  for (const d of listDirCached(root)) if (d.startsWith("--")) scanDir(join(root, d), add);
 }
 
 // a @tintinweb/pi-subagents child: same dir as its parent, parentSession set, session_info name "<type>#<8 hex>"

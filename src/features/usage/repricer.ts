@@ -1,7 +1,7 @@
 // agentglass — price changes reach history in place: re-price every ledger session's table-priced rows (record.ts reprice)
 // SPDX-License-Identifier: Apache-2.0
 // Triggers: a write through the price panel or CLI in this process, prices.json / pi models.json / OpenCode config
-// changing on disk (stat every 5 s on the tick), a community list refresh, a cache saved under other prices (cache.ts).
+// changing on disk (stat every second on the tick), a community list refresh, a cache saved under other prices (cache.ts).
 import { statSync } from "node:fs";
 import { H } from "../../hooks.ts";
 import { say } from "../../state.ts";
@@ -50,8 +50,9 @@ function watched(): string[] {
 function statKey(): string { let k = ""; for (const f of watched()) { try { const s = statSync(f); k += s.mtimeMs + ":" + s.size + "|"; } catch (e) { k += "-|"; } } return k; }
 let lastKey = ""; let lastAt = 0;
 H.firstScan.push(() => { warn(USER_WARN); lastKey = statKey(); lastAt = Date.now(); }); // a CLI run prints them on stderr
+const WATCH_MS = 1000; // a `prices set` in another process shows within ~2 s (a few stats a second)
 H.onTick.push(() => {
-  if (Date.now() - lastAt < 5000) return;
+  if (Date.now() - lastAt < WATCH_MS) return;
   lastAt = Date.now();
   const k = statKey(); if (k === lastKey) return;
   lastKey = k;

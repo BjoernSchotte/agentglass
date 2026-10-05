@@ -4,7 +4,7 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { HOME, readText, listDir } from "../util/fs.ts";
+import { HOME, readText, listDir, listDirCached } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
@@ -19,7 +19,7 @@ import { toolArg, blockText, isNoise, prompts } from "./common.ts";
 const DIR = join(HOME, ".kiro", "sessions", "cli");
 // a kiro session log (its booked cost depends on the credit rate: the ledger cache re-indexes these when the rate changes)
 export function isKiroLog(path: string): boolean { return path.startsWith(DIR + "/"); }
-function scan(add: AddFn): void { for (const f of listDir(DIR)) if (f.length === 42 && f.endsWith(".jsonl")) add(join(DIR, f), f.slice(0, -6), "", false); }
+function scan(add: AddFn): void { for (const f of listDirCached(DIR)) if (f.length === 42 && f.endsWith(".jsonl")) add(join(DIR, f), f.slice(0, -6), "", false); }
 function side(s: Sess): Obj | null { return parseJson(readText(s.path.slice(0, -6) + ".json", 0, 4194304).trim()); }
 // {session_id, cwd, title, parent_session_id, session_created_reason: "subagent" | …}
 function meta(s: Sess): void {

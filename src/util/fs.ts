@@ -51,6 +51,43 @@ export function readLines(path: string, start: number, end: number, align: boole
   return { lines: text.split("\n"), next: start + z + 1 };
 }
 export function listDir(p: string): string[] { try { return readdirSync(p); } catch (e) { return []; } }
+// listDir for the session scans: the last listing is reused while the directory's mtime stands and is over 2 s old (a
+// change within the same coarse mtime tick must not be missed), and at least once a minute it is listed anyway
+// (filesystems whose directory mtime does not move). A missing directory lists as [] and is forgotten. The array is
+// shared: callers must not change it.
+// quietMs ≥ 0: the caller knows a directory unchanged for that long gets no new entries now (an idle session's subagent
+// dir: 0; a project dir no agent works in: a day): its mtime is then looked at only once a minute, and a missing one is
+// remembered as missing for that long
+export const FS_CLOCK = { now: (): number => Date.now() };
+export const FS_STATS = { lists: 0, stats: 0 }; // real listings and directory stats (checks)
+const DIRS = new Map<string, { mt: number; at: number; st: number; names: string[] }>();
+const FRESH_MS = 2000; const RELIST_MS = 60000;
+const NONE: string[] = [];
+// quiet directories are looked at each scan again while an agent may be about to write a new log into one (procs.ts):
+// all of them for a minute after a new agent process; a harness's own while one of its agents has no session yet
+// (WAKE_H: harness → when that was last seen), or just that agent's session dir when the harness can name it (WAKE_DIRS)
+export const WAKE_ALL = { at: 0 };
+export const WAKE_H = new Map<string, number>();
+export const WAKE_DIRS = new Set<string>();
+function sameNames(a: string[], b: string[]): boolean { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+export function listDirCached(p: string, quietMs: number = -1, h: string = ""): string[] {
+  const now = FS_CLOCK.now(); const e = DIRS.get(p);
+  if (quietMs >= 0 && now - WAKE_ALL.at >= RELIST_MS && (h === "" || now - (WAKE_H.get(h) ?? 0) >= RELIST_MS) && !WAKE_DIRS.has(p) && e && now - e.st < RELIST_MS && (e.mt < 0 || now - e.mt >= quietMs)) return e.names;
+  let mt = 0; FS_STATS.stats++;
+  try { mt = statSync(p).mtimeMs; } catch (x) { if (quietMs >= 0) DIRS.set(p, { mt: -1, at: now, st: now, names: NONE }); else DIRS.delete(p); return NONE; }
+  if (e && e.mt === mt && now - mt >= FRESH_MS && now - e.at < RELIST_MS) { e.st = now; return e.names; }
+  FS_STATS.lists++;
+  let names = listDir(p);
+  if (e && sameNames(e.names, names)) names = e.names; // listed again, nothing new: the same array (callers key on it)
+  DIRS.set(p, { mt, at: now, st: now, names });
+  return names;
+}
+// the mtime of a session log the scan already knows (sessions.ts sets it; 0 = unknown): lets a harness scan tell an
+// old session's subagent dir (aged) from a working one's without a stat
+export const KNOWN = { mtime: (path: string): number => 0 };
+// a scan's shortcut (sessions.ts ↔ a harness scan): want = the caller holds the last listing; same = the scan found
+// every directory as before and listed nothing (the caller walks what it holds)
+export const LISTING = { want: false, same: false };
 export function run(cmd: string, args: string[]): string {
   try { return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 }); } catch (e) { return ""; }
 }

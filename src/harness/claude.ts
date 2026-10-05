@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join, dirname } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { CLAUDE, readText, readBytes, listDir } from "../util/fs.ts";
+import { CLAUDE, readText, readBytes, listDir, listDirCached, KNOWN, LISTING } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
@@ -17,15 +17,58 @@ import { toolArg, blockText, isNoise, leadTag, prompts } from "./common.ts";
 const PROJECTS = join(CLAUDE, "projects");
 
 // ~/.claude/projects/<project>/<session>.jsonl, subagents in <project>/<session>/subagents/agent-<id>.jsonl
+// a project dir's logs and subagent dirs as paths, kept while its listing is the same (no path building per scan)
+const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][] }>();
+// the project dirs' paths and listings in the projects listing's order, while it stands
+const TOP = { names: [] as string[], pds: [] as string[], ms: [] as { names: string[]; logs: string[][]; subs: string[][] }[] };
+const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
+const IDLE_MS = 300000; const QUIET_MS = 3600000; // a session not written for 5 min spawns no subagent (the spawning call is written first)
+// a live session (registry) whose log the scan does not know yet wakes every project dir for a minute, when it first
+// shows and whenever its registry entry moves (a first prompt creates the log); ids = the logs the scan lists
+const WAKE = { at: 0, ids: new Set<string>(), unknown: new Map<string, string>() };
+// the project dir Claude Code keeps a cwd's logs in: every character but letters and digits as "-"
+export function projectDirOf(cwd: string): string {
+  let o = ""; for (let i = 0; i < cwd.length; i++) { const c = cwd.charCodeAt(i); o += (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) ? cwd.charAt(i) : "-"; }
+  return join(PROJECTS, o);
+}
 function scan(add: AddFn): void {
-  for (const proj of listDir(PROJECTS)) {
-    for (const f of listDir(join(PROJECTS, proj))) {
-      if (f.endsWith(".jsonl")) { add(join(PROJECTS, proj, f), f.slice(0, -6), "", false); continue; }
-      if (f.length !== 36) continue; // <session-uuid>/ dirs hold subagent transcripts
-      const sd = join(PROJECTS, proj, f, "subagents");
-      for (const a of listDir(sd)) if (a.endsWith(".jsonl")) add(join(sd, a), a.slice(6, -6), f, false);
+  const quiet = Date.now() - WAKE.at < 60000 ? -1 : QUIET_MS; // a project dir unchanged for an hour: once a minute, unless a new live session is unknown (or a new agent: fs.ts WAKE_ALL)
+  const top = listDirCached(PROJECTS);
+  let changed = top !== TOP.names;
+  if (changed) { TOP.names = top; TOP.pds = []; TOP.ms = []; for (const proj of top) TOP.pds.push(join(PROJECTS, proj)); }
+  const now = Date.now();
+  // look at every dir first (the cached listings, a stat where due); emit only when one changed or the caller has no copy
+  for (let i = 0; i < TOP.pds.length; i++) {
+    const pd = TOP.pds[i] ?? "";
+    const names = listDirCached(pd, quiet, "claude");
+    let m = i < TOP.ms.length ? TOP.ms[i] : null;
+    if (!m || m.names !== names) {
+      m = PJ.get(pd) ?? null;
+      if (!m || m.names !== names) {
+        m = { names, logs: [], subs: [] };
+        for (const f of names) {
+          if (f.endsWith(".jsonl")) { m.logs.push([join(pd, f), f.slice(0, -6)]); WAKE.ids.add(f.slice(0, -6)); }
+          else if (f.length === 36) m.subs.push([join(pd, f, "subagents"), f, join(pd, f + ".jsonl")]); // <session-uuid>/ dirs hold subagent transcripts
+        }
+        PJ.set(pd, m); changed = true;
+      }
+      if (i < TOP.ms.length) TOP.ms[i] = m; else TOP.ms.push(m);
+    }
+    for (const d of m.subs) {
+      const sd = d[0] ?? "";
+      const pm = KNOWN.mtime(d[2] ?? ""); // its session idle (or gone): no new subagents now, the dir looked at once a minute
+      const ns = listDirCached(sd, pm === 0 || now - pm >= IDLE_MS ? 0 : -1, "claude");
+      const k = SD.get(sd);
+      if (!k || k.names !== ns) { const kk = { names: ns, logs: [] as string[][] }; for (const a of ns) if (a.endsWith(".jsonl")) kk.logs.push([join(sd, a), a.slice(6, -6)]); SD.set(sd, kk); changed = true; }
     }
   }
+  if (!changed && LISTING.want) { LISTING.same = true; return; } // the caller still holds what this would list
+  for (const m of TOP.ms) {
+    for (const l of m.logs) add(l[0] ?? "", l[1] ?? "", "", false);
+    for (const d of m.subs) { const k = SD.get(d[0] ?? ""); if (k) for (const l of k.logs) add(l[0] ?? "", l[1] ?? "", d[1] ?? "", false); }
+  }
+  if (PJ.size > 4096) PJ.clear();
+  if (SD.size > 65536) SD.clear();
 }
 // subagents: agent-<id>.meta.json {agentType, description, model, toolUseId}
 function meta(s: Sess): void {
@@ -140,7 +183,7 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
     const o = parseJson(readText(join(sd, f), 0, 8192).trim());
     if (!o) continue;
     const pid = num(o["pid"]);
-    if (pid && alive(pid)) out.push({ id: str(o["sessionId"]), pid, status: str(o["status"]), name: str(o["name"]) });
+    if (pid && alive(pid)) { const id = str(o["sessionId"]); out.push({ id, pid, status: str(o["status"]), name: str(o["name"]) }); if (id && !WAKE.ids.has(id)) { const k = str(o["status"]) + "|" + String(num(o["updatedAt"])); if (WAKE.unknown.get(id) !== k) { WAKE.unknown.set(id, k); WAKE.at = Date.now(); } } }
   }
   return out;
 }
@@ -319,7 +362,7 @@ export const claude: HarnessAdapter = {
   roots: () => [PROJECTS], scan, meta, headBytes: 131072,
   parse, spawnOf: (s: Sess) => spawnCall(s),
   busy: (s: Sess) => s.status === "busy", // the registry knows; its logs carry no turn markers
-  liveRegistry,
+  liveRegistry, wakeDir: projectDirOf,
   headless: (s: Sess, msg: string) => ["-p", "--resume", s.id, msg],
   resume: (s: Sess) => ["--resume", s.id],
   files, usage, carriers, headState, setHeadState,

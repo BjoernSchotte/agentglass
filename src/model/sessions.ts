@@ -4,32 +4,55 @@ import { firstLine } from "../util/text.ts";
 import { own } from "../util/own.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
-import { readBytes } from "../util/fs.ts";
+import { readBytes, KNOWN, LISTING } from "../util/fs.ts";
 import { S } from "../state.ts";
 import { H, applyMeta } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
+KNOWN.mtime = (path: string): number => { const s = sessions.get(path); return s ? s.mtime : 0; };
 export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 
-function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>, parent: string): void {
-  let s = sessions.get(path);
-  const fresh = !s;
+// a known log is stat'ed every scan when it is pid-linked or written within 10 min, every 4th when within a day; the rest
+// in turns, 1/ROT of them per scan (~every 2 min at the hot scan interval): a history of old logs was most of a scan
+const ROT = 40; const RECENT_MS = 86400000; const WARM_MS = 600000; // written within 10 min: every scan; within a day: every 4th
+const SCAN = { no: 0, now: 0, seen: 0, gone: [] as string[], gen: -1, n: -1 };
+// a log's turn: from the characters before its extension (ids, random enough), no lookup per log and scan
+function rotOf(path: string): number { const n = path.length; let h = 0; for (let i = Math.max(0, n - 14); i < n - 6; i++) h = h * 7 + path.charCodeAt(i); return h % ROT; }
+// a known session at its turn: stat, new size/mtime; false = its log is gone
+function refresh(h: Harness, s: Sess, turn: number): boolean {
+  const age = SCAN.now - s.mtime;
+  if (s.pid <= 0 && (age >= RECENT_MS ? turn !== SCAN.no % ROT : age >= WARM_MS && turn % 4 !== SCAN.no % 4)) { SCAN.seen++; if (H.meta.length) applyMeta(s); return true; } // not its turn
+  const st = sourceOf(h).stat(s);
+  if (!st) { SCAN.gone.push(s.path); return false; }
+  if (restat(s, st.size, st.mtime, epochOf(s)) || H.meta.length) applyMeta(s); // head and tail reads apply it after they change fields; --redact (H.meta) fakes every scanned session as before: a writer path that skips it must not leak
+  SCAN.seen++; return true;
+}
+// counts what it saw (scan() finds what went from the count; no set of paths per scan); the session, null = none
+function addFile(h: Harness, path: string, id: string, archived: boolean, parent: string): Sess | null {
+  const known = sessions.get(path);
+  if (known) return refresh(h, known, rotOf(path)) ? known : null;
+  let s: Sess | undefined = known; // typed as the map's (a fresh record bound to a const was copied into the map by scriptc 0.1.7: updates after set were lost)
   if (!s) { s = newSess(h, id, path, archived); s.parent = parent; }
   const st = sourceOf(h).stat(s);
-  if (!st) return; // gone (a new session is not in the map yet)
-  if (fresh) {
-    sessions.set(path, s); SG.gen++;
-    const m = harnessOf(h).meta; if (m) m(s);
-  }
-  restat(s, st.size, st.mtime, epochOf(s));
-  applyMeta(s);
-  seen.add(path);
+  if (!st) return null; // gone (a new session is not in the map yet)
+  sessions.set(path, s); SG.gen++;
+  const m = harnessOf(h).meta; if (m) m(s);
+  restat(s, st.size, st.mtime, epochOf(s)); applyMeta(s);
+  SCAN.seen++; return s;
 }
-// new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file
-export function restat(s: Sess, size: number, mtime: number, ep: string): void {
+// per harness: what its last scan listed and the sessions those were. A scan that lists the same paths (no directory
+// was listed again: the listings are the cached ones, no log came) walks those sessions instead: no lookup per log
+interface Listed { paths: string[]; ids: string[]; pars: string[]; arch: boolean[]; sess: (Sess | null)[]; live: number; hot: number[] | null; isHot: boolean[] }
+const NOPATHS: string[] = [];
+const LISTED = new Map<string, Listed>();
+// new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file.
+// true = something changed
+export function restat(s: Sess, size: number, mtime: number, ep: string): boolean {
+  const moved = s.mtime !== mtime || s.size !== size;
   s.mtime = mtime; s.size = size;
-  if (ep === s.ep) return;
+  if (ep === s.ep) return moved;
   s.ep = ep; s.tailSize = -1; s.headDone = false; s.evs = [];
+  return true;
 }
 // live probe: stat only pid-linked sessions (no spawn, no directory listing) so a streaming agent is seen within the probe
 // interval and its tail follows without waiting for scan(); unlinked sessions are left to scan(). true = one grew
@@ -46,9 +69,45 @@ export function probeLive(): boolean {
 let scanned = false;
 export function scan(): void {
   if (!scanned) { scanned = true; for (const f of H.firstScan) f(); }
-  const seen = new Set<string>();
-  for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, seen, parent));
+  SCAN.no++; SCAN.now = Date.now(); SCAN.seen = 0; SCAN.gone = [];
+  if (SG.gen !== SCAN.gen || sessions.size !== SCAN.n) LISTED.clear(); // sessions came or went outside a scan (trash, checks)
+  for (const ad of HARNESSES) {
+    const m = LISTED.get(ad.id); const prev = m ? m.paths : NOPATHS;
+    // while the walk repeats the last listing path by path nothing is copied; at the first difference the arrays start
+    const paths: string[] = []; const ids: string[] = []; const pars: string[] = []; const arch: boolean[] = [];
+    let same = m !== undefined; let n = 0;
+    LISTING.want = m !== undefined; LISTING.same = false;
+    ad.scan((path: string, id: string, parent: string, archived: boolean) => {
+      if (same && n < prev.length && prev[n] === path) { n++; return; }
+      if (same) { same = false; for (let i = 0; i < n; i++) { paths.push(prev[i] ?? ""); ids.push(m ? m.ids[i] ?? "" : ""); pars.push(m ? m.pars[i] ?? "" : ""); arch.push(m ? m.arch[i] ?? false : false); } }
+      paths.push(path); ids.push(id); pars.push(parent); arch.push(archived);
+    });
+    const short = LISTING.same; LISTING.want = false; LISTING.same = false;
+    if (m && ((short && n === 0) || (same && n === prev.length))) { // the same listing: its sessions, in turns
+      // only the hot ones (live, written within a day) and this scan's rotation turn are looked at; the hot list is
+      // made again once per rotation round (a log turning old; a live one is stat'ed by probeLive meanwhile)
+      if (!m.hot || SCAN.no % ROT === 0) { m.hot = []; m.isHot = []; for (let i = 0; i < m.sess.length; i++) { const s = m.sess[i]; const h = s !== null && (s.pid > 0 || SCAN.now - s.mtime < RECENT_MS); m.isHot.push(h); if (h) m.hot.push(i); } }
+      let seen = 0; const turn = SCAN.no % ROT; const s0 = SCAN.seen;
+      for (const i of m.hot) { const s = m.sess[i + 0]; if (!s) continue; seen++; if (!refresh(ad.id, s, i % ROT)) { m.sess[i + 0] = null; m.live--; } }
+      for (let i = turn; i < m.sess.length; i += ROT) { const s = m.sess[i]; if (!s || (m.isHot[i] ?? false)) continue; seen++; if (!refresh(ad.id, s, turn)) { m.sess[i] = null; m.live--; } }
+      SCAN.seen = s0 + (SCAN.seen - s0) + (m.live - seen); // the ones not looked at count as listed
+      continue;
+    }
+    if (same && m) for (let i = 0; i < n; i++) { paths.push(prev[i] ?? ""); ids.push(m.ids[i] ?? ""); pars.push(m.pars[i] ?? ""); arch.push(m.arch[i] ?? false); } // a shorter listing
+    const sess: (Sess | null)[] = [];
+    for (let i = 0; i < paths.length; i++) sess.push(addFile(ad.id, paths[i] ?? "", ids[i] ?? "", arch[i] ?? false, pars[i] ?? ""));
+    let live = 0; for (const x of sess) if (x) live++;
+    LISTED.set(ad.id, { paths, ids, pars, arch, sess, live, hot: null, isHot: [] });
+  }
+  if (SCAN.gone.length) LISTED.clear(); // the walks above hold sessions that go now
+  for (const p of SCAN.gone) if (sessions.delete(p)) SG.gen++; // listed but no longer there
+  if (SCAN.seen === sessions.size) { SCAN.gen = SG.gen; SCAN.n = sessions.size; return; } // every known log listed once: nothing else went
+  LISTED.clear();
+  const seen = new Set<string>(); // something went (or a path was listed twice): list again by name
+  for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => { seen.add(path); });
+  for (const p of SCAN.gone) seen.delete(p);
   for (const k of [...sessions.keys()]) if (!seen.has(k)) { sessions.delete(k); SG.gen++; }
+  SCAN.gen = SG.gen; SCAN.n = sessions.size;
 }
 // A log only grows: once it reaches past the head window, what reading the head did is final (a shorter log: until it
 // grows; a record source counts records). That outcome — the session fields it changed, the first prompt and the
@@ -162,14 +221,42 @@ export function isOpen(s: Sess): boolean {
 }
 // every active H.listFilter predicate passes (the filter language's Sessions filter)
 function matchesAll(ps: ((s: Sess) => boolean)[], s: Sess): boolean { for (const f of ps) if (!f(s)) return false; return true; }
+// root sessions by harness:id, rebuilt when the session set changed (SG.gen, size) or a hit is no longer a root (a head read
+// set its parent): parentOf was a scan of every session, per subagent and per caller (git attribution: per pass)
+const ROOTS = { gen: -1, n: -1, m: new Map<string, Sess>() };
+function indexRoots(): void {
+  ROOTS.gen = SG.gen; ROOTS.n = sessions.size; ROOTS.m.clear();
+  for (const p of sessions.values()) if (!p.parent) { const k = p.h + ":" + p.id; if (!ROOTS.m.has(k)) ROOTS.m.set(k, p); } // the first wins, as the scan did
+}
 export function parentOf(s: Sess): Sess | null {
   if (!s.parent) return null;
-  for (const p of sessions.values()) if (!p.parent && p.h === s.h && p.id === s.parent) return p;
-  return null;
+  if (ROOTS.gen !== SG.gen || ROOTS.n !== sessions.size) indexRoots(); // size: callers (checks) that set sessions directly
+  const k = s.h + ":" + s.parent;
+  let p = ROOTS.m.get(k);
+  if (p && (p.parent || sessions.get(p.path) !== p)) { indexRoots(); p = ROOTS.m.get(k); }
+  return p ?? null;
 }
+// everything buildView reads, as one cheap pass of number adds: the session set, each session's mtime, pid and parent,
+// which subagents are active (time-based auto-expand), the expanded/collapsed sets, the active filters' matches and the
+// selection. Equal signatures build equal views. ps = the active filters' predicates
+function sigOf(ps: ((s: Sess) => boolean)[]): string {
+  const now = Date.now(); let mt = 0; let pid = 0; let par = 0; let act = 0; let hit = 0; let n = 0;
+  for (const s of sessions.values()) {
+    mt += s.mtime; pid += s.pid; par += s.parent.length;
+    if (s.parent && now - s.mtime < 45000) act += 1 + (s.mtime % 1000003); // subActive
+    if (ps.length && matchesAll(ps, s)) { n++; hit += 1 + (s.mtime % 1000003) + s.parent.length; }
+  }
+  let ex = ""; for (const k of expanded) ex += k + "\n"; ex += "|"; for (const k of collapsed) ex += k + "\n";
+  return String(SG.gen) + "|" + String(sessions.size) + "|" + String(mt) + "|" + String(pid) + "|" + String(par) + "|" + String(act) + "|" +
+    String(ps.length) + ":" + String(n) + ":" + String(hit) + "|" + String(S.sel) + "|" + ex;
+}
+function activePreds(): ((s: Sess) => boolean)[] { const ps: ((s: Sess) => boolean)[] = []; for (const f of H.listFilter) { const p = f(); if (p) ps.push(p); } return ps; }
+export function viewSig(): string { return sigOf(activePreds()); }
+let lastSig = ""; let lastView: Sess[] = [];
 export function buildView(): void {
   // the predicates once per build: a filter's matching set is computed once, not per session (n² with 2k sessions)
-  const ps: ((s: Sess) => boolean)[] = []; for (const f of H.listFilter) { const p = f(); if (p) ps.push(p); }
+  const ps = activePreds();
+  const sig = sigOf(ps); if (sig === lastSig && S.view === lastView) return; // nothing it reads changed: S.view stays the same array
   const filtering = ps.length > 0; const matches = (s: Sess): boolean => matchesAll(ps, s);
   const roots = new Map<string, Sess>();
   for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; if (!s.parent) roots.set(s.h + ":" + s.id, s); }
@@ -200,6 +287,7 @@ export function buildView(): void {
   S.view = out;
   if (cur) { const i = S.view.indexOf(cur); if (i >= 0) S.sel = i; }
   S.sel = Math.max(0, Math.min(S.sel, S.view.length - 1));
+  lastSig = sigOf(ps); lastView = S.view; // after the selection moved with its session
 }
 // bounds-checked reads: in scriptc an out-of-range object read traps instead of yielding undefined
 export function sessAt(i: number): Sess | null { return i >= 0 && i < S.view.length ? S.view[i] : null; }

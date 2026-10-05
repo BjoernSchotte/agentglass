@@ -8,14 +8,18 @@ export interface FileInfo { uid: number; mode: number; kind: string }
 
 export interface Platform {
   name: string;
-  // every process on the machine
-  listProcs(): ProcRow[];
+  // every process on the machine; tracked = the pids whose cpu/rss the caller needs fresh (harness trees): an adapter
+  // that reads incrementally (Linux /proc) re-reads those every call and the rest only when new or on a periodic full
+  // pass; a new process whose name (comm) wantArgs rejects may show a pass later (most such live less than a pass)
+  // discover false: no look for new pids this call (the known ones, tracked read fresh; ps adapters list all anyway)
+  listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean, discover: boolean): ProcRow[];
   // recent cpu% of a process (not a lifetime average) given the cpu listProcs reported; called once per refresh for each process shown
   cpuOf(pid: number, reported: number, now: number): number;
   // drop per-process state of pids that are gone
   prune(alive: (pid: number) => boolean): void;
-  // cwd per pid and the pid holding each open file for which want(path) is true
-  procFiles(pids: number[], want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> };
+  // cwd per pid and the pid holding each open file for which want(path) is true; only the open files of fdPids are looked
+  // at (an adapter that lists all at once may look at all)
+  procFiles(pids: number[], fdPids: Set<number>, want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> };
   // the tty's device path as tmux reports pane_tty, "" when the process has none
   ttyDevice(tty: string): string;
   // native clipboard commands to try in order (text on stdin); tmux and OSC 52 are tried after them

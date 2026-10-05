@@ -5,7 +5,7 @@ import type { Ev, Proc, Sess } from "../model/types.ts";
 import { S, say } from "../state.ts";
 import { H } from "../hooks.ts";
 import { sessions, loadTail, working, current, sessAt, titleOf } from "../model/sessions.ts";
-import { allProcs, hist, rootOf, refreshProcs, paneTitles, ttyOf } from "../model/procs.ts";
+import { allProcs, hist, rootOf, refreshProcs, paneTitles, ttyOf, PG } from "../model/procs.ts";
 import { harnessOf } from "../harness/index.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf } from "./detect.ts";
@@ -32,9 +32,14 @@ let selPath = ""; let selSince = 0;
 // the newest user prompt in the tail window (ts + text), "" when none is in it
 function lastPrompt(evs: Ev[]): string { for (let i = evs.length - 1; i >= 0; i--) { const e = evs[i]; if (e.kind === "user") return e.ts + "\u0000" + e.text; } return ""; }
 export function watched(s: Sess): boolean { return s.pid !== 0 && !s.parent; }
+// the children map of the process table, made again only when a pid came, went or moved (procs.ts PG; the process
+// objects live across refreshes)
+const KM = { gen: -1, n: -1, k: new Map<number, Proc[]>() };
 function kidsMap(): Map<number, Proc[]> {
+  if (KM.gen === PG.gen && KM.n === allProcs.size) return KM.k;
   const k = new Map<number, Proc[]>();
   for (const p of allProcs.values()) { const a = k.get(p.ppid); if (a) a.push(p); else k.set(p.ppid, [p]); }
+  KM.gen = PG.gen; KM.n = allProcs.size; KM.k = k;
   return k;
 }
 function observe(s: Sess, kids: Map<number, Proc[]>, titles: () => Map<string, string>): Obs {

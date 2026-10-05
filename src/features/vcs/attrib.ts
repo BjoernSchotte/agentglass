@@ -10,8 +10,8 @@ import { sessions } from "../../model/sessions.ts";
 import { type GitRun, P } from "../../model/project.ts";
 import { intSetting } from "../../util/config.ts";
 import { readText, run } from "../../util/fs.ts";
-import { ledger } from "../usage/ledger.ts";
-import { L } from "../usage/record.ts";
+import { ledger, indexing } from "../usage/ledger.ts";
+import type { Acc } from "../usage/record.ts";
 import type { VRef } from "../usage/vcs.ts";
 import { livePid } from "../query/eval.ts";
 import { identOf } from "../query/project.ts";
@@ -215,38 +215,140 @@ export function sessIn(s: Sess, now: number): SessIn | null {
   const w = a ? windowOf(a.t0, a.al, live, GIT.pad, now) : [];
   return { path: s.path, gitdir: id.gitdir, common: id.common, key: id.key, top: id.top, branch: s.branch, t0: w.length ? w[0] ?? 0 : 0, t1: w.length ? w[1] ?? 0 : 0, live, sub: s.parent !== "", refs: a ? a.vcs : [] };
 }
-// every session's attribution at once (one pass, per gitdir), rebuilt when sessions, identities or a reflog change, and
-// at most once a second while only the ledger moved (live sessions write all the time). Whether anything changed takes a
-// pass over every session and reflog too: at most once a second while the ledger stands still (seen = its last pass;
-// a CLI asks once per listed session)
-const ALL = { key: "", ver: -1, at: 0, seen: 0, info: new Map<string, GitInfo>(), proj: new Map<string, SessIn[]>(), ins: new Map<string, SessIn>() };
-// sessions were indexed or placed outside the ledger's tick (a CLI completing a worktree's peers): look again at once
-export function gitStale(): void { ALL.at = 0; ALL.seen = 0; }
+// every session's attribution, kept per git repo (common dir): a pass (at once when the identities or the session set
+// changed or after gitStale; while only the ledger moves — live sessions write all the time — at most once a second) rebuilds the SessIn only of sessions whose inputs changed, re-reads a repo's reflog stamps and worktree list
+// at most every 5 s, and re-attributes only the repos whose sessions or reflogs changed. Attribution never crosses a
+// common dir (reflogs, sibling worktrees and the object DB are all per repo), so the result equals a full rebuild
+// (fullRebuildForCheck). gen bumps whenever any repo's result changed.
+export const GIT_CLOCK = { now: (): number => Date.now() };
+export const ATTR_STATS = { projects: 0, stamps: 0, sessIns: 0 }; // re-attributed repos, reflog stamp reads, SessIns built (checks)
+const READ_MS = 5000; const PASS_MS = 1000; const RECENT_MS = 60000;
+// a session's SessIn and the inputs it was built from (compared by value or identity, no string building per pass)
+// si null: no git worktree known (kept too: most sessions of a history have none, rebuilding them every pass was the cost).
+// pass = the last pass that saw it (no per-pass set of paths: each path lookup hashes ~100 characters)
+interface Memo { si: SessIn | null; grp: string; sig: string; pass: number; pver: number; a: Acc; t0: number; al: number; n: number; vcs: VRef[]; live: boolean; cwd: string; branch: string; parent: string; remote: string; head: boolean }
+// grps: repo → its sessions' paths in session order; dirs: repo → the gitdirs whose reflog stamps it reads (its sessions')
+const ALL = { at: 0, fullAt: 0, force: true, gen: 0, touch: 0, pass: 0, pver: -1, n: -1, info: new Map<string, GitInfo>(), proj: new Map<string, SessIn[]>(), ins: new Map<string, SessIn>(),
+  memo: new Map<string, Memo>(), grps: new Map<string, string[]>(), dirs: new Map<string, string[]>(), stamp: new Map<string, { st: string; at: number; pass: number }>(), peers: new Map<string, { ds: string[]; at: number }>() };
+// sessions were indexed or placed outside the ledger's tick (a CLI completing a worktree's peers): look again at once,
+// reflogs too
+export function gitStale(): void { ALL.force = true; ALL.at = 0; }
+export function gitGen(): number { return ALL.gen; }
+// per-session infos changed in place (no-reflog fallback, enrichment): memos over info objects look again
+export function gitTouched(): void { ALL.touch++; }
+export function gitTouches(): number { return ALL.touch; }
+// the repo a SessIn belongs to: its common dir, else its gitdir, else itself (a removed worktree: banners only)
+function grpOf(i: SessIn): string { return i.common || i.gitdir || "\t" + i.path; }
+// what attribution reads of a SessIn; a live session's window end moves with the clock but covers every reflog event
+// up to now either way, so only "live" counts (its no-reflog fallback follows the minute itself: gitInfo)
+function sigOf(i: SessIn): string {
+  return i.gitdir + "\t" + i.common + "\t" + i.key + "\t" + i.top + "\t" + i.branch + "\t" + String(i.t0) + "\t" + (i.live ? "L" : String(i.t1)) + "\t" + (i.sub ? "s" : "") + "\t" + String(i.refs.length);
+}
+function stampOf(d: string, now: number, force: boolean, dirty: Set<string>, grp: string): void {
+  const e = ALL.stamp.get(d);
+  if (e && (e.pass === ALL.pass || (!force && now - e.at < READ_MS))) return; // read this pass already (a repo's sessions share it)
+  ATTR_STATS.stamps++;
+  const st = reflogStamp(d);
+  if (e && e.st === st) { e.at = now; e.pass = ALL.pass; return; }
+  ALL.stamp.set(d, { st, at: now, pass: ALL.pass }); dirty.add(grp);
+}
+function peersOf(common: string, now: number, force: boolean, dirty: Set<string>): string[] {
+  const e = ALL.peers.get(common);
+  if (e && !force && now - e.at < READ_MS) return e.ds;
+  const ds = worktreeGitdirs(common);
+  if (!e || e.ds.join("\n") !== ds.join("\n")) dirty.add(common);
+  ALL.peers.set(common, { ds, at: now }); return ds;
+}
 export function allInfo(): Map<string, GitInfo> {
-  const now = Date.now();
-  const ss: SessIn[] = []; const dirs = new Set<string>(); let stamps = "";
-  if (ALL.ver === L.ver && now - Math.max(ALL.at, ALL.seen) < 1000) return ALL.info;
-  const peers = new Map<string, string[]>(); // common dir → its worktrees' gitdirs (banners made in a sibling worktree)
+  const now = GIT_CLOCK.now();
+  if (!ALL.force && ALL.pver === P.ver && ALL.n === sessions.size && now - ALL.at < PASS_MS) return ALL.info;
+  // a full pass looks at every session (forced, identities or the session set changed, while the ledger indexes the
+  // history, and every 5 s); in between only at live ones and those written within the minute: the ledger books new
+  // bytes only of logs that grew, and growing moves the mtime
+  const full = ALL.force || ALL.pver !== P.ver || ALL.n !== sessions.size || indexing() || now - ALL.fullAt >= READ_MS;
+  const force = ALL.force; ALL.force = false; ALL.at = now; ALL.pass++; ALL.pver = P.ver; ALL.n = sessions.size;
+  if (full) ALL.fullAt = now;
+  const pass = ALL.pass; const dirty = new Set<string>();
+  let moved = false; // a SessIn changed: grps/proj/ins are rebuilt
+  for (const x of sessions.values()) {
+    if (!full && x.pid <= 0 && now - x.mtime >= RECENT_MS) continue;
+    const a = ledger.get(x.path); if (!a) continue;
+    const live = livePid(x) > 0;
+    const m = ALL.memo.get(x.path);
+    if (m && m.pver === P.ver && m.a === a && m.t0 === a.t0 && m.al === a.al && m.vcs === a.vcs && m.n === a.vcs.length && m.live === live &&
+        m.cwd === x.cwd && m.branch === x.branch && m.parent === x.parent && m.remote === x.remote && m.head === x.headDone) {
+      m.pass = pass;
+      if (live && m.si) { const w = windowOf(a.t0, a.al, true, GIT.pad, now); if (w.length) { m.si.t0 = w[0] ?? 0; m.si.t1 = w[1] ?? 0; } } // the window end follows the clock
+      continue;
+    }
+    ATTR_STATS.sessIns++;
+    const i = sessIn(x, now);
+    const memo: Memo = { si: i, grp: "", sig: "", pass, pver: P.ver, a, t0: a.t0, al: a.al, n: a.vcs.length, vcs: a.vcs, live, cwd: x.cwd, branch: x.branch, parent: x.parent, remote: x.remote, head: x.headDone };
+    if (!i) { if (m && m.si) { dirty.add(m.grp); ALL.info.delete(x.path); moved = true; } ALL.memo.set(x.path, memo); continue; }
+    const grp = grpOf(i); const sig = sigOf(i);
+    const old = m ? m.si : null;
+    const same = m !== undefined && old !== null && m.grp === grp && m.sig === sig && m.vcs === a.vcs; // another refs array (a re-index) may hold other refs
+    if (!same) { dirty.add(grp); if (m && m.grp) dirty.add(m.grp); moved = true; }
+    if (same && old) { old.t0 = i.t0; old.t1 = i.t1; memo.si = old; }
+    memo.grp = grp; memo.sig = sig;
+    ALL.memo.set(x.path, memo);
+  }
+  if (full) for (const [p, m] of ALL.memo) if (m.pass !== pass) { if (m.si) { dirty.add(m.grp); moved = true; } ALL.memo.delete(p); ALL.info.delete(p); }
+  // members per repo (rebuilt when a SessIn moved), in session order as a full rebuild sees them
+  if (moved) {
+    ALL.grps.clear(); ALL.dirs.clear(); ALL.ins.clear(); ALL.proj.clear();
+    for (const x of sessions.values()) {
+      const m = ALL.memo.get(x.path); const si = m ? m.si : null; if (!m || !si) continue;
+      const l = ALL.grps.get(m.grp); if (l) l.push(x.path); else ALL.grps.set(m.grp, [x.path]);
+      if (si.gitdir) { const ds = ALL.dirs.get(m.grp); if (!ds) ALL.dirs.set(m.grp, [si.gitdir]); else if (ds.indexOf(si.gitdir) < 0) ds.push(si.gitdir); }
+      ALL.ins.set(x.path, si);
+      if (!si.sub) { const pl = ALL.proj.get(si.key); if (pl) pl.push(si); else ALL.proj.set(si.key, [si]); }
+    }
+  }
+  // reflogs and worktree lists: re-read at most every 5 s per repo (Decision 8), at once when forced
+  for (const [grp, ps] of ALL.grps) {
+    const m0 = ALL.memo.get(ps[0] ?? ""); const s0 = m0 ? m0.si : null; if (!s0) continue;
+    if (s0.common) for (const d of peersOf(s0.common, now, force, dirty)) stampOf(d, now, force, dirty, grp);
+    for (const d of ALL.dirs.get(grp) ?? []) stampOf(d, now, force, dirty, grp);
+  }
+  if (!dirty.size) return ALL.info;
+  for (const grp of dirty) {
+    const ps = ALL.grps.get(grp); if (!ps) continue;
+    ATTR_STATS.projects++;
+    const ss: SessIn[] = []; const dirs = new Set<string>(); const peers = new Map<string, string[]>();
+    for (const p of ps) {
+      const m = ALL.memo.get(p); const i = m ? m.si : null; if (!i) continue;
+      ss.push(i); if (i.gitdir) dirs.add(i.gitdir);
+      if (i.common && !peers.has(i.common)) { const e = ALL.peers.get(i.common); const ds = e ? e.ds : worktreeGitdirs(i.common); peers.set(i.common, ds); for (const d of ds) dirs.add(d); }
+    }
+    const logs = new Map<string, RefEv[]>();
+    for (const d of dirs) { const e = ALL.stamp.get(d); if (e && e.st) logs.set(d, readReflog(d)); }
+    for (const [p, g] of attributeWith(ss, logs, peers, hasCommit)) ALL.info.set(p, g);
+  }
+  ALL.gen++;
+  return ALL.info;
+}
+// today's one-shot path over every session (no memo, no throttle): the incremental pass must equal it
+export function fullRebuildForCheck(): Map<string, GitInfo> {
+  const now = GIT_CLOCK.now();
+  const ss: SessIn[] = []; const dirs = new Set<string>(); const peers = new Map<string, string[]>();
   for (const x of sessions.values()) {
     if (!ledger.has(x.path)) continue; const i = sessIn(x, now); if (!i) continue;
     ss.push(i); if (i.gitdir) dirs.add(i.gitdir);
     if (i.common && !peers.has(i.common)) { const ds = worktreeGitdirs(i.common); peers.set(i.common, ds); for (const d of ds) dirs.add(d); }
   }
   const logs = new Map<string, RefEv[]>();
-  for (const d of dirs) { const st = reflogStamp(d); stamps += st + ","; if (st) logs.set(d, readReflog(d)); }
-  const key = String(P.ver) + "|" + String(sessions.size) + "|" + String(ss.length) + "|" + stamps;
-  if (key === ALL.key && (ALL.ver === L.ver || now - ALL.at < 1000)) { ALL.seen = now; return ALL.info; }
-  ALL.info = attributeWith(ss, logs, peers, hasCommit); ALL.key = key; ALL.ver = L.ver; ALL.at = now;
-  ALL.proj.clear(); ALL.ins.clear();
-  for (const x of ss) { ALL.ins.set(x.path, x); if (x.sub) continue; const l = ALL.proj.get(x.key); if (l) l.push(x); else ALL.proj.set(x.key, [x]); }
-  return ALL.info;
+  for (const d of dirs) if (reflogStamp(d)) logs.set(d, readReflog(d));
+  return attributeWith(ss, logs, peers, hasCommit);
 }
 // the session's own git info (null: no git worktree known); without a reflog the window `git log` adds its ≈ rows (gated
 // spawn, cached; asked sessions only: those rows are never counted, so aggregations need no spawns)
+// the minute a live session's fallback last fetched its window for (it moves with the clock: one fetch per minute)
+const fbMin = new Map<string, number>();
 export function gitInfo(s: Sess): GitInfo | null {
   const g = allInfo().get(s.path); if (!g) return null;
   const me = ALL.ins.get(s.path);
-  if (g.noReflog && !g.fb && me) fallback(me, g, ALL.proj.get(me.key) ?? []);
+  if (g.noReflog && me && (!g.fb || (me.live && fbMin.get(s.path) !== Math.ceil(me.t1 / 60000)))) fallback(me, g, ALL.proj.get(me.key) ?? []);
   return g;
 }
 // no reflog: the session's window commits by `git log`, kept only when no other session of the project covers the time
@@ -254,7 +356,8 @@ function fallback(s: SessIn, g: GitInfo, proj: SessIn[]): void {
   if (s.sub || s.t1 <= s.t0 || !s.top) { g.fb = true; return; }
   const t1 = s.live ? Math.ceil(s.t1 / 60000) * 60000 : s.t1; // live: the window end moves; one fetch per minute
   if (!windowLogCached(s.path, s.t0, t1) && !spawnOk()) return; // budgeted: a later frame fetches it
-  g.fb = true;
+  g.fb = true; ALL.touch++; // the preview line's memo
+  if (s.live) { if (fbMin.size > 1024) fbMin.clear(); fbMin.set(s.path, t1 / 60000); }
   for (const e of windowLog(s.path, s.top, s.common, s.branch, s.t0, t1, gitRun())) {
     let n = 0; for (const o of proj) if (covers(o, e.at)) n++;
     if (n > 1) continue;

@@ -22,6 +22,8 @@ eq("nothing", levelOf(act(0, 0, false, 0, false, false)), "idle");
 eq("focus-out and indexing", levelOf(act(0, t - 1000, false, 0, true, false)), "hot");
 eq("focus-out, live: away", levelOf(act(0, t - 1000, false, 0, false, true)), "away");
 
+// ── the fast job follows what is armed: 50 ms for a replay, the marquee's 150 ms otherwise ──
+{ const f = newSched(false, false, t); f.lv = "hot"; eq("fast default (replay)", String(every(f, "fast", false, true)), "50"); f.fastMs = 150; eq("fast for the marquee", String(every(f, "fast", false, true)), "150"); eq("fast unarmed", String(every(f, "fast", false, false)), "-1"); }
 // ── table ──
 eq("scan idle", String(base("scan", "idle", false, false, false)), "10000");
 eq("procs idle live", String(base("procs", "idle", true, false, false)), "1500");
@@ -95,10 +97,19 @@ eq("fast armed idle", String(every(sc, "fast", false, true)), "-1");
 
 // ── unfocused cap ──
 sc = newSched(false, false, t); sc.lv = "hot"; sc.unf = true;
-eq("unf render hot", String(every(sc, "render", false, false)), "1000");
-eq("unf tick hot", String(every(sc, "tick", false, false)), "500");
+eq("unf render hot", String(every(sc, "render", false, false)), "5000");
+eq("unf tick hot", String(every(sc, "tick", false, false)), "1000");
+eq("unf scan hot", String(every(sc, "scan", false, false)), "6000");
 eq("unf probe hot", String(every(sc, "probe", false, false)), "250");
+eq("unf probe hot, live: rides on watch", String(every(sc, "probe", true, false)), "-1");
+sc.fastMs = 150; eq("unf marquee paused", String(every(sc, "fast", false, true)), "-1");
+sc.fastMs = 50; eq("unf replay goes on", String(every(sc, "fast", false, true)), "50"); sc.fastMs = 150;
+eq("unf size", String(every(sc, "size", false, false)), "10000");
 eq("unf watch live", String(every(sc, "watch", true, false)), "1500");
+// a young agent with no session yet: its first log may come any moment, in any level (a first prompt)
+sc.lv = "away"; eq("away scan", String(every(sc, "scan", false, false)), "15000");
+sc.pend = true; eq("away scan, agent pending", String(every(sc, "scan", false, false)), "2000"); eq("away slow, agent pending", String(every(sc, "slow", false, false)), "2000"); sc.pend = false;
+eq("away slow", String(every(sc, "slow", false, false)), "30000");
 sc.lv = "away";
 eq("unf render away", String(every(sc, "render", false, false)), "5000");
 sc.lv = "hot"; sc.unf = false;
@@ -106,7 +117,11 @@ eq("focused render hot", String(every(sc, "render", false, false)), "250");
 
 // ── due ──
 sc = newSched(false, false, t); sc.lv = "hot";
-eq("tick not due at 499", String(due(sc, t + 499, false, false).indexOf("tick")), "-1");
+// a data job due within a quarter of its interval (≤ 100 ms) shares a wake with one that is due; alone it waits
+eq("tick shares the wake at 450 (probe due)", String(due(sc, t + 450, false, false).indexOf("tick") >= 0), "true");
+{ const q = newSched(false, false, t); q.lv = "hot"; for (const j of ["size", "procs", "scan", "slow", "probe", "watch", "fast", "render"]) { const x = q.js.get(j); if (x) x.last = t + 440; }
+  eq("tick alone not early at 450", String(due(q, t + 450, false, false).length), "0");
+  eq("render never early (tick due at 680)", String(due(q, t + 680, false, false).indexOf("render")) + String(due(q, t + 680, false, false).indexOf("tick") >= 0), "-1true"); }
 const d250 = due(sc, t + 250, false, false);
 eq("probe due at 250", String(d250.indexOf("probe") >= 0 && d250.indexOf("tick") < 0), "true");
 eq("tick due at 500", String(due(sc, t + 500, false, false).indexOf("tick") >= 0), "true");
@@ -175,7 +190,7 @@ eq("duration measured", String(px ? px.ew >= 9 : false), "true"); // 0.3 × 30
 eq("fast nothing", fastDraw(false, false, false), "");
 eq("fast header", fastDraw(false, true, false), "header");
 eq("fast full", fastDraw(true, true, false), "full");
-eq("fast unfocused header", fastDraw(false, true, true), "dirty");
+eq("fast unfocused header: nothing", fastDraw(false, true, true), "");
 eq("fast unfocused full", fastDraw(true, false, true), "dirty");
 
 // ── fast arm seam ──

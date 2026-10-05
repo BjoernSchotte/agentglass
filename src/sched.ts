@@ -12,9 +12,12 @@ export interface Act { now: number; input: number; focusOut: number; replay: boo
 export interface JS { last: number; ew: number } // last run, EWMA of its duration (ms)
 // unf: focus-out reported and no focus-in since (render capped at 1/s); burst: ledger indexing pending, its tick keeps
 // the level's cadence (the 100 ms slice per tick is the one intentional burst, not a cost to stretch away)
-export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; burst: boolean; js: Map<string, JS> }
+// fastMs: the fast job's interval while armed (50 ms for a replay; the marquee steps every 150 ms: more turns only cost)
+// pend: a young agent has no session yet (its first log may come any moment: scan and slow run every 2 s in any level)
+export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; burst: boolean; js: Map<string, JS>; fastMs: number; pend: boolean }
 
 const LV: Level[] = ["hot", "warm", "idle", "away"];
+const PEND_MS = 2000; // scan and slow while a young agent has no session yet (procs.ts PEND)
 const JUMP = 600000; // a job last run more than 10 min ago (suspend) or in the future (clock went back) runs now
 const ALARM = 1500; // watch and procs while an agent is live: alarm latency wins over the budget
 // base intervals hot / warm / idle / away; -1 = not scheduled at that level. hot never polls data faster than the old
@@ -59,7 +62,7 @@ export function levelOf(a: Act): Level {
 export function newSched(fixed: boolean, winch: boolean, now: number): Sched {
   const js = new Map<string, JS>();
   for (const j of JOBS) js.set(j, { last: now, ew: 0 });
-  return { fixed, winch, lv: "warm", unf: false, burst: false, js };
+  return { fixed, winch, lv: "warm", unf: false, burst: false, js, fastMs: 50, pend: false };
 }
 
 export function base(j: Job, lv: Level, live: boolean, fixed: boolean, winch: boolean): number {
@@ -78,19 +81,37 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
   const x = sc.js.get(j);
   if (j === "tick" && sc.burst) return sc.lv === "hot" ? 250 : b; // ledger indexing: 100 ms slices at 250 ms while hot, no stretch
   let e = x ? Math.max(b, 20 * x.ew) : b;
-  if (j === "render" && sc.unf) e = Math.max(e, 1000); // unfocused: draw ≤ 1/s, ingest and alarms keep their cadence
+  if (j === "render" && sc.unf) e = Math.max(e, 5000); // unfocused: nobody looks — frames only for a change (an alarm draws at once: main.ts watch)
+  if (j === "fast") e = Math.max(e, sc.fastMs);
+  if (sc.unf) { // unfocused: no marquee steps (a replay goes on), the live probe rides on the watch job (its alarm latency), size seldom
+    if (j === "fast" && sc.fastMs > 50) return -1;
+    if (j === "probe" && live) return -1;
+    if (j === "size") e = Math.max(e, 10000);
+    if (j === "tick") e = Math.max(e, 1000); // ingest within a second of the watch job reading it (alarm values)
+    if (j === "scan") e = Math.max(e, 6000); // a new agent scans at once (main.ts: procs)
+  }
+  if ((j === "scan" || j === "slow") && sc.pend) e = Math.min(e, PEND_MS); // slow: its cwd links the log (pi, OpenCode, Gemini)
   return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
 }
 
 function lastOf(sc: Sched, j: Job): number { const x = sc.js.get(j); return x ? x.last : 0; }
 function jumped(last: number, now: number): boolean { return last > now || now - last > JUMP; }
 
+// a turn that runs anyway also runs the data jobs due within the next quarter of their interval (≤ 100 ms): every
+// wake of the loop costs the runtime ~0.1 ms by itself, so jobs share wakes; render and fast keep their own beat (the
+// spinner and marquee speed)
 export function due(sc: Sched, now: number, live: boolean, armed: boolean): Job[] {
   const out: Job[] = [];
   for (const j of JOBS) {
     const e = every(sc, j, live, armed); if (e < 0) continue;
     const last = lastOf(sc, j);
     if (jumped(last, now) || now - last >= e) out.push(j);
+  }
+  if (!out.length) return out;
+  for (const j of JOBS) {
+    if (j === "render" || j === "fast" || out.indexOf(j) >= 0) continue;
+    const e = every(sc, j, live, armed); if (e < 0) continue;
+    if (now - lastOf(sc, j) >= e - Math.min(100, e / 4)) out.push(j);
   }
   return out;
 }
@@ -126,7 +147,7 @@ export function sleepFor(sc: Sched, now: number, live: boolean, armed: boolean):
 // (marquee: one row instead of a whole frame, ~6 steps/s), dirty = unfocused, left to the 1/s render cap
 export function fastDraw(full: boolean, header: boolean, unf: boolean): string {
   if (!full && !header) return "";
-  if (unf) return "dirty";
+  if (unf) return full ? "dirty" : ""; // unfocused: a marquee step is not drawn at all
   return full ? "full" : "header";
 }
 // a frame is built at least this often even when nothing is dirty ("3m ago" texts)

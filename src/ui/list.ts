@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { base } from "../util/json.ts";
 import { width, vwidth, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM, localDay } from "../util/text.ts";
-import type { Sess } from "../model/types.ts";
+import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current } from "../model/sessions.ts";
@@ -17,14 +17,70 @@ import { link, sessUrl } from "../util/hyper.ts";
 // mouse hit map for the preview, rebuilt every frame
 export const prevKind: number[] = []; export const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
 export const prevKids: Sess[] = [];
+// the preview's activity lines (the last 25 events wrapped and styled) while the session's events are the same array (a
+// tail read makes a new one), at the same width and colors: formatting them was the bulk of a frame
+const ACT = { evs: [] as Ev[], w: -1, theme: "", lines: [] as string[], ev: [] as number[] };
+export function actLines(s: Sess, w: number): string[] {
+  const theme = C.text + C.cyan + C.dim + C.sel + C.sub + C.line + C.yellow + C.purple; // every color evLines uses: a theme may change any one
+  if (ACT.evs === s.evs && ACT.w === w && ACT.theme === theme) return ACT.lines;
+  ACT.evs = s.evs; ACT.w = w; ACT.theme = theme; ACT.lines = []; ACT.ev = [];
+  for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], w, false, ACT.lines); while (ACT.ev.length < ACT.lines.length) ACT.ev.push(i); }
+  return ACT.lines;
+}
 
+// the status glyph's kind: b busy (spinner), l live idle ●, r recent ○, o old ·
+function glyphKind(s: Sess): string {
+  if (s.pid) return working(s) || Date.now() - s.mtime < 8000 ? "b" : "l";
+  return Date.now() - s.mtime < 120000 ? "r" : "o";
+}
 function statusGlyph(s: Sess): string {
-  if (s.pid) {
-    const busy = working(s) || Date.now() - s.mtime < 8000;
-    return busy ? fg(C.green) + spin() + RST : fg(C.yellow) + "●" + RST;
+  const k = glyphKind(s);
+  return k === "b" ? fg(C.green) + spin() + RST : k === "l" ? fg(C.yellow) + "●" + RST : k === "r" ? fg(C.green) + "○" + RST : fg(C.dim) + "·" + RST;
+}
+// what the Sessions list and its preview show, without drawing them (main.ts: a frame is built when it moved). Each row
+// as renderSessions draws it from these inputs; the preview by its session's fields, last events (the tail is read here
+// as the frame would), its subagents and the usage its sections show
+function rowKey(s: Sess, sub: boolean, last: boolean): string {
+  const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + agoK(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + agoK(s.last) + "|" + s.cwd + "|" +
+    (s.subs.length ? (isOpen(s) ? "v" : ">") + String(activeSubs(s)) + "/" + String(s.subs.length) : ""));
+  let b = ""; for (const f of H.rowBadges) b += f(s);
+  return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b;
+}
+function usageKey(s: Sess): string {
+  return String(s.inTok) + "," + String(s.outTok) + "," + String(s.cacheRTok) + "," + String(s.cacheWTok) + "," + String(s.cost) + "," + String(s.unkTok) + "," + String(s.unkCr) + "," +
+    String(s.tools) + "," + String(s.linesAdd) + "," + String(s.linesDel) + "," + s.bill + s.plan + s.billSrc + (s.attention ? "!" : "") + s.stuck;
+}
+// which sessions the visible rows show and each one's glyph kind (busy, live, recent, old): an unfocused TUI draws a
+// change here at once (main.ts), the rest at its 5 s beat
+export function listPresence(): string {
+  let o = String(S.view.length);
+  for (let r = 0; r < S.listH; r++) { const s = sessAt(S.top + r); if (!s) break; o += "|" + s.path + (s.depth === 1 ? (subActive(s) ? "A" : "a") : glyphKind(s)); }
+  return o;
+}
+// clock false: without the "ago" texts (an unfocused TUI draws for a change of data, not of the clock)
+const SIGT = { clock: true };
+function agoK(t: number): string { return SIGT.clock ? ago(t) : ""; }
+export function listSig(clock: boolean = true): string {
+  SIGT.clock = clock;
+  const o: string[] = [String(S.W) + "x" + String(S.H), String(S.top), String(S.sel), String(S.listH), String(S.view.length), boxChips("sessions", S.W)];
+  for (let r = 0; r < S.listH; r++) {
+    const s = sessAt(S.top + r); if (!s) break;
+    const nx = sessAt(S.top + r + 1);
+    o.push(rowKey(s, s.depth === 1, !(nx && nx.depth === 1)));
   }
-  if (Date.now() - s.mtime < 120000) return fg(C.green) + "○" + RST;
-  return fg(C.dim) + "·" + RST;
+  const s = current();
+  if (s) {
+    if (s.headDone) loadTail(s); // as the frame reads it (a head is read by the frame itself)
+    const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
+    o.push(s.path + "|" + bytes(s.size) + "|" + (s.headDone ? "h" : "") + s.cwd + "|" + s.branch + "|" + s.remote + "|" + s.model + "|" + agoK(s.mtime) + "|" + String(s.pid) + s.status + s.name + "|" +
+      (s.pid ? tmuxTarget(s.pid) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
+    // the preview lists the 6 most active subagents (renderSessions' order); the usage sums all of them
+    let u = 0; for (const c of s.subs) u += c.cost + c.inTok + c.outTok + c.cacheRTok + c.cacheWTok + c.tools + c.linesAdd + c.linesDel + c.unkTok;
+    o.push(String(s.subs.length) + ":" + String(u));
+    if (s.subs.length) for (const c of s.subs.slice().sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime).slice(0, 6))
+      o.push(c.path + (subActive(c) ? "A" : "a") + agoK(c.mtime) + "|" + titleOf(c) + "|" + activity(c));
+  }
+  return o.join("\n");
 }
 // H.rowBadges slot: only takes room when a feature registered one
 function badgeSlot(s: Sess, b: string): string {
@@ -111,8 +167,7 @@ export function renderSessions(): void {
       }
     }
     lines.push(fg(C.line) + "─".repeat(iw2) + RST);
-    const act: string[] = []; const actEv: number[] = [];
-    for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], iw2, false, act); while (actEv.length < act.length) actEv.push(i); }
+    actLines(s, iw2); const act = ACT.lines; const actEv = ACT.ev;
     const room = ph - 2 - lines.length;
     const from = Math.max(0, act.length - room);
     for (let i = from; i < act.length; i++) { lines.push(act[i]); hit(2, actEv[i]); }

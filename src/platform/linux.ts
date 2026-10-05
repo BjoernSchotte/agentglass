@@ -1,18 +1,33 @@
-// agentglass — Linux adapter: cpu from /proc tick deltas, cwd and open files from /proc (no lsof needed)
+// agentglass — Linux adapter: the process table and cpu from /proc (no ps), cwd and open files from /proc (no lsof needed)
 // SPDX-License-Identifier: Apache-2.0
 import { realpathSync, renameSync, mkdirSync, openSync, writeSync, closeSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { userInfo } from "node:os";
 import { HOME, readText, readBytes, listDir, run } from "../util/fs.ts";
-import type { Platform } from "./types.ts";
+import type { Platform, ProcRow } from "./types.ts";
+import { type ProcFs, scanProcs, knownProcs, btimeOf, procfsUsable } from "./procfs.ts";
 import { psProcs, devOf, detached, freeName, ownerModeOf, fileInfoOf } from "./posix.ts";
 
+// the process table from /proc (procfs.ts): no ps child, and only new, young and tracked pids are read on most passes;
+// a full pass every 30 s catches execs and reparenting of the rest. Falls back to ps where /proc is not usable.
+const PFS: ProcFs = { root: "/proc", hz: 0, page: 0, btime: 0 };
+const FULL_MS = 30000;
+let useProc = -1; let lastFull = 0;
+function clkTck(): number { if (!PFS.hz) PFS.hz = Number(run("getconf", ["CLK_TCK"]).trim()) || 100; return PFS.hz; }
+function listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean, discover: boolean): ProcRow[] {
+  if (useProc < 0) { clkTck(); PFS.page = Number(run("getconf", ["PAGESIZE"]).trim()) || 4096; PFS.btime = btimeOf(PFS.root); useProc = procfsUsable(PFS) ? 1 : 0; }
+  if (!useProc) return psProcs();
+  const now = Date.now(); const full = discover && now - lastFull >= FULL_MS;
+  if (full) lastFull = now;
+  return discover ? scanProcs(PFS, now, tracked, full, wantArgs) : knownProcs(PFS, now, tracked);
+}
 // ps %cpu on Linux is the lifetime average, so fresh helpers read as 100%+ and long-lived agents as idle →
-// diff utime+stime from /proc/<pid>/stat between refreshes instead
+// diff utime+stime between refreshes instead: scanProcs already did from the stat it just read (reported); the ps
+// fallback reads /proc/<pid>/stat here
 const ticks = new Map<number, { t: number; at: number; cpu: number }>();
-let hz = 0;
 function cpuOf(pid: number, reported: number, now: number): number {
-  if (!hz) hz = Number(run("getconf", ["CLK_TCK"]).trim()) || 100;
+  if (useProc > 0) return reported;
+  const hz = clkTck();
   const st = readText("/proc/" + pid + "/stat", 0, 1024);
   const i = st.lastIndexOf(")"); // comm may contain spaces and parens
   const f = i > 0 ? st.slice(i + 2).split(" ") : [];
@@ -25,11 +40,12 @@ function cpuOf(pid: number, reported: number, now: number): number {
   return cpu;
 }
 function realpath(p: string): string { try { return realpathSync(p); } catch (e) { return ""; } }
-function procFiles(pids: number[], want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> } {
+function procFiles(pids: number[], fdPids: Set<number>, want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> } {
   const cwd = new Map<number, string>(); const open = new Map<string, number>();
   for (const pid of pids) {
     const c = realpath("/proc/" + pid + "/cwd");
     if (c) cwd.set(pid, c);
+    if (!fdPids.has(pid)) continue;
     const dir = "/proc/" + pid + "/fd";
     for (const fd of listDir(dir)) { const n = realpath(dir + "/" + fd); if (n && want(n)) open.set(n, pid); }
   }
@@ -53,7 +69,7 @@ function trash(path: string): void {
 
 export const linux: Platform = {
   name: "linux",
-  listProcs: psProcs,
+  listProcs,
   cpuOf,
   prune: (alive: (pid: number) => boolean) => { for (const k of [...ticks.keys()]) if (!alive(k)) ticks.delete(k); },
   procFiles,
