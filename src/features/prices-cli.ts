@@ -15,8 +15,9 @@ import { parseSince } from "./queries.ts";
 import { dayKey } from "./usage/record.ts";
 import { ledger, accOf } from "./usage/ledger.ts";
 import { kfmt } from "./usage/costs.ts";
-import { type Price, type Resolved, PRICES_FILE, resolve, loadUser, readUserFile, communitySource, communityFetched } from "./usage/pricing.ts";
+import { type Price, type Resolved, PRICES_FILE, resolve, readUserFile, communitySource, communityFetched } from "./usage/pricing.ts";
 import { type PRow, type SessAcc, priceRows, reportedNote, rates, srcLabel } from "./usage/pricerows.ts";
+import { reloadPrices } from "./usage/repricer.ts";
 import { type PriceIn, parsePriceLine, entryOf, storedKey, setUserEntry, userEntry } from "./usage/userprices.ts";
 
 const LIST_OPTS = setOptions("prices", [
@@ -136,7 +137,7 @@ function noteOf(model: string): string {
 function write(model: string, e: Obj | null): void {
   try { setUserEntry(PRICES_FILE, model, e); }
   catch (x) { cliError("prices_file", x instanceof Error ? x.message : String(x), "fix " + home(PRICES_FILE) + " (it was not changed)", 1); }
-  const u = readUserFile(PRICES_FILE); loadUser(u.o);
+  reloadPrices("cli"); // the user layer again, and the ledger this run loaded re-priced (its cache saves consistent)
 }
 function report(json: boolean, model: string, before: Resolved | null, extra: Obj, note: string): void {
   const k = storedKey(model); const after = resolve(k, "");

@@ -13,7 +13,7 @@ import { type Acc, L } from "./record.ts";
 import { ROWS } from "./facts.ts";
 import { rulesNeedRows } from "../rules/file.ts";
 import { pricesSig, kiroRate } from "./pricing.ts";
-import { repriceAll } from "./repricer.ts";
+import { repriceAll, PRICED } from "./repricer.ts";
 import { isKiroLog } from "../../harness/kiro.ts";
 import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
@@ -63,6 +63,7 @@ function load(): void {
     ledger.set(path, a); written.set(path, a.off);
   }
   if (str(root["prices"]) !== pricesSig()) repriceAll(); // saved under other prices: re-price in place (no log is read again)
+  else PRICED.sig = pricesSig();
 }
 // ledger offset each session's calls file was last written at (= consistent with)
 const written = new Map<string, number>();
@@ -80,6 +81,7 @@ function saveCalls(): void {
 let savedIdx = -1; let lastSave = 0;
 function save(): void {
   if (!loaded || L.idx === savedIdx || !ROWS.on) return; // without rows a save would leave calls files behind the ledger
+  if (PRICED.sig !== pricesSig()) repriceAll(); // the table changed without a re-price (a CLI write): the saved signature must describe the numbers
   const ss: Obj = {};
   for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) ss[s.path] = accOut(a, KEEP_IDS); } // only sessions that still exist
   saveCalls();

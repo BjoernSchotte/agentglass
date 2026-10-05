@@ -19,15 +19,19 @@ export function grp(n: number): string {
 
 // by[i] = cost of MODES[i]; unk/um = unpriced tokens (per model), uc = credits without a rate; est = the share priced
 // through a prices.json alias (an estimate: figures holding any get ≈, also on an API key)
-export interface ModeSum { by: number[]; unk: number; um: Map<string, number>; uc: number; est: number }
-export function newSum(): ModeSum { return { by: [0, 0, 0, 0, 0], unk: 0, um: new Map<string, number>(), uc: 0, est: 0 }; }
-// a day's alias-priced cost: its priced-token rows whose model resolves through an alias now
-export function estDay(d: Day): number {
+// (estBy[i]: that share within MODES[i])
+export interface ModeSum { by: number[]; unk: number; um: Map<string, number>; uc: number; est: number; estBy: number[] }
+export function newSum(): ModeSum { return { by: [0, 0, 0, 0, 0], unk: 0, um: new Map<string, number>(), uc: 0, est: 0, estBy: [0, 0, 0, 0, 0] }; }
+// a day's alias-priced cost: its priced-token rows whose model resolves through an alias now; m (when given) gets it
+// per billing mode of the row's provider
+export function estDay(d: Day, m: ModeSum | null = null, mode: ((prov: string) => Bill) | null = null): number {
   let e = 0;
   for (const [k, r] of d.tp) {
     const usd = r[5] ?? -1; if (usd <= 0) continue;
-    const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1);
-    const z = resolve(k.slice(t2 + 1), k.slice(t1 + 1, t2)); if (z && z.src === "alias") e += usd;
+    const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1); const prov = k.slice(t1 + 1, t2);
+    const z = resolve(k.slice(t2 + 1), prov); if (!z || z.src !== "alias") continue;
+    e += usd;
+    if (m && mode) { const i = MODES.indexOf(mode(prov)); if (i >= 0) m.estBy[i] = (m.estBy[i] ?? 0) + usd; }
   }
   return e;
 }
@@ -47,12 +51,13 @@ export function estTop(a: Acc): { usd: number; model: string; n: number } {
 // one session-day into the sum; mode resolves each provider's cost (pi/OpenCode per provider, else the session's mode)
 export function addDay(m: ModeSum, d: Day, mode: (prov: string) => Bill): void {
   for (const [p, c] of d.cp) { const i = MODES.indexOf(mode(p)); if (i >= 0) m.by[i] = (m.by[i] ?? 0) + c; }
-  m.unk = m.unk + d.unk; m.uc = m.uc + d.uc; m.est = m.est + estDay(d);
+  m.unk = m.unk + d.unk; m.uc = m.uc + d.uc; m.est = m.est + estDay(d, m, mode);
   for (const [k, n] of d.um) m.um.set(k, (m.um.get(k) ?? 0) + n);
 }
 export function addSum(m: ModeSum, o: ModeSum): void {
   for (let i = 0; i < MODES.length; i++) m.by[i] = (m.by[i] ?? 0) + (o.by[i] ?? 0);
   m.unk = m.unk + o.unk; m.uc = m.uc + o.uc; m.est = m.est + o.est;
+  for (let i = 0; i < MODES.length; i++) m.estBy[i] = (m.estBy[i] ?? 0) + (o.estBy[i] ?? 0);
   for (const [k, n] of o.um) m.um.set(k, (m.um.get(k) ?? 0) + n);
 }
 export function total(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; return t; }
@@ -72,7 +77,7 @@ export function split(m: ModeSum, narrow: boolean): string {
   if (narrow || !one && total(m) === 0) return money(total(m), one, est);
   if (one) return moneyTag(total(m), one, est);
   const parts: string[] = [];
-  for (let i = 0; i < MODES.length; i++) if ((m.by[i] ?? 0) > 0) parts.push(moneyTag(m.by[i] ?? 0, MODES[i] ?? "unknown", est)); // which mode holds the alias share is not kept: all parts say ≈
+  for (let i = 0; i < MODES.length; i++) if ((m.by[i] ?? 0) > 0) parts.push(moneyTag(m.by[i] ?? 0, MODES[i] ?? "unknown", (m.estBy[i] ?? 0) > 1e-9));
   return parts.join(" + ");
 }
 // "gpt-x 900K · custom 300K · +2 models · kiro 120 credits (set kiroCreditUsd)", "" when nothing is unpriced

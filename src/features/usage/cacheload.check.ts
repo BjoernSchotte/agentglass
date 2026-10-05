@@ -1,7 +1,7 @@
 // agentglass — self-check for loading a ledger cache saved under other prices: scriptc build src/features/usage/cacheload.check.ts -o cl && ./cl
 // SPDX-License-Identifier: Apache-2.0
 // Runs under check.sh's temp HOME: the cache lives in $HOME/.agentglass/cache, kiro logs under $HOME/.kiro/sessions/cli.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { H } from "../../hooks.ts";
 import { HOME, cacheDir } from "../../util/fs.ts";
@@ -10,7 +10,9 @@ import { accOut } from "./cache.ts";
 import { VERSION } from "./codec.ts";
 import { ROWS } from "./facts.ts";
 import { newAcc, bucket, tokens, addCost, L } from "./record.ts";
-import { loadUser } from "./pricing.ts";
+import { loadUser, pricesSig } from "./pricing.ts";
+import { sessions } from "../../model/sessions.ts";
+import { newSess } from "../../model/types.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -34,5 +36,16 @@ ok("re-priced in place", !!b && Math.abs(b.cost - 3000 / 1e6) < 1e-12 && b.unk =
 ok("caches told to rebuild", L.ver > ver, String(L.ver));
 ok("kiro session dropped (rate changed)", !ledger.has(kp), "kept");
 
+// a price change in this process that nobody re-priced (a CLI write): the save re-prices first, so the file's price
+// signature always describes its numbers (else the next run would trust stale costs)
+const sx = newSess("codex", "a", "/w/a.jsonl", false); sx.size = 100; sessions.set(sx.path, sx);
+loadUser(JSON.parse('{"gpt-6.1-sol":{"input":2,"output":2}}'));
+ROWS.on = true; L.idx++;
+for (const f of H.onQuit) f();
+const saved = JSON.parse(readFileSync(join(cacheDir(), "ledger.json"), "utf8")) as Record<string, unknown>;
+const so = (saved["sessions"] as Record<string, unknown>)["/w/a.jsonl"] as Record<string, unknown>;
+const tt = (so ? so["t"] : []) as number[];
+ok("saved sig = current", saved["prices"] === pricesSig(), String(saved["prices"]));
+ok("saved numbers under that sig", Math.abs((tt[4] ?? 0) - 4000 / 1e6) < 1e-12, String(tt[4]));
 console.log(bad ? bad + " failed" : "cacheload: all checks passed");
 if (bad) process.exit(1);

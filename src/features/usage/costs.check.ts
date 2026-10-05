@@ -100,6 +100,10 @@ ok("money est", money(3, "api", true) === "≈$3.00" && money(3, "api") === "$3.
   const ms = newSum(); addDay(ms, dd, (p: string): Bill => "api");
   ok("addDay est", Math.abs(ms.est - 3) < 1e-9 && Math.abs(total(ms) - 6) < 1e-9, ms.est + "/" + total(ms));
   ok("split marks the estimate", split(ms, false) === "≈$6.00 spend", split(ms, false));
+  const mx = newSum(); addDay(mx, dd, (p: string): Bill => "api"); const d2 = newDay(); d2.cp.set("gemini", 2); d2.cost = 2; addDay(mx, d2, (p: string): Bill => "plan");
+  ok("only the mode holding the alias share gets ≈", split(mx, false) === "≈$6.00 spend + ≈$2.00 plan" && (mx.estBy[0] ?? 0) > 2.9 && (mx.estBy[1] ?? 0) === 0, split(mx, false));
+  const my = newSum(); addDay(my, d2, (p: string): Bill => "api"); addDay(my, dd, (p: string): Bill => "plan");
+  ok("an api part without alias share stays exact", split(my, false) === "$2.00 spend + ≈$6.00 plan", split(my, false));
   ok("estOf session", Math.abs(estOf(a) - 3) < 1e-9, String(estOf(a)));
   loadUser(null);
   const m2 = newSum(); addDay(m2, dd, (p: string): Bill => "api");

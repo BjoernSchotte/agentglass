@@ -12,11 +12,13 @@ import { PRICES_FILE, USER_WARN, readUserFile, loadUser, setGateway, setRemote, 
 import { loadGateway, gatewayEnv, gatewayFiles } from "./gwprices.ts";
 import { remoteCfg, loadCached, pricesFile } from "./remote.ts";
 
+// the price signature the ledger's numbers are booked under (cache.ts saves it; a mismatch re-prices before a save)
+export const PRICED = { sig: "" };
 // every ledger session under the current table; the Stats/cost caches rebuild (L.ver), the cache saves (L.idx)
 export function repriceAll(): { usd: number; ms: number } {
   const t0 = Date.now(); let usd = 0;
   for (const a of ledger.values()) usd += reprice(a);
-  L.ver++; L.idx++;
+  L.ver++; L.idx++; PRICED.sig = pricesSig();
   return { usd, ms: Date.now() - t0 };
 }
 // warnings (invalid prices.json entries) are told once per distinct text
@@ -36,6 +38,7 @@ export function reloadPrices(why: string): number {
 }
 // the gateway layer at startup, before anything is booked (pricing.ts cannot import gwprices.ts: it would be a cycle)
 setGateway(loadGateway(HOME, gatewayEnv()).rows);
+PRICED.sig = pricesSig();
 
 // the files a price can come from; their stat (mtime + size) changing on disk triggers reloadPrices("watch")
 function watched(): string[] {

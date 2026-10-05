@@ -72,12 +72,12 @@ function text(c: CostNow): void {
   out(hd);
   for (const r of rows) {
     let l = r.name.padEnd(L);
-    for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; l += pad(money(r.m.by[i] ?? 0, MODES[i] ?? "unknown", r.m.est > 1e-9), W); }
+    for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; l += pad(money(r.m.by[i] ?? 0, MODES[i] ?? "unknown", (r.m.estBy[i] ?? 0) > 1e-9), W); }
     l += pad(r.m.unk > 0 ? kfmt(r.m.unk) + " tok" : "—", W);
     out(l);
   }
   let pl = "projected month".padEnd(L);
-  for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; const p = c.projByMode[i]; pl += pad(p && p.month >= 0 ? money(p.month, MODES[i] ?? "unknown", c.month.est > 1e-9) : "—", W); }
+  for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; const p = c.projByMode[i]; pl += pad(p && p.month >= 0 ? money(p.month, MODES[i] ?? "unknown", (c.month.estBy[i] ?? 0) > 1e-9) : "—", W); }
   out(pl + (c.proj.month < 0 ? "   (needs 3+ days of history)" : "   (total " + money(c.proj.month, cols.length === 1 && cols[0] === 0 ? "api" : "", c.month.est > 1e-9) + ")"));
   out("");
   const uw = unpricedLine(c.week, 5); const um = unpricedLine(c.month, 5);
