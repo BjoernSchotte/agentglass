@@ -87,31 +87,37 @@ eq("new commit after ≤ 5 s: repo a only", String(ATTR_STATS.projects - p0), "1
 eq("new commit attributed", m1.indexOf("444:shared") >= 0 ? "yes" : "no", "yes");
 eq("== full rebuild after a reflog change", m1, show(fullRebuildForCheck()));
 
-// (c) one session's last activity moves: only its repo re-attributes
+// (c) one session's log grew (its mtime moves with it) and the ledger moved its last activity: only its repo
+// re-attributes, on the next pass a second later
+const s1 = sessions.get(dir + "/a1.jsonl");
+function wrote(): void { if (s1) s1.mtime = now; }
 p0 = ATTR_STATS.projects; const g1 = gitGen();
-a1.al = T + 125000;
-now += 1500; const m2 = show(allInfo());
+now += 1500; wrote(); a1.al = T + 125000;
+now += 1100; const m2 = show(allInfo());
 eq("one session changed: one repo", String(ATTR_STATS.projects - p0), "1");
 eq("generation bumped", gitGen() > g1 ? "yes" : "no", "yes");
 eq("== full rebuild after a session change", m2, show(fullRebuildForCheck()));
 // a banner appended to a session's refs (same array, longer)
 p0 = ATTR_STATS.projects;
-a1.vcs.push(vr("commit", "2222222", T + 120000));
-now += 1500; const m3 = show(allInfo());
+wrote(); a1.vcs.push(vr("commit", "2222222", T + 120000));
+now += 1100; const m3 = show(allInfo());
 eq("banner added: one repo", String(ATTR_STATS.projects - p0), "1");
 eq("== full rebuild after a banner", m3, show(fullRebuildForCheck()));
-// a session gone from the ledger: its entry goes, its repo re-attributes
+// a log not written within the minute and not live is looked at by the full pass only (every 5 s): the ledger books
+// bytes only of logs that grew, so this is a re-index or a removal
 const b1 = dir + "/b1.jsonl"; ledger.delete(b1);
-p0 = ATTR_STATS.projects; now += 1500; const m4 = allInfo();
-eq("session gone: entry dropped", m4.has(b1) ? "kept" : "dropped", "dropped");
+now += 5000; const m4 = allInfo();
+eq("session gone: dropped within 5 s", m4.has(b1) ? "kept" : "dropped", "dropped");
 eq("== full rebuild after removal", show(m4), show(fullRebuildForCheck()));
-// within the 1 s pass interval nothing is looked at; the ledger moving makes a pass (sessions only); gitStale forces one
-// with stamp reads at once
-let i0 = ATTR_STATS.sessIns; s0 = ATTR_STATS.stamps; now += 100; allInfo(); eq("inside 1 s: no pass", String(ATTR_STATS.stamps - s0), "0");
+// within the 1 s pass interval nothing is looked at, also when the ledger moved (live sessions write all the time): the
+// next pass a second later rebuilds what changed; gitStale forces a pass with stamp reads at once
+const i0 = ATTR_STATS.sessIns; now += 100; allInfo();
 a1.al = T + 126000; L.ver++; now += 100; allInfo();
-eq("ledger moved: a pass at once, one SessIn rebuilt", String(ATTR_STATS.sessIns - i0), "1");
-eq("no worktree: no info", allInfo().has(dir + "/n1.jsonl") ? "has" : "none", "none"); eq("…no stamp read", String(ATTR_STATS.stamps - s0), "0");
-now += 100;
+eq("ledger moved: no pass within the second", String(ATTR_STATS.sessIns - i0), "0");
+now += 1000; allInfo();
+eq("…then one SessIn rebuilt", String(ATTR_STATS.sessIns - i0), "1");
+eq("no worktree: no info", allInfo().has(dir + "/n1.jsonl") ? "has" : "none", "none");
+s0 = ATTR_STATS.stamps; now += 100;
 gitStale(); allInfo(); eq("gitStale: stamps read at once", String(ATTR_STATS.stamps - s0), "1");
 
 rmSync(dir, { recursive: true, force: true });
