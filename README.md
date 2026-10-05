@@ -849,6 +849,7 @@ export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (d
 export AGENTGLASS_CONFIG="/tmp/ag-config.json"   # another config file (default ~/.agentglass/config.json)
 export AGENTGLASS_RUN_DIR="/tmp/ag-run"   # single-instance lock and link inbox (default ~/.agentglass/run; must be yours, 0700)
 export AGENTGLASS_PALETTE_FILE="/tmp/ag-palette.json"   # the palette's recent picks (default ~/.agentglass/palette.json)
+export AGENTGLASS_THEME_FILE="/tmp/ag-theme"   # the theme T persists (default ~/.agentglass/theme)
 export AGENTGLASS_OTLP_DIR="/tmp/ag-otlp"     # OTLP export state, lock and request bodies (default ~/.agentglass/otlp)
 ```
 
