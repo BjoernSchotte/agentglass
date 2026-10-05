@@ -1,8 +1,9 @@
 // agentglass — self-check for cost sums by billing mode, money format, unpriced line, projection and budget: scriptc build src/features/usage/costs.check.ts -o cc && ./cc
 // SPDX-License-Identifier: Apache-2.0
 import { type Bill } from "./billing.ts";
-import { newDay, isoMs } from "./record.ts";
-import { newSum, addDay, total, single, money, moneyTag, split, unpricedLine, type DayCost, projectToday, projectMonth, daysLeftInMonth, monthStart, parseBudget, budgetState, notifyOnce, projText } from "./costs.ts";
+import { newDay, isoMs, newAcc, bucket, tokens } from "./record.ts";
+import { loadUser } from "./pricing.ts";
+import { estOf, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, type DayCost, projectToday, projectMonth, daysLeftInMonth, monthStart, parseBudget, budgetState, notifyOnce, projText } from "./costs.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -89,5 +90,24 @@ ok("proj text approx", projText(14.2, 310, b1, { state: "watch", used: 0, projec
 ok("proj text plan", projText(4.25, 31, parseBudget({}), { state: "", used: 0, projected: -1, approx: false }, false) === "→ today ≈$4.25 · month ≈$31", projText(4.25, 31, parseBudget({}), { state: "", used: 0, projected: -1, approx: false }, false));
 ok("proj none", projText(-1, -1, b1, wb, true) === "→ — not enough history", projText(-1, -1, b1, wb, true));
 
+
+// ── alias-priced cost is an estimate: ≈ even on an API key ──
+ok("money est", money(3, "api", true) === "≈$3.00" && money(3, "api") === "$3.00" && moneyTag(3, "api", true) === "≈$3.00 spend", money(3, "api", true));
+{
+  loadUser(JSON.parse('{"gpt-x-unknown":{"alias":"claude-sonnet-4-5"}}'));
+  const a = newAcc(); const dd = bucket(a, 0, "2026-10-01T09:30:00.000Z");
+  tokens(a, dd, "gpt-x-unknown", 1000000, 0, 0, 0, 0); tokens(a, dd, "claude-sonnet-4-5", 1000000, 0, 0, 0, 0);
+  const ms = newSum(); addDay(ms, dd, (p: string): Bill => "api");
+  ok("addDay est", Math.abs(ms.est - 3) < 1e-9 && Math.abs(total(ms) - 6) < 1e-9, ms.est + "/" + total(ms));
+  ok("split marks the estimate", split(ms, false) === "≈$6.00 spend", split(ms, false));
+  const mx = newSum(); addDay(mx, dd, (p: string): Bill => "api"); const d2 = newDay(); d2.cp.set("gemini", 2); d2.cost = 2; addDay(mx, d2, (p: string): Bill => "plan");
+  ok("only the mode holding the alias share gets ≈", split(mx, false) === "≈$6.00 spend + ≈$2.00 plan" && (mx.estBy[0] ?? 0) > 2.9 && (mx.estBy[1] ?? 0) === 0, split(mx, false));
+  const my = newSum(); addDay(my, d2, (p: string): Bill => "api"); addDay(my, dd, (p: string): Bill => "plan");
+  ok("an api part without alias share stays exact", split(my, false) === "$2.00 spend + ≈$6.00 plan", split(my, false));
+  ok("estOf session", Math.abs(estOf(a) - 3) < 1e-9, String(estOf(a)));
+  loadUser(null);
+  const m2 = newSum(); addDay(m2, dd, (p: string): Bill => "api");
+  ok("alias gone: no estimate", m2.est === 0, String(m2.est));
+}
 console.log(bad ? bad + " failed" : "costs: all checks passed");
 if (bad) process.exit(1);

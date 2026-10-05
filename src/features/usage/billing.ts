@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import { statSync } from "node:fs";
 import { readText } from "../../util/fs.ts";
+import { stripJsonc } from "./gwprices.ts";
 import { type RlWin, isoMs } from "./record.ts";
 import { type Obj, obj, str } from "../../util/json.ts";
 
@@ -132,7 +133,7 @@ export function cutObject(text: string, key: string): Obj | null {
   return null;
 }
 function readObj(p: string): Obj | null {
-  const t = readText(p, 0, CAP).trim();
+  const raw = readText(p, 0, CAP); const t = (p.endsWith(".jsonc") ? stripJsonc(raw) : raw).trim(); // OpenCode's JSON with comments
   if (!t.startsWith("{")) return null;
   try { return obj(JSON.parse(t)); } catch (e) { return null; }
 }
@@ -190,7 +191,7 @@ function endpoints(ev: Evid, p: string, field: string, inOptions: boolean): void
     if (op && str(op[inOptions ? "baseURL" : "baseUrl"])) ev.kv.set("base." + k, "1");
   }
 }
-const OC_CFG = ["opencode.json", "opencode.jsonc", "config.json"]; // OpenCode's global config names (a .jsonc with comments is skipped)
+const OC_CFG = ["opencode.json", "opencode.jsonc", "config.json"]; // OpenCode's global config names
 // the files configEv(h, home, cwd) reads (their mtimes tell a cache when to re-read)
 export function configFiles(h: string, home: string, cwd: string): string[] {
   if (h === "claude") {

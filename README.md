@@ -128,13 +128,41 @@ Every screen in this README and the launch video was recorded this way.
 
 ## Prices
 
-Costs are API-equivalent list prices. Claude prices are built in. `~/.agentglass/prices.json`
-overrides any model by id prefix:
+Costs are API-equivalent list prices. Claude and Gemini prices are built in; every other model can get a
+price from inside agentglass, without a re-index:
+
+- **TUI:** `$` in Stats opens the price panel — every model of the period with its price source, unpriced
+  first. `↵` sets a price (`$/Mtok: in out [cacheRead [cacheWrite [cacheWrite1h]]]`, `0 0` = free), `a`
+  prices it like another model (an alias), `x` removes your entry. Ctrl+K offers "Set price for <model>"
+  for every unpriced model.
+- **CLI:** `agentglass prices` lists every model with its source (`--unpriced` exits 4 when one has no
+  price, for scripts), `agentglass prices set <model> --in 1.25 --out 10`, `agentglass prices alias
+  codex-auto-review gpt-6-sol`, `agentglass prices unset <model>`; `--json` everywhere.
+
+A price change re-prices the whole history in memory in milliseconds (no log is read again); a running TUI
+picks up a change made elsewhere within 5 s. Where a price comes from, first hit wins:
+
+| source | where | applies to |
+|---|---|---|
+| `user` | `prices.json` entry with `input` | every use of the id (prefix, longest first) |
+| `≈ <target>` | `prices.json` entry with `alias`: priced like the target (one hop) — an **estimate**, so its figures carry `≈` even on an API key | every use |
+| `gw <provider>` | per-model `cost` in pi's `~/.pi/agent/models.json` or OpenCode's config (`opencode.json`/`.jsonc`) | only that provider's usage |
+| `litellm` / `models.dev` | the opt-in community list (below) | every use |
+| `built-in` | agentglass's own table | every use |
+| `harness` | pi, OpenCode or fx reported the cost itself | that message: a price you set applies only to its unpriced messages |
+
+`prices.json` lives at `~/.agentglass/prices.json` (`AGENTGLASS_PRICES=<path>` for another one); agentglass
+writes it atomically (a symlink stays a link, unknown keys stay) and never overwrites a file that is not JSON.
+Ids are stored lower case without provider prefix or date suffix:
 
 ```json
-{ "claude-opus-4-5": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25, "cacheWrite1h": 10 },
+{ "gpt-6.1-sol": { "input": 1.25, "output": 10, "cacheRead": 0.125 },
+  "codex-auto-review": { "alias": "gpt-6-sol" },
   "kiroCreditUsd": 0.04 }
 ```
+
+Unpriced tokens are never booked at $0 unless you say so: they stay visible as unpriced. No alias or OpenAI
+price ships built in — a guessed price would look authoritative.
 
 For Codex, Gemini and new models without maintaining that file, opt in to a community-maintained
 list in `~/.agentglass/config.json`:
@@ -146,8 +174,8 @@ list in `~/.agentglass/config.json`:
 `source` is [`litellm`](https://github.com/BerriAI/litellm) (covers Codex ids and 1-hour cache
 writes) or [`models.dev`](https://models.dev). agentglass then fetches that public file at most every
 `refreshHours` in the background — a plain GET, nothing about you or your sessions is sent, but the
-host sees your IP — keeps only first-party model prices in `~/.agentglass/cache/`, and uses them from
-the next start. Your `prices.json` still wins. `agentglass --update-prices` fetches now,
+host sees your IP — keeps only first-party model prices in `~/.agentglass/cache/`, and applies them at
+once. Your `prices.json` still wins. `agentglass --update-prices` (or `agentglass prices update`) fetches now,
 `AGENTGLASS_OFFLINE=1` stops fetching. The Stats tab shows which prices are in use.
 
 ## Billing modes, projection, budget
@@ -176,7 +204,7 @@ type fields (provider configs only for whether an endpoint is set), `~/.claude.j
 is read, stored or exported; `--redact` keeps the tags and replaces plan names that are not plain type words.
 
 Usage without a price is listed instead of hidden: `unpriced  gpt-x 900K · custom 300K · +2 models ·
-kiro 120 credits (set kiroCreditUsd)`.
+kiro 120 credits (set kiroCreditUsd) · $ set prices`.
 
 **Projection** (Stats line 3, `agentglass cost`): today = spent so far + the mean cost of each remaining hour
 over the last 14 days with any cost; month = month-to-date + today's remainder + days left × the mean daily
@@ -204,6 +232,7 @@ plan has one), from the newest `rate_limits` Codex logged. A narrow header keeps
 agentglass cost                 # today / 7 days / month by mode, unpriced usage, projection, budget
 agentglass cost --json | jq .   # {today, week, month{…, projected}, budget{monthlyUsd, used, projected, state, approx}}
 agentglass cost --check         # exit 3 when the month is over budget (prompts, cron)
+agentglass prices --unpriced    # models without a price (exit 4 when there is one); set one: agentglass prices set <model> --in <$> --out <$>
 ```
 
 ## Install

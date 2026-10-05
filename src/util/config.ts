@@ -47,19 +47,26 @@ export function mergeConfig(text: string, name: string, key: string, value: stri
   sec[key] = value; cur[name] = sec;
   return JSON.stringify(cur, null, 2) + "\n";
 }
-// merge into a config file (atomic; other sections and keys stay as they are); throws, leaving the file as it is, when it
-// cannot be read or is not a JSON object. A symlink (dotfile managers) is written through: the link stays a link.
-export function writeConfigAt(path: string, name: string, key: string, value: string): void {
+// edit a JSON object file in place (atomic; keys the edit does not touch stay as they are): re-read right before writing,
+// a missing or blank file is {}; throws, leaving the file as it is, when it cannot be read or is not a JSON object.
+// Pretty-printed (2 spaces) + newline, mode 0600. A symlink (dotfile managers) is written through: the link stays a link.
+export function writeJsonAt(path: string, edit: (root: Obj) => void): void {
   const r = readWhole(path, MAX);
   if (r.err) throw new Error("cannot read " + path + " (" + r.err + ") — it was left as it is");
-  const text = mergeConfig(r.text, name, key, value);
-  if (text === null) throw new Error(path + " is not valid JSON — fix it first (it was left as it is)");
+  const p = parseConfig(r.text);
+  if (p.bad) throw new Error(path + " is not valid JSON (" + p.bad + ") — fix it first (it was left as it is)");
+  const root = p.root ?? {};
+  edit(root);
   const real = existsSync(path) ? realpathSync(path) : path;
   mkdirSync(dirname(real), { recursive: true });
   const tmp = real + ".tmp";
-  const fd = openSync(tmp, "w"); writeSync(fd, text); closeSync(fd);
+  const fd = openSync(tmp, "w"); writeSync(fd, JSON.stringify(root, null, 2) + "\n"); closeSync(fd);
   try { chmodSync(tmp, 0o600); } catch (e) { /* keep the umask's mode */ } // pinned filters may name repos and paths
   renameSync(tmp, real);
+}
+// merge {[name]: {...old, [key]: value}} into a config file (writeJsonAt's rules)
+export function writeConfigAt(path: string, name: string, key: string, value: string): void {
+  writeJsonAt(path, (cur: Obj): void => { const sec = obj(cur[name]) ?? {}; sec[key] = value; cur[name] = sec; });
 }
 export function setConfig(name: string, key: string, value: string): void { writeConfigAt(CONFIG_FILE, name, key, value); }
 // an integer in [lo, hi] (hi 0 = no upper bound), else def; pure (checks)

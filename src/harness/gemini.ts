@@ -9,7 +9,6 @@ import { C } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, reasoning, turn, skill, nlines, num, isoMs } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
-import { price } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
 import { toolArg, isNoise, prompts } from "./common.ts";
@@ -332,18 +331,9 @@ function busy(s: Sess): boolean {
 }
 // ── usage (normalized lines: each message's tokens and each tool call appear once) ──
 // input includes cached; thoughts bill as output; tool-use prompt tokens as input. No cost in the files: priced by table,
-// per message: "<model>>200k" for prompts over 200k tokens, "<model>@2027" from 2027-01-01, where the table has them.
-function priceKey(md: string, input: number, iso: string): string {
-  const p = price(md); if (!p) return md;
-  // prefix match prices -lite/-image/-tts variants as their base: only -preview/-latest/-exp/version suffixes share a price
-  let m = md.toLowerCase(); const sl = m.lastIndexOf("/"); if (sl >= 0) m = m.slice(sl + 1);
-  const rest = m.slice(p.p.length);
-  if (p.p.startsWith("gemini-") && rest && !/^-(preview|latest|exp|\d)/.test(rest)) return "?" + md; // unpriced
-  let k = p.p; // the table entry the id matched (gemini-3.1-pro-preview → gemini-3.1-pro)
-  if (iso >= "2027-01-01" && price(k + "@2027") !== price(k)) k += "@2027";
-  if (input > 200000 && price(k + ">200k") !== price(k)) k += ">200k";
-  return k === p.p ? md : k;
-}
+// per message: "<model>@2027" from 2027-01-01, "<model>>200k" for prompts over 200k tokens; the resolver (pricing.ts)
+// picks the tier rows where the table has them and keeps -lite/-image/-tts variants off their base model's row.
+function priceKey(md: string, input: number, iso: string): string { return md + (iso >= "2027-01-01" ? "@2027" : "") + (input > 200000 ? ">200k" : ""); }
 function usage(a: Acc, l: string): void {
   if (l.indexOf("\"type\":\"user\"") >= 0) { // the prompt itself, not a nested object in a tool call that looks like one
     const o = parseJson(l);

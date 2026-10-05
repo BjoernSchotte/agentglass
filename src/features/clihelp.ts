@@ -40,6 +40,8 @@ export const EXAMPLES: string[] = [
   "agentglass errors --since 24h --limit 5",
   "agentglass session last",
   "agentglass cost --since today --by model",
+  "agentglass prices --unpriced",
+  "agentglass prices set gpt-6.1-sol --in 1.25 --out 10",
   "agentglass sessions --since 24h --format table",
 ];
 
@@ -96,7 +98,7 @@ export function helpOf(cmd: string, args: string[], text: string): string {
 }
 export function wantsHelp(args: string[]): boolean { return args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0; }
 // TUI-only, maintenance and version commands: --help lists them
-const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults"];
+const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults", "prices set", "prices alias", "prices unset"];
 // the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word
 function brief(s: string): string {
   const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); if (t.length <= 36) return t;

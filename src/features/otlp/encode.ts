@@ -54,7 +54,10 @@ function usage(out: Attr[], t: XTurn, sp: XSpan, c: OtlpCfg): void {
   if (t.h !== "kiro" || sp.cr > 0) out.push(attrI("gen_ai.usage.cache_read.input_tokens", sp.cr));
   if (t.h !== "kiro" || sp.cw > 0) out.push(attrI("gen_ai.usage.cache_write.input_tokens", sp.cw));
   if (sp.rs > 0) out.push(attrI("gen_ai.usage.reasoning.output_tokens", sp.rs));
-  if (!(sp.unk > 0 && sp.cost === 0)) out.push(attrD("agentglass.usage.cost", sp.cost)); // unknown cost is omitted, never 0
+  const unknown = sp.unk > 0 && sp.cost === 0;
+  if (!unknown) out.push(attrD("agentglass.usage.cost", sp.cost)); // unknown cost is omitted, never 0
+  const src = unknown ? "unpriced" : sp.costSrc || (sp.exact || sp.total ? "harness" : ""); // fx totals and kiro turns: the harness's own figure
+  if (src) { out.push(attrS("agentglass.usage.cost.source", src)); out.push(attrB("agentglass.usage.cost.estimated", sp.costEst)); }
 }
 // gen_ai.provider.name of a root or tool span: the model's vendor, else what a chat span of that model resolved (the
 // provider its record logged), so a model no vendor rule knows names one provider across the trace

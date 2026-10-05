@@ -106,6 +106,7 @@ function collect(c: Ctx): Item[] {
     STAND.set("project:" + k, standing({ live: e.live, last: e.last, gone: e.gone, remote: e.remote, worktree: false }, now));
   }
   for (const a of H.actions) if (a.keys && a.when(c)) out.push(actItem(a)); // key bindings first, palette-only ones (themes) after
+  for (const f of H.dynActions) for (const a of f()) if (a.when(c)) out.push(actItem(a)); // built now (Set price for <unpriced model>)
   for (const a of H.actions) if (!a.keys && a.when(c)) out.push(actItem(a));
   out.push(tabItem("Sessions", 0, "1")); out.push(tabItem("Processes", 1, "2"));
   for (let i = 0; i < H.tabs.length; i++) out.push(tabItem(H.tabs[i].name, i + 2, i + 3 <= 9 ? String(i + 3) : ""));

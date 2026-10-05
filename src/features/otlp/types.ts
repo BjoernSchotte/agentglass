@@ -13,6 +13,7 @@ export interface XSpan {
   nIn: number; nOut: number; cr: number; cw: number; rs: number; cost: number; unk: number; exact: boolean; hasUsage: boolean; total: boolean; // total = fx: the growth of the session totals since the last export (export.ts fxDelta)
   provId: string; // chat: the provider id the record logged (pi/OpenCode: its config's name — a gateway, openrouter …), "" = none
   bill: string; // chat: honest-costs mode of this request ("" on other spans)
+  costSrc: string; costEst: boolean; // chat: where its cost's price came from (pricing.ts PSrc, harness, unpriced; "mixed" over several) and whether an alias priced part of it
   tool: string; callId: string; mcp: string; prog: string; exit: number; skill: string; superseded: boolean; // exit -1 = unknown
   input: string; output: string; args: string; result: string; // content, sent only with --content
   open: boolean; // execute_tool still waiting for its result
@@ -35,7 +36,7 @@ export function newSpan(op: string, name: string, spanId: string, parentId: stri
   return {
     op, name, spanId, parentId, kind: op === "chat" ? 3 : 1, t0, t1: t0, est: false, err: "", errMsg: "", sess, agent: "", attrs: [], events: [],
     model: "", respModel: "", provider: "", respId: "", models: [],
-    nIn: 0, nOut: 0, cr: 0, cw: 0, rs: 0, cost: 0, unk: 0, exact: false, hasUsage: false, total: false, provId: "", bill: "",
+    nIn: 0, nOut: 0, cr: 0, cw: 0, rs: 0, cost: 0, unk: 0, exact: false, hasUsage: false, total: false, provId: "", bill: "", costSrc: "", costEst: false,
     tool: "", callId: "", mcp: "", prog: "", exit: -1, skill: "", superseded: false, input: "", output: "", args: "", result: "", open: false,
   };
 }
