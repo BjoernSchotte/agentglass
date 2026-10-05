@@ -15,7 +15,7 @@ import { type ModeSum, newSum, addDay } from "../usage/costs.ts";
 import type { Bill } from "../usage/billing.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { type Compiled, EMPTY, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
-import { contentOk } from "../query/ui.ts";
+import { contentOk, timeStep } from "../query/ui.ts";
 import { identOf } from "../query/project.ts";
 import { type GitInfo, allInfo } from "../vcs/attrib.ts";
 import { realCwd, realMeta } from "../../hooks.ts";
@@ -108,7 +108,7 @@ function sessOk(f: Compiled, ok: (path: string) => boolean, s: Sess): boolean { 
 
 interface Hit { key: string; at: number; rows: RepoAgg[] }
 const cache = new Map<string, Hit>();
-// per (days, canonical filter, ledger version, identity version), 5 s
+// per (days, canonical filter, ledger version, identity version), 5 s (an age clause: its time step)
 export function repoAgg(days: string[], f0: Compiled | null): RepoAgg[] { return repoAggIn(days, f0, new Set<string>(), ""); }
 // tag ≠ "": only the session paths in allow (agent-mode scope of the CLI); tag names that set in the cache key
 export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string>, tag: string): RepoAgg[] {
@@ -116,7 +116,7 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
   const ck = days.join(",") + "|" + f.key + "|" + tag;
   const key = ck + "|" + String(L.ver) + "|" + String(P.ver);
   const hit = cache.get(ck);
-  if (hit && hit.key === key && Date.now() - hit.at < 5000) return hit.rows;
+  if (hit && hit.key === key && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) return hit.rows; // an age clause: its own step
   const by = new Map<string, RepoAgg>();
   const acts = new Map<string, number[][]>(); // "<repo key>\t<day>" → the sessions' intervals
   const rd = f.needsCalls ? rowDays(f, days) : new Map<string, RowDay>();

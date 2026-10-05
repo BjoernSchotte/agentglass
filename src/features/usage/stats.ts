@@ -26,7 +26,7 @@ import { parse } from "../query/parse.ts";
 import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
 import { type Totals, totals } from "../query/agg.ts";
 import { setLocal } from "../query/scope.ts";
-import { tabFilter, chips, contentOk, callsChip } from "../query/ui.ts";
+import { tabFilter, chips, contentOk, callsChip, timeStep } from "../query/ui.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export { kfmt, grp };
@@ -64,7 +64,7 @@ function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean): Ma
 function aggF(days: string[], f: Compiled): Agg {
   const key = days.join(",") + "|" + f.key;
   const hit = cache.get(key);
-  if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit;
+  if (hit && hit.ver === L.ver && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) return hit; // an age clause: its own step
   const rows = HARNESSES.map((ad) => ha(ad.id)); const tot = ha("total");
   const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls };
   const cp = contentOk(f);
@@ -356,7 +356,7 @@ function dagg(days: string[]): DA {
   const f = statsFilter();
   const key = days.join(",") + "|" + dKey + "|" + f.key;
   const hit = dCache;
-  if (hit && hit.key === key && hit.ver === L.ver && Date.now() - hit.at < 3000) return hit;
+  if (hit && hit.key === key && hit.ver === L.ver && Date.now() - hit.at < Math.min(3000, timeStep(f.cs))) return hit;
   const da: DA = { key, ver: L.ver, at: Date.now(), n: 0, err: 0, dn: 0, ms: 0, max: 0, out: 0, hist: zeros(HB), vals: zeros(days.length > 1 ? days.length : 24), hs: zeros(HARNESSES.length), all: 0,
     prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), kids: new Map<string, Cnt>(), slow: [], errs: [] };
   const pre = dKey + "\t";

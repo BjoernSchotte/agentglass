@@ -9,6 +9,7 @@ import { type Cnt, newCnt } from "./calls.ts";
 import { vwidth } from "../../util/text.ts";
 import { H } from "../../hooks.ts";
 import { newSess } from "../../model/types.ts";
+import { sessions } from "../../model/sessions.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -80,6 +81,15 @@ ok("period intersects", periodMessage(compile(parse("day is today").cs, "stats")
   t("axis: 1 cell, now 9", hourAxis(18, 1, 0, 9), "0  3  6  ▲  12 15 ");
   t("axis: 2 cells", hourAxis(24, 2, 0, 8), "0     3     6   ▲ 9     12    15    18    21    ");
   t("axis: window", hourAxis(18, 1, 5, 22), " 6  9  12 15 18  ▲");
+}
+// an age clause re-matches on its own step (age < 2s: each second), not on the 5 s aggregation cache
+{
+  fxBase(); for (const s of sessions.values()) { s.last = 0; s.mtime = 0; } // every session old but one
+  const yng = [...sessions.values()][0]; yng.last = Date.now() - 1500; yng.mtime = yng.last;
+  const n1 = statsSummaryFor("age < 2s").sess;
+  const t0 = Date.now(); while (Date.now() - t0 < 1100) { /* the clause's step: 1 s */ }
+  const n2 = statsSummaryFor("age < 2s").sess;
+  ok("age < 2s: a young session counts, a second later not", n1 === 1 && n2 === 0, String(n1) + " → " + String(n2));
 }
 console.log(bad ? bad + " failed" : "stats: all checks passed");
 if (bad) process.exit(1);
