@@ -11,9 +11,11 @@ import { ledger, indexing, unread, LAZY, accOf } from "./ledger.ts";
 import { REDACT } from "../redact-on.ts";
 import { type Acc, L } from "./record.ts";
 import { ROWS } from "./facts.ts";
-import { PRICES_SIG } from "./pricing.ts";
+import { pricesSig, kiroRate } from "./pricing.ts";
+import { repriceAll, PRICED } from "./repricer.ts";
+import { isKiroLog } from "../../harness/kiro.ts";
 import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
-import { readCache, writeCache } from "./cachefile.ts";
+import { type Head, readCache, writeCache } from "./cachefile.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
@@ -32,25 +34,34 @@ function load(): void {
   loaded = true; savedIdx = L.idx; // nothing to save until something is indexed
   lastSave = Date.now(); // the save clock starts here: a warm start has nothing new to write on its first tick
   // the old file only when it is newer (none yet, or an older build ran since and wrote it): what it holds is current
-  if (mtime(OLD) > mtime(FILE)) { loadOld(); if (ledger.size) L.idx++; return; } // the next save writes FILE and drops OLD
-  readCache(FILE, (h) => { if (!readable(h.v) || h.prices !== PRICES_SIG) return false; rlIn(h.rl); return true; }, install);
+  let prices = "";
+  if (mtime(OLD) > mtime(FILE)) { prices = loadOld(); if (ledger.size) L.idx++; } // the next save writes FILE and drops OLD
+  else readCache(FILE, (h: Head): boolean => { if (!readable(h.v)) return false; prices = h.prices; kiroOff = h.kiro !== kiroRate(); rlIn(h.rl); return true; }, install);
+  if (!ledger.size) return;
+  if (prices !== pricesSig()) repriceAll(); // saved under other prices: re-price in place (no log is read again)
+  else PRICED.sig = pricesSig();
 }
 // one session of a readable cache; a line the reader could not use was skipped: that session alone re-indexes
+let kiroOff = false; // kiro credits are priced at booking, not per row: under another rate those sessions re-index
 function install(path: string, o: Obj): void {
+  if (kiroOff && isKiroLog(path)) return;
   const a = accIn(o);
   if (!ROWS.on) { ledger.set(path, a); return; } // no rows built (checks): the day buckets alone are consistent with off
   ledger.set(path, a); written.set(path, a.off); unread.add(path); // its calls file, as is, until asked for or it grows
 }
-function loadOld(): void {
+// the old one-object file: its price signature ("" = not readable)
+function loadOld(): string {
   let size = 0;
-  try { size = statSync(OLD).size; } catch (e) { return; }
+  try { size = statSync(OLD).size; } catch (e) { return ""; }
   const root = parse(readText(OLD, 0, size).trim());
   const v = root ? num(root["v"]) : 0;
-  if (!root || !readable(v) || str(root["prices"]) !== PRICES_SIG) return; // stale: re-index from scratch
+  if (!root || !readable(v)) return ""; // another format: re-index from scratch
   rlIn(obj(root["rl"]));
   const ss = obj(root["sessions"]);
-  if (!ss) return;
+  if (!ss) return "";
+  kiroOff = num(root["kiro"]) !== kiroRate();
   for (const path of Object.keys(ss)) { const o = obj(ss[path]); if (o) install(path, o); }
+  return str(root["prices"]);
 }
 // ledger offset each session's calls file was last written at (= consistent with)
 const written = new Map<string, number>();
@@ -68,8 +79,9 @@ function saveCalls(): void {
 let savedIdx = -1; let lastSave = 0;
 function save(): void {
   if (!loaded || L.idx === savedIdx || !ROWS.on) return; // without rows a save would leave calls files behind the ledger
+  if (PRICED.sig !== pricesSig()) repriceAll(); // the table changed without a re-price (a CLI write): the saved signature must describe the numbers
   saveCalls();
-  const ok = writeCache(FILE, { v: VERSION, prices: PRICES_SIG, rl: rlOut() }, (put: (path: string, o: Obj) => void): void => {
+  const ok = writeCache(FILE, { v: VERSION, prices: pricesSig(), kiro: kiroRate(), rl: rlOut() }, (put: (path: string, o: Obj) => void): void => {
     for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) put(s.path, accOut(a, KEEP_IDS)); } // only sessions that still exist
   });
   if (!ok) return; // read-only home etc.: keep indexing in memory

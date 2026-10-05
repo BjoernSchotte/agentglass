@@ -8,7 +8,8 @@ import { S } from "../state.ts";
 import { sessions, loadHead, loadTail, subActive } from "../model/sessions.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
 import { accOf, rowsOf, callsOf } from "./usage/ledger.ts";
-import { type Acc, modelUses, isoMs, dayKey, heavy } from "./usage/record.ts";
+import { type Acc, modelUses, isoMs, dayKey, heavy, newAcc } from "./usage/record.ts";
+import { type PRow, type SessAcc, priceRows } from "./usage/pricerows.ts";
 import { ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
 import type { Rows } from "./usage/rows.ts";
 import { callCutoff } from "./usage/callcache.ts";
@@ -271,7 +272,8 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
     let w = who.get(k); if (!w) { w = []; who.set(k, w); } if (w.indexOf(s.path) < 0) w.push(s.path);
   };
   const f = cf.f; const from = midnightOf(sinceKey);
-  const cands: Sess[] = [];
+  const cands: Sess[] = []; const kept: SessAcc[] = []; // by model: the kept days, for each model's price source
+  
   for (const s of sessions.values()) {
     if (s.mtime < from || !visible(s, sc)) continue;
     if (cf.needsHead && !s.headDone) loadHead(s);
@@ -282,13 +284,13 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
   const hit = new Set<string>();
   if (f.needsCalls) { const ps = new Set<string>(); for (const s of cands) ps.add(s.path); eachCall(f, daysFrom(from, Date.now()), (s: Sess, r: Rows, i: number): void => { if (ps.has(s.path)) hit.add(s.path + "\t" + localOf(r.t[i] + 0).day); }); }
   for (const s of cands) {
-    const a = accOf(s); let used = false;
+    const a = accOf(s); let used = false; const ka = newAcc();
     for (const [k, d] of a.days) {
       if (k < sinceKey) continue;
       if (f.needsCalls ? !hit.has(s.path + "\t" + k) : !dayMatches(f, s, k, d)) continue;
       const v = [d.inTok, d.outTok, d.cr, d.cw, d.cost, d.unk];
       if (d.inTok + d.outTok + d.cr + d.cw + d.unk === 0 && d.cost === 0) continue;
-      used = true;
+      used = true; if (by === "model") ka.days.set(k, d);
       sum(tot, v);
       if (by === "model") {
         const ms = new Set<string>();
@@ -296,11 +298,14 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
         for (const [m, n] of d.um) if (!ms.has(m)) add(m, s, [0, 0, 0, 0, 0, n]);
       } else add(by === "day" ? k : by === "session" ? s.h + ":" + s.id : sessDim(by, s)[0] || "(unknown)", s, v);
     }
-    if (used) all.push(s.path);
+    if (used) { all.push(s.path); if (by === "model") kept.push({ a: ka, h: s.h }); }
   }
+  const srcs = new Map<string, PRow>(); if (by === "model") for (const pr of priceRows(kept, null)) srcs.set(pr.model, pr);
   const row = (k: string, r: number[], n: number): Obj => {
     const c = r[4] ?? 0; const unk = r[5] ?? 0;
-    return { key: k, in: r[0] ?? 0, out: r[1] ?? 0, cacheRead: r[2] ?? 0, cacheWrite: r[3] ?? 0, costUsd: c === 0 && unk > 0 ? null : r6(c), unpricedTokens: unk, sessions: n };
+    const o: Obj = { key: k, in: r[0] ?? 0, out: r[1] ?? 0, cacheRead: r[2] ?? 0, cacheWrite: r[3] ?? 0, costUsd: c === 0 && unk > 0 ? null : r6(c), unpricedTokens: unk, sessions: n };
+    if (by === "model") { const pr = srcs.get(k); o["priceSource"] = pr ? pr.src : k === "total" ? null : "unpriced"; o["estimated"] = k === "total" ? [...srcs.values()].some((x: PRow) => x.est > 0) : !!pr && pr.est > 0; }
+    return o;
   };
   const ks = [...acc.keys()];
   const cost = (k: string): number => { const r = acc.get(k) ?? []; return r[4] ?? 0; };
@@ -356,6 +361,7 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
   return s;
 }
 export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
+export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]); // --by model: where each model's price comes from, alias-priced (≈)
 function envelope(rows: Obj[], source: string, sc: Scope): string { return JSON.stringify({ rows, source, scope: sc.name }); }
 // json → the {rows, source, scope} envelope (compact inside an agent and in pipes); other formats → bare rows
 // rc: the exit code when stdout cannot be written (the caller's own, e.g. cost --check's 3)

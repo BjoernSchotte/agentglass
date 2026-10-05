@@ -8,7 +8,7 @@ function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console
 const dir = "/tmp/agentglass-cf-check-" + String(process.pid); mkdirSync(dir, { recursive: true });
 const f = dir + "/ledger.jsonl";
 const big = "x".repeat(5 * 1048576); // a line over the 4 MB window
-ok("write", writeCache(f, { v: 15, prices: "P", rl: null }, (put) => { put("/a", { off: 1 }); put("/b", { off: 2, s: big }); put("/c", { off: 3 }); put("/e", {}); }), "false");
+ok("write", writeCache(f, { v: 15, prices: "P", kiro: 0, rl: null }, (put) => { put("/a", { off: 1 }); put("/b", { off: 2, s: big }); put("/c", { off: 3 }); put("/e", {}); }), "false");
 ok("no tmp left", !existsSync(f + ".tmp"), "tmp");
 const got: string[] = [];
 const r = readCache(f, (h) => h.v === 15 && h.prices === "P", (p: string, o: Obj) => { got.push(p + ":" + String(o["off"]) + (o["s"] ? ":" + String(str(o["s"]).length) : "")); });
@@ -33,7 +33,7 @@ ok("over-long line skipped", g6.join(",") === "/n" && r6.bad === 1, g6.join(",")
 ok("missing file", readCache(dir + "/none.jsonl", (h) => true, (p: string, o: Obj) => { bad++; }).lines === 0, "lines");
 // an unwritable dir: false, nothing left behind
 const ro = dir + "/ro"; mkdirSync(ro); chmodSync(ro, 0o500);
-const w = writeCache(ro + "/ledger.jsonl", { v: 15, prices: "P", rl: null }, (put) => { put("/a", { off: 1 }); });
+const w = writeCache(ro + "/ledger.jsonl", { v: 15, prices: "P", kiro: 0, rl: null }, (put) => { put("/a", { off: 1 }); });
 ok("unwritable: false", !w || process.getuid?.() === 0, String(w));
 chmodSync(ro, 0o700);
 rmSync(dir, { recursive: true, force: true });

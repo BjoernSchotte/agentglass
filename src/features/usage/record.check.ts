@@ -1,8 +1,9 @@
 // agentglass — self-check for the usage record primitives: scriptc build src/features/usage/record.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, openSync, writeSync, closeSync, rmSync } from "node:fs";
-import { newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines, type Booking, setBookTap, reasoning, heavy } from "./record.ts";
+import { type Acc, reprice, tableTok, newAcc, bucket, tool, pend, retool, tokens, usageExact, credits, modelUses, skill, skillUses, turn, file, patchLines, type Booking, setBookTap, reasoning, heavy } from "./record.ts";
 import { accOut, accIn } from "./cache.ts";
+import { loadUser, setGateway, type Price } from "./pricing.ts";
 import { type Dict, DICT, ROWS, nameOf, MQ_MSG, MQ_SESS, localOf, extOf } from "./facts.ts";
 import { done, setCallTap } from "./calls.ts";
 import { callAt } from "./rows.ts";
@@ -187,6 +188,77 @@ ROWS.on = true;
   ok("fx totals", !!t && t.nIn === 30 && t.nOut === 4 && t.cr === 10 && t.cw === 2 && t.usd === 0.25 && t.unk === 0, t ? JSON.stringify(t) : "null");
   ok("fx totals missing", fxTotals(newSess("fx", "y", fd0 + "/none/events.jsonl", false)) === null, "");
   rmSync(fd0, { recursive: true, force: true });
+}
+
+// ── priced-token rows (Day.tp) and in-place re-pricing: every aggregate equals a fresh booking under the new table ──
+{
+  const r6 = (x: number): string => "#" + String(x); // numbers compare within 1e-9 (same(): summed per booking vs. at once)
+  const sorted = (m: Map<string, number>, tag: string, out: string[]): void => { for (const k of [...m.keys()].sort()) { const v = m.get(k) ?? 0; if (Math.abs(v) > 1e-9) { out.push(tag + " " + k); out.push(r6(v)); } } };
+  const snap = (a: Acc): string => { // every aggregate a re-price touches, rounded; zero provider shares are no share
+    const out: string[] = [r6(a.cost), r6(a.unk)];
+    for (const k of [...a.days.keys()].sort()) {
+      const d = a.days.get(k); if (!d) continue;
+      out.push(k, r6(d.cost), r6(d.unk)); sorted(d.um, "um", out); sorted(d.cp, "cp", out);
+      for (let h = 0; h < 24; h++) out.push(r6(d.hc[h] ?? 0));
+      for (const m of [...d.mt.keys()].sort()) { const x = d.mt.get(m) ?? []; out.push("mt " + m); for (const v of x) out.push(r6(v)); }
+    }
+    return out.join("|");
+  };
+  const same = (x: string, y: string): string => { // "" = equal, else the first difference
+    const a = x.split("|"); const b = y.split("|");
+    if (a.length !== b.length) return "length " + a.length + " vs " + b.length + ": " + x + "\n  vs " + y;
+    for (let i = 0; i < a.length; i++) {
+      const p = a[i] ?? ""; const q = b[i] ?? "";
+      if (p.startsWith("#") && q.startsWith("#") ? Math.abs(Number(p.slice(1)) - Number(q.slice(1))) > 1e-9 : p !== q) return "at " + i + ": " + p + " vs " + q + "\n" + x;
+    }
+    return "";
+  };
+  const book = (a: Acc): void => {
+    const d1 = bucket(a, 0, "2026-10-01T09:30:00.000Z"); tokens(a, d1, "gpt-6.1-sol", 1000, 200, 5000, 0, 0); tokens(a, d1, "claude-sonnet-4-5", 100, 10, 0, 50, 20);
+    const d2 = bucket(a, 0, "2026-10-01T14:10:00.000Z"); tokens(a, d2, "codex-auto-review", 300, 30, 0, 0, 0, "");
+    usageExact(a, d2, "claude-sonnet-5-5", 10, 10, 0, 0, 0, 0.5, "cliproxy"); tokens(a, d2, "claude-sonnet-5-5", 10, 10, 0, 0, 0, "cliproxy");
+    tokens(a, d2, "gpt-6-sol", 1000, 0, 0, 0, 0, "cliproxy"); // the gateway row of cliproxy prices it
+    const d3 = bucket(a, 0, "2026-10-02T23:10:00.000Z"); tokens(a, d3, "gpt-6.1-sol", 7, 7, 0, 0, 0, "openai");
+  };
+  setGateway(new Map<string, Price[]>([["cliproxy", [{ p: "gpt-6-sol", i: 1, o: 8, cr: -1, cw: -1, cw1: -1 }]]]));
+  const tables = ['{}', '{"gpt-6.1-sol":{"input":1.25,"output":10}}', '{"gpt-6.1-sol":{"input":2,"output":8,"cacheRead":0.5},"codex-auto-review":{"alias":"gpt-6.1-sol"},"claude-sonnet-4-5":{"input":0,"output":0}}', '{"codex-auto-review":{"alias":"gpt-6-sol"}}', '{}'];
+  loadUser(JSON.parse(tables[0] ?? "{}")); const live = newAcc(); book(live);
+  const d1 = live.days.get([...live.days.keys()][0] ?? "");
+  const hr = new Date("2026-10-01T09:30:00.000Z").getHours();
+  ok("tp row per hour/provider/model", !!d1 && (d1.tp.get(hr + "\t\tgpt-6.1-sol") ?? []).join(",") === "1000,200,5000,0,0,-1", d1 ? [...d1.tp.keys()].join(" | ") : "no day");
+  ok("tp row of a priced model", !!d1 && ((d1.tp.get(hr + "\t\tclaude-sonnet-4-5") ?? [])[5] ?? -1) > 0, d1 ? [...d1.tp.keys()].join(" | ") : "no day");
+  let i = 0;
+  for (const t of tables) {
+    loadUser(JSON.parse(t)); const dl = reprice(live);
+    const fresh = newAcc(); book(fresh);
+    const df = same(snap(live), snap(fresh)); ok("reprice == fresh under table " + i, df === "", df);
+    ok("delta returned under table " + i, i === 0 ? Math.abs(dl) < 1e-9 : true, String(dl));
+    i++;
+  }
+  // a second pass with nothing changed moves nothing
+  ok("idempotent", Math.abs(reprice(live)) < 1e-12, "moved");
+  // harness-reported 0.5 survives every table
+  let ex = 0; for (const d of live.days.values()) ex += d.cp.get("cliproxy") ?? 0;
+  ok("harness cost kept", Math.abs(ex - 0.5 - 1000 / 1e6 - (10 * 2 + 10 * 10) / 1e6) < 1e-9, String(ex));
+  // a booking under a changed table that nobody re-priced yet: the row is re-priced before the tokens join it
+  loadUser(JSON.parse('{"gpt-6.1-sol":{"input":1,"output":1}}'));
+  const d9 = bucket(live, 0, "2026-10-01T09:40:00.000Z"); tokens(live, d9, "gpt-6.1-sol", 1, 1, 0, 0, 0);
+  reprice(live); // the other rows follow (the trigger's pass); the row booked into must not be counted twice
+  const fr = newAcc(); book(fr); tokens(fr, bucket(fr, 0, "2026-10-01T09:40:00.000Z"), "gpt-6.1-sol", 1, 1, 0, 0, 0);
+  const ds = same(snap(live), snap(fr)); ok("stale row re-priced on booking", ds === "", ds);
+  // fx: a $0 custom model's tokens go through the table (priceable)
+  const fa = newAcc(); const fd = bucket(fa, 0, "2026-10-01T09:30:00.000Z"); tableTok(fa, fd, "fx:custom", "", 10, 5, 0, 0, 0);
+  ok("fx custom unpriced", fa.unk === 15 && fa.cost === 0, fa.unk + "/" + fa.cost);
+  loadUser(JSON.parse('{"fx:custom":{"input":1,"output":1}}')); reprice(fa);
+  ok("fx custom priced after a user price", fa.unk === 0 && Math.abs(fa.cost - 15 / 1e6) < 1e-12, fa.unk + "/" + fa.cost);
+  // the booking tap carries the price source and the estimate flag
+  const bs: Booking[] = []; setBookTap((b: Booking): void => { bs.push(b); });
+  loadUser(JSON.parse('{"codex-auto-review":{"alias":"claude-sonnet-4-5"}}'));
+  const ta = newAcc(); const td = bucket(ta, 0, "2026-10-01T09:30:00.000Z");
+  tokens(ta, td, "codex-auto-review", 1, 1, 0, 0, 0); tokens(ta, td, "claude-sonnet-4-5", 1, 1, 0, 0, 0); tokens(ta, td, "nope", 1, 1, 0, 0, 0); usageExact(ta, td, "x", 1, 1, 0, 0, 0, 0.1, "p");
+  setBookTap(null);
+  ok("booking src/est", bs.map((b: Booking): string => b.src + (b.est ? "~" : "")).join(",") === "alias~,built-in,unpriced,harness", bs.map((b: Booking): string => b.src + (b.est ? "~" : "")).join(","));
+  loadUser(null); setGateway(new Map<string, Price[]>());
 }
 console.log(bad ? bad + " failed" : "usage record: all checks passed");
 if (bad) process.exit(1);

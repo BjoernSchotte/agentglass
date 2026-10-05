@@ -71,6 +71,7 @@ export function onInput(k: string): void {
       if (S.confirmAction === "TERM") killPid(targetPid(), "SIGTERM");
       else if (S.confirmAction === "KILL") killPid(targetPid(), "SIGKILL");
       else if (S.confirmAction === "trash" && s) trash(s);
+      else for (const f of H.confirmed) f(S.confirmAction);
     } else if (k === "n" || k === "N" || k === "esc" || k === "q") S.mode = S.prevMode;
     return;
   }

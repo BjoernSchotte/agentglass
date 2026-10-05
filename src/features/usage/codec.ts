@@ -10,7 +10,7 @@ import { newRows } from "./rows.ts";
 // spare capacity, and the loaded ledger lives for the whole run
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 15; // 15: cross-file ownership of Claude messages and prompts (Acc.mo as text "mo", Acc.mc, Acc.xs): a fork's, continuation's, second project dir's or forked subagent's copies book nothing, and a forked Codex rollout's copied parent calls and token totals are not its own; v14 caches double count them and re-index; 14: Claude messages booked at their final output_tokens (Acc.ids → booked output_tokens, persisted as io; a message's first, thinking line under-counts it): v12/v13 caches re-index; 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 17; // 17: Day.tp per-hour priced-token rows (model-prices): caches load across price changes and re-price in place, gemini keys carry their tier tags; 16: a Claude twin under the project dir its cwd names owns the shared messages, not the first path (OWN.home); v15 caches gave a copy's project the tokens and re-index; 15: cross-file ownership of Claude messages and prompts (Acc.mo as text "mo", Acc.mc, Acc.xs): a fork's, continuation's, second project dir's or forked subagent's copies book nothing, and a forked Codex rollout's copied parent calls and token totals are not its own; v14 caches double count them and re-index; 14: Claude messages booked at their final output_tokens (Acc.ids → booked output_tokens, persisted as io; a message's first, thinking line under-counts it): v12/v13 caches re-index; 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
 // older caches re-index (v12/v13 under-count Claude output, v14 double counts copied Claude messages); dayIn still reads v12's inline heavy maps
 export function readable(v: number): boolean { return v === VERSION; }
@@ -66,7 +66,7 @@ function heavyOf(o: Obj): Heavy {
 HEAVY.decode = heavyIn;
 function dayOut(d: Day): Obj {
   return { t: d.tools, hv: d.hx ? heavyOut(d.hx) : d.hv, k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del,
-    um: numMapOut(d.um), uc: d.uc, cp: numMapOut(d.cp), hc: d.hc, mt: rowsOut(d.mt), ak: d.act };
+    um: numMapOut(d.um), uc: d.uc, cp: numMapOut(d.cp), hc: d.hc, mt: rowsOut(d.mt), ak: d.act, tp: rowsOut(d.tp) };
 }
 // a stored interval list: even length, bounded, sorted pairs (anything else is dropped rather than trusted)
 function actIn(v: unknown): number[] {
@@ -79,7 +79,7 @@ function dayIn(o: Obj): Day {
   const hc = padTo(nums(o["hc"]), 24);
   const hv = str(o["hv"]);
   return { tools: num(o["t"]), hx: hv ? null : heavyOf(o), hv: own(hv), skills: cntsIn(o["k"]), turns: num(o["tu"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
-    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]) };
+    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6) };
 }
 // git refs as [k, v, t, how, br, subj, call, ts] tuples
 function refsOut(rs: VRef[]): unknown[][] { const out: unknown[][] = []; for (const r of rs) out.push([r.k, r.v, r.t, r.how, r.br, r.subj, r.call, r.ts]); return out; }

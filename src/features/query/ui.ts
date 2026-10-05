@@ -18,7 +18,7 @@ import { callDays } from "../usage/callcache.ts";
 import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
-import { type Ctx, type Compiled, EMPTY, compile, matchSession, beyondRetention, oldestDay } from "./eval.ts";
+import { type Ctx, type Compiled, EMPTY, compile, matchSession, beyondRetention, oldestDay, numOf } from "./eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, restoredToast, initPins, configStore, hiddenByPins, onScopeChange, pinToast } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
 import { repoOf, repoShown } from "./project.ts";
@@ -41,9 +41,19 @@ function compiledOf(cs: Clause[], ctx: Ctx): Compiled {
 }
 
 // ── matching session paths (list hooks, hidden count, CLI) ──
-// live state and age change without a ledger tick: they are part of the cache key
-// (and heads: cwd, branch and title of some harnesses come from a transcript's head, read in the background below)
-function liveSig(): string { let p = 0; let a = 0; let h = 0; for (const s of sessions.values()) { if (s.pid) p += s.pid; if (s.attention || s.stuck) a++; if (s.headDone) h++; } return String(p) + "/" + String(a) + "/" + String(h) + "/" + String(sessions.size) + "/" + String(Math.floor(Date.now() / 60000)); }
+// live state and time change without a ledger tick: they are part of the cache key (and heads: cwd, branch and title of
+// some harnesses come from a transcript's head, read in the background below); time in steps of step ms (timeStep)
+function liveSig(step: number): string { let p = 0; let a = 0; let h = 0; for (const s of sessions.values()) { if (s.pid) p += s.pid; if (s.attention || s.stuck) a++; if (s.headDone) h++; } return String(p) + "/" + String(a) + "/" + String(h) + "/" + String(sessions.size) + "/" + String(step) + ":" + String(Math.floor(Date.now() / step)); }
+// how often matches can change with time alone: a minute (the call rows' retention cutoff, day keys); an age clause
+// sooner, by 1/60 of its duration (age < 30s: each second, age < 5m: every 5 s), never below a second (a frame's cadence)
+export function timeStep(cs: Clause[]): number {
+  let ms = 60000;
+  for (const c of cs) {
+    const a = attrOf(c.key); if (!a || a.key !== "age") continue;
+    for (const v of c.vals) { const x = numOf("dur", v); if (x > 0) ms = Math.min(ms, Math.max(1000, Math.round(x / 60))); }
+  }
+  return ms;
+}
 // a clause on these needs every session's head (the list reads heads only for visible rows)
 const HEADKEYS = ["repo", "worktree", "project.kind", "cwd", "branch", "title", "text", "agent", "model"];
 function needsHeads(f: Compiled): boolean { for (const c of f.cs) if (HEADKEYS.indexOf(c.key) >= 0) return true; return false; }
@@ -66,7 +76,7 @@ let searchOk = true; // false while typing: a content clause never starts a sear
 export const MPS = { asks: 0 }; // matchingPaths calls (checks: a pass over sessions asks once, not per session — each ask walks them all)
 export function matchingPaths(f: Compiled): Set<string> {
   MPS.asks++;
-  const key = String(L.ver) + "|" + liveSig();
+  const key = String(L.ver) + "|" + liveSig(timeStep(f.cs));
   const hit = mp.get(f.key); if (hit && hit.key === key) return hit.paths;
   const out = new Set<string>();
   for (const s of sessions.values()) if (matchSession(f, s, null)) out.add(s.path);
@@ -101,7 +111,7 @@ function countTop(cs: Clause[]): number {
 let hidKey = ""; let hidN = 0;
 export function hiddenCount(tab: string): number {
   if (!S.pins.length) return 0;
-  const k = print(S.pins) + "|" + print(localFor(tab)) + "|" + String(L.ver) + "|" + liveSig();
+  const k = print(S.pins) + "|" + print(localFor(tab)) + "|" + String(L.ver) + "|" + liveSig(Math.min(timeStep(S.pins), timeStep(localFor(tab))));
   if (k !== hidKey) { hidKey = k; hidN = hiddenByPins(tab, countTop); }
   return hidN;
 }

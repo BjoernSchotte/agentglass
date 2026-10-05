@@ -19,7 +19,7 @@ function turn(h: string, key: string): XTurn {
   const t: XTurn = { h, rootId: "s1", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: T0, t1: T0 + 5000, closed: true, closedBy: "next", compacted: false, ver: "2.1.90", cwd: "/w/app", branch: "main", remote: "", spans: [], fx: [], fxOn: false };
   const r = newSpan("invoke_agent", "invoke_agent Claude Code", "aaaaaaaaaaaaaaaa", "", T0, "s1"); r.t1 = T0 + 5000; r.model = "claude-sonnet-4-5"; r.models = ["claude-opus-4-5", "claude-sonnet-4-5"]; r.input = "fix the build"; r.output = "done";
   const c = newSpan("chat", "chat claude-sonnet-4-5", "bbbbbbbbbbbbbbbb", r.spanId, T0 + 10, "s1"); c.t1 = T0 + 900; c.model = "claude-sonnet-4-5"; c.provider = "anthropic"; c.respId = "msg_a";
-  c.nIn = 10; c.nOut = 5; c.cr = 100; c.cw = 5; c.rs = 0; c.cost = 0.01; c.hasUsage = true; c.bill = "plan"; c.output = "x".repeat(40);
+  c.nIn = 10; c.nOut = 5; c.cr = 100; c.cw = 5; c.rs = 0; c.cost = 0.01; c.hasUsage = true; c.bill = "plan"; c.costSrc = "built-in"; c.output = "x".repeat(40);
   const u = newSpan("chat", "chat mystery", "cccccccccccccccc", r.spanId, T0 + 1000, "s1"); u.t1 = T0 + 1100; u.model = "mystery"; u.nIn = 3; u.unk = 3; u.hasUsage = true; u.bill = "unknown";
   const x = newSpan("execute_tool", "execute_tool mcp__ctx__search", "dddddddddddddddd", r.spanId, T0 + 950, "s1"); x.t1 = T0 + 990; x.tool = "mcp__ctx__search"; x.mcp = "ctx"; x.callId = "toolu_1"; x.args = "{\"query\":\"q\"}"; x.result = "hit";
   const b = newSpan("execute_tool", "execute_tool Bash git", "eeeeeeeeeeeeeeee", r.spanId, T0 + 1200, "s1"); b.t1 = T0 + 1300; b.tool = "Bash"; b.prog = "git"; b.exit = 1; b.err = "tool_error"; b.errMsg = "fatal";
@@ -67,6 +67,10 @@ eq("provider semantics", attrs(spans(req([turn("claude", "k#0")], { inputTokens:
 }
 const ua = attrs(unp);
 eq("unpriced: no cost, billing mode kept", String(ua.has("agentglass.usage.cost")) + " " + (ua.get("agentglass.billing.mode") ?? ""), "false stringValue:\"unknown\"");
+eq("unpriced: cost source", ua.get("agentglass.usage.cost.source") ?? "", "stringValue:\"unpriced\"");
+eq("priced: built-in source, not estimated", (ca.get("agentglass.usage.cost.source") ?? "") + " " + (ca.get("agentglass.usage.cost.estimated") ?? ""), "stringValue:\"built-in\" boolValue:false");
+{ const t = turn("codex", "k#0"); t.spans[1].costSrc = "alias"; t.spans[1].costEst = true; const al = attrs(spans(req([t], {}))[1] ?? {});
+  eq("alias-priced: source and estimate", (al.get("agentglass.usage.cost.source") ?? "") + " " + (al.get("agentglass.usage.cost.estimated") ?? ""), "stringValue:\"alias\" boolValue:true"); }
 eq("billing mode only on chat", String(attrs(mcp).has("agentglass.billing.mode") || attrs(bash).has("agentglass.billing.mode")), "false");
 const ma = attrs(mcp);
 eq("mcp tool", [ma.get("gen_ai.tool.name"), ma.get("gen_ai.tool.type"), ma.get("mcp.method.name"), ma.get("agentglass.mcp.server.name"), ma.get("gen_ai.tool.call.id")].join(" "),

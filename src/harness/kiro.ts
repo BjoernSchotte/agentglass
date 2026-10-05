@@ -11,12 +11,14 @@ import { C } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, isoMs, modelTok, addCost, credits } from "../features/usage/record.ts";
 import { MQ_SESS } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
-import { userRate } from "../features/usage/pricing.ts";
+import { kiroRate } from "../features/usage/pricing.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
 
 // ~/.kiro/sessions/cli/<uuid>.jsonl (transcript), <uuid>.json (metadata + per-turn usage), <uuid>.lock ({pid} while open)
 const DIR = join(HOME, ".kiro", "sessions", "cli");
+// a kiro session log (its booked cost depends on the credit rate: the ledger cache re-indexes these when the rate changes)
+export function isKiroLog(path: string): boolean { return path.startsWith(DIR + "/"); }
 function scan(add: AddFn): void { for (const f of listDir(DIR)) if (f.length === 42 && f.endsWith(".jsonl")) add(join(DIR, f), f.slice(0, -6), "", false); }
 function side(s: Sess): Obj | null { return parseJson(readText(s.path.slice(0, -6) + ".json", 0, 4194304).trim()); }
 // {session_id, cwd, title, parent_session_id, session_created_reason: "subagent" | …}
@@ -148,7 +150,6 @@ function usage(a: Acc, l: string): void {
 // metering_usage[{unit: "credit", value}]}. kiro bills credits, not tokens: cost = credits × kiroCreditUsd from
 // ~/.agentglass/prices.json (or AGENTGLASS_KIRO_CREDIT_USD); unset = unknown, never a guessed dollar figure.
 // Plan allotments/overage are account-wide (kiro-cli /usage, a network call) and not modelled here.
-function creditUsd(): number { const e = Number(process.env.AGENTGLASS_KIRO_CREDIT_USD ?? ""); return e > 0 ? e : userRate("kiroCreditUsd"); }
 // end_timestamp is an ISO-8601 string ("2026-05-27T08:45:45.575821116Z", nanosecond precision) in current kiro-cli;
 // the runtime's Date rejects >3 fractional digits, so trim to milliseconds. Tolerate a numeric epoch (seconds) too.
 function endMs(v: unknown): number {
@@ -166,7 +167,7 @@ function usageSidecar(s: Sess, a: Acc): void {
   const o = side(s); const ss = o ? obj(o["session_state"]) : null; const cm = ss ? obj(ss["conversation_metadata"]) : null;
   if (!cm) return;
   const turns = arr(cm["user_turn_metadatas"]);
-  const rate = creditUsd();
+  const rate = kiroRate();
   for (let i = 0; i < turns.length; i++) {
     const tm = obj(turns[i]); if (!tm) continue;
     const end = endMs(tm["end_timestamp"]); // kiro writes end_timestamp as an ISO-8601 string, occasionally a number
@@ -191,7 +192,7 @@ export function kiroTurns(s: Sess): KTurn[] {
   const out: KTurn[] = [];
   const o = side(s); const ss = o ? obj(o["session_state"]) : null; const cm = ss ? obj(ss["conversation_metadata"]) : null;
   if (!cm) return out;
-  const rate = creditUsd();
+  const rate = kiroRate();
   for (const v of arr(cm["user_turn_metadatas"])) {
     const tm = obj(v); if (!tm) continue;
     let cr = 0;

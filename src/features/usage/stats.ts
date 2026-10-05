@@ -10,12 +10,13 @@ import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { ledger, accOf, pending } from "./ledger.ts";
 import { type Day, L, todayKey, lastDays, startOfDay, skillUses, newDay, heavy } from "./record.ts";
-import { PRICES_FROM } from "./pricing.ts";
+import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
-import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText } from "./costs.ts";
+import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText, estTop } from "./costs.ts";
 import { type Bill, type GW, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
-import { costNow, budget } from "./summary.ts";
+import { costNow, budget, sourceCounts } from "./summary.ts";
+import { PP, renderPanel, panelKey, setStatsGo } from "./pricepanel.ts";
 import "./progress.ts"; // the header indexing gauge (registers itself)
 import { REDACT } from "../redact-on.ts";
 import { CONFIG_FILE } from "../../util/config.ts";
@@ -27,7 +28,7 @@ import { parse } from "../query/parse.ts";
 import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
 import { type Totals, totals } from "../query/agg.ts";
 import { setLocal } from "../query/scope.ts";
-import { tabFilter, chips, contentOk, callsChip } from "../query/ui.ts";
+import { tabFilter, chips, contentOk, callsChip, timeStep } from "../query/ui.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export { kfmt, grp };
@@ -65,7 +66,7 @@ function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean): Ma
 function aggF(days: string[], f: Compiled): Agg {
   const key = days.join(",") + "|" + f.key;
   const hit = cache.get(key);
-  if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit;
+  if (hit && hit.ver === L.ver && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) return hit; // an age clause: its own step
   const rows = HARNESSES.map((ad) => ha(ad.id)); const tot = ha("total");
   const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls };
   const cp = contentOk(f);
@@ -148,7 +149,8 @@ function billingOf(rows: HA[]): string[] {
 }
 // line 1's tail within w columns: prices + billing; narrow drops the price source first, then trailing harnesses ("+2")
 function sourcesOf(rows: HA[], w: number): string {
-  const pr = fg(C.dim) + "   prices: " + PRICES_FROM + RST; const bs = billingOf(rows);
+  const sc = sourceCounts(period()); const from = pricesFrom();
+  const pr = fg(C.dim) + "   prices: " + (from === "built-in" ? from : "built-in + " + from) + (sc ? " · " + sc : "") + RST; const bs = billingOf(rows);
   const bl = (n: number, lead: string): string => !bs.length ? "" : fg(C.dim) + lead + "billing: " + RST + bs.slice(0, n).join(fg(C.dim) + " · " + RST) + (n < bs.length ? fg(C.dim) + " +" + String(bs.length - n) + RST : "");
   if (vwidth(pr + bl(bs.length, " · ")) <= w) return pr + bl(bs.length, " · ");
   if (!bs.length) return pr;
@@ -159,7 +161,7 @@ function sourcesOf(rows: HA[], w: number): string {
 function cellOf(x: HA): string {
   if (x.cost === 0 && (x.unk > 0 || x.ms.uc > 0)) return "?";
   const one = single(x.ms);
-  return one ? moneyTag(total(x.ms), one) : total(x.ms) > 0 ? money(total(x.ms), "") + " mixed" : money(0, "");
+  return one ? moneyTag(total(x.ms), one, x.ms.est > 1e-9) : total(x.ms) > 0 ? money(total(x.ms), "") + " mixed" : money(0, "");
 }
 // modes whose cost counts (budget.counts, or all without a budget) are all API spend: figures without ≈
 function allApi(): boolean {
@@ -192,7 +194,7 @@ function renderStats(): void {
   // still too long (80 columns): the parts the table below repeats go first — unpriced, sessions, cache write, lines
   const l2f = (narrow: boolean, drop: number): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
     fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read" : " cr") + RST + (drop >= 3 ? "" : "  " + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST) + dot +
-    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + (drop >= 4 ? "" : dot + linesStr(t.add, t.del)) + (drop >= 2 ? "" : dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST) + (t.ms.unk > 0 && drop < 1 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
+    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + (drop >= 4 ? "" : dot + linesStr(t.add, t.del)) + (drop >= 2 ? "" : dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST) + (t.ms.est > 0.005 && drop < 1 ? fg(C.dim) + " · " + money(t.ms.est, "", true) + " by alias" + RST : "") + (t.ms.unk > 0 && drop < 1 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
   const sc = g.scoped ? fg(C.dim) + " · cost: days with matching calls" + RST : "";
   let l2 = l2f(false, 0);
   for (let d = 0; d <= 4 && vwidth(l2 + sc) > W - 4; d++) l2 = l2f(true, d);
@@ -246,9 +248,13 @@ function renderStats(): void {
   for (let i = 0; i < nh; i++) row(i < g.rows.length ? g.rows[i] : ha(""), 8 + i, "");
   put(1, 8 + nh, " " + fg(C.line) + "─".repeat(W - 4) + RST + " ");
   row(t, 9 + nh, "Σ total");
-  if (up) { const ul = fg(C.dim) + fit("unpriced", 10) + RST + fg(C.sub) + up + RST; put(1, 10 + nh, " " + fitStyled(ul, W - 4) + fillTo(fitStyled(ul, W - 4), W - 4) + " "); }
+  if (up) {
+    const hint = fg(C.dim) + " · $ set prices" + RST; // the price panel; narrow: fewer models before the hint is cut
+    if (width(up) + 15 > W - 14) { const u1 = unpricedLine(t.ms, 1); if (width(u1) < width(up)) up = u1; }
+    const ul = fg(C.dim) + fit("unpriced", 10) + RST + fg(C.sub) + up + RST + hint; put(1, 10 + nh, " " + fitStyled(ul, W - 4) + fillTo(fitStyled(ul, W - 4), W - 4) + " "); }
   // bottom: top tools | activity
   const y0 = 11 + nh + (up ? 1 : 0); const bh = Ht - 1 - y0;
+  if (PP.open) { if (bh >= 4) renderPanel(0, y0, W, bh, days); else put(2, Ht - 2, fg(C.yellow) + fit("price panel: the terminal is too short — enlarge it or $ to close", W - 4) + RST); return; }
   if (bh < 5) return;
   const lw2 = Math.max(34, Math.floor(W * 0.42)); const rw = W - lw2;
   box(0, y0, lw2, bh, "top tools", String(g.names.size) + " distinct · ↵ details", false);
@@ -357,7 +363,7 @@ function dagg(days: string[]): DA {
   const f = statsFilter();
   const key = days.join(",") + "|" + dKey + "|" + f.key;
   const hit = dCache;
-  if (hit && hit.key === key && hit.ver === L.ver && Date.now() - hit.at < 3000) return hit;
+  if (hit && hit.key === key && hit.ver === L.ver && Date.now() - hit.at < Math.min(3000, timeStep(f.cs))) return hit;
   const da: DA = { key, ver: L.ver, at: Date.now(), n: 0, err: 0, dn: 0, ms: 0, max: 0, out: 0, hist: zeros(HB), vals: zeros(days.length > 1 ? days.length : 24), hs: zeros(HARNESSES.length), all: 0,
     prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), kids: new Map<string, Cnt>(), slow: [], errs: [] };
   const pre = dKey + "\t";
@@ -626,6 +632,8 @@ function key(k: string): boolean {
   if (k === "B") { budgetInfo(); return true; }
   if (k === "d") { week = false; return true; }
   if (k === "w") { week = true; return true; }
+  if (k === "$" && !dKey && !PP.open) { PP.open = true; return true; } // the price panel (pricepanel.ts) in place of the bottom boxes
+  if (PP.open && !dKey && panelKey(k, period())) return true;
   if (dKey) {
     if (k === "esc" || k === "bs") { dKey = ""; return true; }
     if (k === "up" || k === "k" || k === "wheelup") dsel = Math.max(0, dsel - 1);
@@ -655,6 +663,7 @@ function key(k: string): boolean {
   return true;
 }
 function mouse(x: number, y: number, dbl: boolean): void {
+  if (PP.open && !dKey && y !== 2) return; // the panel: keys only (the period chips still click)
   if (dKey) {
     for (let i = 0; i < hitY.length; i++) {
       if (y !== numAt(hitY, i, -1) || x < numAt(hitX0, i, 0) || x >= numAt(hitX1, i, 0)) continue;
@@ -670,6 +679,8 @@ function mouse(x: number, y: number, dbl: boolean): void {
 }
 const tab: Tab = { name: "Stats", render: renderStats, key, mouse };
 H.tabs.push(tab);
+PP.period = period; PP.label = (): string => (week ? "7 days" : "today");
+setStatsGo((): void => { S.tab = H.tabs.indexOf(tab) + 2; S.mode = "list"; dKey = ""; });
 function mine(): boolean { return S.tab - 2 === H.tabs.indexOf(tab); }
 
 // ── preview, header, footer, help ───────────────────────────────────────────
@@ -680,7 +691,9 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   const tok = fg(C.cyan) + "↑" + kfmt(s.inTok) + " " + RST + fg(C.purple) + "↓" + kfmt(s.outTok) + " " + RST + fg(C.accent) + "↻" + kfmt(s.cacheRTok + s.cacheWTok) + RST;
   const bill = asBill(s.bill); const pl = bill === "plan" && s.plan ? fg(C.sub) + " (" + planLabel(s.plan, REDACT) + ")" + RST : "";
   // narrow (60 columns): the lines, then the tool count go whole rather than being cut mid-figure
-  const tl = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill)) + RST + pl, fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST, linesStr(s.linesAdd, s.linesDel)];
+  const es = estTop(a); // alias-priced share: an estimate, ≈ even on an API key
+  const tl = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill, es.usd > 1e-9)) + RST + pl, fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST, linesStr(s.linesAdd, s.linesDel)];
+  if (es.usd > 0.005) tl.splice(1, 0, fg(C.dim) + "incl. " + money(es.usd, "", true) + " alias (" + es.model + (es.n > 1 ? " +" + String(es.n - 1) : "") + ")" + RST);
   while (tl.length > 1 && vwidth(tl.join(dot)) > w) tl.pop();
   const out = [tl.join(dot)];
   const pad = fit("", 9);
@@ -722,12 +735,14 @@ H.headerWidgets.push((w: number): string => {
 H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || !mine()) return [];
   if (dKey) return [["↑↓", "call"], ["↵", "open session"], ["esc", "back"], ["d", "today"], ["w", "7 days"], ["/", "filter"]];
-  return [["↑↓", "tool"], ["↵", "details"], ["␣", "expand MCP/skills"], ["d", "today"], ["w", "7 days"], ["/", "filter"], ["p", "pin"], ["P", "pins"], ["B", "budget"]];
+  if (PP.open) return [["↑↓", "model"], ["↵", "price"], ["a", "alias"], ["x", "remove"], ["$", "close"], ["d", "today"], ["w", "7 days"]];
+  return [["↑↓", "tool"], ["↵", "details"], ["$", "prices"], ["␣", "expand MCP/skills"], ["d", "today"], ["w", "7 days"], ["/", "filter"], ["p", "pin"], ["P", "pins"], ["B", "budget"]];
 });
 H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server or the skills group"],
   ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
   ["B", "budget: current state and the config path"], ["t", "triage the Stats filter's calls (drill-down: that tool's errors)"], ["C", "compare this period with the previous one (today vs yesterday, 7 days vs the 7 before)"],
   ["/  p  P", "filter Stats (tool is Bash, repo is x, day >= -3d…) · pin it · edit pins"],
-  ["", "costs = API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"],
+  ["$", "prices: every model of the period with its price source; ↵ set a price, a alias, x remove (see prices below)"],
+  ["", "costs = API list price (" + pricesFrom() + "); prices.json, aliases and gateway configs override it"],
   ["", "cost tags: spend = API key (real), plan = list-price equivalent, cloud = Bedrock/Vertex/Foundry, gw = gateway, ? = unknown; * = assumed from current config"],
   ["", "projection: today from the 14-day hourly profile, month from the 14-day mean; history = what is still on disk"]] });
