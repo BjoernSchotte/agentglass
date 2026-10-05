@@ -5,7 +5,7 @@ import { writeSync } from "node:fs";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { join } from "node:path";
-import { H, screenOut, startTui } from "../../hooks.ts";
+import { H, screenOut, startTui, display } from "../../hooks.ts";
 import { OS } from "../../platform/index.ts";
 import { scan, buildView, loadHead, loadTail, titleOf, parentOf, expanded, collapsed } from "../../model/sessions.ts";
 import { openTranscriptAt } from "../../ui/transcript.ts";
@@ -47,7 +47,7 @@ export function applyTarget(t: Target): void {
 export function targetObj(t: Target, r: Ref): Obj {
   const s = t.s as Sess;
   return {
-    harness: s.h, id: s.id, path: s.path, title: titleOf(s), cwd: s.cwd,
+    harness: s.h, id: s.id, path: display("path", s.path, s), title: titleOf(s), cwd: s.cwd,
     anchor: t.kind ? { kind: t.kind, turn: t.turn >= 0 ? t.turn : null, ts: t.ts || null, callId: t.kind === "tool" || t.kind === "result" ? t.id || null : null } : null,
     url: canonicalUrl(s, t.ukey, t.uval),
   };
