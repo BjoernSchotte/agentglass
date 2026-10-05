@@ -167,7 +167,7 @@ function header(st: RState, w: number): string {
   const label = b.scope === "cwd" ? "(same cwd: no project)" : b.label || "(project unknown)";
   const make = (short: boolean, lab: string): string => {
     const parts = [fg(C.accent) + "related" + RST, lab,
-      "±" + String(st.minutes) + "m " + (short ? "@ " : "around ") + clock(b.anchor.t), String(n.size) + (short ? " sess" : " sessions"), ev + (short ? " ev" : " events")];
+      "±" + String(st.minutes) + "m " + (short ? "@ " : "around ") + clock(b.anchor.t), String(n.size) + (short ? " sess" : n.size === 1 ? " session" : " sessions"), ev + (short ? " ev" : " events")];
     if (b.flagged) parts.push(fg(C.red) + "‼ " + String(b.flagged) + RST);
     if (building(st)) parts.push(fg(C.yellow) + spin() + (short ? " " : " loading ") + String(b.next) + "/" + String(b.cands.length) + RST);
     if (b.more) parts.push(fg(C.dim) + "+" + String(b.more) + (short ? " more" : " more sessions not shown") + RST);
