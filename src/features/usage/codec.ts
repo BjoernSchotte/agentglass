@@ -4,13 +4,14 @@ import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
 import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 import { own } from "../../util/own.ts";
+import { moOut } from "./owners.ts";
 // every string read back is own()ed: the parser hands escaped strings (each key "<tool>\t<…>") over with up to 64 KB of
 // spare capacity, and the loaded ledger lives for the whole run
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 14; // 14: Claude messages booked at their final output_tokens (Acc.ids → booked output_tokens, persisted as io; a message's first, thinking line under-counts it): v12/v13 caches re-index; 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 15; // 15: cross-file ownership of Claude messages and prompts (Acc.mo as text "mo", Acc.mc, Acc.xs): a fork's, continuation's, second project dir's or forked subagent's copies book nothing, and a forked Codex rollout's copied parent calls and token totals are not its own; v14 caches double count them and re-index; 14: Claude messages booked at their final output_tokens (Acc.ids → booked output_tokens, persisted as io; a message's first, thinking line under-counts it): v12/v13 caches re-index; 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
-// older caches re-index (v12/v13 under-count Claude output); dayIn still reads v12's inline heavy maps
+// older caches re-index (v12/v13 under-count Claude output, v14 double counts copied Claude messages); dayIn still reads v12's inline heavy maps
 export function readable(v: number): boolean { return v === VERSION; }
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function strsIn(v: unknown): string[] { const out: string[] = []; for (const x of arr(v)) out.push(own(str(x))); return out; }
@@ -90,6 +91,8 @@ function refsIn(v: unknown): VRef[] {
   }
   return out;
 }
+function pairsOut(m: Map<string, string>): string[][] { const out: string[][] = []; for (const [k, v] of m) out.push([k, v]); return out; }
+function pairsIn(v: unknown): Map<string, string> { const m = new Map<string, string>(); for (const x of arr(v)) { const t = arr(x); if (t.length !== 2) continue; const k = str(t[0]); if (k) m.set(own(k), own(str(t[1]))); } return m; }
 // keepIds: claude dedupe only needs the ids near the resume offset
 export function accOut(a: Acc, keepIds = 64): Obj {
   const days: Obj = {};
@@ -97,6 +100,7 @@ export function accOut(a: Acc, keepIds = 64): Obj {
   return {
     off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids.keys()].slice(-keepIds), io: [...a.ids.values()].slice(-keepIds), x: a.x, xM: a.xM, pk: a.pk,
     t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del, a.uc, a.rs], bill: a.bill, plan: a.plan, bs: a.billSrc, t0: a.t0, al: a.al, days, v: refsOut(a.vcs), hd: a.hd, tl: a.tl,
+    mo: a.mv || moOut(a.mo), mc: pairsOut(a.mc), xs: [...a.xs],
   };
 }
 export function accIn(o: Obj): Acc {
@@ -110,5 +114,6 @@ export function accIn(o: Obj): Acc {
     off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: own(str(o["model"])), pend: new Map<string, Pend>(), ep: own(str(o["ep"])), x: nums(o["x"]), xM: num(o["xM"]), pk: own(str(o["pk"])), sub: false,
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
     bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), calls: [], lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
+    p: "", ro: false, mo: new Map<string, number>(), mv: own(str(o["mo"])), mc: pairsIn(o["mc"]), xs: new Set<string>(strsIn(o["xs"])),
   };
 }

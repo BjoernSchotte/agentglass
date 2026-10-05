@@ -5,11 +5,12 @@
 import { readBytes } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
 import { type Acc, L, newAcc, startOfDay, flushSpans } from "./record.ts";
 import { scrape } from "./vcs.ts";
+import { OWN, reconcile, release } from "./owners.ts";
 
 export const ledger = new Map<string, Acc>();
 
@@ -27,10 +28,26 @@ export function rowsOf(s: Sess): void {
 export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);
   if (a && unread.has(s.path) && a.off < s.size) { unread.delete(s.path); if (!LAZY.rows(s.path, a)) a = undefined; }
-  if (!a || s.size < a.off || a.ep !== s.ep) { unread.delete(s.path); a = newAcc(); a.ep = s.ep; ledger.set(s.path, a); } // new, truncated/rewritten or other cursor epoch
+  if (!a || s.size < a.off || a.ep !== s.ep) { // new, truncated/rewritten or other cursor epoch
+    const old = a; unread.delete(s.path); a = newAcc(); a.ep = s.ep; ledger.set(s.path, a);
+    if (old && (old.mv || old.mo.size)) release(s.path, old);
+  }
   a.sub = s.parent !== ""; // known before the first line is booked: scan/meta set it when the session is first seen
+  a.p = s.path;
   return a;
 }
+// logs that must be read again from the start: another log owns some of their messages now (owners.ts)
+const redo = new Set<string>();
+function restart(path: string): void {
+  const o = ledger.get(path); if (!o) return;
+  if (redo.has(path) && o.off === 0) return; // restarted already and not read since (a takeover of many messages at once)
+  const a = newAcc(); a.ep = o.ep; a.hd = o.hd; a.tl = o.tl; a.sub = o.sub; a.p = path; // the head/tail memos stay valid
+  unread.delete(path); ledger.set(path, a); redo.add(path); L.idx++;
+}
+OWN.accs = (): Map<string, Acc> => ledger;
+OWN.alive = (path: string): boolean => sessions.has(path);
+OWN.sub = (path: string): boolean => { const s = sessions.get(path); return !!s && s.parent !== ""; };
+OWN.restart = restart;
 export function pending(s: Sess, a: Acc): boolean { return a.off < s.size && a.stall !== s.size; }
 // side files with running totals (fx usage-v2.json, …): cheap stat per session, re-read on change
 function sidecar(s: Sess, a: Acc): void { const f = harnessOf(s.h).usageSidecar; if (f) f(s, a); }
@@ -79,8 +96,12 @@ function rank(s: Sess, sod: number): number {
   if (s.pid) return 1;
   return s.mtime >= sod ? 2 : 3;
 }
+// the session set changed since the last reconcile(): a log that skipped copies of a removed owner re-reads
+let known = -1;
+function settle(): void { const g = SG.gen * 1048576 + sessions.size; if (g !== known) { known = g; reconcile(); } }
 function tick(): void {
   const t0 = Date.now();
+  settle(); redo.clear(); // restarted logs are pending: this and the next ticks read them in rank order
   const sod = startOfDay();
   const q: Sess[] = [];
   let done = 0; let total = 0;
@@ -94,8 +115,8 @@ function tick(): void {
   let budget = BUDGET;
   for (const s of q) {
     const a = accOf(s);
-    while (budget > 0 && Date.now() - t0 < SLICE_MS) { const n = step(s, a); if (!n) break; budget -= n; }
-    applyAcc(s, a);
+    while (budget > 0 && Date.now() - t0 < SLICE_MS && ledger.get(s.path) === a) { const n = step(s, a); if (!n) break; budget -= n; }
+    applyAcc(s, ledger.get(s.path) ?? a);
     if (budget <= 0 || Date.now() - t0 >= SLICE_MS) break;
   }
   if (budget < BUDGET) { L.ver++; L.idx++; }
@@ -106,11 +127,30 @@ function tick(): void {
 export function indexing(): boolean { return L.total > 0 && L.done < L.total; }
 // blocking: everything up to the end of the file (CLI exports)
 export function complete(s: Sess): void {
+  settle();
+  // the logs that may own messages this one carries are read too, and theirs (adapter carriers): a one-shot command that
+  // reads only some sessions books every message where a full index does, whatever it read before
+  const g = SG.gen * 1048576 + sessions.size;
+  const seen = new Set<string>([s.path]); const q: Sess[] = [s];
+  for (let i = 0; i < q.length; i++) {
+    const x = q[i] ?? s; finish(x); drain();
+    const f = harnessOf(x.h).carriers; const a = ledger.get(x.path); if (!f || !a) continue;
+    for (const p of f(x, a, sessions, g)) { const r = sessions.get(p); if (r && !seen.has(p)) { seen.add(p); q.push(r); } }
+  }
+}
+// a log another one took messages from was read before: read it again now, so every completed number is settled
+function drain(): void {
+  for (let guard = 0; redo.size && guard < 10000; guard++) {
+    const p = [...redo][0] ?? ""; redo.delete(p);
+    const r = sessions.get(p); if (r) finish(r);
+  }
+}
+function finish(s: Sess): void {
   const a = accOf(s);
   sidecar(s, a); // first: some adapters date log lines from it (kiro turn times)
-  let n = 0; for (let k = step(s, a); k > 0; k = step(s, a)) n += k;
+  let n = 0; for (let k = step(s, a); k > 0 && ledger.get(s.path) === a; k = step(s, a)) n += k;
   if (n > 0) L.idx++; // not L.ver: per-session caches (git attribution) would be rebuilt for every completed session
-  applyAcc(s, a);
+  applyAcc(s, ledger.get(s.path) ?? a); // restarted meanwhile: redo reads it again
 }
 
 H.onTick.push(tick);

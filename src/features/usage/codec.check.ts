@@ -3,6 +3,7 @@
 import { accOut, accIn, VERSION, readable, rlOut, rlIn } from "./codec.ts";
 import { newAcc, bucket, tokens, usageExact, credits, reasoning, L, tool, pend, file, heavy } from "./record.ts";
 import { type Obj, parse } from "../../util/json.ts";
+import { moIn } from "./owners.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -18,8 +19,8 @@ const o = accOut(a, 64); const js = JSON.stringify(o);
 const back = parse(js);
 const b = accIn(back ?? {});
 const e = b.days.get([...a.days.keys()][0] ?? "");
-ok("version", VERSION === 14, String(VERSION)); // 14 = Claude messages at their final output_tokens (Acc.ids with booked output: v12/v13 caches under-count, re-index); 13 = perf-baseline (the heavy day maps as JSON text: a v12 build would read them empty; v12 caches still read); 12 = harness-correctness (Gemini call errors + models, pi /skill); 11 = Acc.vcs git refs (git-linkage); 10 = Acc.rs (otlp-export); 9 = repo-view Day.act + Acc.al; 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
-ok("reads its own version only", readable(VERSION) && !readable(13) && !readable(12) && !readable(VERSION + 1), "");
+ok("version", VERSION === 15, String(VERSION)); // 15 = cross-file message ownership (Acc.mo/mc: copies of a message another log owns book nothing; older caches double count, re-index); 14 = Claude messages at their final output_tokens (Acc.ids with booked output: v12/v13 caches under-count, re-index); 13 = perf-baseline (the heavy day maps as JSON text: a v12 build would read them empty; v12 caches still read); 12 = harness-correctness (Gemini call errors + models, pi /skill); 11 = Acc.vcs git refs (git-linkage); 10 = Acc.rs (otlp-export); 9 = repo-view Day.act + Acc.al; 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
+ok("reads its own version only", readable(VERSION) && !readable(14) && !readable(13) && !readable(12) && !readable(VERSION + 1), "");
 ok("day present", !!e, [...b.days.keys()].join(","));
 if (e) {
   ok("unk", e.unk === d.unk, String(e.unk));
@@ -32,6 +33,17 @@ if (e) {
 }
 ok("rs round trip", b.rs === 42, String(b.rs));
 ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan === "team" && b.billSrc === "session" && b.unk === a.unk && b.cost === a.cost, JSON.stringify(o["t"]));
+// owned message ids (with times) and skipped copies round-trip; the owned list stays text until something reads it
+{
+  const x = newAcc(); x.mo.set("msg_1", 1759312800000); x.mo.set("msg_2", 1759312800500); x.mo.set("u:abc", 1759312700000); x.mc.set("msg_0", "/p/o.jsonl"); x.xs.add("3c4e27dd-7185-40bd-a29f-8ca06a57d08c");
+  const y = accIn(parse(JSON.stringify(accOut(x, 64))) ?? {});
+  ok("mo stays text", y.mo.size === 0 && y.mv.length > 0, y.mv);
+  const m = moIn(y.mv);
+  ok("mo round trip", m.get("msg_1") === 1759312800000 && m.get("msg_2") === 1759312800500 && m.get("u:abc") === 1759312700000 && m.size === 3, y.mv);
+  ok("mc round trip", y.mc.get("msg_0") === "/p/o.jsonl" && y.mc.size === 1, JSON.stringify(accOut(y, 64)["mc"]));
+  ok("xs round trip", y.xs.has("3c4e27dd-7185-40bd-a29f-8ca06a57d08c") && y.xs.size === 1, JSON.stringify(accOut(y, 64)["xs"]));
+  ok("undecoded mo written back as is", JSON.stringify(accOut(y, 64)["mo"]) === JSON.stringify(y.mv), "");
+}
 // an older 9-element t: uc defaults to 0
 const old: Obj = {}; for (const k of Object.keys(o)) old[k] = o[k];
 old["t"] = [1, 2, 3, 4, 5, 6, 7, 8, 9];

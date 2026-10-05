@@ -7,6 +7,7 @@ import { display } from "../../hooks.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
 import { type Acc, type Booking, newAcc, setBookTap } from "../usage/record.ts";
 import { setCallTap, program, norm, mcpServer } from "../usage/calls.ts";
+import { ledger } from "../usage/ledger.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { kiroTurns, type KTurn } from "../../harness/kiro.ts";
 import { fxTotals } from "../../harness/fx.ts";
@@ -38,7 +39,8 @@ export interface SessB {
 const WIN = 1048576;
 
 function newSide(s: Sess, top: boolean): Side {
-  const a = newAcc(); a.sub = !top;
+  const a = newAcc(); a.sub = !top; a.p = s.path; a.ro = true; // its path: a Codex fork finds its parent's calls; ro: claims nothing
+  const la = ledger.get(s.path); if (la) for (const [k, v] of la.mc) a.mc.set(k, v); // copies another log owns: no request of this one
   return { s, at: 0, ep: epochOf(s), acc: a, rq: newReqState(), top, last: 0, mark: 0, pend: new Map<string, XSpan>(), anon: [], chats: new Map<string, XSpan>(), lastChat: null, outBuf: "", lineTurn: "", lineAt: -1, pieces: new Map<string, XSpan>(), first: 0 };
 }
 export function newSessB(root: Sess, subs: Sess[]): SessB {
@@ -106,7 +108,7 @@ function line(b: SessB, sd: Side, l: string, o: BuildOpts): void {
   setBookTap((x: Booking) => { bs.push(x); });
   setCallTap((id: string, d: number, err: boolean, codes: number[], name: string) => { calls.set(id, { ms: d, err, codes, name: display("tool", name, null) }); }); // the name as the events show it (--redact)
   try { harnessOf(h).usage(a, l); } finally { setBookTap(null); setCallTap(null); }
-  const q = requestOf(h, null, l, sd.rq);
+  const q0 = requestOf(h, null, l, sd.rq); const q = q0 && a.mc.has(q0.key) ? null : q0;
   if (sd.top && !b.ver) { const m = /"(?:cli_)?version":"([^"]+)"/.exec(l.slice(0, 2000)); if (m && (h === "claude" || h === "codex")) b.ver = m[1] ?? ""; }
   const evs: Ev[] = [];
   parseEvents(h, l, evs, sd.s);

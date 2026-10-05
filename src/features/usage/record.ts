@@ -46,6 +46,11 @@ export interface Acc {
   vk: Set<string>; vkn: number; // "<k>\t<v>" of vcs (gcall spans aside) and the vcs length it mirrors (not persisted)
   hd: string[]; // the head memo (model/sessions.ts HeadMemo) as [w, h, z, t, x, field, value, …]; [] none
   tl: string[]; // the tail memo (TailMemo) as [size, t, x, kind, text, ts, id, field, value, …] (kind "" = no event); [] none
+  p: string; // the log's path (set by ledger accOf and the OTLP export, not persisted; "" = a fixture: no cross-file ownership)
+  ro: boolean; // an OTLP export's scratch Acc: claims nothing (its log's mc is copied in), not persisted
+  mo: Map<string, number>; mv: string; // messages (and prompts) this log owns → their order key (owners.ts); mv = mo as stored, until decoded
+  mc: Map<string, string>; // copies this log skipped → the path that owned them then
+  xs: Set<string>; // other sessions its lines name as their source (a Claude continuation's session_id): they may own its messages
 }
 // one scraped git reference: k = commit (v = sha as printed) | pr | issue | link (v = canonical URL; link = a commit URL) |
 // gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
@@ -69,7 +74,8 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Map<string, number>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [] };
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [],
+    p: "", ro: false, mo: new Map<string, number>(), mv: "", mc: new Map<string, string>(), xs: new Set<string>() };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time

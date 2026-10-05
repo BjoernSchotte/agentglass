@@ -74,4 +74,7 @@ export interface HarnessAdapter {
   // ── usage (tokens, cost, tools, lines, files → Stats tab, --json) ──
   usage: (a: Acc, line: string) => void; // one raw log line; pre-filter with indexOf before parse(), most lines are noise
   usageSidecar?: (s: Sess, a: Acc) => void; // per tick: running totals kept outside the log (stat first, reparse on change)
+  // logs that may own messages this one carries too (owners.ts): a one-shot command that reads only some sessions reads these
+  // as well, so each message books where a full index books it. all = every session, gen = its change counter (cache key)
+  carriers?: (s: Sess, a: Acc, all: Map<string, Sess>, gen: number) => string[];
 }

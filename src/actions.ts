@@ -8,7 +8,7 @@ import { OS } from "./platform/index.ts";
 import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
-import { sessions, scan, buildView, parentOf, current } from "./model/sessions.ts";
+import { sessions, SG, scan, buildView, parentOf, current } from "./model/sessions.ts";
 import { refreshProcs, rootOf, tmuxTarget, procAt, procSess, sharedDaemon } from "./model/procs.ts";
 import { harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
@@ -135,7 +135,7 @@ export function trash(s: Sess): void {
   if (!fl) { say("warn", harnessOf(s.h).label + " sessions can't be moved to the trash"); return; }
   try {
     for (const f of fl(s)) if (existsSync(f)) OS.trash(f);
-    sessions.delete(s.path);
+    sessions.delete(s.path); SG.gen++;
     if (S.tv && S.tv.s === s) { S.tv = null; S.mode = "list"; }
     say("ok", "moved to " + OS.trashName);
   } catch (e) { say("err", "trash failed: " + String(e)); }

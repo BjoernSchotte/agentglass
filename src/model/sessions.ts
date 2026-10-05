@@ -9,6 +9,7 @@ import { S } from "../state.ts";
 import { H, applyMeta } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
+export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 
 function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>, parent: string): void {
   let s = sessions.get(path);
@@ -17,7 +18,7 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
   const st = sourceOf(h).stat(s);
   if (!st) return; // gone (a new session is not in the map yet)
   if (fresh) {
-    sessions.set(path, s);
+    sessions.set(path, s); SG.gen++;
     const m = harnessOf(h).meta; if (m) m(s);
   }
   restat(s, st.size, st.mtime, epochOf(s));
@@ -47,7 +48,7 @@ export function scan(): void {
   if (!scanned) { scanned = true; for (const f of H.firstScan) f(); }
   const seen = new Set<string>();
   for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, seen, parent));
-  for (const k of [...sessions.keys()]) if (!seen.has(k)) sessions.delete(k);
+  for (const k of [...sessions.keys()]) if (!seen.has(k)) { sessions.delete(k); SG.gen++; }
 }
 // A log only grows: once it reaches past the head window, what reading the head did is final (a shorter log: until it
 // grows; a record source counts records). That outcome — the session fields it changed, the first prompt and the

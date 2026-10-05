@@ -1,9 +1,9 @@
 // agentglass — Codex (~/.codex) adapter
 // SPDX-License-Identifier: Apache-2.0
 import { statSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { type Obj, obj, str, parse as parseJson } from "../util/json.ts";
-import { CODEX, readText, listDir } from "../util/fs.ts";
+import { CODEX, readText, readBytes, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
@@ -14,6 +14,7 @@ import { rlWins } from "../features/usage/billing.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
 import { scrubRemote } from "../util/giturl.ts";
+import { own } from "../util/own.ts";
 
 // ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl (+ archived_sessions/, flat)
 const titles = new Map<string, string>(); // thread names from session_index.jsonl
@@ -84,6 +85,60 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   }
 }
 
+// a forked rollout (fork_context subagents) starts with a copy of its parent's history under new timestamps: calls and
+// token_count totals included. A call whose call_id the parent logged is the parent's (booked there); a total the parent
+// logged is only the fork's starting point. The parent is read once per process, in 1 MB chunks, up to the newest fork's
+// start (a later line can hold no copied history).
+interface Par { path: string; off: number; skip: boolean; until: number; calls: Set<string>; tot: Set<string> }
+const PARENTS = new Map<string, Par>(); // parent rollout path → what it logged so far
+const FORKS = new Map<string, string>(); // rollout path → its parent's path, "" = not a fork or the parent is gone
+const ROLLOUTS = new Map<string, string>(); let rolled = false; // rollout id → path, for a parent in another day's dir
+function totKey(tu: Obj): string { return [num(tu["input_tokens"]), num(tu["cached_input_tokens"]), num(tu["cache_write_input_tokens"]), num(tu["output_tokens"]), num(tu["reasoning_output_tokens"])].join(","); }
+function parentLine(r: Par, l: string): number { // the line's time (0 = untimed)
+  const h = l.slice(0, 200);
+  const tm = /"timestamp":"([^"]+)"/.exec(h); const t = tm ? isoMs(tm[1] ?? "") : 0;
+  if (h.indexOf("_call\"") >= 0 && h.indexOf("_call_output\"") < 0) { const c = /"call_id":"([^"]+)"/.exec(l); if (c) r.calls.add(own(c[1] ?? "")); } // own(): a match would keep its whole 1 MB chunk alive
+  else if (h.indexOf("\"payload\":{\"type\":\"token_count\"") >= 0) {
+    const o = parseJson(l); const p = o ? obj(o["payload"]) : null; const info = p ? obj(p["info"]) : null; const tu = info ? obj(info["total_token_usage"]) : null;
+    if (tu) r.tot.add(totKey(tu));
+  }
+  return t;
+}
+function readParent(r: Par, upTo: number): void {
+  let size = 0; try { size = statSync(r.path).size; } catch (e) { return; }
+  while (r.off < size && r.until <= upTo) {
+    const b = readBytes(r.path, r.off, Math.min(1048576, size - r.off)); if (!b.length) return;
+    let z = b.length - 1; while (z >= 0 && b[z] !== 10) z--;
+    if (z < 0) { r.off += b.length; r.skip = true; continue; } // a >1 MB line: no call head or total in reach
+    const ls = new TextDecoder("utf-8").decode(b.subarray(0, z + 1)).split("\n");
+    for (let i = r.skip ? 1 : 0; i < ls.length; i++) { const t = parentLine(r, ls[i] ?? ""); if (t > r.until) r.until = t; }
+    r.skip = false; r.off += z + 1;
+  }
+}
+// the fork's parent, read up to the fork's start (+ 1 min of clock skew); null = not a fork
+function parentOf(path: string): Par | null {
+  let pp = FORKS.get(path);
+  if (pp === undefined) {
+    const head = readText(path, 0, 16384);
+    const m = /"forked_from_id":"([^"]+)"/.exec(head); const pid = m ? m[1] ?? "" : "";
+    pp = "";
+    if (pid) {
+      const name = "-" + pid + ".jsonl";
+      for (const f of listDir(dirname(path))) if (f.endsWith(name)) pp = join(dirname(path), f); // forks usually start the same day
+      if (!pp) {
+        if (!rolled) { rolled = true; scan((p: string, id: string, parent: string, archived: boolean): void => { ROLLOUTS.set(id, p); }); }
+        pp = ROLLOUTS.get(pid) ?? "";
+      }
+      if (pp) {
+        const tm = /"timestamp":"([^"]+)"/.exec(head); const t0 = tm ? isoMs(tm[1] ?? "") : 0;
+        let r = PARENTS.get(pp); if (!r) { r = { path: pp, off: 0, skip: false, until: 0, calls: new Set<string>(), tot: new Set<string>() }; PARENTS.set(pp, r); }
+        readParent(r, t0 > 0 ? t0 + 60000 : 8640000000000000);
+      }
+    }
+    FORKS.set(path, pp);
+  }
+  return pp ? PARENTS.get(pp) ?? null : null;
+}
 const SHELL = ["exec_command", "shell", "shell_command", "container.exec"];
 function usage(a: Acc, l: string): void {
   const h = l.slice(0, 200); // cheap pre-filter: most bytes are tool outputs and messages we never parse
@@ -114,6 +169,10 @@ function usage(a: Acc, l: string): void {
   const p = obj(o["payload"]); if (!p) return;
   const iso = str(o["timestamp"]);
   if (ctx) { const m = str(p["model"]); if (m) a.model = m; return; }
+  const par = a.p ? parentOf(a.p) : null;
+  if (par && call && par.calls.has(str(p["call_id"]))) return; // the parent's call, copied into this fork
+  const info = tc ? obj(p["info"]) : null; const tu = info ? obj(info["total_token_usage"]) : null;
+  if (par && tu && par.tot.has(totKey(tu))) { a.x = [num(tu["input_tokens"]), num(tu["cached_input_tokens"]), num(tu["cache_write_input_tokens"]), num(tu["output_tokens"]), num(tu["reasoning_output_tokens"])]; return; } // the parent's total, copied: the fork counts on from it
   const d = bucket(a, 0, iso);
   if (call) {
     const t = str(p["type"]);
@@ -143,7 +202,6 @@ function usage(a: Acc, l: string): void {
     }
     return;
   }
-  const info = obj(p["info"]); const tu = info ? obj(info["total_token_usage"]) : null;
   if (tu) { // cumulative → attribute the delta to this event's day; input_tokens includes the cached part
     const cur = [num(tu["input_tokens"]), num(tu["cached_input_tokens"]), num(tu["cache_write_input_tokens"]), num(tu["output_tokens"]), num(tu["reasoning_output_tokens"])];
     const dl: number[] = [];
