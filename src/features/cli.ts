@@ -97,7 +97,8 @@ function usage(): string {
   alerts[{rule,severity,value,unit,threshold,since,message,labels,acked}] (live sessions; durations s, ratios 0–1, USD)
   git{commits[{sha,branch,subject,at,how,counted,status,merge,add,del}],produced,prs[{url,number,how}],issues[],links[{url,how}],
   costPerCommit,noReflog} (null = no git worktree; how = observed ✓ | reflog ≈ | shared — only observed is counted;
-  status = present|missing|amended|elsewhere, "unknown" and add/del null without --git; subagents' commits count for the parent)
+  status = present|missing|amended|elsewhere — without --git "unknown" (elsewhere: a banner on a branch the repo lacks) and
+  add/del null; subagents' commits count for the parent)
   (costUsd = API list price, null when only unpriced usage exists; billing.mode = api|plan|metered|gateway|unknown,
   source = session|process|config — config = assumed from the current config files;
   skills source = command: a slash command / $mention, model: the agent chose it;
