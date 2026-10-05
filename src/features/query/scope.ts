@@ -136,9 +136,13 @@ export function setPins(expr: string): QErr | null {
   return null;
 }
 // `p`: every local clause of the tab into the pins (merge rules apply); the toast
+// the pins already hold every clause of cs (a value inside a pinned set, a duplicate): pinning changes nothing
+export function holds(pins: Clause[], cs: Clause[]): boolean { return print(addAll(pins, cs).cs) === print(pins); }
+export function alreadyPinned(cs: Clause[]): string { return "already pinned: " + chipText(cs) + " (pins: " + chipText(S.pins) + ") — P edits pins"; }
 export function pinAll(tab: string): string {
   const loc = localFor(tab);
   if (!loc.length) return "nothing to pin — / adds a filter, p pins it";
+  if (holds(S.pins, loc)) return alreadyPinned(loc); // the tab keeps its filter: p changes nothing
   note(loc); // before the merge notes print them
   const r = addAll(S.pins, pinned(loc, true));
   pinsTo(r.cs); S.local.set(tab, []); persist(); changed();

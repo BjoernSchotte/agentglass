@@ -18,7 +18,16 @@ eq("flatten objects in arrays", JSON.stringify(flatten({ s: [{ name: "a", n: 1 }
 eq("json, all fields", render(rows.slice(0, 1), [], "json", false, false, false, 120), "[" + JSON.stringify(row("a", -3, null)) + "]");
 eq("json single", render(rows.slice(0, 1), ["id", "tokens"], "json", true, false, false, 120), "{\"id\":\"a\",\"tokens\":{\"in\":1,\"out\":2}}");
 eq("json flattened field", render(rows.slice(0, 1), ["tokens_in", "id"], "json", false, false, false, 120), "[{\"tokens_in\":1,\"id\":\"a\"}]");
-eq("json pretty", render(rows.slice(0, 1), ["id"], "json", true, true, false, 120), "{\n  \"id\": \"a\"\n}");
+// a flattened name keeps the real value in JSON: a list stays an array (git_commits was a ";"-joined string), an object an object
+const nest: Obj = { id: "a", git: { commits: [{ sha: "s1", add: 1 }, { sha: "s2", add: null }], prs: [], who: { n: 1 }, n: 2 }, tags: ["x", "y"] };
+eq("json flattened list", render([nest], ["git_commits", "git_prs"], "json", false, false, false, 120), "[{\"git_commits\":[{\"sha\":\"s1\",\"add\":1},{\"sha\":\"s2\",\"add\":null}],\"git_prs\":[]}]");
+eq("jsonl flattened list", render([nest], ["id", "git_commits"], "jsonl", false, false, false, 120), "{\"id\":\"a\",\"git_commits\":[{\"sha\":\"s1\",\"add\":1},{\"sha\":\"s2\",\"add\":null}]}");
+eq("json single flattened object + leaf", render([nest], ["git_who", "git_n", "git_who_n"], "json", true, false, false, 120), "{\"git_who\":{\"n\":1},\"git_n\":2,\"git_who_n\":1}");
+eq("json missing flattened name", render([nest], ["git_nope"], "json", false, false, false, 120), "[{\"git_nope\":null}]");
+eq("csv flattened list stays joined", render([nest], ["id", "tags", "git_prs"], "csv", false, false, false, 120), "id,tags,git_prs\na,x;y,");
+eq("csv flattened object expands", render([nest], ["git_who"], "csv", false, false, false, 120), "git_who_n\n1");
+eq("pickCols flattened object name", pickCols([nest], ["git_commits", "git_who"], [], []).bad.join(","), "");
+eq("json pretty",render(rows.slice(0, 1), ["id"], "json", true, true, false, 120), "{\n  \"id\": \"a\"\n}");
 eq("jsonl", render(rows, ["id", "cost"], "jsonl", false, false, false, 120), "{\"id\":\"a\",\"cost\":null}\n{\"id\":\"bb\",\"cost\":0.5}\n{\"id\":\"ccc\",\"cost\":1.23456}");
 
 eq("csv", render(rows.slice(0, 2), [], "csv", false, false, false, 120),

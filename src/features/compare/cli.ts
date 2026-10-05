@@ -17,6 +17,7 @@ import { MODES } from "../usage/billing.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, printClause } from "../query/parse.ts";
 import { addAll } from "../query/scope.ts";
+import { type OptRec, opt, optTable, setOptions, helpOf, wantsHelp } from "../clihelp.ts";
 import { compile, sessMatches } from "../query/eval.ts";
 import { cliFilter } from "../query/cli.ts";
 import { shown } from "../triage/run.ts";
@@ -28,23 +29,22 @@ import { type Scope, agentHost, agentScope, visible, cliError } from "../agenten
 import { type Group, type Side, type Cmp, groupOfSession, groupOfExpr, groupClauses, compareGroups } from "./metrics.ts";
 import { toolRows, cntRows, fileLists } from "./sections.ts";
 
-const HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--json]
+export const COMPARE_OPTS: OptRec[] = setOptions("compare", [
+  opt("--a", "'<expr>'", "group A: any filter expression, e.g. 'model ~ opus' (vs --b 'model ~ sonnet')", "", []),
+  opt("--b", "'<expr>'", "group B, e.g. 'day >= -6d' vs --a 'day >= -13d and day < -6d' (this week vs the last)", "", []),
+  opt("--filter", "'<scope>'", "clauses both groups must also match (repeatable; pins are not applied)", "", []),
+  opt("--no-subagents", "", "leave subagents out (by default a session group includes its subagents)", "", []),
+  opt("--json", "", "{a:{expr, n, metrics}, b:{…}, subagents, tools[], programs[], files{onlyA, onlyB, both}};\nmetrics.cost is the total, costByMode its split (api = real spend, the rest list-price\nestimates), billing the one mode or \"mixed\"; wallMs = first event → last activity,\nactiveMs = minutes with activity (a session: at most wallMs); unknown values (unpriced cost,\nuntimed calls) are null", "", []),
+]);
+export const COMPARE_HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--json]
        agentglass compare --a '<expr>' --b '<expr>' [--filter '<scope>']… [--no-subagents] [--json]
 
   side-by-side diff of two runs or two groups: cost, turns, tokens, cache use, tool mix, errors, durations,
   lines, files and models, with Δ (B − A) and B/A.
+  <session> = <harness>:<id> (claude:3f2a…), a unique id prefix of at least 6 characters, or current | last | parent
+  (as for agentglass session)
 
-  <session>           <harness>:<id> (claude:3f2a…), a unique id prefix of at least 6 characters, or current | last | parent
-                      (as for agentglass session)
-  --a / --b '<expr>'  any filter expression per group, e.g. 'model ~ opus' vs 'model ~ sonnet',
-                      'day >= -6d' vs 'day >= -13d and day < -6d' (this week vs the last)
-  --filter '<scope>'  clauses both groups must also match (repeatable; pins are not applied)
-  --no-subagents      leave subagents out (by default a session group includes its subagents)
-  --json              {a:{expr, n, metrics}, b:{…}, subagents, tools[], programs[], files{onlyA, onlyB, both}};
-                      metrics.cost is the total, costByMode its split (api = real spend, the rest list-price
-                      estimates), billing the one mode or "mixed"; wallMs = first event → last activity,
-                      activeMs = minutes with activity (a session: at most wallMs); unknown values (unpriced cost,
-                      untimed calls) are null
+` + optTable(COMPARE_OPTS) + `
 
   inside a coding agent: --json is the default and the scope is the current repo (--all-projects: every one)
 
@@ -57,6 +57,7 @@ function fail(msg: string, code = 2, hint = ""): never { cliError(code === 4 ? "
 interface Opts { pos: string[]; a: string; b: string; hasA: boolean; hasB: boolean; filters: string[]; subs: boolean; json: boolean }
 function parseArgs(args: string[]): Opts {
   const o: Opts = { pos: [], a: "", b: "", hasA: false, hasB: false, filters: [], subs: true, json: false };
+  if (wantsHelp(args)) { out(helpOf("compare", args, COMPARE_HELP)); process.exit(0); }
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
     const val = (): string => { if (i + 1 >= args.length) fail(a + " needs a value (see agentglass compare --help)"); i++; return args[i] ?? ""; };
@@ -65,7 +66,6 @@ function parseArgs(args: string[]): Opts {
     else if (a === "--a") { o.a = val(); o.hasA = true; }
     else if (a === "--b") { o.b = val(); o.hasB = true; }
     else if (a === "--filter") o.filters.push(val());
-    else if (a === "--help" || a === "-h") { out(HELP); process.exit(0); }
     else if (a === "--all-projects" || a === "--project-only") continue; // the agent-mode scope (agentScope reads them)
     else if (a.startsWith("-")) fail("unknown option " + a + " (see agentglass compare --help)");
     else o.pos.push(a);

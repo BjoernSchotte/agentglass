@@ -117,8 +117,9 @@ function cost(args: string[]): void {
   const by = o.by || "day";
   const rows = costRows(since, by, sc, qfilter(o));
   const f: Fmt = { fmt: o.f.fmt || (o.json ? "json" : ""), fields: o.f.fields };
-  printEnvelope(rows, "ledger", sc, f, COST_FIELDS, COST_FIELDS);
-  process.exit(o.check && summary(o.harness).bs.state === "over" ? 3 : 0);
+  const code = o.check && summary(o.harness).bs.state === "over" ? 3 : 0; // before printing: a failed write keeps it
+  printEnvelope(rows, "ledger", sc, f, COST_FIELDS, COST_FIELDS, code);
+  process.exit(code);
 }
 
 addCmd({ cmd: "cost", usage: "agentglass cost [--json] [--check]", summary: "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget; --since/--by: rows per day|model|harness|project|session)",

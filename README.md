@@ -392,7 +392,8 @@ harness is pi, day >= -7d               duration > 30s                       con
 
 - `key op value`; terms are ANDed (`and`, `,` or just a blank; a leading, doubled or trailing `and` / `,` is an error; `, and` counts as one). Operators: `is` `=` `is_not` `!=` `is_one_of`
   `is_not_one_of` `~` (contains) `!~` `>` `>=` `<` `<=`. `not` / `-` negates. Bare words search title, path, id,
-  harness and branch, as `/` always did. OR exists only as `is_one_of`; no parentheses.
+  harness and branch, as `/` always did. OR exists only as `is_one_of`, whose values take blanks or commas
+  (`harness is_one_of pi opencode` = `harness is_one_of pi,opencode`); no parentheses.
 - Values: `$0.50`, `40k`, `1.5M`, `100KB`, `500ms`, `30s`, `2m`, `1h`, `3d`, `20%`, `today`, `yesterday`, `-7d`,
   weekdays `mo`…`su`; `unknown` finds unpriced cost and untimed calls (`cost is unknown`). Paths take `*` globs.
 - Keys (`--help` and `?` list them): session `harness repo cwd branch model title id agent subagent live archived
@@ -722,7 +723,7 @@ One table for every command (`agentglass --help` prints it, the JSON help carrie
 | 4 | ambiguous reference (an id prefix that matches several sessions; the candidates go to stderr) |
 
 Command-specific on top: `cost --check` exits 3 when the month is over budget, `rules check` 1 on warnings and 2 on
-errors, `export` 1 when some requests failed.
+errors, `export` 1 when some requests failed and 3 when another export to the same endpoint is running.
 
 ## Send to an OTLP backend
 
@@ -800,7 +801,9 @@ service: {pipelines: {traces: {receivers: [otlp], exporters: [debug]}}}
 
 `--format csv` is RFC 4180 with a header row: nested fields are flattened (`tokens_in`), lists joined with `;`, `null`
 is empty, and text starting with `= + - @` gets a leading `'` so spreadsheets do not run it. `--fields` picks and
-orders columns; an unknown name exits 2 and lists the valid ones. On a terminal the default is `table`, in a pipe
+orders columns, nested ones by their flattened name (`tokens_in`, `git_commits`); in `json`/`jsonl` a picked field
+keeps its type (`git_commits` stays an array of objects, only csv/table join lists); an unknown name exits 2 and lists
+the valid ones. On a terminal the default is `table`, in a pipe
 `json` (`--json` stays JSON).
 
 ## Inside coding agents

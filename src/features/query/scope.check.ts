@@ -55,6 +55,14 @@ eq("pinAll toast", pinAll("Sessions"), "pinned: tool is Bash · cost > 2 — P e
 eq("pinAll pins", T(S.pins), "tool is Bash and cost > 2"); eq("pinAll local empty", T(localFor("Sessions")), ""); eq("pinAll persisted", saved, "tool is Bash and cost > 2");
 setLocal("Sessions", P("tool is Edit")); eq("pinAll merges", pinAll("Sessions"), "pinned: tool is_one_of Bash Edit · cost > 2 (merged: tool is_one_of Bash Edit) — P edits pins");
 eq("pinAll empty", pinAll("Sessions"), "nothing to pin — / adds a filter, p pins it");
+// p on a value the pins already hold (inside a pinned set): nothing changes, the toast says so, the tab keeps its filter
+calls = 0; saved = "untouched";
+setLocal("Sessions", P("tool is Bash")); const c0 = calls;
+eq("pinAll already pinned", pinAll("Sessions"), "already pinned: tool is Bash (pins: tool is_one_of Bash Edit · cost > 2) — P edits pins");
+eq("already pinned: pins unchanged", T(S.pins) + " | " + saved + " | " + String(calls - c0), "tool is_one_of Bash Edit and cost > 2 | untouched | 0");
+eq("already pinned: local stays", T(localFor("Sessions")), "tool is Bash");
+setLocal("Sessions", P("tool is Bash and repo is x")); eq("partly new pins", pinAll("Sessions"), "pinned: tool is_one_of Bash Edit · cost > 2 · repo is x (merged: tool is_one_of Bash Edit) — P edits pins");
+setPins("tool is_one_of Bash Edit and cost > 2"); setLocal("Sessions", []);
 // hidden count: sessions the pins alone exclude
 eq("hiddenByPins", String(hiddenByPins("Sessions", (cs: Clause[]) => 10 - cs.length * 3)), "6");
 const st2: PinStore = { load: () => "repo is x", save: (v: string) => { saved = "SHOULD NOT"; }, remember: false };

@@ -3,6 +3,7 @@
 import type { Obj } from "../util/json.ts";
 import { BUILD } from "../build-info.ts";
 import { FORMATS } from "./format.ts";
+import { agentHost, hostObj } from "./agentenv.ts";
 
 // def = default ("" none), values = the allowed values ([] = free)
 export interface OptRec { flag: string; arg: string; summary: string; def: string; values: string[] }
@@ -11,12 +12,21 @@ export interface OptRec { flag: string; arg: string; summary: string; def: strin
 export interface CmdRec { cmd: string; usage: string; summary: string; options: OptRec[]; fields: string[]; group: string }
 
 export const REG: CmdRec[] = [];
+// options a command module declares for a record registered elsewhere (cli.ts's usage rows), whichever comes first
+const OPTS = new Map<string, OptRec[]>();
 // a record with the same cmd and group replaces the older one (a feature refines a built-in row); else it goes before the
 // record named before ("" or unknown = at the end)
 export function addCmd(c: CmdRec, before = ""): void {
+  const os = c.group === "cmd" && !c.options.length ? OPTS.get(c.cmd) : undefined; if (os) c.options = os;
   for (let i = 0; i < REG.length; i++) if (REG[i].cmd === c.cmd && REG[i].group === c.group) { REG[i] = c; return; }
   for (let i = 0; i < REG.length; i++) if (before && REG[i].cmd === before && REG[i].group === c.group) { REG.splice(i, 0, c); return; }
   REG.push(c);
+}
+// a command's options, declared where it parses them: the JSON help lists them, its text help prints optTable(os)
+export function setOptions(cmd: string, os: OptRec[]): OptRec[] {
+  OPTS.set(cmd, os);
+  for (const c of REG) if (c.group === "cmd" && c.cmd === cmd) c.options = os;
+  return os;
 }
 export function cmdOf(cmd: string): CmdRec | null { for (const c of REG) if (c.group === "cmd" && c.cmd === cmd) return c; return null; }
 export function opt(flag: string, arg: string, summary: string, def: string, values: string[]): OptRec { return { flag, arg, summary, def, values }; }
@@ -24,7 +34,7 @@ export function opt(flag: string, arg: string, summary: string, def: string, val
 // the one exit-code table of every command (text help, JSON help exitCodes, README "Exit codes"); EXIT_EXTRA = the
 // command-specific meanings on top of it
 export const EXIT_CODES: Obj = { "0": "ok (an empty result is ok)", "1": "runtime failure", "2": "usage error", "3": "not found", "4": "ambiguous reference" };
-const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed";
+const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed, 3 = another export to the endpoint runs";
 export const EXAMPLES: string[] = [
   "agentglass session current --fields costUsd,tools,errors",
   "agentglass errors --since 24h --limit 5",
@@ -51,25 +61,40 @@ export function textHelp(head: string, tail: string): string {
   return head + "\n\nusage:\n" + table(cr, col) + "\n\noptions for --json / --watch:\n" + table(or, col) +
     "\n\nexit codes: " + ex + "\n  (command-specific: " + EXIT_EXTRA + ")\n\n" + tail;
 }
+// options as text rows: "--flag arg  summary (default …)"; a "\n" in summary continues under the description column
+export function optTable(os: OptRec[]): string {
+  const rs: string[][] = [];
+  for (const o of os) {
+    const ls = (o.summary + (o.def ? " (default " + o.def + ")" : "")).split("\n");
+    for (let i = 0; i < ls.length; i++) rs.push([i === 0 ? o.flag + (o.arg ? " " + o.arg : "") : "", ls[i] ?? ""]);
+  }
+  let col = 0; for (const r of rs) col = Math.max(col, (r[0] ?? "").length + 2);
+  return table(rs, col);
+}
 // one command's text help (agentglass <cmd> --help outside agent mode)
 export function cmdText(c: CmdRec): string {
-  const os: string[][] = c.options.map((o: OptRec) => [o.flag + (o.arg ? " " + o.arg : ""), o.summary + (o.def ? " (default " + o.def + ")" : "")]);
-  let col = 0; for (const r of os) col = Math.max(col, (r[0] ?? "").length + 2);
-  return "usage: " + c.usage + "\n\n  " + c.summary.split("\n").join("\n  ") + (os.length ? "\n\noptions:\n" + table(os, col) : "") +
+  return "usage: " + c.usage + "\n\n  " + c.summary.split("\n").join("\n  ") + (c.options.length ? "\n\noptions:\n" + optTable(c.options) : "") +
     (c.fields.length ? "\n\nfields: " + c.fields.join(" ") : "");
 }
 
-function optJson(o: OptRec): Obj { return { flag: o.flag, arg: o.arg, summary: o.summary, default: o.def, values: o.values }; }
+function optJson(o: OptRec): Obj { return { flag: o.flag, arg: o.arg, summary: o.summary.split("\n").join(" "), default: o.def, values: o.values }; }
 function cmdJson(c: CmdRec): Obj { return { cmd: c.cmd, usage: c.usage, summary: c.summary.split("\n").join(" "), options: c.options.map(optJson), fields: c.fields }; }
-// full machine help; cmd non-empty = only that command ("" when it is unknown)
+// full machine help; cmd non-empty = only that command, or its subcommands (rules → rules check, rules defaults); "" when
+// it is unknown
 export function jsonHelp(cmd: string, agent: Obj): string {
   const cs: Obj[] = [];
-  for (const c of REG) if (c.group === "cmd" && (!cmd || c.cmd === cmd)) cs.push(cmdJson(c));
+  for (const c of REG) if (c.group === "cmd" && (!cmd || c.cmd === cmd || c.cmd.startsWith(cmd + " "))) cs.push(cmdJson(c));
   if (cmd && !cs.length) return "";
   const ex: string[] = [];
   for (const e of EXAMPLES) if (!cmd || e.startsWith("agentglass " + cmd + " ")) ex.push(e);
   return JSON.stringify({ name: "agentglass", version: BUILD.version, agentMode: agent, commands: cs, formats: FORMATS, exitCodes: EXIT_CODES, examples: ex });
 }
+// <cmd> --help: the JSON help inside an agent or with --format json (as cli.ts's help), else the command's text
+export function helpOf(cmd: string, args: string[], text: string): string {
+  const fi = args.indexOf("--format");
+  return agentHost().on || (fi >= 0 && args[fi + 1] === "json") ? jsonHelp(cmd, hostObj(true)) : text;
+}
+export function wantsHelp(args: string[]): boolean { return args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0; }
 // TUI-only, maintenance and version commands: --help lists them
 const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults"];
 // the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word

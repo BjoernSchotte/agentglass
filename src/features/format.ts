@@ -24,37 +24,54 @@ export function flatten(o: Obj): Obj {
   walk("", o);
   return out;
 }
-function keysOf(rows: Obj[], flat: boolean): string[] {
+// every flattened name → its real value: nested objects under their own name too (git_who), lists as lists (git_commits)
+function named(o: Obj): Obj {
+  const out: Obj = {};
+  const walk = (pre: string, v: Obj): void => {
+    for (const k of Object.keys(v)) {
+      const x = v[k]; const n = pre ? pre + "_" + k : k;
+      if (x === undefined) continue;
+      out[n] = x;
+      const ox = x !== null && !Array.isArray(x) ? obj(x) : null;
+      if (ox) walk(n, ox);
+    }
+  };
+  walk("", o);
+  return out;
+}
+// the keys of rows in first-seen order: "top" as is, "flat" the flattened leaves, "named" every flattened name
+function keysOf(rows: Obj[], how: string): string[] {
   const seen = new Set<string>(); const out: string[] = [];
-  for (const r of rows) for (const k of Object.keys(flat ? flatten(r) : r)) if (!seen.has(k)) { seen.add(k); out.push(k); }
+  for (const r of rows) for (const k of Object.keys(how === "flat" ? flatten(r) : how === "named" ? named(r) : r)) if (!seen.has(k)) { seen.add(k); out.push(k); }
   return out;
 }
 // fields empty → defaults (empty defaults → every flattened key, first-seen order); valid = top-level + flattened names (+ known,
 // the command's declared fields, so an empty result still rejects a typo)
 export function pickCols(rows: Obj[], fields: string[], defaults: string[], known: string[]): { cols: string[]; bad: string[]; valid: string[] } {
-  const valid = keysOf(rows, false);
-  for (const k of keysOf(rows, true).concat(known)) if (valid.indexOf(k) < 0) valid.push(k);
-  if (!fields.length) return { cols: defaults.length ? defaults : keysOf(rows, true), bad: [], valid };
+  const valid = keysOf(rows, "top");
+  for (const k of keysOf(rows, "named").concat(known)) if (valid.indexOf(k) < 0) valid.push(k);
+  if (!fields.length) return { cols: defaults.length ? defaults : keysOf(rows, "flat"), bad: [], valid };
   const bad: string[] = [];
   for (const f of fields) if (valid.indexOf(f) < 0) bad.push(f);
   return { cols: fields, bad, valid };
 }
-// a row cut to cols: a top-level name keeps its value (nested objects too), a flattened name takes the flat value
+// a row cut to cols: every name keeps its real value, a flattened one too (git_commits stays a list: --json is typed;
+// csv/table flatten the cut row afterwards)
 function project(r: Obj, cols: string[]): Obj {
   if (!cols.length) return r;
-  const out: Obj = {}; let flat: Obj | null = null;
+  const out: Obj = {}; let all: Obj | null = null;
   for (const c of cols) {
     const v = r[c];
     if (v !== undefined) { out[c] = v; continue; }
-    if (!flat) flat = flatten(r);
-    const fv = flat[c];
+    if (!all) all = named(r);
+    const fv = all[c];
     out[c] = fv === undefined ? null : fv;
   }
   return out;
 }
 // csv/table columns: a top-level object name stands for its flattened children
 function expand(rows: Obj[], cols: string[]): string[] {
-  const all = keysOf(rows, true);
+  const all = keysOf(rows, "flat");
   if (!cols.length) return all;
   const out: string[] = [];
   for (const c of cols) {

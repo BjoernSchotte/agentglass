@@ -38,6 +38,10 @@ echo "$txt" | grep -q "spend" || { echo "FAIL text has no spend tag"; echo "$txt
 echo "$txt" | grep -q "unpriced (month): gpt-x-unknown 5.0K" || { echo "FAIL text has no unpriced line"; echo "$txt"; fail=1; }
 run cost --help | grep -q -- "--check" || { echo "FAIL cost --help"; fail=1; }
 run --help | grep -q "agentglass cost" || { echo "FAIL --help lists cost"; fail=1; }
+# rows (--by) through a failed write (a full disk): --check still exits 3 when over budget, in every format
+if [ -w /dev/full ]; then for fm in json csv table; do
+  set +e; run cost --check --by model --format $fm > /dev/full 2>/dev/null; rc=$?; set -e; eq "--by write error ($fm): exit" "$rc" 3
+done; fi
 # cli-agent-mode: inside an agent the summary is the same JSON; rows with --by/--since; csv needs rows; --check in both forms
 eq "agent summary = --json" "$(AGENTGLASS_AGENT=1 run cost)" "$(run cost --json)"
 set +e; run cost --format csv > /dev/null 2>&1; rc=$?; run cost --check --by day > "$t/rows" 2>/dev/null; rc2=$?; set -e

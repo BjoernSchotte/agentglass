@@ -57,7 +57,7 @@ session-compare reuse.
 expr    = term { [ "and" | "," ] term }            -- adjacent terms are ANDed
 term    = [ "not" | "-" ] ( clause | text )
 clause  = key op value                              -- every op except *_one_of
-        | key ("is_one_of" | "is_not_one_of") value { value }
+        | key ("is_one_of" | "is_not_one_of") value { [ "," ] value }
 op      = is | = | is_not | != | is_one_of | is_not_one_of | ~ | !~ | > | >= | < | <=
 value   = word | "quoted string"                    -- \" and \\ escapes inside quotes
 text    = word | "quoted string"                    -- a term that does not start a clause
@@ -65,8 +65,11 @@ text    = word | "quoted string"                    -- a term that does not star
 1. A clause starts where a known key (or alias) is followed by an operator. Anything else is a **text** term, so
    today's `/foo` keeps working: `foo` = `text ~ foo`. Several bare words are ANDed (`foo bar` = both appear; today:
    the phrase). `"foo bar"` is the phrase.
-2. `is_one_of` takes values until `and`, `,`, the end, or a token that starts a new clause (key + operator). A value
-   that equals a key must be quoted.
+2. `is_one_of` takes values separated by blanks or commas (`harness is_one_of pi opencode` = `harness is_one_of
+   pi,opencode` = `pi, opencode`) until `and`, the end, or a token that starts a new clause (key + operator), `not` or
+   `-<clause>`; a `,` before one of those (or before `and`, another `,` or the end) is the connector, so
+   `tool is_one_of Bash, cost > 2` still ANDs. A value that equals a key must be quoted. (Ruling, release QA: a comma
+   used to end the list, so `pi,opencode` silently meant `pi and text ~ opencode`.)
 3. Keywords (`and`, `not`, operators) are case-insensitive. `or` is rejected with a hint (5). OR exists only inside
    `is_one_of`; no parentheses (YAGNI, no query engine).
 4. Negation: `not <clause>`, `-<clause>`, `is_not`, `!=`, `!~`, `is_not_one_of`. `-foo` = `text !~ foo`.

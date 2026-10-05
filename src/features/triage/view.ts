@@ -22,7 +22,7 @@ import { statsDrillTool, statsPeriod } from "../usage/stats.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, printClause, sameClause } from "../query/parse.ts";
 import { compile, eachCall } from "../query/eval.ts";
-import { addClause, addAll, effective, includeClause, localFor, setLocal, setPins, shownClause, pinToast } from "../query/scope.ts";
+import { addClause, addAll, effective, includeClause, localFor, setLocal, setPins, shownClause, holds, alreadyPinned, pinToast } from "../query/scope.ts";
 import { cycleNext, exprErr, newCyc } from "../query/ui.ts";
 import { type TRow, rank, fmtLift, fmtPct, chiStr } from "./score.ts";
 import { type Run, type Result, type TJob, PRESETS, presetOf, newRun, labelOf, triageJob, triageStep, triageProgress, triageCfg, periodOf, periodLabel, guardText, shown, slowKeep, without } from "./run.ts";
@@ -250,6 +250,7 @@ export function includeSel(neg: boolean): string {
 function pinSel(st: TState): void {
   const r = rowAt(st.sel); if (!r) return;
   const c = clauseOf(st, r, false); if (!c) { say("warn", "the session start " + r.attr + " has no filter key"); return; }
+  if (holds(S.pins, [c])) { say("info", alreadyPinned([c])); return; }
   const e = setPins(print(addClause(S.pins, c).cs)); if (e) { say("err", e.msg); return; }
   st.run.scope = addClause(st.run.scope, c).cs; changed(st); V.want = rowKey(r);
   pinToast("pinned: " + shownClause(c) + " — P edits pins");

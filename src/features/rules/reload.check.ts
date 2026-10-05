@@ -12,8 +12,8 @@ import { loadRules } from "./config.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
-const F = { text: "", mtime: -1 };
-const rl = (now: number): boolean => reload(now, (p: string) => F.text, (p: string) => F.mtime, (p: string) => true);
+const F = { text: "", mtime: -1, err: "" };
+const rl = (now: number): boolean => reload(now, (p: string) => ({ text: F.text, err: F.err }), (p: string) => F.mtime, (p: string) => true);
 function ids(): string { return R.set.rules.filter((r) => r.enabled).map((r) => r.id).join(","); }
 // a chmod alone (the fix the unsafe-command warning asks for) counts as a change: the permission check runs again
 const cf = "/tmp/agentglass-reload-check-" + String(Date.now()) + ".json"; writeFileSync(cf, "{}"); chmodSync(cf, 0o664);
@@ -54,7 +54,16 @@ S.toast = ""; F.text = '{"rules":[{"id":"approval","critical":"2x"}]}'; F.mtime 
 eq("one error toast", S.toast.startsWith("rules.json:1:39: approval: threshold \"2x\" is invalid") ? "named" : S.toast, "named");
 S.toast = ""; F.text = '{"rules":[{"id":"approval","critical":"2x"},{"id":"x","metric":"nope"}]}'; F.mtime = 11; rl(t + 22500);
 eq("two errors toast", S.toast.startsWith("rules.json: 2 errors") ? "counted" : S.toast, "counted");
-F.mtime = -1; rl(t + 25000);
+// unreadable (no permission, a directory): said as such, never "syntax error"; the previous rules stay, one warning per mtime
+S.toast = ""; F.text = ""; F.err = "EACCES: permission denied"; F.mtime = 12;
+eq("unreadable → kept", String(rl(t + 25000)), "false");
+eq("unreadable toast", S.toast, "rules.json: cannot read the file (EACCES: permission denied) — keeping the previous rules");
+S.toast = ""; eq("unreadable: one warning per mtime", String(rl(t + 27500)) + " [" + S.toast + "]", "false []");
+// on the first load: the built-ins, with the same cause
+R.mtime = -2; S.toast = ""; F.err = "not a regular file"; F.mtime = 13;
+eq("unreadable first load → built-ins", String(rl(t + 30000)) + " " + ids(), "true waiting,approval,loop,long-cmd,stalled,spinning");
+eq("unreadable first toast", S.toast, "rules.json: cannot read the file (not a regular file) — using built-in rules");
+F.err = ""; F.mtime = -1; rl(t + 32500);
 
 // bell/desktop throttle (30 s per session, shared), ack, AGENTGLASS_NOTIFY=0 (the check env)
 let bells = 0; let desks = 0;

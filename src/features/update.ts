@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Only this command talks to GitHub, and only when run. Downloads use curl (scriptc's fetch has no binary bodies).
 import { existsSync, mkdirSync, copyFileSync, renameSync, chmodSync, readSync, writeSync, openSync, closeSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { str, parse } from "../util/json.ts";
 import { HOME, readText } from "../util/fs.ts";
@@ -12,11 +12,23 @@ import { H } from "../hooks.ts";
 import { BUILD } from "../build-info.ts";
 import { installMethod, samePath, versionOfTag, versionInfo } from "./version.ts";
 import { errLine, interactive } from "./agentenv.ts";
-import { type Rel, relsFromJson, pickTarget, isDowngrade, sumFor } from "./update-core.ts";
+import { opt, setOptions } from "./clihelp.ts";
+import { type Rel, relsFromJson, pickTarget, isDowngrade, sumFor, caMissing, fetchErr, curlErr } from "./update-core.ts";
 
 const REPO = "BjoernSchotte/agentglass";
 const INSTALL_JSON = join(HOME, ".agentglass", "install.json");
 
+// update's options (`update status` is in the record's summary): the JSON help lists them, `update --help` prints them
+// (cli.ts, from the record)
+setOptions("update", [
+  opt("--channel", "stable|dev", "the release channel (remembered after a successful update)", "the saved one, else stable", ["stable", "dev"]),
+  opt("--tag", "T", "one specific release (2026.10.1, v2026.10.1 or a dev-… tag); the saved channel stays", "", []),
+  opt("--dry-run", "", "show what would happen, change nothing", "", []),
+  opt("--json", "", "one JSON object on stdout", "", []),
+  opt("--yes", "", "allow a downgrade without asking (-y)", "", []),
+  opt("--force", "", "replace a binary built from source with a release", "", []),
+  opt("--rollback", "", "back to the binary before the last update", "", []),
+]);
 interface Opts { status: boolean; channel: string; tag: string; dry: boolean; json: boolean; yes: boolean; force: boolean; rollback: boolean }
 function opts(args: string[]): Opts | string {
   const o: Opts = { status: false, channel: "", tag: "", dry: false, json: false, yes: false, force: false, rollback: false };
@@ -47,10 +59,13 @@ async function releases(): Promise<Rel[] | string> {
     const body = await r.text();
     if (r.status !== 200) return "GitHub answered " + r.status + (r.headers.get("x-ratelimit-remaining") === "0" ? " (rate limit — try again later)" : "");
     return relsFromJson(body);
-  } catch (e) { return "cannot reach GitHub: " + String(e); }
+  } catch (e) { return fetchErr(String(e), noCa()); }
 }
-function download(url: string, to: string): boolean {
-  try { execFileSync("curl", ["-fsSL", "--retry", "2", "-o", to, url], { stdio: ["ignore", "ignore", "ignore"], timeout: 300000 }); return true; } catch (e) { return false; }
+function noCa(): boolean { return caMissing((p: string): boolean => existsSync(p), process.env.NODE_EXTRA_CA_CERTS ?? "", BUILD.platform); }
+// curl's exit code (0 ok, -1 it did not run or timed out): curlErr turns it into the message
+function download(url: string, to: string): number {
+  const r = spawnSync("curl", ["-fsSL", "--retry", "2", "-o", to, url], { stdio: ["ignore", "ignore", "ignore"], timeout: 300000 });
+  return typeof r.status === "number" ? r.status : -1;
 }
 function ask(q: string): boolean {
   writeSync(1, q);
@@ -86,7 +101,7 @@ async function update(args: string[]): Promise<number> {
     const rs = await releases();
     const latest = typeof rs === "string" ? null : pickTarget(rs, channel, "", BUILD.platform);
     say(o, "agentglass " + BUILD.version + " (" + BUILD.channel + ", " + method + ") · channel " + channel + " · latest " + (latest ? latest.tag : typeof rs === "string" ? "unknown (" + rs + ")" : "none"),
-      { installed: versionInfo(), channel, latest: latest ? latest.tag : null });
+      { installed: versionInfo(), channel, latest: latest ? latest.tag : null, error: typeof rs === "string" ? rs : null });
     return 0;
   }
   if (method === "homebrew") {
@@ -108,7 +123,8 @@ async function update(args: string[]): Promise<number> {
     // target version: stable from the tag; dev from its build metadata
     let tv = versionOfTag(target.tag);
     if (!tv) {
-      if (!download(base + "build-metadata.json", join(work, "meta.json"))) return fail("cannot download build-metadata.json for " + target.tag, 1);
+      const dc = download(base + "build-metadata.json", join(work, "meta.json"));
+      if (dc !== 0) return fail(curlErr("cannot download build-metadata.json for " + target.tag, dc, noCa()), 1);
       const m = parse(readText(join(work, "meta.json"), 0, 65536).trim()); tv = m ? str(m["version"]) : "";
       if (!tv) return fail("build-metadata.json of " + target.tag + " names no version", 1);
     }
@@ -123,7 +139,8 @@ async function update(args: string[]): Promise<number> {
     }
     const asset = "agentglass-" + BUILD.platform + ".tar.gz";
     const arc = join(work, asset); const sums = join(work, "SHA256SUMS");
-    if (!download(base + asset, arc) || !download(base + "SHA256SUMS", sums)) return fail("cannot download " + target.tag + " for " + BUILD.platform, 1);
+    let dc = download(base + asset, arc); if (dc === 0) dc = download(base + "SHA256SUMS", sums);
+    if (dc !== 0) return fail(curlErr("cannot download " + target.tag + " for " + BUILD.platform, dc, noCa()), 1);
     const want = sumFor(readText(sums, 0, 65536), asset);
     if (!want || OS.sha256File(arc) !== want) return fail("checksum mismatch for " + asset + " — nothing changed", 1);
     const x = join(work, "x"); mkdirSync(x, { recursive: true });

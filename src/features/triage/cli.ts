@@ -16,6 +16,7 @@ import type { Clause } from "../query/types.ts";
 import { parse, print, quoteVal } from "../query/parse.ts";
 import { projectClause } from "../query/project.ts";
 import { agentHost, agentScope, cliError } from "../agentenv.ts";
+import { type OptRec, opt, optTable, setOptions, helpOf, wantsHelp } from "../clihelp.ts";
 import { addAll } from "../query/scope.ts";
 import { sessMatches } from "../query/eval.ts";
 import { cliFilter } from "../query/cli.ts";
@@ -24,25 +25,27 @@ import { type TRow, rank, fmtLift, fmtPct, chiStr } from "./score.ts";
 import { type Run, type Result, type Base, PRESETS, newRun, runTriage, triageCfg, periodLabel, guardText, shown } from "./run.ts";
 
 const NAMES = ["errors", "slow", "long", "expensive", "failing", "period"]; // --preset words, PRESETS 1..6
-const HELP = `usage: agentglass triage [--select '<expr>' | --preset ${NAMES.join("|")}] [--filter '<scope>']…
+export const TRIAGE_OPTS: OptRec[] = setOptions("triage", [
+  opt("--select", "'<expr>'", "the selection, in the filter grammar (e.g. 'tool is Bash and status is error')", "", []),
+  opt("--preset", "p", "errors: status is error · slow: duration ≥ the tool's p90 · long: duration > triage.longCall\nexpensive: cost > triage.expensiveUsd (sessions) · failing: error_rate > 20% and tools >= 10\nperiod: this period vs the previous one (default without --select)", "", NAMES),
+  opt("--filter", "'<scope>'", "the scope both groups come from (repeatable; pins are not applied)", "", []),
+  opt("--baseline", "b", "rest = scope minus the selection · previous = the selection in the period before", "rest", ["rest", "previous"]),
+  opt("--entity", "e", "call (rows = tool calls, kept triage.callDays) or session (default: from the preset, else call)", "", ["call", "session"]),
+  opt("--days", "N", "period length in days", "7", []),
+  opt("--weight", "w", "count · cost, tokens (sessions) · duration (calls); weighted runs have no χ²", "count", ["count", "cost", "tokens", "duration"]),
+  opt("--limit", "N", "at most N rows", "20", []),
+  opt("--json", "", "{entity, period, selection, baseline, rows[], guard}; guard null | empty-baseline |\nempty-selection | small-sample | retention", "", []),
+  opt("--all-projects", "", "inside an agent: every project (default: the current repo only)", "", []),
+  opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", []),
+]);
+export const TRIAGE_HELP = `usage: agentglass triage [--select '<expr>' | --preset ${NAMES.join("|")}] [--filter '<scope>']…
                          [--baseline rest|previous] [--entity call|session] [--days N]
                          [--weight count|cost|tokens|duration] [--limit N] [--json]
 
   ranks the attribute values over-represented in a selection compared with a baseline:
   "program npm — 34% of errored calls vs 6% of the rest". ● marks χ² ≥ 6.63 (p < 0.01, Yates).
 
-  --select '<expr>'   the selection, in the filter grammar (e.g. 'tool is Bash and status is error')
-  --preset p          errors: status is error · slow: duration ≥ the tool's p90 · long: duration > triage.longCall
-                      expensive: cost > triage.expensiveUsd (sessions) · failing: error_rate > 20% and tools >= 10
-                      period: this period vs the previous one (default without --select)
-  --filter '<scope>'  the scope both groups come from (repeatable; pins are not applied)
-  --baseline b        rest = scope minus the selection (default) · previous = the selection in the period before
-  --entity e          call (rows = tool calls, kept triage.callDays) or session (default: from the preset, else call)
-  --days N            period length in days (default 7)
-  --weight w          count (default) · cost, tokens (sessions) · duration (calls); weighted runs have no χ²
-  --limit N           at most N rows (default 20)
-  --json              {entity, period, selection, baseline, rows[], guard}; guard null | empty-baseline |
-                      empty-selection | small-sample | retention
+` + optTable(TRIAGE_OPTS) + `
   inside a coding agent: --json is the default and the scope is the current repo (--all-projects: every one)
 
   config (~/.agentglass/config.json): { "triage": { "longCall": "30s", "expensiveUsd": 5, "minSupport": 3 } }`;
@@ -55,6 +58,7 @@ function oneOf(v: string, name: string, ok: string[]): string { if (ok.indexOf(v
 export interface CliOpts { run: Run; limit: number; json: boolean }
 // argv after "triage" → the run (exits 2 on a bad option or expression)
 export function parseArgs(args: string[]): CliOpts {
+  if (wantsHelp(args)) { out(helpOf("triage", args, TRIAGE_HELP)); process.exit(0); } // before the options: any order works
   let select = ""; let hasSelect = false; let preset = ""; const filters: string[] = []; let baseline = ""; let entity = ""; let days = 7; let weight = ""; let limit = 20; let json = false;
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? ""; const v = args[i + 1] ?? "";
@@ -68,7 +72,6 @@ export function parseArgs(args: string[]): CliOpts {
     else if (a === "--days") days = intArg(val(), "--days");
     else if (a === "--weight") weight = oneOf(val(), "--weight", ["count", "cost", "tokens", "duration"]);
     else if (a === "--limit") limit = intArg(val(), "--limit");
-    else if (a === "--help" || a === "-h") { out(HELP); process.exit(0); }
     else if (a === "--all-projects" || a === "--project-only") continue; // the agent-mode scope (agentScope reads them)
     else fail("unknown option " + a + " (see agentglass triage --help)");
   }
