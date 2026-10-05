@@ -7,7 +7,7 @@ import { sessions } from "../../model/sessions.ts";
 import { type Acc, dayKey } from "./record.ts";
 import { ledger, accOf, complete } from "./ledger.ts";
 import { accOut, accIn } from "./codec.ts";
-import { forget } from "./owners.ts";
+import { forget, OWN } from "./owners.ts";
 import { parse } from "../../util/json.ts";
 import { newSessB, finish } from "../otlp/build.ts";
 import "../../harness/index.ts";
@@ -83,6 +83,31 @@ for (const first of [1, 2]) {
   all(first === 1 ? [x, y] : [y, x]);
   eq("two project dirs (" + String(first) + " first): booked once", String(cr(x) + cr(y)) + " turns " + String(turns(ledger.get(P1) ?? accOf(x)) + turns(ledger.get(P2) ?? accOf(y))), "30 turns 1");
   eq("two project dirs: stable owner", String(cr(x)), "30"); // same timestamps: the first path
+}
+
+// ── twins with a home: the project dir that encodes the session's cwd is the original's, a twin under another dir is a
+// copy (crabbox: /w/crab-box's session also under -w-crab-box-codex, which sorts first by path); a subagent likewise ──
+function at(line: string, cwd: string): string { return "{\"cwd\":" + JSON.stringify(cwd) + "," + line.slice(1); }
+mkdirSync(dir + "/-w-crab-box/T/subagents", { recursive: true }); mkdirSync(dir + "/-w-crab-box-codex/T/subagents", { recursive: true });
+const HOME = dir + "/-w-crab-box/T.jsonl"; const AWAY = dir + "/-w-crab-box-codex/T.jsonl";
+const HSUB = dir + "/-w-crab-box/T/subagents/agent-t1.jsonl"; const ASUB = dir + "/-w-crab-box-codex/T/subagents/agent-t1.jsonl";
+const QUEUED = "{\"type\":\"queue-operation\",\"content\":\"" + "q".repeat(100000) + "\"}"; // a queued prompt before the first cwd: past 64 KB
+const TW = [QUEUED, at(prompt("t1", D1), "/w/crab-box"), asst("h1", D1, 10, 1, ""), at(asst("h2", D1b, 20, 1, ""), "/w/crab-box")];
+const TWS = [at(asst("hs1", D1, 5, 1, ""), "/w/crab-box")];
+put(HOME, TW); put(HSUB, TWS); put(AWAY, TW.concat([at(prompt("t2", D2), "/w/crab-box-codex"), asst("h3", D2, 40, 1, "")])); put(ASUB, TWS);
+for (const first of ["away", "home"]) {
+  reset();
+  const h = sess(HOME, ""); const a = sess(AWAY, ""); const hs = sess(HSUB, "T"); const as = sess(ASUB, "T");
+  all(first === "away" ? [a, as, h, hs] : [h, hs, a, as]);
+  eq("twins (" + first + " first): the home dir owns the shared history", show(h) + " | " + show(a), "cr 30 out 2 tools 0 turns 1 | cr 40 out 1 tools 0 turns 1");
+  eq("twins (" + first + " first): a subagent too", String(cr(hs)) + "/" + String(cr(as)), "5/0");
+}
+
+// a head without a cwd yet (a new log, queued prompts first) decides nothing for good: the cwd that follows does
+{
+  const NEW = dir + "/-w-crab-box-codex/N.jsonl"; put(NEW, [QUEUED.slice(0, 200) + "\"}"]);
+  const h0 = OWN.home(NEW); appendFileSync(NEW, at(prompt("n1", D1), "/w/crab-box") + "\n");
+  eq("no cwd yet: at home, then the cwd decides", String(h0) + "/" + String(OWN.home(NEW)), "true/false");
 }
 
 // ── a forked subagent starts with a copy of its parent's last message (later or equal timestamp) ──
