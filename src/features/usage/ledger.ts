@@ -32,11 +32,16 @@ const LIVE_MB = 1048576; // a live session this far behind is indexing (a first 
 // for its rows (callsOf) or right before the session grows, so its rows stay whole when it is saved; false = none or stale,
 // the session is indexed from the start
 export const unread = new Set<string>();
+// sessions whose numbers or rows moved, in order (tick apply, complete, a lazy read, an entry started over or dropped):
+// readers that keep a per-session result (the list's call filter) re-check these instead of every session; a new gen =
+// the log was reset, re-check all
+export const MOVED = { gen: 0, log: [] as string[] };
+export function moved(path: string): void { if (MOVED.log.length >= 20000) { MOVED.log = []; MOVED.gen++; } MOVED.log.push(path); }
 export const LAZY = { rows: (path: string, a: Acc): boolean => false };
 // a reader of call rows (errors, triage: only the sessions of their window): this session's rows, now
 export function rowsOf(s: Sess): void {
   const a = ledger.get(s.path); if (!a || !unread.has(s.path)) return;
-  unread.delete(s.path); if (!LAZY.rows(s.path, a)) ledger.delete(s.path); // stale: accOf starts it over
+  unread.delete(s.path); if (!LAZY.rows(s.path, a)) { ledger.delete(s.path); moved(s.path); } // stale: accOf starts it over
 }
 // one-shot runs index a session whose rows turned out stale right away (the answer must be whole); the TUI leaves that to
 // its ticks (term.ts TERM.tui) rather than block a frame on reading a whole log
@@ -52,7 +57,7 @@ export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);
   if (a && unread.has(s.path) && a.off < s.size) { unread.delete(s.path); if (!LAZY.rows(s.path, a)) a = undefined; }
   if (!a || s.size < a.off || a.ep !== s.ep) { // new, truncated/rewritten or other cursor epoch
-    const old = a; unread.delete(s.path); a = newAcc(); a.ep = s.ep; ledger.set(s.path, a);
+    const old = a; unread.delete(s.path); a = newAcc(); a.ep = s.ep; ledger.set(s.path, a); moved(s.path);
     if (old && (old.mv || old.mo.size)) release(s.path, old);
   }
   a.sub = s.parent !== ""; // known before the first line is booked: scan/meta set it when the session is first seen
@@ -65,7 +70,7 @@ function restart(path: string): void {
   const o = ledger.get(path); if (!o) return;
   if (redo.has(path) && o.off === 0) return; // restarted already and not read since (a takeover of many messages at once)
   const a = newAcc(); a.ep = o.ep; a.hd = o.hd; a.tl = o.tl; a.sub = o.sub; a.p = path; // the head/tail memos stay valid
-  unread.delete(path); ledger.set(path, a); redo.add(path); L.idx++;
+  unread.delete(path); ledger.set(path, a); redo.add(path); moved(path); L.idx++;
 }
 OWN.accs = (): Map<string, Acc> => ledger;
 OWN.alive = (path: string): boolean => sessions.has(path);
@@ -137,10 +142,6 @@ export const TICK_STATS = { applied: 0, sidecars: 0, visits: 0, full: 0 }; // co
 export const LGEN = { reapply: 0 }; // bumped by reapplyAll: totals derived from every session's numbers re-sum (summary.ts)
 export function reapplyAll(): void { for (const k of TK.values()) k.a = null; fullAt = 0; LGEN.reapply++; }
 function tkOf(s: Sess): Tk { let k = TK.get(s.path); if (!k) { k = { a: null, off: -1, s: null, side: 0, c: 0, z: 0, h: false }; TK.set(s.path, k); } return k; }
-// sessions whose numbers or rows moved, in order (tick apply, complete, a lazy read): readers that keep a per-session
-// result (the list's call filter) re-check these instead of every session; a new gen = the log was reset, re-check all
-export const MOVED = { gen: 0, log: [] as string[] };
-export function moved(path: string): void { if (MOVED.log.length >= 20000) { MOVED.log = []; MOVED.gen++; } MOVED.log.push(path); }
 function apply(s: Sess, a: Acc, k: Tk): void { applyAcc(s, a); k.a = a; k.off = a.off; k.s = s; TICK_STATS.applied++; moved(s.path); }
 function contrib(s: Sess, a: Acc): number { return Math.min(a.off, s.size) + (a.stall === s.size && a.off < s.size ? s.size - a.off : 0); }
 // history: bytes pending in a session without a live agent, or a live one far behind (not the appends of a live agent)
@@ -200,7 +201,7 @@ function histCredit(now: number): number {
   CPU.credit = Math.min(PACE.sliceMs, CPU.credit + CPU.allow * Math.max(0, Math.min(1000, now - CPU.last))); CPU.last = now;
   return CPU.credit;
 }
-export function histAllow(): number { return CPU.allow; } // checks
+export function paceResetForTest(): void { CPU.at = 0; CPU.floor = 0; } // checks: a fresh budget window
 function tick(): void {
   const t0 = Date.now();
   settle(); redo.clear(); // restarted logs are pending: this and the next ticks read them in rank order

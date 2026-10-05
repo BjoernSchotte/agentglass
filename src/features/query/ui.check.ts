@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../../state.ts";
 import type { Sess } from "../../model/types.ts";
-import { sessions, buildView } from "../../model/sessions.ts";
+import { sessions, buildView, SG } from "../../model/sessions.ts";
 import { onInput } from "../../input.ts";
 import { H, boxChips, emptyText } from "../../hooks.ts";
 import { parse, print } from "./parse.ts";
 import { initPins, localFor, setLocal } from "./scope.ts";
 import { complete, hiddenCount, matchingPaths, timeStep, fillOnForTest, fillStep, fillState } from "./ui.ts";
-import { ledger, unread, LAZY, moved } from "../usage/ledger.ts";
+import { ledger, unread, LAZY, moved, reapplyAll } from "../usage/ledger.ts";
+import { OWN } from "../usage/owners.ts";
 import { bucket, tool, L } from "../usage/record.ts";
 import { MQ_MSG } from "../usage/facts.ts";
 import { matchSession, MEMO_STATS } from "./eval.ts";
@@ -150,6 +151,33 @@ eq("age < 2s: a second later it no longer does", String(matchingPaths(fa).has(yn
   const e0 = MEMO_STATS.evals; const inc = [...matchingPaths(fb, "list")].sort().join(",");
   eq("incremental: one session re-checked", String(MEMO_STATS.evals - e0), "1");
   eq("incremental = full re-match, k1 in", inc + " " + String(inc.indexOf(k1) >= 0), fullSet() + " true");
+  // every way a verdict can change: the incremental set still equals a full re-match, for a call filter, a day filter and
+  // a filter with a session clause
+  const fd = compile(parse("cost > 0").cs, "list").f ?? EMPTY;
+  const fs = compile(parse("tool is Read and harness is claude").cs, "list").f ?? EMPTY;
+  const same = (what: string): void => {
+    // "defer" (beside the list: pins hide n) never hands the fill to another filter, so each ask after the first is
+    // incremental; the list's own filter (fb) the same
+    for (const f of [fb, fd, fs]) {
+      const o: string[] = []; for (const s of sessions.values()) if (matchSession(f, s, null)) o.push(s.path);
+      eq(what + " (" + f.key + ")", [...matchingPaths(f, "defer")].sort().join(","), o.sort().join(","));
+    }
+    const o: string[] = []; for (const s of sessions.values()) if (matchSession(fb, s, null)) o.push(s.path);
+    eq(what + " (list: " + fb.key + ")", [...matchingPaths(fb, "list")].sort().join(","), o.sort().join(","));
+  };
+  same("before the moves");
+  const grow = (id: string, name: string): void => {
+    for (const s of sessions.values()) if (s.id === id) { const a = ledger.get(s.path); if (!a) continue; s.size += 10; tool(a, bucket(a, Date.now(), ""), name, "", MQ_MSG); a.off += 10; moved(s.path); }
+    L.ver++;
+  };
+  grow("x1", "Bash"); same("a live session grows a Bash row");
+  grow("c1s", "Read"); same("a live session grows another row");
+  // another log took this one's messages (owners.ts): it starts over from offset 0, its rows are gone until it is re-read
+  OWN.restart(k1); L.ver++; same("a restart");
+  reapplyAll(); L.ver++; same("a re-price");
+  setCallDaysForTest(1); same("the retention cut moves: yesterday's Read rows leave"); setCallDaysForTest(90); same("and come back");
+  for (const s of sessions.values()) if (s.id === "x1") { sessions.delete(s.path); SG.gen++; }
+  L.ver++; same("a session deleted");
   setLocal("Sessions", []); fillOnForTest(false); LAZY.rows = was; rmSync(dir, { recursive: true, force: true });
 }
 console.log(bad ? bad + " failed" : "filter ui: all checks passed");

@@ -104,13 +104,14 @@ export function fillState(f: Compiled): { left: number; total: number } { return
 export function matchingPaths(f: Compiled, lazy = ""): Set<string> {
   MPS.asks++;
   const defer = lazy !== "" && filling() && (f.call.length > 0 || f.rowx.length > 0);
-  const key = String(L.ver) + "|" + liveSig(timeStep(f.cs));
+  const live = liveSig(timeStep(f.cs)) + "|" + String(callCutoff()); // the cut: midnight or a retention change
+  const key = String(L.ver) + "|" + live;
   // a list fill of another filter ran or stopped since: this one's deferred sessions must be queued again
   const own = !(defer && lazy === "list" && FILL.fkey !== f.key);
   const mk = f.key + (defer ? "\u0000" + lazy : ""); const hit = mp.get(mk); if (hit && hit.key === key && own) return hit.paths;
   // a ledger move re-checks only the sessions that moved (call/day clauses alone: no session clause can change without
   // the ledger, the time and live parts are in base); the result equals a full re-match (eval.check / ui.check)
-  const base = liveSig(timeStep(f.cs)) + "|" + String(SG.gen) + "|" + String(sessions.size) + "|" + String(MOVED.gen) + "|" + String(callCutoff()) + "|" + String(LGEN.reapply);
+  const base = live + "|" + String(SG.gen) + "|" + String(MOVED.gen) + "|" + String(LGEN.reapply);
   if (hit && own && hit.base === base && !f.sess.length && !f.content.length && hit.pos <= MOVED.log.length) {
     const memo = memoOf(f.key);
     for (let i = hit.pos; i < MOVED.log.length; i++) {
