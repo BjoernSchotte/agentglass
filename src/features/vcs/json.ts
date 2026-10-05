@@ -55,7 +55,7 @@ export function gitJson(s: Sess): Obj | null {
   const g: GitInfo | null = sessGit(s); if (!g) return null;
   const cs: Obj[] = [];
   for (const c of g.commits) {
-    const st = GJ.full || c.status === "amended" ? c.status : "unknown";
+    const st = GJ.full || c.status === "amended" || c.status === "elsewhere" ? c.status : "unknown"; // elsewhere: known without --git (object DB)
     cs.push({ sha: c.sha, branch: display("branch", c.br, s), subject: display("vcs", c.subj, s), at: c.at > 0 ? new Date(c.at).toISOString() : null,
       how: c.how, counted: c.counted, status: st, merge: c.merge, add: GJ.full && c.add >= 0 ? c.add : null, del: GJ.full && c.del >= 0 ? c.del : null });
   }

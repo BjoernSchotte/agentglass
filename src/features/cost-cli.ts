@@ -41,7 +41,8 @@ const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
   --filter '<expr>'               only matching sessions, days and calls (the filter language; repeatable)`;
 const WORDS = ["spend", "plan", "cloud", "gateway", "unknown"];
 
-function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
+let rc = 0; // the exit code a failed write (closed reader, full disk) still reports: --check's 3 survives `| head`
+function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(rc); } }
 function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 function byMode(m: ModeSum): Obj { const o: Obj = {}; for (let i = 0; i < MODES.length; i++) o[MODES[i] ?? ""] = round(m.by[i] ?? 0); return o; }
@@ -106,10 +107,11 @@ function cost(args: string[]): void {
   discover();
   if (!rowsForm) {
     const c = summary(o.harness);
+    rc = o.check && c.bs.state === "over" ? 3 : 0;
     // json inside an agent, with --json / --format json; the text table otherwise (also in pipes, as before)
     if (o.json || o.f.fmt === "json" || (!o.f.fmt && agentHost().on)) out(process.stdout.isTTY && !agentHost().on ? JSON.stringify(json(c), null, 2) : JSON.stringify(json(c)));
     else text(c);
-    process.exit(o.check && c.bs.state === "over" ? 3 : 0);
+    process.exit(rc);
   }
   const since = o.since ? dayKey(new Date(o.sinceMs)) : todayKey();
   const by = o.by || "day";

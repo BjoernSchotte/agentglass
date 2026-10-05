@@ -31,6 +31,8 @@ eq projected "$(echo "$c" | jq -r '.month.projected')" null
 set +e; run cost --check > /dev/null; rc=$?; run cost --nope > /dev/null 2>&1; rc2=$?; set -e
 eq exit "$rc" 3
 eq "bad flag exit" "$rc2" 2
+# a failed write (a full disk) keeps --check's over-budget exit
+if [ -w /dev/full ]; then set +e; run cost --check > /dev/full 2>/dev/null; rc=$?; set -e; eq "write error: exit" "$rc" 3; fi
 txt=$(run cost)
 echo "$txt" | grep -q "spend" || { echo "FAIL text has no spend tag"; echo "$txt"; fail=1; }
 echo "$txt" | grep -q "unpriced (month): gpt-x-unknown 5.0K" || { echo "FAIL text has no unpriced line"; echo "$txt"; fail=1; }
@@ -50,4 +52,9 @@ eq "unpriced model row" "$(run cost --by model --format csv | grep '^gpt-x-unkno
 printf '{"budget":{"monthlyUsd":"1"}}\n' > "$t/home/.agentglass/config.json"
 eq "bad budget" "$(run cost --json 2>"$t/err" | jq -r '.budget')" null
 grep -q "budget.monthlyUsd invalid" "$t/err" || { echo "FAIL no warning for an invalid budget"; fail=1; }
+# a config.json that is not JSON: one warning naming the file, never silently "no budget"
+printf '{"budget":{"monthlyUsd":1},}\n' > "$t/home/.agentglass/config.json"
+eq "broken config" "$(run cost --json 2>"$t/err" | jq -r '.budget')" null
+grep -q "config.json is not valid JSON" "$t/err" || { echo "FAIL no warning for a broken config.json"; cat "$t/err"; fail=1; }
+eq "broken config: one warning" "$(grep -c 'not valid JSON' "$t/err")" 1
 [ $fail = 0 ] && echo "cost cli: all checks passed"; exit $fail
