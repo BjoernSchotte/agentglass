@@ -23,10 +23,10 @@ export function renderHeader(): void {
   const spark = braille(cpuHist, W >= 150 ? 16 : 6, 1, Math.max(100, Math.max(...cpuHist.slice(-32))))[0];
   const sep = fg(C.dim) + " · " + RST; const lv = fg(C.green) + "● " + live + " live" + RST; const bz = fg(C.yellow) + busy + " busy" + RST;
   const cpuS = fg(C.sub) + "cpu " + RST + fg(heat(cpu / 400)) + cpu.toFixed(1) + "% " + spark + RST;
-  // the stats on the right, widest first; below 100 columns they step down so the widgets (alarms ◆ ⚠, cost) keep a
-  // place (wider: the established split, cpu and memory stay)
+  // the stats on the right, widest first; they step down so the widgets (alarms ◆ ⚠, cost) keep a place: the live
+  // count goes last, as "●N" before it goes
   const rights = [lv + sep + bz + sep + cpuS + sep + fg(C.text) + bytes(mem) + RST + fg(C.dim) + (W >= 190 ? "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions" : "") + " " + RST, // totals only when wide: widgets need the room
-    lv + sep + bz + " ", lv + " ", ""];
+    lv + sep + bz + " ", lv + " ", fg(C.green) + "●" + live + RST + " ", ""];
   // full tab names; when they leave no room for a widget with something to say (alarms, cost) or for anything at all
   // on the right (60 columns), the other tabs show only their number key
   let L = layout(W, tabs, false, rights);
@@ -50,14 +50,14 @@ function layout(W: number, tabs: string[], compact: boolean, rights: string[]): 
     s += (i === S.tab ? bg(C.sel) + fg(C.text) + CSI + "1m" + CSI + "4m" : fg(C.sub)) + (i + 1) + t + RST + " ";
     x0.push(x); x += width(t) + 2; x1.push(i === tabs.length - 1 ? x + 1 : x);
   }
-  const want = W < 100 && fixed(Math.max(0, W - x)) !== ""; // a widget has something to say
+  const want = fixed(Math.max(0, W - x)) !== ""; // a widget has something to say
   let ri = 0;
   for (; ri < rights.length; ri++) {
     const rw = width(rights[ri].replace(ESC_RE, ""));
     if (W - x > rw && (!want || fixed(W - x - rw) !== "")) break;
   }
   if (ri === rights.length) ri = rights.length - 1;
-  return { s, x, x0, x1, ri, lost: W < 100 && fixed(Math.max(0, W - x)) === "" && fixed(W) !== "" };
+  return { s, x, x0, x1, ri, lost: fixed(Math.max(0, W - x)) === "" && fixed(W) !== "" };
 }
 // the fixed-size header widgets that fit in free columns ("" = none)
 function fixed(free: number): string {

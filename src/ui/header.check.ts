@@ -41,5 +41,22 @@ ok("badge: alarms at 80 (tab names over the live count)", header(80).indexOf("�
 ok("badge: alarms and live at 60", header(60).indexOf("⚠ 3") >= 0 && header(60).indexOf("live") >= 0, header(60));
 ok("badge: alarms and live at 120", header(120).indexOf("⚠ 3") >= 0 && header(120).indexOf("live") >= 0, header(120));
 ok("badge before the tabs", header(80).indexOf("REDACTED") < header(80).indexOf("Sessions"), header(80));
+// the live count steps down to "●N" before it goes: with the badge and the alarms at 80 the full tab names and it both fit
+for (const alarms of [false, true]) {
+  H.headerWidgets.length = 0; if (alarms) H.headerWidgets.push((w: number) => "⚠ 3");
+  for (const badge of [false, true]) {
+    H.headerBadge.length = 0; if (badge) H.headerBadge.push(() => " REDACTED ");
+    const at = (badge ? "badge, " : "") + (alarms ? "alarms, " : "");
+    for (const W of [60, 80, 100, 120]) {
+      const h = header(W);
+      ok(at + "live count (long or ●N) at " + String(W), h.indexOf("● 0 live") >= 0 || h.indexOf("●0") >= 0, h);
+      ok(at + "fits at " + String(W), h.replace(/\s+$/, "").length <= W, h);
+      if (alarms) ok(at + "alarms at " + String(W), h.indexOf("⚠ 3") >= 0, h);
+      if (W >= 80) ok(at + "full tab names at " + String(W), h.indexOf("2 Processes") >= 0 && h.indexOf("4 Repos") >= 0, h);
+    }
+  }
+}
+ok("badge, alarms, 80: the compact count", header(80).indexOf("●0") >= 0 && header(80).indexOf("live") < 0, header(80));
+ok("badge, alarms, 120: the long count", header(120).indexOf("● 0 live") >= 0, header(120));
 console.log(bad ? bad + " failed" : "header: all checks passed");
 if (bad) process.exit(1);
