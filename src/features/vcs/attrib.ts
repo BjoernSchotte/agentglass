@@ -16,6 +16,7 @@ import type { VRef } from "../usage/vcs.ts";
 import { livePid } from "../query/eval.ts";
 import { identOf } from "../query/project.ts";
 import { type RefEv, readReflog, reflogStamp, isNew, worktreeGitdirs } from "./reflog.ts";
+import { hasCommit } from "./objects.ts";
 
 // pad = git.tailPadMin (minutes after the last activity that still belong to the session: agents commit after a long test run);
 // spawn = git spawns allowed in the TUI; cli = allowed in a CLI run (--json --git only); gate = at most one per 500 ms (TUI);
@@ -78,7 +79,8 @@ function evIndex(evs: RefEv[], sha: string): number { // a printed (short) sha �
 // pure: sessions (each with its window, refs and gitdir) + each gitdir's reflog → per session path its git info. peers =
 // common dir → the gitdirs of all its worktrees (their reflogs in logs): a banner made in a sibling worktree is found there
 export function attribute(ss: SessIn[], logs: Map<string, RefEv[]>): Map<string, GitInfo> { return attributeWith(ss, logs, new Map<string, string[]>()); }
-export function attributeWith(ss: SessIn[], logs: Map<string, RefEv[]>, pm: Map<string, string[]>): Map<string, GitInfo> {
+// has(common, sha): the commit is in the repo's object DB (1), not (0), cannot tell (-1); default: cannot tell
+export function attributeWith(ss: SessIn[], logs: Map<string, RefEv[]>, pm: Map<string, string[]>, has: (common: string, sha: string) => number = (): number => -1): Map<string, GitInfo> {
   const out = new Map<string, GitInfo>();
   const owner = new Map<string, string[]>(); // "<gitdir>\t<event index>" → the sessions observing it
   const evOf = (s: SessIn): RefEv[] => { const e = logs.get(s.gitdir); return e ? e : []; };
@@ -97,9 +99,10 @@ export function attributeWith(ss: SessIn[], logs: Map<string, RefEv[]>, pm: Map<
       let pd = ""; let j = -1; // a sibling worktree of the same repo (cd ../wt && git commit)
       for (const d of pm.get(s.common) ?? []) { if (d === s.gitdir) continue; j = evIndex(logs.get(d) ?? [], r.v); if (j >= 0) { pd = d; break; } }
       if (pd) { own(pd + "\t" + String(j), s.path); seen.add(pd); continue; }
-      // in no reflog of the repo: unknown, counted (a banner is observed work). Not "elsewhere" yet: removed worktrees take
-      // their reflogs with them and unreachable entries expire, so only enrichment (the object DB) can tell
+      // in no reflog of the repo (removed worktrees take their reflogs along, entries expire): the object DB decides —
+      // there = counted, status unknown till enrichment; not there = another repo (a test script's temp repo), elsewhere
       const c = row(r.v, r.br, r.subj, r.t, "observed", r.call, r.ts, s.path);
+      if (s.common && has(s.common, r.v) === 0) { c.status = "elsewhere"; c.counted = false; }
       g.commits.push(c);
     }
     if (sp.length) for (let i = 0; i < evs.length; i++) { const e = evs[i]; if (isNew(e) && inSpans(sp, e.at)) own(s.gitdir + "\t" + String(i), s.path); }
@@ -233,7 +236,7 @@ export function allInfo(): Map<string, GitInfo> {
   for (const d of dirs) { const st = reflogStamp(d); stamps += st + ","; if (st) logs.set(d, readReflog(d)); }
   const key = String(P.ver) + "|" + String(sessions.size) + "|" + String(ss.length) + "|" + stamps;
   if (key === ALL.key && (ALL.ver === L.ver || now - ALL.at < 1000)) { ALL.seen = now; return ALL.info; }
-  ALL.info = attributeWith(ss, logs, peers); ALL.key = key; ALL.ver = L.ver; ALL.at = now;
+  ALL.info = attributeWith(ss, logs, peers, hasCommit); ALL.key = key; ALL.ver = L.ver; ALL.at = now;
   ALL.proj.clear(); ALL.ins.clear();
   for (const x of ss) { ALL.ins.set(x.path, x); if (x.sub) continue; const l = ALL.proj.get(x.key); if (l) l.push(x); else ALL.proj.set(x.key, [x]); }
   return ALL.info;

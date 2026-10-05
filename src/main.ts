@@ -21,7 +21,7 @@ import { enter, quit, termSize, focusOf } from "./term.ts";
 import { type Job, DBG, fastDraw, newSched, levelOf, hotWhy, due, runJob, sleepFor, forceMs, debugLine, refreshMode } from "./sched.ts";
 import { str } from "./util/json.ts";
 import { bytes } from "./util/text.ts";
-import { section } from "./util/config.ts";
+import { section, configProblem } from "./util/config.ts";
 import { L } from "./features/usage/record.ts";
 import { indexing } from "./features/usage/ledger.ts";
 import { replaying } from "./features/replay.ts";
@@ -206,6 +206,7 @@ function tui(): void {
   scan(); refreshProcs(); refreshSlow(); buildView();
   for (const f of H.start) f();
   if (mode.err) say("warn", mode.err);
+  const cp = configProblem(); if (cp) say("warn", cp);
   DBG.on = process.env.AGENTGLASS_DEBUG_REFRESH === "1";
   render(); lastBuild = Date.now(); scanSig = scanSum();
   process.stdin.on("data", onData);

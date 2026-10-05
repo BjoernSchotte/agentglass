@@ -152,7 +152,7 @@ async function update(args: string[]): Promise<number> {
       return fail("downloaded binary failed its self-check (expected " + tv + " " + tch + ") — nothing changed", 1);
     try { copyFileSync(exe, exe + ".prev"); renameSync(cand, exe); }
     catch (e) { return fail("cannot replace " + exe + ": " + String(e), 1); }
-    if (!o.tag) setConfig("update", "channel", tch); // --tag is one-off: the saved channel stays
+    if (!o.tag) try { setConfig("update", "channel", tch); } catch (e) { errLine("agentglass update", "config", "channel not saved: " + (e instanceof Error ? e.message : String(e)), ""); } // --tag is one-off: the saved channel stays
     rewriteInstallJson(exe, tch, tv);
     say(o, "updated " + BUILD.version + " → " + tv + " (" + tch + ")", { updated: true, from: BUILD.version, to: tv, channel: tch, tag: target.tag });
     return 0;

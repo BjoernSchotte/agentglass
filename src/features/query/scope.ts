@@ -91,7 +91,10 @@ export function setLocal(tab: string, cs: Clause[]): void { S.local.set(tab, pin
 // ── persistence (config filter.pinned; filter.remember false = never saved, a saved value ignored) ──
 export interface PinStore { load: () => string; save: (v: string) => void; remember: boolean }
 let store: PinStore = { load: () => "", save: (v: string) => {}, remember: false };
-function persist(): void { if (store.remember) { const sv = store.save; sv(print(S.pins)); } }
+let unsaved = ""; // why the last save failed ("" = saved or nothing to save)
+function persist(): void { unsaved = ""; if (store.remember) { const sv = store.save; sv(print(S.pins)); } }
+// a pin change's toast: a warning naming why it was not saved (a broken config.json), else info
+export function pinToast(msg: string): void { if (unsaved) say("warn", msg + " — not saved: " + unsaved); else say("info", msg); }
 export function chipText(cs: Clause[]): string { return shownText(cs, " · "); }
 // --redact notes pinned values: the screen shows them as "…"
 function note(cs: Clause[]): void { if (REDACT) for (const c of cs) for (const v of c.vals) PINNED.add(c.key + "\t" + v.toLowerCase()); }
@@ -155,5 +158,5 @@ export function hiddenByPins(tab: string, total: (cs: Clause[]) => number): numb
 export function configStore(): PinStore {
   const sec = section("filter"); const rm = sec["remember"];
   if (rm !== undefined && typeof rm !== "boolean") say("warn", "config filter.remember must be true or false — using true");
-  return { load: () => str(section("filter")["pinned"]), save: (v: string) => { try { setConfig("filter", "pinned", v); } catch (e) { say("warn", "could not save pinned filter: " + String(e)); } }, remember: rm !== false };
+  return { load: () => str(section("filter")["pinned"]), save: (v: string) => { try { setConfig("filter", "pinned", v); } catch (e) { unsaved = e instanceof Error ? e.message : String(e); } }, remember: rm !== false };
 }
