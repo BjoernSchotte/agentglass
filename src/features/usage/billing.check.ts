@@ -87,6 +87,8 @@ const pie = configEv("pi", HOMED, "");
 ok("pi per provider", provRule("pi", "anthropic", pie, "config").bill === "plan" && provRule("pi", "openai", pie, "config").bill === "api" && kvs(pie).indexOf("SECRET") < 0, kvs(pie));
 const oce = configEv("opencode", HOMED, "");
 ok("opencode gateway from config", provRule("opencode", "cliproxy", oce, "config").bill === "gateway" && provRule("opencode", "google", oce, "config").bill === "unknown" && provRule("opencode", "anthropic", oce, "config").bill === "plan" && kvs(oce).indexOf("SECRET") < 0 && kvs(oce).indexOf("8317") < 0, kvs(oce));
+write(HOMED + "/.config/opencode/opencode.jsonc", "// mine\n{\"provider\":{\"corpgw\":{\"options\":{\"baseURL\":\"https://gw//v1\"},},},}\n");
+ok("opencode .jsonc with comments read", provRule("opencode", "corpgw", configEv("opencode", HOMED, ""), "config").bill === "gateway", kvs(configEv("opencode", HOMED, "")));
 ok("pi gateway from models.json", provRule("pi", "cliproxy", pie, "config").bill === "gateway" && provRule("pi", "openai", pie, "config").bill === "api" && kvs(pie).indexOf("8317") < 0, kvs(pie));
 // parsed config files are cached by mtime + size: a file whose stat did not move is not read again (~/.claude.json
 // moves every few seconds while Claude runs; each project folder's evidence and the allowance gauge read it)
