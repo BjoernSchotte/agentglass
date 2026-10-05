@@ -310,7 +310,8 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
-function out(text: string): void { try { writeSync(1, screenOut(text) + "\n"); } catch (e) { process.exit(0); } }
+// rc: the exit code a failed write (closed reader, full disk) still reports (cost --check: 3 over budget)
+function out(text: string, rc = 0): void { try { writeSync(1, screenOut(text) + "\n"); } catch (e) { process.exit(rc); } }
 export interface QOpts { ref: string; root: boolean; since: string; sinceMs: number; cwd: string; limit: number; live: boolean; subs: boolean; harness: string; by: string; check: boolean; json: boolean; f: Fmt; filters: string[]; pinned: boolean }
 const VAL = ["--since", "--cwd", "--limit", "--harness", "--format", "--fields", "--by", "--filter"];
 const ALWAYS = ["--agent", "--no-agent", "--redact", "--all-projects", "--project-only", "--format", "--fields"];
@@ -355,11 +356,12 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
 export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
 function envelope(rows: Obj[], source: string, sc: Scope): string { return JSON.stringify({ rows, source, scope: sc.name }); }
 // json → the {rows, source, scope} envelope (compact inside an agent and in pipes); other formats → bare rows
-export function printEnvelope(rows: Obj[], source: string, sc: Scope, f: Fmt, tableCols: string[], known: string[]): void {
+// rc: the exit code when stdout cannot be written (the caller's own, e.g. cost --check's 3)
+export function printEnvelope(rows: Obj[], source: string, sc: Scope, f: Fmt, tableCols: string[], known: string[], rc = 0): void {
   const fmt = f.fmt || (agentHost().on || process.stdout.isTTY !== true ? "json" : "table");
-  if (fmt !== "json") { out(formatRows(rows, { fmt, fields: f.fields }, false, tableCols, known, false)); return; }
+  if (fmt !== "json") { out(formatRows(rows, { fmt, fields: f.fields }, false, tableCols, known, false), rc); return; }
   const r = f.fields.length ? JSON.parse(formatRows(rows, { fmt: "json", fields: f.fields }, false, tableCols, known, false)) as Obj[] : rows;
-  out(envelope(r, source, sc));
+  out(envelope(r, source, sc), rc);
 }
 
 const ERR_FIELDS = ["ts", "harness", "session", "tool", "arg", "text", "durationMs"];
