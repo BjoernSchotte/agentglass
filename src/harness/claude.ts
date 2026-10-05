@@ -260,6 +260,27 @@ function forkOf(path: string): string {
   FORK.set(path, f); return f;
 }
 OWN.fork = (path: string): boolean => forkOf(path) !== "";
+// a log at home: its project dir is the one Claude names after the session's cwd (each character but a-z A-Z 0-9 → "-";
+// past 200 characters cut, plus "-<hash>"). The same session under another dir (a project moved or copied with its
+// ~/.claude dir) is a copy: same lines, same times, and nothing else to tell them apart. No cwd in the first MB: at home
+const HOME = new Map<string, boolean>();
+function homeOf(path: string): boolean {
+  let h = HOME.get(path); if (h !== undefined) return h;
+  const i = path.lastIndexOf("/subagents/"); const p = i >= 0 ? path.slice(0, i) : path; // <project>/<session>/subagents/…: as the session's own log
+  const d = dirname(p); const proj = d.slice(d.lastIndexOf("/") + 1);
+  let cwd = ""; for (const n of [65536, 1048576]) { cwd = cwdOf(readText(path, 0, n)); if (cwd) break; } // queued prompts can come first, 90 KB each
+  const ch: string[] = []; for (const c of Array.from(cwd)) ch.push(/^[a-zA-Z0-9]$/.test(c) ? c : "-");
+  const enc = ch.join("");
+  h = !cwd || proj === enc || (enc.length > 200 && proj.startsWith(enc.slice(0, 200) + "-"));
+  HOME.set(path, h); return h;
+}
+// the first cwd a log's head names (its complete lines only), "" = none
+function cwdOf(head: string): string {
+  const ls = head.split("\n"); ls.pop();
+  for (const l of ls) { if (l.indexOf("\"cwd\":") < 0) continue; const o = parseJson(l); const c = o ? str(o["cwd"]) : ""; if (c) return c; }
+  return "";
+}
+OWN.home = homeOf;
 // a log's place under projects/: "<session>.jsonl", or "<session>/subagents/agent-<id>.jsonl"
 function tailOf(path: string): string {
   const i = path.lastIndexOf("/subagents/"); const j = path.lastIndexOf("/", i >= 0 ? i - 1 : path.length - 1);
