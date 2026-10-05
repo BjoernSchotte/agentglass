@@ -102,9 +102,10 @@ function usage(): string {
   source = session|process|config — config = assumed from the current config files;
   skills source = command: a slash command / $mention, model: the agent chose it;
   repo = the project: worktrees and clones of one remote share key, kind = git|gitdir|path|none, null = no cwd known)
---watch lines: {ts,harness,session,title,project,parent,kind,tool,id,text}; id = the tool call id (tool|result, else null); kind = user|assistant|thinking|tool|result|meta,
+--watch lines: {ts,harness,session,title,project,parent,kind,tool,id,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears, and alert (rules.json transitions: an alert object
-  {rule,severity,state,value,threshold,labels}; state = fire|escalate|deescalate|resolve; off with --no-alerts)
+  {rule,severity,state,value,threshold,labels}; state = fire|escalate|deescalate|resolve; off with --no-alerts);
+  id = the tool call id on tool|result lines (what --related --event and open <ref>#call= take), else null
 
 filter: key op value [and …]; op = is = is_not != is_one_of is_not_one_of ~ !~ > >= < <=; not / - negates; bare words
   search title, path, id; --json lists sessions with a matching call or day; --watch filters events (event is tool|result|alert|…)
