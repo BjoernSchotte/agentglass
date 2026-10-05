@@ -11,7 +11,7 @@ import { type Acc, L, todayKey, lastDays } from "./record.ts";
 import { PGEN } from "./pricing.ts";
 import { type PRow, type SessAcc, priceRows } from "./pricerows.ts";
 import { type Bill, MODES } from "./billing.ts";
-import { modeOf } from "./bill-live.ts";
+import { modeOf, envSig } from "./bill-live.ts";
 import { type ModeSum, type DayCost, type Budget, type BState, newSum, addDay, addSum, parseBudget, budgetState, stateOf, notifyOnce, projectToday, projectMonth, daysLeftInMonth, monthStart } from "./costs.ts";
 
 export const budget: Budget = parseBudget(section("budget"));
@@ -89,7 +89,7 @@ function incSync(win: string[], now: number): void {
   const seen = INC.sig;
   for (const s of sessions.values()) {
     const a = ledger.get(s.path) ?? null; const g = seen.get(s.path);
-    const mode = s.bill + "|" + String(s.pid); // the label bill-live derives from the evidence modeOf reads
+    const mode = s.bill + "|" + String(s.pid) + "|" + String(envSig(s)); // the evidence modeOf reads: the label, the live env (pi/OpenCode)
     if (g && g.a === a && (!a || (g.off === a.off && g.xm === a.xM)) && g.mode === mode) continue;
     const days = a ? windowDays(a, ws) : [];
     if (g) for (const k of g.days) touched.add(k); // what it added before (an entry restarted or moved)
