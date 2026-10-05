@@ -95,4 +95,4 @@ r("status", [], "call", "enum", false, ["ok", "error", "unknown"], "", []);
 r("duration", [], "call", "dur", false, [], "", []);
 r("out", [], "call", "size", false, [], "", []);
 r("hour", [], "call", "num", false, [], "", []);
-r("event", [], "event", "enum", false, ["user", "assistant", "thinking", "tool", "result", "meta", "live", "exit"], "", []);
+r("event", [], "event", "enum", false, ["user", "assistant", "thinking", "tool", "result", "meta", "live", "exit", "alert"], "", []);

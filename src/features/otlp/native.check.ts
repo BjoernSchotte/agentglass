@@ -1,7 +1,7 @@
 // agentglass — self-check for detecting the harnesses' own OTLP export: scriptc build src/features/otlp/native.check.ts -o nc && ./nc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { type Native, detectNative, applyPolicy, accessed, envNative } from "./native.ts";
+import { type Native, detectNative, applyPolicy, accessed, envNative, projectDirs } from "./native.ts";
 import { newState } from "./state.ts";
 
 let bad = 0;
@@ -46,6 +46,12 @@ const off = applyPolicy([{ h: "codex", on: "off", src: "" }], "skip", st, 10000)
 eq("off again clears with a notice", String(st.nativeSince.has("codex")) + " " + String(off.notes.length) + " " + String(off.skipFrom.size), "false 1 0");
 const inc = applyPolicy(on, "include", st, 11000);
 eq("include", String(inc.notes.length) + String(inc.skipFrom.size), "00");
+// Gemini's project settings: only Gemini sessions' dirs count, the newest first, each once, at most 64
+const rs: { h: string; cwd: string; mtime: number }[] = [{ h: "gemini", cwd: "/old", mtime: 1 }, { h: "claude", cwd: "/c", mtime: 50 }];
+for (let i = 0; i < 70; i++) rs.push({ h: "gemini", cwd: "/g" + String(i), mtime: 10 + i });
+rs.push({ h: "gemini", cwd: "/g69", mtime: 5 }); rs.push({ h: "gemini", cwd: "", mtime: 99 });
+const pd = projectDirs(rs);
+eq("project dirs", String(pd.length) + " " + (pd[0] ?? "") + " " + String(pd.indexOf("/c")) + " " + String(pd.indexOf("/old")) + " " + String(pd.filter((d: string) => d === "/g69").length), "64 /g69 -1 -1 1");
 rmSync(base, { recursive: true, force: true });
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("otlp native: all checks passed");
