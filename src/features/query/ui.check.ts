@@ -7,7 +7,8 @@ import { onInput } from "../../input.ts";
 import { H, boxChips, emptyText } from "../../hooks.ts";
 import { parse, print } from "./parse.ts";
 import { initPins, localFor, setLocal } from "./scope.ts";
-import { complete, hiddenCount } from "./ui.ts";
+import { complete, hiddenCount, matchingPaths, timeStep } from "./ui.ts";
+import { EMPTY, compile } from "./eval.ts";
 import { fxBase } from "./fixture.ts";
 import { setCallDaysForTest } from "../usage/callcache.ts";
 
@@ -94,5 +95,16 @@ const all = (s: Sess): boolean => { asked++; return s.path !== ""; };
 H.listFilter.push(() => { made++; return all; });
 buildView(); eq("list filter: one predicate per build", String(made), "1"); eq("list filter: asked per session", String(asked >= 1), "true");
 H.listFilter.pop();
+// a match that changes with time alone (age) is never a minute stale: the cache key's time step follows the clause
+eq("time step: no time clause keeps the minute", String(timeStep(parse("cost > 1 and harness is claude").cs)), "60000");
+eq("time step: age < 30s by the second", String(timeStep(parse("age < 30s").cs)), "1000");
+eq("time step: age < 5m every 5 s", String(timeStep(parse("cost > 1 and age < 5m").cs)), "5000");
+eq("time step: age > 2h capped at the minute", String(timeStep(parse("age > 2h").cs)), "60000");
+eq("time step: the finest clause wins", String(timeStep(parse("age > 10m and age < 1m").cs)), "1000");
+const yng = [...sessions.values()][0]; yng.last = Date.now() - 1500; yng.mtime = yng.last;
+const fa = compile(parse("age < 2s").cs, "list").f ?? EMPTY;
+eq("age < 2s: a young session matches", String(matchingPaths(fa).has(yng.path)), "true");
+const t0 = Date.now(); while (Date.now() - t0 < 1100) { /* the clause's step: 1 s */ }
+eq("age < 2s: a second later it no longer does", String(matchingPaths(fa).has(yng.path)), "false");
 console.log(bad ? bad + " failed" : "filter ui: all checks passed");
 if (bad) process.exit(1);
