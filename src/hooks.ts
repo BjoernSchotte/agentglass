@@ -39,6 +39,7 @@ export const H = {
   rowBadges: [] as ((s: Sess) => string)[], // styled glyphs in a 2-col slot before each session row's title
   rowPrefix: [] as ((s: Sess) => string)[], // styled text right before a session row's title (compare marks); its width comes off the title
   previewSections: [] as ((s: Sess, w: number) => string[])[], // styled lines after the preview's metadata block
+  headerBadge: [] as (() => string)[], // styled marks right after the logo, at every width (e.g. REDACTED): the tabs move over
   headerWidgets: [] as ((w: number) => string)[], // styled segments between the tabs and the header stats; w = free width
   headerFlex: [] as ((w: number) => string)[], // laid out after headerWidgets, filling the width they leave (e.g. a ticker)
   footerHints: [] as ((mode: string) => string[][])[], // extra [key, label, tier?] footer hints (clickable when key is one keystroke; tier "0"–"3", see ui/footer.ts tierOf)

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { statSync } from "node:fs";
 import type { Sess } from "../../model/types.ts";
-import { H } from "../../hooks.ts";
+import { H, realCwd } from "../../hooks.ts";
 import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
 import type { Obj } from "../../util/json.ts";
@@ -36,12 +36,12 @@ const envs = new Map<number, { at: number; ev: Evid }>();
 
 function stamped(a: Acc | undefined): Det | null { return a && a.billSrc ? { bill: asBill(a.bill), plan: a.plan, why: "", src: a.billSrc } : null; }
 // the session's own mode: stamped evidence, else the current config's (src "config" = assumed)
-export function billOf(s: Sess): Det { return stamped(ledger.get(s.path)) ?? cfgOf(s.h, s.cwd).det; }
+export function billOf(s: Sess): Det { return stamped(ledger.get(s.path)) ?? cfgOf(s.h, realCwd(s)).det; }
 function multi(h: string): boolean { return h === "pi" || h === "opencode"; }
 function provDet(s: Sess, prov: string): Det {
   if (!multi(s.h) || !prov) return billOf(s);
   const e = s.pid ? envs.get(s.pid) : undefined;
-  return provMode(s.h, prov, e ? e.ev : null, cfgOf(s.h, s.cwd).ev);
+  return provMode(s.h, prov, e ? e.ev : null, cfgOf(s.h, realCwd(s)).ev);
 }
 // the mode a cost booked under provider prov counts as; a pi/OpenCode cost without a provider (usage lines, subagent
 // results) counts as the session's label

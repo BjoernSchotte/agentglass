@@ -36,7 +36,7 @@ export function renderHeader(): void {
   const right = rights[L.ri]; const rw = width(right.replace(ESC_RE, ""));
   const free = Math.max(0, W - L.x - rw); const wid = widgets(free);
   const ww = width(wid.replace(ESC_RE, ""));
-  put(0, 0, L.s + wid + " ".repeat(Math.max(0, free - ww)) + (W - L.x > rw ? right : ""));
+  put(0, 0, L.x > W ? fitStyled(L.s, W) : L.s + wid + " ".repeat(Math.max(0, free - ww)) + (W - L.x > rw ? right : "")); // a badge can push the last tabs off a very narrow row
 }
 interface Layout { s: string; x: number; x0: number[]; x1: number[]; ri: number; lost: boolean }
 // logo + tabs (compact: the inactive ones as their number) and which of the right-hand stats fit beside the widgets;
@@ -44,6 +44,7 @@ interface Layout { s: string; x: number; x0: number[]; x1: number[]; ri: number;
 function layout(W: number, tabs: string[], compact: boolean, rights: string[]): Layout {
   let s = bg(C.accent) + fg(C.panel) + CSI + "1m" + " ◈ agentglass " + RST + " ";
   let x = width(" ◈ agentglass  "); const x0: number[] = []; const x1: number[] = [];
+  for (const f of H.headerBadge) { const b = f(); if (b) { s += b + " "; x += width(b.replace(ESC_RE, "")) + 1; } } // never dropped: the tabs move over
   for (let i = 0; i < tabs.length; i++) {
     const t = compact && i !== S.tab ? " " : " " + tabs[i] + " ";
     s += (i === S.tab ? bg(C.sel) + fg(C.text) + CSI + "1m" + CSI + "4m" : fg(C.sub)) + (i + 1) + t + RST + " ";

@@ -6,10 +6,12 @@
 import type { Ev, Sess } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
 import { HOME } from "../util/fs.ts";
-import { H, applyMeta } from "../hooks.ts";
+import { H, applyMeta, display } from "../hooks.ts";
 import { REDACT } from "./redact.ts";
 import { parse } from "./query/parse.ts";
-import { compile, matchSession } from "./query/eval.ts";
+import { compile, matchSession, callVal } from "./query/eval.ts";
+import { DICT, intern } from "./usage/facts.ts";
+import { EXACT } from "./query/types.ts";
 
 let bad = 0;
 function ok(what: string, cond: boolean, got: string): void { if (!cond) { bad++; console.log("FAIL " + what + ": " + JSON.stringify(got)); } }
@@ -47,5 +49,12 @@ ok("second session faked", s2.cwd.indexOf("otherproj") < 0 && s2.prompt.indexOf(
 ok("second session: real first prompt", m(s2, "title ~ \"secret todo\"") === "true", s2.prompt);
 ok("second session: real cwd", m(s2, "otherproj") === "true", s2.cwd);
 ok("second session: the first one's values do not leak into it", m(s2, "acme") === "false" && m(s, "otherproj") === "false", "");
+// a private program: the completion offers its shown fake, which selects the call exactly; a safe one stays real
+{ const pid = intern(DICT.prog, "deploy-acme-prod"); const gid = intern(DICT.prog, "git");
+  const fake = display("prog", "deploy-acme-prod", null);
+  ok("program faked", fake !== "deploy-acme-prod" && fake.indexOf("acme") < 0, fake);
+  ok("safe program stays", display("prog", "git", null) === "git", display("prog", "git", null));
+  const v = callVal("program", s, { t: 0, tool: 0, model: -1, mq: 0, progs: [pid, gid], cmds: [], files: [], ms: 0, err: 0, out: 0, cid: "" }).ss.join(",");
+  ok("program values: real, shown fake exact, safe once", v === "deploy-acme-prod," + EXACT + fake.toLowerCase() + ",git", JSON.stringify(v)); }
 console.log(bad ? bad + " failed" : "redact filters: all checks passed");
 process.exit(bad ? 1 : 0);

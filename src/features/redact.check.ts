@@ -76,6 +76,12 @@ for (const f of H.events) f(s, evs, 0);
 const all = evs.map((e) => e.text + e.full).join(" ");
 ok("content faked", all.indexOf("ACME") < 0 && all.indexOf("acme") < 0, all);
 ok("tool name kept", (evs[1] ?? evs[0]).text.startsWith("Bash\u0000"), (evs[1] ?? evs[0]).text);
+// meta lines (--watch, transcript): the label stays, the free text after it is faked
+const mt: Ev[] = [["! gh secret set TOKEN -R acmecorp/billing", "! "], ["\u27f2 completed · Agent \"Acme stages 3-5\" finished", "\u27f2 completed · "],
+  ["\u21c4 fixer-tester · rev for acme: need the repro", "\u21c4 "], ["[error] acme host down", "[error] "], ["/deploy acme prod", "/deploy"], ["branch: acme rollout", "branch: "], ["turn complete", "turn complete"]]
+  .map((x: string[]): Ev => ({ kind: "meta", text: x[0] ?? "", ts: "t", id: x[1] ?? "", full: "acme" }));
+for (const f of H.events) f(s, mt, 0);
+for (const e of mt) ok("meta faked: " + e.id, e.text.startsWith(e.id) && e.text.toLowerCase().indexOf("acme") < 0 && e.full === "" && e.text.indexOf("fixer-tester") < 0, e.text);
 
 // git linkage (kind vcs): URL keeps host, kind, number; owner/repo faked; subjects come from the title pool, stably
 const pu = display("vcs", "https://github.com/me/x/pull/7", null);

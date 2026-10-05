@@ -1,4 +1,4 @@
-// agentglass — self-check for the header row (alarms and live count at any width): scriptc build src/ui/header.check.ts -o hc && ./hc
+// agentglass — self-check for the header row (alarms, live count and badges at any width): scriptc build src/ui/header.check.ts -o hc && ./hc
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../state.ts";
 import { H } from "../hooks.ts";
@@ -29,5 +29,17 @@ ok("60 columns: the widget gets room", header(60).indexOf("today") >= 0 && heade
 H.headerWidgets.length = 0;
 ok("60 columns, no widgets: the live count gets room", header(60).indexOf("live") >= 0, header(60));
 ok("120 columns, no widgets: names", header(120).indexOf("4 Repos") >= 0, header(120));
+// a badge (--redact's REDACTED) at every width, before the tabs; the alarms stay
+H.headerBadge.push(() => " REDACTED "); H.headerWidgets.push((w: number) => "⚠ 3");
+for (const W of [60, 80, 120, 200]) {
+  const h = header(W);
+  ok("badge visible at " + String(W), h.indexOf("REDACTED") >= 0, h);
+  ok("badge: never wider than the row at " + String(W), h.replace(/\s+$/, "").length <= W, h);
+  ok("badge: tab hit areas at " + String(W), h.charAt(tabX0[0] ?? -1) === "1", h + " " + JSON.stringify(tabX0));
+}
+ok("badge: alarms at 80 (tab names over the live count)", header(80).indexOf("⚠ 3") >= 0 && header(80).indexOf("4 Repos") >= 0, header(80));
+ok("badge: alarms and live at 60", header(60).indexOf("⚠ 3") >= 0 && header(60).indexOf("live") >= 0, header(60));
+ok("badge: alarms and live at 120", header(120).indexOf("⚠ 3") >= 0 && header(120).indexOf("live") >= 0, header(120));
+ok("badge before the tabs", header(80).indexOf("REDACTED") < header(80).indexOf("Sessions"), header(80));
 console.log(bad ? bad + " failed" : "header: all checks passed");
 if (bad) process.exit(1);

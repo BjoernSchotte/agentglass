@@ -437,8 +437,22 @@ function fakeEv(e: Ev, evs: Ev[], i: number, title: string): void {
     if (e.id) for (let j = i - 1; j >= 0 && j > i - 400; j--) { const c = evs[j]; if (c && c.kind === "tool" && c.id === e.id) { name = c.text.slice(0, Math.max(0, c.text.indexOf("\u0000"))); break; } }
     e.text = isErr(e.text) ? pick(ERRS, key) : fakeResult(name, key);
   } else if (e.kind === "meta" && e.text.startsWith("summary:")) e.text = "summary: " + title;
+  else if (e.kind === "meta") { e.text = fakeMeta(e.text, key, title); e.full = ""; return; }
   else { e.text = scrubText(e.text); return; }
   e.full = "";
+}
+// meta lines carry free text after a fixed label (--watch, the transcript): the label stays, the text is faked —
+// "! <shell command>", "⟲ <status> · <task summary>", "⇄ <peer> · <message>", "branch: <summary>", "[error] <message>",
+// "/command <args>"; anything else (turn complete, model → x, skill: x) is scrubbed
+function fakeMeta(t: string, key: string, title: string): string {
+  const dot = t.indexOf(" · ");
+  if (t.startsWith("! ")) return "! " + pick(CMDS, key);
+  if (t.startsWith("\u27f2 ")) return (dot > 0 ? t.slice(0, dot) + " · " + pick(SUBS, key) : t);
+  if (t.startsWith("\u21c4 ")) { const from = dot > 0 ? t.slice(2, dot) : "peer"; return "\u21c4 " + (from === "peer" || builtinAgent(from) ? from : fakeAgent(from)) + " · " + pick(SAYS, key); }
+  if (t.startsWith("branch: ")) return "branch: " + title;
+  const b = /^\[[A-Za-z_ -]+\] /.exec(t); if (b) return b[0] + (pick(ERRS, key).split("\n")[0] ?? "");
+  if (t.startsWith("/")) { const i = t.indexOf(" "); return i > 0 ? t.slice(0, i) : t; }
+  return scrubText(t);
 }
 // process args: the program, flags, ids and paths stay; free text (prompts) goes
 function fakeArgs(a: string): string {
@@ -559,7 +573,7 @@ if (REDACT) {
       branch: s.branch !== r.branch ? s.branch : r.rb, name: s.name !== r.name ? s.name : r.rn, kind: s.kind !== r.kind ? s.kind : r.rk };
   });
   H.screenFilter.push(scrubStyled);
-  H.headerWidgets.unshift((w: number) => (w >= 10 ? bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST : ""));
+  H.headerBadge.push(() => bg(C.red) + fg(C.panel) + CSI + "1m" + " REDACTED " + RST); // at every width: a screencast must show it
 }
 H.helpSections.push({ name: "privacy (--redact)", ctx: "", keys: [
   ["--redact", "fake titles, projects, content; scrub names"], ["…REDACT=1", "AGENTGLASS_REDACT=1: the same via env"],
