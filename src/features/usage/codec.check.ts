@@ -18,8 +18,8 @@ const o = accOut(a, 64); const js = JSON.stringify(o);
 const back = parse(js);
 const b = accIn(back ?? {});
 const e = b.days.get([...a.days.keys()][0] ?? "");
-ok("version", VERSION === 13, String(VERSION)); // 13 = perf-baseline (the heavy day maps as JSON text: a v12 build would read them empty; v12 caches still read); 12 = harness-correctness (Gemini call errors + models, pi /skill); 11 = Acc.vcs git refs (git-linkage); 10 = Acc.rs (otlp-export); 9 = repo-view Day.act + Acc.al; 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
-ok("reads v12 and its own version only", readable(12) && readable(VERSION) && !readable(11) && !readable(VERSION + 1), "");
+ok("version", VERSION === 14, String(VERSION)); // 14 = Claude messages at their final output_tokens (Acc.ids with booked output: v12/v13 caches under-count, re-index); 13 = perf-baseline (the heavy day maps as JSON text: a v12 build would read them empty; v12 caches still read); 12 = harness-correctness (Gemini call errors + models, pi /skill); 11 = Acc.vcs git refs (git-linkage); 10 = Acc.rs (otlp-export); 9 = repo-view Day.act + Acc.al; 8 = filter-language call rows + t0; 7 = honest-costs (nightly builds from main wrote it without the call rows)
+ok("reads its own version only", readable(VERSION) && !readable(13) && !readable(12) && !readable(VERSION + 1), "");
 ok("day present", !!e, [...b.days.keys()].join(","));
 if (e) {
   ok("unk", e.unk === d.unk, String(e.unk));
