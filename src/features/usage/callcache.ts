@@ -1,7 +1,7 @@
 // agentglass — per-session call-row files (~/.agentglass/cache/calls/<key>.json): columnar, local dictionaries, retention
 // SPDX-License-Identifier: Apache-2.0
 // A calls file is valid only for the ledger offset it was written at and the path it names: anything else (a crash between
-// this write and ledger.json's, a hash collision, an old format) counts as missing and that one session re-indexes.
+// this write and ledger.jsonl's, a hash collision, an old format) counts as missing and that one session re-indexes.
 import { openSync, writeSync, closeSync, renameSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";

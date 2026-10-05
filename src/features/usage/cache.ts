@@ -1,6 +1,6 @@
 // agentglass — persists the usage ledger to ~/.agentglass/cache so a restart resumes at the last byte instead of re-indexing every log
 // SPDX-License-Identifier: Apache-2.0
-import { openSync, writeSync, closeSync, renameSync, mkdirSync, statSync } from "node:fs";
+import { statSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { readText } from "../../util/fs.ts";
@@ -14,6 +14,7 @@ import { ROWS } from "./facts.ts";
 import { rulesNeedRows } from "../rules/file.ts";
 import { PRICES_SIG } from "./pricing.ts";
 import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
+import { readCache, writeCache } from "./cachefile.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
@@ -34,30 +35,41 @@ function lazyRows(): boolean {
 }
 const LAZY_ROWS = lazyRows();
 const DIR = CACHE_DIR; // AGENTGLASS_CACHE_DIR or ~/.agentglass/cache
-const FILE = join(DIR, "ledger.json");
+// one header line + one line per session, streamed (cachefile.ts); ledger.json = the one-object file of 2026.10.4 and
+// before, read once to migrate (no re-index on upgrade) and removed after the first save of FILE
+const FILE = join(DIR, "ledger.jsonl");
+const OLD = join(DIR, "ledger.json");
 const KEEP_IDS = 64; // claude dedupe only needs the ids near the resume offset (a message's lines are adjacent)
 
 let loaded = false;
+function mtime(p: string): number { try { return statSync(p).mtimeMs; } catch (e) { return -1; } }
 function load(): void {
   loaded = true; savedIdx = L.idx; // nothing to save until something is indexed
+  lastSave = Date.now(); // the save clock starts here: a warm start has nothing new to write on its first tick
+  // the old file only when it is newer (none yet, or an older build ran since and wrote it): what it holds is current
+  if (mtime(OLD) > mtime(FILE)) { loadOld(); if (ledger.size) L.idx++; return; } // the next save writes FILE and drops OLD
+  readCache(FILE, (h) => { if (!readable(h.v) || h.prices !== PRICES_SIG) return false; rlIn(h.rl); return true; }, install);
+}
+// one session of a readable cache; a line the reader could not use was skipped: that session alone re-indexes
+function install(path: string, o: Obj): void {
+  const a = accIn(o);
+  if (!ROWS.on) { ledger.set(path, a); return; } // no rows built (checks): the day buckets alone are consistent with off
+  if (LAZY_ROWS) { ledger.set(path, a); written.set(path, a.off); unread.add(path); return; } // its calls file, as is, until it grows
+  const calls = loadCallsFrom(CALLS_DIR, path, a);
+  if (!calls) return; // no or stale call rows: this session alone re-indexes
+  a.calls = calls; a.lastCall = calls.length - 1;
+  ledger.set(path, a); written.set(path, a.off);
+}
+function loadOld(): void {
   let size = 0;
-  try { size = statSync(FILE).size; } catch (e) { return; }
-  const root = parse(readText(FILE, 0, size).trim());
+  try { size = statSync(OLD).size; } catch (e) { return; }
+  const root = parse(readText(OLD, 0, size).trim());
   const v = root ? num(root["v"]) : 0;
   if (!root || !readable(v) || str(root["prices"]) !== PRICES_SIG) return; // stale: re-index from scratch
   rlIn(obj(root["rl"]));
   const ss = obj(root["sessions"]);
   if (!ss) return;
-  for (const path of Object.keys(ss)) {
-    const o = obj(ss[path]); if (!o) continue;
-    const a = accIn(o);
-    if (!ROWS.on) { ledger.set(path, a); continue; } // no rows built (checks): the day buckets alone are consistent with off
-    if (LAZY_ROWS) { ledger.set(path, a); written.set(path, a.off); unread.add(path); continue; } // its calls file, as is, until it grows
-    const calls = loadCallsFrom(CALLS_DIR, path, a);
-    if (!calls) continue; // no or stale call rows: this session alone re-indexes
-    a.calls = calls; a.lastCall = calls.length - 1;
-    ledger.set(path, a); written.set(path, a.off);
-  }
+  for (const path of Object.keys(ss)) { const o = obj(ss[path]); if (o) install(path, o); }
 }
 // ledger offset each session's calls file was last written at (= consistent with)
 const written = new Map<string, number>();
@@ -75,17 +87,13 @@ function saveCalls(): void {
 let savedIdx = -1; let lastSave = 0;
 function save(): void {
   if (!loaded || L.idx === savedIdx || !ROWS.on) return; // without rows a save would leave calls files behind the ledger
-  const ss: Obj = {};
-  for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) ss[s.path] = accOut(a, KEEP_IDS); } // only sessions that still exist
   saveCalls();
-  const body = JSON.stringify({ v: VERSION, prices: PRICES_SIG, saved: Date.now(), rl: rlOut(), sessions: ss });
-  try {
-    mkdirSync(DIR, { recursive: true });
-    const tmp = FILE + ".tmp";
-    const fd = openSync(tmp, "w"); writeSync(fd, body); closeSync(fd);
-    renameSync(tmp, FILE); // atomic: a crash mid-write never leaves a torn cache
-    savedIdx = L.idx;
-  } catch (e) { /* read-only home etc.: keep indexing in memory */ }
+  const ok = writeCache(FILE, { v: VERSION, prices: PRICES_SIG, rl: rlOut() }, (put: (path: string, o: Obj) => void): void => {
+    for (const s of sessions.values()) { const a = ledger.get(s.path); if (a && a.off > 0) put(s.path, accOut(a, KEEP_IDS)); } // only sessions that still exist
+  });
+  if (!ok) return; // read-only home etc.: keep indexing in memory
+  savedIdx = L.idx;
+  if (existsSync(OLD)) { try { unlinkSync(OLD); } catch (e) { /* the newer FILE wins at the next load anyway */ } }
 }
 
 LAZY.rows = (path: string, a: Acc): boolean => {
@@ -115,7 +123,8 @@ if (!REDACT) {
 H.firstScan.push(load); // not at import: --help, --version and the agent help never read it
 // a one-shot CLI run keeps what it indexed for the next run (also on an error exit: what was saved is consistent)
 process.on("exit", () => { try { save(); } catch (e) { /* never block the exit */ } });
-// a save serializes the whole ledger (tens of MB and ~0.5 s of CPU with a long history): every 30 s only while indexing
-// (a crash must not lose much of a first index), else every 5 min; quit always saves, a crash re-reads ≤ 5 min of logs
+// a save serializes the whole ledger (tens of MB written, ~0.5 s of CPU with a long history; one session's line in memory
+// at a time): only when something was indexed, every 30 s while indexing (a crash must not lose much of a first index),
+// else every 5 min, never on the first tick (the clock starts at load); quit always saves, a crash re-reads ≤ 5 min of logs
 H.onTick.push(() => { if (Date.now() - lastSave > (indexing() ? 30000 : 300000)) { lastSave = Date.now(); save(); } });
 H.onQuit.push(save);
