@@ -59,15 +59,13 @@ eq("absent banner", r0 ? r0.status + (r0.counted ? "+" : "") : "-", "unknown+");
 m = attribute([si("A", "X", 0, 10000, [vr("commit", "fffffff", 5000)])], logs("X", [ev("a", 1000, "commit", "main")]));
 const ge = m.get("A"); let re0: GCommit | null = null; if (ge) for (const c of ge.commits) if (c.sha === "fffffff") re0 = c;
 eq("absent banner, reflog reaching back", re0 ? re0.status + (re0.counted ? "+" : "") : "-", "unknown+");
-// …but on a branch the repo has never had, after the reflog's start: made in another repo (a test script's temp repo:
-// `sh probe.sh` printing "[g 9318fc4] fc") — elsewhere, never counted; a detached banner or an older one stays unknown+
-{ const brs = (common: string, br: string): boolean => common === "X" && (br === "main" || br === "feat");
-  const vb = (v: string, t: number, br: string): VRef => { const r = vr("commit", v, t); r.br = br; return r; };
+// …unless the repo's object DB says the sha is not there: made in another repo (a test script's temp repo printing
+// "[g 9318fc4] fc") — elsewhere, never counted; in the DB (a removed worktree's commit) or unknown: unknown+
+{ const db = (common: string, v: string): number => common !== "X" ? -1 : v.startsWith("e") ? 1 : v.startsWith("g") ? 0 : -1;
   const st = (mm: Map<string, GitInfo>, v: string): string => { const gg = mm.get("A"); if (gg) for (const c of gg.commits) if (c.sha === v) return c.status + (c.counted ? "+" : ""); return "-"; };
-  m = attributeWith([si("A", "X", 0, 10000, [vb("ggggggg", 5000, "g"), vb("eeeeeee", 5000, "feat"), vb("ccccccc", 5000, ""), vb("bbbbbbb", 500, "g")])], logs("X", [ev("a", 1000, "commit", "main")]), new Map<string, string[]>(), brs);
-  eq("foreign branch banner", st(m, "ggggggg"), "elsewhere"); eq("known branch banner", st(m, "eeeeeee"), "unknown+");
-  eq("detached banner", st(m, "ccccccc"), "unknown+"); eq("banner older than the reflog", st(m, "bbbbbbb"), "unknown+");
-  const gx = m.get("A"); eq("foreign banner not produced", gx ? String(gx.produced) : "-", "3"); }
+  m = attributeWith([si("A", "X", 0, 10000, [vr("commit", "ggggggg", 5000), vr("commit", "eeeeeee", 5000), vr("commit", "ccccccc", 5000)])], logs("X", [ev("a", 1000, "commit", "main")]), new Map<string, string[]>(), db);
+  eq("foreign banner", st(m, "ggggggg"), "elsewhere"); eq("banner in the object DB", st(m, "eeeeeee"), "unknown+"); eq("object DB unreadable", st(m, "ccccccc"), "unknown+");
+  const gx = m.get("A"); eq("foreign banner not produced", gx ? String(gx.produced) : "-", "2"); }
 // a banner made in another worktree of the same repo (cd ../wt && git commit): found in that worktree's reflog —
 // observed and counted there, never ≈ for a session working in that worktree
 { const lg = logs("X", [ev("a", 1000, "commit", "main")]); lg.set("W", [ev("w", 5000, "commit", "feat")]);

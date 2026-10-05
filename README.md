@@ -358,9 +358,9 @@ transcript at the tool call that made the commit or printed the link, `y` copies
   `"git": {"tailPadMin": 10}`, 0–120; live sessions until now). The person may have made them.
   **`? shared`**: the same, covered by several sessions of the worktree — listed on each, counted on none.
 - A banner made in another worktree of the same repo is found in that worktree's reflog and counts. One that is in no
-  reflog (the worktree was removed since) counts too — unless it names a branch the repo does not have and the reflog
-  reaches back before it (a test script's temp repo): `elsewhere` at once. `--git` and the git view then check the
-  repo's objects: a sha that is not there (`git -C ../other commit`) is `elsewhere`, not counted. Without a reflog (deleted, `core.logAllRefUpdates=false`, expired) the view says "no reflog — matched by
+  reflog (the worktree was removed since) counts when its sha is in the repo's objects (read directly, no git call);
+  a sha that is not there (`git -C ../other commit`, a test script's temp repo) is `elsewhere`, not counted. `--git`
+  and the git view add full shas and diff stats. Without a reflog (deleted, `core.logAllRefUpdates=false`, expired) the view says "no reflog — matched by
   time" and lists the commits of the session's branch in its window by your `user.email` (≈, and only when no other
   session of the project was active then).
 - PR/MR, issue and commit URLs of GitHub, GitLab (nested groups, `/-/merge_requests/`), Bitbucket and Gitea/Forgejo
