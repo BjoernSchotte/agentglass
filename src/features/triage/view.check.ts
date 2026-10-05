@@ -95,6 +95,22 @@ eq("triage scope narrowed", T.st ? print(T.st.run.scope) : "none", "harness is c
 openTriage(newRun("Sessions", "call", [], parse("status is error").cs, 2), () => {});
 selectRow("harness", "codex"); includeSel(true);
 eq("exclude replaces is", print(localFor("Sessions")), "harness is_not codex");
+// a pinned set: + and − narrow it, in the run and in the tab (pins ∘ local), never widen it
+initPins({ load: () => "harness is_one_of claude codex", save: (v: string) => { saved = v; }, remember: true }); setLocal("Sessions", []);
+openTriage(newRun("Sessions", "call", S.pins.slice(), parse("status is error").cs, 2), () => {});
+selectRow("harness", "codex"); includeSel(false);
+eq("+ on a pinned set narrows the run", T.st ? print(T.st.run.scope) : "", "harness is codex");
+eq("+ on a pinned set: the tab", print(localFor("Sessions")), "harness is codex");
+setLocal("Sessions", []); openTriage(newRun("Sessions", "call", S.pins.slice(), parse("status is error").cs, 2), () => {});
+selectRow("harness", "codex"); includeSel(true);
+eq("− on a pinned set narrows the run", T.st ? print(T.st.run.scope) : "", "harness is claude");
+// a local set: + narrows it (the row is one of its values), it does not merge into the same set
+initPins({ load: () => "", save: (v: string) => { saved = v; }, remember: true }); setLocal("Sessions", parse("harness is_one_of claude codex").cs);
+openTriage(newRun("Sessions", "call", [], parse("status is error").cs, 2), () => {});
+selectRow("harness", "codex");
+eq("+ on a local set: toast", includeSel(false), "Sessions filter: + harness is codex (narrowed: harness is codex)");
+eq("+ on a local set narrows the tab", print(localFor("Sessions")), "harness is codex");
+setLocal("Sessions", parse("harness is_not codex").cs);
 // a non-tab origin receives the clause through onInclude; the tabs' filters stay as they are
 let got = "";
 onInclude("Compare", (c: Clause): string => { got = printClause(c); return "group A: + " + printClause(c); });
@@ -121,6 +137,13 @@ onInput("R"); eq("R real", print(S.pins) + " | " + saved, " | ");
 openTriage(newRun("Stats", "call", [], parse("status is error").cs, 2), () => {});
 selectRow("tool", "Bash"); onInput("o");
 eq("o opens Sessions", String(S.tab) + " " + S.mode + " " + print(localFor("Sessions")), "0 list harness is_not codex and status is error and tool is Bash");
+
+// the typed selection (s, 7): tab after a unique completion goes on, a parse error marks its column
+openTriage(newRun("Stats", "call", [], parse("status is error").cs, 2), () => {});
+onInput("s"); onInput("7"); eq("7 asks", S.mode + " " + S.inputAction, "input triage");
+onInput("ctrl-u"); for (const ch of "harn") onInput(ch); onInput("tab"); onInput("tab"); eq("selection: tab after a unique key goes on", S.inputText, "harness is ");
+onInput("ctrl-u"); for (const ch of "status is bogus") onInput(ch); eq("selection: error column", String(S.inputErrCol), "10");
+onInput("esc"); onInput("esc");
 
 // ── t: entry points ──
 fxBase(); initPins({ load: () => "repo is agentglass", save: (v: string) => {}, remember: true });
