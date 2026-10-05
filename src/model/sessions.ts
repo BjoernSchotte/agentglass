@@ -42,7 +42,7 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, parent
 }
 // per harness: what its last scan listed and the sessions those were. A scan that lists the same paths (no directory
 // was listed again: the listings are the cached ones, no log came) walks those sessions instead: no lookup per log
-interface Listed { paths: string[]; ids: string[]; pars: string[]; arch: boolean[]; sess: (Sess | null)[] }
+interface Listed { paths: string[]; ids: string[]; pars: string[]; arch: boolean[]; sess: (Sess | null)[]; live: number; hot: number[] | null; isHot: boolean[] }
 const NOPATHS: string[] = [];
 const LISTED = new Map<string, Listed>();
 // new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file.
@@ -84,13 +84,20 @@ export function scan(): void {
     });
     const short = LISTING.same; LISTING.want = false; LISTING.same = false;
     if (m && ((short && n === 0) || (same && n === prev.length))) { // the same listing: its sessions, in turns
-      for (let i = 0; i < m.sess.length; i++) { const s = m.sess[i]; if (s && !refresh(ad.id, s, i % ROT)) m.sess[i] = null; }
+      // only the hot ones (live, written within a day) and this scan's rotation turn are looked at; the hot list is
+      // made again once per rotation round (a log turning old; a live one is stat'ed by probeLive meanwhile)
+      if (!m.hot || SCAN.no % ROT === 0) { m.hot = []; m.isHot = []; for (let i = 0; i < m.sess.length; i++) { const s = m.sess[i]; const h = s !== null && (s.pid > 0 || SCAN.now - s.mtime < RECENT_MS); m.isHot.push(h); if (h) m.hot.push(i); } }
+      let seen = 0; const turn = SCAN.no % ROT; const s0 = SCAN.seen;
+      for (const i of m.hot) { const s = m.sess[i + 0]; if (!s) continue; seen++; if (!refresh(ad.id, s, i % ROT)) { m.sess[i + 0] = null; m.live--; } }
+      for (let i = turn; i < m.sess.length; i += ROT) { const s = m.sess[i]; if (!s || (m.isHot[i] ?? false)) continue; seen++; if (!refresh(ad.id, s, turn)) { m.sess[i] = null; m.live--; } }
+      SCAN.seen = s0 + (SCAN.seen - s0) + (m.live - seen); // the ones not looked at count as listed
       continue;
     }
     if (same && m) for (let i = 0; i < n; i++) { paths.push(prev[i] ?? ""); ids.push(m.ids[i] ?? ""); pars.push(m.pars[i] ?? ""); arch.push(m.arch[i] ?? false); } // a shorter listing
     const sess: (Sess | null)[] = [];
     for (let i = 0; i < paths.length; i++) sess.push(addFile(ad.id, paths[i] ?? "", ids[i] ?? "", arch[i] ?? false, pars[i] ?? ""));
-    LISTED.set(ad.id, { paths, ids, pars, arch, sess });
+    let live = 0; for (const x of sess) if (x) live++;
+    LISTED.set(ad.id, { paths, ids, pars, arch, sess, live, hot: null, isHot: [] });
   }
   if (SCAN.gone.length) LISTED.clear(); // the walks above hold sessions that go now
   for (const p of SCAN.gone) if (sessions.delete(p)) SG.gen++; // listed but no longer there
