@@ -11,29 +11,14 @@ import { ledger, indexing, unread, LAZY, accOf } from "./ledger.ts";
 import { REDACT } from "../redact-on.ts";
 import { type Acc, L } from "./record.ts";
 import { ROWS } from "./facts.ts";
-import { rulesNeedRows } from "../rules/file.ts";
 import { PRICES_SIG } from "./pricing.ts";
 import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { readCache, writeCache } from "./cachefile.ts";
 import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
-// Runs that never read call rows (`cost`, `sessions`, `session`, plain --json / --watch) read a session's calls file only
-// right before that session grows (ledger.ts LAZY), not all of them up front: the rows they save stay whole. `errors` and
-// `triage` read the rows of the sessions in their window only (rowsOf). A --filter or --pinned may need every row.
-const GLOBAL = ["--agent", "--no-agent", "--redact"]; // flags of any command (main.ts moves them last)
-const ARGV = process.argv.slice(2).filter((a: string) => GLOBAL.indexOf(a) < 0);
-function lazyRows(): boolean {
-  const filtered = ARGV.indexOf("--filter") >= 0 || ARGV.indexOf("--pinned") >= 0;
-  if (ARGV[0] === "cost" || ARGV[0] === "sessions" || ARGV[0] === "session") return !filtered;
-  if (ARGV[0] === "triage") return true; // its scope is cheap clauses: every session it ranks goes through rowsOf
-  if (ARGV[0] === "errors") return !filtered;
-  const oneShot = ["--json", "--watch"].some((x: string) => ARGV.indexOf(x) >= 0);
-  if (!oneShot || filtered) return false;
-  // --json alerts / --watch alert lines of a rule on call rows (tool_calls, tool_errors, tool_error_rate)
-  return !((ARGV.indexOf("--json") >= 0 || ARGV.indexOf("--watch") >= 0) && ARGV.indexOf("--no-alerts") < 0 && rulesNeedRows());
-}
-const LAZY_ROWS = lazyRows();
+// Every run reads a session's calls file only when something asks for its rows (ledger.ts callsOf) or right before the
+// session grows (ledger.ts LAZY), never all of them up front: the rows it saves stay whole.
 const DIR = CACHE_DIR; // AGENTGLASS_CACHE_DIR or ~/.agentglass/cache
 // one header line + one line per session, streamed (cachefile.ts); ledger.json = the one-object file of 2026.10.4 and
 // before, read once to migrate (no re-index on upgrade) and removed after the first save of FILE
@@ -54,11 +39,7 @@ function load(): void {
 function install(path: string, o: Obj): void {
   const a = accIn(o);
   if (!ROWS.on) { ledger.set(path, a); return; } // no rows built (checks): the day buckets alone are consistent with off
-  if (LAZY_ROWS) { ledger.set(path, a); written.set(path, a.off); unread.add(path); return; } // its calls file, as is, until it grows
-  const calls = loadCallsFrom(CALLS_DIR, path, a);
-  if (!calls) return; // no or stale call rows: this session alone re-indexes
-  a.calls = calls; a.lastCall = calls.length - 1;
-  ledger.set(path, a); written.set(path, a.off);
+  ledger.set(path, a); written.set(path, a.off); unread.add(path); // its calls file, as is, until asked for or it grows
 }
 function loadOld(): void {
   let size = 0;

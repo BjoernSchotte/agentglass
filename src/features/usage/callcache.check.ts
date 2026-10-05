@@ -4,6 +4,7 @@ import { rmSync, writeFileSync, existsSync } from "node:fs";
 import { newAcc, bucket, tool, pend, file } from "./record.ts";
 import { type Call, MQ_MSG, DICT, nameOf, intern } from "./facts.ts";
 import { pathKey, encodeCalls, decodeCalls, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
+import { accOut, accIn } from "./codec.ts";
 import { intOf } from "../../util/config.ts";
 
 let bad = 0;
@@ -56,6 +57,15 @@ ok("save", saveCallsTo(dir, "/s/x.jsonl", a), "");
 const rl = loadCallsFrom(dir, "/s/x.jsonl", a);
 ok("load", !!rl && rl.length === 2, rl ? String(rl.length) : "null");
 a.off = 1; ok("load other off", loadCallsFrom(dir, "/s/x.jsonl", a) === null, ""); a.off = 900;
+// reading rows decodes the day maps' text keys without keeping them decoded (a ledger loaded from the cache keeps them text)
+const two = newAcc(); two.off = 50; const t1 = bucket(two, 0, "2026-10-01T10:00:00.000Z"); pend(two, t1, tool(two, t1, "Bash", "", MQ_MSG), "Bash", "c1", 0, "2026-10-01T10:00:00.000Z", "", ["make"]);
+const t2 = bucket(two, 0, "2026-10-02T10:00:00.000Z"); pend(two, t2, tool(two, t2, "Bash", "", MQ_MSG), "Bash", "c2", 0, "2026-10-02T10:00:00.000Z", "", ["make test"]); file(two, t2, "Edit", "/w/b.ts", 1, 0);
+ok("save two days", saveCallsTo(dir, "/s/two.jsonl", two), "");
+const cold = accIn(accOut(two)); let pinned = 0; for (const x of cold.days.values()) if (x.hx) pinned++;
+ok("cache-loaded days are text", pinned === 0 && cold.days.size === 2, String(pinned));
+const cr = loadCallsFrom(dir, "/s/two.jsonl", cold); pinned = 0; for (const x of cold.days.values()) if (x.hx) pinned++;
+const crs: string[] = []; if (cr) for (const c of cr) { const cs: string[] = []; for (const x of c.cmds) cs.push(nameOf(DICT.cmd, x)); crs.push(cs.join("+")); }
+ok("rows from text days, days not pinned", crs.join(",") === "make,make test" && pinned === 0, crs.join(",") + " pinned " + String(pinned));
 ok("load missing", loadCallsFrom(dir, "/s/none.jsonl", a) === null, "");
 writeFileSync(dir + "/" + pathKey("/s/z.jsonl") + ".json", "{}"); writeFileSync(dir + "/junk.json.tmp", "x");
 sweepCalls(dir, new Set<string>([pathKey("/s/x.jsonl")]));

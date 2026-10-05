@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
 import { readText, listDir, cacheDir } from "../../util/fs.ts";
 import { intSetting } from "../../util/config.ts";
-import { type Acc, startOfDay, num, heavy } from "./record.ts";
+import { type Acc, startOfDay, num, peekHeavy } from "./record.ts";
 import { type Call, type Dict, DICT, intern, nameOf } from "./facts.ts";
 
 // AGENTGLASS_CACHE_DIR: a separate ledger cache (test builds of other branches must not rewrite the real one)
@@ -42,15 +42,17 @@ function localIds(d: Dict, m: Map<number, number>, names: string[], xs: number[]
 // session, is stored literally (ref = -1 - index into the literal list). An unresolvable hash makes the file invalid.
 const AMBIG = "\u0000"; // two texts of one session share the hash
 function textHash(s: string): number { return fnv(s, 2166136261); }
-function refTable(a: Acc, cmds: boolean): Map<number, string> {
-  const m = new Map<number, string>();
-  for (const d of a.days.values()) {
-    for (const k of (cmds ? heavy(d).cmds : heavy(d).files).keys()) {
-      const x = k.slice(k.indexOf("\t") + 1); const h = textHash(x); const o = m.get(h);
-      if (o === undefined) m.set(h, x); else if (o !== x) m.set(h, AMBIG);
-    }
-  }
-  return m;
+// both tables in one pass over the days; a day not decoded yet is decoded for this and dropped again (peekHeavy): reading
+// a session's rows must not pin every day's heavy maps
+interface Refs { cmds: Map<number, string>; files: Map<number, string> }
+function refInto(m: Map<number, string>, k: string): void {
+  const x = k.slice(k.indexOf("\t") + 1); const h = textHash(x); const o = m.get(h);
+  if (o === undefined) m.set(h, x); else if (o !== x) m.set(h, AMBIG);
+}
+function refTables(a: Acc): Refs {
+  const r: Refs = { cmds: new Map<number, string>(), files: new Map<number, string>() };
+  for (const d of a.days.values()) { const h = peekHeavy(d); for (const k of h.cmds.keys()) refInto(r.cmds, k); for (const k of h.files.keys()) refInto(r.files, k); }
+  return r;
 }
 function refsOut(names: string[], tab: Map<number, string>, lits: string[]): number[] {
   const o: number[] = [];
@@ -104,7 +106,7 @@ export function encodeCalls(path: string, a: Acc): string {
     ms.push(c.ms); er.push(c.err); ou.push(c.out); ids.push(c.cid);
   }
   const cl: string[] = []; const fl: string[] = [];
-  const cr = refsOut(cn, refTable(a, true), cl); const fr = refsOut(fn, refTable(a, false), fl);
+  const rt = refTables(a); const cr = refsOut(cn, rt.cmds, cl); const fr = refsOut(fn, rt.files, fl);
   const cf = frontOut(cl, cr); const ff = frontOut(fl, fr);
   const cp = cidPrefix(ids); const ci: string[] = []; for (const c of ids) ci.push(c ? c.slice(cp.length) : "");
   return JSON.stringify({ v: FORMAT, path, off: a.off, tool: tn, model: mn, prog: pn, cmd: cr, cmdp: cf.pre, cmdl: cf.rest, file: fr, filep: ff.pre, filel: ff.rest, cp, t, to, mo, mq, pg, cm: cmd, fi, ms, er, ou, ci });
@@ -147,8 +149,9 @@ export function decodeCalls(body: string, path: string, a: Acc): Call[] | null {
   const tg = globalIds(DICT.tool, o["tool"]); if (!tg) return null;
   const mg = globalIds(DICT.model, o["model"]); if (!mg) return null;
   const pg = globalIds(DICT.prog, o["prog"]); if (!pg) return null;
-  const cg = refIds(DICT.cmd, o["cmd"], o["cmdp"], o["cmdl"], refTable(a, true)); if (!cg) return null;
-  const fg = refIds(DICT.file, o["file"], o["filep"], o["filel"], refTable(a, false)); if (!fg) return null;
+  const rt = refTables(a);
+  const cg = refIds(DICT.cmd, o["cmd"], o["cmdp"], o["cmdl"], rt.cmds); if (!cg) return null;
+  const fg = refIds(DICT.file, o["file"], o["filep"], o["filel"], rt.files); if (!fg) return null;
   const t = nums(o["t"]); if (!t) return null;
   const n = t.length;
   const to = col(o["to"], n); if (!to) return null;

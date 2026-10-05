@@ -25,6 +25,8 @@ export interface Heavy { tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<
 export function newHeavy(): Heavy { return { tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>() }; }
 export const HEAVY = { decode: (raw: string): Heavy => newHeavy() };
 export function heavy(d: Day): Heavy { let h = d.hx; if (!h) { h = d.hv ? HEAVY.decode(d.hv) : newHeavy(); d.hx = h; d.hv = ""; } return h; }
+// read-only look without keeping what it decoded (the day stays text): for passes over many days (call-row decoding)
+export function peekHeavy(d: Day): Heavy { const h = d.hx; return h ? h : d.hv ? HEAVY.decode(d.hv) : newHeavy(); }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Map<string, number>; days: Map<string, Day>; model: string; // claude: booked message id → its output_tokens booked so far

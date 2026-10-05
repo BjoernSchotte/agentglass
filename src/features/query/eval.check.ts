@@ -3,10 +3,10 @@
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
-import { accOf } from "../usage/ledger.ts";
+import { accOf, ledger, unread, LAZY } from "../usage/ledger.ts";
 import { bucket, tool } from "../usage/record.ts";
 import { DICT, nameOf, localOf, MQ_MSG } from "../usage/facts.ts";
-import { setCallDaysForTest } from "../usage/callcache.ts";
+import { setCallDaysForTest, saveCallsTo, loadCallsFrom } from "../usage/callcache.ts";
 import { parse, printClause } from "./parse.ts";
 import { register } from "./attrs.ts";
 import { type Compiled, EMPTY, compile, matchSession, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf, beyondRetention } from "./eval.ts";
@@ -128,5 +128,22 @@ eq("day clauses inside", String(beyondRetention(["2026-10-01", "2026-10-02"], []
 eq("day clauses before", String(beyondRetention(["2026-01-01", "2026-10-02"], [], "2025-01-01", cut)), "true");
 eq("day clauses ∩ period: the old day is outside the period", String(beyondRetention(["2026-01-01", "2026-10-02"], ["2026-09-28", "2026-10-02"], "2025-01-01", cut)), "false");
 eq("no day left", String(beyondRetention([], [], "2025-01-01", cut)), "false");
+// lazy call rows: rows only on disk (as after a cache load) give the same answers as rows in memory, and a session with no
+// day bucket in the window is not read at all
+{
+  fxBase();
+  const rowsOfAll = (src: string, days: string[]): string => { const o: string[] = []; eachCall(F(src, "stats"), days, (s: Sess, c) => { o.push(s.id + ":" + nameOf(DICT.tool, c.tool) + ":" + String(c.t)); }); return o.sort().join(","); };
+  const today = [localOf(Date.now()).day]; const yday = [localOf(Date.parse(isoAt(1, 9, 0))).day];
+  const memErr = rowsOfAll("status is error", today); const memRead = rowsOfAll("tool is Read", yday); const memMatch = S0("tool is Bash and status is error");
+  const dir = "/tmp/agentglass-eval-lazy-" + String(process.pid); rmSync(dir, { recursive: true, force: true });
+  for (const s of sessions.values()) { const a = ledger.get(s.path); if (a) { saveCallsTo(dir, s.path, a); a.calls = []; a.lastCall = -1; unread.add(s.path); } }
+  const was = LAZY.rows; const read: string[] = [];
+  LAZY.rows = (path: string, a) => { read.push(path); const cs = loadCallsFrom(dir, path, a); if (!cs) return false; a.calls = cs; a.lastCall = cs.length - 1; return true; };
+  eq("lazy rows: yesterday's Read rows, only c1 read", rowsOfAll("tool is Read", yday) + " read " + read.map((p: string) => p.slice(p.lastIndexOf("/") + 1)).join(","), memRead + " read c1.jsonl");
+  eq("lazy rows: errors today", rowsOfAll("status is error", today), memErr);
+  eq("lazy rows: matchSession", S0("tool is Bash and status is error"), memMatch);
+  eq("lazy rows: all read once", String(unread.size), "0");
+  LAZY.rows = was; rmSync(dir, { recursive: true, force: true });
+}
 console.log(bad ? bad + " failed" : "filter eval: all checks passed");
 if (bad) process.exit(1);

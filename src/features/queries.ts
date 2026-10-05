@@ -7,7 +7,7 @@ import { H, complete, display, realCwd, screenOut } from "../hooks.ts";
 import { S } from "../state.ts";
 import { sessions, loadHead, loadTail, subActive } from "../model/sessions.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
-import { accOf, ledger, rowsOf } from "./usage/ledger.ts";
+import { accOf, rowsOf, callsOf } from "./usage/ledger.ts";
 import { type Acc, modelUses, isoMs, dayKey, heavy } from "./usage/record.ts";
 import { type Call, ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
 import { callCutoff } from "./usage/callcache.ts";
@@ -219,7 +219,7 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
   if (ROWS.on) {
     srcs.push("calls");
     // the days to read: from since (or the oldest row of these sessions) through today
-    let first = Math.max(sinceMs, callCutoff()); if (sinceMs <= 0) { first = Date.now(); for (const p of fam) { const a = ledger.get(p); if (a) for (const c of a.calls) if (c.t < first) first = c.t; } first = Math.max(first, callCutoff()); }
+    let first = Math.max(sinceMs, callCutoff()); if (sinceMs <= 0) { first = Date.now(); for (const p of fam) { const x = sessions.get(p); if (x) for (const c of callsOf(x)) if (c.t < first) first = c.t; } first = Math.max(first, callCutoff()); }
     eachCall(cf.f, daysFrom(first, Date.now()), (s: Sess, c: Call): void => {
       if (c.err !== 1 || c.t < sinceMs || !fam.has(s.path)) return;
       items.push({ s, tool: nameOf(DICT.tool, c.tool), t: c.t, ts: new Date(c.t).toISOString(), ms: c.ms, id: c.cid, arg: "", argKnown: false });

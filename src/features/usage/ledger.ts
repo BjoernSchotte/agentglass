@@ -9,6 +9,7 @@ import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
 import { type Acc, L, newAcc, startOfDay, flushSpans } from "./record.ts";
+import type { Call } from "./facts.ts";
 import { scrape } from "./vcs.ts";
 import { OWN, reconcile, release } from "./owners.ts";
 import { DEBUG_PARTS } from "../../util/selfmem.ts";
@@ -22,14 +23,24 @@ const CHUNK = 1048576;
 export const PACE = { sliceMs: 50, tickMs: 250, fullMs: 5000 };
 const LIVE_MB = 1048576; // a live session this far behind is indexing (a first read, a resume), below it is ingest
 
-// call rows the cache has but this run has not read (a run that never reads rows: cache.ts): they are read right before
-// the session grows, so its rows stay whole when it is saved; false = none or stale, the session is indexed from the start
+// call rows the cache has but this run has not read (cache.ts): a session's calls file is read only when something asks
+// for its rows (callsOf) or right before the session grows, so its rows stay whole when it is saved; false = none or stale,
+// the session is indexed from the start
 export const unread = new Set<string>();
 export const LAZY = { rows: (path: string, a: Acc): boolean => false };
-// a reader of call rows in such a run (errors, triage: only the sessions of their window): this session's rows, now
+// a reader of call rows (errors, triage: only the sessions of their window): this session's rows, now
 export function rowsOf(s: Sess): void {
   const a = ledger.get(s.path); if (!a || !unread.has(s.path)) return;
   unread.delete(s.path); if (!LAZY.rows(s.path, a)) ledger.delete(s.path); // stale: accOf starts it over
+}
+// one-shot runs index a session whose rows turned out stale right away (the answer must be whole); the TUI leaves that to
+// its ticks (H.start clears it) rather than block a frame on reading a whole log
+const BLOCKING = { on: true };
+// the one way to read a session's call rows (filters, rules, triage, compare, Stats): reads its calls file first if this
+// run has not; [] when it has none (yet)
+export function callsOf(s: Sess): Call[] {
+  if (unread.has(s.path)) { rowsOf(s); if (!ledger.has(s.path) && BLOCKING.on) complete(s); }
+  const a = ledger.get(s.path); return a ? a.calls : [];
 }
 export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);
@@ -238,5 +249,6 @@ function finish(s: Sess): void {
 }
 
 H.onTick.push(tick);
+H.start.push(() => { BLOCKING.on = false; });
 H.enrich.push((s: Sess) => { L.prio = s.path; L.prioAt = Date.now(); }); // O(1): the next tick indexes this one first
 H.complete.push(complete);

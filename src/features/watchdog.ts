@@ -9,7 +9,7 @@ import { allProcs, hist, rootOf, refreshProcs, paneTitles, ttyOf } from "../mode
 import { harnessOf } from "../harness/index.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf } from "./detect.ts";
-import { accOf, complete as ledgerComplete } from "./usage/ledger.ts";
+import { accOf, callsOf, complete as ledgerComplete } from "./usage/ledger.ts";
 import type { Call } from "./usage/facts.ts";
 import { sessMatches } from "./query/eval.ts";
 import { type Rule, type RuleSet, CALL_METRICS, thrText, unitOf } from "./rules/config.ts";
@@ -66,7 +66,7 @@ export function ruleVals(rs: RuleSet, s: Sess, o: Obs, turnAt: (r: Rule) => numb
   for (const r of rs.rules) {
     if (!r.enabled) continue;
     const f = r.wf; if (f && !sessMatches(f, s)) continue;
-    if (rowMetric(r) && !haveRows) { rows = accOf(s).calls; haveRows = true; }
+    if (rowMetric(r) && !haveRows) { accOf(s); rows = callsOf(s); haveRows = true; }
     m.set(r.id, metricOf(r, s, o, turnAt(r), rows, memo));
   }
   return m;

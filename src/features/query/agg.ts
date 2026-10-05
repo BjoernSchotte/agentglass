@@ -4,7 +4,7 @@
 // buckets cannot answer (model × status, …), reads the call rows (within retention). Callers do not choose.
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger } from "../usage/ledger.ts";
+import { ledger, callsOf } from "../usage/ledger.ts";
 import { type Day, L, heavy } from "../usage/record.ts";
 import { type Call, type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
@@ -43,8 +43,7 @@ function outLabel(n: number, known: boolean): string { if (!known) return "unkno
 function stateOf(s: Sess): string { if (s.stuck) return "stuck"; if (s.attention) return "attention"; const p = livePid(s); return p && working(s) ? "busy" : p ? "idle" : "ended"; }
 function sessModels(s: Sess): string[] {
   const o: string[] = []; if (s.model) o.push(s.model);
-  const a = ledger.get(s.path);
-  if (a) { const seen = new Set<number>(); for (const c of a.calls) if (c.model >= 0 && !seen.has(c.model)) { seen.add(c.model); const m = nameOf(DICT.model, c.model); if (o.indexOf(m) < 0) o.push(m); } }
+  const seen = new Set<number>(); for (const c of callsOf(s)) if (c.model >= 0 && !seen.has(c.model)) { seen.add(c.model); const m = nameOf(DICT.model, c.model); if (o.indexOf(m) < 0) o.push(m); }
   return o.length ? o : ["unknown"];
 }
 function startOf(s: Sess): { hour: string; wd: string } { const a = ledger.get(s.path); const t0 = a ? a.t0 : 0; if (t0 <= 0) return { hour: "unknown", wd: "unknown" }; const l = localOf(t0); return { hour: String(l.hour), wd: WD[l.wd] ?? "" }; }

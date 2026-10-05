@@ -9,7 +9,7 @@ import { type RealMeta, realMeta, display } from "../../hooks.ts";
 import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/record.ts";
 import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
-import { accOf, ledger } from "../usage/ledger.ts";
+import { accOf, ledger, callsOf } from "../usage/ledger.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
@@ -58,8 +58,7 @@ const models = new Map<string, { ver: number; ss: string[] }>();
 function modelsOf(s: Sess): Val {
   const hit = models.get(s.path); if (hit && hit.ver === L.ver) return hit.ss.length ? V(hit.ss) : UNK;
   const set = new Set<string>(); if (s.model) set.add(s.model.toLowerCase());
-  const a = ledger.get(s.path);
-  if (a) { const seen = new Set<number>(); for (const c of a.calls) if (c.model >= 0 && !seen.has(c.model)) { seen.add(c.model); set.add(nameOf(DICT.model, c.model).toLowerCase()); } }
+  const seen = new Set<number>(); for (const c of callsOf(s)) if (c.model >= 0 && !seen.has(c.model)) { seen.add(c.model); set.add(nameOf(DICT.model, c.model).toLowerCase()); }
   const ss = [...set]; models.set(s.path, { ver: L.ver, ss });
   return ss.length ? V(ss) : UNK;
 }
@@ -331,13 +330,22 @@ function rowOk(f: Compiled, s: Sess, ds: Map<string, Day>, c: Call, cut: number,
   if (f.day.length) { const d = ds.get(dk); if (!d || !dayMatches(f, s, dk, d)) return false; }
   return callOk(f, s, c);
 }
+// rows fall on the session's day buckets: a session without a bucket in the window and within retention has no row there,
+// and its calls file is not read (call rows are read lazily, ledger.ts callsOf)
+const cutDay = { cut: -1, key: "" };
+function rowsMayMatch(ds: Map<string, Day>, cut: number, days: Set<string>, anyDay: boolean): boolean {
+  if (cut !== cutDay.cut) { cutDay.cut = cut; cutDay.key = localOf(cut).day; }
+  for (const k of ds.keys()) if (k >= cutDay.key && (anyDay || days.has(k))) return true;
+  return false;
+}
 export function matchSession(f: Compiled, s: Sess, days: string[] | null): boolean {
   if (!all1(f.sess, s)) return false;
   if (!f.call.length && !f.day.length) return true;
   const a = accOf(s); const any = days === null; const ds = new Set<string>(days ?? []);
   if (f.call.length) {
-    const cut = callCutoff();
-    for (let i = a.calls.length - 1; i >= 0; i--) if (rowOk(f, s, a.days, a.calls[i], cut, ds, any)) return true;
+    const cut = callCutoff(); if (!rowsMayMatch(a.days, cut, ds, any)) return false;
+    const cs = callsOf(s); const b = ledger.get(s.path) ?? a; // a stale calls file re-indexed the session: its new entry
+    for (let i = cs.length - 1; i >= 0; i--) if (rowOk(f, s, b.days, cs[i], cut, ds, any)) return true;
     return false;
   }
   for (const [dk, d] of a.days) { if (!any && !ds.has(dk)) continue; if (dayMatches(f, s, dk, d)) return true; }
@@ -350,6 +358,7 @@ export function eachCall(f: Compiled, days: string[], fn: (s: Sess, c: Call) => 
 // one session's rows of eachCall (resumable aggregation steps a session at a time)
 export function callsIn(f: Compiled, s: Sess, days: Set<string>, cut: number, fn: (c: Call) => void): void {
   if (!all1(f.sess, s)) return;
-  const a = ledger.get(s.path); if (!a) return;
-  for (const c of a.calls) if (rowOk(f, s, a.days, c, cut, days, false)) fn(c);
+  const a = ledger.get(s.path); if (!a || !rowsMayMatch(a.days, cut, days, false)) return;
+  const cs = callsOf(s); const b = ledger.get(s.path) ?? a;
+  for (const c of cs) if (rowOk(f, s, b.days, c, cut, days, false)) fn(c);
 }
