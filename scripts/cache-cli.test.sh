@@ -25,27 +25,28 @@ bounded() { # run with a 20 s limit (no timeout(1) on macOS): 124 = killed
 off() { grep -o '"off":[0-9]*' "$1" | head -1 | cut -d: -f2; } # the one session's offset in a cache file
 
 # help and version never read the ledger cache: a FIFO in its place would block the read until the timeout
-mkdir -p "$c"; mkfifo "$c/ledger.json"
+mkdir -p "$c"; mkfifo "$c/ledger.jsonl"; mkfifo "$c/ledger.json"
 for a in --help --version "cost --help" "triage --help"; do
   set +e; bounded $a; rc=$?; set -e
   eq "$a without the ledger" "$rc" 0
 done
 set +e; (AGENTGLASS_AGENT=1 bounded); rc=$?; set -e # subshell: macOS sh (bash 3.2 --posix) keeps an assignment before a function call
 eq "agent help without the ledger" "$rc" 0
-rm -f "$c/ledger.json"
+rm -f "$c/ledger.jsonl" "$c/ledger.json"
 
 # a plain --json run saves what it indexed: ledger and call rows at the end of the log
 run --json > /dev/null
 size=$(wc -c < "$f" | tr -d ' ')
-[ -s "$c/ledger.json" ] || { echo "FAIL --json saved no ledger.json"; fail=1; }
-eq "--json ledger offset" "$(off "$c/ledger.json")" "$size"
+[ -s "$c/ledger.jsonl" ] || { echo "FAIL --json saved no ledger.jsonl"; fail=1; }
+[ ! -e "$c/ledger.json" ] || { echo "FAIL --json wrote the old ledger.json"; fail=1; }
+eq "--json ledger offset" "$(off "$c/ledger.jsonl")" "$size"
 eq "--json calls offset" "$(off "$c"/calls/*.json)" "$size"
 
 # the log grows; cost (no call rows read) indexes the new lines and keeps the old rows: both files at the new end
 call 3 "make" ',"is_error":true'
 run cost --json > /dev/null
 size=$(wc -c < "$f" | tr -d ' ')
-eq "cost ledger offset" "$(off "$c/ledger.json")" "$size"
+eq "cost ledger offset" "$(off "$c/ledger.jsonl")" "$size"
 eq "cost calls offset" "$(off "$c"/calls/*.json)" "$size"
 # errors reads the rows from the cache: the failed call from before and the one after the growth
 e=$(run errors --format json --since 1d)
@@ -58,14 +59,30 @@ echo "$tr" | grep -q '"selection":{"expr":"status is error","n":2}' || { echo "F
 # nothing new to index (and the head/tail memos of this log already kept): the cache is not rewritten
 inode() { ls -i "$1" | awk '{print $1}'; } # a save renames a new file into place
 run --json > /dev/null
-before=$(inode "$c/ledger.json")
+before=$(inode "$c/ledger.jsonl")
 run --json > /dev/null
-eq "unchanged cache kept" "$(inode "$c/ledger.json")" "$before"
+eq "unchanged cache kept" "$(inode "$c/ledger.jsonl")" "$before"
 
 # a warm run (heads and tails replayed from their memos) prints what a cold one does
 rm -rf "$c"; cold=$(run --json); warm=$(run --json)
 eq "warm --json = cold --json" "$warm" "$cold"
 echo "$warm" | grep -q '"title":"hi"' || { echo "FAIL warm title: $warm"; fail=1; }
+
+# upgrade from the one-object ledger.json of 2026.10.4: read once, no log re-read (a marked token count in the old file
+# shows up as is), then saved as ledger.jsonl and the old file removed
+sed -n 1p "$c/ledger.jsonl" | sed 's/}$/,"sessions":{/' > "$c/old"
+sed -n '2,$p' "$c/ledger.jsonl" | sed 's/^{"path":\("[^"]*"\),/\1:{/' | paste -sd, - >> "$c/old"
+printf '}}\n' >> "$c/old"; tr -d '\n' < "$c/old" | sed 's/"t":\[30,/"t":[31,/' > "$c/ledger.json"; rm -f "$c/old" "$c/ledger.jsonl"
+eq "migrated --json = the old cache's numbers" "$(run --json)" "$(printf '%s' "$cold" | sed 's/"in":30,/"in":31,/')"
+[ -s "$c/ledger.jsonl" ] && [ ! -e "$c/ledger.json" ] || { echo "FAIL migration left: $(ls "$c")"; fail=1; }
+grep -q '"t":\[31,' "$c/ledger.jsonl" || { echo "FAIL migrated cache not carried over"; fail=1; }
+# an unreadable ledger.json newer than ledger.jsonl (an older build of another cache VERSION ran since) does not hide it
+printf '{"v":1,"sessions":{}}\n' > "$c/ledger.json"; touch -t 209901010000 "$c/ledger.json"
+eq "unreadable newer ledger.json: the jsonl's numbers" "$(run --json)" "$(printf '%s' "$cold" | sed 's/"in":30,/"in":31,/')"
+# a torn last line costs that session only: it re-indexes, the output stays the same
+n=$(wc -c < "$c/ledger.jsonl" | tr -d ' '); head -c $((n - 20)) "$c/ledger.jsonl" > "$c/torn"; mv "$c/torn" "$c/ledger.jsonl"
+eq "torn cache --json = cold --json" "$(run --json)" "$cold"
+eq "torn cache re-saved whole" "$(off "$c/ledger.jsonl")" "$(wc -c < "$f" | tr -d ' ')"
 
 [ $fail = 0 ] && echo "cache cli: all checks passed"
 exit $fail

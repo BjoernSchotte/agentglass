@@ -7,9 +7,10 @@ import type { Sess } from "../../model/types.ts";
 import { sessions, titleFrom, working, parentOf } from "../../model/sessions.ts";
 import { type RealMeta, realMeta, display } from "../../hooks.ts";
 import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/record.ts";
-import { type Call, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
+import { DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
+import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
-import { accOf, ledger } from "../usage/ledger.ts";
+import { accOf, ledger, callsOf, unread } from "../usage/ledger.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
@@ -23,11 +24,11 @@ export interface Compiled {
   cs: Clause[];           // the clauses compiled (pinned flags kept)
   sess: ((s: Sess) => boolean)[];
   day: ((s: Sess, dk: string, d: Day) => boolean)[];
-  call: ((s: Sess, c: Call) => boolean)[];
+  call: ((s: Sess, r: Rows, i: number) => boolean)[]; // call row i of the session's rows r
   event: ((s: Sess, kind: string, tool: string, args: string) => boolean)[];
   content: Clause[];      // content ~ / !~ clauses (the full-text search runs elsewhere)
   dayKeys: string[] | null; // known day keys passing the day/weekday clauses, sorted; null = no day clause (scriptc: no Set | null members)
-  rowx: ((s: Sess, c: Call) => boolean)[]; // per-row tests of session attributes a call refines (model): rows only, never lifted alone
+  rowx: ((s: Sess, r: Rows, i: number) => boolean)[]; // per-row tests of session attributes a call refines (model): rows only, never lifted alone
   needsCalls: boolean;    // any call clause or row refinement: totals and aggregates must read call rows
   dimmed: Clause[];       // clauses that do not apply in this ctx (procs: all but harness/repo/cwd/live)
 }
@@ -58,8 +59,8 @@ const models = new Map<string, { ver: number; ss: string[] }>();
 function modelsOf(s: Sess): Val {
   const hit = models.get(s.path); if (hit && hit.ver === L.ver) return hit.ss.length ? V(hit.ss) : UNK;
   const set = new Set<string>(); if (s.model) set.add(s.model.toLowerCase());
-  const a = ledger.get(s.path);
-  if (a) { const seen = new Set<number>(); for (const c of a.calls) if (c.model >= 0 && !seen.has(c.model)) { seen.add(c.model); set.add(nameOf(DICT.model, c.model).toLowerCase()); } }
+  const seen = new Set<number>(); const r = callsOf(s);
+  for (let i = 0; i < r.n; i++) { const m = r.model[i] + 0; if (m >= 0 && !seen.has(m)) { seen.add(m); set.add(nameOf(DICT.model, m).toLowerCase()); } }
   const ss = [...set]; models.set(s.path, { ver: L.ver, ss });
   return ss.length ? V(ss) : UNK;
 }
@@ -125,21 +126,21 @@ function progVals(xs: number[]): string[] {
   for (const x of xs) { const n = nameOf(DICT.prog, x); o.push(n.toLowerCase()); const sh = display("prog", n, null); if (sh !== n) o.push(EXACT + sh.toLowerCase()); }
   return o;
 }
-export function callVal(key: string, s: Sess, c: Call): Val {
+export function callVal(key: string, s: Sess, r: Rows, i: number): Val {
   switch (key) {
-    case "tool": return V([nameOf(DICT.tool, c.tool).toLowerCase()]);
-    case "server": return V([mcpServer(nameOf(DICT.tool, c.tool)).toLowerCase()]);
-    case "program": return V(progVals(c.progs));
-    case "command": return V(names(DICT.cmd, c.cmds));
-    case "file": return V(names(DICT.file, c.files));
-    case "ext": { const o: string[] = []; for (const f of c.files) { const e = extOf(nameOf(DICT.file, f)); if (o.indexOf(e) < 0) o.push(e); } return V(o); }
-    case "status": return V([c.err === 1 ? "error" : c.err === 0 ? "ok" : "unknown"]);
-    case "duration": return c.ms < 0 ? UNK : N(c.ms);
-    case "out": return c.err < 0 ? UNK : N(c.out);
-    case "hour": return N(localOf(c.t).hour);
-    case "model": return c.model < 0 ? UNK : V([nameOf(DICT.model, c.model).toLowerCase()]);
-    case "day": return V([localOf(c.t).day]);
-    case "weekday": return V([WD[localOf(c.t).wd] ?? ""]);
+    case "tool": return V([nameOf(DICT.tool, r.tool[i] + 0).toLowerCase()]);
+    case "server": return V([mcpServer(nameOf(DICT.tool, r.tool[i] + 0)).toLowerCase()]);
+    case "program": return V(progVals(rowIds(r, i, KIND_PROG)));
+    case "command": return V(names(DICT.cmd, rowIds(r, i, KIND_CMD)));
+    case "file": return V(names(DICT.file, rowIds(r, i, KIND_FILE)));
+    case "ext": { const o: string[] = []; for (const f of rowIds(r, i, KIND_FILE)) { const e = extOf(nameOf(DICT.file, f)); if (o.indexOf(e) < 0) o.push(e); } return V(o); }
+    case "status": { const e = r.err[i] + 0; return V([e === 1 ? "error" : e === 0 ? "ok" : "unknown"]); }
+    case "duration": return r.ms[i] < 0 ? UNK : N(r.ms[i] + 0);
+    case "out": return r.err[i] < 0 ? UNK : N(r.out[i] + 0);
+    case "hour": return N(localOf(r.t[i] + 0).hour);
+    case "model": return r.model[i] < 0 ? UNK : V([nameOf(DICT.model, r.model[i] + 0).toLowerCase()]);
+    case "day": return V([localOf(r.t[i] + 0).day]);
+    case "weekday": return V([WD[localOf(r.t[i] + 0).wd] ?? ""]);
   }
   return sessVal(key, s);
 }
@@ -286,9 +287,9 @@ export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr
     if (a.ent === "event") { f.event.push((s: Sess, kind: string, tool: string, args: string) => m(V([kind]))); continue; }
     // tool events, and result events with their call's name and arguments
     if (ctx === "watch" && a.ent === "call") { f.event.push((s: Sess, kind: string, tool: string, args: string) => (kind === "tool" || kind === "result") && m(eventVal(key, tool, args))); continue; }
-    if (a.ent === "call") { f.call.push((s: Sess, cl: Call) => m(callVal(key, s, cl))); f.needsCalls = true; continue; }
+    if (a.ent === "call") { f.call.push((s: Sess, r: Rows, i: number) => m(callVal(key, s, r, i))); f.needsCalls = true; continue; }
     // model is per session (its models) and per call (the issuing message's): the session test lifts, rows test their own
-    if (key === "model") { f.sess.push((s: Sess) => m(sessVal(key, s))); f.rowx.push((s: Sess, cl: Call) => m(callVal(key, s, cl))); f.needsCalls = true; continue; }
+    if (key === "model") { f.sess.push((s: Sess) => m(sessVal(key, s))); f.rowx.push((s: Sess, r: Rows, i: number) => m(callVal(key, s, r, i))); f.needsCalls = true; continue; }
     if (a.ent === "day") {
       f.day.push((s: Sess, dk: string, d: Day) => m(dayVal(key, s, dk, d)));
       if (key === "day" || key === "weekday") dateCs.push((dk: string) => key === "day" ? m(V([dk])) : m(V([WD[weekdayOf(dk)] ?? ""])));
@@ -316,40 +317,59 @@ function eventVal(key: string, tool: string, args: string): Val {
 function all1(ps: ((s: Sess) => boolean)[], s: Sess): boolean { for (const p of ps) if (!p(s)) return false; return true; }
 export function sessMatches(f: Compiled, s: Sess): boolean { return all1(f.sess, s); }
 export function dayMatches(f: Compiled, s: Sess, dk: string, d: Day): boolean { for (const p of f.day) if (!p(s, dk, d)) return false; return true; }
-function callOk(f: Compiled, s: Sess, c: Call): boolean { for (const p of f.call) if (!p(s, c)) return false; for (const p of f.rowx) if (!p(s, c)) return false; return true; }
-export function callMatches(f: Compiled, s: Sess, c: Call): boolean {
+function callOk(f: Compiled, s: Sess, r: Rows, i: number): boolean { for (const p of f.call) if (!p(s, r, i)) return false; for (const p of f.rowx) if (!p(s, r, i)) return false; return true; }
+export function callMatches(f: Compiled, s: Sess, r: Rows, i: number): boolean {
   if (!all1(f.sess, s)) return false;
-  if (f.day.length) { const dk = localOf(c.t).day; const d = accOf(s).days.get(dk); if (!d || !dayMatches(f, s, dk, d)) return false; }
-  return callOk(f, s, c);
+  if (f.day.length) { const dk = localOf(r.t[i] + 0).day; const d = accOf(s).days.get(dk); if (!d || !dayMatches(f, s, dk, d)) return false; }
+  return callOk(f, s, r, i);
 }
 // a row on a selected day (days null = any), within retention, whose day bucket passes the day clauses and that passes the call clauses
 // (scriptc: no Set | null values — anyDay says "days not restricted")
-function rowOk(f: Compiled, s: Sess, ds: Map<string, Day>, c: Call, cut: number, days: Set<string>, anyDay: boolean): boolean {
-  if (c.t < cut) return false;
-  const dk = localOf(c.t).day;
+function rowOk(f: Compiled, s: Sess, ds: Map<string, Day>, r: Rows, i: number, cut: number, days: Set<string>, anyDay: boolean): boolean {
+  const t = r.t[i] + 0;
+  if (t < cut) return false;
+  const dk = localOf(t).day;
   if (!anyDay && !days.has(dk)) return false;
   if (f.day.length) { const d = ds.get(dk); if (!d || !dayMatches(f, s, dk, d)) return false; }
-  return callOk(f, s, c);
+  return callOk(f, s, r, i);
+}
+// rows fall on the session's day buckets: a session without a bucket in the window and within retention has no row there,
+// and its calls file is not read (call rows are read lazily, ledger.ts callsOf)
+const cutDay = { cut: -1, key: "" };
+function rowsMayMatch(ds: Map<string, Day>, cut: number, days: Set<string>, anyDay: boolean): boolean {
+  if (cut !== cutDay.cut) { cutDay.cut = cut; cutDay.key = localOf(cut).day; }
+  for (const k of ds.keys()) if (k >= cutDay.key && (anyDay || days.has(k))) return true;
+  return false;
+}
+// matchSession would read this session's calls file first (not read in this run yet, rows possibly in the window)
+const NO_DAYS = new Set<string>();
+export function rowsPending(f: Compiled, s: Sess): boolean {
+  if (!f.call.length && !f.rowx.length) return false;
+  if (!unread.has(s.path)) return false;
+  const a = ledger.get(s.path); return !!a && rowsMayMatch(a.days, callCutoff(), NO_DAYS, true);
 }
 export function matchSession(f: Compiled, s: Sess, days: string[] | null): boolean {
   if (!all1(f.sess, s)) return false;
   if (!f.call.length && !f.day.length) return true;
   const a = accOf(s); const any = days === null; const ds = new Set<string>(days ?? []);
   if (f.call.length) {
-    const cut = callCutoff();
-    for (let i = a.calls.length - 1; i >= 0; i--) if (rowOk(f, s, a.days, a.calls[i], cut, ds, any)) return true;
+    const cut = callCutoff(); if (!rowsMayMatch(a.days, cut, ds, any)) return false;
+    const r = callsOf(s); const b = ledger.get(s.path) ?? a; // a stale calls file re-indexed the session: its new entry
+    for (let i = r.n - 1; i >= 0; i--) if (rowOk(f, s, b.days, r, i, cut, ds, any)) return true;
     return false;
   }
   for (const [dk, d] of a.days) { if (!any && !ds.has(dk)) continue; if (dayMatches(f, s, dk, d)) return true; }
   return false;
 }
-export function eachCall(f: Compiled, days: string[], fn: (s: Sess, c: Call) => void): void {
+// every matching row as (s, r, i): r and i are valid only inside fn (rows are compacted between passes)
+export function eachCall(f: Compiled, days: string[], fn: (s: Sess, r: Rows, i: number) => void): void {
   const cut = callCutoff(); const ds = new Set<string>(days);
-  for (const s of sessions.values()) callsIn(f, s, ds, cut, (c: Call) => fn(s, c));
+  for (const s of sessions.values()) callsIn(f, s, ds, cut, (r: Rows, i: number) => fn(s, r, i));
 }
 // one session's rows of eachCall (resumable aggregation steps a session at a time)
-export function callsIn(f: Compiled, s: Sess, days: Set<string>, cut: number, fn: (c: Call) => void): void {
+export function callsIn(f: Compiled, s: Sess, days: Set<string>, cut: number, fn: (r: Rows, i: number) => void): void {
   if (!all1(f.sess, s)) return;
-  const a = ledger.get(s.path); if (!a) return;
-  for (const c of a.calls) if (rowOk(f, s, a.days, c, cut, days, false)) fn(c);
+  const a = ledger.get(s.path); if (!a || !rowsMayMatch(a.days, cut, days, false)) return;
+  const r = callsOf(s); const b = ledger.get(s.path) ?? a;
+  for (let i = 0; i < r.n; i++) if (rowOk(f, s, b.days, r, i, cut, days, false)) fn(r, i);
 }

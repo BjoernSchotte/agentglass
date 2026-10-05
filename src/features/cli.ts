@@ -4,7 +4,7 @@ import { writeSync } from "node:fs";
 import { H, complete, screenOut, display } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
-import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf } from "../harness/index.ts";
+import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf, window } from "../harness/index.ts";
 import { type Obj, base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
@@ -282,11 +282,17 @@ export function watch(o: Opts, sink: Sink | null): void {
       // scope after the size check: a log without a cwd yet is re-read only while it grows, and stays unread until it has one
       if (!visible(s, o.sc)) { if (s.cwd) off.set(s.path, size); continue; }
       if (!headed.has(s.path)) { headed.add(s.path); if (!s.headDone) loadHead(s); loadTail(s); } // title/cwd for the output
-      const r = src.lines(s, at, size);
-      off.set(s.path, r.next);
-      const evs: Ev[] = [];
-      for (const l of r.lines) parseEvents(s.h, l, evs, s);
-      if (lines) for (const e of evs) emitEv(s, e, o.cf);
+      // in ≤ 4 MB windows (memory stays bounded on a big growth or --from-start); a longer line widens the window up to
+      // 64 MB, a line over that is skipped (as the ledger skips one) instead of stalling the session
+      for (let p = at; p < size;) {
+        let w = window(src, 4194304); let r = src.lines(s, p, Math.min(size, p + w));
+        while (r.next <= p && p + w < size && w < window(src, 67108864)) { w *= 4; r = src.lines(s, p, Math.min(size, p + w)); }
+        if (r.next <= p) { if (p + w < size) { p = src.align(s, p + w); off.set(s.path, p); continue; } break; } // a partial last line: next poll
+        p = r.next; off.set(s.path, p);
+        const evs: Ev[] = [];
+        for (const l of r.lines) parseEvents(s.h, l, evs, s);
+        if (lines) for (const e of evs) emitEv(s, e, o.cf);
+      }
     }
   };
   // the alert rules on every live top-level session, after each process refresh; transitions become alert lines

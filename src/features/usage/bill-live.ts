@@ -31,8 +31,11 @@ function cfgOf(h: string, cwd: string): CfgHit {
   cfg.set(k, n); if (hit) BL.cfg++; // changed evidence (a new key's sessions are labelled as they ask for it)
   return n;
 }
-// live environment names per pid (pi/OpenCode resolve each provider against them); names only, never values
-const envs = new Map<number, { at: number; ev: Evid }>();
+// live environment names per pid (pi/OpenCode resolve each provider against them); names only, never values. g: a
+// generation that moves only when a pid's evidence changed (incremental sums re-sum that session: summary.ts)
+const envs = new Map<number, { at: number; ev: Evid; g: number; k: string }>();
+let envGen = 0;
+export function envSig(s: Sess): number { const e = s.pid > 0 ? envs.get(s.pid) : undefined; return e ? e.g : 0; }
 // generations of the config evidence and of the environments (label memo keys); labels: label() runs (checks)
 export const BL = { cfg: 0, env: 0, labels: 0 };
 
@@ -113,7 +116,9 @@ function probeOne(s: Sess, now: number): void {
   if (e && now - e.at < RECHECK_MS) return;
   const sm = envSummary(OS.envOf(s.pid));
   const ev = newEvid(); ev.names = sm.names; ev.on = sm.on;
-  envs.set(s.pid, { at: now, ev }); BL.env++;
+  const k = sm.names.join(",") + "|" + sm.on.join(",");
+  envs.set(s.pid, { at: now, ev, g: e && e.k === k ? e.g : ++envGen, k });
+  if (!e || e.k !== k) BL.env++; // the labels look again only when the evidence changed
   if (!a || !sm.names.length) return;
   const d = rule(s.h, ev, "process");
   if (d.bill !== "unknown") stamp(a, d.bill, d.plan, "process");

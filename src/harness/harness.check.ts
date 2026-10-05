@@ -7,6 +7,7 @@ import { width } from "../util/text.ts";
 import { newSess, type Ev } from "../model/types.ts";
 import { BADGE_W, badge } from "../ui/screen.ts";
 import { type Acc, type ModelUse, L, newAcc, bucket, usageExact, modelUses } from "../features/usage/record.ts";
+import { callList } from "../features/usage/rows.ts";
 import { price, cost } from "../features/usage/pricing.ts";
 import { skillUses, heavy } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
@@ -124,7 +125,7 @@ for (const sm of SAMPLES) {
   // one fact row per counted call; closed rows match the per-tool counters (error count, timed count)
   let tn = 0; let te = 0; let tdn = 0;
   for (const dd of a.days.values()) for (const st of heavy(dd).tt.values()) { tn += st.n; te += st.err; tdn += st.dn; }
-  let rn = 0; let re = 0; let rdn = 0; for (const c of a.calls) { rn++; if (c.err === 1) re++; if (c.ms >= 0) rdn++; }
+  let rn = 0; let re = 0; let rdn = 0; for (const c of callList(a.rows)) { rn++; if (c.err === 1) re++; if (c.ms >= 0) rdn++; }
   ok(sm.h + " rows = TS.n", rn === tn && rn === a.tools, rn + " vs " + tn);
   ok(sm.h + " rows err = TS.err", re === te, re + " vs " + te);
   ok(sm.h + " rows timed = TS.dn", rdn === tdn, rdn + " vs " + tdn);

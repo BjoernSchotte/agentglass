@@ -6,6 +6,7 @@ import { accOut, accIn } from "./cache.ts";
 import { loadUser, setGateway, type Price } from "./pricing.ts";
 import { type Dict, DICT, ROWS, nameOf, MQ_MSG, MQ_SESS, localOf, extOf } from "./facts.ts";
 import { done, setCallTap } from "./calls.ts";
+import { callAt } from "./rows.ts";
 import { newSess } from "../../model/types.ts";
 import { fx, fxTotals } from "../../harness/fx.ts";
 import { codex } from "../../harness/codex.ts";
@@ -99,40 +100,42 @@ rmSync("/tmp/agentglass-record-check", { recursive: true, force: true });
 {
   const b = newAcc(); const iso2 = "2026-10-01T10:00:05.000Z"; const d2 = bucket(b, 0, iso2);
   pend(b, d2, tool(b, d2, "Bash", "claude-opus-4-5", MQ_MSG), "Bash", "t1", Date.parse(iso2), iso2, "npm test", ["npm test", "git status", "npm run x"]);
-  const r0 = b.calls[0];
-  ok("row appended", b.calls.length === 1 && b.lastCall === 0, String(b.calls.length));
+  let r0 = callAt(b.rows, 0);
+  ok("row appended", b.rows.n === 1 && b.lastCall === 0, String(b.rows.n));
   ok("row tool/model/mq", !!r0 && nameOf(DICT.tool, r0.tool) === "Bash" && nameOf(DICT.model, r0.model) === "claude-opus-4-5" && r0.mq === MQ_MSG, "");
   ok("row progs", !!r0 && names(DICT.prog, r0.progs) === "npm,git", r0 ? r0.progs.join(",") : "");
   ok("row t from iso", !!r0 && r0.t === Date.parse(iso2), r0 ? String(r0.t) : "");
   ok("row open", !!r0 && r0.err === -1 && r0.ms === -1 && r0.cid === "t1", "");
   const pp = b.pend.get("t1"); if (pp) done(pp, 1200, true, 42, "t1", []);
+  r0 = callAt(b.rows, 0);
   ok("row closed", !!r0 && r0.err === 1 && r0.ms === 1200 && r0.out === 42, r0 ? [r0.err, r0.ms, r0.out].join(",") : "");
   tool(b, d2, "Edit", "", MQ_SESS); file(b, d2, "Edit", "/w/src/a.TS", 3, 1);
-  const r1 = b.calls[1];
+  let r1 = callAt(b.rows, 1);
   ok("unknown model", !!r1 && r1.model === -1, "");
   ok("file attached", !!r1 && names(DICT.file, r1.files) === "/w/src/a.TS", "");
   ok("ext", extOf("/w/src/a.TS") === "ts" && extOf("/w/.bashrc") === "" && extOf("/w/Makefile") === "", "");
   file(b, d2, "Write", "/w/other.md", 1, 0); // tool name differs from the newest row: day counter only
+  r1 = callAt(b.rows, 1);
   ok("file not attached to other tool", !!r1 && r1.files.length === 1, "");
   tool(b, d2, "apply_patch", "gpt-5", MQ_SESS); patchLines(b, d2, "apply_patch", "*** Update File: x.go\n+a\n*** Add File: y.go\n+b\n");
-  ok("patch files attached", b.calls[2].files.length === 2, String(b.calls[2].files.length));
+  ok("patch files attached", callAt(b.rows, 2).files.length === 2, String(callAt(b.rows, 2).files.length));
   pend(b, d2, tool(b, d2, "mcp", "m1", MQ_MSG), "mcp", "c9", 0, iso2, "", []);
   const p9 = b.pend.get("c9"); if (p9) retool(b, p9, "mcp__s__t");
-  ok("retool renames row", nameOf(DICT.tool, b.calls[3].tool) === "mcp__s__t", "");
+  ok("retool renames row", nameOf(DICT.tool, b.rows.tool[3] + 0) === "mcp__s__t", "");
   // kiro-style: no call time → the bucket's time
   const k = newAcc(); const kd = bucket(k, 1759312800000, ""); pend(k, kd, tool(k, kd, "shell", "", MQ_SESS), "shell", "u1", 0, "", "", []);
-  ok("row t falls back to bucket ms", k.calls[0].t === 1759312800000, String(k.calls[0].t));
+  ok("row t falls back to bucket ms", k.rows.t[0] === 1759312800000, String(k.rows.t[0]));
   ok("t0 first activity", k.t0 === 1759312800000 && b.t0 === Date.parse(iso2), [k.t0, b.t0].join(","));
   bucket(k, 1759312700000, ""); ok("t0 earliest, not first", k.t0 === 1759312700000, String(k.t0));
   const kn = newAcc(); bucket(kn, 0, ""); ok("now fallback is no activity", kn.t0 === 0, String(kn.t0));
   ok("localOf memo", localOf(Date.parse(iso2)).hour === new Date(iso2).getHours(), "");
-  const rt = accIn(JSON.parse(JSON.stringify(accOut(k)))); ok("t0 persisted", rt.t0 === k.t0 && rt.calls.length === 0 && rt.lastCall === -1, String(rt.t0));
+  const rt = accIn(JSON.parse(JSON.stringify(accOut(k)))); ok("t0 persisted", rt.t0 === k.t0 && rt.rows.n === 0 && rt.lastCall === -1, String(rt.t0));
 }
 // rows off (one-shot CLI runs that never read them): counters as always, no rows, files attach nowhere
 ROWS.on = false;
 const ro = newAcc(); const rd = bucket(ro, 0, "2026-10-01T10:00:00.000Z");
 pend(ro, rd, tool(ro, rd, "Bash", "m", MQ_MSG), "Bash", "r1", 0, "", "", ["ls"]); file(ro, rd, "Bash", "/w/x", 1, 0);
-ok("rows off: counted, no row", ro.tools === 1 && ro.calls.length === 0 && ro.lastCall === -1 && (heavy(rd).tt.get("Bash")?.n ?? 0) === 1, String(ro.calls.length));
+ok("rows off: counted, no row", ro.tools === 1 && ro.rows.n === 0 && ro.lastCall === -1 && (heavy(rd).tt.get("Bash")?.n ?? 0) === 1, String(ro.rows.n));
 ROWS.on = true;
 
 // otlp export taps: one Booking per tokens()/usageExact() call with the cost it added; reasoning is a subset of out

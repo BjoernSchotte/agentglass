@@ -4,9 +4,10 @@
 // buckets cannot answer (model × status, …), reads the call rows (within retention). Callers do not choose.
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger } from "../usage/ledger.ts";
+import { ledger, callsOf } from "../usage/ledger.ts";
 import { type Day, L, heavy } from "../usage/record.ts";
-import { type Call, type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
+import { type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
+import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
 import { type Compiled, sessMatches, dayMatches, callsIn, weekdayOf, livePid } from "./eval.ts";
 import { callCutoff } from "../usage/callcache.ts";
@@ -43,8 +44,8 @@ function outLabel(n: number, known: boolean): string { if (!known) return "unkno
 function stateOf(s: Sess): string { if (s.stuck) return "stuck"; if (s.attention) return "attention"; const p = livePid(s); return p && working(s) ? "busy" : p ? "idle" : "ended"; }
 function sessModels(s: Sess): string[] {
   const o: string[] = []; if (s.model) o.push(s.model);
-  const a = ledger.get(s.path);
-  if (a) { const seen = new Set<number>(); for (const c of a.calls) if (c.model >= 0 && !seen.has(c.model)) { seen.add(c.model); const m = nameOf(DICT.model, c.model); if (o.indexOf(m) < 0) o.push(m); } }
+  const seen = new Set<number>(); const r = callsOf(s);
+  for (let i = 0; i < r.n; i++) { const x = r.model[i] + 0; if (x >= 0 && !seen.has(x)) { seen.add(x); const m = nameOf(DICT.model, x); if (o.indexOf(m) < 0) o.push(m); } }
   return o.length ? o : ["unknown"];
 }
 function startOf(s: Sess): { hour: string; wd: string } { const a = ledger.get(s.path); const t0 = a ? a.t0 : 0; if (t0 <= 0) return { hour: "unknown", wd: "unknown" }; const l = localOf(t0); return { hour: String(l.hour), wd: WD[l.wd] ?? "" }; }
@@ -73,21 +74,21 @@ function dictNames(d: { ids: Map<string, number>; names: string[] }, xs: number[
 // the dimensions callDim answers per row; any other falls back to the session's value
 const CALL_LEVEL = ["tool", "server", "program", "command", "file", "ext", "status", "duration", "out", "model", "hour", "day", "weekday"];
 // a call attribute as dimension values (multi-valued attributes: each distinct value)
-export function callDim(dim: string, s: Sess, c: Call): string[] {
+export function callDim(dim: string, s: Sess, r: Rows, i: number): string[] {
   switch (dim) {
-    case "tool": return [nameOf(DICT.tool, c.tool)];
-    case "server": return [mcpServer(nameOf(DICT.tool, c.tool))];
-    case "program": return uniq(dictNames(DICT.prog, c.progs));
-    case "command": return uniq(dictNames(DICT.cmd, c.cmds));
-    case "file": return uniq(dictNames(DICT.file, c.files));
-    case "ext": { const o: string[] = []; for (const f of c.files) { const e = extOf(nameOf(DICT.file, f)); if (o.indexOf(e) < 0) o.push(e); } return o; }
-    case "status": return [c.err === 1 ? "error" : c.err === 0 ? "ok" : "unknown"];
-    case "duration": return [durLabel(c.ms)];
-    case "out": return [outLabel(c.out, c.err >= 0)];
-    case "model": return [c.model >= 0 ? nameOf(DICT.model, c.model) : "unknown"];
-    case "hour": return [String(localOf(c.t).hour)];
-    case "day": return [localOf(c.t).day];
-    case "weekday": return [WD[localOf(c.t).wd] ?? ""];
+    case "tool": return [nameOf(DICT.tool, r.tool[i])];
+    case "server": return [mcpServer(nameOf(DICT.tool, r.tool[i]))];
+    case "program": return uniq(dictNames(DICT.prog, rowIds(r, i, KIND_PROG)));
+    case "command": return uniq(dictNames(DICT.cmd, rowIds(r, i, KIND_CMD)));
+    case "file": return uniq(dictNames(DICT.file, rowIds(r, i, KIND_FILE)));
+    case "ext": { const o: string[] = []; for (const f of rowIds(r, i, KIND_FILE)) { const e = extOf(nameOf(DICT.file, f)); if (o.indexOf(e) < 0) o.push(e); } return o; }
+    case "status": return [r.err[i] === 1 ? "error" : r.err[i] === 0 ? "ok" : "unknown"];
+    case "duration": return [durLabel(r.ms[i])];
+    case "out": return [outLabel(r.out[i], r.err[i] >= 0)];
+    case "model": return [r.model[i] >= 0 ? nameOf(DICT.model, r.model[i]) : "unknown"];
+    case "hour": return [String(localOf(r.t[i]).hour)];
+    case "day": return [localOf(r.t[i]).day];
+    case "weekday": return [WD[localOf(r.t[i]).wd] ?? ""];
   }
   return sessDim(dim, s);
 }
@@ -107,16 +108,16 @@ export function aggregate(f: Compiled, entity: "session" | "call", days: string[
   const j = aggJob(f, entity, days, dims, weight, null); aggStep(j, Infinity); return j.out;
 }
 // rows path with an extra row test no filter can express (triage `slow`); not cached (keep is a closure)
-export function aggregateWhere(f: Compiled, days: string[], dims: string[], weight: Weight, keep: (s: Sess, c: Call) => boolean): Dist[] {
+export function aggregateWhere(f: Compiled, days: string[], dims: string[], weight: Weight, keep: (s: Sess, r: Rows, i: number) => boolean): Dist[] {
   const j = aggJob(f, "call", days, dims, weight, keep); aggStep(j, Infinity); return j.out;
 }
 
 // ── resumable aggregation: one session per step, so a long count (30 days of call rows) runs in slices between frames ──
 export interface AggJob {
   k: string /* cache key, "" = not cached */; f: Compiled; entity: "session" | "call"; days: string[]; dset: Set<string>; dims: string[]; weight: Weight;
-  keep: ((s: Sess, c: Call) => boolean) | null; rows: boolean; cut: number; sl: boolean[] /* dims answered per session */; ss: Sess[]; i: number; out: Dist[]; done: boolean;
+  keep: ((s: Sess, r: Rows, i: number) => boolean) | null; rows: boolean; cut: number; sl: boolean[] /* dims answered per session */; ss: Sess[]; i: number; out: Dist[]; done: boolean;
 }
-export function aggJob(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight, keep: ((s: Sess, c: Call) => boolean) | null): AggJob {
+export function aggJob(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight, keep: ((s: Sess, r: Rows, i: number) => boolean) | null): AggJob {
   fresh();
   const k = keep ? "" : aggKey(f, entity, days, dims, weight); const hit = k ? cache.get(k) : undefined;
   let rows = f.needsCalls || keep !== null; if (entity === "call") for (const d of dims) if (ROW_DIMS.indexOf(d) >= 0) rows = true;
@@ -180,23 +181,24 @@ function rowsCall(j: AggJob, s: Sess): void {
   // session attributes are the same for every row of the session: its rows add up in one bin, which joins each session
   // dimension's value bin once at the end
   const acc = newBin(); let any = false;
-  callsIn(j.f, s, j.dset, j.cut, (c: Call) => {
-    if (kp) { const k = kp; if (!k(s, c)) return; }
+  callsIn(j.f, s, j.dset, j.cut, (r: Rows, ri: number) => {
+    if (kp) { const k = kp; if (!k(s, r, ri)) return; }
     any = true;
-    const w = weight === "count" ? 1 : weight === "duration" ? Math.max(0, c.ms) : 0;
-    const hi = c.ms >= 0 ? hb(c.ms) : -1;
-    addRow(acc, w, c, hi);
+    const w = weight === "count" ? 1 : weight === "duration" ? Math.max(0, r.ms[ri]) : 0;
+    const hi = r.ms[ri] >= 0 ? hb(r.ms[ri]) : -1;
+    addRow(acc, w, r, ri, hi);
     for (let i = 0; i < out.length; i++) {
       const ds = out[i]; const dim = ds.dim;
       ds.total++; ds.wTotal += w;
       if (j.sl[i]) continue;
-      // the multi-valued call dims straight from the row's ids, without per-row arrays
+      // the multi-valued call dims straight from the row's ids
       if (dim === "program" || dim === "file" || dim === "command") {
-        const ids: number[] = dim === "program" ? c.progs : dim === "file" ? c.files : c.cmds; const d: Dict = dim === "program" ? DICT.prog : dim === "file" ? DICT.file : DICT.cmd;
-        let x = 0; for (const id of ids) { if (ids.indexOf(id) === x) addRow(bin(ds, nameOf(d, id)), w, c, hi); x++; }
+        const ids: number[] = rowIds(r, ri, dim === "program" ? KIND_PROG : dim === "file" ? KIND_FILE : KIND_CMD); const d: Dict = dim === "program" ? DICT.prog : dim === "file" ? DICT.file : DICT.cmd;
+        let x = 0; for (const id of ids) { if (ids.indexOf(id) === x) addRow(bin(ds, nameOf(d, id)), w, r, ri, hi); x++; }
       } else if (dim === "ext") {
-        if (c.files.length) { const es: string[] = []; for (const f of c.files) { const e = extId(f); if (es.indexOf(e) < 0) { es.push(e); addRow(bin(ds, e), w, c, hi); } } }
-      } else for (const v of callDim(dim, s, c)) addRow(bin(ds, v), w, c, hi);
+        const fs = rowIds(r, ri, KIND_FILE);
+        if (fs.length) { const es: string[] = []; for (const f of fs) { const e = extId(f); if (es.indexOf(e) < 0) { es.push(e); addRow(bin(ds, e), w, r, ri, hi); } } }
+      } else for (const v of callDim(dim, s, r, ri)) addRow(bin(ds, v), w, r, ri, hi);
     }
   });
   if (!any) return;
@@ -206,7 +208,7 @@ function rowsCall(j: AggJob, s: Sess): void {
     for (const v of sessDim(ds.dim, s)) { const b = bin(ds, v); b.n += acc.n; b.w += acc.w; b.err += acc.err; addHist(b.hist, acc.hist); if (acc.max > b.max) b.max = acc.max; }
   }
 }
-function addRow(b: Bin, w: number, c: Call, hi: number): void { b.n++; b.w += w; if (c.err === 1) b.err++; if (hi >= 0) { b.hist[hi] = (b.hist[hi] ?? 0) + 1; if (c.ms > b.max) b.max = c.ms; } }
+function addRow(b: Bin, w: number, r: Rows, i: number, hi: number): void { b.n++; b.w += w; if (r.err[i] === 1) b.err++; if (hi >= 0) { b.hist[hi] = (b.hist[hi] ?? 0) + 1; if (r.ms[i] > b.max) b.max = r.ms[i] + 0; } }
 // extension per file id (file ids are ledger-wide and never reused)
 const extMemo = new Map<number, string>();
 function extId(id: number): string { const e = extMemo.get(id); if (e !== undefined) return e; const x = extOf(nameOf(DICT.file, id)); extMemo.set(id, x); return x; }
@@ -214,15 +216,15 @@ function extId(id: number): string { const e = extMemo.get(id); if (e !== undefi
 function rowsSess(j: AggJob, s: Sess): void {
   const dims = j.dims; const kp = j.keep;
   let n = 0; let err = 0; let dur = 0; const dks: string[] = []; const vals: string[][] = []; for (let i = 0; i < dims.length; i++) vals.push([]);
-  callsIn(j.f, s, j.dset, j.cut, (c: Call) => {
-    if (kp) { const k = kp; if (!k(s, c)) return; }
+  callsIn(j.f, s, j.dset, j.cut, (r: Rows, ri: number) => {
+    if (kp) { const k = kp; if (!k(s, r, ri)) return; }
     n++;
-    if (c.err === 1) err++;
-    if (c.ms > 0) dur += c.ms;
-    const dk = localOf(c.t).day; if (dks.indexOf(dk) < 0) dks.push(dk);
+    if (r.err[ri] === 1) err++;
+    if (r.ms[ri] > 0) dur += r.ms[ri];
+    const dk = localOf(r.t[ri]).day; if (dks.indexOf(dk) < 0) dks.push(dk);
     for (let i = 0; i < dims.length; i++) {
       const dim = dims[i] ?? ""; if (dim === "hour" || dim === "weekday") continue;
-      const into = vals[i] ?? []; for (const v of callDim(dim, s, c)) if (into.indexOf(v) < 0) into.push(v);
+      const into = vals[i] ?? []; for (const v of callDim(dim, s, r, ri)) if (into.indexOf(v) < 0) into.push(v);
     }
   });
   if (!n) return;
@@ -322,17 +324,17 @@ function bucketTotals(j: TotJob, s: Sess): void {
 // "<path>\t<day>" in j.seen: days with ≥ 1 matching row add their cost/tokens/lines once
 function rowTotals(j: TotJob, s: Sess): void {
   const t = j.t; const a = ledger.get(s.path);
-  callsIn(j.f, s, j.dset, j.cut, (c: Call) => {
+  callsIn(j.f, s, j.dset, j.cut, (r: Rows, ri: number) => {
     sessSeen(t, s);
-    const dk = localOf(c.t).day; const sk = s.path + "\t" + dk;
+    const dk = localOf(r.t[ri]).day; const sk = s.path + "\t" + dk;
     if (!j.seen.has(sk)) { j.seen.add(sk); const d = a ? a.days.get(dk) : undefined; if (d) dayMoney(t, s, dk, d, false); }
-    t.models.add(c.model >= 0 ? nameOf(DICT.model, c.model) : "unknown");
-    const name = nameOf(DICT.tool, c.tool); const x = toolT(t, name); const err = c.err === 1;
+    t.models.add(r.model[ri] >= 0 ? nameOf(DICT.model, r.model[ri]) : "unknown");
+    const name = nameOf(DICT.tool, r.tool[ri]); const x = toolT(t, name); const err = r.err[ri] === 1;
     t.tools++; x.n++; if (err) { t.errors++; x.err++; }
-    if (c.ms >= 0) { const b = hb(c.ms); x.dn++; x.ms += c.ms; if (c.ms > x.max) x.max = c.ms; x.hist[b] = (x.hist[b] ?? 0) + 1; t.dn++; t.ms += c.ms; if (c.ms > t.max) t.max = c.ms; t.hist[b] = (t.hist[b] ?? 0) + 1; }
-    if (c.err >= 0) x.out += c.out;
-    for (const p of uniq(dictNames(DICT.prog, c.progs))) bump(t.prog, name + "\t" + p, err);
-    for (const cm of uniq(dictNames(DICT.cmd, c.cmds))) bump(t.cmds, name + "\t" + cm, err);
-    for (const fp of uniq(dictNames(DICT.file, c.files))) bump(t.files, fp, false);
+    if (r.ms[ri] >= 0) { const b = hb(r.ms[ri]); x.dn++; x.ms += r.ms[ri]; if (r.ms[ri] > x.max) x.max = r.ms[ri]; x.hist[b] = (x.hist[b] ?? 0) + 1; t.dn++; t.ms += r.ms[ri]; if (r.ms[ri] > t.max) t.max = r.ms[ri]; t.hist[b] = (t.hist[b] ?? 0) + 1; }
+    if (r.err[ri] >= 0) x.out += r.out[ri];
+    for (const p of uniq(dictNames(DICT.prog, rowIds(r, ri, KIND_PROG)))) bump(t.prog, name + "\t" + p, err);
+    for (const cm of uniq(dictNames(DICT.cmd, rowIds(r, ri, KIND_CMD)))) bump(t.cmds, name + "\t" + cm, err);
+    for (const fp of uniq(dictNames(DICT.file, rowIds(r, ri, KIND_FILE)))) bump(t.files, fp, false);
   });
 }

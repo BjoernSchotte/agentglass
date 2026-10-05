@@ -9,8 +9,8 @@ import { allProcs, hist, rootOf, refreshProcs, paneTitles, ttyOf, PG } from "../
 import { harnessOf } from "../harness/index.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf } from "./detect.ts";
-import { accOf, complete as ledgerComplete } from "./usage/ledger.ts";
-import type { Call } from "./usage/facts.ts";
+import { accOf, callsOf, complete as ledgerComplete } from "./usage/ledger.ts";
+import { type Rows, newRows } from "./usage/rows.ts";
 import { sessMatches } from "./query/eval.ts";
 import { type Rule, type RuleSet, CALL_METRICS, thrText, unitOf } from "./rules/config.ts";
 import { metricOf } from "./rules/metrics.ts";
@@ -65,13 +65,14 @@ function rowMetric(r: Rule): boolean { return CALL_METRICS.indexOf(r.metric) >= 
 // an enabled rule reads the ledger (cost, tokens, call rows)
 export function ledgerRule(rs: RuleSet): boolean { for (const r of rs.rules) if (r.enabled && (rowMetric(r) || r.metric === "session_cost" || r.metric === "session_tokens")) return true; return false; }
 // rule id → value for every enabled rule whose where-scope the session passes
+const NO_ROWS = newRows();
 export function ruleVals(rs: RuleSet, s: Sess, o: Obs, turnAt: (r: Rule) => number): Map<string, MVal> {
   const m = new Map<string, MVal>(); const memo = new Map<string, MVal>();
-  let rows: Call[] = []; let haveRows = false;
+  let rows: Rows = NO_ROWS; let haveRows = false;
   for (const r of rs.rules) {
     if (!r.enabled) continue;
     const f = r.wf; if (f && !sessMatches(f, s)) continue;
-    if (rowMetric(r) && !haveRows) { rows = accOf(s).calls; haveRows = true; }
+    if (rowMetric(r) && !haveRows) { accOf(s); rows = callsOf(s); haveRows = true; }
     m.set(r.id, metricOf(r, s, o, turnAt(r), rows, memo));
   }
   return m;

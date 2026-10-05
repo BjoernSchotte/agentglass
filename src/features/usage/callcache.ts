@@ -1,14 +1,15 @@
 // agentglass — per-session call-row files (~/.agentglass/cache/calls/<key>.json): columnar, local dictionaries, retention
 // SPDX-License-Identifier: Apache-2.0
 // A calls file is valid only for the ledger offset it was written at and the path it names: anything else (a crash between
-// this write and ledger.json's, a hash collision, an old format) counts as missing and that one session re-indexes.
+// this write and ledger.jsonl's, a hash collision, an old format) counts as missing and that one session re-indexes.
 import { openSync, writeSync, closeSync, renameSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
+import { cursor, eat, skip, numLists, num as snum, str as sstr, nums as snums, strs as sstrs } from "../../util/jsonscan.ts";
 import { readText, listDir, cacheDir } from "../../util/fs.ts";
 import { intSetting } from "../../util/config.ts";
-import { type Acc, startOfDay, num, heavy } from "./record.ts";
-import { type Call, type Dict, DICT, intern, nameOf } from "./facts.ts";
+import { type Acc, startOfDay, num, peekHeavy } from "./record.ts";
+import { type Dict, DICT, intern, nameOf } from "./facts.ts";
+import { type Rows, sized, compact, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "./rows.ts";
 
 // AGENTGLASS_CACHE_DIR: a separate ledger cache (test builds of other branches must not rewrite the real one)
 export const CACHE_DIR = cacheDir();
@@ -42,15 +43,17 @@ function localIds(d: Dict, m: Map<number, number>, names: string[], xs: number[]
 // session, is stored literally (ref = -1 - index into the literal list). An unresolvable hash makes the file invalid.
 const AMBIG = "\u0000"; // two texts of one session share the hash
 function textHash(s: string): number { return fnv(s, 2166136261); }
-function refTable(a: Acc, cmds: boolean): Map<number, string> {
-  const m = new Map<number, string>();
-  for (const d of a.days.values()) {
-    for (const k of (cmds ? heavy(d).cmds : heavy(d).files).keys()) {
-      const x = k.slice(k.indexOf("\t") + 1); const h = textHash(x); const o = m.get(h);
-      if (o === undefined) m.set(h, x); else if (o !== x) m.set(h, AMBIG);
-    }
-  }
-  return m;
+// both tables in one pass over the days; a day not decoded yet is decoded for this and dropped again (peekHeavy): reading
+// a session's rows must not pin every day's heavy maps
+interface Refs { cmds: Map<number, string>; files: Map<number, string> }
+function refInto(m: Map<number, string>, k: string): void {
+  const x = k.slice(k.indexOf("\t") + 1); const h = textHash(x); const o = m.get(h);
+  if (o === undefined) m.set(h, x); else if (o !== x) m.set(h, AMBIG);
+}
+function refTables(a: Acc): Refs {
+  const r: Refs = { cmds: new Map<number, string>(), files: new Map<number, string>() };
+  for (const d of a.days.values()) { const h = peekHeavy(d); for (const k of h.cmds.keys()) refInto(r.cmds, k); for (const k of h.files.keys()) refInto(r.files, k); }
+  return r;
 }
 function refsOut(names: string[], tab: Map<number, string>, lits: string[]): number[] {
   const o: number[] = [];
@@ -96,29 +99,24 @@ export function encodeCalls(path: string, a: Acc): string {
   const tm = new Map<number, number>(); const mm = new Map<number, number>(); const pm = new Map<number, number>(); const cm = new Map<number, number>(); const fm = new Map<number, number>();
   const t: number[] = []; const to: number[] = []; const mo: number[] = []; const mq: number[] = []; const pg: number[][] = []; const cmd: number[][] = []; const fi: number[][] = [];
   const ms: number[] = []; const er: number[] = []; const ou: number[] = []; const ids: string[] = [];
-  let prev = 0;
-  for (const c of a.calls) {
-    t.push(c.t - prev); prev = c.t; // deltas: a few digits instead of 13
-    to.push(localId(DICT.tool, tm, tn, c.tool)); mo.push(localId(DICT.model, mm, mn, c.model)); mq.push(c.mq);
-    pg.push(localIds(DICT.prog, pm, pn, c.progs)); cmd.push(localIds(DICT.cmd, cm, cn, c.cmds)); fi.push(localIds(DICT.file, fm, fn, c.files));
-    ms.push(c.ms); er.push(c.err); ou.push(c.out); ids.push(c.cid);
+  let prev = 0; const r = a.rows;
+  for (let i = 0; i < r.n; i++) {
+    const ti = r.t[i] + 0; t.push(ti - prev); prev = ti; // deltas: a few digits instead of 13
+    to.push(localId(DICT.tool, tm, tn, r.tool[i] + 0)); mo.push(localId(DICT.model, mm, mn, r.model[i] + 0)); mq.push(r.mq[i] + 0);
+    pg.push(localIds(DICT.prog, pm, pn, rowIds(r, i, KIND_PROG))); cmd.push(localIds(DICT.cmd, cm, cn, rowIds(r, i, KIND_CMD))); fi.push(localIds(DICT.file, fm, fn, rowIds(r, i, KIND_FILE)));
+    ms.push(r.ms[i] + 0); er.push(r.err[i] + 0); ou.push(r.out[i] + 0); ids.push(r.cid[i] ?? "");
   }
   const cl: string[] = []; const fl: string[] = [];
-  const cr = refsOut(cn, refTable(a, true), cl); const fr = refsOut(fn, refTable(a, false), fl);
+  const rt = refTables(a); const cr = refsOut(cn, rt.cmds, cl); const fr = refsOut(fn, rt.files, fl);
   const cf = frontOut(cl, cr); const ff = frontOut(fl, fr);
   const cp = cidPrefix(ids); const ci: string[] = []; for (const c of ids) ci.push(c ? c.slice(cp.length) : "");
   return JSON.stringify({ v: FORMAT, path, off: a.off, tool: tn, model: mn, prog: pn, cmd: cr, cmdp: cf.pre, cmdl: cf.rest, file: fr, filep: ff.pre, filel: ff.rest, cp, t, to, mo, mq, pg, cm: cmd, fi, ms, er, ou, ci });
 }
 
-function nums(v: unknown): number[] | null { const o: number[] = []; for (const x of arr(v)) { if (typeof x !== "number") return null; o.push(num(x)); } return o; }
-function strs(v: unknown): string[] | null { const o: string[] = []; for (const x of arr(v)) { if (typeof x !== "string") return null; o.push(x as string); } return o; }
 // local names → global ids (re-interned into DICT)
-function globalIds(d: Dict, v: unknown): number[] | null { const ns = strs(v); if (!ns) return null; const o: number[] = []; for (const n of ns) o.push(intern(d, n)); return o; }
+function globalIds(d: Dict, ns: string[]): number[] { const o: number[] = []; for (const n of ns) o.push(intern(d, n)); return o; }
 // text references (hashes or literal indexes) → global ids; null when a hash does not resolve in this ledger state
-function refIds(d: Dict, refs: unknown, pre: unknown, rest: unknown, tab: Map<number, string>): number[] | null {
-  const rs = nums(refs); if (!rs) return null;
-  const pl = nums(pre); if (!pl) return null;
-  const rl = strs(rest); if (!rl) return null;
+function refIds(d: Dict, rs: number[], pl: number[], rl: string[], tab: Map<number, string>): number[] | null {
   const ls = frontIn(pl, rl); if (!ls) return null;
   const o: number[] = [];
   for (const r of rs) {
@@ -131,53 +129,72 @@ function refIds(d: Dict, refs: unknown, pre: unknown, rest: unknown, tab: Map<nu
 }
 // + 0: scriptc cannot index with a bare element read that came out of this same function (SC1090)
 function at(m: number[], i: number): number { if (i < 0 || i >= m.length) return -1; return m[i] + 0; }
-function col(v: unknown, n: number): number[] | null { const c = nums(v); if (!c || c.length !== n) return null; return c; }
-function remap(m: number[], xs: number[]): number[] { const o: number[] = []; for (const x of xs) { const g = at(m, x); if (g >= 0) o.push(g); } return o; }
-function lists(v: unknown, n: number): number[][] | null {
-  const o: number[][] = []; const xs = arr(v); if (xs.length !== n) return null;
-  for (const x of xs) { const l = nums(x); if (!l) return null; o.push(l); }
-  return o;
+// a calls file's members, read with the pull reader (util/jsonscan.ts: no JSON tree); a missing column reads as empty
+interface CF {
+  v: number; path: string; off: number; cp: string; tool: string[]; model: string[]; prog: string[]; cmdl: string[]; filel: string[]; ci: string[];
+  cmd: number[]; cmdp: number[]; file: number[]; filep: number[]; t: number[]; to: number[]; mo: number[]; mq: number[]; ms: number[]; er: number[]; ou: number[];
+  pg: number[][]; cm: number[][]; fi: number[][];
+}
+function readCF(body: string): CF | null {
+  const f: CF = { v: -1, path: "", off: -1, cp: "", tool: [], model: [], prog: [], cmdl: [], filel: [], ci: [], cmd: [], cmdp: [], file: [], filep: [], t: [], to: [], mo: [], mq: [], ms: [], er: [], ou: [], pg: [], cm: [], fi: [] };
+  const c = cursor(body);
+  if (!eat(c, 123)) return null;
+  if (eat(c, 125)) return f;
+  for (;;) {
+    const k = sstr(c); if (!c.ok || !eat(c, 58)) return null;
+    if (k === "v") f.v = snum(c); else if (k === "off") f.off = snum(c); else if (k === "path") f.path = sstr(c); else if (k === "cp") f.cp = sstr(c);
+    else if (k === "tool") f.tool = sstrs(c); else if (k === "model") f.model = sstrs(c); else if (k === "prog") f.prog = sstrs(c);
+    else if (k === "cmdl") f.cmdl = sstrs(c); else if (k === "filel") f.filel = sstrs(c); else if (k === "ci") f.ci = sstrs(c);
+    else if (k === "cmd") f.cmd = snums(c); else if (k === "cmdp") f.cmdp = snums(c); else if (k === "file") f.file = snums(c); else if (k === "filep") f.filep = snums(c);
+    else if (k === "t") f.t = snums(c); else if (k === "to") f.to = snums(c); else if (k === "mo") f.mo = snums(c); else if (k === "mq") f.mq = snums(c);
+    else if (k === "ms") f.ms = snums(c); else if (k === "er") f.er = snums(c); else if (k === "ou") f.ou = snums(c);
+    else if (k === "pg") f.pg = numLists(c); else if (k === "cm") f.cm = numLists(c); else if (k === "fi") f.fi = numLists(c);
+    else skip(c);
+    if (!c.ok) return null;
+    if (eat(c, 44)) continue;
+    if (eat(c, 125)) return f;
+    return null;
+  }
 }
 // null = missing, corrupt, written for another path or another ledger offset, or referring to texts this ledger state lacks:
 // the caller re-indexes the session. a = the session's ledger entry the file must be consistent with (off, day counters).
-export function decodeCalls(body: string, path: string, a: Acc): Call[] | null {
-  const o: Obj | null = parse(body);
-  if (!o || o["v"] !== FORMAT || str(o["path"]) !== path || o["off"] !== a.off) return null;
-  // one check per column: scriptc narrows a nullable only through its own test
-  const tg = globalIds(DICT.tool, o["tool"]); if (!tg) return null;
-  const mg = globalIds(DICT.model, o["model"]); if (!mg) return null;
-  const pg = globalIds(DICT.prog, o["prog"]); if (!pg) return null;
-  const cg = refIds(DICT.cmd, o["cmd"], o["cmdp"], o["cmdl"], refTable(a, true)); if (!cg) return null;
-  const fg = refIds(DICT.file, o["file"], o["filep"], o["filel"], refTable(a, false)); if (!fg) return null;
-  const t = nums(o["t"]); if (!t) return null;
-  const n = t.length;
-  const to = col(o["to"], n); if (!to) return null;
-  const mo = col(o["mo"], n); if (!mo) return null;
-  const mq = col(o["mq"], n); if (!mq) return null;
-  const ms = col(o["ms"], n); if (!ms) return null;
-  const er = col(o["er"], n); if (!er) return null;
-  const ou = col(o["ou"], n); if (!ou) return null;
-  const ci = strs(o["ci"]); if (!ci || ci.length !== n) return null;
-  const cp = str(o["cp"]);
-  const pl = lists(o["pg"], n); if (!pl) return null;
-  const cl = lists(o["cm"], n); if (!cl) return null;
-  const fl = lists(o["fi"], n); if (!fl) return null;
-  const out: Call[] = []; let tt = 0;
+export function decodeCalls(body: string, path: string, a: Acc): Rows | null {
+  const o = readCF(body);
+  if (!o || o.v !== FORMAT || o.path !== path || o.off !== a.off) return null;
+  const tg = globalIds(DICT.tool, o.tool); const mg = globalIds(DICT.model, o.model); const pg = globalIds(DICT.prog, o.prog);
+  const rt = refTables(a);
+  const cg = refIds(DICT.cmd, o.cmd, o.cmdp, o.cmdl, rt.cmds); if (!cg) return null;
+  const fg = refIds(DICT.file, o.file, o.filep, o.filel, rt.files); if (!fg) return null;
+  const t = o.t; const n = t.length;
+  const to = o.to; const mo = o.mo; const mq = o.mq; const ms = o.ms; const er = o.er; const ou = o.ou; const ci = o.ci; const cp = o.cp;
+  const pl = o.pg; const cl = o.cm; const fl = o.fi;
+  for (const col of [to, mo, mq, ms, er, ou]) if (col.length !== n) return null;
+  if (ci.length !== n || pl.length !== n || cl.length !== n || fl.length !== n) return null;
+  // straight into the columns: no per-row object
+  let nl = 0; for (let i = 0; i < n; i++) nl += (pl[i] ?? []).length + (cl[i] ?? []).length + (fl[i] ?? []).length;
+  const out = sized(n, nl); let tt = 0; let k = 0;
+  const ids = (g: number[], xs: number[], kind: number): void => { for (const x of xs) { const v = at(g, x); if (v >= 0) { out.li[k] = v * 4 + kind; k++; } } };
   for (let i = 0; i < n; i++) {
     tt += at(t, i); const id = ci[i] ?? "";
-    out.push({ t: tt, tool: at(tg, at(to, i)), model: at(mg, at(mo, i)), mq: at(mq, i), progs: remap(pg, pl[i] ?? []), cmds: remap(cg, cl[i] ?? []), files: remap(fg, fl[i] ?? []),
-      ms: at(ms, i), err: at(er, i), out: at(ou, i), cid: id ? cp + id : "" });
+    out.t[i] = tt; out.tool[i] = at(tg, at(to, i)); out.model[i] = at(mg, at(mo, i)); out.mq[i] = at(mq, i);
+    out.ms[i] = at(ms, i); out.err[i] = at(er, i); out.out[i] = at(ou, i); out.cid.push(id ? cp + id : ""); out.lo[i] = k;
+    ids(pg, pl[i] ?? [], KIND_PROG); ids(cg, cl[i] ?? [], KIND_CMD); ids(fg, fl[i] ?? [], KIND_FILE);
   }
+  out.n = n; out.nl = k;
   return out;
 }
 
-// drop rows older than cutoff (rows are in call order, but a restored session may interleave: filter, not slice)
+// drop rows older than cutoff (rows are in call order, but a restored session may interleave: filter, not slice); the
+// newest row and the pending calls' rows follow their rows' new places (-1 = dropped)
 export function prune(a: Acc, cutoff: number): boolean {
-  let keep = 0; for (const c of a.calls) if (c.t >= cutoff) keep++;
-  if (keep === a.calls.length) return false;
-  const newest = a.lastCall >= 0 && a.lastCall < a.calls.length ? a.calls[a.lastCall] : null;
-  a.calls = a.calls.filter((c: Call) => c.t >= cutoff);
-  a.lastCall = newest && newest.t >= cutoff ? a.calls.indexOf(newest) : -1;
+  const r = a.rows;
+  let keep = 0; for (let i = 0; i < r.n; i++) if (r.t[i] >= cutoff) keep++;
+  if (keep === r.n) return false;
+  const nw = a.lastCall >= 0 && a.lastCall < r.n ? a.lastCall : -1;
+  const map = compact(r, (i: number): boolean => r.t[i] >= cutoff);
+  const to = (i: number): number => (i >= 0 && i < map.length ? map[i] + 0 : -1);
+  a.lastCall = to(nw);
+  for (const p of a.pend.values()) if (p.rows === r) p.ri = to(p.ri);
   return true;
 }
 
@@ -192,7 +209,7 @@ export function saveCallsTo(dir: string, path: string, a: Acc): boolean {
     return true;
   } catch (e) { return false; }
 }
-export function loadCallsFrom(dir: string, path: string, a: Acc): Call[] | null {
+export function loadCallsFrom(dir: string, path: string, a: Acc): Rows | null {
   const f = fileOf(dir, path);
   let size = 0; try { size = statSync(f).size; } catch (e) { return null; }
   return decodeCalls(readText(f, 0, size).trim(), path, a);

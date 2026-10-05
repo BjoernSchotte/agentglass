@@ -5,7 +5,8 @@
 # --cold: both binaries index from empty caches (ref first). --warm: ref indexes cold into cache A, A is copied to B
 # right after (ref's own cache format), and the new binary runs on B (exercises load, migration and lazy call rows).
 # Only stable sessions count: listed by both runs, same bytes, last write over 120 s before the ref run started (live
-# agents keep writing while this runs). Prints `compared <n> stable sessions, skipped <m>`, one line per difference
+# agents keep writing while this runs), still that size when the comparison ends (a session that resumed during the
+# later runs). Prints `compared <n> stable sessions, skipped <m>`, one line per difference
 # (`<session> <field> ref=<v> new=<v>`), then `<k> differences`; exit 0 iff k = 0. Every AGENTGLASS_* path points into
 # the scratch dir; only ids, numbers and paths are compared and printed (no transcript text).
 # GOLDEN_SELFTEST=1 adds 1 to the first stable session's tokens.in in the new output (the script must then fail).
@@ -37,7 +38,7 @@ ag() {
   d="$scratch/$1"; b=$2; shift 2
   env AGENTGLASS_CACHE_DIR="$d/cache" AGENTGLASS_CONFIG="$d/config.json" AGENTGLASS_RULES="$d/rules.json" \
     AGENTGLASS_RUN_DIR="$d/run" AGENTGLASS_PALETTE_FILE="$d/palette.json" AGENTGLASS_THEME_FILE="$d/theme" \
-    AGENTGLASS_OTLP_DIR="$d/otlp" AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 nice -n 10 "$b" "$@"
+    AGENTGLASS_OTLP_DIR="$d/otlp" AGENTGLASS_PRICES="$d/prices.json" AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 nice -n 10 "$b" "$@"
 }
 hf=""; [ -z "$harness" ] || hf="--harness $harness"
 # runs <side> <bin>: the list first (on a cold cache it indexes), then the filters and cost rows
@@ -59,7 +60,7 @@ runs ref "$ref"
 runs new "$new"
 
 python3 - "$scratch" "$start" "${GOLDEN_SELFTEST:-0}" << 'PY'
-import json, sys
+import json, os, sys
 from datetime import datetime
 d, start, selftest = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "1"
 def jl(p):
@@ -69,7 +70,11 @@ def ts(s):
     except Exception: return float("inf")
 ref = {o["path"]: o for o in jl(d + "/ref/list.jsonl")}
 new = {o["path"]: o for o in jl(d + "/new/list.jsonl")}
-stable = sorted(p for p, o in ref.items() if p in new and new[p]["bytes"] == o["bytes"] and ts(o["updated"]) < start - 120)
+def size(p):
+    try: return os.path.getsize(p)
+    except OSError: return -1
+# still that size now: a log that resumed after the list runs would change the later filter and cost runs
+stable = sorted(p for p, o in ref.items() if p in new and new[p]["bytes"] == o["bytes"] and ts(o["updated"]) < start - 120 and size(p) == o["bytes"])
 skipped = len(set(ref) | set(new)) - len(stable)
 if selftest and stable:
     t = new[stable[0]].get("tokens") or {}; t["in"] = (t.get("in") or 0) + 1; new[stable[0]]["tokens"] = t

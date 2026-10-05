@@ -4,7 +4,8 @@
 // its result lines close a pending call with done() from calls.ts. Everything else (budgets, caching, stats) is the ledger's.
 import { resolve, cost, stripTiers } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
-import { type Call, DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
+import { DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
+import { type Rows, newRows, push, addId, KIND_PROG, KIND_CMD, KIND_FILE } from "./rows.ts";
 import { numAt } from "../../util/text.ts";
 import { own } from "../../util/own.ts";
 export { dayKey };
@@ -25,8 +26,24 @@ export interface Day {
 // --json) reads them back as text and writes that text out again; heavy() decodes a day's on first use (HEAVY: codec.ts)
 export interface Heavy { tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt> }
 export function newHeavy(): Heavy { return { tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>() }; }
-export const HEAVY = { decode: (raw: string): Heavy => newHeavy() };
+export const HEAVY = { decode: (raw: string): Heavy => newHeavy(), encode: (h: Heavy): string => "" };
 export function heavy(d: Day): Heavy { let h = d.hx; if (!h) { h = d.hv ? HEAVY.decode(d.hv) : newHeavy(); d.hx = h; d.hv = ""; } return h; }
+// read-only look without keeping what it decoded (the day stays text): for passes over many days (call-row decoding)
+// back to text (one-shot runs, once a session is read to its end): the decoded maps are several times their text, and the
+// save writes this text as is instead of encoding them then
+export function packHeavy(d: Day): void { const h = d.hx; if (!h) return; const t = HEAVY.encode(h); if (!t) return; d.hv = own(t); d.hx = null; } // "": no codec in this program
+// every day of a session back to text except those a pending call still books into: its result (a later read) updates
+// the TS and Cnt objects it holds from that day's maps, which a re-decode would not see
+export function packAcc(a: Acc): void {
+  const held: TS[] = []; for (const p of a.pend.values()) held.push(p.st); // scriptc: no Set of objects
+  for (const d of a.days.values()) {
+    const h = d.hx; if (!h) continue;
+    let busy = false;
+    if (held.length) for (const st of h.tt.values()) { for (const x of held) if (x === st) { busy = true; break; } if (busy) break; }
+    if (!busy) packHeavy(d);
+  }
+}
+export function peekHeavy(d: Day): Heavy { const h = d.hx; return h ? h : d.hv ? HEAVY.decode(d.hv) : newHeavy(); }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Map<string, number>; days: Map<string, Day>; model: string; // claude: booked message id → its output_tokens booked so far
@@ -39,7 +56,7 @@ export interface Acc {
   uc: number; // credits without a rate (kiro)
   rs: number; // reasoning tokens, a subset of outTok (gemini thoughts, opencode reasoning, codex reasoning_output_tokens)
   bill: string; plan: string; billSrc: string; // billing mode stamped from evidence ("" = not stamped; billSrc "session" | "process")
-  calls: Call[]; lastCall: number; // one row per tool call in call order (persisted apart, callcache.ts); index of the newest, -1 none
+  rows: Rows; lastCall: number; // one row per tool call in call order, columnar (rows.ts; persisted apart, callcache.ts); index of the newest (the last row), -1 none
   t0: number; // first activity (epoch ms), 0 unknown
   al: number; // latest activity booked into Day.act (epoch ms), 0 none
   sp: number[]; // finished calls' [start, end] pairs (epoch ms) not yet in Day.act (not persisted: flushed per line and per chunk)
@@ -76,7 +93,7 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Map<string, number>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
-    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", calls: [], lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [],
+    inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", rows: newRows(), lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [],
     p: "", ro: false, mo: new Map<string, number>(), mv: "", mc: new Map<string, string>(), xs: new Set<string>() };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
@@ -192,27 +209,26 @@ export function tool(a: Acc, d: Day, name: string, model: string, mq: number): T
   st.h[tsHour] = (st.h[tsHour] ?? 0) + 1;
   d.hours[tsHour] = (d.hours[tsHour] ?? 0) + 1;
   if (!ROWS.on) return st;
-  a.calls.push({ t: tsMs > 0 ? tsMs : Date.now(), tool: intern(DICT.tool, name), model: intern(DICT.model, model), mq, progs: [], cmds: [], files: [], ms: -1, err: -1, out: 0, cid: "" });
-  a.lastCall = a.calls.length - 1;
+  a.lastCall = push(a.rows, tsMs > 0 ? tsMs : Date.now(), intern(DICT.tool, name), intern(DICT.model, model), mq);
   return st;
 }
-function newest(a: Acc): Call | null { return a.lastCall >= 0 && a.lastCall < a.calls.length ? a.calls[a.lastCall] : null; }
-function addId(xs: number[], i: number): void { if (i >= 0 && xs.indexOf(i) < 0) xs.push(i); }
+// the newest row's index, -1 none (pruned away, or no row yet)
+function newest(a: Acc): number { return a.lastCall >= 0 && a.lastCall < a.rows.n ? a.lastCall : -1; }
 // remember a call until its result shows up; shell commands are counted now, their errors on the result
 // a call's shell command line(s) for the git-linkage scraper, ≤ 4 KB (one command: no copy)
 function cmdOf(cmds: string[]): string { const c = cmds.length === 1 ? cmds[0] ?? "" : cmds.join("\n"); return c.length > 4096 ? c.slice(0, 4096) : c; }
 export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number, ts: string, arg: string, cmds: string[]): void {
-  const sh: Cnt[] = []; const row = newest(a);
+  const sh: Cnt[] = []; const row = newest(a); const r = a.rows;
   for (const c of cmds) {
     const n = norm(c); if (!n) continue;
     const pg = program(n);
     const h = heavy(d); sh.push(cnt(h.prog, name + "\t" + pg)); sh.push(cnt(h.cmds, name + "\t" + n));
-    if (row) { addId(row.progs, intern(DICT.prog, pg)); addId(row.cmds, intern(DICT.cmd, n)); }
+    if (row >= 0) { addId(r, row, KIND_PROG, intern(DICT.prog, pg)); addId(r, row, KIND_CMD, intern(DICT.cmd, n)); }
   }
-  if (row) row.cid = id;
+  if (row >= 0) r.cid[row] = id;
   if (!id) return;
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
-  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, row, sp: a.sp, name, cmd: cmdOf(cmds), id, end: 0, dn: a.dn });
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, rows: row >= 0 ? r : null, ri: row, sp: a.sp, name, cmd: cmdOf(cmds), id, end: 0, dn: a.dn });
 }
 // the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
 export function retool(a: Acc, p: Pend, name: string): void {
@@ -229,15 +245,15 @@ export function retool(a: Acc, p: Pend, name: string): void {
   if (!st) { st = newTS(); tt.set(own(name), st); }
   st.n = st.n + 1; st.h[h] = (st.h[h] ?? 0) + 1;
   p.st = st;
-  if (p.row) p.row.tool = intern(DICT.tool, name);
+  const r = p.rows; if (r && p.ri >= 0 && p.ri < r.n) r.tool[p.ri] = intern(DICT.tool, name);
 }
 // a changed file: the day's counter, and the newest call row when it is this tool's (adapters book files right after tool())
 export function file(a: Acc, d: Day, name: string, path: string, add: number, del: number): void {
   if (!path) return;
   const c = cnt(heavy(d).files, name + "\t" + path);
   c.add = c.add + add; c.del = c.del + del;
-  const r = newest(a);
-  if (r && nameOf(DICT.tool, r.tool) === name) addId(r.files, intern(DICT.file, path));
+  const i = newest(a);
+  if (i >= 0 && nameOf(DICT.tool, a.rows.tool[i] + 0) === name) addId(a.rows, i, KIND_FILE, intern(DICT.file, path));
 }
 // human prompts (what the transcript shows as user events), on the local day of the prompt; root sessions only
 export function turn(a: Acc, ms: number, iso: string, n: number): void { if (n > 0 && !a.sub) { const d = bucket(a, ms, iso); d.turns = d.turns + n; } }

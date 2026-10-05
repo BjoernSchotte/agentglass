@@ -6,7 +6,7 @@ import { statSync } from "node:fs";
 import { H } from "../../hooks.ts";
 import { say } from "../../state.ts";
 import { HOME } from "../../util/fs.ts";
-import { ledger } from "./ledger.ts";
+import { ledger, reapplyAll } from "./ledger.ts";
 import { L, reprice } from "./record.ts";
 import { PRICES_FILE, USER_WARN, readUserFile, loadUser, setGateway, setRemote, pricesSig } from "./pricing.ts";
 import { loadGateway, gatewayEnv, gatewayFiles } from "./gwprices.ts";
@@ -19,6 +19,7 @@ export function repriceAll(): { usd: number; ms: number } {
   const t0 = Date.now(); let usd = 0;
   for (const a of ledger.values()) usd += reprice(a);
   L.ver++; L.idx++; PRICED.sig = pricesSig();
+  reapplyAll(); // costs changed in place: the tick puts them on every session again (it skips unchanged entries)
   return { usd, ms: Date.now() - t0 };
 }
 // warnings (invalid prices.json entries) are told once per distinct text

@@ -3,6 +3,7 @@
 // Filters match the REAL values (a pin saved without --redact keeps matching), the screen shows the fakes. cwd, branch
 // and repo also match the session's own shown fake, exactly (a value taken off the redacted screen, e.g. a triage
 // include), never by ~ (fake titles and branches come from shared pools: a typed word would hit unrelated sessions).
+import { rowsFrom } from "./usage/rows.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
 import { HOME } from "../util/fs.ts";
@@ -54,7 +55,7 @@ ok("second session: the first one's values do not leak into it", m(s2, "acme") =
   const fake = display("prog", "deploy-acme-prod", null);
   ok("program faked", fake !== "deploy-acme-prod" && fake.indexOf("acme") < 0, fake);
   ok("safe program stays", display("prog", "git", null) === "git", display("prog", "git", null));
-  const v = callVal("program", s, { t: 0, tool: 0, model: -1, mq: 0, progs: [pid, gid], cmds: [], files: [], ms: 0, err: 0, out: 0, cid: "" }).ss.join(",");
+  const v = callVal("program", s, rowsFrom([{ t: 0, tool: 0, model: -1, mq: 0, progs: [pid, gid], cmds: [], files: [], ms: 0, err: 0, out: 0, cid: "" }]), 0).ss.join(",");
   ok("program values: real, shown fake exact, safe once", v === "deploy-acme-prod," + EXACT + fake.toLowerCase() + ",git", JSON.stringify(v)); }
 console.log(bad ? bad + " failed" : "redact filters: all checks passed");
 process.exit(bad ? 1 : 0);

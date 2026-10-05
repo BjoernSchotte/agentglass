@@ -1,7 +1,7 @@
 // agentglass — per-tool call detail for the usage ledger: call↔result pairing, durations, shell programs, changed files
 // SPDX-License-Identifier: Apache-2.0
 import { clean } from "../../util/text.ts";
-import type { Call } from "./facts.ts";
+import type { Rows } from "./rows.ts";
 import { own } from "../../util/own.ts";
 
 // one remembered call: t = call time (epoch ms), ms = duration (-1 unknown), ts/id = the transcript event to jump to
@@ -10,11 +10,12 @@ export interface Rec { t: number; ms: number; id: string; ts: string; arg: strin
 export interface TS { n: number; err: number; dn: number; ms: number; max: number; out: number; hist: number[]; h: number[]; slow: Rec[]; errs: Rec[] }
 // shell program / command line (n calls, err) or changed file (n edits, add/del lines)
 export interface Cnt { n: number; err: number; add: number; del: number }
-// a call still waiting for its result; sh = [program, command] counters per shell command, for error attribution; row = its fact row;
+// a call still waiting for its result; sh = [program, command] counters per shell command, for error attribution; rows/ri =
+// its session's call rows and its row there (null / -1 none; callcache prune remaps ri);
 // name = the tool's name as booked (retool renames it); sp = its session's Acc.sp: done() leaves the call's [start, end] there for the active-time intervals (record.ts flushSpans)
 // cmd = its full shell command line(s) ("" none), id = call id, end = result time (0 unknown);
 // dn = its session's Acc.dn: done() appends the call there, for the git-linkage scraper of the same line (vcs.ts)
-export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; row: Call | null; sp: number[]; name: string; cmd: string; id: string; end: number; dn: Pend[] }
+export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; rows: Rows | null; ri: number; sp: number[]; name: string; cmd: string; id: string; end: number; dn: Pend[] }
 
 // duration histogram: bucket 0 = < 10 ms, bucket k = [EDGE[k-1], EDGE[k]), the last one ≥ 30 min (roughly ×2.5 per step)
 export const EDGE = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 180000, 600000, 1800000];
@@ -63,8 +64,8 @@ export function done(p: Pend, ms: number, err: boolean, out: number, id: string,
   const tap = callTap; if (tap) tap(id, ms, err, codes, p.name);
   const st = p.st;
   const r: Rec = { t: p.t, ms, id: own(id), ts: p.ts, arg: p.arg }; // id: often a regex capture of the result line
-  const row = p.row;
-  if (row) { row.err = err ? 1 : 0; row.ms = ms >= 0 && ms < 86400000 ? ms : -1; row.out = out; }
+  const rw = p.rows; const i = p.ri;
+  if (rw && i >= 0 && i < rw.n) { rw.err[i] = err ? 1 : 0; rw.ms[i] = ms >= 0 && ms < 86400000 ? ms : -1; rw.out[i] = out; }
   st.out = st.out + out;
   if (err) { st.err = st.err + 1; st.errs.push(r); if (st.errs.length > KEEP) st.errs.shift(); }
   if (p.t > 0 && ms > 0 && ms < 86400000) { p.sp.push(p.t); p.sp.push(p.t + ms); } // a 20-minute test run is active time without lines

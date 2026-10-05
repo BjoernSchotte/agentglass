@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { own } from "../../util/own.ts";
 export const MQ_MSG = 0; export const MQ_TURN = 1; export const MQ_SESS = 2; // model exact per message | per turn | per session
-// one tool call. String columns are ids into DICT; -1 = none/unknown. t = call time (epoch ms, never 0: falls back to the bucket's time).
+// one tool call as a plain value: a copy of one row of the columnar store (rows.ts callAt), for checks and fixtures. String
+// columns are ids into DICT; -1 = none/unknown. t = call time (epoch ms, never 0: falls back to the bucket's time).
 // ms -1 = untimed; err -1 = no result seen yet, 0 ok, 1 failed; out = result bytes; cid = the harness call id ("" none)
 export interface Call { t: number; tool: number; model: number; mq: number; progs: number[]; cmds: number[]; files: number[]; ms: number; err: number; out: number; cid: string }
 // rows off: a one-shot CLI run that never reads call rows and never saves the ledger (cache.ts decides) skips building them

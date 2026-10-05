@@ -6,7 +6,7 @@ import { sessions } from "../../model/sessions.ts";
 import { home } from "../../util/text.ts";
 import { ledger } from "../usage/ledger.ts";
 import { type Cnt, HB, pct, mcpServer } from "../usage/calls.ts";
-import type { Call } from "../usage/facts.ts";
+import type { Rows } from "../usage/rows.ts";
 import { dayKey, heavy } from "../usage/record.ts";
 import type { ToolT } from "../query/agg.ts";
 import { EMPTY, callsIn, callCutoff } from "../query/eval.ts";
@@ -152,7 +152,7 @@ function rowsOf(sd: Side, t0: number, out: number[]): void {
   const t = sd.t; const f = sd.f ?? EMPTY; const cut = callCutoff();
   for (const p of t.paths) {
     const x = sessions.get(p); const ds = t.pdays.get(p); if (!x || !ds) continue;
-    callsIn(f, x, setOf(ds), cut, (c: Call) => bump(out, Math.floor((c.t - t0) / SLOT), 1));
+    callsIn(f, x, setOf(ds), cut, (r: Rows, i: number) => bump(out, Math.floor((r.t[i] - t0) / SLOT), 1));
   }
 }
 // local midnight of the day holding t (scriptc has no new Date(y, m, d))
