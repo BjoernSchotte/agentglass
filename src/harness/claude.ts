@@ -196,8 +196,12 @@ function usage(a: Acc, l: string): void {
   const d = bucket(a, 0, iso);
   const id = str(m["id"]); const u = obj(m["usage"]);
   const md0 = str(m["model"]); const rowModel = md0 === "<synthetic>" ? "" : md0; // the model that issued this line's calls
-  if (u && !(id && a.ids.has(id))) { // one API message is split over several lines carrying the same id + usage
-    if (id) a.ids.add(id);
+  const was = id ? a.ids.get(id) : undefined;
+  if (u && was !== undefined) { // a later line of a booked message: output_tokens grew while it streamed (thinking first)
+    const o2 = num(u["output_tokens"]); const md = str(m["model"]) || a.model; // the top level mirrors the answering attempt
+    if (o2 > was) { a.ids.set(id, o2); if (md !== "<synthetic>") tokens(a, d, md, 0, o2 - was, 0, 0, 0); }
+  } else if (u) { // one API message is split over several lines carrying the same id + usage
+    if (id) a.ids.set(id, num(u["output_tokens"]));
     const model = str(m["model"]) || a.model; if (model) a.model = model;
     const mb = modelBill(model); if (mb) stamp(a, mb, "", "session");
     const its = arr(u["iterations"]);

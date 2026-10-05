@@ -38,7 +38,8 @@ const HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--
   --json              {a:{expr, n, metrics}, b:{…}, subagents, tools[], programs[], files{onlyA, onlyB, both}};
                       metrics.cost is the total, costByMode its split (api = real spend, the rest list-price
                       estimates), billing the one mode or "mixed"; wallMs = first event → last activity,
-                      activeMs = minutes with activity; unknown values (unpriced cost, untimed calls) are null
+                      activeMs = minutes with activity (a session: at most wallMs); unknown values (unpriced cost,
+                      untimed calls) are null
 
   exit codes: 0 ok · 2 usage (bad expression or option, id prefix < 6, A = B) · 3 unknown session · 4 ambiguous prefix`;
 

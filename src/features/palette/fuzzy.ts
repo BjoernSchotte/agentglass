@@ -11,10 +11,13 @@ export function terms(q: string): Term[] {
   return o;
 }
 const SEPS = " /-_.:·";
+// the start of the text is a word start worth a little more (fzf: 10 vs 9 after a delimiter); runs carry only a word
+// start's 10, so "agentgl" at the start of "agentglass-x-review" does not outscore it after the "/" of "acme/agentglass" by 6 per character
+const WORD = 10;
 function bonusAt(hay: string, i: number): number {
-  if (i === 0) return 16;
+  if (i === 0) return 12;
   const p = hay.charAt(i - 1);
-  if (SEPS.indexOf(p) >= 0) return 10;
+  if (SEPS.indexOf(p) >= 0) return WORD;
   const c = hay.charCodeAt(i); const pc = hay.charCodeAt(i - 1);
   return c >= 65 && c <= 90 && pc >= 97 && pc <= 122 ? 8 : 0; // camelCase hump
 }
@@ -41,7 +44,7 @@ export function scoreTerm(hay: string, low: string, t: string, cs: boolean, pos:
     for (let j = 0; j < n; j++) {
       i = h.indexOf(t.charAt(j), i + 1);
       let b = bonusAt(hay, i);
-      if (i === last + 1) b = Math.max(b, run, 4); else run = b; // a run keeps its first character's boundary bonus (fzf)
+      if (i === last + 1) b = Math.max(b, run, 4); else run = Math.min(b, WORD); // a run keeps its first character's boundary bonus (fzf)
       tryPos.push(i); score += b; last = i;
     }
     const v = score - Math.min(80, e - s + 1 - n); // 1 per skipped column: letters scattered far apart rank low
