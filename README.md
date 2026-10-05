@@ -414,6 +414,7 @@ agentglass --json --filter 'tool is Bash and status is error' | jq '.[].title'  
 agentglass --json --filter 'repo is agentglass' --filter 'cost > 2'           # --filter repeats (AND)
 agentglass --json --pinned                                                     # also apply the TUI's pins
 agentglass --watch --filter 'harness is pi and event is_one_of tool result'    # only pi's calls and results
+agentglass --watch --filter 'event is alert'                                   # only alert transitions
 ```
 A bad expression exits 2 with the message and a caret under the column.
 
