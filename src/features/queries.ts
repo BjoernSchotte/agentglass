@@ -406,7 +406,7 @@ function errors(args: string[]): void {
 }
 
 const SCOPE_OPTS: OptRec[] = [opt("--all-projects", "", "inside an agent: every project (default: the current one)", "", []), opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", [])];
-const FMT_OPTS: OptRec[] = [opt("--format", "json|jsonl|csv|table", "output format", "json in an agent or a pipe, table on a terminal", ["json", "jsonl", "csv", "table"]), opt("--fields", "a,b,c", "only these fields, in this order (tokens_in for nested ones)", "", [])];
+const FMT_OPTS: OptRec[] = [opt("--format", "json|jsonl|csv|table", "output format", "json in an agent or a pipe, table on a terminal", ["json", "jsonl", "csv", "table"]), opt("--fields", "a,b,c", "only these fields, in this order (nested: tokens_in, git_commits; lists stay JSON arrays)", "", [])];
 function rec(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options: options.concat(FMT_OPTS, SCOPE_OPTS), fields, group: "cmd" }; }
 const SINCE = opt("--since", "today|<n>h|<n>d|YYYY-MM-DD", "only from then on", "24h", []);
 const HARNESS = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());

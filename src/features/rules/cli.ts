@@ -6,6 +6,7 @@ import { S } from "../../state.ts";
 import { type Rule, type RuleSet, loadRules, builtins, unitOf, thrText } from "./config.ts";
 export { thrText };
 import { RULES_FILE } from "./file.ts";
+import { type OptRec, opt, optTable, setOptions, helpOf, wantsHelp } from "../clihelp.ts";
 import { fileText, fileMtime, fileSafe, withSafety } from "./state.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
@@ -69,10 +70,17 @@ export function defaultsText(examples: boolean): string {
   return "{\n  \"version\": 1,\n  \"builtins\": true,\n  \"notify\": { \"bell\": true, \"desktop\": true, \"throttle\": \"30s\", \"command\": null, \"on\": [\"fire\", \"escalate\"] },\n  \"rules\": [\n" + rows.join(",\n") + "\n  ]\n}";
 }
 
-const HELP = `usage: agentglass rules check [--json]     validate ${"~"}/.agentglass/rules.json; print the effective rules and every problem as
-                                           rules.json:<line>:<col>: <rule>: <message> (exit 0 clean, 1 warnings, 2 errors)
-       agentglass rules defaults [--examples]  print the built-in rules as a ready-to-edit rules.json
-                                           (--examples: plus disabled example rules: cost, error rate, repeats, per harness)
+const CHECK_OPTS: OptRec[] = setOptions("rules check", [opt("--json", "", "check: {file, exists, rules[], diagnostics[{line,col,rule,message,severity}]}", "", [])]);
+const DEFAULTS_OPTS: OptRec[] = setOptions("rules defaults", [opt("--examples", "", "defaults: plus disabled example rules (cost, error rate, repeats, per harness)", "", [])]);
+export const RULES_HELP = `usage: agentglass rules check [--json]
+       agentglass rules defaults [--examples]
+
+  check     validate ${"~"}/.agentglass/rules.json; print the effective rules and every problem as
+            rules.json:<line>:<col>: <rule>: <message> (exit 0 clean, 1 warnings, 2 errors)
+  defaults  print the built-in rules as a ready-to-edit rules.json
+
+` + optTable(CHECK_OPTS.concat(DEFAULTS_OPTS)) + `
+
 the file: {"builtins": true, "notify": {...}, "rules": [{"id", "metric", "where", "op", "degraded", "critical", "for", ...}]}
 a rule with a built-in id (waiting approval loop long-cmd stalled spinning) changes only the fields it names
 metrics: turn_done approval_wait repeat_run command_age stalled spinning session_cost session_tokens tool_calls tool_errors tool_error_rate
@@ -82,6 +90,7 @@ H.cli.push((args: string[]): boolean => {
   if (args[0] !== "rules") return false;
   S.cli = true;
   const sub = args[1] ?? "";
+  if (wantsHelp(args) || sub === "help") { out(helpOf(sub === "check" || sub === "defaults" ? "rules " + sub : "rules", args, RULES_HELP)); process.exit(0); }
   if (sub === "check") {
     const exists = fileMtime(RULES_FILE) >= 0;
     const c = checkText(exists ? fileText(RULES_FILE) : "", exists, exists && fileSafe(RULES_FILE));
@@ -90,7 +99,6 @@ H.cli.push((args: string[]): boolean => {
     process.exit(c.code);
   }
   if (sub === "defaults") { out(defaultsText(args.indexOf("--examples") >= 0)); process.exit(0); }
-  if (sub === "--help" || sub === "-h" || sub === "help") { out(HELP); process.exit(0); }
-  process.stderr.write("agentglass rules: " + (sub ? "unknown command \"" + sub + "\"" : "which one? check or defaults") + "\n" + HELP + "\n");
+  process.stderr.write("agentglass rules: " + (sub ? "unknown command \"" + sub + "\"" : "which one? check or defaults") + "\n" + RULES_HELP + "\n");
   process.exit(2);
 });

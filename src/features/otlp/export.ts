@@ -17,6 +17,7 @@ import type { Clause } from "../query/types.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
 import { discover, opts as watchOpts, watch } from "../cli.ts";
 import { agentScope, visible } from "../agentenv.ts";
+import { opt, setOptions } from "../clihelp.ts";
 import { newLive, liveTick, liveStop } from "./live.ts";
 import { type XTurn } from "./types.ts";
 import { newSessB, finish, fxChat } from "./build.ts";
@@ -66,6 +67,24 @@ export function sessFilter(src: string): { f: Compiled | null; err: string } {
 export function urlErr(url: string): string {
   return /^https?:\/\/[^/\s]/i.test(url) && !/[\s\u0000-\u001f\u007f]/.test(url) ? "" : "--otlp needs an http(s) URL (got " + safeUrl(url).replace(/[\u0000-\u001f\u007f]/g, "?") + ")";
 }
+// export's options: the JSON help lists them, `export --help` prints them (cli.ts, from the record)
+setOptions("export", [
+  opt("--otlp", "<url>", "the OTLP/HTTP endpoint (else otlp.endpoint, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_ENDPOINT)", "", []),
+  opt("--since", "30m|24h|7d|YYYY-MM-DD|all", "send what happened from then on", "7d", []),
+  opt("--until", "30m|24h|7d|YYYY-MM-DD", "and up to then", "", []),
+  opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds()),
+  opt("--session", "<id>", "only this session (repeatable)", "", []),
+  opt("--filter", "'<session clauses>'", "only the matching sessions (repeatable, ANDed)", "", []),
+  opt("--no-subagents", "", "leave subagent sessions out", "", []),
+  opt("--content", "", "also send prompts, outputs and tool I/O, each cut to otlp.contentMax", "off", []),
+  opt("--resend", "", "send again what the endpoint already accepted (same ids)", "", []),
+  opt("--dry-run", "", "print the OTLP/JSON requests, send nothing", "", []),
+  opt("--batch", "N", "spans per request, 1–100000 (at most 4 MB)", "otlp.batch, 512", []),
+  opt("--compression", "gzip|none", "request body compression", "otlp.compression, gzip", ["gzip", "none"]),
+  opt("--native", "warn|skip|include", "turns of a harness that exports OTLP itself: warn, leave new ones to it, or send", "otlp.native, warn", ["warn", "skip", "include"]),
+  opt("--status", "", "the last export to the endpoint, gzip support, the harnesses' own telemetry", "", []),
+  opt("--json", "", "the summary as JSON on stdout", "", []),
+]);
 export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<string, string>): { o: ExOpts; err: string } {
   const o: ExOpts = { url: "", since: now - 7 * 86400000, until: 0, harness: "", ids: [], filter: "", subagents: true, native: c.native, status: false, content: c.content, resend: false, dry: false, batch: c.batch, compression: "", json: false };
   let flag = "";
@@ -89,7 +108,7 @@ export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<st
       else if (a === "--compression") { o.compression = val(i, a); i++; if (o.compression !== "gzip" && o.compression !== "none") throw new Error("--compression takes gzip or none"); }
       else if (a === "--json") o.json = true;
       else if (a === "--redact" || a === "--agent" || a === "--no-agent" || a === "--all-projects" || a === "--project-only") { /* read at startup (redact-on.ts, agentenv.ts) */ }
-      else throw new Error("unknown option " + a + " (agentglass --help lists the export options)");
+      else throw new Error("unknown option " + a + " (agentglass export --help lists the options)");
     }
   } catch (e) { return { o, err: e instanceof Error ? e.message : String(e) }; }
   if (o.until > 0 && o.until <= o.since) return { o, err: "--until must be after --since" };
