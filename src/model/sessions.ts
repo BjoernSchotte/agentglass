@@ -162,10 +162,20 @@ export function isOpen(s: Sess): boolean {
 }
 // every active H.listFilter predicate passes (the filter language's Sessions filter)
 function matchesAll(ps: ((s: Sess) => boolean)[], s: Sess): boolean { for (const f of ps) if (!f(s)) return false; return true; }
+// root sessions by harness:id, rebuilt when the session set changed (SG.gen, size) or a hit is no longer a root (a head read
+// set its parent): parentOf was a scan of every session, per subagent and per caller (git attribution: per pass)
+const ROOTS = { gen: -1, n: -1, m: new Map<string, Sess>() };
+function indexRoots(): void {
+  ROOTS.gen = SG.gen; ROOTS.n = sessions.size; ROOTS.m.clear();
+  for (const p of sessions.values()) if (!p.parent) { const k = p.h + ":" + p.id; if (!ROOTS.m.has(k)) ROOTS.m.set(k, p); } // the first wins, as the scan did
+}
 export function parentOf(s: Sess): Sess | null {
   if (!s.parent) return null;
-  for (const p of sessions.values()) if (!p.parent && p.h === s.h && p.id === s.parent) return p;
-  return null;
+  if (ROOTS.gen !== SG.gen || ROOTS.n !== sessions.size) indexRoots(); // size: callers (checks) that set sessions directly
+  const k = s.h + ":" + s.parent;
+  let p = ROOTS.m.get(k);
+  if (p && (p.parent || sessions.get(p.path) !== p)) { indexRoots(); p = ROOTS.m.get(k); }
+  return p ?? null;
 }
 export function buildView(): void {
   // the predicates once per build: a filter's matching set is computed once, not per session (n² with 2k sessions)

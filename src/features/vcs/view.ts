@@ -13,7 +13,7 @@ import { openTranscript } from "../../ui/transcript.ts";
 import { copyText } from "../../actions.ts";
 import { money } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
-import { type GitInfo, type GCommit, type GLink, gitInfo, sessIn, gitRun, merged, sessGit } from "./attrib.ts";
+import { type GitInfo, type GCommit, type GLink, gitInfo, sessIn, gitRun, merged, sessGit, gitTouches, gitTouched } from "./attrib.ts";
 export { merged, sessGit };
 import { enrich, saveVcs, gitFailed, VF } from "./enrich.ts";
 import { repoShas } from "./reflog.ts";
@@ -88,8 +88,24 @@ export function costOf(s: Sess): number[] {
   for (const x of s.subs) { c += x.cost > 0 ? x.cost : 0; u += x.unkTok; }
   return [c, u];
 }
+// the preview's git line: the session's infos merged with its subagents' are kept while those infos are the same objects
+// (a re-attribution makes new ones) and none was changed in place (gitTouches: fallback, enrichment); merging a busy
+// repo's rows was most of a frame. The line itself is rebuilt each frame (cost moves while the session streams).
+const PREV = new Map<string, { touch: number; gs: (GitInfo | null)[]; g: GitInfo | null }>();
+function prevGit(s: Sess): GitInfo | null {
+  const gs: (GitInfo | null)[] = [gitInfo(s)]; for (const x of s.subs) gs.push(gitInfo(x));
+  const hit = PREV.get(s.path);
+  if (hit && hit.touch === gitTouches() && hit.gs.length === gs.length) {
+    let same = true; for (let i = 0; i < gs.length; i++) if (hit.gs[i] !== gs[i]) { same = false; break; }
+    if (same) return hit.g;
+  }
+  const g = sessGit(s);
+  if (PREV.size > 256) PREV.clear();
+  PREV.set(s.path, { touch: gitTouches(), gs, g });
+  return g;
+}
 H.previewSections.push((s: Sess, w: number): string[] => {
-  const g = sessGit(s); if (!g) return [];
+  const g = prevGit(s); if (!g) return [];
   const cu = costOf(s);
   const t = previewLine(g, cu[0] ?? 0, cu[1] ?? 0, s.bill);
   if (!t) return [];
@@ -117,6 +133,7 @@ function refresh(): void {
     const rl = repoShas(i.gitdir, i.common);
     enrich(x.path, gi, i.top, closedNow(x), rl, gitRun());
   }
+  if (g) gitTouched(); // enrichment may have changed counted rows: the preview line's memo
   V.g = g ? sessGit(s) : null; // re-merge: enrichment wrote into the per-session infos
   V.rows = V.g ? viewRows(V.g, Date.now(), S.W - 6) : [];
   if (V.sel >= V.rows.length) V.sel = Math.max(0, V.rows.length - 1);
