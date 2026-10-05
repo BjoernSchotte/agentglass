@@ -1,9 +1,10 @@
 // agentglass — self-check for the filter input, keys, chips and pins in the TUI (no terminal): scriptc build src/features/query/ui.check.ts -o uc && ./uc
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../../state.ts";
+import type { Sess } from "../../model/types.ts";
 import { sessions, buildView } from "../../model/sessions.ts";
 import { onInput } from "../../input.ts";
-import { boxChips, emptyText } from "../../hooks.ts";
+import { H, boxChips, emptyText } from "../../hooks.ts";
 import { parse, print } from "./parse.ts";
 import { initPins, localFor, setLocal } from "./scope.ts";
 import { complete, hiddenCount } from "./ui.ts";
@@ -73,5 +74,11 @@ eq("completion text values", complete("tool is B", true).join(","), "Bash");
 eq("start toast", initPins({ load: () => "repo is agentglass", save: (v: string) => {}, remember: true }), "pinned: repo is agentglass — P edits, P then enter on empty unpins");
 buildView(); eq("restored pins filter", ids(), "c1");
 eq("sessions in fixture", String(sessions.size), "4");
+// a filter's predicate is made once per build, not asked per session (its matching set walks every session: n² at 2k)
+let made = 0; let asked = 0;
+const all = (s: Sess): boolean => { asked++; return s.path !== ""; };
+H.listFilter.push(() => { made++; return all; });
+buildView(); eq("list filter: one predicate per build", String(made), "1"); eq("list filter: asked per session", String(asked >= 1), "true");
+H.listFilter.pop();
 console.log(bad ? bad + " failed" : "filter ui: all checks passed");
 if (bad) process.exit(1);
