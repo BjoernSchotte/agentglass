@@ -11,10 +11,10 @@ function bytes(h: string): number[] { const o: number[] = []; for (let i = 0; i 
 function be(n: number): number[] { return [Math.floor(n / 16777216) % 256, Math.floor(n / 65536) % 256, Math.floor(n / 256) % 256, n % 256]; }
 // a version-2 .idx as git writes it: magic, version, fan-out, sorted names (CRCs and offsets after them don't matter here)
 function idx(shas: string[]): Uint8Array {
-  const s = shas.slice().sort(); const o: number[] = [0xff, 0x74, 0x4f, 0x63, 0, 0, 0, 2];
+  const s = shas.slice().sort(); const w = (s[0] ?? "").length / 2; const o: number[] = [0xff, 0x74, 0x4f, 0x63, 0, 0, 0, 2];
   for (let b = 0; b < 256; b++) { let n = 0; for (const x of s) if (parseInt(x.slice(0, 2), 16) <= b) n++; for (const v of be(n)) o.push(v); }
   for (const x of s) for (const v of bytes(x)) o.push(v);
-  for (let i = 0; i < s.length * 8 + 40; i++) o.push(0);
+  for (let i = 0; i < s.length * 8 + 2 * w; i++) o.push(0);
   return new Uint8Array(o);
 }
 const D = join(HOME, "objects-check"); rmSync(D, { recursive: true, force: true });
@@ -42,6 +42,21 @@ const ALT = join(D, "base", "objects"); mkdirSync(join(ALT, "d3"), { recursive: 
 const O2 = join(D, "clone", ".git", "objects"); mkdirSync(join(O2, "info"), { recursive: true }); writeFileSync(join(O2, "info", "alternates"), ALT + "\n");
 eq("alternates", String(hasCommit(join(D, "clone", ".git"), "d356c32")), "1");
 eq("alternates absent", String(hasCommit(join(D, "clone", ".git"), "d356c33")), "0");
+// SHA-256 repos (extensions.objectformat): 32-byte names in the index; read as 20-byte ones a present sha looked absent
+const S2 = join(D, "s256", ".git"); mkdirSync(join(S2, "objects", "pack"), { recursive: true });
+writeFileSync(join(S2, "config"), "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = sha256\n");
+const P2 = ["11" + "a".repeat(62), "5e" + "b".repeat(62), "5e" + "c".repeat(62), "ab" + "d".repeat(62)];
+writeFileSync(join(S2, "objects", "pack", "pack-2.idx"), idx(P2));
+eq("sha256 packed", String(hasCommit(S2, "5ebbbbb")) + String(hasCommit(S2, "5eccccc")) + String(hasCommit(S2, "abddddd")), "111");
+eq("sha256 absent", String(hasCommit(S2, "5eaaaaa")), "0");
+rmSync(join(OBJ, "pack", "pack-0.idx"));
+// a foreign sha fetched later (git fetch from the clone that made it): the memo does not keep the old "not there"
+eq("absent before the fetch", String(hasCommit(C, "4b1d000")), "0");
+mkdirSync(join(OBJ, "4b"), { recursive: true }); writeFileSync(join(OBJ, "4b", "1d000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), "x");
+eq("there after the fetch (loose)", String(hasCommit(C, "4b1d000")), "1");
+eq("absent before the fetch (pack)", String(hasCommit(C, "c0ffee0")), "0");
+writeFileSync(join(OBJ, "pack", "pack-3.idx"), idx(["c0ffee0000000000000000000000000000000000"]));
+eq("there after the fetch (pack)", String(hasCommit(C, "c0ffee0")), "1");
 rmSync(D, { recursive: true, force: true });
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("objects: all checks passed");
