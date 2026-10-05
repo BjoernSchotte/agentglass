@@ -76,6 +76,9 @@ printf '}}\n' >> "$c/old"; tr -d '\n' < "$c/old" | sed 's/"t":\[30,/"t":[31,/' >
 eq "migrated --json = the old cache's numbers" "$(run --json)" "$(printf '%s' "$cold" | sed 's/"in":30,/"in":31,/')"
 [ -s "$c/ledger.jsonl" ] && [ ! -e "$c/ledger.json" ] || { echo "FAIL migration left: $(ls "$c")"; fail=1; }
 grep -q '"t":\[31,' "$c/ledger.jsonl" || { echo "FAIL migrated cache not carried over"; fail=1; }
+# an unreadable ledger.json newer than ledger.jsonl (an older build of another cache VERSION ran since) does not hide it
+printf '{"v":1,"sessions":{}}\n' > "$c/ledger.json"; touch -t 209901010000 "$c/ledger.json"
+eq "unreadable newer ledger.json: the jsonl's numbers" "$(run --json)" "$(printf '%s' "$cold" | sed 's/"in":30,/"in":31,/')"
 # a torn last line costs that session only: it re-indexes, the output stays the same
 n=$(wc -c < "$c/ledger.jsonl" | tr -d ' '); head -c $((n - 20)) "$c/ledger.jsonl" > "$c/torn"; mv "$c/torn" "$c/ledger.jsonl"
 eq "torn cache --json = cold --json" "$(run --json)" "$cold"

@@ -4,7 +4,7 @@
 // or one object tree of it; writing holds one session's line at a time. A line that does not parse (a torn write, a
 // line over the largest window) costs only that session: it is reported as bad and skipped, so it re-indexes.
 import { openSync, writeSync, closeSync, renameSync, mkdirSync, statSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, basename } from "node:path";
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { readBytes } from "../../util/fs.ts";
 
@@ -59,9 +59,15 @@ export function readCache(path: string, onHead: (h: Head) => boolean, onSession:
   return r;
 }
 // temp file + rename (atomic: a crash mid-write keeps the previous file); false on any error, the temp file removed.
+// The temp name is this writer's own (pid + sequence): a TUI and a CLI run saving at once each rename a whole file of
+// their own (the last one wins), where a shared name let one truncate the other's file mid-write and splice lines of two
+// states, some of which still parse. isTmpOf() finds what a killed writer left behind (cache.ts sweeps it).
 // The line is {"path":…} followed by the session object's own members (no copy of the object to add the key).
+let seq = 0;
+export function tmpOf(path: string): string { seq++; return path + "." + String(process.pid) + "." + String(seq) + ".tmp"; }
+export function isTmpOf(path: string, name: string): boolean { const b = basename(path) + "."; return name.startsWith(b) && name.endsWith(".tmp"); }
 export function writeCache(path: string, head: Head, each: (put: (path: string, o: Obj) => void) => void): boolean {
-  const tmp = path + ".tmp"; let fd = -1;
+  const tmp = tmpOf(path); let fd = -1;
   try {
     mkdirSync(dirname(path), { recursive: true });
     fd = openSync(tmp, "w");
