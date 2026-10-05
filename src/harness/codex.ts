@@ -221,6 +221,8 @@ function usage(a: Acc, l: string): void {
   if (ws.length && at >= L.rlAt) { L.rlAt = at; L.rl = ws; } // the newest event across sessions: 5 h and, when the plan has it, 7 d
 }
 
+// a new rollout goes into today's dir (local date): the one dir an agent without a session yet can write into
+function todayDir(cwd: string): string { const d = new Date(); const two = (n: number): string => (n < 10 ? "0" : "") + String(n); return join(CODEX, "sessions", String(d.getFullYear()), two(d.getMonth() + 1), two(d.getDate())); }
 export const codex: HarnessAdapter = {
   id: "codex", label: "Codex", glyph: ">_", mark: "›", color: () => C.codex,
   badge: () => bg("236;236;240") + fg("16;16;20") + CSI + "1m" + ">_" + RST + fg(C.text) + " Codex  " + RST, // terminal prompt
@@ -228,6 +230,7 @@ export const codex: HarnessAdapter = {
   roots: () => [join(CODEX, "sessions"), join(CODEX, "archived_sessions")], scan, meta, headBytes: 524288,
   parse, title: (s: Sess) => titles.get(s.id) ?? "",
   liveFile: (p: string) => p.endsWith(".jsonl") && p.indexOf("/rollout-") >= 0, // codex keeps its rollout open
+  wakeDir: todayDir,
   headless: (s: Sess, msg: string) => ["exec", "resume", s.id, msg],
   resume: (s: Sess) => ["resume", s.id],
   files: (s: Sess) => [s.path], usage,

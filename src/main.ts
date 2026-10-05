@@ -103,8 +103,8 @@ function listShown(): boolean { return S.tab === 0 && S.mode === "list"; }
 function headSig(): string { const o: string[] = [statsKey(), String(S.tab)]; for (const f of H.headerWidgets) o.push(f(S.W)); return o.join("\n"); }
 function bodySig(): string { return String(gitGen()) + "/" + String(gitTouches()) + "\n" + listSig(); }
 // once per turn at most (several jobs ask in one turn): true = the body moved (a frame); a moved header alone marks only
-// that row (the cpu graph and the stats move every process scan). head = also look at the header (the live probe
-// cannot move it: it only stats logs)
+// that row (the cpu graph and the stats move every process scan). head = also look at the header: only the process
+// scan and a ledger tick that booked something move it (an alarm count is drawn by the watch job's alarm frame)
 const VIS = { head: "", body: "", turn: -1, hturn: -1, moved: false };
 let turnNo = 0; let wakeSeen = 0; let headDirty = false;
 function shownMoved(head: boolean): boolean {
@@ -147,7 +147,7 @@ function body(j: Job, now: number): () => void {
   };
   // alarm latency = the watch interval: probe first (the probe may sleep up to 1 s, the tail follows the stat), and a
   // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap)
-  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved(true)) S.dirty = true; }; // the watchdog read tails: busy/idle glyphs
+  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved(false)) S.dirty = true; }; // the watchdog read tails: busy/idle glyphs
   if (j === "fast") return () => {
     let d = false; for (const f of H.onFastTick) if (f()) d = true;
     let hd = false; for (const f of H.onHeaderTick) if (f()) hd = true;
@@ -157,7 +157,7 @@ function body(j: Job, now: number): () => void {
   return () => { // render: build only when something changed, a toast is up, or the clock texts are due; else turn the spinners
     const toast = S.toast !== "" && now - S.toastAt < S.toastMs + 500; // includes the frame that removes it
     const list = listShown();
-    const clock = now - lastBuild >= forceMs(sc.lv) && (!list || now - lastBuild >= SAFETY_MS || shownMoved(true));
+    const clock = now - lastBuild >= forceMs(sc.lv) && (!list || now - lastBuild >= SAFETY_MS || shownMoved(false));
     if (sc.fixed || S.dirty || toast || clock || (S.animating && !list)) { lastBuild = now; S.frame++; render(); return; }
     if (headDirty) { headDirty = false; renderTop(false); } // the header row only
     if (S.animating) { S.frame++; flushSpin(spinGlyph(), (o: string) => { process.stdout.write(o); }); } // the spinner cells only

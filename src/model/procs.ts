@@ -127,7 +127,7 @@ export function wakeScan(roots: Proc[], now: number): void {
   for (const p of roots) {
     if (!p.h || p.sess) continue;
     let wd: ((cwd: string) => string) | null = null; for (const ad of HARNESSES) if (ad.id === p.h) { const f = ad.wakeDir; if (f) wd = f; }
-    if (wd && p.cwd) WAKE_DIRS.add(wd(p.cwd)); else WAKE_H.set(p.h, now);
+    if (wd && (p.cwd || p.h !== "claude")) WAKE_DIRS.add(wd(p.cwd)); else WAKE_H.set(p.h, now); // Claude names its dir from the cwd (known after the slow job)
   }
 }
 // what linkSessions reads besides the open files (refreshSlow links after reading those): the registries, the agent

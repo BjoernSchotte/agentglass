@@ -5,7 +5,7 @@ import { harnessOfArgs, linkOne, wakeScan } from "./procs.ts";
 import type { Proc } from "./types.ts";
 import { WAKE_H, WAKE_DIRS, listDirCached, FS_STATS, FS_CLOCK } from "../util/fs.ts";
 import { projectDirOf } from "../harness/claude.ts";
-import { CLAUDE } from "../util/fs.ts";
+import { CLAUDE, CODEX } from "../util/fs.ts";
 import { newSess, type Sess } from "./types.ts";
 import { H } from "../hooks.ts";
 let bad = 0;
@@ -49,7 +49,9 @@ ok("claude project dir from a cwd", projectDirOf("/home/u/.herdr/work_trees/x-1"
 WAKE_H.clear();
 wakeScan([pr(10, "claude", "/home/u/proj", ""), pr(11, "codex", "/home/u/p2", ""), pr(12, "gemini", "/w", "/s/linked.json"), pr(13, "pi", "", ""), pr(14, "opencode", "/o", ""), pr(15, "kiro", "/k", ""), pr(16, "fx", "/f", "")], 5000);
 ok("claude: its project dir", WAKE_DIRS.has(CLAUDE + "/projects/-home-u-proj") && !WAKE_H.has("claude"), [...WAKE_DIRS].join(","));
-ok("codex, pi, opencode, kiro, fx: their harness", WAKE_H.get("codex") === 5000 && WAKE_H.get("pi") === 5000 && WAKE_H.get("opencode") === 5000 && WAKE_H.get("kiro") === 5000 && WAKE_H.get("fx") === 5000, [...WAKE_H.keys()].join(","));
+let codexDir = false; for (const d of WAKE_DIRS) if (d.startsWith(CODEX + "/sessions/")) codexDir = true;
+ok("codex: today's rollout dir", codexDir && !WAKE_H.has("codex"), [...WAKE_DIRS].join(","));
+ok("pi, opencode, kiro, fx: their harness", WAKE_H.get("pi") === 5000 && WAKE_H.get("opencode") === 5000 && WAKE_H.get("kiro") === 5000 && WAKE_H.get("fx") === 5000, [...WAKE_H.keys()].join(","));
 ok("a linked agent wakes nothing", !WAKE_H.has("gemini"), "");
 // a quiet dir is looked at again while woken (harness or dir), and not after the minute
 const qd = "/tmp/agentglass-wake-check-" + String(process.pid); mkdirSync(qd, { recursive: true });
@@ -61,4 +63,4 @@ ok("woken harness: stat", FS_STATS.stats === st0 + 1, "");
 WAKE_H.clear(); WAKE_DIRS.add(qd); st0 = FS_STATS.stats; listDirCached(qd, 0, "claude");
 ok("woken dir: stat", FS_STATS.stats === st0 + 1, "");
 WAKE_DIRS.clear(); rmSync(qd, { recursive: true, force: true });
-console.log(bad ? bad + " failed" : "procs: all checks passed (" + String(cases.length + 13) + " cases)"); process.exit(bad ? 1 : 0);
+console.log(bad ? bad + " failed" : "procs: all checks passed (" + String(cases.length + 14) + " cases)"); process.exit(bad ? 1 : 0);
