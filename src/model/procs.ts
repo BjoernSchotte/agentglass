@@ -137,17 +137,26 @@ export function refreshSlow(): void {
   for (const ad of HARNESSES) if (ad.liveFile) lf.add(ad.id);
   for (const p of allProcs.values()) if (p.h) { hp.push(p.pid); if (lf.has(p.h)) fp.add(p.pid); }
   const f = OS.procFiles(hp, fp, (n: string) => { for (const ad of HARNESSES) { const lf = ad.liveFile; if (lf && lf(n)) return true; } return false; });
+  let sig = ""; for (const [k, v] of f.cwd) sig += String(k) + "=" + v + "\n"; for (const [k, v] of f.open) sig += v + "<" + String(k) + "\n";
   cwdByPid.clear(); filePid.clear();
   for (const [k, v] of f.cwd) cwdByPid.set(k, v);
   for (const [k, v] of f.open) filePid.set(k, v);
-  tmuxByTty.clear();
+  // tmux panes: listed when an agent sits on a tty no pane is known for (a new pane), else every 30 s (a moved one)
+  const now = Date.now(); let paneDue = now - SLOW.tmuxAt >= 30000;
+  if (!paneDue) for (const p of procs) { const d = OS.ttyDevice(p.tty); if (d && !tmuxByTty.has(d) && !SLOW.noPane.has(d)) { paneDue = true; break; } }
+  if (paneDue) readPanes(now);
+  for (const p of procs) p.cwd = cwdByPid.get(p.pid) ?? "";
+  if (S.pins.length) buildProcView(); // cwd known now: repo and cwd pins apply
+  if (sig !== SLOW.sig) { SLOW.sig = sig; linkSessions(); lastLink = linkSig(); } // cwds or open transcripts moved: link again
+}
+const SLOW = { sig: "", tmuxAt: 0, noPane: new Set<string>() };
+function readPanes(now: number): void {
+  SLOW.tmuxAt = now; tmuxByTty.clear(); SLOW.noPane.clear();
   for (const l of run("tmux", ["list-panes", "-a", "-F", "#{pane_tty} #{session_name}:#{window_index}.#{pane_index}"]).split("\n")) {
     const i = l.indexOf(" ");
     if (i > 0) tmuxByTty.set(l.slice(0, i), l.slice(i + 1));
   }
-  for (const p of procs) p.cwd = cwdByPid.get(p.pid) ?? "";
-  if (S.pins.length) buildProcView(); // cwd known now: repo and cwd pins apply
-  linkSessions(); lastLink = linkSig();
+  for (const p of procs) { const d = OS.ttyDevice(p.tty); if (d && !tmuxByTty.has(d)) SLOW.noPane.add(d); } // outside tmux: not asked again till the 30 s
 }
 export function rootOf(pid: number): Proc | null {
   let q = allProcs.get(pid);
@@ -210,6 +219,8 @@ export function paneTitles(): Map<string, string> {
   return m;
 }
 export function ttyOf(pid: number): string { const p = allProcs.get(pid); return p ? OS.ttyDevice(p.tty) : ""; }
+// the target for an action (send keys, switch): the panes read now (the display's map may be up to 30 s old)
+export function tmuxTargetNow(pid: number): string { readPanes(Date.now()); return tmuxTarget(pid); }
 export function tmuxTarget(pid: number): string {
   const p = allProcs.get(pid);
   const dev = p ? OS.ttyDevice(p.tty) : "";

@@ -13,8 +13,8 @@ KNOWN.mtime = (path: string): number => { const s = sessions.get(path); return s
 export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 
 // a known log is stat'ed every scan when it is pid-linked or written within 10 min, every 4th when within a day; the rest
-// in turns, 1/ROT of them per scan (~once a minute at the hot scan interval): a history of old logs was most of a scan
-const ROT = 20; const RECENT_MS = 86400000; const WARM_MS = 600000; // written within 10 min: every scan; within a day: every 4th
+// in turns, 1/ROT of them per scan (~every 2 min at the hot scan interval): a history of old logs was most of a scan
+const ROT = 40; const RECENT_MS = 86400000; const WARM_MS = 600000; // written within 10 min: every scan; within a day: every 4th
 const SCAN = { no: 0, now: 0, seen: 0, gone: [] as string[], gen: -1, n: -1 };
 // a log's turn: from the characters before its extension (ids, random enough), no lookup per log and scan
 function rotOf(path: string): number { const n = path.length; let h = 0; for (let i = Math.max(0, n - 14); i < n - 6; i++) h = h * 7 + path.charCodeAt(i); return h % ROT; }
