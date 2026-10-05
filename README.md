@@ -609,7 +609,7 @@ More examples:
 | Codex waits 5 min, everything else keeps the default | `{"id":"waiting","where":"harness is_not codex"}` and `{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}` (a copy repeats the `ack`/`notify`/`message` it wants) |
 
 **Checking.** `agentglass rules check` prints the effective rules and every problem as
-`rules.json:<line>:<col>: <rule>: <message>` (exit 0 clean, 1 warnings, 2 errors; `--json` for scripts). A broken new rule
+`rules.json:<line>:<col>: <rule>: <message>` (no `<rule>:` for a file-level problem such as a syntax error; exit 0 clean, 1 warnings, 2 errors; `--json` for scripts). A broken new rule
 is disabled and a broken override leaves its built-in unchanged; the rest keep running; the TUI says so once at start.
 Fields a metric does not read (`min_calls` outside `tool_error_rate`, `window` outside the call-row metrics) are warnings. A JSON syntax error keeps the built-ins.
 The file is re-read within 2 s of a change: a valid edit replaces the rules (alerts of removed rules end silently), a

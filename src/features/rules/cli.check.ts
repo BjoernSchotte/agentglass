@@ -21,6 +21,12 @@ eq("warnings only: exit 1", String(checkText('{"rules":[{"id":"y","metric":"sess
 eq("clean: exit 0", String(checkText('{"rules":[{"id":"approval","critical":"2m"}]}', true, true).code), "0");
 eq("missing: exit 0", String(checkText("", false, false).code), "0");
 eq("syntax: exit 2", String(checkText('{"rules":[}', true, true).code), "2");
+// a file-level problem has no rule part: file:line:col: message (never "-:")
+eq("syntax line", checkText('{"rules":[{"id":"x",}]}', true, true).lines.filter((l: string) => l.startsWith("rules.json:")).join(" | "), "rules.json:1:21: syntax error: expected a quoted key — using built-in rules");
+eq("file-level line", checkText('{"rules":5}', true, true).lines.filter((l: string) => l.startsWith("rules.json:")).join(" | "), "rules.json:1:10: rules must be an array");
+const unread = checkText("", true, true, "permission denied");
+eq("unreadable: exit 2", String(unread.code), "2");
+eq("unreadable: line", unread.lines.filter((l: string) => l.startsWith("rules.json:")).join(" | "), "rules.json:1:1: cannot read the file (permission denied) — using built-in rules");
 eq("unsafe command: exit 2", String(checkText('{"notify":{"command":["/bin/true"]}}', true, false).code), "2");
 const ap = checkText('{"rules":[{"id":"approval","critical":"2m"}]}', true, true).lines.filter((l: string) => l.indexOf("approval_wait") >= 0)[0] ?? "";
 eq("effective rule line", ap.replace(/\s+/g, " ").trim(), "approval approval_wait > 20s/2m");
