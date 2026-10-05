@@ -10,7 +10,7 @@ import { setCallDaysForTest, saveCallsTo, loadCallsFrom } from "../usage/callcac
 import { newRows } from "../usage/rows.ts";
 import { parse, printClause } from "./parse.ts";
 import { register } from "./attrs.ts";
-import { type Compiled, EMPTY, compile, matchSession, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf, beyondRetention } from "./eval.ts";
+import { type Compiled, EMPTY, compile, matchSession, matchSessionMemo, MEMO_STATS, type RowMemo, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf, beyondRetention } from "./eval.ts";
 import { projectOf, projectRoot } from "./project.ts";
 import { real } from "../../model/project.ts";
 import { fxBase, pathOf, isoAt } from "./fixture.ts";
@@ -145,6 +145,23 @@ eq("no day left", String(beyondRetention([], [], "2025-01-01", cut)), "false");
   eq("lazy rows: matchSession", S0("tool is Bash and status is error"), memMatch);
   eq("lazy rows: all read once", String(unread.size), "0");
   LAZY.rows = was; rmSync(dir, { recursive: true, force: true });
+}
+// incremental re-match (a pinned call filter while agents stream): a session's row verdict is kept while its ledger entry
+// (object, offset), the retention cut and the price generation are unchanged; the set always equals a full re-match
+{
+  fxBase();
+  const fb = F("tool is Bash", "list"); const memo = new Map<string, RowMemo>();
+  const full = (): string => { const o: string[] = []; for (const s of sessions.values()) if (matchSession(fb, s, null)) o.push(s.id); return o.sort().join(","); };
+  const inc = (): string => { const o: string[] = []; for (const s of sessions.values()) if (matchSessionMemo(fb, s, memo)) o.push(s.id); return o.sort().join(","); };
+  eq("memo first pass = full", inc(), full());
+  const e0 = MEMO_STATS.evals; inc();
+  eq("nothing moved: no session re-evaluated", String(MEMO_STATS.evals - e0), "0");
+  let k1 = ""; for (const s of sessions.values()) if (s.id === "k1") { k1 = s.path; s.size += 10; }
+  const ka = ledger.get(k1);
+  if (ka) { const d = bucket(ka, Date.now(), ""); tool(ka, d, "Bash", "", MQ_MSG); ka.off += 10; }
+  const e1 = MEMO_STATS.evals; const after = inc();
+  eq("one entry moved: only it re-evaluated", String(MEMO_STATS.evals - e1), "1");
+  eq("after a new Bash row: memo = full, k1 now matches", after + " " + String(after.indexOf("k1") >= 0), full() + " true");
 }
 console.log(bad ? bad + " failed" : "filter eval: all checks passed");
 if (bad) process.exit(1);

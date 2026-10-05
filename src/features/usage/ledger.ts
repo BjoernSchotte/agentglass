@@ -21,7 +21,11 @@ const CHUNK = 1048576;
 // indexing pace (tui-footprint Decision 1): a 50 ms slice per tick, and the tick runs every 250 ms while indexing
 // (sched.ts burst): ≤ 20 % of one core, no byte cap. tickMs documents sched.ts's cadence, it does not set it. fullMs:
 // how often tick() looks at every session (in between: the hot ones, see tick)
-export const PACE = { sliceMs: 50, tickMs: 250, fullMs: 5000 };
+// share: the whole process stays within this share of one core while history indexes (Decision 1): the history slice
+// is what that leaves after everything else this process spent (procs, render, ingest…) over the last second
+// 0.19: the budget counts this process's own CPU over the last second; its children (~0.2 %) and the one-window lag
+// stay inside the 20 %
+export const PACE = { sliceMs: 50, tickMs: 250, fullMs: 5000, share: 0.19 };
 const LIVE_MB = 1048576; // a live session this far behind is indexing (a first read, a resume), below it is ingest
 
 // call rows the cache has but this run has not read (cache.ts): a session's calls file is read only when something asks
@@ -133,7 +137,11 @@ export const TICK_STATS = { applied: 0, sidecars: 0, visits: 0, full: 0 }; // co
 export const LGEN = { reapply: 0 }; // bumped by reapplyAll: totals derived from every session's numbers re-sum (summary.ts)
 export function reapplyAll(): void { for (const k of TK.values()) k.a = null; fullAt = 0; LGEN.reapply++; }
 function tkOf(s: Sess): Tk { let k = TK.get(s.path); if (!k) { k = { a: null, off: -1, s: null, side: 0, c: 0, z: 0, h: false }; TK.set(s.path, k); } return k; }
-function apply(s: Sess, a: Acc, k: Tk): void { applyAcc(s, a); k.a = a; k.off = a.off; k.s = s; TICK_STATS.applied++; }
+// sessions whose numbers or rows moved, in order (tick apply, complete, a lazy read): readers that keep a per-session
+// result (the list's call filter) re-check these instead of every session; a new gen = the log was reset, re-check all
+export const MOVED = { gen: 0, log: [] as string[] };
+export function moved(path: string): void { if (MOVED.log.length >= 20000) { MOVED.log = []; MOVED.gen++; } MOVED.log.push(path); }
+function apply(s: Sess, a: Acc, k: Tk): void { applyAcc(s, a); k.a = a; k.off = a.off; k.s = s; TICK_STATS.applied++; moved(s.path); }
 function contrib(s: Sess, a: Acc): number { return Math.min(a.off, s.size) + (a.stall === s.size && a.off < s.size ? s.size - a.off : 0); }
 // history: bytes pending in a session without a live agent, or a live one far behind (not the appends of a live agent)
 function hist(s: Sess, a: Acc): boolean { return pending(s, a) && (s.pid <= 0 || s.size - a.off > LIVE_MB); }
@@ -177,6 +185,22 @@ function fold(now: number): void {
     INGEST.at = now; INGEST.accMs = 0; INGEST.accBytes = 0;
   }
 }
+// CPU of this process (ms) and the history reads' own part of it, per window of ≥ 1 s → allow: the share of wall time
+// history may take next; credit: ms of history reading earned since (allow × elapsed), spent by the reads, so a chunk
+// that overran its slice is paid back on the next ticks
+const CPU = { at: 0, c0: 0, own: 0, allow: -1, last: 0, credit: 0, floor: 0 };
+function cpuMs(): number { const u = process.cpuUsage(); return (u.user + u.system) / 1000; }
+function histCredit(now: number): number {
+  if (PACE.share >= 1) { CPU.credit = PACE.sliceMs; return CPU.credit; } // no process budget: the slice alone
+  if (!CPU.at) { CPU.at = now; CPU.c0 = cpuMs(); CPU.own = 0; CPU.allow = PACE.share; CPU.last = now; CPU.credit = PACE.sliceMs; }
+  else if (now - CPU.at >= 1000) {
+    const c = cpuMs(); const rest = Math.max(0, c - CPU.c0 - CPU.own);
+    CPU.allow = Math.max(0, PACE.share - rest / (now - CPU.at)); CPU.at = now; CPU.c0 = c; CPU.own = 0;
+  }
+  CPU.credit = Math.min(PACE.sliceMs, CPU.credit + CPU.allow * Math.max(0, Math.min(1000, now - CPU.last))); CPU.last = now;
+  return CPU.credit;
+}
+export function histAllow(): number { return CPU.allow; } // checks
 function tick(): void {
   const t0 = Date.now();
   settle(); redo.clear(); // restarted logs are pending: this and the next ticks read them in rank order
@@ -200,11 +224,20 @@ function tick(): void {
   }
   q.sort((x, y) => rank(x, sod) - rank(y, sod) || y.mtime - x.mtime);
   let booked = 0;
+  // live appends (ingest) get the fixed slice; history reads spend the credit the process budget leaves (one step a
+  // second at least, so a saturated host still advances): the gauge may take longer, the process stays at ≤ PACE.share
+  const hist0 = RUN.hist > 0; if (hist0) histCredit(t0);
   for (const s of q) {
     if (Date.now() - t0 >= PACE.sliceMs) break;
     const a = accOf(s); const live = !hist(s, a);
+    const floor = !live && hist0 && CPU.credit <= 0 && t0 - CPU.floor >= 1000;
+    if (!live && hist0 && CPU.credit <= 0 && !floor) continue;
     const ts = Date.now(); let n = 0;
-    while (Date.now() - t0 < PACE.sliceMs && ledger.get(s.path) === a) { const k = step(s, a); if (!k) break; n += k; }
+    while (Date.now() - t0 < PACE.sliceMs && ledger.get(s.path) === a) {
+      const k = step(s, a); if (!k) break; n += k;
+      if (!live && hist0 && (floor || Date.now() - ts >= CPU.credit)) break;
+    }
+    if (!live && hist0) { const sp = Date.now() - ts; CPU.credit -= sp; CPU.own += sp; if (floor) CPU.floor = t0; }
     const b = ledger.get(s.path) ?? a; const k = tkOf(s);
     apply(s, b, k); account(s, b, k);
     booked += n;
@@ -252,7 +285,7 @@ function finish(s: Sess): void {
   const a = accOf(s);
   sidecar(s, a); // first: some adapters date log lines from it (kiro turn times)
   let n = 0; for (let k = step(s, a); k > 0 && ledger.get(s.path) === a; k = step(s, a)) n += k;
-  if (n > 0) { readNow.push(s.path); L.idx++; } // not L.ver: per-session caches (git attribution) would be rebuilt for every completed session
+  if (n > 0) { readNow.push(s.path); moved(s.path); L.idx++; } // not L.ver: per-session caches (git attribution) would be rebuilt for every completed session
   applyAcc(s, ledger.get(s.path) ?? a); // restarted meanwhile: redo reads it again
 }
 

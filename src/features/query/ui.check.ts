@@ -8,7 +8,10 @@ import { H, boxChips, emptyText } from "../../hooks.ts";
 import { parse, print } from "./parse.ts";
 import { initPins, localFor, setLocal } from "./scope.ts";
 import { complete, hiddenCount, matchingPaths, timeStep, fillOnForTest, fillStep, fillState } from "./ui.ts";
-import { ledger, unread, LAZY } from "../usage/ledger.ts";
+import { ledger, unread, LAZY, moved } from "../usage/ledger.ts";
+import { bucket, tool, L } from "../usage/record.ts";
+import { MQ_MSG } from "../usage/facts.ts";
+import { matchSession, MEMO_STATS } from "./eval.ts";
 import { saveCallsTo, loadCallsFrom } from "../usage/callcache.ts";
 import { newRows } from "../usage/rows.ts";
 import { rmSync } from "node:fs";
@@ -139,6 +142,14 @@ eq("age < 2s: a second later it no longer does", String(matchingPaths(fa).has(yn
   let guard = 0; while (fillStep(0) && guard < 50) { guard++; matchingPaths(fb, "list"); }
   eq("filled: equals the eager set", [...matchingPaths(fb, "list")].sort().join(",") + " left " + String(fillState(fb).left), eager + " left 0");
   eq("filled: no filtering text", String(emptyText("sessions").indexOf("filtering") >= 0), "false");
+  // afterwards a ledger move re-checks only what moved, and the set still equals a full re-match
+  let k1 = ""; for (const s of sessions.values()) if (s.id === "k1") { k1 = s.path; s.size += 10; }
+  const ka = ledger.get(k1);
+  if (ka) { const d = bucket(ka, Date.now(), ""); tool(ka, d, "Bash", "", MQ_MSG); ka.off += 10; moved(k1); L.ver++; }
+  const fullSet = (): string => { const o: string[] = []; for (const s of sessions.values()) if (matchSession(fb, s, null)) o.push(s.path); return o.sort().join(","); };
+  const e0 = MEMO_STATS.evals; const inc = [...matchingPaths(fb, "list")].sort().join(",");
+  eq("incremental: one session re-checked", String(MEMO_STATS.evals - e0), "1");
+  eq("incremental = full re-match, k1 in", inc + " " + String(inc.indexOf(k1) >= 0), fullSet() + " true");
   setLocal("Sessions", []); fillOnForTest(false); LAZY.rows = was; rmSync(dir, { recursive: true, force: true });
 }
 console.log(bad ? bad + " failed" : "filter ui: all checks passed");

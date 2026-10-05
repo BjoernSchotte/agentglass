@@ -67,7 +67,7 @@ eq("(d) same bytes, no live agent: indexing", String(indexing()), "true");
 a.pid = 4242; let big = ""; while (big.length < 1100000) big += asst(1); grow(a, big); tick();
 eq("(d) live session > 1 MB behind: indexing", String(indexing()), "true");
 // (e) no byte cap: a 3 MB log is read within a few ticks of a 1 s slice
-PACE.sliceMs = 1000; a.pid = 0;
+PACE.sliceMs = 1000; PACE.share = 1; a.pid = 0; // no process budget in a check: the slice alone
 let more = ""; while (more.length < 3 * 1048576) more += asst(2); const d = sess("d", more);
 let k = 0; for (; k < 20 && !(L.done === L.total && ledger.has(d.path) && (ledger.get(d.path)?.off ?? 0) === d.size); k++) tick();
 eq("(e) 3 MB + 1 MB indexed within 20 ticks", String(k < 20 && L.done === L.total), "true");

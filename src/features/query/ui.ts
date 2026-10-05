@@ -5,21 +5,21 @@ import { S, say } from "../../state.ts";
 import { H, tabAt, display } from "../../hooks.ts";
 import type { Proc, Sess } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
-import { sessions, buildView, loadHead } from "../../model/sessions.ts";
+import { sessions, buildView, loadHead, SG } from "../../model/sessions.ts";
 import { buildProcView } from "../../model/procs.ts";
 import { ask } from "../../actions.ts";
 import { TERM } from "../../term.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { harnessIds, harnessOf } from "../../harness/index.ts";
-import { ledger, callsOf } from "../usage/ledger.ts";
+import { ledger, callsOf, MOVED, moved, LGEN } from "../usage/ledger.ts";
 import { L, todayKey, lastDays, heavy } from "../usage/record.ts";
 import { DICT } from "../usage/facts.ts";
 import { mcpServer } from "../usage/calls.ts";
-import { callDays } from "../usage/callcache.ts";
+import { callDays, callCutoff } from "../usage/callcache.ts";
 import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
-import { type Ctx, type Compiled, EMPTY, compile, matchSession, sessMatches, rowsPending, beyondRetention, oldestDay, numOf } from "./eval.ts";
+import { type Ctx, type Compiled, type RowMemo, EMPTY, compile, matchSession, matchSessionMemo, sessMatches, rowsPending, beyondRetention, oldestDay, numOf } from "./eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, restoredToast, initPins, configStore, hiddenByPins, onScopeChange, pinToast } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
 import { repoOf, repoShown } from "./project.ts";
@@ -71,10 +71,14 @@ H.onTick.push(() => {
   if (read) S.dirty = true;
 });
 H.backlog.push(() => headsLeft > 0);
-interface MP { key: string; paths: Set<string> }
+interface MP { key: string; paths: Set<string>; base: string; pos: number } // base: what a ledger move leaves; pos: MOVED.log read up to
 const mp = new Map<string, MP>();
+// per filter: each session's row verdict (eval.ts matchSessionMemo); a few filters at most are active at once
+interface Memo { m: Map<string, RowMemo> } // scriptc: no Map as a Map value
+const memos = new Map<string, Memo>();
+function memoOf(k: string): Map<string, RowMemo> { let x = memos.get(k); if (!x) { if (memos.size > 8) memos.clear(); x = { m: new Map<string, RowMemo>() }; memos.set(k, x); } return x.m; }
 let searchOk = true; // false while typing: a content clause never starts a search (enter does)
-export const MPS = { asks: 0 }; // matchingPaths calls (checks: a pass over sessions asks once, not per session — each ask walks them all)
+export const MPS = { asks: 0, sets: 0 }; // sets: a match set was made or changed (counts beside the list key on it) // matchingPaths calls (checks: a pass over sessions asks once, not per session — each ask walks them all)
 // The Sessions list's call-row filter never blocks a frame (a pinned `tool is Bash` read every calls file before the first
 // one): sessions whose calls file this run has not read yet are left out for now and read on the tick in ≤ 50 ms slices,
 // newest first; each slice moves L.ver, so the list re-matches and fills in. Until all are read the box says
@@ -88,7 +92,7 @@ export function fillOnForTest(on: boolean): void { FILL.on = on; FILL.fkey = "";
 export function fillStep(ms: number): boolean {
   if (!FILL.queue.length) return false;
   const t0 = Date.now(); let n = 0;
-  while (FILL.queue.length && (n === 0 || Date.now() - t0 < ms)) { const p = FILL.queue.pop() ?? ""; const s = sessions.get(p); if (s) { callsOf(s); n++; } }
+  while (FILL.queue.length && (n === 0 || Date.now() - t0 < ms)) { const p = FILL.queue.pop() ?? ""; const s = sessions.get(p); if (s) { callsOf(s); moved(p); n++; } }
   if (n) { L.ver++; S.dirty = true; }
   return n > 0;
 }
@@ -104,11 +108,25 @@ export function matchingPaths(f: Compiled, lazy = ""): Set<string> {
   // a list fill of another filter ran or stopped since: this one's deferred sessions must be queued again
   const own = !(defer && lazy === "list" && FILL.fkey !== f.key);
   const mk = f.key + (defer ? "\u0000" + lazy : ""); const hit = mp.get(mk); if (hit && hit.key === key && own) return hit.paths;
+  // a ledger move re-checks only the sessions that moved (call/day clauses alone: no session clause can change without
+  // the ledger, the time and live parts are in base); the result equals a full re-match (eval.check / ui.check)
+  const base = liveSig(timeStep(f.cs)) + "|" + String(SG.gen) + "|" + String(sessions.size) + "|" + String(MOVED.gen) + "|" + String(callCutoff()) + "|" + String(LGEN.reapply);
+  if (hit && own && hit.base === base && !f.sess.length && !f.content.length && hit.pos <= MOVED.log.length) {
+    const memo = memoOf(f.key);
+    for (let i = hit.pos; i < MOVED.log.length; i++) {
+      const s = sessions.get(MOVED.log[i] ?? ""); if (!s) continue;
+      const was = hit.paths.has(s.path);
+      const now = !(defer && rowsPending(f, s)) && matchSessionMemo(f, s, memo); // pending: still queued for the fill
+      if (now !== was) { if (now) hit.paths.add(s.path); else hit.paths.delete(s.path); MPS.sets++; }
+    }
+    hit.pos = MOVED.log.length; hit.key = key;
+    return hit.paths;
+  }
   const out = new Set<string>(); const later: Sess[] = [];
   for (const s of sessions.values()) {
     // a model clause reads rows already in the session test: defer before it; other session clauses are cheap
     if (defer && rowsPending(f, s) && (f.rowx.length > 0 || sessMatches(f, s))) { later.push(s); continue; }
-    if (matchSession(f, s, null)) out.add(s.path);
+    if (matchSessionMemo(f, s, memoOf(f.key))) out.add(s.path);
   }
   if (lazy === "list" && !defer) fillStop(); // the list's filter no longer reads rows: the rest of an earlier fill is moot
   if (defer && lazy === "list") {
@@ -127,7 +145,7 @@ export function matchingPaths(f: Compiled, lazy = ""): Set<string> {
     for (const p of [...out]) if (r.paths.has(p) === neg) out.delete(p);
   }
   if (mp.size > 32) mp.clear();
-  mp.set(mk, { key, paths: out });
+  mp.set(mk, { key, paths: out, base, pos: MOVED.log.length }); MPS.sets++;
   return out;
 }
 // does a session path pass f's content (full-text) clauses? Made once per pass over sessions or calls, asked per item
@@ -148,7 +166,12 @@ function countTop(cs: Clause[]): number {
 let hidKey = ""; let hidN = 0;
 export function hiddenCount(tab: string): number {
   if (!S.pins.length) return 0;
-  const k = print(S.pins) + "|" + print(localFor(tab)) + "|" + String(L.ver) + "|" + liveSig(Math.min(timeStep(S.pins), timeStep(localFor(tab))));
+  // the sets first (after a ledger move only the moved sessions are re-checked); the count is redone only when a set
+  // changed, not on every ledger move
+  const loc = localFor(tab); const eff = effective(S.pins, loc).cs;
+  if (loc.length) matchingPaths(compiledOf(loc, "list"), "defer");
+  if (eff.length) matchingPaths(compiledOf(eff, "list"), "defer");
+  const k = print(S.pins) + "|" + print(loc) + "|" + String(MPS.sets) + "|" + String(SG.gen) + "|" + liveSig(Math.min(timeStep(S.pins), timeStep(loc)));
   if (k !== hidKey) { hidKey = k; hidN = hiddenByPins(tab, countTop); }
   return hidN;
 }
