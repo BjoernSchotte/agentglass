@@ -5,6 +5,7 @@ import { newSess } from "../../model/types.ts";
 import { type Obs, type MVal, type Cmd, absent, approvalNote, stuckOf } from "../detect.ts";
 import { type RuleSet, loadRules, unitOf } from "./config.ts";
 import { metricOf } from "./metrics.ts";
+import { newRows } from "../usage/rows.ts";
 import { type Trans, LOG, stepSession, flags, ackLook, unwatch, retain, stateOf, snapLevel, firing, watching } from "./engine.ts";
 
 let bad = 0;
@@ -17,7 +18,7 @@ const sess = newSess("claude", "e1", "/fx/e1.jsonl", false);
 // values of every enabled rule for an observation (scope: all in scope)
 function vals(rs: RuleSet, o: Obs, turnAt: number): Map<string, MVal> {
   const m = new Map<string, MVal>(); const memo = new Map<string, MVal>();
-  for (const r of rs.rules) if (r.enabled) m.set(r.id, metricOf(r, sess, o, turnAt, [], memo));
+  for (const r of rs.rules) if (r.enabled) m.set(r.id, metricOf(r, sess, o, turnAt, newRows(), memo));
   return m;
 }
 
@@ -129,7 +130,7 @@ const PH = loadRules('{"rules":[{"id":"waiting","where":"harness is_not codex"},
 eq("copies load clean", String(PH.diags.length), "0");
 function scoped(rs: RuleSet, h: string): string {
   const s = newSess(h, "p", "/p/" + h, false); const m = new Map<string, MVal>(); const memo = new Map<string, MVal>();
-  for (const r of rs.rules) { const f = r.wf; if (!r.enabled || (f && !f.sess.every((p) => p(s)))) continue; m.set(r.id, metricOf(r, s, { now, mtime: now, busy: false, evs: [], cpu: [], cmds: [], subsActive: false }, now - 400000, [], memo)); }
+  for (const r of rs.rules) { const f = r.wf; if (!r.enabled || (f && !f.sess.every((p) => p(s)))) continue; m.set(r.id, metricOf(r, s, { now, mtime: now, busy: false, evs: [], cpu: [], cmds: [], subsActive: false }, now - 400000, newRows(), memo)); }
   return states(stepSession(rs, s.path, m, now));
 }
 eq("codex: only the copy", scoped(PH, "codex"), "waiting-codex:fire");

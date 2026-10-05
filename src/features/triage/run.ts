@@ -10,7 +10,7 @@ import { type Obj } from "../../util/json.ts";
 import { section } from "../../util/config.ts";
 import { L, lastDays, startOfDay } from "../usage/record.ts";
 import { callDays } from "../usage/callcache.ts";
-import type { Call } from "../usage/facts.ts";
+import type { Rows } from "../usage/rows.ts";
 import { DICT, nameOf } from "../usage/facts.ts";
 import { pct } from "../usage/calls.ts";
 import type { Clause } from "../query/types.ts";
@@ -126,19 +126,19 @@ function groups(r: Run, dims: string[]): Groups {
   }
   if (r.slow && r.entity === "call") {
     // untimed calls (fx, kiro, unfinished) are in neither group
-    return { plan: [() => p90Job(r), () => aggJob(scopeF, "call", days, dims, r.weight, (s: Sess, c: Call) => c.ms >= 0), (g: Dist[][]) => aggJob(scopeF, "call", days, dims, r.weight, slowFrom(at(g, 0)))],
+    return { plan: [() => p90Job(r), () => aggJob(scopeF, "call", days, dims, r.weight, (s: Sess, r: Rows, i: number) => r.ms[i] >= 0), (g: Dist[][]) => aggJob(scopeF, "call", days, dims, r.weight, slowFrom(at(g, 0)))],
       sel: (g: Dist[][]) => at(g, 2), base: (g: Dist[][]) => minus(at(g, 1), at(g, 2)) };
   }
   return { plan: [() => aggJob(scopeF, r.entity, days, dims, r.weight, null), () => groupJob(r, scopeF, r.sel, days, dims)], sel: (g: Dist[][]) => at(g, 1), base: (g: Dist[][]) => minus(at(g, 0), at(g, 1)) };
 }
 // the slow test: duration ≥ the p90 of the same tool over scope and period (30 s is normal for Bash and alarming for Read)
 function p90Job(r: Run): AggJob { return aggJob(F(without(r.scope, r.dropped)), "call", periodOf(r.days, false), ["tool"], "count", null); }
-function slowFrom(tools: Dist[]): (s: Sess, c: Call) => boolean {
+function slowFrom(tools: Dist[]): (s: Sess, r: Rows, i: number) => boolean {
   const p90 = new Map<string, number>();
   for (const d of tools) for (const [t, b] of d.vals) if (histN(b) > 0) p90.set(t, pct(b.hist, 0.9, b.max));
-  return (s: Sess, c: Call): boolean => c.ms >= 0 && c.ms >= (p90.get(nameOf(DICT.tool, c.tool)) ?? Infinity);
+  return (s: Sess, r: Rows, i: number): boolean => r.ms[i] >= 0 && r.ms[i] >= (p90.get(nameOf(DICT.tool, r.tool[i] + 0)) ?? Infinity);
 }
-export function slowKeep(r: Run): (s: Sess, c: Call) => boolean { const j = p90Job(r); aggStep(j, Infinity); return slowFrom(j.out); }
+export function slowKeep(r: Run): (s: Sess, r: Rows, i: number) => boolean { const j = p90Job(r); aggStep(j, Infinity); return slowFrom(j.out); }
 function histN(b: Bin): number { let n = 0; for (const x of b.hist) n += x; return n; }
 
 export function labelOf(r: Run): string {

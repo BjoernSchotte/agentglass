@@ -78,8 +78,8 @@ function save(): void {
 }
 
 LAZY.rows = (path: string, a: Acc): boolean => {
-  const calls = loadCallsFrom(CALLS_DIR, path, a); if (!calls) return false;
-  a.calls = calls; a.lastCall = calls.length - 1; written.set(path, a.off); return true;
+  const rows = loadCallsFrom(CALLS_DIR, path, a); if (!rows) return false;
+  a.rows = rows; a.lastCall = rows.n - 1; written.set(path, a.off); return true;
 };
 // head and tail memos live in the session's ledger entry (reset with it when the log is rewritten); never under --redact,
 // where a read sees faked texts and a replay could show real ones

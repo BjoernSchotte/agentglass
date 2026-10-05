@@ -9,7 +9,7 @@ import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
 import { type Acc, L, newAcc, startOfDay, flushSpans } from "./record.ts";
-import type { Call } from "./facts.ts";
+import { type Rows, newRows } from "./rows.ts";
 import { scrape } from "./vcs.ts";
 import { OWN, reconcile, release } from "./owners.ts";
 import { DEBUG_PARTS } from "../../util/selfmem.ts";
@@ -37,10 +37,11 @@ export function rowsOf(s: Sess): void {
 // its ticks (H.start clears it) rather than block a frame on reading a whole log
 const BLOCKING = { on: true };
 // the one way to read a session's call rows (filters, rules, triage, compare, Stats): reads its calls file first if this
-// run has not; [] when it has none (yet)
-export function callsOf(s: Sess): Call[] {
+// run has not; no rows when it has none (yet). Callers must not keep the Rows or an index past their pass (prune compacts).
+const NONE = newRows();
+export function callsOf(s: Sess): Rows {
   if (unread.has(s.path)) { rowsOf(s); if (!ledger.has(s.path) && BLOCKING.on) complete(s); }
-  const a = ledger.get(s.path); return a ? a.calls : [];
+  const a = ledger.get(s.path); return a ? a.rows : NONE;
 }
 export function accOf(s: Sess): Acc {
   let a = ledger.get(s.path);

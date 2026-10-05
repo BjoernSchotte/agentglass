@@ -8,7 +8,8 @@ import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
 import { readText, listDir, cacheDir } from "../../util/fs.ts";
 import { intSetting } from "../../util/config.ts";
 import { type Acc, startOfDay, num, peekHeavy } from "./record.ts";
-import { type Call, type Dict, DICT, intern, nameOf } from "./facts.ts";
+import { type Dict, DICT, intern, nameOf } from "./facts.ts";
+import { type Rows, sized, compact, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "./rows.ts";
 
 // AGENTGLASS_CACHE_DIR: a separate ledger cache (test builds of other branches must not rewrite the real one)
 export const CACHE_DIR = cacheDir();
@@ -98,12 +99,12 @@ export function encodeCalls(path: string, a: Acc): string {
   const tm = new Map<number, number>(); const mm = new Map<number, number>(); const pm = new Map<number, number>(); const cm = new Map<number, number>(); const fm = new Map<number, number>();
   const t: number[] = []; const to: number[] = []; const mo: number[] = []; const mq: number[] = []; const pg: number[][] = []; const cmd: number[][] = []; const fi: number[][] = [];
   const ms: number[] = []; const er: number[] = []; const ou: number[] = []; const ids: string[] = [];
-  let prev = 0;
-  for (const c of a.calls) {
-    t.push(c.t - prev); prev = c.t; // deltas: a few digits instead of 13
-    to.push(localId(DICT.tool, tm, tn, c.tool)); mo.push(localId(DICT.model, mm, mn, c.model)); mq.push(c.mq);
-    pg.push(localIds(DICT.prog, pm, pn, c.progs)); cmd.push(localIds(DICT.cmd, cm, cn, c.cmds)); fi.push(localIds(DICT.file, fm, fn, c.files));
-    ms.push(c.ms); er.push(c.err); ou.push(c.out); ids.push(c.cid);
+  let prev = 0; const r = a.rows;
+  for (let i = 0; i < r.n; i++) {
+    const ti = r.t[i] + 0; t.push(ti - prev); prev = ti; // deltas: a few digits instead of 13
+    to.push(localId(DICT.tool, tm, tn, r.tool[i] + 0)); mo.push(localId(DICT.model, mm, mn, r.model[i] + 0)); mq.push(r.mq[i] + 0);
+    pg.push(localIds(DICT.prog, pm, pn, rowIds(r, i, KIND_PROG))); cmd.push(localIds(DICT.cmd, cm, cn, rowIds(r, i, KIND_CMD))); fi.push(localIds(DICT.file, fm, fn, rowIds(r, i, KIND_FILE)));
+    ms.push(r.ms[i] + 0); er.push(r.err[i] + 0); ou.push(r.out[i] + 0); ids.push(r.cid[i] ?? "");
   }
   const cl: string[] = []; const fl: string[] = [];
   const rt = refTables(a); const cr = refsOut(cn, rt.cmds, cl); const fr = refsOut(fn, rt.files, fl);
@@ -134,7 +135,6 @@ function refIds(d: Dict, refs: unknown, pre: unknown, rest: unknown, tab: Map<nu
 // + 0: scriptc cannot index with a bare element read that came out of this same function (SC1090)
 function at(m: number[], i: number): number { if (i < 0 || i >= m.length) return -1; return m[i] + 0; }
 function col(v: unknown, n: number): number[] | null { const c = nums(v); if (!c || c.length !== n) return null; return c; }
-function remap(m: number[], xs: number[]): number[] { const o: number[] = []; for (const x of xs) { const g = at(m, x); if (g >= 0) o.push(g); } return o; }
 function lists(v: unknown, n: number): number[][] | null {
   const o: number[][] = []; const xs = arr(v); if (xs.length !== n) return null;
   for (const x of xs) { const l = nums(x); if (!l) return null; o.push(l); }
@@ -142,7 +142,7 @@ function lists(v: unknown, n: number): number[][] | null {
 }
 // null = missing, corrupt, written for another path or another ledger offset, or referring to texts this ledger state lacks:
 // the caller re-indexes the session. a = the session's ledger entry the file must be consistent with (off, day counters).
-export function decodeCalls(body: string, path: string, a: Acc): Call[] | null {
+export function decodeCalls(body: string, path: string, a: Acc): Rows | null {
   const o: Obj | null = parse(body);
   if (!o || o["v"] !== FORMAT || str(o["path"]) !== path || o["off"] !== a.off) return null;
   // one check per column: scriptc narrows a nullable only through its own test
@@ -165,22 +165,31 @@ export function decodeCalls(body: string, path: string, a: Acc): Call[] | null {
   const pl = lists(o["pg"], n); if (!pl) return null;
   const cl = lists(o["cm"], n); if (!cl) return null;
   const fl = lists(o["fi"], n); if (!fl) return null;
-  const out: Call[] = []; let tt = 0;
+  // straight into the columns: no per-row object
+  let nl = 0; for (let i = 0; i < n; i++) nl += (pl[i] ?? []).length + (cl[i] ?? []).length + (fl[i] ?? []).length;
+  const out = sized(n, nl); let tt = 0; let k = 0;
+  const ids = (g: number[], xs: number[], kind: number): void => { for (const x of xs) { const v = at(g, x); if (v >= 0) { out.li[k] = v * 4 + kind; k++; } } };
   for (let i = 0; i < n; i++) {
     tt += at(t, i); const id = ci[i] ?? "";
-    out.push({ t: tt, tool: at(tg, at(to, i)), model: at(mg, at(mo, i)), mq: at(mq, i), progs: remap(pg, pl[i] ?? []), cmds: remap(cg, cl[i] ?? []), files: remap(fg, fl[i] ?? []),
-      ms: at(ms, i), err: at(er, i), out: at(ou, i), cid: id ? cp + id : "" });
+    out.t[i] = tt; out.tool[i] = at(tg, at(to, i)); out.model[i] = at(mg, at(mo, i)); out.mq[i] = at(mq, i);
+    out.ms[i] = at(ms, i); out.err[i] = at(er, i); out.out[i] = at(ou, i); out.cid.push(id ? cp + id : ""); out.lo[i] = k;
+    ids(pg, pl[i] ?? [], KIND_PROG); ids(cg, cl[i] ?? [], KIND_CMD); ids(fg, fl[i] ?? [], KIND_FILE);
   }
+  out.n = n; out.nl = k;
   return out;
 }
 
-// drop rows older than cutoff (rows are in call order, but a restored session may interleave: filter, not slice)
+// drop rows older than cutoff (rows are in call order, but a restored session may interleave: filter, not slice); the
+// newest row and the pending calls' rows follow their rows' new places (-1 = dropped)
 export function prune(a: Acc, cutoff: number): boolean {
-  let keep = 0; for (const c of a.calls) if (c.t >= cutoff) keep++;
-  if (keep === a.calls.length) return false;
-  const newest = a.lastCall >= 0 && a.lastCall < a.calls.length ? a.calls[a.lastCall] : null;
-  a.calls = a.calls.filter((c: Call) => c.t >= cutoff);
-  a.lastCall = newest && newest.t >= cutoff ? a.calls.indexOf(newest) : -1;
+  const r = a.rows;
+  let keep = 0; for (let i = 0; i < r.n; i++) if (r.t[i] >= cutoff) keep++;
+  if (keep === r.n) return false;
+  const nw = a.lastCall >= 0 && a.lastCall < r.n ? a.lastCall : -1;
+  const map = compact(r, (i: number): boolean => r.t[i] >= cutoff);
+  const to = (i: number): number => (i >= 0 && i < map.length ? map[i] + 0 : -1);
+  a.lastCall = to(nw);
+  for (const p of a.pend.values()) if (p.rows === r) p.ri = to(p.ri);
   return true;
 }
 
@@ -195,7 +204,7 @@ export function saveCallsTo(dir: string, path: string, a: Acc): boolean {
     return true;
   } catch (e) { return false; }
 }
-export function loadCallsFrom(dir: string, path: string, a: Acc): Call[] | null {
+export function loadCallsFrom(dir: string, path: string, a: Acc): Rows | null {
   const f = fileOf(dir, path);
   let size = 0; try { size = statSync(f).size; } catch (e) { return null; }
   return decodeCalls(readText(f, 0, size).trim(), path, a);

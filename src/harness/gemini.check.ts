@@ -5,6 +5,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { type Ev, type Sess, newSess } from "../model/types.ts";
 import { gemini } from "./gemini.ts";
 import { type Acc, type Day, newAcc, skillUses, heavy } from "../features/usage/record.ts";
+import { callList } from "../features/usage/rows.ts";
 import { applyUserPrices } from "../features/usage/pricing.ts";
 import { setCallTap } from "../features/usage/calls.ts";
 import { DICT, nameOf } from "../features/usage/facts.ts";
@@ -343,7 +344,7 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   ok("failed calls: the tap gets the error flag and the exit code", codes.join(" ") === "f1!:1 f2 f3 f4! f5! f6! f7 f8 f9 f10!:2 f11!:3", codes.join(" "));
   const pg = d ? heavy(d).prog.get("run_shell_command\tcat") : undefined;
   ok("failed calls: the shell program's error count", !!pg && pg.err === 5, pg ? String(pg.err) : "none");
-  ok("failed calls: call rows carry the error", a.calls.map((c) => String(c.err)).join("") === "10011100011", a.calls.map((c) => String(c.err)).join(""));
+  ok("failed calls: call rows carry the error", callList(a.rows).map((c) => String(c.err)).join("") === "10011100011", callList(a.rows).map((c) => String(c.err)).join(""));
   const e = evs(["{\"id\":\"q\",\"timestamp\":\"" + TS + "1.000Z\",\"type\":\"gemini\",\"toolCalls\":[" + calls.join(",") + "]}"], null);
   const tags = e.filter((v: Ev) => v.kind === "result").map((v: Ev) => { const m = /^\[[a-z]+\]/.exec(v.text); return m ? m[0] : "-"; }).join(" ");
   ok("failed calls: the transcript marks them", tags === "[error] - - [error] [error] [timeout] - - - [error] [error]", tags);
@@ -354,7 +355,7 @@ const gm = (ts: string, model: string, tok: string, calls: string): string => "{
   const ls = src.lines(s, 0, bytes(FULL)).lines.filter((l: string) => l.indexOf("\"toolCalls\"") >= 0);
   ok("normalized call lines carry the message's model", ls.length === 2 && ls.every((l: string) => { const o = parseJson(l); return !!o && str(o["model"]).startsWith("gemini-2.5-"); }), ls.map((l: string) => l.slice(0, 120)).join(" | "));
   const a = acc(src.lines(s, 0, bytes(FULL)).lines);
-  const ms = a.calls.map((c) => nameOf(DICT.model, c.model)).join(" ");
+  const ms = callList(a.rows).map((c) => nameOf(DICT.model, c.model)).join(" ");
   ok("call rows: the model of the message that issued them", ms === "gemini-2.5-pro gemini-2.5-pro gemini-2.5-flash", ms);
 }
 {

@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Each harness switches model between two tool-calling messages; every row must carry the model of the message that issued it.
 import { type Acc, newAcc } from "../features/usage/record.ts";
+import { callList } from "../features/usage/rows.ts";
 import { DICT, nameOf, MQ_MSG, MQ_TURN, MQ_SESS } from "../features/usage/facts.ts";
 import { newSess } from "../model/types.ts";
 import { harnessOf } from "./index.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
-function dump(a: Acc): string { const o: string[] = []; for (const c of a.calls) o.push(nameOf(DICT.tool, c.tool) + "@" + (nameOf(DICT.model, c.model) || "?") + "/" + String(c.mq)); return o.join(" "); }
+function dump(a: Acc): string { const o: string[] = []; for (const c of callList(a.rows)) o.push(nameOf(DICT.tool, c.tool) + "@" + (nameOf(DICT.model, c.model) || "?") + "/" + String(c.mq)); return o.join(" "); }
 function rows(h: string, lines: string[]): string { const a = newAcc(); for (const l of lines) harnessOf(h).usage(a, l); return dump(a); }
 function want(xs: string[], mq: number): string { const o: string[] = []; for (const x of xs) o.push(x + "/" + String(mq)); return o.join(" "); }
 function eq(w: string, got: string, exp: string): void { ok(w, got === exp, got + " ≠ " + exp); }

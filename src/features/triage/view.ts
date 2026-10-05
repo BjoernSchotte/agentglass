@@ -13,7 +13,7 @@ import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { harnessOf } from "../../harness/index.ts";
-import type { Call } from "../usage/facts.ts";
+import type { Rows } from "../usage/rows.ts";
 import { localOf } from "../usage/facts.ts";
 import { fmtMs } from "../usage/calls.ts";
 import { grp } from "../usage/costs.ts";
@@ -32,7 +32,8 @@ export interface TState { run: Run; res: Result | null; sel: number; top: number
 export const T: { st: TState | null } = { st: null };
 
 // ── state beside TState: the listed rows, the newest-calls list, recount bookkeeping ──
-interface CR { s: Sess; c: Call }
+// a listed call: a copy of what the list shows (rows are not kept past the pass that found them)
+interface CR { s: Sess; t: number; err: number; ms: number; cid: string }
 const V = { rows: [] as TRow[], rowsOf: "", calls: [] as CR[], stale: true, job: null as TJob | null, at: 0, ver: -1, want: "", inTx: false, rowY0: 0, rowN: 0 };
 // ms of counting: a little in the frame after a key (small counts then finish without a spinner), then slices on a timer of
 // their own with the event loop free in between (the refresh jobs' 5% budget would stretch a 1 s count to 20 s)
@@ -153,11 +154,11 @@ function callLines(st: TState, W: number, n: number): string[] {
   const wk = st.run.days > 1;
   for (let k = 0; k < V.calls.length && o.length < n; k++) {
     const x = V.calls[k]; const on = k === st.csel; const b = on ? bg(C.sel) : "";
-    const l = localOf(x.c.t); const d = new Date(x.c.t);
+    const l = localOf(x.t); const d = new Date(x.t);
     const hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") + ":" + String(d.getSeconds()).padStart(2, "0");
     const ad = harnessOf(x.s.h);
-    const st1 = x.c.err === 1 ? fg(C.red) + "✗" : x.c.err === 0 ? fg(C.green) + "✓" : fg(C.dim) + "?";
-    o.push(line(b + " " + fg(C.sub) + (wk ? l.day.slice(5) + " " : "") + hm + RST + b + "  " + fg(C.text) + rp(x.c.ms >= 0 ? fmtMs(x.c.ms) : "—", 7) + RST + b + "  " + st1 + RST + b + "  " +
+    const st1 = x.err === 1 ? fg(C.red) + "✗" : x.err === 0 ? fg(C.green) + "✓" : fg(C.dim) + "?";
+    o.push(line(b + " " + fg(C.sub) + (wk ? l.day.slice(5) + " " : "") + hm + RST + b + "  " + fg(C.text) + rp(x.ms >= 0 ? fmtMs(x.ms) : "—", 7) + RST + b + "  " + st1 + RST + b + "  " +
       fg(ad.color()) + ad.mark + RST + b + " " + fg(C.text) + clean(titleOf(x.s)) + RST, W) + RST);
   }
   return o;
@@ -272,14 +273,14 @@ function loadCalls(st: TState, r: TRow): void {
   const cs = without(st.run.scope, st.run.dropped).concat(st.run.sel, [{ key: r.attr, op: "is", vals: [r.value], neg: false, pinned: false }]);
   const f = compile(cs, "stats").f; const keep = st.run.slow ? slowKeep(st.run) : null;
   const all: CR[] = [];
-  if (f) eachCall(f, periodOf(st.run.days, false), (s: Sess, c: Call) => { if (keep) { const k = keep; if (!k(s, c)) return; } all.push({ s, c }); });
-  all.sort((a: CR, b: CR) => b.c.t - a.c.t);
+  if (f) eachCall(f, periodOf(st.run.days, false), (s: Sess, r: Rows, i: number) => { if (keep) { const k = keep; if (!k(s, r, i)) return; } all.push({ s, t: r.t[i] + 0, err: r.err[i] + 0, ms: r.ms[i] + 0, cid: r.cid[i] ?? "" }); });
+  all.sort((a: CR, b: CR) => b.t - a.t);
   V.calls = all.slice(0, 10); st.calls = rowKey(r); st.csel = 0;
 }
 function openCall(st: TState): void {
   const x = crAt(st.csel); if (!x) return;
   openTranscript(x.s);
-  const t = S.tv; if (t && x.c.cid) { t.focusKind = "tool"; t.focusTs = ""; t.focusText = x.c.cid; }
+  const t = S.tv; if (t && x.cid) { t.focusKind = "tool"; t.focusTs = ""; t.focusText = x.cid; }
   V.inTx = true;
 }
 function choosePreset(st: TState, n: number): void {

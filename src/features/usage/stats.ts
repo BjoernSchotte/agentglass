@@ -21,7 +21,7 @@ import { REDACT } from "../redact-on.ts";
 import { CONFIG_FILE } from "../../util/config.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
 import { DICT, nameOf, localOf } from "./facts.ts";
-import type { Call } from "./facts.ts";
+import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "./rows.ts";
 import type { Clause } from "../query/types.ts";
 import { parse } from "../query/parse.ts";
 import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
@@ -53,12 +53,12 @@ function sessOk(f: Compiled, ok: (path: string) => boolean, s: Sess): boolean { 
 interface RowDay { n: number; names: Map<string, Cnt>; hours: number[] }
 function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean): Map<string, RowDay> {
   const m = new Map<string, RowDay>();
-  eachCall(f, days, (s: Sess, c: Call) => {
+  eachCall(f, days, (s: Sess, r: Rows, ri: number) => {
     if (!cp(s.path)) return;
-    const k = s.path + "\t" + localOf(c.t).day;
-    let r = m.get(k); if (!r) { r = { n: 0, names: new Map<string, Cnt>(), hours: zeros(24) }; m.set(k, r); }
-    r.n++; addCnt(r.names, nameOf(DICT.tool, c.tool), 1, c.err === 1 ? 1 : 0, 0, 0);
-    const h = localOf(c.t).hour; r.hours[h] = numAt(r.hours, h, 0) + 1;
+    const k = s.path + "\t" + localOf(r.t[ri]).day;
+    let x = m.get(k); if (!x) { x = { n: 0, names: new Map<string, Cnt>(), hours: zeros(24) }; m.set(k, x); }
+    x.n++; addCnt(x.names, nameOf(DICT.tool, r.tool[ri]), 1, r.err[ri] === 1 ? 1 : 0, 0, 0);
+    const h = localOf(r.t[ri]).hour; x.hours[h] = numAt(x.hours, h, 0) + 1;
   });
   return m;
 }
@@ -395,23 +395,23 @@ function dagg(days: string[]): DA {
 function rowDrill(da: DA, f: Compiled, days: string[]): void {
   const ids = new Set<string>(); const pathsOf = new Set<string>();
   const ix = new Map<string, number>(); for (let i = 0; i < days.length; i++) ix.set(days[i] ?? "", i); const cp = contentOk(f);
-  eachCall(f, days, (s: Sess, c: Call) => {
+  eachCall(f, days, (s: Sess, r: Rows, ri: number) => {
     if (!cp(s.path)) return;
     da.all = da.all + 1;
-    const name = nameOf(DICT.tool, c.tool);
+    const name = nameOf(DICT.tool, r.tool[ri]);
     if (dServer ? !name.startsWith(dKey + "__") : name !== dKey) return;
-    const hi = harnessIndex(s.h); const lo = localOf(c.t);
-    da.n = da.n + 1; if (c.err === 1) da.err = da.err + 1; if (c.err >= 0) da.out = da.out + c.out;
-    if (c.ms >= 0) { da.dn = da.dn + 1; da.ms = da.ms + c.ms; if (c.ms > da.max) da.max = c.ms; const b = hb(c.ms); da.hist[b] = numAt(da.hist, b, 0) + 1; }
+    const hi = harnessIndex(s.h); const lo = localOf(r.t[ri]);
+    da.n = da.n + 1; if (r.err[ri] === 1) da.err = da.err + 1; if (r.err[ri] >= 0) da.out = da.out + r.out[ri];
+    if (r.ms[ri] >= 0) { da.dn = da.dn + 1; da.ms = da.ms + r.ms[ri]; if (r.ms[ri] > da.max) da.max = r.ms[ri]; const b = hb(r.ms[ri]); da.hist[b] = numAt(da.hist, b, 0) + 1; }
     if (days.length > 1) { const i = ix.get(lo.day) ?? -1; if (i >= 0) da.vals[i] = numAt(da.vals, i, 0) + 1; } else da.vals[lo.hour] = numAt(da.vals, lo.hour, 0) + 1;
     if (hi >= 0) da.hs[hi] = numAt(da.hs, hi, 0) + 1;
-    if (dServer) addCnt(da.kids, name.slice(dKey.length + 2), 1, c.err === 1 ? 1 : 0, 0, 0);
+    if (dServer) addCnt(da.kids, name.slice(dKey.length + 2), 1, r.err[ri] === 1 ? 1 : 0, 0, 0);
     else {
-      for (const p of c.progs) addCnt(da.prog, nameOf(DICT.prog, p), 1, c.err === 1 ? 1 : 0, 0, 0);
-      for (const m of c.cmds) addCnt(da.cmds, nameOf(DICT.cmd, m), 1, c.err === 1 ? 1 : 0, 0, 0);
-      for (const fl of c.files) addCnt(da.files, nameOf(DICT.file, fl), 1, 0, 0, 0);
+      for (const p of rowIds(r, ri, KIND_PROG)) addCnt(da.prog, nameOf(DICT.prog, p), 1, r.err[ri] === 1 ? 1 : 0, 0, 0);
+      for (const m of rowIds(r, ri, KIND_CMD)) addCnt(da.cmds, nameOf(DICT.cmd, m), 1, r.err[ri] === 1 ? 1 : 0, 0, 0);
+      for (const fl of rowIds(r, ri, KIND_FILE)) addCnt(da.files, nameOf(DICT.file, fl), 1, 0, 0, 0);
     }
-    if (c.cid) ids.add(c.cid);
+    if ((r.cid[ri] ?? "")) ids.add((r.cid[ri] ?? ""));
     pathsOf.add(s.path);
   });
   for (const p of pathsOf) {

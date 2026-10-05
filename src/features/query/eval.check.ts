@@ -7,6 +7,7 @@ import { accOf, ledger, unread, LAZY } from "../usage/ledger.ts";
 import { bucket, tool } from "../usage/record.ts";
 import { DICT, nameOf, localOf, MQ_MSG } from "../usage/facts.ts";
 import { setCallDaysForTest, saveCallsTo, loadCallsFrom } from "../usage/callcache.ts";
+import { newRows } from "../usage/rows.ts";
 import { parse, printClause } from "./parse.ts";
 import { register } from "./attrs.ts";
 import { type Compiled, EMPTY, compile, matchSession, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf, beyondRetention } from "./eval.ts";
@@ -65,7 +66,7 @@ eq("live", S0("live is true"), "");
 eq("age", S0("age < 1h"), "c1,c1s,k1,x1");
 const fb = F("model ~ sonnet and status is error", "list");
 const c1 = sessions.get(pathOf("c1")); const rowsOk: string[] = [];
-if (c1) for (const c of accOf(c1).calls) if (callMatches(fb, c1, c)) rowsOk.push(nameOf(DICT.tool, c.tool));
+if (c1) { const r = accOf(c1).rows; for (let i = 0; i < r.n; i++) if (callMatches(fb, c1, r, i)) rowsOk.push(nameOf(DICT.tool, r.tool[i] + 0)); }
 eq("callMatches per row", rowsOk.join(","), "Bash");
 eq("sessMatches ignores call clauses", c1 && sessMatches(F("harness is claude and tool is Nope", "list"), c1) ? "yes" : "no", "yes");
 const fd = F("day is yesterday and harness is codex", "stats"); const dks: string[] = [];
@@ -73,9 +74,9 @@ if (c1) for (const [k, dd] of accOf(c1).days) if (dayMatches(fd, c1, k, dd)) dks
 eq("dayMatches: day clauses only, ignores session clauses", dks.join(","), localOf(Date.parse(isoAt(1, 9, 0))).day);
 eq("dayKeys", fd.dayKeys ? fd.dayKeys.join(",") : "null", localOf(Date.parse(isoAt(1, 9, 0))).day);
 eq("no dayKeys without day clauses", F("tool is Bash", "list").dayKeys === null ? "null" : "set", "null");
-const each: string[] = []; eachCall(F("program is npm", "stats"), [localOf(Date.now()).day], (s: Sess, c) => { each.push(s.id + ":" + nameOf(DICT.tool, c.tool)); });
+const each: string[] = []; eachCall(F("program is npm", "stats"), [localOf(Date.now()).day], (s: Sess, r, i) => { each.push(s.id + ":" + nameOf(DICT.tool, r.tool[i] + 0)); });
 eq("eachCall", each.sort().join(","), "x1:exec,x1:shell");
-const em: string[] = []; eachCall(F("model ~ sonnet", "stats"), [localOf(Date.parse(isoAt(1, 9, 0))).day], (s: Sess, c) => { em.push(nameOf(DICT.tool, c.tool)); });
+const em: string[] = []; eachCall(F("model ~ sonnet", "stats"), [localOf(Date.parse(isoAt(1, 9, 0))).day], (s: Sess, r, i) => { em.push(nameOf(DICT.tool, r.tool[i] + 0)); });
 eq("eachCall: model per row, day", em.join(","), "Read,Read");
 const w = compile(parse("duration > 1s").cs, "watch"); eq("watch rejects duration", w.err ? w.err.msg : "", "--watch: duration is known only after the call's result; filter result events with event is result instead");
 const we = compile(parse("tool is Bash and event is tool").cs, "watch"); const wf = we.f ?? EMPTY;
@@ -132,13 +133,13 @@ eq("no day left", String(beyondRetention([], [], "2025-01-01", cut)), "false");
 // day bucket in the window is not read at all
 {
   fxBase();
-  const rowsOfAll = (src: string, days: string[]): string => { const o: string[] = []; eachCall(F(src, "stats"), days, (s: Sess, c) => { o.push(s.id + ":" + nameOf(DICT.tool, c.tool) + ":" + String(c.t)); }); return o.sort().join(","); };
+  const rowsOfAll = (src: string, days: string[]): string => { const o: string[] = []; eachCall(F(src, "stats"), days, (s: Sess, r, i) => { o.push(s.id + ":" + nameOf(DICT.tool, r.tool[i] + 0) + ":" + String(r.t[i])); }); return o.sort().join(","); };
   const today = [localOf(Date.now()).day]; const yday = [localOf(Date.parse(isoAt(1, 9, 0))).day];
   const memErr = rowsOfAll("status is error", today); const memRead = rowsOfAll("tool is Read", yday); const memMatch = S0("tool is Bash and status is error");
   const dir = "/tmp/agentglass-eval-lazy-" + String(process.pid); rmSync(dir, { recursive: true, force: true });
-  for (const s of sessions.values()) { const a = ledger.get(s.path); if (a) { saveCallsTo(dir, s.path, a); a.calls = []; a.lastCall = -1; unread.add(s.path); } }
+  for (const s of sessions.values()) { const a = ledger.get(s.path); if (a) { saveCallsTo(dir, s.path, a); a.rows = newRows(); a.lastCall = -1; unread.add(s.path); } }
   const was = LAZY.rows; const read: string[] = [];
-  LAZY.rows = (path: string, a) => { read.push(path); const cs = loadCallsFrom(dir, path, a); if (!cs) return false; a.calls = cs; a.lastCall = cs.length - 1; return true; };
+  LAZY.rows = (path: string, a) => { read.push(path); const cs = loadCallsFrom(dir, path, a); if (!cs) return false; a.rows = cs; a.lastCall = cs.n - 1; return true; };
   eq("lazy rows: yesterday's Read rows, only c1 read", rowsOfAll("tool is Read", yday) + " read " + read.map((p: string) => p.slice(p.lastIndexOf("/") + 1)).join(","), memRead + " read c1.jsonl");
   eq("lazy rows: errors today", rowsOfAll("status is error", today), memErr);
   eq("lazy rows: matchSession", S0("tool is Bash and status is error"), memMatch);

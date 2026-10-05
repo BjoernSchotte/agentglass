@@ -5,6 +5,7 @@ import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHea
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 import { own } from "../../util/own.ts";
 import { moOut } from "./owners.ts";
+import { newRows } from "./rows.ts";
 // every string read back is own()ed: the parser hands escaped strings (each key "<tool>\t<…>") over with up to 64 KB of
 // spare capacity, and the loaded ledger lives for the whole run
 
@@ -113,7 +114,7 @@ export function accIn(o: Obj): Acc {
   return {
     off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: own(str(o["model"])), pend: new Map<string, Pend>(), ep: own(str(o["ep"])), x: nums(o["x"]), xM: num(o["xM"]), pk: own(str(o["pk"])), sub: false,
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
-    bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), calls: [], lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
+    bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), rows: newRows(), lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
     p: "", ro: false, mo: new Map<string, number>(), mv: own(str(o["mo"])), mc: pairsIn(o["mc"]), xs: new Set<string>(strsIn(o["xs"])),
   };
 }
