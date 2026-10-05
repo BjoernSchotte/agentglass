@@ -9,6 +9,7 @@ import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, 
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
+import { claim } from "../features/usage/owners.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise, leadTag, prompts } from "./common.ts";
 
@@ -157,6 +158,8 @@ function claudeResult(a: Acc, l: string): void {
   const s0 = tr >= 0 && tr < at ? tr : at; const end = l.indexOf("]},\"uuid\":\"", at); // result block ≈ up to the end of the message (JSON-escaped size)
   done(p, t > 0 && p.t > 0 ? t - p.t : -1, l.indexOf("\"is_error\":true") >= 0, end > s0 ? end - s0 : 0, id, []);
 }
+// a user line another log carries too (same uuid): its owner books the prompt
+function owned(a: Acc, o: Obj): boolean { const u = str(o["uuid"]); return !u || claim(a, "u:" + u, str(o["timestamp"])); }
 function userText(o: Obj): string { const m = obj(o["message"]); const c = m ? m["content"] : null; return typeof c === "string" ? c : blockText(c); }
 // slash-command skills: the command line, then an isMeta line "Base directory for this skill: …/skills/<name>" with the same
 // promptId and no sourceToolUseID (a model's Skill call has one). /compact & co. never get that line.
@@ -164,7 +167,7 @@ function userLine(a: Acc, l: string): void {
   if (l.indexOf("<command-name>/") >= 0) {
     const o = parseJson(l); if (!o) return;
     const cm = /<command-name>\/([^<]*)<\/command-name>/.exec(userText(o));
-    a.pk = cm ? str(o["promptId"]) + "\t" + (cm[1] ?? "").trim() : "";
+    a.pk = cm && owned(a, o) ? str(o["promptId"]) + "\t" + (cm[1] ?? "").trim() : ""; // a copied command is its owner's
     return;
   }
   if (!a.pk) return;
@@ -187,14 +190,16 @@ function usage(a: Acc, l: string): void {
     userLine(a, l);
     if (a.sub || l.indexOf("\"isMeta\":true") >= 0) return; // never a (human) prompt
     const o = parseJson(l); const n = o ? prompts(parse, o) : 0;
-    if (o && n) turn(a, 0, str(o["timestamp"]), n);
+    if (o && n && owned(a, o)) turn(a, 0, str(o["timestamp"]), n); // a copied prompt is its owner's turn
     return;
   }
   const o = parseJson(l); if (!o || str(o["type"]) !== "assistant") return;
   const m = obj(o["message"]); if (!m) return;
   const iso = str(o["timestamp"]);
+  const id = str(m["id"]) || str(o["requestId"]); const u = obj(m["usage"]);
+  // a message another log carries too (fork, resume, a second project dir, a forked subagent) books in the first one only
+  if (id && !a.ids.has(id) && !claim(a, id, iso)) return;
   const d = bucket(a, 0, iso);
-  const id = str(m["id"]); const u = obj(m["usage"]);
   const md0 = str(m["model"]); const rowModel = md0 === "<synthetic>" ? "" : md0; // the model that issued this line's calls
   const was = id ? a.ids.get(id) : undefined;
   if (u && was !== undefined) { // a later line of a booked message: output_tokens grew while it streamed (thinking first)
