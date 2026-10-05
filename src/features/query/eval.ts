@@ -10,7 +10,7 @@ import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/recor
 import { DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
-import { accOf, ledger, callsOf } from "../usage/ledger.ts";
+import { accOf, ledger, callsOf, unread } from "../usage/ledger.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
@@ -340,6 +340,13 @@ function rowsMayMatch(ds: Map<string, Day>, cut: number, days: Set<string>, anyD
   if (cut !== cutDay.cut) { cutDay.cut = cut; cutDay.key = localOf(cut).day; }
   for (const k of ds.keys()) if (k >= cutDay.key && (anyDay || days.has(k))) return true;
   return false;
+}
+// matchSession would read this session's calls file first (not read in this run yet, rows possibly in the window)
+const NO_DAYS = new Set<string>();
+export function rowsPending(f: Compiled, s: Sess): boolean {
+  if (!f.call.length && !f.rowx.length) return false;
+  if (!unread.has(s.path)) return false;
+  const a = ledger.get(s.path); return !!a && rowsMayMatch(a.days, callCutoff(), NO_DAYS, true);
 }
 export function matchSession(f: Compiled, s: Sess, days: string[] | null): boolean {
   if (!all1(f.sess, s)) return false;

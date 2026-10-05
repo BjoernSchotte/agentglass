@@ -18,7 +18,10 @@ export function termSize(): boolean {
 }
 // focus report token (ESC[?1004h): "in", "out", or "" for anything else; never handled as a key
 export function focusOf(t: string): string { return t === "\x1b[I" ? "in" : t === "\x1b[O" ? "out" : ""; }
+// the interactive TUI owns the terminal (set on its first enter(), before its first scan and frame); one-shot runs never
+export const TERM = { tui: false };
 export function enter(): void {
+  TERM.tui = true;
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h\x1b[?1004h" + CSI + "2J"); // ?7l: no autowrap, overlong rows never scroll; ?1004h: focus in/out reports
   S.repaint = true; S.dirty = true; // cleared (also after a suspend for an editor/attach): the next frame is written in full

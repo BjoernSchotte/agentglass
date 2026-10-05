@@ -8,9 +8,10 @@ import { newSess } from "../../model/types.ts";
 import { sessions, buildView, loadHead } from "../../model/sessions.ts";
 import { buildProcView } from "../../model/procs.ts";
 import { ask } from "../../actions.ts";
+import { TERM } from "../../term.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { harnessIds, harnessOf } from "../../harness/index.ts";
-import { ledger } from "../usage/ledger.ts";
+import { ledger, callsOf } from "../usage/ledger.ts";
 import { L, todayKey, lastDays, heavy } from "../usage/record.ts";
 import { DICT } from "../usage/facts.ts";
 import { mcpServer } from "../usage/calls.ts";
@@ -18,7 +19,7 @@ import { callDays } from "../usage/callcache.ts";
 import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
-import { type Ctx, type Compiled, EMPTY, compile, matchSession, beyondRetention, oldestDay, numOf } from "./eval.ts";
+import { type Ctx, type Compiled, EMPTY, compile, matchSession, sessMatches, rowsPending, beyondRetention, oldestDay, numOf } from "./eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, restoredToast, initPins, configStore, hiddenByPins, onScopeChange, pinToast } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
 import { repoOf, repoShown } from "./project.ts";
@@ -74,12 +75,43 @@ interface MP { key: string; paths: Set<string> }
 const mp = new Map<string, MP>();
 let searchOk = true; // false while typing: a content clause never starts a search (enter does)
 export const MPS = { asks: 0 }; // matchingPaths calls (checks: a pass over sessions asks once, not per session — each ask walks them all)
-export function matchingPaths(f: Compiled): Set<string> {
+// The Sessions list's call-row filter never blocks a frame (a pinned `tool is Bash` read every calls file before the first
+// one): sessions whose calls file this run has not read yet are left out for now and read on the tick in ≤ 50 ms slices,
+// newest first; each slice moves L.ver, so the list re-matches and fills in. Until all are read the box says
+// "filtering n/m" and an empty list says so instead of "no sessions match". One-shot runs and other callers read at once.
+const FILL = { on: false, fkey: "", total: 0, queue: [] as string[] };
+function filling(): boolean { return FILL.on || TERM.tui; } // the TUI (from its first frame on) or a check
+export function fillOnForTest(on: boolean): void { FILL.on = on; FILL.fkey = ""; FILL.queue = []; }
+// one slice of reads; true when it read something
+export function fillStep(ms: number): boolean {
+  if (!FILL.queue.length) return false;
+  const t0 = Date.now(); let n = 0;
+  while (FILL.queue.length && (n === 0 || Date.now() - t0 < ms)) { const p = FILL.queue.pop() ?? ""; const s = sessions.get(p); if (s) { callsOf(s); n++; } }
+  if (n) { L.ver++; S.dirty = true; }
+  return n > 0;
+}
+H.onTick.push(() => { fillStep(50); });
+H.backlog.push(() => FILL.queue.length > 0); // the tick keeps its burst cadence while the filter fills in
+export function fillState(f: Compiled): { left: number; total: number } { return f.key === FILL.fkey ? { left: FILL.queue.length, total: FILL.total } : { left: 0, total: 0 }; }
+// lazy: "" reads what it needs now; "list" (the Sessions list's own filter) defers unread rows and owns the "filtering"
+// progress; "defer" defers the same way without it (counts beside the list: pins hide n, which settle as the rows arrive)
+export function matchingPaths(f: Compiled, lazy = ""): Set<string> {
   MPS.asks++;
+  const defer = lazy !== "" && filling() && (f.call.length > 0 || f.rowx.length > 0);
   const key = String(L.ver) + "|" + liveSig(timeStep(f.cs));
-  const hit = mp.get(f.key); if (hit && hit.key === key) return hit.paths;
-  const out = new Set<string>();
-  for (const s of sessions.values()) if (matchSession(f, s, null)) out.add(s.path);
+  const mk = f.key + (defer ? "\u0000" + lazy : ""); const hit = mp.get(mk); if (hit && hit.key === key) return hit.paths;
+  const out = new Set<string>(); const later: Sess[] = [];
+  for (const s of sessions.values()) {
+    // a model clause reads rows already in the session test: defer before it; other session clauses are cheap
+    if (defer && rowsPending(f, s) && (f.rowx.length > 0 || sessMatches(f, s))) { later.push(s); continue; }
+    if (matchSession(f, s, null)) out.add(s.path);
+  }
+  if (defer && lazy === "list") {
+    later.sort((x: Sess, y: Sess) => x.mtime - y.mtime); // popped from the end: newest first
+    const q: string[] = []; for (const s of later) q.push(s.path);
+    if (f.key !== FILL.fkey) { FILL.fkey = f.key; FILL.total = q.length; } else FILL.total = Math.max(FILL.total, q.length);
+    FILL.queue = q;
+  }
   for (const c of f.content) {
     const q = c.vals[0] ?? "";
     if (!searchOk && !contentKnown(q)) continue;
@@ -90,7 +122,7 @@ export function matchingPaths(f: Compiled): Set<string> {
     for (const p of [...out]) if (r.paths.has(p) === neg) out.delete(p);
   }
   if (mp.size > 32) mp.clear();
-  mp.set(f.key, { key, paths: out });
+  mp.set(mk, { key, paths: out });
   return out;
 }
 // does a session path pass f's content (full-text) clauses? Made once per pass over sessions or calls, asked per item
@@ -100,7 +132,7 @@ export function contentOk(f: Compiled): (path: string) => boolean {
 }
 // top-level rows a clause list leaves (a parent stays when a subagent matches)
 function countTop(cs: Clause[]): number {
-  const f = compiledOf(cs, "list"); const m = matchingPaths(f); let n = 0;
+  const f = compiledOf(cs, "list"); const m = matchingPaths(f, "defer"); let n = 0;
   for (const s of sessions.values()) {
     if (s.depth !== 0) continue;
     if (!cs.length || m.has(s.path)) { n++; continue; }
@@ -361,7 +393,7 @@ H.keys.push((mode: string, k: string): boolean => {
 });
 
 // ── hooks into the list and the process table ──
-H.listFilter.push(() => { const f = tabFilter("Sessions", "list"); if (f === EMPTY) return null; const m = matchingPaths(f); return (s: Sess): boolean => m.has(s.path); });
+H.listFilter.push(() => { const f = tabFilter("Sessions", "list"); if (f === EMPTY) return null; const m = matchingPaths(f, "list"); return (s: Sess): boolean => m.has(s.path); });
 H.procFilter.push((p: Proc): boolean => {
   if (!S.pins.length) return true;
   const f = compiledOf(S.pins, "procs"); if (f === EMPTY) return true;
@@ -374,11 +406,14 @@ H.boxChips.push((where: string, w: number): string => {
   if (where !== "sessions") return "";
   const f = tabFilter("Sessions", "list"); if (f === EMPTY) return "";
   const hid = hiddenCount("Sessions"); const all: string[] = []; const cc = callsChip(f, all);
-  const tail = (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (cc ? " " + cc : "");
+  const fl = fillState(f);
+  const tail = (fl.left > 0 ? fg(C.yellow) + " · filtering " + String(fl.total - fl.left) + "/" + String(fl.total) + RST : "") + (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (cc ? " " + cc : "");
   return chips("Sessions", "list", Math.max(8, w - vwidth(tail))) + tail;
 });
 H.emptyText.push((where: string): string => {
   if (where !== "sessions" || tabFilter("Sessions", "list") === EMPTY) return "";
+  const fl = fillState(tabFilter("Sessions", "list"));
+  if (fl.left > 0) return fg(C.yellow) + "filtering… " + String(fl.total - fl.left) + "/" + String(fl.total) + " sessions' call rows read — matches appear as they are" + RST;
   const hid = hiddenCount("Sessions");
   return fg(C.sub) + "no sessions match" + (hid > 0 ? " — " + String(hid) + " hidden by pins (P edits)" : localFor("Sessions").length ? " — esc clears the filter" : "") + RST;
 });
@@ -401,6 +436,7 @@ H.helpSections.push({ name: "filter  (/ on Sessions and Stats; the same grammar 
   ["P", "edit the pins (empty + ↵ unpins); config filter.remember: false forgets them"],
   ["h  l  F", "harness is … (cycle) · live is true (toggle) · content ~ \"…\" (full-text)"],
   ["esc (list)", "clear this tab's filter; pins stay"],
+  ["filtering n/m", "a call filter reads call rows in the background; matches fill in"],
 ].concat(wrapKeys(64)) });
 
 // ── restored pins: announced on start so they never look like missing sessions; the info toast is built then, not

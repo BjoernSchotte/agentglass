@@ -7,7 +7,11 @@ import { onInput } from "../../input.ts";
 import { H, boxChips, emptyText } from "../../hooks.ts";
 import { parse, print } from "./parse.ts";
 import { initPins, localFor, setLocal } from "./scope.ts";
-import { complete, hiddenCount, matchingPaths, timeStep } from "./ui.ts";
+import { complete, hiddenCount, matchingPaths, timeStep, fillOnForTest, fillStep, fillState } from "./ui.ts";
+import { ledger, unread, LAZY } from "../usage/ledger.ts";
+import { saveCallsTo, loadCallsFrom } from "../usage/callcache.ts";
+import { newRows } from "../usage/rows.ts";
+import { rmSync } from "node:fs";
 import { EMPTY, compile } from "./eval.ts";
 import { fxBase } from "./fixture.ts";
 import { setCallDaysForTest } from "../usage/callcache.ts";
@@ -106,5 +110,25 @@ const fa = compile(parse("age < 2s").cs, "list").f ?? EMPTY;
 eq("age < 2s: a young session matches", String(matchingPaths(fa).has(yng.path)), "true");
 const t0 = Date.now(); while (Date.now() - t0 < 1100) { /* the clause's step: 1 s */ }
 eq("age < 2s: a second later it no longer does", String(matchingPaths(fa).has(yng.path)), "false");
+// a call filter in the TUI: rows not read yet are deferred (no blocking read), the box and the empty list say "filtering",
+// slices of reads fill the matches in, and the final set equals the eager one
+{
+  fxBase();
+  const fb = compile(parse("tool is Bash").cs, "list").f ?? EMPTY;
+  const eager = [...matchingPaths(fb)].sort().join(",");
+  const dir = "/tmp/agentglass-ui-fill-" + String(process.pid); rmSync(dir, { recursive: true, force: true });
+  for (const s of sessions.values()) { const a = ledger.get(s.path); if (a) { saveCallsTo(dir, s.path, a); a.rows = newRows(); a.lastCall = -1; unread.add(s.path); } }
+  const was = LAZY.rows; LAZY.rows = (path: string, a) => { const r = loadCallsFrom(dir, path, a); if (!r) return false; a.rows = r; a.lastCall = r.n - 1; return true; };
+  fillOnForTest(true);
+  const first = matchingPaths(fb, "list"); const st = fillState(fb);
+  eq("first pass reads nothing, defers", String(first.size) + " left " + String(st.left) + "/" + String(st.total) + " unread " + String(unread.size), "0 left " + String(st.total) + "/" + String(st.total) + " unread " + String(unread.size));
+  eq("something deferred", String(st.total > 0), "true");
+  setLocal("Sessions", parse("tool is Bash").cs);
+  eq("empty list says filtering", String(emptyText("sessions").indexOf("filtering") >= 0), "true");
+  let guard = 0; while (fillStep(0) && guard < 50) { guard++; matchingPaths(fb, "list"); }
+  eq("filled: equals the eager set", [...matchingPaths(fb, "list")].sort().join(",") + " left " + String(fillState(fb).left), eager + " left 0");
+  eq("filled: no filtering text", String(emptyText("sessions").indexOf("filtering") >= 0), "false");
+  setLocal("Sessions", []); fillOnForTest(false); LAZY.rows = was; rmSync(dir, { recursive: true, force: true });
+}
 console.log(bad ? bad + " failed" : "filter ui: all checks passed");
 if (bad) process.exit(1);

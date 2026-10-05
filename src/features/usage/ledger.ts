@@ -5,6 +5,7 @@
 import { readBytes } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
+import { TERM } from "../../term.ts";
 import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
@@ -34,13 +35,13 @@ export function rowsOf(s: Sess): void {
   unread.delete(s.path); if (!LAZY.rows(s.path, a)) ledger.delete(s.path); // stale: accOf starts it over
 }
 // one-shot runs index a session whose rows turned out stale right away (the answer must be whole); the TUI leaves that to
-// its ticks (H.start clears it) rather than block a frame on reading a whole log
-const BLOCKING = { on: true };
+// its ticks (term.ts TERM.tui) rather than block a frame on reading a whole log
+function blocking(): boolean { return !TERM.tui; }
 // the one way to read a session's call rows (filters, rules, triage, compare, Stats): reads its calls file first if this
 // run has not; no rows when it has none (yet). Callers must not keep the Rows or an index past their pass (prune compacts).
 const NONE = newRows();
 export function callsOf(s: Sess): Rows {
-  if (unread.has(s.path)) { rowsOf(s); if (!ledger.has(s.path) && BLOCKING.on) complete(s); }
+  if (unread.has(s.path)) { rowsOf(s); if (!ledger.has(s.path) && blocking()) complete(s); }
   const a = ledger.get(s.path); return a ? a.rows : NONE;
 }
 export function accOf(s: Sess): Acc {
@@ -236,7 +237,7 @@ export function complete(s: Sess): void {
   }
   // a one-shot run is done with these logs: their day detail maps go back to text (a cold full index holds every day of
   // every log at once otherwise); a later reader decodes a day again on use
-  if (BLOCKING.on) for (const p of readNow) { const a = ledger.get(p); if (a) for (const d of a.days.values()) packHeavy(d); }
+  if (blocking()) for (const p of readNow) { const a = ledger.get(p); if (a) for (const d of a.days.values()) packHeavy(d); }
   readNow.length = 0;
 }
 const readNow: string[] = []; // logs finish() read bytes of during this complete()
@@ -256,6 +257,6 @@ function finish(s: Sess): void {
 }
 
 H.onTick.push(tick);
-H.start.push(() => { BLOCKING.on = false; });
+
 H.enrich.push((s: Sess) => { L.prio = s.path; L.prioAt = Date.now(); }); // O(1): the next tick indexes this one first
 H.complete.push(complete);

@@ -1,6 +1,7 @@
 // agentglass — cost by billing mode over all sessions (today, 7 days, month), projections and the budget watch
 // SPDX-License-Identifier: Apache-2.0
 import { H } from "../../hooks.ts";
+import { TERM } from "../../term.ts";
 import { say } from "../../state.ts";
 import { section } from "../../util/config.ts";
 import { OS } from "../../platform/index.ts";
@@ -61,7 +62,7 @@ export function dayCosts(days: string[], harness: string): DayCost[][] {
 interface DayAgg { m: ModeSum; dc: DayCost[] /* per mode */ }
 interface SessSig { a: Acc | null; off: number; xm: number; mode: string; days: string[] /* its window days, as summed */ }
 const INC = { on: false, key: "", at: 0, days: new Map<string, DayAgg>(), sig: new Map<string, SessSig>(), resums: 0 };
-H.start.push(() => { INC.on = true; }); // the TUI; a one-shot run sums once anyway
+
 function dayAggOf(k: string): DayAgg {
   const m = newSum(); const dc: DayCost[] = []; for (let i = 0; i < MODES.length; i++) dc.push({ key: k, cost: 0, hc: zeros24() });
   for (const s of sessions.values()) {
@@ -141,7 +142,7 @@ export function costNow(harness: string): CostNow {
   const hit = nows.get(harness);
   if (hit && fresh(hit.ver, hit.at)) return hit.c;
   const now = Date.now(); const hour = new Date(now).getHours(); const left = daysLeftInMonth(now);
-  const d15 = lastDays(15); const mk = monthStart(now); const inc = INC.on && harness === "";
+  const d15 = lastDays(15); const mk = monthStart(now); const inc = (INC.on || TERM.tui) && harness === ""; // the TUI (term.ts); a one-shot run sums once anyway
   if (inc) { const win = mk.slice(); for (const k of d15) if (win.indexOf(k) < 0) win.push(k); incSync(win, now); }
   const month = inc ? incSum(mk) : sumDays(mk, harness);
   const rows = inc ? incRows(d15) : dayCosts(d15, harness);
