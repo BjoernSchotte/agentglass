@@ -128,8 +128,8 @@ Every screen in this README and the launch video was recorded this way.
 - **Small footprint on a big history.** Measured with 3,400 sessions (12 GB of transcripts) and 36 agents
   streaming: about 175 MB of memory (260–270 MB with a pinned call-row filter), first frame in under a second, and
   about 4 % of one core in front, under 2 % in the background. A first start shows the session list at once. The
-  header shows `⟳ indexing 34% · 8.0G left · ~3m` while the history is indexed in the background (about 4–5 min here,
-  at most ~20 % of one core). Numbers and method: `specs/tui-footprint/results.md`.
+  header shows `⟳ indexing 34% · 8.0G left · ~3m` while the history is indexed in the background (the whole process
+  stays at ≤ 20 % of one core meanwhile; about 8 min here). Numbers and method: `specs/tui-footprint/results.md`.
 
 ## Prices
 

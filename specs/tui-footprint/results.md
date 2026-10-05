@@ -1,7 +1,8 @@
 # TUI footprint — results
 
 Status: measured 2026-10-05/06 on `main` @ d00257f (T0–T8, PRs #60 and #59) against `main` @ e5b02e7 (the last main
-before them: model-prices merged, footprint not). Spec: [spec.md](spec.md), plan: [plan.md](plan.md) Task 9.
+before them: model-prices merged, footprint not). The pinned-filter and cold-start CPU rows also give the numbers with
+#63 (`perf/pinned-and-cold`). Spec: [spec.md](spec.md), plan: [plan.md](plan.md) Task 9.
 
 ## Method
 - Host: Linux 6.17, 32 cores, about 3,450 sessions (12 GB of transcripts), 36 live agents streaming, load average 2–11.
@@ -25,13 +26,13 @@ before them: model-prices merged, footprint not). Spec: [spec.md](spec.md), plan
 | TUI first frame, warm | 2,476 ms | **752 ms** | ≤ 1 s | met |
 | TUI first frame, warm, pinned `tool is Bash` | 2,831 ms | **588 ms** (matches fill in within ~12 s, `filtering n/m` until then) | ≤ 1 s | met |
 | TUI first frame, cold cache | 351 ms | **353 ms**, gauge after 3 s | ≤ 2 s, gauge | met |
-| History indexed on a cold start (TUI) | ~8 min (spec) | **265 s** (peak RSS 331 MB) | ≈ 4 min | met (+10 %) |
+| History indexed on a cold start (TUI) | ~8 min (spec) | 265 s on d00257f; **500 s** with #63 (whole process held at 20 %), peak RSS 332 MB | ≈ 4 min; longer accepted for the 20 % cap | accepted |
 | TUI RSS 5 s / 30 s / end, warm | 828 / 828 / 828 MB | **169 / 175 / 176 MB** | ≤ 300 MB | met |
 | TUI RSS end, pinned `tool is Bash` | 825 MB | **272 MB** | ≤ 300 MB | met |
-| TUI CPU, warm, focused, 120 s (self + children) | 12.12 + 4.19 = **16.3 %** | 4.03 + 0.15 = **4.2 %** | ≤ 2 % in all, ≤ 1 % without ingest | **not met** |
+| TUI CPU, warm, focused, 120 s (self + children) | 12.12 + 4.19 = **16.3 %** | 4.03 + 0.15 = **4.2 %** (3.5–4.2 % over runs) | ≤ 2 % applies to the unattended (away) state (decision) | accepted |
 | TUI CPU, warm, unfocused (`--away`) | 7.18 + 4.19 = 11.4 % | 1.69 + 0.05 = **1.7 %** | ≤ 2 % | met |
-| TUI CPU, pinned `tool is Bash`, focused, 60 s | 13.10 + 4.02 = 17.1 % | 6.60 + 0.15 = 6.8 % | ≤ 2 % | **not met** |
-| TUI CPU, cold start, first 100 s | 27.1 + 4.1 = 31.2 % | 26.8 + 0.3 = 27.1 % | ≤ 20 % while indexing (Decision 1) | **not met** (indexing slice ≤ 20 %, plus the other jobs) |
+| TUI CPU, pinned `tool is Bash`, focused, 60 s | 13.10 + 4.02 = 17.1 % | 6.8 % on d00257f; **+0.27 %** over no filter with #63 (3 alternating pairs) | ≤ +0.5 % over no filter (decision) | met with #63 |
+| TUI CPU, cold start, whole process while history indexes | 27.1 + 4.1 = 31.2 % (first 100 s) | 27.1 % on d00257f; **19.9 %** over 500 s with #63 | ≤ 20 %, the whole process (Decision 1) | met with #63 |
 | Cold full index `--json --subagents`, peak RSS | 903 MB | **478 MB** | ≤ 500 MB | met |
 | Cold full index, wall / user CPU | 58.1 s / 53.6 s | 59.3 s / 54.8 s | not slower than ref by more than 10 % | met (+2 %) |
 | Warm `--json --limit 400` (2nd run) | 1.16 s / 408 MB | **0.83 s / 149 MB** | not slower, not larger | met |
@@ -57,20 +58,23 @@ Before: procs 102 ms, render 112–160 ms, tick 14–20 ms, scan 32 ms (spec "To
 - Cold full index: 478 MB (was 903 MB). The save is streamed, and one-shot runs pack the day maps of the logs they
   have read back to text.
 
-## Rulings
-- **Focused CPU 4.2 % (target ≤ 2 %), not met.** Measured cause: the jobs that run on the alarm and refresh cadence
-  while agents are live (procs 0.9 %, tick 0.8 %, render ≤ 0.7 %), plus about 1 % of runtime overhead. None of them
-  is a single large cost any more. The 1.5 s alarm cadence is binding (Decision 7), and the 500 ms tick and render
-  follow adaptive-refresh's hot level. Reaching 2 % needs either a slower hot level (alarms are bound to 1.5 s) or
-  cutting each job about in half. This is left to the lead: the target is not loosened here. The unfocused case
-  meets the target (1.7 %).
-- **Pinned call filter CPU 6.8 %, not met.** While agents stream, every `L.ver` move re-matches the list filter over
-  the rows of every session (`matchingPaths`). A follow-up would re-match only the sessions whose rows grew.
-- **Cold-start CPU 27 % (Decision 1: ≤ 20 % while indexing).** The indexing slice holds 50 ms per 250 ms tick. On top
-  come procs, render (L.ver moves every tick) and the gauge. History finished in 265 s.
+## Decisions and rulings
+- **Focused CPU 3.5–4.2 % is accepted (lead decision, from the user's low-load mandate).** The ≤ 2 % target applies to
+  the unattended state: in the background (`--away`) it is met at 1.7 %. In front, these are the floors: procs (~0.9 %),
+  the tick (~0.8 %), render (≤ 0.7 %) and about 1 % of runtime overhead. Each is bound by the 1.5 s alarm cadence
+  (Decision 7) and the hot refresh level while agents stream.
+- **Pinned call filter: re-matched incrementally (#63).** A session's row verdict is kept while its ledger entry, the
+  retention cut and the price generation are unchanged. After a ledger move only the moved sessions are re-checked,
+  and the "pins hide n" count is redone only when a set changed. Same binary, pinned `tool is Bash` vs no filter, 3
+  alternating pairs: 4.15/3.60/5.52 % vs 3.83/3.58/5.05 %, which is +0.27 % on average. The final set equals a full
+  re-match (`eval.check.ts`, `ui.check.ts`).
+- **Cold-start CPU: the whole process holds 20 % (#63).** History reads spend a credit: 0.19 of one core minus this
+  process's other CPU over the last second (`process.cpuUsage`). The 0.01 covers children and the one-window lag. Live
+  ingest keeps its fixed slice. Result: 19.9 % (self + children) over the whole cold start. History is done after
+  500 s instead of 265 s, the price of the cap.
 - **CHANGELOG not edited.** The release tooling (`scripts/release.sh`) generates CHANGELOG.md from the commit
   subjects; a hand-written "unreleased" entry would be duplicated at release time.
-- **Golden skipped counts (65–67).** These are sessions written during the runs: 36 live agents plus the agents
+- **Golden skipped counts (65–73).** These are sessions written during the runs: 36 live agents plus the agents
   running this work. Each compare took several minutes.
 
 ## Manual pass (this run)
