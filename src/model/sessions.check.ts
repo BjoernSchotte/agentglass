@@ -3,7 +3,7 @@
 import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { newSess, type Sess } from "./types.ts";
 import { H } from "../hooks.ts";
-import { sessions, probeLive, scan } from "./sessions.ts";
+import { sessions, probeLive, scan, SCANNED } from "./sessions.ts";
 import { CLAUDE } from "../util/fs.ts";
 
 let bad = 0;
@@ -33,8 +33,11 @@ const pd = CLAUDE + "/projects/-tmp-scan"; mkdirSync(pd, { recursive: true });
 const u = (n: number): string => pd + "/0000000" + String(n) + "-aaaa-bbbb-cccc-dddddddddddd.jsonl";
 writeFileSync(u(1), "{}\n"); writeFileSync(u(2), "{}\n");
 scan(); eq("two logs", String(sessions.size), "2");
-writeFileSync(u(3), "{}\n"); scan(); eq("a new log", String(sessions.size), "3");
-scan(); eq("steady", String(sessions.size), "3");
+// a scan that brought new sessions tells its listeners at once (procs.ts links live processes to them in the same turn:
+// a new OpenCode/pi/Gemini session showed without its process until the next process pass)
+let told = 0; SCANNED.push((): void => { told++; });
+writeFileSync(u(3), "{}\n"); scan(); eq("a new log", String(sessions.size) + " told " + String(told), "3 told 1");
+scan(); eq("steady", String(sessions.size) + " told " + String(told), "3 told 1");
 // the same listing again (the scan walks the sessions it holds): a log that grew shows its new size in the map
 for (let i = 0; i < 3; i++) scan();
 writeFileSync(u(1), "{}\n{}\n"); scan();

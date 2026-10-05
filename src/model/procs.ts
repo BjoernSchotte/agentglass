@@ -8,7 +8,7 @@ import type { Live } from "../harness/types.ts";
 import type { Proc, Sess } from "./types.ts";
 import type { ProcRow } from "../platform/types.ts";
 import { etimeSec } from "../features/detect.ts";
-import { sessions, SG } from "./sessions.ts";
+import { sessions, SG, SCANNED } from "./sessions.ts";
 import { S } from "../state.ts";
 import { linkByCwd, daemonWarn, type CwdProc } from "./link.ts";
 import { H, applyMeta, realCwd } from "../hooks.ts";
@@ -128,9 +128,13 @@ export function refreshProcs(discover: boolean = true): void {
     for (const l of ls) registry.set(ad.id + ":" + l.id, l);
     if (ad.daemon) daemonLive.set(ad.id, ls);
   }
-  const g = linkSig(); if (g !== lastLink) { lastLink = g; linkSessions(); }
+  relink();
   wakeScan(procs, Date.now());
 }
+function relink(): void { const g = linkSig(); if (g !== lastLink) { lastLink = g; linkSessions(); } }
+// a scan brought new sessions: link them now, from this pass's processes and registry (until the next process pass a new
+// OpenCode/pi/Gemini session showed with no process: ○/· before its spinner)
+SCANNED.push(relink);
 // an agent process with no session yet may write a new log any moment (a first prompt), often in a dir quiet for long:
 // its harness's dirs (or just its session dir, when the harness names it from the cwd) are looked at every scan
 // PEND.young: such agents started within the last 10 min (main.ts scans every 2 s while there is one, in any level; an

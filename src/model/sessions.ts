@@ -35,7 +35,7 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, parent
   if (!s) { s = newSess(h, id, path, archived); s.parent = parent; }
   const st = sourceOf(h).stat(s);
   if (!st) return null; // gone (a new session is not in the map yet)
-  sessions.set(path, s); SG.gen++;
+  sessions.set(path, s); SG.gen++; adds++;
   const m = harnessOf(h).meta; if (m) m(s);
   restat(s, st.size, st.mtime, epochOf(s)); applyMeta(s);
   SCAN.seen++; return s;
@@ -67,8 +67,16 @@ export function probeLive(): boolean {
   return changed;
 }
 let scanned = false;
+// told after a scan that added sessions (procs.ts: link live processes to them now, not on the next process pass)
+export const SCANNED: (() => void)[] = [];
+let adds = 0;
 export function scan(): void {
   if (!scanned) { scanned = true; for (const f of H.firstScan) f(); }
+  const a0 = adds;
+  scanOnce();
+  if (adds !== a0) for (const f of SCANNED) f();
+}
+function scanOnce(): void {
   SCAN.no++; SCAN.now = Date.now(); SCAN.seen = 0; SCAN.gone = [];
   if (SG.gen !== SCAN.gen || sessions.size !== SCAN.n) LISTED.clear(); // sessions came or went outside a scan (trash, checks)
   for (const ad of HARNESSES) {
