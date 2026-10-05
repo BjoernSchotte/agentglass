@@ -123,6 +123,13 @@ openTriage(newRun("Stats", "call", [], parse("status is error").cs, 2), () => {}
 selectRow("tool", "Grep"); onInput("p");
 eq("p pins", print(S.pins) + " | " + saved, "tool is Grep | tool is Grep");
 eq("p narrows the run", T.st ? print(T.st.run.scope) : "", "tool is Grep");
+// p on a value already inside a pinned set: nothing changes, and the toast says so
+initPins({ load: () => "tool is_one_of Grep Bash", save: (v: string) => { saved = v; }, remember: true }); saved = "untouched";
+openTriage(newRun("Stats", "call", S.pins.slice(), parse("status is error").cs, 2), () => {});
+selectRow("tool", "Grep"); onInput("p");
+eq("p already pinned: toast", S.toast, "already pinned: tool is Grep (pins: tool is_one_of Grep Bash) — P edits pins");
+eq("p already pinned: pins unchanged", print(S.pins) + " | " + saved, "tool is_one_of Grep Bash | untouched");
+initPins({ load: () => "", save: (v: string) => { saved = v; }, remember: true });
 setLocal("Stats", []);
 // guards: r drops for this triage only, R for real
 initPins({ load: () => "status is error", save: (v: string) => { saved = v; }, remember: true });
