@@ -61,6 +61,17 @@ const starts: number[] = []; { let o = 0; for (const l of L) { starts.push(o); o
 const sess = (p: string): Sess => newSess("gemini", "0000aaaa-1111-2222-3333-444455556666", p, false);
 // live linking: a session's start comes from its header (procs.ts links a live gemini only to sessions begun after it)
 { const st = gemini.sessionStart; ok("session start from the header", !!st && st(sess(P)) === Date.parse(TS + "0.000Z"), st ? String(st(sess(P))) : "none"); }
+// and its newest message (an in-TUI resume): top-level user/gemini records only ($set histories and summaries are not
+// new messages; an unfinished last line is not one yet); a window that ends inside a long line still finds it
+{
+  const lm = gemini.lastMessage; const t7 = Date.parse(TS + "7.000Z");
+  ok("last message time", !!lm && lm(sess(P)) === t7, lm ? String(lm(sess(P))) : "none");
+  const Q = DIR + "/long.jsonl"; const big = "x".repeat(200000);
+  write(Q, (L[0] ?? "") + "\n" + (L[2] ?? "") + "\n{\"$set\":{\"summary\":\"" + big + "\"}}\n");
+  ok("last message behind a long line", !!lm && lm(sess(Q)) === Date.parse(TS + "1.000Z"), lm ? String(lm(sess(Q))) : "none");
+  const E = DIR + "/empty.jsonl"; write(E, (L[0] ?? "") + "\n{\"$set\":{\"summary\":\"s\"}}\n");
+  ok("no message: 0", !!lm && lm(sess(E)) === 0, lm ? String(lm(sess(E))) : "none");
+}
 
 // what a normalized stream says, as countable keys: msg:<id> (message fields), call:<id>, tok:<id>, title:…, meta:…, hdr
 function keys(ls: string[]): string[] {

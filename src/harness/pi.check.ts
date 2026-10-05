@@ -128,10 +128,10 @@ ok("nicobailon fork-context child", pk("F") === "P/subagent", pk("F"));
 ok("tintinweb child from session_info name", pk("C") === "P/Explore", pk("C"));
 ok("a /fork stays top-level", pk("K") === "/", pk("K"));
 // liveness: one pi process in the cwd, the tintinweb child newest → never linked to it (procs.ts offers only unparented sessions)
-const live: { path: string; h: string; cwd: string; mtime: number; pid: number; start: number }[] = [];
+const live: { path: string; id: string; h: string; cwd: string; mtime: number; pid: number; start: number }[] = [];
 let mt = 0;
-for (const id of ["P", "K", "C"]) { const s = found.get(id); mt++; if (s && !s.parent) live.push({ path: s.path, h: "pi", cwd: s.cwd, mtime: id === "C" ? 99 : mt, pid: 0, start: 0 }); }
-const lk = linkByCwd([{ pid: 42, h: "pi", cwd: "/w", after: 0 }], live);
+for (const id of ["P", "K", "C"]) { const s = found.get(id); mt++; if (s && !s.parent) live.push({ path: s.path, id: s.id, h: "pi", cwd: s.cwd, mtime: id === "C" ? 99 : mt, pid: 0, start: 0 }); }
+const lk = linkByCwd([{ pid: 42, h: "pi", cwd: "/w", start: 0, resume: "" }], live);
 const kp = found.get("K");
 ok("pid goes to the newest unparented session", !!kp && lk.get(kp.path) === 42 && lk.size === 1, String(lk.size));
 // a run whose session.jsonl has no header yet is not listed under a made-up id; it shows up with its own id once written

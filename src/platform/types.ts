@@ -1,8 +1,9 @@
 // agentglass — platform port: everything OS-specific the app needs; one adapter per OS (darwin.ts, linux.ts, …)
 // SPDX-License-Identifier: Apache-2.0
 
-// one row of the process table; cpu as the OS reports it (see Platform.cpuOf), rss in bytes, etime as [[dd-]hh:]mm:ss
-export interface ProcRow { pid: number; ppid: number; cpu: number; rss: number; etime: string; tty: string; args: string }
+// one row of the process table; cpu as the OS reports it (see Platform.cpuOf), rss in bytes, etime as [[dd-]hh:]mm:ss,
+// start = when it started (epoch ms; 0 = only etime is known: whole seconds)
+export interface ProcRow { pid: number; ppid: number; cpu: number; rss: number; etime: string; tty: string; args: string; start: number }
 
 export interface FileInfo { uid: number; mode: number; kind: string }
 

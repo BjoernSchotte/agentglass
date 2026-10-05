@@ -10,7 +10,7 @@ import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, appro
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 function ev(kind: string, text: string): Ev { return { kind, text, ts: "", id: "", full: "" }; }
-function pr(pid: number, ppid: number, etime: string, args: string): Proc { return { pid, ppid, cpu: 0, rss: 0, etime, tty: "??", args, h: "", cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; }
+function pr(pid: number, ppid: number, etime: string, args: string): Proc { return { pid, ppid, cpu: 0, rss: 0, etime, tty: "??", args, h: "", start: 0, cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; }
 function flat(n: number, v: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(v); return a; }
 
 eq("etime mm:ss", String(etimeSec("01:05")), "65");
