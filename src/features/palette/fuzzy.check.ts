@@ -14,6 +14,8 @@ const T = ["Fix timezone bug in reports", "prefix bug", "Fix bug", "unrelated"];
 const h1 = run(T, "fx tmz");
 ok("fx tmz finds the title", h1.length === 1 && h1[0].i === 0, ids(h1));
 ok("boundary beats mid-word", sc("Fix bug", "fix") > sc("prefix bug", "fix"), sc("Fix bug", "fix") + " vs " + sc("prefix bug", "fix"));
+const st0 = sc("agentglass-palette-review", "agentgl"); const st1 = sc("BjoernSchotte/agentglass", "agentgl");
+ok("start of text: a little above a word start, not 6 per character", st0 > st1 && st0 - st1 < 5, st0 + " vs " + st1);
 ok("consecutive beats scattered", sc("abcxyz", "abc") > sc("axbxcx", "abc"), sc("abcxyz", "abc") + " vs " + sc("axbxcx", "abc"));
 ok("camelCase hump scores", sc("openTranscript", "ot") > sc("opentranscript", "ot"), sc("openTranscript", "ot") + " vs " + sc("opentranscript", "ot"));
 ok("smart case: Fix does not match fix bug", sc("fix bug", "Fix") === NO_MATCH, String(sc("fix bug", "Fix")));

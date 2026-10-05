@@ -56,6 +56,13 @@ function geminiCfg(p: string): string {
   const t = obj(o["telemetry"]); accessed.push("telemetry.enabled");
   return t && t["enabled"] === true ? "on" : "off";
 }
+// the project dirs whose .gemini/settings.json can switch Gemini's export on: its sessions' cwds, newest first, each once,
+// at most 64 (a long --since must not crowd out the session that is running now)
+export function projectDirs(roots: { h: string; cwd: string; mtime: number }[]): string[] {
+  const gs = roots.filter((s: { h: string; cwd: string; mtime: number }) => s.h === "gemini" && !!s.cwd).sort((a, b) => b.mtime - a.mtime);
+  const out: string[] = []; for (const s of gs) { if (out.length >= 64) break; if (out.indexOf(s.cwd) < 0) out.push(s.cwd); }
+  return out;
+}
 // per harness (all of them, in a fixed order): live processes' environment first, then the config files
 export function detectNative(pids: Map<string, number[]>, home: string, cwds: string[]): Native[] {
   const out: Native[] = [];

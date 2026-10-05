@@ -15,7 +15,7 @@ import { type ModeSum, newSum, addDay } from "../usage/costs.ts";
 import type { Bill } from "../usage/billing.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { type Compiled, EMPTY, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
-import { matchingPaths } from "../query/ui.ts";
+import { contentOk } from "../query/ui.ts";
 import { identOf } from "../query/project.ts";
 import { type GitInfo, allInfo } from "../vcs/attrib.ts";
 import { realCwd, realMeta } from "../../hooks.ts";
@@ -103,8 +103,8 @@ function rowDays(f: Compiled, days: string[]): Map<string, RowDay> {
   });
   return m;
 }
-// the session passes the filter's session clauses and its full-text clauses (EMPTY passes everything)
-function sessOk(f: Compiled, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && (!f.content.length || matchingPaths(f).has(s.path))); }
+// the session passes the filter's session clauses and its full-text clauses (ok = contentOk(f); EMPTY passes everything)
+function sessOk(f: Compiled, ok: (path: string) => boolean, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && ok(s.path)); }
 
 interface Hit { key: string; at: number; rows: RepoAgg[] }
 const cache = new Map<string, Hit>();
@@ -128,8 +128,9 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
     let n = pcOf(root).n; for (const k of root.subs) n += pcOf(k).n;
     rootN.set(root.path, n); return n;
   };
+  const cp = contentOk(f);
   for (const s of sessions.values()) {
-    const a = ledger.get(s.path); if (!a || (tag && !allow.has(s.path)) || !sessOk(f, s)) continue;
+    const a = ledger.get(s.path); if (!a || (tag && !allow.has(s.path)) || !sessOk(f, cp, s)) continue;
     const id = identOf(s); if (!id) continue; // unresolved: the tab says "resolving N sessions…"
     let r = by.get(id.key);
     if (!r) { r = newRepo(id.key, labelOf(id), id.kind, days); r.remote = id.remote; r.via = id.via; by.set(id.key, r); }

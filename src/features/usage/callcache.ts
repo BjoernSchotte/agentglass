@@ -5,13 +5,13 @@
 import { openSync, writeSync, closeSync, renameSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
-import { HOME, readText, listDir } from "../../util/fs.ts";
+import { readText, listDir, cacheDir } from "../../util/fs.ts";
 import { intSetting } from "../../util/config.ts";
 import { type Acc, startOfDay, num, heavy } from "./record.ts";
 import { type Call, type Dict, DICT, intern, nameOf } from "./facts.ts";
 
 // AGENTGLASS_CACHE_DIR: a separate ledger cache (test builds of other branches must not rewrite the real one)
-export const CACHE_DIR = process.env.AGENTGLASS_CACHE_DIR || join(HOME, ".agentglass", "cache");
+export const CACHE_DIR = cacheDir();
 export const CALLS_DIR = join(CACHE_DIR, "calls");
 const FORMAT = 2; // 2: command/file texts as references into the ledger day counters (else front-coded), delta call times, call id prefix
 

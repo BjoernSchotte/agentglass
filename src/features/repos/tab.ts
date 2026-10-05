@@ -188,8 +188,13 @@ function renderList(): void {
     const r = RV.top + i < rs.length ? rs[RV.top + i] : undefined;
     if (!r) { line(1, y0 + i, W - 2, i === 0 && !rs.length ? "  " + fg(C.dim) + emptyLine(f !== EMPTY) + RST : ""); continue; }
     const on = RV.top + i === RV.sel; const b = on ? bg(C.sel) : "";
-    const wt = r.worktrees.size > 1 ? fg(C.dim) + " ⑂" + String(r.worktrees.size) + RST + b : "";
-    const lab = (on ? fg(C.text) + CSI + "1m" : fg(r.kind === "path" || r.kind === "none" ? C.sub : C.text)) + clean(shown(r.label)) + RST + b + (r.unread ? fg(C.dim) + " ?" + RST + b : "") + wt;
+    const nm = clean(shown(r.label));
+    // the worktree count goes before the name is cut; a name still too long ends in "…" (a path keeps its end: the
+    // folder, "(gone)")
+    const wt = r.worktrees.size > 1 && width(nm) + (r.unread ? 2 : 0) + 2 + String(r.worktrees.size).length <= rw ? fg(C.dim) + " ⑂" + String(r.worktrees.size) + RST + b : "";
+    const nr = Math.max(1, rw - (r.unread ? 2 : 0) - vwidth(wt));
+    const nmF = width(nm) <= nr ? nm : (r.kind === "path" ? fitTail(nm, nr) : fit(nm, nr)).replace(/ +$/, "");
+    const lab = (on ? fg(C.text) + CSI + "1m" : fg(r.kind === "path" || r.kind === "none" ? C.sub : C.text)) + nmF + RST + b + (r.unread ? fg(C.dim) + " ?" + RST + b : "") + wt;
     const mt = mixW ? "  " + mixCells(r.byHarness, mixW) + b + (mkW ? " " + fitStyled(marks(byShare(r.byHarness)), mkW - 1) + fillTo(fitStyled(marks(byShare(r.byHarness)), mkW - 1), mkW - 1) : "") + b : "";
     const nf = r.files.size + (r.outside.n > 0 ? 1 : 0);
     const s = (on ? fg(C.accent) + "▌" + RST + b : " ") + fitStyled(lab, rw) + fillTo(fitStyled(lab, rw), rw) + b +

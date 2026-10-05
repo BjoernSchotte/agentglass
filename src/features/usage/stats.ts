@@ -26,7 +26,7 @@ import { parse } from "../query/parse.ts";
 import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
 import { type Totals, totals } from "../query/agg.ts";
 import { setLocal } from "../query/scope.ts";
-import { tabFilter, chips, matchingPaths, callsChip } from "../query/ui.ts";
+import { tabFilter, chips, contentOk, callsChip } from "../query/ui.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export { kfmt, grp };
@@ -46,14 +46,14 @@ function addCnt(m: Map<string, Cnt>, k: string, n: number, err: number, add: num
   c.add = c.add + add; c.del = c.del + del;
 }
 const cache = new Map<string, Agg>();
-// the session passes the filter's session clauses and its content clauses (full-text) — EMPTY passes everything
-function sessOk(f: Compiled, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && (!f.content.length || matchingPaths(f).has(s.path))); }
+// the session passes the filter's session clauses and its content clauses (full-text; ok = contentOk(f)) — EMPTY passes everything
+function sessOk(f: Compiled, ok: (path: string) => boolean, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && ok(s.path)); }
 // per (session path, day): the matching call rows of a filter with call clauses (tools, errors, per tool, per hour)
 interface RowDay { n: number; names: Map<string, Cnt>; hours: number[] }
-function rowDays(f: Compiled, days: string[]): Map<string, RowDay> {
+function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean): Map<string, RowDay> {
   const m = new Map<string, RowDay>();
   eachCall(f, days, (s: Sess, c: Call) => {
-    if (f.content.length && !matchingPaths(f).has(s.path)) return;
+    if (!cp(s.path)) return;
     const k = s.path + "\t" + localOf(c.t).day;
     let r = m.get(k); if (!r) { r = { n: 0, names: new Map<string, Cnt>(), hours: zeros(24) }; m.set(k, r); }
     r.n++; addCnt(r.names, nameOf(DICT.tool, c.tool), 1, c.err === 1 ? 1 : 0, 0, 0);
@@ -67,12 +67,13 @@ function aggF(days: string[], f: Compiled): Agg {
   if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit;
   const rows = HARNESSES.map((ad) => ha(ad.id)); const tot = ha("total");
   const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls };
-  const rows0 = f.needsCalls; const rd = rows0 ? rowDays(f, days) : new Map<string, RowDay>(); // call clauses: tools from matching rows, money from the session-days holding them
+  const cp = contentOk(f);
+  const rows0 = f.needsCalls; const rd = rows0 ? rowDays(f, days, cp) : new Map<string, RowDay>(); // call clauses: tools from matching rows, money from the session-days holding them
   const from = startOfDay() - (days.length - 1) * 86400000; // ±1h around DST: fine for a progress gauge
   for (const s of sessions.values()) {
     const a = ledger.get(s.path);
     if (s.mtime >= from) { g.total += s.size; if (a) g.done += pending(s, a) ? Math.min(a.off, s.size) : s.size; }
-    if (!a || !sessOk(f, s)) continue;
+    if (!a || !sessOk(f, cp, s)) continue;
     const ri = harnessIndex(s.h); const r = ri >= 0 ? rows[ri] : tot;
     let st = 0; let sc = 0; let any = false;
     for (let i = 0; i < days.length; i++) {
@@ -186,12 +187,15 @@ function renderStats(): void {
   const l1h = chip(!week, "d", "Today") + " " + chip(week, "w", "7 days") + "   " + idx;
   const l1 = l1h + sourcesOf(t.sess ? g.rows : [], W - 4 - vwidth(l1h));
   const wide = W >= 130; const sp = wide ? " " : "";
-  // the split figure ("$3.10 spend + ≈$9.20 plan"), or the ≈ total when the line would not fit (the table keeps the tags)
-  const l2f = (narrow: boolean): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
-    fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read  " : " cr  ") + RST + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST + dot +
-    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + dot + linesStr(t.add, t.del) + dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST + (t.ms.unk > 0 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
+  // the split figure ("$3.10 spend + ≈$9.20 plan"), or the ≈ total when the line would not fit (the table keeps the tags);
+  // still too long (80 columns): the parts the table below repeats go first — unpriced, sessions, cache write, lines
+  const l2f = (narrow: boolean, drop: number): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
+    fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read" : " cr") + RST + (drop >= 3 ? "" : "  " + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST) + dot +
+    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + (drop >= 4 ? "" : dot + linesStr(t.add, t.del)) + (drop >= 2 ? "" : dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST) + (t.ms.unk > 0 && drop < 1 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
   const sc = g.scoped ? fg(C.dim) + " · cost: days with matching calls" + RST : "";
-  const l2 = (vwidth(l2f(false)) <= W - 4 ? l2f(false) : l2f(true)) + sc;
+  let l2 = l2f(false, 0);
+  for (let d = 0; d <= 4 && vwidth(l2 + sc) > W - 4; d++) l2 = l2f(true, d);
+  l2 += sc;
   const b = g.busy;
   const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? moneyTag(g.busyCost, asBill(b.bill)) + " " : "") + RST +
     fg(C.text) + clean(titleOf(b)) + RST : fg(C.dim) + "no activity yet" + RST;
@@ -214,21 +218,23 @@ function renderStats(): void {
   const tight = W - 4 < 79;
   const cols = tight ? [10, 8, 7, 8, 8, 9, 9, 15] : [10, 9, 11, 8, 8, 9, 9, 15];
   let used = 0; for (const c of cols) used += c;
+  // narrower still (60 columns): cache write, then cache read leave rather than cutting the cost column off
+  for (let i = 6; i >= 5; i--) if (used > W - 4) { used -= numAt(cols, i, 0); cols[i] = 0; }
   const lw0 = Math.min(18, Math.max(0, W - 4 - used)); const lw = lw0 >= 9 ? lw0 : 0; // no room for "+12 −3": leave lines out
   const shareW = Math.max(0, W - 4 - used - lw - 2);
   const nh = HARNESSES.length;
-  const up = unpricedLine(t.ms, 2);
+  let up = unpricedLine(t.ms, 2); if (width(up) > W - 14) up = unpricedLine(t.ms, 1); // narrow: the top model and "+N models"
   box(0, 6, W, nh + (up ? 6 : 5), "by harness", "", false);
   const hdr = ["harness", "sessions", tight ? "tools" : "tool calls", "in", "out", "cache r", "cache w", "cost"];
   let hl = fg(C.dim);
   for (let i = 0; i < hdr.length; i++) hl += i === 0 ? fit(hdr[i] ?? "", numAt(cols, i, 0)) : rj(hdr[i] ?? "", numAt(cols, i, 0));
-  hl += (lw ? rj("lines ±", lw) : "") + (shareW >= 6 ? "  " + fit("share of tool calls", shareW) : "") + RST;
+  hl += (lw ? rj("lines ±", lw) : "") + (shareW >= 6 ? "  " + fit(shareW >= 19 ? "share of tool calls" : shareW >= 14 ? "share of calls" : "share", shareW) : "") + RST;
   put(1, 7, " " + fitStyled(hl, W - 4) + " ");
   const row = (x: HA, y: number, label: string): void => {
     const lead = label ? fg(C.text) + CSI + "1m" + fit(label, 10) + RST : badge(x.h);
     const quiet = x.tools === 0 && x.inTok + x.outTok + x.cr === 0;
     const c = quiet ? fg(C.dim) : fg(C.text);
-    let s = lead + c + rj(String(x.sess), numAt(cols, 1, 9)) + rj(grp(x.tools), numAt(cols, 2, 11)) + rj(kfmt(x.inTok), 8) + rj(kfmt(x.outTok), 8) + rj(kfmt(x.cr), 9) + rj(kfmt(x.cw), 9) + RST;
+    let s = lead + c + rj(String(x.sess), numAt(cols, 1, 9)) + rj(grp(x.tools), numAt(cols, 2, 11)) + rj(kfmt(x.inTok), 8) + rj(kfmt(x.outTok), 8) + (cols[5] ? rj(kfmt(x.cr), 9) : "") + (cols[6] ? rj(kfmt(x.cw), 9) : "") + RST;
     const cs = cellOf(x);
     s += (cs === "?" ? fg(C.dim) : fg(C.yellow)) + rj(cs, 15) + RST;
     const ls = "+" + grp(x.add) + " −" + grp(x.del);
@@ -355,8 +361,9 @@ function dagg(days: string[]): DA {
     prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), kids: new Map<string, Cnt>(), slow: [], errs: [] };
   const pre = dKey + "\t";
   if (f.needsCalls) { rowDrill(da, f, days); dCache = da; return da; }
+  const cp = contentOk(f);
   for (const s of sessions.values()) {
-    const a = ledger.get(s.path); if (!a || !sessOk(f, s)) continue;
+    const a = ledger.get(s.path); if (!a || !sessOk(f, cp, s)) continue;
     const hi = harnessIndex(s.h); if (hi < 0) continue;
     for (let i = 0; i < days.length; i++) {
       const dk = days[i] ?? ""; const d = a.days.get(dk); if (!d) continue;
@@ -386,9 +393,9 @@ function dagg(days: string[]): DA {
 // calls; slowest/error lists keep only the remembered calls whose id is a matching row's
 function rowDrill(da: DA, f: Compiled, days: string[]): void {
   const ids = new Set<string>(); const pathsOf = new Set<string>();
-  const ix = new Map<string, number>(); for (let i = 0; i < days.length; i++) ix.set(days[i] ?? "", i);
+  const ix = new Map<string, number>(); for (let i = 0; i < days.length; i++) ix.set(days[i] ?? "", i); const cp = contentOk(f);
   eachCall(f, days, (s: Sess, c: Call) => {
-    if (f.content.length && !matchingPaths(f).has(s.path)) return;
+    if (!cp(s.path)) return;
     da.all = da.all + 1;
     const name = nameOf(DICT.tool, c.tool);
     if (dServer ? !name.startsWith(dKey + "__") : name !== dKey) return;
@@ -537,11 +544,41 @@ function jump(x: DR): void {
 }
 // vertical block-bar chart with a heat gradient (green at the bottom → red at the top); dayCost labels the 7-day view
 // cur = the per-day cost labels' currency mark: "$" only when every figure is API spend
-function chart(x: number, y: number, w: number, h: number, vals: number[], days: string[], dayCost: number[], cur: string): void {
-  const n = vals.length; const ch = h - 2; const axis = 5;
+// labels under a bar column of cw cells keep the bars' gap (cw > 2: the bar is cw − 1 wide), else they run together
+// ("Mo 28Tu 29", "≈1615≈1348"): the weekday goes first, then the cents, then the "$", then the figure shrinks to 1.6K
+export function dayLabel(wd: number, dom: number, cw: number): string {
+  const room = cw > 2 ? cw - 1 : cw; // "Mo 28" on every column or on none: the same form across the axis
+  return room >= 5 ? WD.slice(wd * 2, wd * 2 + 2) + " " + String(dom) : String(dom);
+}
+export function costLabel(c: number, cur: string, cw: number): string {
+  if (c <= 0) return "";
+  const room = cw > 2 ? cw - 1 : cw; const cn = c < 100 ? c.toFixed(1) : String(Math.round(c)); const one = cur === "$" ? "$" : "≈";
+  for (const l of [cur + cn, one + cn, one + kfmt(c), kfmt(c)]) if (width(l) <= room) return l;
+  return "";
+}
+// the hour axis under bars of cwid < 3 cells: every third hour, its figure running into the empty columns after it;
+// ▲ marks now, and a figure that would touch it is left out
+export function hourAxis(n: number, cwid: number, h0: number, nowH: number): string {
+  const cells: string[] = []; for (let i = 0; i < n * cwid; i++) cells.push(" ");
+  const nc = (nowH - h0) * cwid;
+  for (let i = 0; i < n; i++) {
+    const hr = h0 + i; const lab = String(hr); const at = i * cwid;
+    if (hr % 3 !== 0 || hr === nowH || (nc >= at - 1 && nc <= at + lab.length) || at + lab.length > n * cwid) continue;
+    for (let j = 0; j < lab.length; j++) cells[at + j] = lab.charAt(j);
+  }
+  if (nc >= 0 && nc < cells.length) cells[nc] = "▲";
+  return cells.join("");
+}
+// today's first hour shown when 24 bars do not fit in room cells: the hours up to now that fit
+export function hourStart(len: number, room: number, nowH: number): number { return len > room ? Math.max(0, Math.min(len - room, nowH + 1 - room)) : 0; }
+function chart(x: number, y: number, w: number, h: number, all: number[], days: string[], dayCost: number[], cur: string): void {
+  const ch = h - 2; const axis = 5; const nowH = new Date().getHours();
+  // today's 24 hours in fewer cells (60 columns): the hours up to now that fit, rather than bars past the box
+  const room = Math.max(1, w - axis - 1); const h0 = days.length === 1 ? hourStart(all.length, room, nowH) : 0;
+  const vals = days.length === 1 && all.length > room ? all.slice(h0, h0 + room) : all;
+  const n = vals.length;
   const cwid = Math.max(1, Math.floor((w - axis - 1) / n));
   let mx = 0; for (const v of vals) if (v > mx) mx = v;
-  const nowH = new Date().getHours();
   for (let r = 0; r < ch; r++) {
     const lab = r === 0 ? rj(kfmt(mx), axis - 1) + "┤" : r === ch - 1 ? rj("0", axis - 1) + "┤" : " ".repeat(axis - 1) + "│";
     let l = fg(C.dim) + lab + RST + fg(heat(1 - r / Math.max(1, ch - 1)));
@@ -559,20 +596,22 @@ function chart(x: number, y: number, w: number, h: number, vals: number[], days:
   let l1 = " ".repeat(axis); let l2 = " ".repeat(axis);
   for (let i = 0; i < n; i++) {
     if (days.length > 1) {
-      const d = new Date(startOfDay() + 43200000 - (n - 1 - i) * 86400000); const wd = d.getDay();
-      l1 += fg(i === n - 1 ? C.accent : C.sub) + fit(WD.slice(wd * 2, wd * 2 + 2) + " " + d.getDate(), cwid) + RST;
-      const c = numAt(dayCost, i, 0);
-      const cn = c < 100 ? c.toFixed(1) : String(Math.round(c));
-      const cl = cur.length + cn.length < cwid ? cur + cn : cur === "$" ? "$" + cn : "≈" + cn; // keep a gap: "≈2.4" when "≈$2.4" would touch
-      l2 += fg(C.yellow) + fit(c > 0 ? cl : "", cwid) + RST;
-    } else {
-      const lab = i % (cwid >= 3 ? 2 : 3) === 0 ? String(i) : "";
-      l1 += fg(i === nowH ? C.accent : C.dim) + fit(i === nowH ? "▲" + (cwid >= 3 ? String(i) : "") : lab, cwid) + RST;
+      // bars without a gap (60 columns): every other day, today's included, labels its own and the next column
+      const pair = cwid <= 2 && (n - 1 - i) % 2 === 1;
+      if (pair) { if (i === 0) { l1 += " ".repeat(cwid); l2 += " ".repeat(cwid); } continue; }
+      const span = cwid <= 2 && i < n - 1 ? 2 * cwid : cwid;
+      const d = new Date(startOfDay() + 43200000 - (n - 1 - i) * 86400000);
+      l1 += fg(i === n - 1 ? C.accent : C.sub) + fit(dayLabel(d.getDay(), d.getDate(), span), span) + RST;
+      l2 += fg(C.yellow) + fit(costLabel(numAt(dayCost, i, 0), cur, span), span) + RST;
+    } else if (cwid >= 3) {
+      const hr = h0 + i; const lab = hr % 2 === 0 ? String(hr) : "";
+      l1 += fg(hr === nowH ? C.accent : C.dim) + fit(hr === nowH ? "▲" + String(hr) : lab, cwid) + RST;
     }
   }
+  if (days.length === 1 && cwid < 3) { const ax = hourAxis(n, cwid, h0, nowH); const k = ax.indexOf("▲"); l1 += k < 0 ? fg(C.dim) + ax + RST : fg(C.dim) + ax.slice(0, k) + fg(C.accent) + "▲" + fg(C.dim) + ax.slice(k + 1) + RST; }
   if (days.length === 1) {
-    let pk = 0; for (let i = 0; i < 24; i++) if (numAt(vals, i, 0) > numAt(vals, pk, 0)) pk = i;
-    l2 += fg(C.dim) + "peak " + RST + fg(C.text) + pk + ":00" + RST + fg(C.dim) + " · " + grp(numAt(vals, pk, 0)) + " calls · ▲ now" + RST;
+    let pk = 0; for (let i = 0; i < 24; i++) if (numAt(all, i, 0) > numAt(all, pk, 0)) pk = i;
+    l2 += fg(C.dim) + "peak " + RST + fg(C.text) + pk + ":00" + RST + fg(C.dim) + " · " + grp(numAt(all, pk, 0)) + (w >= 34 ? " calls · ▲ now" : " calls") + RST;
   }
   put(x, y + ch, " " + fitStyled(l1, w - 1)); put(x, y + ch + 1, " " + fitStyled(l2, w - 1));
 }
@@ -639,7 +678,10 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   if (pending(s, a) && a.off < s.size * 0.98) return [k + fg(C.yellow) + spin() + " indexing " + Math.floor((a.off / Math.max(1, s.size)) * 100) + "%" + RST];
   const tok = fg(C.cyan) + "↑" + kfmt(s.inTok) + " " + RST + fg(C.purple) + "↓" + kfmt(s.outTok) + " " + RST + fg(C.accent) + "↻" + kfmt(s.cacheRTok + s.cacheWTok) + RST;
   const bill = asBill(s.bill); const pl = bill === "plan" && s.plan ? fg(C.sub) + " (" + planLabel(s.plan, REDACT) + ")" + RST : "";
-  const out = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill)) + RST + pl + dot + fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(s.linesAdd, s.linesDel)];
+  // narrow (60 columns): the lines, then the tool count go whole rather than being cut mid-figure
+  const tl = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill)) + RST + pl, fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST, linesStr(s.linesAdd, s.linesDel)];
+  while (tl.length > 1 && vwidth(tl.join(dot)) > w) tl.pop();
+  const out = [tl.join(dot)];
   const pad = fit("", 9);
   if (s.unkTok > 0 || s.unkCr > 0) {
     let top = ""; let tn = 0; const um = new Map<string, number>();

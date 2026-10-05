@@ -1,11 +1,14 @@
 // agentglass — self-check for the Stats top-tools list (skill markers lead: a long name is cut, they are not): scriptc build src/features/usage/stats.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
-import { toolRows, allowGauge, open, statsTotalsFor, statsSummaryFor, periodMessage, statsPeriod } from "./stats.ts";
+import { toolRows, allowGauge, dayLabel, costLabel, hourAxis, hourStart, open, statsTotalsFor, statsSummaryFor, periodMessage, statsPeriod } from "./stats.ts";
 import { parse } from "../query/parse.ts";
 import { EMPTY, compile } from "../query/eval.ts";
 import { fxBase } from "../query/fixture.ts";
+import { MPS } from "../query/ui.ts";
 import { type Cnt, newCnt } from "./calls.ts";
 import { vwidth } from "../../util/text.ts";
+import { H } from "../../hooks.ts";
+import { newSess } from "../../model/types.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -35,6 +38,11 @@ for (const ex of ["", "harness is codex", "repo is agentglass", "subagent is fal
 ok("today unfiltered", statsSummaryFor("").tools === 8, String(statsSummaryFor("").tools));
 const cs = statsSummaryFor("tool is Bash and status is error"); const ct = statsTotalsFor("tool is Bash and status is error");
 ok("call-scoped", cs.scoped && cs.tools === 1 && ct.callScoped && ct.tools === 1 && cs.cost === ct.cost && cs.cost > 0, [cs.scoped, cs.tools, ct.tools, cs.cost, ct.cost].join(","));
+// a content clause asks its matching paths once per aggregation, not per session or call row (each ask walks every session)
+for (const ex of ["content ~ zzz", "content ~ zzz and tool is Bash"]) {
+  const n0 = MPS.asks; statsSummaryFor(ex);
+  ok("content paths asked once: " + ex, MPS.asks - n0 === 1, String(MPS.asks - n0));
+}
 const old = compile(parse("day is 2020-01-01").cs, "stats").f ?? EMPTY;
 ok("empty period ∩ day", periodMessage(old, statsPeriod()) === "today does not match day is 2020-01-01", periodMessage(old, statsPeriod()));
 ok("period intersects", periodMessage(compile(parse("day is today").cs, "stats").f ?? EMPTY, statsPeriod()) === "", "");
@@ -47,6 +55,31 @@ ok("period intersects", periodMessage(compile(parse("day is today").cs, "stats")
   ok("gauge: the fuller one bold", g.indexOf("\x1b[1m7d 64%") >= 0 && g.indexOf("\x1b[1m5h") < 0, JSON.stringify(g));
   ok("gauge: narrow keeps the fuller window", plain(allowGauge("cx", ws, 18)) === " · cx 7d 64%", plain(allowGauge("cx", ws, 18)));
   ok("gauge: too narrow = nothing", allowGauge("cx", ws, 11) === "" && allowGauge("cx", [], 80) === "", allowGauge("cx", ws, 11));
+}
+{ // 7-day chart labels keep the bars' gap at 80 columns (5 cells a day: 4 for the label), the full form when wide (8)
+  const t = (w: string, got: string, want: string): void => ok(w, got === want, JSON.stringify(got));
+  t("day: wide", dayLabel(1, 28, 8), "Mo 28"); t("day: 5 cells drop the weekday", dayLabel(1, 28, 5), "28");
+  t("day: one form across the axis", dayLabel(4, 1, 5), "1");
+  t("cost: wide", costLabel(1615.4, "≈$", 8), "≈$1615"); t("cost: 5 cells", costLabel(1615.4, "≈$", 5), "1.6K");
+  t("cost: small fits", costLabel(394, "≈$", 5), "≈394"); t("cost: cents", costLabel(2.4, "≈$", 6), "≈$2.4");
+  t("cost: api keeps $", costLabel(12.5, "$", 6), "$12.5"); t("cost: none", costLabel(0, "≈$", 8), "");
+}
+{ // the preview's usage line at 60 columns: lines, then tools go whole, never cut mid-figure
+  const s = newSess("pi", "u1", "/fx/u1.jsonl", false); s.inTok = 551000; s.outTok = 1400000; s.cacheRTok = 1700000000; s.cost = 1196; s.tools = 2554; s.linesAdd = 853; s.linesDel = 38;
+  const usage = (w: number): string => { for (const f of H.previewSections) for (const l of f(s, w)) { const p = l.replace(/\x1b\[[0-9;]*m/g, ""); if (p.startsWith("usage")) return p; } return ""; };
+  const t = (w: string, c: boolean, got: string): void => ok(w, c, JSON.stringify(got));
+  t("usage: wide keeps all", usage(100).endsWith("2,554 tools · +853 −38"), usage(100));
+  t("usage: 56 drops lines first", usage(56).endsWith("2,554 tools") && vwidth(usage(56)) <= 56, usage(56));
+  t("usage: 45 drops tools too", vwidth(usage(45)) <= 45 && usage(45).indexOf("tools") < 0, usage(45));
+}
+{ // today's chart at 60/80 columns: bars stay in the box, hour figures never run into each other or into ▲
+  const t = (w: string, got: string, want: string): void => ok(w, got === want, JSON.stringify(got));
+  t("hours: all fit", String(hourStart(24, 40, 8)), "0"); t("hours: morning keeps 0", String(hourStart(24, 18, 8)), "0");
+  t("hours: evening ends at now", String(hourStart(24, 18, 22)), "5"); t("hours: late", String(hourStart(24, 18, 23)), "6");
+  t("axis: 1 cell, now 8", hourAxis(18, 1, 0, 8), "0  3  6 ▲   12 15 ");
+  t("axis: 1 cell, now 9", hourAxis(18, 1, 0, 9), "0  3  6  ▲  12 15 ");
+  t("axis: 2 cells", hourAxis(24, 2, 0, 8), "0     3     6   ▲ 9     12    15    18    21    ");
+  t("axis: window", hourAxis(18, 1, 5, 22), " 6  9  12 15 18  ▲");
 }
 console.log(bad ? bad + " failed" : "stats: all checks passed");
 if (bad) process.exit(1);

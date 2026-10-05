@@ -1,6 +1,6 @@
 // agentglass — self-check for styled-text widths: scriptc build src/util/text.check.ts -o tc && ./tc
 // SPDX-License-Identifier: Apache-2.0
-import { width, vwidth, fillTo, fitStyled, ESC_RE, localDay, localHM } from "./text.ts";
+import { width, vwidth, fillTo, fitStyled, ESC_RE, localDay, localHM, wrap } from "./text.ts";
 import { link, hyperMode, fileUrl, setHyper } from "./hyper.ts";
 import { RST } from "../ui/theme.ts";
 
@@ -53,5 +53,11 @@ ok("env wins over config", hyperMode({ AGENTGLASS_HYPERLINKS: "on" }, "off", tru
 ok("vte ≥ 5000", hyperMode({ VTE_VERSION: "6003" }, "auto", true, false, false) && !hyperMode({ VTE_VERSION: "4800" }, "auto", true, false, false), "");
 ok("iTerm/WezTerm/vscode/ghostty/WT", hyperMode({ TERM_PROGRAM: "WezTerm" }, "auto", true, false, false) && hyperMode({ WT_SESSION: "x" }, "auto", true, false, false) && !hyperMode({ TERM_PROGRAM: "Apple_Terminal" }, "auto", true, false, false), "");
 ok("fileUrl encodes", fileUrl("/a b/c").indexOf("/a%20b/c") > 0 && fileUrl("/a b/c").startsWith("file://"), fileUrl("/a b/c"));
+// prose wraps at blanks (no "a|pp.js"); a word longer than half the line, and code (words off), still split anywhere
+const jw = (s: string, w: number, words: boolean): string => JSON.stringify(wrap(s, w, words));
+ok("wrap: words", jw("run node --check on app.js", 12, true) === JSON.stringify(["run node", "--check on", "app.js"]), jw("run node --check on app.js", 12, true));
+ok("wrap: blank at the break goes", jw("abc def ghi", 7, true) === JSON.stringify(["abc def", "ghi"]), jw("abc def ghi", 7, true));
+ok("wrap: long word split", jw("a /tmp/agtest-qarender-pi/index.html", 12, true) === JSON.stringify(["a /tmp/agtes", "t-qarender-p", "i/index.html"]), jw("a /tmp/agtest-qarender-pi/index.html", 12, true));
+ok("wrap: chars by default", jw("run node --check", 6, false) === JSON.stringify(["run no", "de --c", "heck"]), jw("run node --check", 6, false));
 console.log(bad ? bad + " failed" : "text: all checks passed");
 if (bad) process.exit(1);

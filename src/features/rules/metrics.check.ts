@@ -39,6 +39,8 @@ eq("stalled 480", v(stalledFor(obs(480, true, [ev("assistant", "hm")], flat(7, 0
 eq("stalled cpu string", stalledFor(obs(480, true, [ev("assistant", "hm")], flat(7, 0.5)), 1, 7).cpu, "0.5");
 eq("stalled 6 samples", v(stalledFor(obs(480, true, [], flat(6, 0.5)), 1, 7)), "absent");
 eq("stalled idle", v(stalledFor(obs(480, false, [], flat(7, 0.5)), 1, 7)), "absent");
+{ const o = obs(720, true, [ev("assistant", "hm")], flat(7, 0.5)); o.asks = true; // Gemini in tmux, its title says "Action Required"
+  eq("stalled: not while the agent's title says it waits for approval", v(stalledFor(o, 1, 7)), "absent"); }
 eq("spinning 119", v(spinningFor(obs(200, false, [], flat(119, 95)), 80, 120)), "absent");
 eq("spinning 120", v(spinningFor(obs(200, false, [], flat(120, 95)), 80, 120)), "200");
 eq("repeat", v(repeatRun(obs(0, true, [call, call, call], []))) + " " + repeatRun(obs(0, true, [call, call], [])).tool, "3 Bash");
