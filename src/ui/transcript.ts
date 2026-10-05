@@ -14,13 +14,13 @@ export function evLines(e: Ev, w: number, expand: boolean, out: string[]): void 
   const tsx = e.ts.length >= 16 ? localHM(e.ts) : "";
   if (e.kind === "user") {
     out.push("");
-    const ls = wrap(e.text, w - 8); // every line as wide as the first, which leaves room for the time
+    const ls = wrap(e.text, w - 8, true); // every line as wide as the first, which leaves room for the time
     for (let i = 0; i < ls.length; i++) out.push((i === 0 ? fg(C.cyan) + CSI + "1m" + "❯ " : "  ") + RST + bg(C.sel) + fg(C.text) + fit(ls[i], w - 8) + RST + (i === 0 ? fg(C.dim) + " " + fit(tsx, 5) + RST : ""));
   } else if (e.kind === "assistant") {
-    const ls = wrap(e.text, w - 2);
+    const ls = wrap(e.text, w - 2, true);
     for (let i = 0; i < ls.length; i++) out.push((i === 0 ? fg(C.text) + "⏺ " : "  ") + RST + fg(C.text) + ls[i] + RST);
   } else if (e.kind === "thinking") {
-    const ls = wrap(e.text, w - 2);
+    const ls = wrap(e.text, w - 2, true);
     const n = expand ? ls.length : Math.min(2, ls.length);
     for (let i = 0; i < n; i++) out.push(fg(C.dim) + CSI + "3m" + (i === 0 ? "∴ " : "  ") + ls[i] + RST);
     if (n < ls.length) out.push(fg(C.dim) + "  … " + (ls.length - n) + " more lines" + RST);
