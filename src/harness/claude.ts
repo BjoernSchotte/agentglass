@@ -21,8 +21,9 @@ const PROJECTS = join(CLAUDE, "projects");
 const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][] }>();
 const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
 const IDLE_MS = 300000; const DAY_MS = 86400000;
-// a live session (registry) whose log the scan does not know yet: every project dir is looked at for a minute
-const WAKE = { at: 0, ids: new Set<string>() };
+// a live session (registry) whose log the scan does not know yet wakes every project dir for a minute, when it first
+// shows and whenever its registry entry moves (a first prompt creates the log); ids = the logs the scan lists
+const WAKE = { at: 0, ids: new Set<string>(), unknown: new Map<string, string>() };
 const IDLE_MS_DOC = 0; // a session not written for 5 min spawns no subagent (the spawning call is written first)
 function scan(add: AddFn): void {
   const quiet = Date.now() - WAKE.at < 60000 ? -1 : DAY_MS; // a project dir unchanged for a day: once a minute, unless a new live session is unknown
@@ -164,7 +165,7 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
     const o = parseJson(readText(join(sd, f), 0, 8192).trim());
     if (!o) continue;
     const pid = num(o["pid"]);
-    if (pid && alive(pid)) { const id = str(o["sessionId"]); out.push({ id, pid, status: str(o["status"]), name: str(o["name"]) }); if (id && !WAKE.ids.has(id)) WAKE.at = Date.now(); }
+    if (pid && alive(pid)) { const id = str(o["sessionId"]); out.push({ id, pid, status: str(o["status"]), name: str(o["name"]) }); if (id && !WAKE.ids.has(id)) { const k = str(o["status"]) + "|" + String(num(o["updatedAt"])); if (WAKE.unknown.get(id) !== k) { WAKE.unknown.set(id, k); WAKE.at = Date.now(); } } }
   }
   return out;
 }
