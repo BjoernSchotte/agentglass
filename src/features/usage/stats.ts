@@ -16,6 +16,7 @@ import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag
 import { type Bill, type GW, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
 import { costNow, budget } from "./summary.ts";
+import "./progress.ts"; // the header indexing gauge (registers itself)
 import { REDACT } from "../redact-on.ts";
 import { CONFIG_FILE } from "../../util/config.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
