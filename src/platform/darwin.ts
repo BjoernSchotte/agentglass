@@ -9,7 +9,7 @@ function esc(t: string): string { return t.replace(/\\/g, "\\\\").replace(/"/g, 
 
 export const darwin: Platform = {
   name: "darwin",
-  listProcs: psProcs,
+  listProcs: (tracked: Set<number>) => psProcs(),
   cpuOf: (pid: number, reported: number, now: number) => reported,
   prune: (alive: (pid: number) => boolean) => { /* stateless */ },
   procFiles: lsofFiles,

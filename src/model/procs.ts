@@ -41,12 +41,20 @@ export function harnessOfArgs(args: string): string {
   }
   return harnessOfProc(b) || (OTHER.indexOf(b) >= 0 ? b : "");
 }
+// harnessOfArgs per pid while its args stay the same: most of ~2,000 processes never change between refreshes
+const harnessMemo = new Map<number, { args: string; h: string }>();
+function harnessOf(pid: number, args: string): string {
+  const m = harnessMemo.get(pid);
+  if (m && m.args === args) return m.h;
+  const h = harnessOfArgs(args); harnessMemo.set(pid, { args, h }); return h;
+}
+let tracked = new Set<number>(); // the harness trees' pids of the last refresh: the platform reads them fresh
 export function refreshProcs(): void {
   allProcs.clear();
   const kids = new Map<number, number[]>();
-  for (const r of OS.listProcs()) {
+  for (const r of OS.listProcs(tracked)) {
     const p: Proc = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: "", cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" };
-    p.h = harnessOfArgs(p.args);
+    p.h = harnessOf(p.pid, p.args);
     allProcs.set(p.pid, p);
     const k = kids.get(p.ppid);
     if (k) k.push(p.pid); else kids.set(p.ppid, [p.pid]);
@@ -54,6 +62,7 @@ export function refreshProcs(): void {
   const out: Proc[] = [];
   let total = 0;
   const now = Date.now();
+  const tr = new Set<number>();
   for (const p of allProcs.values()) {
     if (!p.h) continue;
     const parent = allProcs.get(p.ppid);
@@ -62,7 +71,7 @@ export function refreshProcs(): void {
     while (stack.length) {
       const q = allProcs.get(stack.pop() as number);
       if (!q) continue;
-      q.cpu = OS.cpuOf(q.pid, q.cpu, now);
+      q.cpu = OS.cpuOf(q.pid, q.cpu, now); tr.add(q.pid);
       p.tcpu += q.cpu; p.trss += q.rss; if (q !== p) p.kids++;
       for (const c of kids.get(q.pid) ?? []) stack.push(c);
     }
@@ -73,7 +82,9 @@ export function refreshProcs(): void {
     total += p.tcpu;
     out.push(p);
   }
+  tracked = tr;
   for (const k of [...hist.keys()]) if (!allProcs.has(k)) hist.delete(k);
+  for (const k of [...harnessMemo.keys()]) if (!allProcs.has(k)) harnessMemo.delete(k);
   OS.prune((pid: number) => allProcs.has(pid));
   cpuHist.push(total); if (cpuHist.length > 240) cpuHist.shift();
   out.sort((a, b) => b.tcpu - a.tcpu || a.pid - b.pid);
@@ -112,14 +123,26 @@ export function rootOf(pid: number): Proc | null {
   while (q) { const par = allProcs.get(q.ppid); if (!par || !par.h) break; q = par; }
   return q ?? null;
 }
+// per session the registry name linkOne last set and the name H.meta turned it into (redact fakes it): applyMeta runs
+// again only when the link's name changed or something else rewrote s.name since. true = applyMeta ran
+const linked = new Map<string, { raw: string; out: string }>();
+export function linkOne(s: Sess, pid: number, status: string, name: string): boolean {
+  s.pid = pid; s.status = status;
+  const m = linked.get(s.path);
+  if (m && m.raw === name && m.out === s.name) return false;
+  s.name = name; applyMeta(s);
+  linked.set(s.path, { raw: name, out: s.name });
+  return true;
+}
 function linkSessions(): void {
   for (const s of sessions.values()) {
-    s.pid = 0; s.status = ""; s.name = "";
+    let pid = 0; let status = ""; let name = "";
     const l = registry.get(s.h + ":" + s.id);
-    if (l) { s.pid = l.pid; s.status = l.status; s.name = l.name; }
-    else { const pid = filePid.get(s.path); if (pid && allProcs.has(pid)) { const r = rootOf(pid); s.pid = r ? r.pid : pid; s.status = "open"; } }
-    applyMeta(s);
+    if (l) { pid = l.pid; status = l.status; name = l.name; }
+    else { const fp = filePid.get(s.path); if (fp && allProcs.has(fp)) { const r = rootOf(fp); pid = r ? r.pid : fp; status = "open"; } }
+    linkOne(s, pid, status, name);
   }
+  if (linked.size > sessions.size) for (const k of [...linked.keys()]) if (!sessions.has(k)) linked.delete(k);
   // harnesses with neither registry nor open transcript: process cwd ↔ newest session in that cwd
   // (registry pids are daemons, not TUIs; subagents never own a TUI)
   const regPids = new Set<number>();
