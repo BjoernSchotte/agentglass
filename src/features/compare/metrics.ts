@@ -149,7 +149,9 @@ function sideOf(g: Group, f: Compiled | null, err: string, tj: TotJob | null, ca
   }
   let act = 0; for (const ls of acts.values()) act += unionMin(ls); // a subagent working inside its parent's minutes adds nothing
   const mu = [...by.values()].sort((x: ModelUse, y: ModelUse) => y.cost - x.cost || (y.inTok + y.outTok) - (x.inTok + x.outTok) || (x.model < y.model ? -1 : x.model > y.model ? 1 : 0));
-  return { n: t.sessions, t, m, bill: single(m), turns, wall: g.single && t.first > 0 && t.last >= t.first ? Math.round(t.last - t.first) : -1, active: act * 60000, live, indexing: tot > 0 ? done / tot : 1, err, prio, f, mu, calls, limited };
+  const wall = g.single && t.first > 0 && t.last >= t.first ? Math.round(t.last - t.first) : -1;
+  // whole clock minutes count: 8m52s of work can touch 10 of them — a single session's active time never exceeds its wall
+  return { n: t.sessions, t, m, bill: single(m), turns, wall, active: wall >= 0 ? Math.min(act * 60000, wall) : act * 60000, live, indexing: tot > 0 ? done / tot : 1, err, prio, f, mu, calls, limited };
 }
 function finish(j: CmpJob): Cmp {
   const a = sideOf(j.A, j.fa, j.ea, j.ja, j.ca); const b = sideOf(j.B, j.fb, j.eb, j.jb, j.cb);

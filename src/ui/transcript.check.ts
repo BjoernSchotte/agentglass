@@ -19,6 +19,9 @@ for (const w of [40, 56, 80]) {
   const ls = lines("user", prompt, w, false);
   eq("user prompt fits " + String(w), String(widest(ls) <= w), "true");
   eq("user prompt keeps every character at " + String(w), text(ls, ["❯"]), prompt.split(" ").join(""));
+  const words = prompt.split(" "); let split = "";
+  for (const l of ls) for (const t of l.split(/\s+/)) if (t && t !== "❯" && !/^\d\d:\d\d$/.test(t) && words.indexOf(t) < 0) split += t + " ";
+  eq("user prompt breaks between words at " + String(w), split, "");
 }
 const cmd = "cd /tmp/agtest-qa-tui-pi && git add -A && git commit -m \"feat: add all/active/done filter bar and open-item counter\" && git status --short && git log --oneline";
 for (const w of [40, 56, 80]) {

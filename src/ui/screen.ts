@@ -18,7 +18,7 @@ export function box(x: number, y: number, w: number, h: number, title: string, i
   else if (width(i) > room) { // the trailing " · "-parts (key hints) go first, then the head is cut
     const ps = clean(info).split(" · "); while (ps.length > 1 && width(ps.join(" · ")) + 2 > room) ps.pop();
     i = " " + ps.join(" · ") + " ";
-    if (width(i) > room) i = room > 2 ? "…" + Array.from(i).slice(-(room - 1)).join("") : "";
+    if (width(i) > room) i = room >= 8 ? "…" + Array.from(i).slice(-(room - 1)).join("") : ""; // "…lls" says nothing
   }
   const mid = Math.max(0, w - 3 - width(t) - (styled ? vwidth(i) : width(i)));
   put(x, y, bc + "╭─" + (focus ? CSI + "1m" + fg(C.text) : fg(C.sub)) + t + RST + bc + "─".repeat(mid) + fg(C.dim) + i + bc + "╮" + RST);

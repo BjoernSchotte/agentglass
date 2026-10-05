@@ -18,19 +18,8 @@ export function renderHeader(): void {
   for (const s of sessions.values()) if (s.pid) { live++; if (working(s)) busy++; }
   const cpu = cpuHist.length ? cpuHist[cpuHist.length - 1] : 0;
   let mem = 0; for (const p of procs) mem += p.trss;
-  const tabs = [" Sessions ", " Processes "];
-  for (const t of H.tabs) tabs.push(" " + t.name + " ");
-  let x = 0;
-  let s = bg(C.accent) + fg(C.panel) + CSI + "1m" + " ◈ agentglass " + RST + " ";
-  x = 16;
-  for (const f of H.headerBadge) { const b = f(); if (b) { s += b + " "; x += width(b.replace(ESC_RE, "")) + 1; } } // never dropped: the tabs move over
-  tabX0.length = 0; tabX1.length = 0;
-  for (let i = 0; i < tabs.length; i++) {
-    s += (i === S.tab ? bg(C.sel) + fg(C.text) + CSI + "1m" + CSI + "4m" : fg(C.sub)) + (i + 1) + tabs[i] + RST + " ";
-    tabX0.push(x);
-    x += tabs[i].length + 2;
-    tabX1.push(i === tabs.length - 1 ? x + 1 : x);
-  }
+  const tabs = ["Sessions", "Processes"];
+  for (const t of H.tabs) tabs.push(t.name);
   const spark = braille(cpuHist, W >= 150 ? 16 : 6, 1, Math.max(100, Math.max(...cpuHist.slice(-32))))[0];
   const sep = fg(C.dim) + " · " + RST; const lv = fg(C.green) + "● " + live + " live" + RST; const bz = fg(C.yellow) + busy + " busy" + RST;
   const cpuS = fg(C.sub) + "cpu " + RST + fg(heat(cpu / 400)) + cpu.toFixed(1) + "% " + spark + RST;
@@ -38,15 +27,37 @@ export function renderHeader(): void {
   // place (wider: the established split, cpu and memory stay)
   const rights = [lv + sep + bz + sep + cpuS + sep + fg(C.text) + bytes(mem) + RST + fg(C.dim) + (W >= 190 ? "/" + bytes(TOTALMEM) + " · " + sessions.size + " sessions" : "") + " " + RST, // totals only when wide: widgets need the room
     lv + sep + bz + " ", lv + " ", ""];
+  // full tab names; when they leave no room for a widget with something to say (alarms, cost) or for anything at all
+  // on the right (60 columns), the other tabs show only their number key
+  let L = layout(W, tabs, false, rights);
+  if (L.lost || (L.ri === rights.length - 1 && fixed(Math.max(0, W - L.x)) === "")) L = layout(W, tabs, true, rights);
+  tabX0.length = 0; tabX1.length = 0;
+  for (let i = 0; i < L.x0.length; i++) { tabX0.push(L.x0[i]); tabX1.push(L.x1[i]); }
+  const right = rights[L.ri]; const rw = width(right.replace(ESC_RE, ""));
+  const free = Math.max(0, W - L.x - rw); const wid = widgets(free);
+  const ww = width(wid.replace(ESC_RE, ""));
+  put(0, 0, L.x > W ? fitStyled(L.s, W) : L.s + wid + " ".repeat(Math.max(0, free - ww)) + (W - L.x > rw ? right : "")); // a badge can push the last tabs off a very narrow row
+}
+interface Layout { s: string; x: number; x0: number[]; x1: number[]; ri: number; lost: boolean }
+// logo + tabs (compact: the inactive ones as their number) and which of the right-hand stats fit beside the widgets;
+// lost: a widget has something to say but no room
+function layout(W: number, tabs: string[], compact: boolean, rights: string[]): Layout {
+  let s = bg(C.accent) + fg(C.panel) + CSI + "1m" + " ◈ agentglass " + RST + " ";
+  let x = width(" ◈ agentglass  "); const x0: number[] = []; const x1: number[] = [];
+  for (const f of H.headerBadge) { const b = f(); if (b) { s += b + " "; x += width(b.replace(ESC_RE, "")) + 1; } } // never dropped: the tabs move over
+  for (let i = 0; i < tabs.length; i++) {
+    const t = compact && i !== S.tab ? " " : " " + tabs[i] + " ";
+    s += (i === S.tab ? bg(C.sel) + fg(C.text) + CSI + "1m" + CSI + "4m" : fg(C.sub)) + (i + 1) + t + RST + " ";
+    x0.push(x); x += width(t) + 2; x1.push(i === tabs.length - 1 ? x + 1 : x);
+  }
   const want = W < 100 && fixed(Math.max(0, W - x)) !== ""; // a widget has something to say
-  let right = ""; let rw = 0;
-  for (const r of rights) {
-    right = r; rw = width(r.replace(ESC_RE, ""));
+  let ri = 0;
+  for (; ri < rights.length; ri++) {
+    const rw = width(rights[ri].replace(ESC_RE, ""));
     if (W - x > rw && (!want || fixed(W - x - rw) !== "")) break;
   }
-  const free = Math.max(0, W - x - rw); const wid = widgets(free);
-  const ww = width(wid.replace(ESC_RE, ""));
-  put(0, 0, x > W ? fitStyled(s, W) : s + wid + " ".repeat(Math.max(0, free - ww)) + (W - x > rw ? right : "")); // a badge can push the last tabs off a very narrow row
+  if (ri === rights.length) ri = rights.length - 1;
+  return { s, x, x0, x1, ri, lost: W < 100 && fixed(Math.max(0, W - x)) === "" && fixed(W) !== "" };
 }
 // the fixed-size header widgets that fit in free columns ("" = none)
 function fixed(free: number): string {

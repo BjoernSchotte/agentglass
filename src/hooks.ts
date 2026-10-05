@@ -53,8 +53,7 @@ export const H = {
   realCwd: [] as ((s: Sess) => string)[], // the session's real cwd when H.meta replaced s.cwd for display (redact); "" = not replaced
   realMeta: [] as ((s: Sess) => RealMeta | null)[], // the real title/prompt/cwd/branch/name when H.meta replaced them (redact); null = not replaced
   screenFilter: [] as ((s: string) => string)[], // every chunk written to the terminal (TUI frame chunks, CLI output lines); must keep visible widths
-  listFilter: [] as ((s: Sess) => boolean)[], // buildView keeps a top-level session when every hook passes for it or for one of its subagents
-  listFiltering: [] as (() => boolean)[], // true = a filter is active: matching subagents are expanded, the others hidden
+  listFilter: [] as (() => ((s: Sess) => boolean) | null)[], // once per buildView: the predicate of an active filter (null = none); a top-level session stays when every predicate passes for it or one of its subagents, matching subagents are expanded, the others hidden
   input: [] as ((action: string, ev: string, text: string) => boolean)[], // the input line of S.inputAction: ev change | enter | esc | tab; enter → true keeps it open
   procFilter: [] as ((p: Proc) => boolean)[], // the Processes table shows a root process when every hook passes
   boxChips: [] as ((where: string, w: number) => string)[], // styled filter chips for a built-in box title ("sessions" | "processes"), w = room

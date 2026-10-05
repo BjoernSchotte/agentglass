@@ -1,7 +1,7 @@
-// agentglass — color themes: --theme / AGENTGLASS_THEME / ~/.agentglass/theme, T cycles live and persists
+// agentglass — color themes: --theme / AGENTGLASS_THEME / ~/.agentglass/theme (AGENTGLASS_THEME_FILE moves it), T cycles live and persists
 // SPDX-License-Identifier: Apache-2.0
 import { openSync, writeSync, closeSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { HOME, readText } from "../util/fs.ts";
 import { S, say } from "../state.ts";
 import { H, type Ctx } from "../hooks.ts";
@@ -52,7 +52,7 @@ const THEMES: Theme[] = [
     kw: "8839ef", str: "40a02b", num: "fe640b", com: "8c8fa1", fn: "1e66f5", type: "df8e1d",
     key: "179299", punct: "7c7f93", flag: "e64553", code: "4c4f69" },
 ];
-const FILE = join(HOME, ".agentglass", "theme");
+const FILE = process.env.AGENTGLASS_THEME_FILE || join(HOME, ".agentglass", "theme");
 let cur = 0;
 
 function rgb(v: string): string {
@@ -74,7 +74,7 @@ function apply(i: number): void {
   HL.key = rgb(t.key); HL.punct = rgb(t.punct); HL.flag = rgb(t.flag); HL.text = rgb(t.code);
 }
 function save(name: string): void {
-  try { mkdirSync(join(HOME, ".agentglass"), { recursive: true }); } catch (e) { /* exists */ }
+  try { mkdirSync(dirname(FILE), { recursive: true }); } catch (e) { /* exists */ }
   try { const fd = openSync(FILE, "w"); writeSync(fd, name + "\n"); closeSync(fd); } catch (e) { say("err", "cannot write " + FILE); }
 }
 function names(): string { return THEMES.map((t) => t.name).join(", "); }

@@ -38,11 +38,29 @@ export function addClause(scope: Clause[], c: Clause): { cs: Clause[]; note: str
       cs[i] = m; return { cs, note: "merged: " + shownClause(m) };
     }
     if (on && cn && canUnion(c.key)) { const vs = union(o.vals, c.vals); const m = withVals(o, vs.length > 1 ? "is_not_one_of" : "is_not", vs); cs[i] = m; return { cs, note: "merged: " + shownClause(m) }; }
+    // is_one_of a b c minus is_not a → is_one_of b c: an exclude narrows, it never drops the rest of the set (a pinned
+    // or triage scope "harness is_one_of pi opencode gemini" − gemini would else widen to every other harness)
+    if (oe && cn && canUnion(c.key)) {
+      const lc = lowerAll(c.vals); const rest: string[] = []; for (const v of o.vals) if (lc.indexOf(v.toLowerCase()) < 0) rest.push(v);
+      if (rest.length && rest.length < o.vals.length) { const m = withVals(o, rest.length > 1 ? "is_one_of" : "is", rest); cs[i] = m; return { cs, note: "narrowed: " + shownClause(m) }; }
+    }
     if (((oe && cn) || (on && ce)) && overlap(o.vals, c.vals)) { cs[i] = c; return { cs, note: "replaced: " + shownClause(c) }; }
     if (o.neg === c.neg && ((UP.indexOf(o.op) >= 0 && UP.indexOf(c.op) >= 0) || (DOWN.indexOf(o.op) >= 0 && DOWN.indexOf(c.op) >= 0))) { cs[i] = c; return { cs, note: "replaced: " + shownClause(c) }; }
   }
   cs.push(c);
   return { cs, note: "" };
+}
+// triage + (an included row's value): `is a` into a scope with `is_one_of a b` narrows it to `is a` — the row came from
+// that set, so the user means AND, not the typed filter's union; anything else follows addClause
+export function includeClause(scope: Clause[], c: Clause): { cs: Clause[]; note: string } {
+  if (c.op === "is" && c.vals.length === 1 && canUnion(c.key)) {
+    const v = (c.vals[0] ?? "").toLowerCase();
+    for (let i = 0; i < scope.length; i++) {
+      const o = scope[i]; if (o.key !== c.key || EQ.indexOf(o.op) < 0 || o.vals.length < 2) continue;
+      for (const x of o.vals) if (x.toLowerCase() === v) { const cs = scope.slice(); const m = withVals(o, "is", [x]); cs[i] = m; return { cs, note: "narrowed: " + shownClause(m) }; }
+    }
+  }
+  return addClause(scope, c);
 }
 export function addAll(scope: Clause[], add: Clause[]): { cs: Clause[]; notes: string[] } {
   let cs = scope; const notes: string[] = [];
@@ -73,7 +91,10 @@ export function setLocal(tab: string, cs: Clause[]): void { S.local.set(tab, pin
 // ── persistence (config filter.pinned; filter.remember false = never saved, a saved value ignored) ──
 export interface PinStore { load: () => string; save: (v: string) => void; remember: boolean }
 let store: PinStore = { load: () => "", save: (v: string) => {}, remember: false };
-function persist(): void { if (store.remember) { const sv = store.save; sv(print(S.pins)); } }
+let unsaved = ""; // why the last save failed ("" = saved or nothing to save)
+function persist(): void { unsaved = ""; if (store.remember) { const sv = store.save; sv(print(S.pins)); } }
+// a pin change's toast: a warning naming why it was not saved (a broken config.json), else info
+export function pinToast(msg: string): void { if (unsaved) say("warn", msg + " — not saved: " + unsaved); else say("info", msg); }
 export function chipText(cs: Clause[]): string { return shownText(cs, " · "); }
 // --redact notes pinned values: the screen shows them as "…"
 function note(cs: Clause[]): void { if (REDACT) for (const c of cs) for (const v of c.vals) PINNED.add(c.key + "\t" + v.toLowerCase()); }
@@ -133,5 +154,5 @@ export function hiddenByPins(tab: string, total: (cs: Clause[]) => number): numb
 export function configStore(): PinStore {
   const sec = section("filter"); const rm = sec["remember"];
   if (rm !== undefined && typeof rm !== "boolean") say("warn", "config filter.remember must be true or false — using true");
-  return { load: () => str(section("filter")["pinned"]), save: (v: string) => { try { setConfig("filter", "pinned", v); } catch (e) { say("warn", "could not save pinned filter: " + String(e)); } }, remember: rm !== false };
+  return { load: () => str(section("filter")["pinned"]), save: (v: string) => { try { setConfig("filter", "pinned", v); } catch (e) { unsaved = e instanceof Error ? e.message : String(e); } }, remember: rm !== false };
 }

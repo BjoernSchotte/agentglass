@@ -35,7 +35,8 @@ export function fitTail(s: string, w: number): string {
   let n = 0; let i = cs.length; while (i > 0 && n + cw(cpOf(cs[i - 1] ?? "")) <= w - 1) { i--; n += cw(cpOf(cs[i] ?? "")); }
   return fit("…" + cs.slice(i).join(""), w);
 }
-export function wrap(s: string, w: number): string[] {
+// words: prose breaks at the last blank of a line (one blank goes; a word longer than half the line is still split)
+export function wrap(s: string, w: number, words = false): string[] {
   const out: string[] = [];
   for (const raw of s.split("\n")) {
     const l = clean(raw).replace(/\s+$/, ""); // trailing padding would wrap into blank rows
@@ -43,7 +44,12 @@ export function wrap(s: string, w: number): string[] {
     let cur = ""; let n = 0;
     for (const ch of l) {
       const c = cw(cpOf(ch));
-      if (n + c > w) { out.push(cur); cur = ""; n = 0; }
+      if (n + c > w) {
+        const b = words ? cur.lastIndexOf(" ") : -1;
+        if (ch === " " && words) { out.push(cur); cur = ""; n = 0; continue; }
+        if (b > 0 && width(cur.slice(b + 1)) < w / 2) { out.push(cur.slice(0, b)); cur = cur.slice(b + 1); n = width(cur); }
+        else { out.push(cur); cur = ""; n = 0; }
+      }
       cur += ch; n += c;
     }
     out.push(cur);

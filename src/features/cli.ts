@@ -97,17 +97,19 @@ function usage(): string {
   alerts[{rule,severity,value,unit,threshold,since,message,labels,acked}] (live sessions; durations s, ratios 0–1, USD)
   git{commits[{sha,branch,subject,at,how,counted,status,merge,add,del}],produced,prs[{url,number,how}],issues[],links[{url,how}],
   costPerCommit,noReflog} (null = no git worktree; how = observed ✓ | reflog ≈ | shared — only observed is counted;
-  status = present|missing|amended|elsewhere, "unknown" and add/del null without --git; subagents' commits count for the parent)
+  status = present|missing|amended|elsewhere — without --git "unknown" (elsewhere: a banner sha not in the repo) and
+  add/del null; subagents' commits count for the parent)
   (costUsd = API list price, null when only unpriced usage exists; billing.mode = api|plan|metered|gateway|unknown,
   source = session|process|config — config = assumed from the current config files;
   skills source = command: a slash command / $mention, model: the agent chose it;
   repo = the project: worktrees and clones of one remote share key, kind = git|gitdir|path|none, null = no cwd known)
---watch lines: {ts,harness,session,title,project,parent,kind,tool,text}; kind = user|assistant|thinking|tool|result|meta,
+--watch lines: {ts,harness,session,title,project,parent,kind,tool,id,text}; kind = user|assistant|thinking|tool|result|meta,
   plus live|exit when an agent process appears or disappears, and alert (rules.json transitions: an alert object
-  {rule,severity,state,value,threshold,labels}; state = fire|escalate|deescalate|resolve; off with --no-alerts)
+  {rule,severity,state,value,threshold,labels}; state = fire|escalate|deescalate|resolve; off with --no-alerts);
+  id = the tool call id on tool|result lines (what --related --event and open <ref>#call= take), else null
 
 filter: key op value [and …]; op = is = is_not != is_one_of is_not_one_of ~ !~ > >= < <=; not / - negates; bare words
-  search title, path, id; --json lists sessions with a matching call or day; --watch filters events (event is tool|result|…)
+  search title, path, id; --json lists sessions with a matching call or day; --watch filters events (event is tool|result|alert|…)
 ${filterKeysHelp()}
 
 OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
@@ -121,13 +123,14 @@ export interface Opts { git: boolean; live: boolean; harness: string; limit: num
 export interface Sink { tick: (now: number) => void; stop: () => void }
 interface JAl { rule: string; severity: string; value: number; unit: string; threshold: number; since: string; message: string; labels: { [k: string]: string }; acked: boolean }
 interface WAl { rule: string; severity: string; state: string; value: number; threshold: number; labels: { [k: string]: string } }
-interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: null; text: string; alert: WAl }
+interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: null; id: null; text: string; alert: WAl }
 function jalerts(as: Alert[]): JAl[] {
   const o: JAl[] = [];
   for (const a of as) { const l: { [k: string]: string } = {}; for (const [k, v] of a.labels) l[k] = v; o.push({ rule: a.rule, severity: a.severity, value: a.value, unit: a.unit, threshold: a.threshold, since: new Date(a.since).toISOString(), message: a.message, labels: l, acked: a.acked }); }
   return o;
 }
-interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; text: string }
+// id: the tool call id of a tool/result line (what --related --event and open #call= take), else null
+interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; id: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
 function out(line: string): void {
@@ -205,10 +208,10 @@ function oneLine(t: string): string {
   const l = t.replace(/\s+/g, " ").trim();
   return l.length > 500 ? l.slice(0, 500) + "…" : l;
 }
-function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string): void {
+function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string, id = ""): void {
   const w: WEv = {
     ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd),
-    parent: s.parent ? s.parent : null, kind, tool: tool === null ? null : display("tool", tool, s), text: oneLine(text),
+    parent: s.parent ? s.parent : null, kind, tool: tool === null ? null : display("tool", tool, s), id: id ? id : null, text: oneLine(text),
   };
   out(JSON.stringify(w));
   lastOut = Date.now();
@@ -222,8 +225,9 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   if (e.kind === "tool" && e.id) { if (calls.size > 20000) calls.clear(); calls.set(s.path + "\t" + e.id, [tool, args]); }
   const pc = e.kind === "result" && e.id ? calls.get(s.path + "\t" + e.id) : undefined;
   if (cf && !cliWatchEvent(cf, s, e.kind, pc ? pc[0] ?? "" : tool, pc ? pc[1] ?? "" : args)) return;
-  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts); return; }
-  emit(s, "tool", tool, args, e.ts);
+  const id = e.kind === "tool" || e.kind === "result" ? e.id : "";
+  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts, id); return; }
+  emit(s, "tool", tool, args, e.ts, id);
 }
 
 const IDLE_MS = 10000;
@@ -285,15 +289,16 @@ export function watch(o: Opts, sink: Sink | null): void {
     const rs = rules(); const lk = looker(); const now = Date.now(); const led = ledgerRule(rs);
     for (const s of sessions.values()) {
       if (!watched(s) || !wanted(s, o)) { forgetSession(s.path); continue; }
+      const shown = !o.cf || cliWatchEvent(o.cf, s, "alert", "", ""); // event/call clauses: an alert line is an event too
       if (led && now - (ledAt.get(s.path) ?? 0) >= 10000) { ledAt.set(s.path, now); ledgerComplete(s); } // cost, tokens, call rows
       loadTail(s);
       for (const t of watchStep(s, observeWith(s, lk), rs, now)) {
         const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
         const msg = render(r, a.v, t.to || t.from, s);
         const l: { [k: string]: string } = {}; for (const [k, v] of r.labels) l[k] = v;
-        const w: WAlert = { ts: new Date(t.at).toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind: "alert", tool: null,
+        const w: WAlert = { ts: new Date(t.at).toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind: "alert", tool: null, id: null,
           text: oneLine(msg), alert: { rule: r.id, severity: severityOf(t.to || t.from), state: t.state, value: t.v, threshold: t.thr, labels: l } };
-        out(JSON.stringify(w)); lastOut = Date.now();
+        if (shown) { out(JSON.stringify(w)); lastOut = Date.now(); }
         onTrans(s, r, t, a.acked, true, o.notify, rs.notify, a.v, msg, a.lvAt); // --watch: never bell/desktop; the command with --notify
       }
     }

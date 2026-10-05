@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { H, complete, screenOut } from "../../hooks.ts";
 import { S } from "../../state.ts";
 import type { Sess } from "../../model/types.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, loadHead } from "../../model/sessions.ts";
 import { harnessIds, isHarness, epochOf } from "../../harness/index.ts";
 import { HOME } from "../../util/fs.ts";
 import { curlBin, otlpDir } from "../../util/http.ts";
@@ -23,7 +23,7 @@ import { newSessB, finish, fxChat } from "./build.ts";
 import { encodeRequest } from "./encode.ts";
 import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl } from "./config.ts";
 import { type ExpState, loadState, saveState, lock, unlock, marked, markTurn, markFx } from "./state.ts";
-import { type Native, detectNative, applyPolicy } from "./native.ts";
+import { type Native, detectNative, applyPolicy, projectDirs } from "./native.ts";
 import { GZ, sendBatch } from "./send.ts";
 
 export interface ExOpts {
@@ -210,12 +210,12 @@ export function build(o: ExOpts, st: ExpState | null, skipFrom: Map<string, numb
   return r;
 }
 function nativeNow(roots: Sess[]): Native[] {
-  const pids = new Map<string, number[]>(); const cwds: string[] = [];
+  const pids = new Map<string, number[]>();
   for (const s of sessions.values()) {
     if (s.pid > 0) { const l = pids.get(s.h) ?? []; if (l.indexOf(s.pid) < 0) l.push(s.pid); pids.set(s.h, l); }
   }
-  for (const s of roots) if (s.cwd && cwds.indexOf(s.cwd) < 0 && cwds.length < 64) cwds.push(s.cwd);
-  return detectNative(pids, HOME, cwds);
+  for (const s of roots) if (s.h === "gemini" && !s.cwd && !s.headDone) loadHead(s); // its cwd comes from the log
+  return detectNative(pids, HOME, projectDirs(roots));
 }
 
 // ── output ──

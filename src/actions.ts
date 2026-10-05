@@ -17,7 +17,7 @@ import { realCwd } from "./hooks.ts";
 // the session's real dir (--redact fakes s.cwd: the agent would start in a dir that does not exist, or in $HOME)
 function cwdOf(s: Sess): string { const c = realCwd(s); return c && existsSync(c) ? c : HOME; }
 
-export function ask(label: string, action: string, init: string): void { S.prevMode = S.mode === "input" ? S.prevMode : S.mode; S.mode = "input"; S.inputLabel = label; S.inputAction = action; S.inputText = init; }
+export function ask(label: string, action: string, init: string): void { S.prevMode = S.mode === "input" ? S.prevMode : S.mode; S.mode = "input"; S.inputLabel = label; S.inputAction = action; S.inputText = init; S.inputErrCol = -1; }
 export function confirm(text: string, action: string): void { S.prevMode = S.mode; S.mode = "confirm"; S.confirmText = text; S.confirmAction = action; }
 export function target(): Sess | null {
   if (S.mode === "transcript" || S.prevMode === "transcript") return S.tv ? S.tv.s : null;
