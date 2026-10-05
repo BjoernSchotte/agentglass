@@ -22,5 +22,22 @@ eq("num", String(num(cursor("42"))), "42");
 const o = cursor('{"x":{"a":[1,{"b":null}],"c":"}"},"y":true,"z":7}');
 eat(o, 123); str(o); eat(o, 58); skip(o); eat(o, 44); str(o); eat(o, 58); skip(o); eat(o, 44); eq("after skips", str(o), "z"); eat(o, 58);
 eq("skip then value", String(num(o)) + String(o.ok) + String(eat(o, 125)), "7truetrue");
+// every BMP code point class and astral ones, as JSON.stringify writes them, read like JSON.parse reads them
+let all = ""; for (let cp = 0; cp < 0x3000; cp += 7) if (cp < 0xd800 || cp > 0xdfff) all += String.fromCharCode(cp);
+all += "\u{1F600}\u{10FFFF}\u{1D11E}\u00e9e\u0301";
+const ac = cursor(JSON.stringify(all)); const ag = str(ac); const ap = JSON.parse(JSON.stringify(all)) as string;
+eq("code point sweep = JSON.parse", String(ac.ok) + " " + String(ag === ap) + " " + String(ag.length), "true true " + String(ap.length));
+// hand-escaped forms JSON.stringify never writes
+const hx = '"\\u0041\\u00E9\\uD83D\\uDE00\\t\\/"'; const hc = cursor(hx);
+eq("upper-case hex escapes = JSON.parse", str(hc), JSON.parse(hx) as string);
+// a huge string (a long command line kept in a calls file), plain and with escapes every few bytes
+const huge = "a".repeat(8 * 1048576); const hc2 = cursor(JSON.stringify(huge)); eq("8 MB plain string", String(str(hc2).length) + String(hc2.ok), String(huge.length) + "true");
+let esc = ""; for (let i = 0; i < 200000; i++) esc += "ab\"c\\d\n"; const ec = cursor(JSON.stringify(esc));
+eq("escaped 1.6 MB string", String(str(ec) === esc) + String(ec.ok), "truetrue");
+// unknown members nested deep are skipped; a corrupt file nested very deep is rejected, not a crash
+let deep = ""; for (let i = 0; i < 20; i++) deep += '{"a":['; deep += "1"; for (let i = 0; i < 20; i++) deep += "]}";
+const dc = cursor('{"x":' + deep + ',"z":5}'); eat(dc, 123); str(dc); eat(dc, 58); skip(dc); eat(dc, 44); str(dc); eat(dc, 58);
+eq("deep member skipped", String(num(dc)) + String(dc.ok), "5true");
+const bomb = cursor("[".repeat(1000000)); skip(bomb); eq("1M open brackets: rejected", String(bomb.ok), "false");
 console.log(bad ? bad + " failed" : "jsonscan: all checks passed");
 if (bad) process.exit(1);

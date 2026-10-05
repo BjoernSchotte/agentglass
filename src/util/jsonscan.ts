@@ -81,9 +81,11 @@ export function numLists(c: Cur): number[][] {
   if (eat(c, 93)) return o;
   for (;;) { o.push(nums(c)); if (!c.ok) return o; if (eat(c, 44)) continue; if (eat(c, 93)) return o; return fail(c, o); }
 }
-// any JSON value, skipped (a member a reader does not know)
-export function skip(c: Cur): void {
-  ws(c); if (c.i >= c.s.length) { c.ok = false; return; }
+// any JSON value, skipped (a member a reader does not know); nested deeper than 64 levels counts as corrupt (no data of
+// ours is, and a recursion that deep in a damaged file would overflow the stack)
+export function skip(c: Cur): void { skipIn(c, 0); }
+function skipIn(c: Cur, depth: number): void {
+  ws(c); if (c.i >= c.s.length || depth > 64) { c.ok = false; return; }
   const ch = c.s.charCodeAt(c.i);
   if (ch === 34) { str(c); return; }
   if (ch === 91 || ch === 123) {
@@ -91,7 +93,7 @@ export function skip(c: Cur): void {
     if (eat(c, close)) return;
     for (;;) {
       if (ch === 123) { str(c); if (!c.ok || !eat(c, 58)) { c.ok = false; return; } }
-      skip(c); if (!c.ok) return;
+      skipIn(c, depth + 1); if (!c.ok) return;
       if (eat(c, 44)) continue; if (eat(c, close)) return; c.ok = false; return;
     }
   }
