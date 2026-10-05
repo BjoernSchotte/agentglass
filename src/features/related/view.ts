@@ -19,6 +19,7 @@ import { ms } from "../callgraph/model.ts";
 import { graphAnchor } from "../callgraph/view.ts";
 import { parse } from "../query/parse.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
+import { cycleNext, exprErr, newCyc } from "../query/ui.ts";
 import { type RelEv, type FileRef, KIND_SETS, relCfg, fileShown } from "./model.ts";
 import { type Build, startBuild, stepBuild, repoll, isAnchor } from "./build.ts";
 
@@ -166,7 +167,7 @@ function header(st: RState, w: number): string {
   const label = b.scope === "cwd" ? "(same cwd: no project)" : b.label || "(project unknown)";
   const make = (short: boolean, lab: string): string => {
     const parts = [fg(C.accent) + "related" + RST, lab,
-      "±" + String(st.minutes) + "m " + (short ? "@ " : "around ") + clock(b.anchor.t), String(n.size) + (short ? " sess" : " sessions"), ev + (short ? " ev" : " events")];
+      "±" + String(st.minutes) + "m " + (short ? "@ " : "around ") + clock(b.anchor.t), String(n.size) + (short ? " sess" : n.size === 1 ? " session" : " sessions"), ev + (short ? " ev" : " events")];
     if (b.flagged) parts.push(fg(C.red) + "‼ " + String(b.flagged) + RST);
     if (building(st)) parts.push(fg(C.yellow) + spin() + (short ? " " : " loading ") + String(b.next) + "/" + String(b.cands.length) + RST);
     if (b.more) parts.push(fg(C.dim) + "+" + String(b.more) + (short ? " more" : " more sessions not shown") + RST);
@@ -293,11 +294,12 @@ function keyView(st: RState, k: string): boolean {
   }
   else if (k === "n") jump(st, 1);
   else if (k === "N") jump(st, -1);
-  else if (k === "/") { S.inputErr = ""; ask("filter related (tool is Bash, harness is codex, file ~ src/)", NAME, st.q); }
+  else if (k === "/") { S.inputErr = ""; cyc.cands = []; ask("filter related (tool is Bash, harness is codex, file ~ src/)", NAME, st.q); }
   else if (k === "0") { st.centred = false; st.ver = ""; }
   return true;
 }
-function filterErr(t: string): string { if (!t.trim()) return ""; const p = parse(t); if (p.err) return p.err.msg; const c = compile(p.cs, "watch"); return c.err ? c.err.msg : ""; }
+const cyc = newCyc();
+function filterErr(t: string): string { return exprErr(t, "watch", ""); }
 
 // ── registration ──
 H.views.push({ name: NAME, render });
@@ -329,7 +331,8 @@ H.mouse.push((mode: string, b: number, x: number, y: number, press: boolean): bo
 H.input.push((action: string, ev: string, text: string): boolean => {
   if (action !== NAME) return false;
   const st = stAt(); if (!st) return false;
-  if (ev === "change") { S.inputErr = filterErr(text); return false; }
+  if (ev === "change") { S.inputErr = filterErr(text); if (text !== cyc.last) cyc.cands = []; return false; }
+  if (ev === "tab") { const next = cycleNext(cyc, text); if (next) { S.inputText = next; S.inputErr = filterErr(next); } return false; }
   if (ev === "esc") { S.inputErr = ""; return false; }
   if (ev !== "enter") return false;
   const e = filterErr(text); if (e) { S.inputErr = e; say("warn", e); return true; } // the last valid filter stays

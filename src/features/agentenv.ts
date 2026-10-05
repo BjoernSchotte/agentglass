@@ -6,7 +6,7 @@ import type { Proc, Sess } from "../model/types.ts";
 import { type Obj, str } from "../util/json.ts";
 import { section } from "../util/config.ts";
 import { sessions, parentOf, loadHead } from "../model/sessions.ts";
-import { allProcs } from "../model/procs.ts";
+import { allProcs, refreshProcs } from "../model/procs.ts";
 import { S, say } from "../state.ts";
 import { realCwd } from "../hooks.ts";
 import { projectRoot } from "./query/project.ts";
@@ -48,6 +48,19 @@ export function detectHost(env0: Record<string, string>, args: string[]): AgentH
   if (!session) for (const k of SESSION_VARS) if (get(env, k)) { session = get(env, k); break; }
   return { on: true, harness, session, via };
 }
+// the harnesses the env markers name, in MARKERS order, each once (several = nested agents: the env cannot tell inner from outer)
+export function markerHarnesses(env0: Record<string, string>): string[] {
+  const env: Env = env0; const o: string[] = [];
+  for (const m of MARKERS) { const v = get(env, m); if (!v) continue; const h = markerHarness(m, v); if (h && o.indexOf(h) < 0) o.push(h); }
+  return o;
+}
+// pure: the host as the innermost harness process (from the process tree) names it; its own session variable or none
+export function innerHost(h: AgentHost, env0: Record<string, string>, inner: string, pid: number): AgentHost {
+  if (!inner || inner === h.harness) return h;
+  const env: Env = env0; let session = "";
+  for (let i = 0; i < SESSION_VARS.length; i++) if ((VAR_HARNESS[i] ?? "") === inner && get(env, SESSION_VARS[i] ?? "")) session = get(env, SESSION_VARS[i] ?? "");
+  return { on: h.on, harness: inner, session, via: h.via + "+ancestor:pid " + String(pid) };
+}
 // the variable a session id came from (for via / warnings)
 export function sessionVar(env0: Record<string, string>, id: string): string { const env: Env = env0; for (const k of SESSION_VARS) if (id && get(env, k) === id) return k; return ""; }
 
@@ -77,7 +90,15 @@ function envMap(): Record<string, string> {
   return m;
 }
 let host: AgentHost | null = null;
-export function agentHost(): AgentHost { if (!host) setHost(detectHost(envMap(), process.argv.slice(2))); return host as AgentHost; }
+export function agentHost(): AgentHost {
+  if (!host) {
+    const env = envMap(); let h = detectHost(env, process.argv.slice(2));
+    // nested (pi run from a Claude Code shell inherits CLAUDECODE): one process listing names the innermost harness
+    if (h.on && markerHarnesses(env).length > 1) { refreshProcs(); const a = ancestry(process.pid, allProcs, (p: Proc): string => ""); h = innerHost(h, env, a.harness, a.pid); }
+    setHost(h);
+  }
+  return host as AgentHost;
+}
 export function setHost(h: AgentHost): void { host = h; S.cliJson = h.on; } // checks set it directly
 // a human can answer a prompt: a terminal on stdin and no agent around
 export function interactive(): boolean { return process.stdin.isTTY === true && !agentHost().on; }

@@ -19,8 +19,11 @@ export function renderFooter(): void {
     const txt = clean(S.inputText) + "▏";
     const err = S.inputErr ? "  " + clean(S.inputErr) : "";
     const tw = Math.min(width(txt), Math.max(10, room - width(err))); // the error stays visible next to the text
-    const shown = width(txt) > tw ? "…" + Array.from(txt).slice(-(tw - 1)).join("") : txt;
-    put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + S.inputLabel + " ❯ " + RST + bg(C.sel) + fg(C.text) + shown + fg(C.red) + fit(err, Math.max(0, room - width(shown))) + RST);
+    const cps = Array.from(txt); const scrolled = width(txt) > tw; const cut = scrolled ? Math.max(0, cps.length - (tw - 1)) : 0; // code points scrolled away
+    const shown = scrolled ? "…" + cps.slice(cut).join("") : txt;
+    // the error's column: a UTF-16 offset into the raw text → code points of the cleaned one, then past the "…"
+    const ec = S.inputErr && S.inputErrCol >= 0 ? Array.from(clean(S.inputText.slice(0, S.inputErrCol))).length - cut : -1;
+    put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + S.inputLabel + " ❯ " + RST + bg(C.sel) + fg(C.text) + marked(shown, ec < 0 ? -1 : ec + (scrolled ? 1 : 0)) + fg(C.red) + fit(err, Math.max(0, room - width(shown))) + RST);
     renderToast(); // e.g. a link that waits for this prompt
     return;
   }
@@ -66,6 +69,11 @@ export function renderFooter(): void {
   put(0, y, fitStyled(hints, W - 1) + CSI + "K");
   if (DBG.on && DBG.line) { const d = " " + fit(DBG.line, Math.min(width(DBG.line), W - 2)) + " "; put(W - width(d), y, bg(C.panel) + fg(C.dim) + d + RST); } // over the hints' tail
   renderToast();
+}
+// the input text with the character at an error's column (the CLI's caret) in red reverse; -1 or past the end = as is
+export function marked(t: string, col: number): string {
+  const cs = Array.from(t); if (col < 0 || col >= cs.length) return t;
+  return cs.slice(0, col).join("") + fg(C.red) + CSI + "7m" + (cs[col] ?? "") + CSI + "27m" + fg(C.text) + cs.slice(col + 1).join("");
 }
 // a hint's tier when its provider names none: 0 "? keys" (never dropped), 1 the essentials (↵ open, / filter, esc / q),
 // 3 the arrow keys everyone tries anyway, 2 the rest

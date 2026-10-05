@@ -19,7 +19,9 @@ export function renderProcs(): void {
   const listH = S.listH;
   const hid = procs.length - procView.length; const ch = boxChips("processes", Math.max(10, W - 40));
   box(0, 1, W, th, "harness processes", (ch ? ch + " " : "") + procView.length + " roots" + (hid > 0 ? " · pins hide " + hid : ""), S.mode === "list");
-  const cols = fg(C.dim) + CSI + "1m" + fit("  PID", 8) + fit("AGENT", BADGE_W + 1) + fit("CPU%", 7) + fit("MEM", 7) + fit("KIDS", 5) + fit("UP", 12) + fit("CPU GRAPH", 17) + fit("SESSION / CWD", W - 69) + RST;
+  // PIDs up to 7 digits and uptimes of 100+ days keep a gap; narrow (80/60 columns): the graph, then the uptime leave so the session shows
+  const gr = W >= 90; const up = W >= 70; const sw = Math.max(0, W - 2 - 1 - 8 - (BADGE_W + 1) - 19 - (up ? 13 : 0) - (gr ? 17 : 0));
+  const cols = fg(C.dim) + CSI + "1m" + fit("  PID", 9) + fit("AGENT", BADGE_W + 1) + fit("CPU%", 7) + fit("MEM", 7) + fit("KIDS", 5) + (up ? fit("UP", 13) : "") + (gr ? fit("CPU GRAPH", 17) : "") + fit("SESSION / CWD", sw) + RST;
   put(1, 2, cols);
   if (S.psel >= procView.length) S.psel = Math.max(0, procView.length - 1);
   if (S.psel < S.ptop) S.ptop = S.psel;
@@ -34,8 +36,8 @@ export function renderProcs(): void {
     const where = s ? clean(titleOf(s)) + "  " + (sCwd !== "" ? home(sCwd) : pCwd) : pCwd !== "" ? pCwd : display("args", p.args, null);
     const ph0 = hist.get(p.pid) ?? [];
     const g = braille(ph0, 16, 1, Math.max(20, Math.max(...ph0)))[0];
-    put(1, 3 + r, b + (on ? fg(C.accent) + "❯" : " ") + fg(C.sub) + fit(String(p.pid), 7) + RST + badge(p.h) + b + " " + fg(heat(p.tcpu / 100)) + fit(p.tcpu.toFixed(1), 7) + fg(C.text) + fit(bytes(p.trss), 7) +
-      fg(C.sub) + fit(String(p.kids), 5) + fit(p.etime, 12) + fg(heat(Math.min(1, p.tcpu / 100))) + g + " " + (s ? fg(C.text) : fg(C.dim)) + fit(where, W - 69) + RST);
+    put(1, 3 + r, b + (on ? fg(C.accent) + "❯" : " ") + fg(C.sub) + fit(String(p.pid), 8) + RST + b + badge(p.h) + b + " " + fg(heat(p.tcpu / 100)) + fit(p.tcpu.toFixed(1), 7) + fg(C.text) + fit(bytes(p.trss), 7) +
+      fg(C.sub) + fit(String(p.kids), 5) + (up ? fit(p.etime, 12) + " " : "") + (gr ? fg(heat(Math.min(1, p.tcpu / 100))) + g + " " : "") + (s ? fg(C.text) : fg(C.dim)) + fit(where, sw) + RST);
   }
   // detail
   const p = procAt(S.psel);

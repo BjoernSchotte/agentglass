@@ -25,7 +25,7 @@ interface State {
   pins: Clause[]; local: Map<string, Clause[]>; // filter scopes: pinned (every tab, remembered) and per tab ("Sessions", "Stats", …)
   view: Sess[];
   toast: string; toastKind: string; toastAt: number; toastMs: number; // toastMs: how long the current toast shows
-  inputLabel: string; inputText: string; inputAction: string; inputErr: string; // inputErr: shown in red after the input text
+  inputLabel: string; inputText: string; inputAction: string; inputErr: string; inputErrCol: number; // inputErr: shown in red after the input text; inputErrCol: its column in the text (-1 = none), marked
   confirmText: string; confirmAction: string;
   listY: number; listH: number; listX: number; listW: number;
   tv: TV | null; dv: DV | null;
@@ -45,7 +45,7 @@ export const S: State = {
   pins: [], local: new Map<string, Clause[]>(),
   view: [],
   toast: "", toastKind: "info", toastAt: 0, toastMs: 5000,
-  inputLabel: "", inputText: "", inputAction: "", inputErr: "",
+  inputLabel: "", inputText: "", inputAction: "", inputErr: "", inputErrCol: -1,
   confirmText: "", confirmAction: "",
   listY: 0, listH: 0, listX: 0, listW: 0,
   tv: null, dv: null,

@@ -67,7 +67,7 @@ function rewriteInstallJson(path: string, channel: string, version: string): voi
 
 async function update(args: string[]): Promise<number> {
   const o0 = opts(args);
-  if (typeof o0 === "string") return fail(o0, 1);
+  if (typeof o0 === "string") return fail(o0, 2); // a usage error (exit-code table)
   const o = o0;
   const exe = process.execPath;
   const method = installMethod(exe, BUILD.channel, readText(INSTALL_JSON, 0, 65536));
@@ -135,7 +135,7 @@ async function update(args: string[]): Promise<number> {
       return fail("downloaded binary failed its self-check (expected " + tv + " " + tch + ") — nothing changed", 1);
     try { copyFileSync(exe, exe + ".prev"); renameSync(cand, exe); }
     catch (e) { return fail("cannot replace " + exe + ": " + String(e), 1); }
-    if (!o.tag) setConfig("update", "channel", tch); // --tag is one-off: the saved channel stays
+    if (!o.tag) try { setConfig("update", "channel", tch); } catch (e) { errLine("agentglass update", "config", "channel not saved: " + (e instanceof Error ? e.message : String(e)), ""); } // --tag is one-off: the saved channel stays
     rewriteInstallJson(exe, tch, tv);
     say(o, "updated " + BUILD.version + " → " + tv + " (" + tch + ")", { updated: true, from: BUILD.version, to: tv, channel: tch, tag: target.tag });
     return 0;

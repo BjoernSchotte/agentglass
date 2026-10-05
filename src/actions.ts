@@ -13,7 +13,7 @@ import { refreshProcs, rootOf, tmuxTarget, procAt, procSess, sharedDaemon } from
 import { harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
 
-export function ask(label: string, action: string, init: string): void { S.prevMode = S.mode === "input" ? S.prevMode : S.mode; S.mode = "input"; S.inputLabel = label; S.inputAction = action; S.inputText = init; }
+export function ask(label: string, action: string, init: string): void { S.prevMode = S.mode === "input" ? S.prevMode : S.mode; S.mode = "input"; S.inputLabel = label; S.inputAction = action; S.inputText = init; S.inputErrCol = -1; }
 export function confirm(text: string, action: string): void { S.prevMode = S.mode; S.mode = "confirm"; S.confirmText = text; S.confirmAction = action; }
 export function target(): Sess | null {
   if (S.mode === "transcript" || S.prevMode === "transcript") return S.tv ? S.tv.s : null;

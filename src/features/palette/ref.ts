@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
 import { findSession } from "../../model/sessref.ts";
+// the agent's own sessions (as `agentglass session` takes them): resolved where the command runs, never by a running TUI
+export const SELF = ["current", "last", "parent"];
 import { sessions, parentOf } from "../../model/sessions.ts";
 import { H as idH, rootKey, traceId, rootSpanId, chatSpanId, toolSpanId, agentSpanId } from "../otlp/ids.ts";
 import { type ReqState, newReqState, requestOf } from "../otlp/requests.ts";
@@ -56,7 +58,8 @@ export function parseRef(raw: string): Ref {
     } else id = path;
   }
   const ie = idErr(id, "the session id"); if (ie) return bad(ie);
-  if (id.length < 6) return bad("the session reference " + id + " is too short (at least 6 characters)");
+  const self = !h && SELF.indexOf(id) >= 0 && !path.toLowerCase().startsWith("agentglass:"); // resolved by the caller (open.ts)
+  if (id.length < 6 && !self) return bad("the session reference " + id + " is too short (at least 6 characters)");
   const r: Ref = { ok: true, err: "", warn: "", harness: h, sess: id, trace: "", span: "", akey: "", aval: "", ak: 0 };
   if (hi < 0) return r;
   const eq = anc.indexOf("=");

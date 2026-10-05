@@ -358,8 +358,9 @@ transcript at the tool call that made the commit or printed the link, `y` copies
   `"git": {"tailPadMin": 10}`, 0–120; live sessions until now). The person may have made them.
   **`? shared`**: the same, covered by several sessions of the worktree — listed on each, counted on none.
 - A banner made in another worktree of the same repo is found in that worktree's reflog and counts. One that is in no
-  reflog (the worktree was removed since) counts too; `--git` and the git view then check the repo's objects: a sha
-  that is not there (`git -C ../other commit`) is `elsewhere`, not counted. Without a reflog (deleted, `core.logAllRefUpdates=false`, expired) the view says "no reflog — matched by
+  reflog (the worktree was removed since) counts when its sha is in the repo's objects (read directly, no git call);
+  a sha that is not there (`git -C ../other commit`, a test script's temp repo) is `elsewhere`, not counted. `--git`
+  and the git view add full shas and diff stats. Without a reflog (deleted, `core.logAllRefUpdates=false`, expired) the view says "no reflog — matched by
   time" and lists the commits of the session's branch in its window by your `user.email` (≈, and only when no other
   session of the project was active then).
 - PR/MR, issue and commit URLs of GitHub, GitLab (nested groups, `/-/merge_requests/`), Bitbucket and Gitea/Forgejo
@@ -414,6 +415,7 @@ agentglass --json --filter 'tool is Bash and status is error' | jq '.[].title'  
 agentglass --json --filter 'repo is agentglass' --filter 'cost > 2'           # --filter repeats (AND)
 agentglass --json --pinned                                                     # also apply the TUI's pins
 agentglass --watch --filter 'harness is pi and event is_one_of tool result'    # only pi's calls and results
+agentglass --watch --filter 'event is alert'                                   # only alert transitions
 ```
 A bad expression exits 2 with the message and a caret under the column.
 
@@ -477,6 +479,7 @@ B, side by side with Δ (B − A, more cost, errors or duration red) and B/A.
 agentglass compare 3f2a9c 7b11e0                                   # two sessions by id prefix
 agentglass compare claude:3f2a9c… codex:7b11e0… --no-subagents --json | jq '.a.metrics, .b.metrics'
 agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 'repo is agentglass'
+agentglass compare last current                                  # inside an agent: this run vs the one before (JSON, this project)
 ```
 In `--json`, `metrics.cost` is the total and `costByMode` its split by billing mode (`api` is real spend, the rest
 list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an id prefix under 6 characters
@@ -607,7 +610,7 @@ More examples:
 | Codex waits 5 min, everything else keeps the default | `{"id":"waiting","where":"harness is_not codex"}` and `{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}` (a copy repeats the `ack`/`notify`/`message` it wants) |
 
 **Checking.** `agentglass rules check` prints the effective rules and every problem as
-`rules.json:<line>:<col>: <rule>: <message>` (exit 0 clean, 1 warnings, 2 errors; `--json` for scripts). A broken new rule
+`rules.json:<line>:<col>: <rule>: <message>` (no `<rule>:` for a file-level problem such as a syntax error; exit 0 clean, 1 warnings, 2 errors; `--json` for scripts). A broken new rule
 is disabled and a broken override leaves its built-in unchanged; the rest keep running; the TUI says so once at start.
 Fields a metric does not read (`min_calls` outside `tool_error_rate`, `window` outside the call-row metrics) are warnings. A JSON syntax error keeps the built-ins.
 The file is re-read within 2 s of a change: a valid edit replaces the rules (alerts of removed rules end silently), a
@@ -651,6 +654,7 @@ agentglass open 'claude:5f1e…#call=toolu_01Abc'          # …at a tool call (
 agentglass open 'agentglass://open/codex/019a2c…#call=c1' # the URL form (Y copies it)
 agentglass open 019a2c --print                          # resolve only: {harness,id,path,title,cwd,anchor,url} (pipes and agents too)
 agentglass open 019a2c --print-url                      # the canonical agentglass://open/<harness>/<id> link
+agentglass open current --print-url                     # inside an agent: a link to its own session (current | last | parent)
 agentglass open '019a2c#turn=2026-09-30T10:00:00.000Z'  # a turn by its start time as logged (~1: the 2nd turn starting then; #turn=3: the 3rd)
 agentglass open 4bf92f3577b34da6a3ce929d0e0e4736         # an OTLP trace id from `agentglass export` → that session and turn
 agentglass open 4bf92f3577b34da6a3ce929d0e0e4736/00f067aa0ba902b7  # …and a span in it: the call, request or subagent
@@ -845,10 +849,11 @@ export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with
 export AGENTGLASS_CURL="/opt/bin/curl"         # … or, without sqlite3, over the OpenCode service's HTTP API with curl
 export AGENTGLASS_KIRO="kiro-cli"
 export AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"   # headless sends may edit files
-export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (default ~/.agentglass/cache)
+export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate cache: ledger, call rows, projects, price lists (default ~/.agentglass/cache)
 export AGENTGLASS_CONFIG="/tmp/ag-config.json"   # another config file (default ~/.agentglass/config.json)
 export AGENTGLASS_RUN_DIR="/tmp/ag-run"   # single-instance lock and link inbox (default ~/.agentglass/run; must be yours, 0700)
 export AGENTGLASS_PALETTE_FILE="/tmp/ag-palette.json"   # the palette's recent picks (default ~/.agentglass/palette.json)
+export AGENTGLASS_THEME_FILE="/tmp/ag-theme"   # the theme T persists (default ~/.agentglass/theme)
 export AGENTGLASS_OTLP_DIR="/tmp/ag-otlp"     # OTLP export state, lock and request bodies (default ~/.agentglass/otlp)
 ```
 

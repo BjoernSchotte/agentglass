@@ -25,7 +25,25 @@ run rules check > /dev/null; eq "examples check: exit" $? 0
 printf '{"notify":{"command":["/usr/bin/true"]}}\n' > "$rf"; chmod 664 "$rf"
 run rules check > "$t/out"; eq "group-writable command: exit" $? 2
 grep -q "notify.command ignored" "$t/out" || { echo "FAIL unsafe command not reported"; cat "$t/out"; fail=1; }
+# a broken file: exit 2 and a clean file:line:col: message (no "-:" rule placeholder), plain and --json
+printf '{"rules":[{"id":"x",}]}\n' > "$rf"; chmod 600 "$rf"
+run rules check > "$t/out"; eq "trailing comma: exit" $? 2
+grep -q '^rules.json:1:21: syntax error: expected a quoted key' "$t/out" || { echo "FAIL trailing comma line"; cat "$t/out"; fail=1; }
+grep -q ': -: ' "$t/out" && { echo "FAIL stray -: in"; cat "$t/out"; fail=1; }
+run rules check --json > /dev/null; eq "trailing comma --json: exit" $? 2
+# a failed write (a full disk) never turns the errors' exit 2 into 0
+if [ -w /dev/full ]; then run rules check > /dev/full 2>/dev/null; eq "write error: exit" $? 2; fi
+rm -f "$rf"; mkdir "$rf"
+run rules check > "$t/out"; eq "a directory: exit" $? 2
+grep -q '^rules.json:1:1: cannot read the file' "$t/out" || { echo "FAIL directory line"; cat "$t/out"; fail=1; }
+rmdir "$rf"
 run rules nope > /dev/null 2>&1; eq "unknown subcommand: exit" $? 2
+rm -f "$rf" # no file: a clean check exits 0, so only the option can make it 2
+run rules check --help | grep -q "usage: agentglass rules check" || { echo "FAIL rules check --help"; fail=1; }
+run rules defaults --bogus > /dev/null 2>&1; eq "defaults --bogus: exit" $? 2
+run rules check --examples > /dev/null 2> "$t/out"; eq "check --examples (a defaults option): exit" $? 2
+grep -q "unknown option --examples" "$t/out" || { echo "FAIL check --examples message"; cat "$t/out"; fail=1; }
+run rules defaults --json > /dev/null 2>&1; eq "defaults --json (a check option): exit" $? 2
 run rules 2> "$t/out"; eq "no subcommand: exit" $? 2
 grep -q "which one? check or defaults" "$t/out" || { echo "FAIL no subcommand message"; cat "$t/out"; fail=1; }
 run rules --help | grep -q "rules defaults" || { echo "FAIL rules --help"; fail=1; }

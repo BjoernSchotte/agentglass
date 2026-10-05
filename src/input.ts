@@ -50,12 +50,12 @@ export function onInput(k: string): void {
     const was = S.inputText;
     if (k === "enter") {
       if (!inputEv("enter")) { // true: invalid input stays open, the error shows after the text
-        S.mode = S.prevMode; S.inputErr = "";
+        S.mode = S.prevMode; S.inputErr = ""; S.inputErrCol = -1;
         const v = S.inputText;
         if (S.inputAction === "send") { const s = target(); if (s && v.trim()) sendPrompt(s, v); }
         else if (S.inputAction === "sendpane") { const p = procAt(S.psel); const t = p ? tmuxTarget(p.pid) : ""; if (t && v.trim()) sendTmux(t, v); }
       }
-    } else if (k === "esc") { S.mode = S.prevMode; inputEv("esc"); S.inputErr = ""; }
+    } else if (k === "esc") { S.mode = S.prevMode; inputEv("esc"); S.inputErr = ""; S.inputErrCol = -1; }
     else if (k === "tab") inputEv("tab");
     else if (k === "bs") S.inputText = Array.from(S.inputText).slice(0, -1).join("");
     else if (k === "ctrl-u") S.inputText = "";
