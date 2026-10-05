@@ -142,6 +142,17 @@ const bm2 = new Map<string, BranchAgg>(); bookBranches(bm2, pc, "main", true, 2,
 const bf = bm2.get("f"); const bmn = bm2.get("main");
 eq("split by commit count", (bmn ? String(bmn.cost) + "/" + String(bmn.commits) : "-") + " " + (bf ? String(bf.cost) + "/" + String(bf.commits) : "-"), "1/1 1/1");
 
+// an age clause re-matches on its own step (age < 2s: each second), not on the 5 s cache
+{
+  const fa = compile(parse("age < 2s").cs, "stats").f ?? EMPTY; let yp = "";
+  for (const s of sessions.values()) { s.last = 0; s.mtime = 0; } // every session old
+  for (const r of repoAgg([TODAY], null)) for (const p of r.paths) if (!yp) yp = p;
+  const yng = sessions.get(yp); if (yng) { yng.last = Date.now() - 1500; yng.mtime = yng.last; }
+  const n1 = repoAgg([TODAY], fa).length;
+  const t0 = Date.now(); while (Date.now() - t0 < 1100) { /* the clause's step: 1 s */ }
+  const n2 = repoAgg([TODAY], fa).length;
+  eq("age < 2s: a young session's repo, a second later none", String(n1) + " → " + String(n2), "1 → 0");
+}
 rmSync(T, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "repo agg ok");
 if (bad) process.exit(1);
