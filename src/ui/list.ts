@@ -20,11 +20,12 @@ export const prevKids: Sess[] = [];
 // the preview's activity lines (the last 25 events wrapped and styled) while the session's events are the same array (a
 // tail read makes a new one), at the same width and colors: formatting them was the bulk of a frame
 const ACT = { evs: [] as Ev[], w: -1, theme: "", lines: [] as string[], ev: [] as number[] };
-function actLines(s: Sess, w: number): void {
-  const theme = C.text + C.cyan + C.dim + C.sel + C.accent;
-  if (ACT.evs === s.evs && ACT.w === w && ACT.theme === theme) return;
+export function actLines(s: Sess, w: number): string[] {
+  const theme = C.text + C.cyan + C.dim + C.sel + C.sub + C.line + C.yellow + C.purple; // every color evLines uses: a theme may change any one
+  if (ACT.evs === s.evs && ACT.w === w && ACT.theme === theme) return ACT.lines;
   ACT.evs = s.evs; ACT.w = w; ACT.theme = theme; ACT.lines = []; ACT.ev = [];
   for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], w, false, ACT.lines); while (ACT.ev.length < ACT.lines.length) ACT.ev.push(i); }
+  return ACT.lines;
 }
 
 // the status glyph's kind: b busy (spinner), l live idle ●, r recent ○, o old ·
