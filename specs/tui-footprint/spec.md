@@ -166,7 +166,7 @@ interface Rows { n: number; t: number[]; tool: number[]; model: number[]; mq: nu
 - The calls file format (`callcache.ts`, columnar on disk already) decodes straight into the columns: no per-row
   object. `FORMAT` stays 2 (the file does not change).
 - Expected: ~110–120 B per row with `number[]` columns (~35 MB for 295k rows instead of 217 MB), less with typed arrays
-  if scriptc 0.1.7 supports growing them (Open question 1).
+  if scriptc 0.1.7 supports growing them (Task 0 probe 1).
 
 ### 6. Process scan (Linux: /proc, incremental)
 - `Platform.listProcs` on Linux reads `/proc` itself instead of spawning `ps`:
@@ -325,8 +325,10 @@ Each: question · options · decision · why · cost if wrong.
    re-index (minutes). Cost if wrong: none for numbers — a wrong migration is caught by the golden `--warm` run, which
    starts the new binary from the old binary's cache.
 
-## Open questions (to verify during implementation)
-1. Do `Float64Array`/`Int32Array` exist in scriptc 0.1.7 with a cheap grow path? If not, `number[]` columns (5).
-2. `/proc/<pid>/task/<tid>/children` on the CI kernels (GitHub ubuntu runners): present? (6, fallback described.)
-3. Does `readLines` over a 4 MB window keep the 64 KB `own()` buffer issue away from the parsed strings? `accIn`
-   already `own()`s every kept string (`codec.ts:8-9`); the check measures RSS after load to confirm.
+## Open questions
+None left open. The three technical unknowns are checked in plan Task 0 (`src/util/footprint-probes.check.ts`), each
+with a named fallback that the later tasks follow without a new decision:
+1. Growable typed arrays in scriptc 0.1.7 → fallback: `number[]` columns (5; ~35 MB instead of ~20 MB for 295k rows).
+2. `/proc/<pid>/task/<tid>/children` on the CI kernels → fallback: children from new pids' ppid plus the 30 s full pass (6).
+3. The 64 KB `own()` buffer after a streamed load → fallback: `cachefile.ts` copies each line with `own()` before parsing,
+   and parsed strings keep going through `accIn`'s `own()` (2).

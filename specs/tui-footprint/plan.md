@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript → native binary via scriptc 0.1.7 (Node 24 to build), no runtime deps. Checks are standalone scriptc programs (`*.check.ts`), shell tests `scripts/*.test.sh`.
 
-**Spec:** [spec.md](spec.md) — read it first, including "Today" (the measured causes), "Decisions" and "Open questions".
+**Spec:** [spec.md](spec.md) — read it first, including "Today" (the measured causes) and "Decisions"; the former open questions are Task 0 Step 6 probes with fixed fallbacks.
 
 **Round:** 2 (after 2026.10.4). No other plan must be merged first. model-prices shares `codec.ts`/`VERSION` (spec "Interactions").
 
@@ -24,7 +24,7 @@
 
 | task | owns (only this task edits them in its wave) |
 |---|---|
-| T0 | `scripts/footprint.sh`, `scripts/golden-usage.sh`, `src/util/selfmem.ts` (new), `src/main.ts` (debug line only) |
+| T0 | `scripts/footprint.sh`, `scripts/golden-usage.sh`, `src/util/selfmem.ts` (new), `src/util/footprint-probes.check.ts` (new), `src/main.ts` (debug line only) |
 | T1 | `src/features/usage/cache.ts`, `src/features/usage/cachefile.ts` (new), `src/features/usage/cachefile.check.ts` (new), `src/features/cli.ts` (`--watch` read window), `scripts/cache-cli.test.sh`, `scripts/filter-cli.test.sh` (file name only) |
 | T2 | `src/features/usage/ledger.ts`, `src/features/usage/progress.ts` (new), `src/features/usage/ledger.check.ts` (new), `src/features/usage/stats.ts` (one import line) |
 | T3 | `src/platform/linux.ts`, `src/platform/procfs.ts` (new), `src/platform/procfs.check.ts` (new), `src/platform/types.ts`, `src/platform/darwin.ts`, `src/model/procs.ts` |
@@ -57,7 +57,7 @@ T0 and T6 both edit `src/main.ts`; T0 merges first, T6 rebases.
 
 ### Task 0: Footprint and golden scripts, RSS in the debug footer
 
-**Files:** Create `scripts/footprint.sh`, `scripts/golden-usage.sh`, `src/util/selfmem.ts`; Modify `src/main.ts:147` (debug line).
+**Files:** Create `scripts/footprint.sh`, `scripts/golden-usage.sh`, `src/util/selfmem.ts`, `src/util/footprint-probes.check.ts`; Modify `src/main.ts:147` (debug line).
 
 **Interfaces — Produces:**
 - `sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>]` prints exactly these lines: `first_frame_ms <n>`, `rss_mb_5s <n>`, `rss_mb_30s <n>`, `rss_mb_end <n>`, `cpu_self_pct <x.xx>`, `cpu_children_pct <x.xx>`, `cpu_total_pct <x.xx>`. Linux only (exits 2 with `footprint.sh: Linux only` elsewhere). `--warm` copies the dir into the scratch first.
@@ -70,8 +70,13 @@ T0 and T6 both edit `src/main.ts`; T0 merges first, T6 rebases.
 - [ ] **Step 3: Write `golden-usage.sh`.** Runs, with separate scratch caches and the same isolation env: `<bin> --json --subagents --fields id,harness,path,bytes,updated,tokens,costUsd,unpricedTokens,unpricedCredits,tools,linesAdded,linesRemoved,skills,billing`; the same with `--fields id` and each `--filter` of `'status is error'`, `'tool is Bash'`, `'duration > 30s'`; `cost --json --by session --since 30d`. `--cold`: both caches empty, ref first. `--warm`: ref indexes cold into A; A is copied to B; new runs on B. Comparison in `python3` (inline heredoc; repo scripts may use python3 — check `scripts/` precedent; if none, write it in POSIX awk over `--format jsonl`). Stable = in both, equal `bytes`, `updated` < ref start − 120 s.
 - [ ] **Step 4: Self-test of the golden script**: `sh scripts/golden-usage.sh --ref /tmp/claude-1000/agentglass-ref --new /tmp/claude-1000/agentglass-ref --warm --harness claude`. Expected: `compared ≥ 1000 stable sessions …` and `0 differences`. Then feed it a known difference: temporarily edit the new run's JSON in the scratch (the script keeps it under `--scratch`) via `GOLDEN_SELFTEST=1` that adds 1 to the first stable session's `tokens.in` → Expected `1 differences`, exit 1.
 - [ ] **Step 5: RSS in the debug footer.** In `turn()` (`main.ts:147`): `if (DBG.on) { const r = selfRssMb(); DBG.line = debugLine(sc, live(), armed(), why) + (r >= 0 ? " · rss " + String(r) + "M" : "") + extras(); }` with `extras()` joining `DEBUG_PARTS` results (" · " + each non-empty) and the same in `onData` (`main.ts:176`). Build; run `AGENTGLASS_DEBUG_REFRESH=1` through footprint's env once and `tmux capture-pane` the last row. Expected: `… · rss 8xxM` (≈ 810–830 on this host).
-- [ ] **Step 6: Baseline**: `sh scripts/footprint.sh --bin /tmp/claude-1000/agentglass-ref --warm <a cache made by golden --warm A> --warmup 30 --window 120` and `--cold --window 100`. Expected (spec "Today"): warm `first_frame_ms` 2200–2600, `rss_mb_end` 800–840, `cpu_total_pct` 15–22; cold `first_frame_ms` < 600. Paste into the PR.
-- [ ] **Step 7:** `sh scripts/check.sh` PASS. Commit `chore(perf): footprint and golden-usage scripts, rss in the debug footer`.
+- [ ] **Step 6: Probes for the three unknowns** in `src/util/footprint-probes.check.ts` (runs in CI with every check; it never fails on the outcome, only on a crash; it prints one `RULING` line per probe, which goes into the PR and decides the later tasks):
+  1. *Growable typed arrays.* Push 300,000 values into a `Float64Array` that doubles by copy (`new Float64Array(n * 2)` + `set`) and into a `number[]`; report whether both compile and run, the time, and `selfRssMb()` growth of each. `RULING typed-arrays yes` when the typed array builds, runs and grows ≤ 0.7 × the `number[]` growth; else `RULING typed-arrays no`. **Fallback (no):** T8 uses `number[]` columns (behind the same `Rows` interface; ~35 MB for 295k rows, still under target).
+  2. *`/proc` children files.* On Linux, read `/proc/self/task/<pid>/children` after spawning one `sleep 1` child (`execFileSync` is synchronous, so use `spawn` from `node:child_process` and read before it exits); `RULING proc-children yes` when the child's pid is listed, `no` when the file is missing or empty; elsewhere `RULING proc-children n/a`. **Fallback (no):** T3's `childrenOf` returns `[]`; new children of tracked agents are found from new pids' `ppid` in every incremental pass (they are new pids, so their `stat` is read anyway) and by the 30 s full pass; the debug footer shows `nochildren`.
+  3. *`own()` buffer after a streamed load.* Write a 40 MB JSONL file to a temp dir: 4,000 lines, each `{"path":"/p<i>","s":"<10 KB with escapes \\n>","k":"short<i>"}`; read it in 4 MB windows with `readLines`, `JSON.parse` each line, keep only `own(str(o["k"]))` in an array; report `selfRssMb()` growth. `RULING own-buffer ok` when growth ≤ 30 MB; else `RULING own-buffer copy`. **Fallback (copy):** T1's `readCache` passes `own(line)` to the parser and keeps nothing from a line it did not `own()`; T1 Step 8 re-measures RSS after load.
+  Expected on this host: all three print a `RULING` line; the check prints `footprint-probes: done` and exits 0.
+- [ ] **Step 6b: Baseline**: `sh scripts/footprint.sh --bin /tmp/claude-1000/agentglass-ref --warm <a cache made by golden --warm A> --warmup 30 --window 120` and `--cold --window 100`. Expected (spec "Today"): warm `first_frame_ms` 2200–2600, `rss_mb_end` 800–840, `cpu_total_pct` 15–22; cold `first_frame_ms` < 600. Paste into the PR.
+- [ ] **Step 7:** `sh scripts/check.sh` PASS. Commit `chore(perf): footprint and golden-usage scripts, probes, rss in the debug footer`.
 
 ---
 
@@ -163,7 +168,7 @@ if (bad) process.exit(1);
 
 - [ ] **Step 1: Failing check** `procfs.check.ts`: fixture tree under `/tmp/agentglass-procfs-<pid>/` with `stat`, `cmdline`, `task/<pid>/children` files, `stat` btime file. Cases: comm `a b) (c` parses ppid right; `ttyName` for `34816` (136:0 → `pts/0`), `34817` (`pts/1`), `1025` (4:1 → `tty1`), `1088` (4:64 → `ttyS0`), `0` → `?`; empty cmdline → `[kthreadd]`; second `scanProcs` with no change reads no `cmdline` (counter `PROCFS_STATS.cmdline` unchanged); a pid younger than 10 s re-reads its cmdline; a tracked pid's ticks change → CPU % = Δticks / hz / Δs × 100; a pid removed from the fixture → gone; a pid reused (same number, other `start`) → its new cmdline; `childrenOf` returns the union of two tasks.
 - [ ] **Step 2: Run** `scriptc build src/platform/procfs.check.ts -o /tmp/claude-1000/tf-pf && /tmp/claude-1000/tf-pf`. Expected: FAIL (module missing).
-- [ ] **Step 3: Implement** `procfs.ts`; wire `linux.ts`, `types.ts`, `darwin.ts`, `procs.ts`. Open question 2: on a kernel without `children` files `childrenOf` returns `[]` and the 30 s full pass plus new pids' ppid find the kids (set a module flag shown in the debug footer as `nochildren`).
+- [ ] **Step 3: Implement** `procfs.ts`; wire `linux.ts`, `types.ts`, `darwin.ts`, `procs.ts`. Per Task 0 probe 2 (`RULING proc-children`): on a kernel without `children` files `childrenOf` returns `[]` and the 30 s full pass plus new pids' ppid find the kids (set a module flag shown in the debug footer as `nochildren`).
 - [ ] **Step 4: Run** the check → `procfs: all checks passed`.
 - [ ] **Step 5: Agreement on this host** (a temporary check program, not committed, or a `--self-test`-free probe): call `psProcs()` and `scanProcs(real, …, full = true)` back to back; for every pid in both: same `ppid`, same `tty`, same `args` (except processes whose cmdline changed in between), `rss` within 10 %. Expected: ≥ 99 % of pids agree; paste the counts in the PR.
 - [ ] **Step 6: Measure.** Golden `--warm` → `0 differences` (`live`, `pid` are not compared; processes do not change numbers). Footprint warm with `AGENTGLASS_DEBUG_REFRESH=1`: procs EWMA ≤ 5 ms (was ~100 ms), no `procs slow`, `cpu_children_pct` ≤ 0.5 (was 5.0). Live count in the header equals `ps`-based main's on the same host (both side by side, one after the other).
@@ -250,9 +255,9 @@ if (bad) process.exit(1);
 **Interfaces — Produces:**
 - `rows.ts`: `export interface Rows { n: number; t: number[]; tool: number[]; model: number[]; mq: number[]; ms: number[]; err: number[]; out: number[]; lo: number[]; li: number[]; cid: string[] }`; `newRows()`; `push(r, t, tool, model, mq): number` (index; also pushes `lo[n] = li.length`); `addId(r, i, kind, id)` (only `i === r.n − 1`; dedupe within the row); `rowIds(r, i, kind): number[]`; `compact(r, keep: (i) => boolean): number[]` (old→new, −1 dropped); `KIND_PROG = 0, KIND_CMD = 1, KIND_FILE = 2`.
 - Reader signature: `eachCall(f, days, fn: (s: Sess, r: Rows, i: number) => void)`; same for `callsIn`, rule metrics, triage `keep` predicates.
-- Open question 1 first: if `Float64Array`/`Int32Array` grow cheaply in scriptc 0.1.7 (probe in Step 1), the numeric columns use them behind the same interface; otherwise `number[]`.
+- Task 0 probe 1 (`RULING typed-arrays`) decides: `yes` → the numeric columns are `Float64Array`s behind the same interface; `no` → `number[]`.
 
-- [ ] **Step 1: Probe** typed arrays: a 10-line scriptc program pushing 300k values into a doubling `Float64Array` vs a `number[]`, RSS via `selfRssMb()`. Record which wins; ruling in the PR.
+- [ ] **Step 1: Re-run** `src/util/footprint-probes.check.ts` and follow its `RULING typed-arrays` line; quote it in the PR.
 - [ ] **Step 2: Failing check** `rows.check.ts`: push 3 rows, `addId` cmd/file to the newest, `rowIds` per kind; `addId` on an older row is ignored; `compact` dropping row 0 returns `[-1, 0, 1]` and keeps `lo/li` consistent; 300k rows → `selfRssMb()` growth ≤ 45 MB.
 - [ ] **Step 3: Run** `scriptc build src/features/usage/rows.check.ts -o /tmp/claude-1000/tf-rw && /tmp/claude-1000/tf-rw`. Expected: FAIL.
 - [ ] **Step 4: Implement** `rows.ts`, then the ledger side (record, calls, callcache decode straight into columns, prune via `compact` + remap of `a.pend` (`p.ri`) and `a.lastCall`), then readers (mechanical: `c.x` → `r.x[i]`, `c.cmds` → `rowIds(r, i, KIND_CMD)`).
