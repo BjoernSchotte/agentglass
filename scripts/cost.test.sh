@@ -50,8 +50,8 @@ eq "--check with rows" "$rc2" 3
 eq "rows: day + total" "$(jq -r '.rows | map(.key) | length' < "$t/rows")" 2
 eq "rows: total cost" "$(jq -r '.rows[-1].costUsd' < "$t/rows")" 3
 eq "rows envelope source" "$(jq -r '.source' < "$t/rows")" ledger
-eq "by model csv" "$(run cost --by model --format csv | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions"
-eq "unpriced model row" "$(run cost --by model --format csv | grep '^gpt-x-unknown,')" "gpt-x-unknown,5000,0,0,0,,5000,1"
+eq "by model csv" "$(run cost --by model --format csv | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions,priceSource,estimated"
+eq "unpriced model row" "$(run cost --by model --format csv | grep "^gpt-x-unknown,")" "gpt-x-unknown,5000,0,0,0,,5000,1,unpriced,false"
 # a bad budget value: ignored with one warning on stderr, the run still succeeds
 printf '{"budget":{"monthlyUsd":"1"}}\n' > "$t/home/.agentglass/config.json"
 eq "bad budget" "$(run cost --json 2>"$t/err" | jq -r '.budget')" null

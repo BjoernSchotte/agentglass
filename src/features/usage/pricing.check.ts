@@ -42,6 +42,9 @@ ok("price+alias warns", w2.length === 1 && w2[0] === "gpt-6.1-sol: has input and
 const pa = resolve("gpt-6.1-sol", ""); ok("price wins over its own alias", !!pa && pa.src === "user" && pa.p.i === 1, pa ? pa.src : "null");
 const ga = resolve("gpt-z", "cliproxy"); ok("alias target via the gateway of the booking's provider", !!ga && ga.src === "alias" && ga.p.i === 1, ga ? ga.src : "null");
 ok("alias target gateway is scoped", resolve("gpt-z", "") === null, "priced");
+loadUser(JSON.parse('{"gpt-6.1-sol":{"input":1,"output":2},"gpt-6.1-sol-mini":{"alias":"claude-sonnet-4-5"}}'));
+const lm = resolve("gpt-6.1-sol-mini", ""); ok("a longer alias key beats a shorter price prefix", !!lm && lm.src === "alias", lm ? lm.src : "null");
+const sp = resolve("gpt-6.1-sol-x", ""); ok("the price prefix still covers other ids", !!sp && sp.src === "user", sp ? sp.src : "null");
 loadUser(JSON.parse('{"gemini-3.1-pro":{"input":1,"output":2}}'));
 const ut = resolve("gemini-3.1-pro-preview>200k", ""); ok("user price replaces tiers", !!ut && ut.src === "user" && ut.p.i === 1, ut ? ut.key : "null");
 loadUser(JSON.parse('{"gemini-2.5-pro>200k":{"input":3,"output":30}}'));

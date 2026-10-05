@@ -25,7 +25,7 @@ H.onTick.push(() => {
 });
 
 H.cli.push((args: string[]): boolean => {
-  if (args.indexOf("--update-prices") < 0) return false;
+  if (args.indexOf("--update-prices") < 0 && !(args[0] === "prices" && args[1] === "update")) return false; // prices update = --update-prices
   const c = remoteCfg();
   if (c.error) { console.error("agentglass: " + c.error); process.exit(2); }
   if (!c.source) { console.log("prices: " + pricesFrom() + " (community lists are off; " + OPT_IN + ")"); return true; }

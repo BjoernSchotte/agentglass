@@ -12,7 +12,7 @@ import { discover } from "./cli.ts";
 import { agentHost, agentScope, hostObj, cliError } from "./agentenv.ts";
 import { jsonHelp, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs } from "./format.ts";
-import { BY, COST_FIELDS, costRows, qopts, qfilter, printEnvelope } from "./queries.ts";
+import { BY, COST_FIELDS, MODEL_FIELDS, costRows, qopts, qfilter, printEnvelope } from "./queries.ts";
 import { startOfDay, dayKey, todayKey } from "./usage/record.ts";
 import { MODES } from "./usage/billing.ts";
 import { type ModeSum, money, kfmt, grp, unpricedLine, monthStart } from "./usage/costs.ts";
@@ -34,6 +34,7 @@ const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
 
   with --by, --since or --filter (without --by: by day; --since defaults to today): one row per key
     {key, in, out, cacheRead, cacheWrite, costUsd, unpricedTokens, sessions} plus a total row
+    (--by model adds priceSource = user|alias|gateway|community|built-in|harness|unpriced and estimated = alias-priced)
     (costUsd is null, never 0, for a row whose tokens are all unpriced; csv/jsonl/table print bare rows,
     json the {rows, source, scope} envelope); inside an agent only the current project (--all-projects: every one)
   --format json|jsonl|csv|table   (default: json in an agent or with --json, else table on a terminal)
@@ -118,7 +119,8 @@ function cost(args: string[]): void {
   const rows = costRows(since, by, sc, qfilter(o));
   const f: Fmt = { fmt: o.f.fmt || (o.json ? "json" : ""), fields: o.f.fields };
   const code = o.check && summary(o.harness).bs.state === "over" ? 3 : 0; // before printing: a failed write keeps it
-  printEnvelope(rows, "ledger", sc, f, COST_FIELDS, COST_FIELDS, code);
+  const cols = by === "model" ? MODEL_FIELDS : COST_FIELDS;
+  printEnvelope(rows, "ledger", sc, f, cols, cols, code);
   process.exit(code);
 }
 

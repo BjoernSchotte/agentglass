@@ -178,27 +178,25 @@ export function resolve(model: string, prov: string): Resolved | null {
   if (!model.startsWith("?")) { // old ledgers' gemini "?<id>": a variant no row may price
     const m = normModel(stripTiers(model));
     const y2027 = model.indexOf("@2027") >= 0; const big = model.indexOf(">200k") >= 0;
-    const u = walk(userP, m, false);
-    if (u) r = direct(m, prov, y2027, big);
-    else {
-      let al: Alias | null = null;
-      for (const x of userA) if (fits(m, x.p)) { al = x; break; }
-      if (al) { // one hop: the target never resolves through another alias
-        const t = direct(normModel(stripTiers(al.target)), prov, y2027, big);
-        r = t ? { p: t.p, src: "alias", key: al.p, via: al.target } : null;
-      } else r = direct(m, prov, y2027, big);
+    const al = userAlias(m);
+    if (!al) r = direct(m, prov, y2027, big);
+    else { // one hop: the target never resolves through another alias
+      const t = direct(normModel(stripTiers(al.target)), prov, y2027, big);
+      r = t ? { p: t.p, src: "alias", key: al.p, via: al.target } : null;
     }
   }
   memo.set(mk, r);
   return r;
 }
-// the target an alias entry names for a model ("" = none), for display of dead aliases
-export function aliasOf(model: string): string {
-  const m = normModel(stripTiers(model));
-  if (walk(userP, m, false)) return "";
-  for (const x of userA) if (fits(m, x.p)) return x.target;
-  return "";
+// the user alias that applies to a normalised id: the longest matching prices.json key wins, a price on the same key
+// beats an alias (the more specific statement); null = a user price or nothing
+function userAlias(m: string): Alias | null {
+  const u = walk(userP, m, false);
+  for (const x of userA) if (fits(m, x.p)) return u && u.p.length >= x.p.length ? null : x;
+  return null;
 }
+// the target an alias entry names for a model ("" = none), for display of dead aliases
+export function aliasOf(model: string): string { const a = userAlias(normModel(stripTiers(model))); return a ? a.target : ""; }
 // opt-in community list, as cached by the last refresh; prices.json, read once here (repricer.ts reloads it)
 const RC = remoteCfg();
 setRemote(RC.source ? loadCached(RC.source) : null);
