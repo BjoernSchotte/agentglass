@@ -4,11 +4,12 @@ import { firstLine } from "../util/text.ts";
 import { own } from "../util/own.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
-import { readBytes } from "../util/fs.ts";
+import { readBytes, KNOWN } from "../util/fs.ts";
 import { S } from "../state.ts";
 import { H, applyMeta } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
+KNOWN.mtime = (path: string): number => { const s = sessions.get(path); return s ? s.mtime : 0; };
 export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 
 // a known log is stat'ed when it is pid-linked or written within a day; the rest in turns, 1/ROT of them per scan (~once a

@@ -127,9 +127,12 @@ function linkSig(): string {
 }
 export function refreshSlow(): void {
   // cwd + open rollout files of every harness proc — nested ones too (codex app-server under its daemon holds the rollouts), tmux panes
-  const hp: number[] = [];
-  for (const p of allProcs.values()) if (p.h) hp.push(p.pid);
-  const f = OS.procFiles(hp, (n: string) => { for (const ad of HARNESSES) { const lf = ad.liveFile; if (lf && lf(n)) return true; } return false; });
+  // open files only of the harnesses that keep their transcript open (liveFile): a walk over every fd of every agent
+  // process was most of this job
+  const hp: number[] = []; const fp = new Set<number>(); const lf = new Set<string>();
+  for (const ad of HARNESSES) if (ad.liveFile) lf.add(ad.id);
+  for (const p of allProcs.values()) if (p.h) { hp.push(p.pid); if (lf.has(p.h)) fp.add(p.pid); }
+  const f = OS.procFiles(hp, fp, (n: string) => { for (const ad of HARNESSES) { const lf = ad.liveFile; if (lf && lf(n)) return true; } return false; });
   cwdByPid.clear(); filePid.clear();
   for (const [k, v] of f.cwd) cwdByPid.set(k, v);
   for (const [k, v] of f.open) filePid.set(k, v);

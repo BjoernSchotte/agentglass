@@ -33,6 +33,13 @@ now += 3000; setDirTime(now - 5000); names(); // listed with this mtime
 const mt = statSync(dir).mtimeMs; writeFileSync(dir + "/d.jsonl", "w\n"); setDirTime(mt); // the mtime "did not move"
 n0 = FS_STATS.lists; now += 30000; eq("within a minute: cached", names(), "a.jsonl,b.jsonl,c.jsonl"); eq("not listed", String(FS_STATS.lists - n0), "0");
 now += 31000; n0 = FS_STATS.lists; eq("after a minute: listed again", names(), "a.jsonl,b.jsonl,c.jsonl,d.jsonl"); eq("relisted", String(FS_STATS.lists - n0), "1");
+// aged (no new entries expected): looked at once a minute only; a missing aged dir is remembered as missing as long
+let st0 = FS_STATS.stats; now += 1000; names(); listDirCached(dir, true); eq("aged right after a listing: no stat", String(FS_STATS.stats - st0 - 1), "0");
+writeFileSync(dir + "/e.jsonl", "v\n"); setDirTime(now - 3000);
+now += 30000; eq("aged within a minute: old listing", listDirCached(dir, true).slice().sort().join(","), "a.jsonl,b.jsonl,c.jsonl,d.jsonl");
+now += 31000; eq("aged after a minute: listed", listDirCached(dir, true).slice().sort().join(","), "a.jsonl,b.jsonl,c.jsonl,d.jsonl,e.jsonl");
+st0 = FS_STATS.stats; eq("aged missing", String(listDirCached(dir + "/nope", true).length + listDirCached(dir + "/nope", true).length), "0");
+eq("aged missing: one stat", String(FS_STATS.stats - st0), "1");
 // a missing directory lists as [] and is forgotten
 rmSync(dir, { recursive: true, force: true });
 eq("gone", names(), "");

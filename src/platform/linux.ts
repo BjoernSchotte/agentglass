@@ -40,11 +40,12 @@ function cpuOf(pid: number, reported: number, now: number): number {
   return cpu;
 }
 function realpath(p: string): string { try { return realpathSync(p); } catch (e) { return ""; } }
-function procFiles(pids: number[], want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> } {
+function procFiles(pids: number[], fdPids: Set<number>, want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> } {
   const cwd = new Map<number, string>(); const open = new Map<string, number>();
   for (const pid of pids) {
     const c = realpath("/proc/" + pid + "/cwd");
     if (c) cwd.set(pid, c);
+    if (!fdPids.has(pid)) continue;
     const dir = "/proc/" + pid + "/fd";
     for (const fd of listDir(dir)) { const n = realpath(dir + "/" + fd); if (n && want(n)) open.set(n, pid); }
   }

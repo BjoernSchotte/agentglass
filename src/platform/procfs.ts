@@ -54,11 +54,13 @@ export const YOUNG_MS = 10000;
 // launchers that exec into what they start (sh -c, env, npx…): only these are re-read while young; an interpreter or a
 // binary keeps its command line, its children are new pids
 const EXECS = ["sh", "bash", "zsh", "dash", "fish", "env", "npx", "npm", "pnpm", "yarn", "bunx", "uv", "uvx", "sudo", "nohup", "timeout", "script", "exec"];
-export const PROCFS_STATS = { stat: 0, cmdline: 0 }; // reads, for checks
+export const PROCFS_STATS = { stat: 0, cmdline: 0, comm: 0 }; // reads, for checks
 // per pid: the row handed out (kept across passes) and the last stat sample for the CPU delta
 // comm = the name from the last stat; args = its command line was read (only for processes that may be agents: want)
 interface Ent { row: ProcRow; start: number; startMs: number; tty: number; t: number; at: number; seen: number; comm: string; args: boolean; rssAt: number }
-const PF = { root: "", pass: 0, bootMs: 0, ents: new Map<number, Ent>(), out: [] as ProcRow[] };
+// wait: new pids whose name is not an agent's or an interpreter's, seen once (by their name only): read on the next pass
+// if still there (most of a busy host's new processes live less than a pass: a shell command, git)
+const PF = { root: "", pass: 0, bootMs: 0, ents: new Map<number, Ent>(), out: [] as ProcRow[], wait: new Map<number, number>() };
 const RSS_EVERY = 4; // a tracked pid's resident size every 4th pass (~6 s): its cpu needs the stat every pass, not this
 // boot time in ms: now − /proc/uptime as ps computes elapsed time (btime is whole seconds: etime would run up to 1 s
 // ahead of ps); btime where there is no uptime file
@@ -69,6 +71,14 @@ function bootMs(fs: ProcFs, now: number): number {
 
 // one buffer for every stat read (hundreds a pass)
 const SB = new Uint8Array(1024);
+// a process's name from /proc/<pid>/comm: the cheapest read there is ("" = gone)
+function readComm(fs: ProcFs, pid: number): string {
+  PROCFS_STATS.comm++;
+  let n = 0;
+  try { const fd = openSync(fs.root + "/" + String(pid) + "/comm", "r"); try { n = readSync(fd, SB, 0, 64, 0); } finally { closeSync(fd); } } catch (e) { return ""; }
+  while (n > 0 && (SB[n - 1] === 10 || SB[n - 1] === 0)) n--;
+  return new TextDecoder("utf-8").decode(SB.subarray(0, n));
+}
 function readStat(fs: ProcFs, pid: number): Stat | null {
   PROCFS_STATS.stat++;
   let n = 0;
@@ -102,7 +112,7 @@ function pidOf(name: string): number {
 // pid or its new child, and again when the name changed (an exec); other rows have args "". cpu is the recent % from
 // the tick delta since the last sample (0 on the first). The array is reused: callers read it before the next pass.
 export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: boolean, want: (comm: string) => boolean = (c: string): boolean => true): ProcRow[] {
-  if (PF.root !== fs.root) { PF.root = fs.root; PF.ents.clear(); }
+  if (PF.root !== fs.root) { PF.root = fs.root; PF.ents.clear(); PF.wait.clear(); }
   if (full || !PF.bootMs) PF.bootMs = bootMs(fs, now); // again on full passes: the wall clock may have been stepped
   PF.pass++; const pass = PF.pass; const out = PF.out; out.length = 0;
   for (const name of listDir(fs.root)) {
@@ -110,7 +120,13 @@ export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: b
     let e = PF.ents.get(pid);
     const tr = tracked.has(pid);
     const young = e !== undefined && now - e.startMs < YOUNG_MS && EXECS.indexOf(e.comm) >= 0;
+    if (!e && !full && !PF.wait.has(pid)) { // first sight: only its name; an agent or an interpreter is read at once
+      const c = readComm(fs, pid);
+      if (!c) continue;
+      if (!want(c) || EXECS.indexOf(c) >= 0) { PF.wait.set(pid, pass); continue; }
+    }
     if (!e || full || young || tr) {
+      PF.wait.delete(pid);
       const st = readStat(fs, pid);
       if (!st) { if (e) PF.ents.delete(pid); continue; } // gone between the listing and the read
       if (e && e.start !== st.start) e = undefined; // pid reused
@@ -135,6 +151,7 @@ export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: b
     out.push(e.row);
   }
   for (const [pid, e] of PF.ents) if (e.seen !== pass) PF.ents.delete(pid);
+  for (const [pid, p] of PF.wait) if (p !== pass) PF.wait.delete(pid); // gone before its second pass (or read now)
   return out;
 }
 // /proc is usable: a numbered entry and a boot time (else the caller falls back to ps)

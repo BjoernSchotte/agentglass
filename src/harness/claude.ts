@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join, dirname } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { CLAUDE, readText, readBytes, listDir, listDirCached } from "../util/fs.ts";
+import { CLAUDE, readText, readBytes, listDir, listDirCached, KNOWN } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
@@ -17,15 +17,35 @@ import { toolArg, blockText, isNoise, leadTag, prompts } from "./common.ts";
 const PROJECTS = join(CLAUDE, "projects");
 
 // ~/.claude/projects/<project>/<session>.jsonl, subagents in <project>/<session>/subagents/agent-<id>.jsonl
+// a project dir's logs and subagent dirs as paths, kept while its listing is the same (no path building per scan)
+const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][] }>();
+const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
+const DAY_MS = 86400000;
 function scan(add: AddFn): void {
   for (const proj of listDirCached(PROJECTS)) {
-    for (const f of listDirCached(join(PROJECTS, proj))) {
-      if (f.endsWith(".jsonl")) { add(join(PROJECTS, proj, f), f.slice(0, -6), "", false); continue; }
-      if (f.length !== 36) continue; // <session-uuid>/ dirs hold subagent transcripts
-      const sd = join(PROJECTS, proj, f, "subagents");
-      for (const a of listDirCached(sd)) if (a.endsWith(".jsonl")) add(join(sd, a), a.slice(6, -6), f, false);
+    const pd = join(PROJECTS, proj); const names = listDirCached(pd);
+    let m = PJ.get(pd);
+    if (!m || m.names !== names) {
+      m = { names, logs: [], subs: [] };
+      for (const f of names) {
+        if (f.endsWith(".jsonl")) m.logs.push([join(pd, f), f.slice(0, -6)]);
+        else if (f.length === 36) m.subs.push([join(pd, f, "subagents"), f, join(pd, f + ".jsonl")]); // <session-uuid>/ dirs hold subagent transcripts
+      }
+      PJ.set(pd, m);
+    }
+    for (const l of m.logs) add(l[0] ?? "", l[1] ?? "", "", false);
+    const now = Date.now();
+    for (const d of m.subs) {
+      const sd = d[0] ?? ""; const f = d[1] ?? "";
+      const pm = KNOWN.mtime(d[2] ?? ""); // its session not written within a day: no new subagents now, looked at once a minute
+      const ns = listDirCached(sd, pm > 0 && now - pm >= DAY_MS);
+      let k = SD.get(sd);
+      if (!k || k.names !== ns) { k = { names: ns, logs: [] }; for (const a of ns) if (a.endsWith(".jsonl")) k.logs.push([join(sd, a), a.slice(6, -6)]); SD.set(sd, k); }
+      for (const l of k.logs) add(l[0] ?? "", l[1] ?? "", f, false);
     }
   }
+  if (PJ.size > 4096) PJ.clear();
+  if (SD.size > 65536) SD.clear();
 }
 // subagents: agent-<id>.meta.json {agentType, description, model, toolUseId}
 function meta(s: Sess): void {

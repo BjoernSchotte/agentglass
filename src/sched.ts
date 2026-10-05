@@ -12,7 +12,8 @@ export interface Act { now: number; input: number; focusOut: number; replay: boo
 export interface JS { last: number; ew: number } // last run, EWMA of its duration (ms)
 // unf: focus-out reported and no focus-in since (render capped at 1/s); burst: ledger indexing pending, its tick keeps
 // the level's cadence (the 100 ms slice per tick is the one intentional burst, not a cost to stretch away)
-export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; burst: boolean; js: Map<string, JS> }
+// fastMs: the fast job's interval while armed (50 ms for a replay; the marquee steps every 150 ms: more turns only cost)
+export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; burst: boolean; js: Map<string, JS>; fastMs: number }
 
 const LV: Level[] = ["hot", "warm", "idle", "away"];
 const JUMP = 600000; // a job last run more than 10 min ago (suspend) or in the future (clock went back) runs now
@@ -59,7 +60,7 @@ export function levelOf(a: Act): Level {
 export function newSched(fixed: boolean, winch: boolean, now: number): Sched {
   const js = new Map<string, JS>();
   for (const j of JOBS) js.set(j, { last: now, ew: 0 });
-  return { fixed, winch, lv: "warm", unf: false, burst: false, js };
+  return { fixed, winch, lv: "warm", unf: false, burst: false, js, fastMs: 50 };
 }
 
 export function base(j: Job, lv: Level, live: boolean, fixed: boolean, winch: boolean): number {
@@ -79,6 +80,7 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
   if (j === "tick" && sc.burst) return sc.lv === "hot" ? 250 : b; // ledger indexing: 100 ms slices at 250 ms while hot, no stretch
   let e = x ? Math.max(b, 20 * x.ew) : b;
   if (j === "render" && sc.unf) e = Math.max(e, 1000); // unfocused: draw ≤ 1/s, ingest and alarms keep their cadence
+  if (j === "fast") e = Math.max(e, sc.fastMs);
   return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
 }
 

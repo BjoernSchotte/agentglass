@@ -22,6 +22,8 @@ eq("nothing", levelOf(act(0, 0, false, 0, false, false)), "idle");
 eq("focus-out and indexing", levelOf(act(0, t - 1000, false, 0, true, false)), "hot");
 eq("focus-out, live: away", levelOf(act(0, t - 1000, false, 0, false, true)), "away");
 
+// ── the fast job follows what is armed: 50 ms for a replay, the marquee's 150 ms otherwise ──
+{ const f = newSched(false, false, t); f.lv = "hot"; eq("fast default (replay)", String(every(f, "fast", false, true)), "50"); f.fastMs = 150; eq("fast for the marquee", String(every(f, "fast", false, true)), "150"); eq("fast unarmed", String(every(f, "fast", false, false)), "-1"); }
 // ── table ──
 eq("scan idle", String(base("scan", "idle", false, false, false)), "10000");
 eq("procs idle live", String(base("procs", "idle", true, false, false)), "1500");

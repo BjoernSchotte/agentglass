@@ -12,7 +12,7 @@ export const darwin: Platform = {
   listProcs: (tracked: Set<number>, wantArgs: (comm: string) => boolean) => psProcs(),
   cpuOf: (pid: number, reported: number, now: number) => reported,
   prune: (alive: (pid: number) => boolean) => { /* stateless */ },
-  procFiles: lsofFiles,
+  procFiles: (pids: number[], fdPids: Set<number>, want: (path: string) => boolean) => lsofFiles(pids, want),
   ttyDevice: devOf,
   clipboardCmds: () => [["pbcopy"]],
   notify: (title: string, subtitle: string, msg: string) =>

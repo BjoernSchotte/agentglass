@@ -16,8 +16,9 @@ export interface Platform {
   cpuOf(pid: number, reported: number, now: number): number;
   // drop per-process state of pids that are gone
   prune(alive: (pid: number) => boolean): void;
-  // cwd per pid and the pid holding each open file for which want(path) is true
-  procFiles(pids: number[], want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> };
+  // cwd per pid and the pid holding each open file for which want(path) is true; only the open files of fdPids are looked
+  // at (an adapter that lists all at once may look at all)
+  procFiles(pids: number[], fdPids: Set<number>, want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> };
   // the tty's device path as tmux reports pane_tty, "" when the process has none
   ttyDevice(tty: string): string;
   // native clipboard commands to try in order (text on stdin); tmux and OSC 52 are tried after them

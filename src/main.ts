@@ -124,6 +124,7 @@ let lastBuild = 0; let scanSig = ""; let watchSig = ""; let gen = 0;
 function live(): boolean { return procs.length > 0; }
 let why = "";
 function relevel(now: number): void {
+  sc.fastMs = replaying() ? 50 : 150; // a replay steps at 50 ms; the marquee moves every 150 ms (ticker.ts)
   const a = { now, input: act.input, focusOut: act.focusOut, replay: replaying(), grow: act.grow, indexing: indexing() || backlog(), live: live() };
   sc.lv = levelOf(a); sc.burst = a.indexing; if (DBG.on) why = sc.lv !== "hot" ? "" : hotWhy(a) + (a.indexing ? " " + bytes(L.total - L.done) + " left" : "");
 }

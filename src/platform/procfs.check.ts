@@ -41,7 +41,7 @@ writeFileSync(join(root, "self"), ""); // non-numeric entries are skipped
 function proc(pid: number, comm: string, ppid: number, tty: number, ticks: number, start: number, args: string): void {
   const d = join(root, String(pid)); mkdirSync(d, { recursive: true });
   writeFileSync(join(d, "stat"), statLine(pid, comm, "S", ppid, tty, ticks, start, 10));
-  writeFileSync(join(d, "cmdline"), args);
+  writeFileSync(join(d, "cmdline"), args); writeFileSync(join(d, "comm"), comm + "\n");
   writeFileSync(join(d, "statm"), "5000 7 2 1 0 3 0\n"); // resident 7 pages: what ps shows, not stat's rss (10)
 }
 const fs: ProcFs = { root, hz: 100, page: 4096, btime: btimeOf(root) };
@@ -76,6 +76,9 @@ rows = scanProcs(fs, T0 + 3100, tr, false);
 const c3 = byPid(rows, 500); eq("pass < 500 ms: cpu kept", c3 ? c3.cpu.toFixed(1) : "", "50.0");
 // a young pid (started 2 s ago) re-reads its cmdline: sh -c → node → agent
 proc(600, "sh", 500, 34816, 0, (1000 + 2) * 100 + 300, "sh\0-c\0node x\0");
+n0 = PROCFS_STATS.stat;
+rows = scanProcs(fs, T0 + 4900, none(), false);
+ok("a new launcher waits a pass (its name only)", byPid(rows, 600) === null && PROCFS_STATS.stat === n0, "listed");
 rows = scanProcs(fs, T0 + 5000, none(), false);
 const y = byPid(rows, 600); eq("young first", y ? y.args : "", "sh -c node x");
 proc(600, "node", 500, 34816, 0, (1000 + 2) * 100 + 300, "node\0/x/gemini\0");
@@ -111,7 +114,7 @@ rows = scanProcs(fs, T0 + 15000, none(), false);
 const lg = byPid(rows, 900); eq("long cmdline", lg ? String(lg.args.length) : "", String(5 + 5000));
 // zombie: [comm] <defunct>, as ps prints it
 const zd = join(root, "800"); mkdirSync(zd, { recursive: true });
-writeFileSync(join(zd, "stat"), statLine(800, "dead", "Z", 1, 0, 0, 100, 0)); writeFileSync(join(zd, "cmdline"), "");
+writeFileSync(join(zd, "stat"), statLine(800, "dead", "Z", 1, 0, 0, 100, 0)); writeFileSync(join(zd, "cmdline"), ""); writeFileSync(join(zd, "comm"), "dead\n");
 rows = scanProcs(fs, T0 + 15500, none(), false);
 const z = byPid(rows, 800); eq("zombie", z ? z.args : "", "[dead] <defunct>");
 
@@ -126,11 +129,15 @@ const want = (c: string): boolean => c === "node" || c === "claude";
 proc(1100, "cron", 1, 0, 0, 100, "/usr/sbin/cron\0-f\0");
 proc(1101, "node", 1, 0, 0, 100, "node\0/x/claude\0");
 n0 = PROCFS_STATS.cmdline;
+rows = scanProcs(fs, T0 + 19900, none(), false, want); // cron waits a pass, node is read at once
+ok("non-agent waits, agent at once", byPid(rows, 1100) === null && byPid(rows, 1101) !== null, "");
 rows = scanProcs(fs, T0 + 20000, none(), false, want);
 const cr = byPid(rows, 1100); const nd = byPid(rows, 1101);
 eq("not an agent's name: no cmdline", cr ? cr.args : "x", ""); eq("node: cmdline", nd ? nd.args : "", "node /x/claude"); eq("one cmdline read", String(PROCFS_STATS.cmdline - n0), "1");
 const t11 = new Set<number>(); t11.add(1100);
 proc(1102, "sh", 1100, 0, 0, 100, "sh\0-c\0ls\0");
+rows = scanProcs(fs, T0 + 21400, t11, false, want); // the shell waits a pass
+ok("a short-lived-looking shell is not read on first sight", byPid(rows, 1102) === null, "listed");
 rows = scanProcs(fs, T0 + 21500, t11, false, want);
 const cr2 = byPid(rows, 1100); const ch = byPid(rows, 1102);
 eq("tracked: cmdline read", cr2 ? cr2.args : "", "/usr/sbin/cron -f"); eq("a tracked pid's new child: cmdline", ch ? ch.args : "", "sh -c ls");
@@ -146,6 +153,15 @@ rows = scanProcs(fs, T0 + 32000, none(), false, want); const x1 = byPid(rows, 11
 eq("exec not seen between full passes", x1 ? x1.args : "", "/usr/sbin/cron -f");
 rows = scanProcs(fs, T0 + 33500, none(), true, want); const x2 = byPid(rows, 1100);
 eq("full pass: exec seen", x2 ? x2.args : "", "node /x/claude --resume");
+
+// a non-agent process gone before the next pass costs only its name
+rmSync(join(root, "700"), { recursive: true, force: true });
+proc(1200, "git", 1, 0, 0, 100, "git\0status\0");
+s0 = PROCFS_STATS.stat; let c0 = PROCFS_STATS.comm;
+rows = scanProcs(fs, T0 + 40000, none(), false, want);
+rmSync(join(root, "1200"), { recursive: true, force: true });
+rows = scanProcs(fs, T0 + 41500, none(), false, want);
+eq("short-lived: one name read, no stat", String(PROCFS_STATS.comm - c0) + "/" + String(PROCFS_STATS.stat - s0), "1/0");
 
 // ── fallback to ps: /proc missing or without a boot time ──
 ok("missing root → not usable", !procfsUsable({ root: join(root, "nope"), hz: 100, page: 4096, btime: 1 }), "usable");

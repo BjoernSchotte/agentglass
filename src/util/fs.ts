@@ -55,20 +55,27 @@ export function listDir(p: string): string[] { try { return readdirSync(p); } ca
 // change within the same coarse mtime tick must not be missed), and at least once a minute it is listed anyway
 // (filesystems whose directory mtime does not move). A missing directory lists as [] and is forgotten. The array is
 // shared: callers must not change it.
+// aged: the caller knows the directory gets no new entries now (a subagent dir of a session not written within a day):
+// its mtime is looked at only once a minute, and a missing one is remembered as missing for that long
 export const FS_CLOCK = { now: (): number => Date.now() };
-export const FS_STATS = { lists: 0 }; // real listings (checks)
-const DIRS = new Map<string, { mt: number; at: number; names: string[] }>();
+export const FS_STATS = { lists: 0, stats: 0 }; // real listings and directory stats (checks)
+const DIRS = new Map<string, { mt: number; at: number; st: number; names: string[] }>();
 const FRESH_MS = 2000; const RELIST_MS = 60000;
-export function listDirCached(p: string): string[] {
-  let mt = 0;
-  try { mt = statSync(p).mtimeMs; } catch (e) { DIRS.delete(p); return []; }
+const NONE: string[] = [];
+export function listDirCached(p: string, aged: boolean = false): string[] {
   const now = FS_CLOCK.now(); const e = DIRS.get(p);
-  if (e && e.mt === mt && now - mt >= FRESH_MS && now - e.at < RELIST_MS) return e.names;
+  if (aged && e && now - e.st < RELIST_MS) return e.names;
+  let mt = 0; FS_STATS.stats++;
+  try { mt = statSync(p).mtimeMs; } catch (x) { if (aged) DIRS.set(p, { mt: -1, at: now, st: now, names: NONE }); else DIRS.delete(p); return NONE; }
+  if (e && e.mt === mt && now - mt >= FRESH_MS && now - e.at < RELIST_MS) { e.st = now; return e.names; }
   FS_STATS.lists++;
   const names = listDir(p);
-  DIRS.set(p, { mt, at: now, names });
+  DIRS.set(p, { mt, at: now, st: now, names });
   return names;
 }
+// the mtime of a session log the scan already knows (sessions.ts sets it; 0 = unknown): lets a harness scan tell an
+// old session's subagent dir (aged) from a working one's without a stat
+export const KNOWN = { mtime: (path: string): number => 0 };
 export function run(cmd: string, args: string[]): string {
   try { return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 }); } catch (e) { return ""; }
 }
