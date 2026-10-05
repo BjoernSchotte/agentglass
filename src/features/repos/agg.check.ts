@@ -9,6 +9,7 @@ import { type Acc, type Day, L, newAcc, newDay, todayKey, lastDays, bucket, tool
 import { MQ_MSG } from "../usage/facts.ts";
 import { newTS, newCnt, done } from "../usage/calls.ts";
 import { parse } from "../query/parse.ts";
+import { MPS } from "../query/ui.ts";
 import { EMPTY, compile } from "../query/eval.ts";
 import { aggregate } from "../query/agg.ts";
 import { identOf } from "../query/project.ts";
@@ -69,6 +70,8 @@ eq("paths newest first", x ? String(x.paths.length) : "", "2");
 const fc = compile(parse("harness is codex").cs, "stats").f ?? EMPTY;
 const rc = repoAgg([TODAY], fc); const xc = byKey(rc, "git:github.com/me/x");
 eq("filter: codex share only", xc ? String(xc.cost) + " " + String(xc.sessions) : "", "4 1"); eq("filter: other project gone", String(rc.length), "1");
+// a content clause asks its matching paths once per aggregation, not per session (each ask walks every session)
+{ const n0 = MPS.asks; repoAgg([TODAY], compile(parse("content ~ zzz").cs, "stats").f ?? EMPTY); eq("content paths asked once", String(MPS.asks - n0), "1"); }
 // cross-check with aggregate()
 const dist = aggregate(EMPTY, "session", [TODAY], ["repo"], "cost");
 const ds = dist[0]; const bx = ds ? ds.vals.get("me/x") : undefined; const bo = ds ? ds.vals.get("me/other") : undefined;

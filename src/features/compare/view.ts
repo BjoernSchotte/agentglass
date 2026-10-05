@@ -19,10 +19,10 @@ import type { Bill } from "../usage/billing.ts";
 import { statsDrill, statsTabIndex } from "../usage/stats.ts";
 import { callDays } from "../usage/callcache.ts";
 import type { Clause } from "../query/types.ts";
-import { parse, print, printClause } from "../query/parse.ts";
-import { compile, callCutoff } from "../query/eval.ts";
-import { addClause, effective, localFor, shownClause } from "../query/scope.ts";
-import { complete } from "../query/ui.ts";
+import { print, printClause } from "../query/parse.ts";
+import { callCutoff } from "../query/eval.ts";
+import { includeClause, effective, localFor, shownClause } from "../query/scope.ts";
+import { cycleNext, exprErr, newCyc } from "../query/ui.ts";
 import { shown, newRun } from "../triage/run.ts";
 import { openTriage, onInclude } from "../triage/view.ts";
 import { type Group, type Cmp, type CmpJob, type Metric, NOSUB, groupOfExpr, groupClauses, cmpJob, cmpStep, cmpProgress, cmpCached, cmpKey, costCell } from "./metrics.ts";
@@ -336,7 +336,7 @@ function triageAB(st: CState): void {
 // triage's + / − edit group A (the compare view is a non-tab origin)
 onInclude("Compare", (cl: Clause): string => {
   const st = CV.st; if (!st) return "";
-  const cs = addClause(st.A.cs, cl).cs; st.A = { label: print(cs), cs, single: null }; st.note = ""; changed(st);
+  const cs = includeClause(st.A.cs, cl).cs; st.A = { label: print(cs), cs, single: null }; st.note = ""; changed(st);
   return "group A: + " + shownClause(cl);
 });
 function cycle(st: CState, d: number): void {
@@ -412,22 +412,17 @@ function slice(): void {
   if (counting()) pump();
 }
 // a / b: a group's expression, live validation and tab completion; an error keeps the input open
-const cyc = { base: "", cands: [] as string[], i: 0, last: "" };
-function exprErr(t: string): string { if (!t.trim()) return "type an expression, e.g. model ~ opus or session is claude:abc123"; const p = parse(t); if (p.err) return p.err.msg; const c = compile(p.cs, "list"); return c.err ? c.err.msg : ""; }
+const cyc = newCyc();
+function groupErr(t: string): string { return exprErr(t, "list", "type an expression, e.g. model ~ opus or session is claude:abc123"); }
 H.input.push((action: string, ev: string, text: string): boolean => {
   if (action !== "cmp-a" && action !== "cmp-b") return false;
   const st = CV.st; if (!st) return false;
-  if (ev === "change") { S.inputErr = text.trim() ? exprErr(text) : ""; if (text !== cyc.last) cyc.cands = []; return false; }
-  if (ev === "tab") {
-    if (cyc.cands.length && text === cyc.last) cyc.i = (cyc.i + 1) % cyc.cands.length;
-    else { const cs = complete(text, true); if (!cs.length) return false; const m = /\S*$/.exec(text); const cur = m ? m[0] : ""; cyc.base = text.slice(0, text.length - cur.length); cyc.cands = cs; cyc.i = 0; }
-    const next = cyc.base + (cyc.cands[cyc.i] ?? "") + " "; S.inputText = next; cyc.last = next; S.inputErr = exprErr(next);
-    return false;
-  }
+  if (ev === "change") { S.inputErr = text.trim() ? groupErr(text) : ""; if (!text.trim()) S.inputErrCol = -1; if (text !== cyc.last) cyc.cands = []; return false; }
+  if (ev === "tab") { const next = cycleNext(cyc, text); if (next) { S.inputText = next; S.inputErr = groupErr(next); } return false; }
   if (ev === "esc") { S.inputErr = ""; return false; }
   if (ev !== "enter") return false;
   const r = groupOfExpr(text); const g = r.g;
-  if (!g) { S.inputErr = r.err ? r.err.msg : "invalid expression"; return true; }
+  if (!g) { S.inputErr = groupErr(text) || (r.err ? r.err.msg : "invalid expression"); return true; } // groupErr: the column too
   if (action === "cmp-a") st.A = g; else st.B = g;
   st.note = ""; changed(st);
   return false;

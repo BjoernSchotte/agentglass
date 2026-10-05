@@ -26,7 +26,7 @@ import { parse } from "../query/parse.ts";
 import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
 import { type Totals, totals } from "../query/agg.ts";
 import { setLocal } from "../query/scope.ts";
-import { tabFilter, chips, matchingPaths, callsChip } from "../query/ui.ts";
+import { tabFilter, chips, contentOk, callsChip } from "../query/ui.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export { kfmt, grp };
@@ -46,14 +46,14 @@ function addCnt(m: Map<string, Cnt>, k: string, n: number, err: number, add: num
   c.add = c.add + add; c.del = c.del + del;
 }
 const cache = new Map<string, Agg>();
-// the session passes the filter's session clauses and its content clauses (full-text) — EMPTY passes everything
-function sessOk(f: Compiled, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && (!f.content.length || matchingPaths(f).has(s.path))); }
+// the session passes the filter's session clauses and its content clauses (full-text; ok = contentOk(f)) — EMPTY passes everything
+function sessOk(f: Compiled, ok: (path: string) => boolean, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && ok(s.path)); }
 // per (session path, day): the matching call rows of a filter with call clauses (tools, errors, per tool, per hour)
 interface RowDay { n: number; names: Map<string, Cnt>; hours: number[] }
-function rowDays(f: Compiled, days: string[]): Map<string, RowDay> {
+function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean): Map<string, RowDay> {
   const m = new Map<string, RowDay>();
   eachCall(f, days, (s: Sess, c: Call) => {
-    if (f.content.length && !matchingPaths(f).has(s.path)) return;
+    if (!cp(s.path)) return;
     const k = s.path + "\t" + localOf(c.t).day;
     let r = m.get(k); if (!r) { r = { n: 0, names: new Map<string, Cnt>(), hours: zeros(24) }; m.set(k, r); }
     r.n++; addCnt(r.names, nameOf(DICT.tool, c.tool), 1, c.err === 1 ? 1 : 0, 0, 0);
@@ -67,12 +67,13 @@ function aggF(days: string[], f: Compiled): Agg {
   if (hit && hit.ver === L.ver && Date.now() - hit.at < 5000) return hit;
   const rows = HARNESSES.map((ad) => ha(ad.id)); const tot = ha("total");
   const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls };
-  const rows0 = f.needsCalls; const rd = rows0 ? rowDays(f, days) : new Map<string, RowDay>(); // call clauses: tools from matching rows, money from the session-days holding them
+  const cp = contentOk(f);
+  const rows0 = f.needsCalls; const rd = rows0 ? rowDays(f, days, cp) : new Map<string, RowDay>(); // call clauses: tools from matching rows, money from the session-days holding them
   const from = startOfDay() - (days.length - 1) * 86400000; // ±1h around DST: fine for a progress gauge
   for (const s of sessions.values()) {
     const a = ledger.get(s.path);
     if (s.mtime >= from) { g.total += s.size; if (a) g.done += pending(s, a) ? Math.min(a.off, s.size) : s.size; }
-    if (!a || !sessOk(f, s)) continue;
+    if (!a || !sessOk(f, cp, s)) continue;
     const ri = harnessIndex(s.h); const r = ri >= 0 ? rows[ri] : tot;
     let st = 0; let sc = 0; let any = false;
     for (let i = 0; i < days.length; i++) {
@@ -355,8 +356,9 @@ function dagg(days: string[]): DA {
     prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), kids: new Map<string, Cnt>(), slow: [], errs: [] };
   const pre = dKey + "\t";
   if (f.needsCalls) { rowDrill(da, f, days); dCache = da; return da; }
+  const cp = contentOk(f);
   for (const s of sessions.values()) {
-    const a = ledger.get(s.path); if (!a || !sessOk(f, s)) continue;
+    const a = ledger.get(s.path); if (!a || !sessOk(f, cp, s)) continue;
     const hi = harnessIndex(s.h); if (hi < 0) continue;
     for (let i = 0; i < days.length; i++) {
       const dk = days[i] ?? ""; const d = a.days.get(dk); if (!d) continue;
@@ -386,9 +388,9 @@ function dagg(days: string[]): DA {
 // calls; slowest/error lists keep only the remembered calls whose id is a matching row's
 function rowDrill(da: DA, f: Compiled, days: string[]): void {
   const ids = new Set<string>(); const pathsOf = new Set<string>();
-  const ix = new Map<string, number>(); for (let i = 0; i < days.length; i++) ix.set(days[i] ?? "", i);
+  const ix = new Map<string, number>(); for (let i = 0; i < days.length; i++) ix.set(days[i] ?? "", i); const cp = contentOk(f);
   eachCall(f, days, (s: Sess, c: Call) => {
-    if (f.content.length && !matchingPaths(f).has(s.path)) return;
+    if (!cp(s.path)) return;
     da.all = da.all + 1;
     const name = nameOf(DICT.tool, c.tool);
     if (dServer ? !name.startsWith(dKey + "__") : name !== dKey) return;

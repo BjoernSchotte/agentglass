@@ -27,8 +27,10 @@ eq("tokens in", val(c, "in"), "2.0K | 6.8K | +4.8K | ×3.4 | 0");
 eq("cache hit", val(c, "cache_hit"), "75.0% | 30.6% | −44.4 pp |  | 0");
 eq("wall", val(c, "wall"), "20m0s | 50m0s | +30m0s | ×2.5 | 0");
 // active time: union of the side's session-day minutes. b1: 11:00–11:08, 11:25–11:41 (the 11:20 task notification is no
-// activity), 11:48–11:49; its subagent's 11:10–11:12 falls into b1's idle gap and adds 2 → 27
-eq("active", val(c, "active"), "21m0s | 27m0s | +6m0s | ×1.3 | 0");
+// activity), 11:48–11:49; its subagent's 11:10–11:12 falls into b1's idle gap and adds 2 → 27. a1 touches 21 clock
+// minutes in 20 minutes of wall time: active never exceeds wall (whole minutes count, a session's span does not)
+eq("active", val(c, "active"), "20m0s | 27m0s | +7m0s | ×1.4 | 0");
+eq("active ≤ wall (--json)", String(c.a.active) + " " + String(c.a.wall), "1200000 1200000");
 eq("files", val(c, "files"), "2 | 2 | 0 | ×1.0 | 0");
 eq("lines", val(c, "lines"), "+4 −1 | +7 −2 |  |  | 0");
 eq("models", val(c, "models"), "claude-sonnet-4-5 | claude-opus-4-5, claude-sonnet-4-5 |  |  | 0");

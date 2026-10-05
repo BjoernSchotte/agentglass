@@ -3,7 +3,7 @@
 import { width, vwidth, fitStyled } from "../../util/text.ts";
 import { S, say } from "../../state.ts";
 import { H, tabAt, display } from "../../hooks.ts";
-import type { Proc } from "../../model/types.ts";
+import type { Proc, Sess } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
 import { sessions, buildView, loadHead } from "../../model/sessions.ts";
 import { buildProcView } from "../../model/procs.ts";
@@ -63,7 +63,9 @@ H.backlog.push(() => headsLeft > 0);
 interface MP { key: string; paths: Set<string> }
 const mp = new Map<string, MP>();
 let searchOk = true; // false while typing: a content clause never starts a search (enter does)
+export const MPS = { asks: 0 }; // matchingPaths calls (checks: a pass over sessions asks once, not per session — each ask walks them all)
 export function matchingPaths(f: Compiled): Set<string> {
+  MPS.asks++;
   const key = String(L.ver) + "|" + liveSig();
   const hit = mp.get(f.key); if (hit && hit.key === key) return hit.paths;
   const out = new Set<string>();
@@ -80,6 +82,11 @@ export function matchingPaths(f: Compiled): Set<string> {
   if (mp.size > 32) mp.clear();
   mp.set(f.key, { key, paths: out });
   return out;
+}
+// does a session path pass f's content (full-text) clauses? Made once per pass over sessions or calls, asked per item
+export function contentOk(f: Compiled): (path: string) => boolean {
+  if (!f.content.length) return (_p: string): boolean => true;
+  const m = matchingPaths(f); return (p: string): boolean => m.has(p);
 }
 // top-level rows a clause list leaves (a parent stays when a subagent matches)
 function countTop(cs: Clause[]): number {
@@ -140,7 +147,7 @@ export function openFilterInput(tab: string): void {
 function changed(): void { S.sel = 0; buildView(); S.dirty = true; }
 // a typed expression → its clauses, or the error to show; typing never starts a full-text search
 function check(text: string, typing: boolean): { cs: Clause[]; err: string } {
-  const p = parse(text);
+  const p = parse(text); S.inputErrCol = p.err ? p.err.col : -1; // the footer marks it (the caret of the CLI)
   if (p.err) return { cs: [], err: p.err.msg + (p.err.col > 0 ? " (column " + String(p.err.col + 1) + ")" : "") };
   const r = compile(effective(S.pins, p.cs).cs, ctxOf(editTab));
   if (r.err) return { cs: [], err: r.err.msg };
@@ -172,7 +179,7 @@ function onQuery(ev: string, text: string): boolean {
     if (!r.err && !startsClause(text, r.cs)) applyTyped(editTab, r.cs);
     return false;
   }
-  if (ev === "esc") { typedGen++; S.inputErr = ""; setLocal(editTab, before); return false; }
+  if (ev === "esc") { typedGen++; S.inputErr = ""; S.inputErrCol = -1; setLocal(editTab, before); return false; }
   if (ev === "enter") {
     typedGen++;
     const r = check(text, false);
@@ -188,10 +195,10 @@ function onQuery(ev: string, text: string): boolean {
 }
 function onPins(ev: string, text: string): boolean {
   if (ev === "change" && !completing) cyc.cands = [];
-  if (ev === "change") { const p = parse(text); S.inputErr = p.err ? p.err.msg : ""; return false; }
+  if (ev === "change") { const p = parse(text); S.inputErr = p.err ? p.err.msg : ""; S.inputErrCol = p.err ? p.err.col : -1; return false; }
   if (ev === "enter") {
     const e = setPins(text);
-    if (e) { S.inputErr = e.msg; return true; }
+    if (e) { S.inputErr = e.msg; S.inputErrCol = e.col; return true; }
     S.inputErr = ""; say("info", S.pins.length ? "pinned: " + shownText(S.pins, " and ") : "pins cleared");
     return false;
   }
@@ -271,20 +278,33 @@ export function complete(text: string, cursorAtEnd: boolean): string[] {
   const out: string[] = []; for (const c of candidates(w.slice(0, -1))) if (c.toLowerCase().startsWith(cur) && out.indexOf(c) < 0) out.push(c);
   return out;
 }
-// repeated tab cycles through the candidates of the word the first tab completed
-interface Cyc { base: string; cands: string[]; i: number; last: string }
-const cyc: Cyc = { base: "", cands: [], i: 0, last: "" };
+// repeated tab cycles through the candidates of the word the first tab completed (every filter input shares this)
+export interface Cyc { base: string; cands: string[]; i: number; last: string }
+export function newCyc(): Cyc { return { base: "", cands: [], i: 0, last: "" }; }
+// the text after a tab on t, "" when nothing completes; a unique completion does not cycle: tab goes on to the next word
+export function cycleNext(c: Cyc, t: string): string {
+  if (c.cands.length > 1 && t === c.last) c.i = (c.i + 1) % c.cands.length;
+  else {
+    const cands = complete(t, true); if (!cands.length) return "";
+    const w = words(t); const cur: string = w[w.length - 1] ?? "";
+    c.base = t.slice(0, t.length - cur.length); c.cands = cands; c.i = 0;
+  }
+  c.last = c.base + (c.cands[c.i] ?? "") + " ";
+  return c.last;
+}
+// a filter input's error text ("" = valid, empty = `empty`), its parse error's column into S.inputErrCol (the footer
+// marks it, the CLI's caret)
+export function exprErr(t: string, ctx: Ctx, empty: string): string {
+  S.inputErrCol = -1;
+  if (!t.trim()) return empty;
+  const p = parse(t); if (p.err) { S.inputErrCol = p.err.col; return p.err.msg; }
+  const c = compile(p.cs, ctx); return c.err ? c.err.msg : "";
+}
+const cyc = newCyc();
 let completing = false; // a change made by tab itself keeps the cycle; any other edit starts over
 function tabComplete(): void {
-  const t: string = S.inputText;
-  if (cyc.cands.length && t === cyc.last) cyc.i = (cyc.i + 1) % cyc.cands.length;
-  else {
-    const cands = complete(t, true); if (!cands.length) return;
-    const w = words(t); const cur: string = w[w.length - 1] ?? "";
-    cyc.base = t.slice(0, t.length - cur.length); cyc.cands = cands; cyc.i = 0;
-  }
-  const next: string = cyc.base + (cyc.cands[cyc.i] ?? "") + " ";
-  S.inputText = next; cyc.last = next;
+  const next = cycleNext(cyc, S.inputText); if (!next) return;
+  S.inputText = next;
   completing = true; for (const f of H.input) f(S.inputAction, "change", next); completing = false;
 }
 
@@ -325,8 +345,7 @@ H.keys.push((mode: string, k: string): boolean => {
 });
 
 // ── hooks into the list and the process table ──
-H.listFilter.push((s) => { const f = tabFilter("Sessions", "list"); return f === EMPTY || matchingPaths(f).has(s.path); });
-H.listFiltering.push(() => tabFilter("Sessions", "list") !== EMPTY);
+H.listFilter.push(() => { const f = tabFilter("Sessions", "list"); if (f === EMPTY) return null; const m = matchingPaths(f); return (s: Sess): boolean => m.has(s.path); });
 H.procFilter.push((p: Proc): boolean => {
   if (!S.pins.length) return true;
   const f = compiledOf(S.pins, "procs"); if (f === EMPTY) return true;
