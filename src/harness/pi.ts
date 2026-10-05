@@ -40,7 +40,7 @@ function headerId(path: string, f: string): string {
 }
 // one dir of sessions; a session's sibling dir <base>/ holds its subagents: tasks/*.jsonl (@gotgenes/pi-subagents),
 // forks/*.jsonl and <runId>/run-<i>/session.jsonl (pi-subagents)
-const QUIET = 86400000; // a dir unchanged for a day: once a minute (a new agent wakes it: fs.ts WAKE_ALL)
+const QUIET = 3600000; // a dir unchanged for an hour: once a minute (a new agent wakes it: fs.ts WAKE_ALL)
 function scanDir(dir: string, add: AddFn): void {
   const names = listDirCached(dir, QUIET); const has = new Set<string>(names);
   for (const f of names) {

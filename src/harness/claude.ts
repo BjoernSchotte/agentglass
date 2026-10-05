@@ -22,12 +22,12 @@ const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][]
 // the project dirs' paths and listings in the projects listing's order, while it stands
 const TOP = { names: [] as string[], pds: [] as string[], ms: [] as { names: string[]; logs: string[][]; subs: string[][] }[] };
 const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
-const IDLE_MS = 300000; const DAY_MS = 86400000; // a session not written for 5 min spawns no subagent (the spawning call is written first)
+const IDLE_MS = 300000; const QUIET_MS = 3600000; // a session not written for 5 min spawns no subagent (the spawning call is written first)
 // a live session (registry) whose log the scan does not know yet wakes every project dir for a minute, when it first
 // shows and whenever its registry entry moves (a first prompt creates the log); ids = the logs the scan lists
 const WAKE = { at: 0, ids: new Set<string>(), unknown: new Map<string, string>() };
 function scan(add: AddFn): void {
-  const quiet = Date.now() - WAKE.at < 60000 ? -1 : DAY_MS; // a project dir unchanged for a day: once a minute, unless a new live session is unknown
+  const quiet = Date.now() - WAKE.at < 60000 ? -1 : QUIET_MS; // a project dir unchanged for an hour: once a minute, unless a new live session is unknown (or a new agent: fs.ts WAKE_ALL)
   const top = listDirCached(PROJECTS);
   let changed = top !== TOP.names;
   if (changed) { TOP.names = top; TOP.pds = []; TOP.ms = []; for (const proj of top) TOP.pds.push(join(PROJECTS, proj)); }

@@ -181,7 +181,7 @@ function scan(add: AddFn): void {
   scanRoots(add2);
   for (const k of [...IX.keys()]) if (!listed.has(k)) IX.delete(k); // trashed or expired: forget its index
 }
-const QUIET = 86400000; // a dir unchanged for a day: once a minute (a new agent wakes it: fs.ts WAKE_ALL)
+const QUIET = 3600000; // a dir unchanged for an hour: once a minute (a new agent wakes it: fs.ts WAKE_ALL)
 function scanRoots(add: AddFn): void {
   for (const root of roots()) for (const slug of listDirCached(root)) {
     const sd = join(root, slug); if (!cwdOf(sd)) continue;
