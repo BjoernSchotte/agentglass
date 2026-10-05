@@ -37,11 +37,27 @@ jobs:
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
-  # one status for the whole run: green only when every shard on both OSes passed
+  # the macOS x64 release is built with scriptc's C backend (no LLVM helper there): build it here too, so a construct
+  # only that backend rejects fails the PR, not the release (2026.10.3: a Record<string, RegExp> lookup)
+  cbackend:
+    name: build --backend c
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - id: scriptc
+        uses: ./.github/actions/scriptc
+        with: { lane: "cbackend" }
+      - run: sh build.sh && ./agentglass --version && AGENTGLASS_AGENT=0 HOME="$RUNNER_TEMP" ./agentglass --json --filter 'cost > $0.50 and tokens > 40k' > /dev/null
+        env: { SCRIPTC_FLAGS: "--backend c" }
+      - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
+  # one status for the whole run: green only when every shard on both OSes and the C-backend build passed
   ci:
     if: ${{ always() }}
-    needs: check
+    needs: [check, cbackend]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - run: test "${{ needs.check.result }}" = success
+      - run: test "${{ needs.check.result }}" = success && test "${{ needs.cbackend.result }}" = success

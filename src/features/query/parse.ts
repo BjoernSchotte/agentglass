@@ -88,10 +88,18 @@ export function suggest(k: string): string {
 }
 
 // value syntax per type (spec §1.6); "" = ok, else the error message
-const NUMRE: Record<string, RegExp> = {
-  usd: /^\$?\d+(\.\d+)?$/, tok: /^\d+(\.\d+)?[kKmM]?$/, size: /^\d+(\.\d+)?([kKmMgG]?[bB]|[kKmMgG])?$/,
-  dur: /^\d+(\.\d+)?(ms|s|m|h|d)$/, ratio: /^\d+(\.\d+)?%?$/, num: /^-?\d+(\.\d+)?$/,
-};
+// a switch, not a Record<string, RegExp>: scriptc's C backend (macOS x64 release) cannot key into a record of regexes
+function numOk(t: string, v: string): boolean {
+  switch (t) {
+    case "usd": return /^\$?\d+(\.\d+)?$/.test(v);
+    case "tok": return /^\d+(\.\d+)?[kKmM]?$/.test(v);
+    case "size": return /^\d+(\.\d+)?([kKmMgG]?[bB]|[kKmMgG])?$/.test(v);
+    case "dur": return /^\d+(\.\d+)?(ms|s|m|h|d)$/.test(v);
+    case "ratio": return /^\d+(\.\d+)?%?$/.test(v);
+    case "num": return /^-?\d+(\.\d+)?$/.test(v);
+  }
+  return false;
+}
 const EXAMPLE: Record<string, string> = { usd: "> 2, {k} > $0.50", tok: "> 40k, {k} > 1.5M", size: "> 100KB, {k} > 1MB", dur: "> 30s, {k} > 500ms", ratio: "> 20%, {k} > 0.2", num: "> 10" };
 function validDate(v: string): boolean {
   const l = v.toLowerCase();
@@ -118,8 +126,7 @@ function value(a: Attr, op: string, v: string): { v: string; err: string } {
   }
   if (t === "date") return validDate(v) ? { v: v.toLowerCase(), err: "" } : { v, err: "\"" + k + "\" needs a date (2026-10-01, today, yesterday, -7d), got \"" + v + "\"" };
   if (isNumeric(t)) {
-    const re = NUMRE[t];
-    if (re && re.test(v)) return { v, err: "" };
+    if (numOk(t, v)) return { v, err: "" };
     const what = t === "dur" ? "a duration" : "a number";
     return { v, err: "\"" + k + "\" needs " + what + " (e.g. " + k + " " + (EXAMPLE[t] ?? "> 1").split("{k}").join(k) + "), got \"" + v + "\"" };
   }
