@@ -100,6 +100,11 @@ proc(500, "codex", 1, 0, 5, 101000, "codex\0");
 rows = scanProcs(fs, T0 + 14000, tr, false);
 const r5 = byPid(rows, 500);
 eq("reused pid args", r5 ? r5.args : "", "codex"); eq("reused pid tty", r5 ? r5.tty : "", "?"); eq("reused pid cpu", r5 ? String(r5.cpu) : "", "0");
+// a command line over the first 4 KB read is read whole
+const long = "x".repeat(5000);
+proc(900, "node", 1, 0, 0, 100, "node\0" + long + "\0");
+rows = scanProcs(fs, T0 + 15000, none(), false);
+const lg = byPid(rows, 900); eq("long cmdline", lg ? String(lg.args.length) : "", String(5 + 5000));
 // zombie: [comm] <defunct>, as ps prints it
 const zd = join(root, "800"); mkdirSync(zd, { recursive: true });
 writeFileSync(join(zd, "stat"), statLine(800, "dead", "Z", 1, 0, 0, 100, 0)); writeFileSync(join(zd, "cmdline"), "");

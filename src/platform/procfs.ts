@@ -72,9 +72,12 @@ function readRss(fs: ProcFs, pid: number, fallback: number): number {
   const n = i > 0 ? Number(t.slice(i + 1, t.indexOf(" ", i + 1))) : NaN;
   return (Number.isNaN(n) ? fallback : n) * fs.page;
 }
+// 4 KB first (nearly every command line fits; a 128 KB buffer per young pid and pass was garbage the size of megabytes)
 function readArgs(fs: ProcFs, st: Stat): string {
   PROCFS_STATS.cmdline++;
-  const a = cmdlineText(readBytes(fs.root + "/" + String(st.pid) + "/cmdline", 0, 131072), st.comm);
+  const f = fs.root + "/" + String(st.pid) + "/cmdline";
+  let raw = readBytes(f, 0, 4096); if (raw.length === 4096) raw = readBytes(f, 0, 131072);
+  const a = cmdlineText(raw, st.comm);
   return own(st.state === "Z" ? a + " <defunct>" : a);
 }
 // a /proc entry's pid, -1 for the rest (self, sys, …); by hand: ~2,500 entries a pass, Number() is slower
