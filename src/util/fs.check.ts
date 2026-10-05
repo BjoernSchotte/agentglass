@@ -34,12 +34,15 @@ const mt = statSync(dir).mtimeMs; writeFileSync(dir + "/d.jsonl", "w\n"); setDir
 n0 = FS_STATS.lists; now += 30000; eq("within a minute: cached", names(), "a.jsonl,b.jsonl,c.jsonl"); eq("not listed", String(FS_STATS.lists - n0), "0");
 now += 31000; n0 = FS_STATS.lists; eq("after a minute: listed again", names(), "a.jsonl,b.jsonl,c.jsonl,d.jsonl"); eq("relisted", String(FS_STATS.lists - n0), "1");
 // aged (no new entries expected): looked at once a minute only; a missing aged dir is remembered as missing as long
-let st0 = FS_STATS.stats; now += 1000; names(); listDirCached(dir, true); eq("aged right after a listing: no stat", String(FS_STATS.stats - st0 - 1), "0");
+let st0 = FS_STATS.stats; now += 1000; names(); listDirCached(dir, 0); eq("aged right after a listing: no stat", String(FS_STATS.stats - st0 - 1), "0");
 writeFileSync(dir + "/e.jsonl", "v\n"); setDirTime(now - 3000);
-now += 30000; eq("aged within a minute: old listing", listDirCached(dir, true).slice().sort().join(","), "a.jsonl,b.jsonl,c.jsonl,d.jsonl");
-now += 31000; eq("aged after a minute: listed", listDirCached(dir, true).slice().sort().join(","), "a.jsonl,b.jsonl,c.jsonl,d.jsonl,e.jsonl");
-st0 = FS_STATS.stats; eq("aged missing", String(listDirCached(dir + "/nope", true).length + listDirCached(dir + "/nope", true).length), "0");
+now += 30000; eq("aged within a minute: old listing", listDirCached(dir, 0).slice().sort().join(","), "a.jsonl,b.jsonl,c.jsonl,d.jsonl");
+now += 31000; eq("aged after a minute: listed", listDirCached(dir, 0).slice().sort().join(","), "a.jsonl,b.jsonl,c.jsonl,d.jsonl,e.jsonl");
+st0 = FS_STATS.stats; eq("aged missing", String(listDirCached(dir + "/nope", 0).length + listDirCached(dir + "/nope", 0).length), "0");
 eq("aged missing: one stat", String(FS_STATS.stats - st0), "1");
+// quiet for a day: a directory changed within the day is looked at every time
+now += 61000; setDirTime(now - 5000); listDirCached(dir, 86400000); st0 = FS_STATS.stats; listDirCached(dir, 86400000);
+eq("changed within the quiet span: stat", String(FS_STATS.stats - st0), "1");
 // a missing directory lists as [] and is forgotten
 rmSync(dir, { recursive: true, force: true });
 eq("gone", names(), "");

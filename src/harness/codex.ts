@@ -21,7 +21,7 @@ const titles = new Map<string, string>(); // thread names from session_index.jso
 let indexM = 0;
 function scan(add: AddFn): void {
   const walk = (dir: string, archived: boolean, depth: number): void => {
-    for (const f of listDirCached(dir)) {
+    for (const f of listDirCached(dir, 86400000)) { // a day dir unchanged for a day gets no new rollouts (a resume appends to its file)
       const p = join(dir, f);
       if (f.endsWith(".jsonl")) add(p, f.length > 42 ? f.slice(-42, -6) : f, "", archived);
       else if (depth < 3 && /^\d+$/.test(f)) walk(p, archived, depth + 1);

@@ -20,15 +20,19 @@ const PROJECTS = join(CLAUDE, "projects");
 // a project dir's logs and subagent dirs as paths, kept while its listing is the same (no path building per scan)
 const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][] }>();
 const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
-const IDLE_MS = 300000; // a session not written for 5 min spawns no subagent (the spawning call is written first)
+const IDLE_MS = 300000; const DAY_MS = 86400000;
+// a live session (registry) whose log the scan does not know yet: every project dir is looked at for a minute
+const WAKE = { at: 0, ids: new Set<string>() };
+const IDLE_MS_DOC = 0; // a session not written for 5 min spawns no subagent (the spawning call is written first)
 function scan(add: AddFn): void {
+  const quiet = Date.now() - WAKE.at < 60000 ? -1 : DAY_MS; // a project dir unchanged for a day: once a minute, unless a new live session is unknown
   for (const proj of listDirCached(PROJECTS)) {
-    const pd = join(PROJECTS, proj); const names = listDirCached(pd);
+    const pd = join(PROJECTS, proj); const names = listDirCached(pd, quiet);
     let m = PJ.get(pd);
     if (!m || m.names !== names) {
       m = { names, logs: [], subs: [] };
       for (const f of names) {
-        if (f.endsWith(".jsonl")) m.logs.push([join(pd, f), f.slice(0, -6)]);
+        if (f.endsWith(".jsonl")) { m.logs.push([join(pd, f), f.slice(0, -6)]); WAKE.ids.add(f.slice(0, -6)); }
         else if (f.length === 36) m.subs.push([join(pd, f, "subagents"), f, join(pd, f + ".jsonl")]); // <session-uuid>/ dirs hold subagent transcripts
       }
       PJ.set(pd, m);
@@ -38,7 +42,7 @@ function scan(add: AddFn): void {
     for (const d of m.subs) {
       const sd = d[0] ?? ""; const f = d[1] ?? "";
       const pm = KNOWN.mtime(d[2] ?? ""); // its session idle (or gone): no new subagents now, the dir looked at once a minute
-      const ns = listDirCached(sd, pm === 0 || now - pm >= IDLE_MS);
+      const ns = listDirCached(sd, pm === 0 || now - pm >= IDLE_MS ? 0 : -1);
       let k = SD.get(sd);
       if (!k || k.names !== ns) { k = { names: ns, logs: [] }; for (const a of ns) if (a.endsWith(".jsonl")) k.logs.push([join(sd, a), a.slice(6, -6)]); SD.set(sd, k); }
       for (const l of k.logs) add(l[0] ?? "", l[1] ?? "", f, false);
@@ -160,7 +164,7 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
     const o = parseJson(readText(join(sd, f), 0, 8192).trim());
     if (!o) continue;
     const pid = num(o["pid"]);
-    if (pid && alive(pid)) out.push({ id: str(o["sessionId"]), pid, status: str(o["status"]), name: str(o["name"]) });
+    if (pid && alive(pid)) { const id = str(o["sessionId"]); out.push({ id, pid, status: str(o["status"]), name: str(o["name"]) }); if (id && !WAKE.ids.has(id)) WAKE.at = Date.now(); }
   }
   return out;
 }

@@ -55,18 +55,19 @@ export function listDir(p: string): string[] { try { return readdirSync(p); } ca
 // change within the same coarse mtime tick must not be missed), and at least once a minute it is listed anyway
 // (filesystems whose directory mtime does not move). A missing directory lists as [] and is forgotten. The array is
 // shared: callers must not change it.
-// aged: the caller knows the directory gets no new entries now (the subagent dir of an idle session):
-// its mtime is looked at only once a minute, and a missing one is remembered as missing for that long
+// quietMs ≥ 0: the caller knows a directory unchanged for that long gets no new entries now (an idle session's subagent
+// dir: 0; a project dir no agent works in: a day): its mtime is then looked at only once a minute, and a missing one is
+// remembered as missing for that long
 export const FS_CLOCK = { now: (): number => Date.now() };
 export const FS_STATS = { lists: 0, stats: 0 }; // real listings and directory stats (checks)
 const DIRS = new Map<string, { mt: number; at: number; st: number; names: string[] }>();
 const FRESH_MS = 2000; const RELIST_MS = 60000;
 const NONE: string[] = [];
-export function listDirCached(p: string, aged: boolean = false): string[] {
+export function listDirCached(p: string, quietMs: number = -1): string[] {
   const now = FS_CLOCK.now(); const e = DIRS.get(p);
-  if (aged && e && now - e.st < RELIST_MS) return e.names;
+  if (quietMs >= 0 && e && now - e.st < RELIST_MS && (e.mt < 0 || now - e.mt >= quietMs)) return e.names;
   let mt = 0; FS_STATS.stats++;
-  try { mt = statSync(p).mtimeMs; } catch (x) { if (aged) DIRS.set(p, { mt: -1, at: now, st: now, names: NONE }); else DIRS.delete(p); return NONE; }
+  try { mt = statSync(p).mtimeMs; } catch (x) { if (quietMs >= 0) DIRS.set(p, { mt: -1, at: now, st: now, names: NONE }); else DIRS.delete(p); return NONE; }
   if (e && e.mt === mt && now - mt >= FRESH_MS && now - e.at < RELIST_MS) { e.st = now; return e.names; }
   FS_STATS.lists++;
   const names = listDir(p);
