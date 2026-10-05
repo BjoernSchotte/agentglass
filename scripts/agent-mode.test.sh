@@ -104,6 +104,24 @@ eq "bad filter: JSON error" "$rc|$(jq -r '.error.code' < "$t/e")|$(cat "$t/o")" 
 # triage inside an agent: JSON by default, the current repo only (no p2 / gemini rows)
 tj=$(agent triage --preset errors --entity session)
 eq "triage: JSON, project scope" "$(printf '%s' "$tj" | jq -r 'has("rows")')|$(printf '%s' "$tj" | grep -c 'gemini\|"p2"')" "true|0"
+# compare / triage / open / rules / export / update inside an agent: JSON out, JSON errors, refs, the project scope
+cj=$(agent compare current "$CX" || true)
+eq "compare: JSON, current ref" "$(printf '%s' "$cj" | jq -r '[.a.n, .b.n] | join(",")')" "1,1"
+set +e; agent compare current "$GM" > "$t/o" 2> "$t/e"; rc=$?; set -e
+eq "compare: other project" "$rc|$(jq -r '.error.code' < "$t/e")|$(cat "$t/o")" "3|out_of_scope|"
+eq "compare --a/--b: project scope" "$(agent compare --a 'harness is claude' --b 'harness is gemini' | jq -r '[.a.n, .b.n] | join(",")')" "1,0"
+eq "compare --all-projects" "$(agent compare --a 'harness is claude' --b 'harness is gemini' --all-projects | jq -r '.b.n')" 1
+set +e; agent compare abc "$CX" > "$t/o" 2> "$t/e"; rc=$?; set -e
+eq "compare: JSON usage error" "$rc|$(jq -r '.error.code' < "$t/e")" "2|usage"
+set +e; agent triage --preset nope > "$t/o" 2> "$t/e"; rc=$?; set -e
+eq "triage: JSON usage error" "$rc|$(jq -r '.error.code' < "$t/e")" "2|usage"
+eq "open current --print" "$(agent open current --print | jq -r '.id')" "$CL"
+eq "open last --print" "$(agent open last --print | jq -r '.id')" "$CX"
+eq "rules check: JSON" "$(agent rules check | jq -r 'has("rules")')" true
+set +e; agent export --otlp > "$t/o" 2> "$t/e"; rc=$?; set -e
+eq "export: JSON usage error" "$rc|$(jq -r '.error.code' < "$t/e")" "2|usage"
+set +e; agent update --bogus > "$t/o" 2> "$t/e"; rc=$?; set -e
+eq "update: usage exit 2" "$rc|$(jq -r '.error.code' < "$t/e")" "2|usage"
 c=$(agent cost --by model --format csv)
 eq "cost csv header" "$(printf "%s\n" "$c" | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions"
 eq "cost csv rows" "$(printf "%s\n" "$c" | tail -n +2 | cut -d, -f1 | tr '\n' ' ')" "claude-sonnet-4-5 total "

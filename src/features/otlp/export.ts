@@ -16,7 +16,7 @@ import { parse as parseQuery } from "../query/parse.ts";
 import type { Clause } from "../query/types.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
 import { discover, opts as watchOpts, watch } from "../cli.ts";
-import { agentScope, visible } from "../agentenv.ts";
+import { agentScope, visible, errLine } from "../agentenv.ts";
 import { opt, setOptions } from "../clihelp.ts";
 import { newLive, liveTick, liveStop } from "./live.ts";
 import { type XTurn } from "./types.ts";
@@ -239,6 +239,8 @@ function nativeNow(roots: Sess[]): Native[] {
 
 // ── output ──
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
+// a failure: inside an agent one JSON line {"error": {code, message}}, else "agentglass: msg" (as err)
+function fail(code: string, msg: string): void { errLine("agentglass", code, msg, ""); }
 function err(line: string): void { try { writeSync(2, "agentglass: " + line + "\n"); } catch (e) { /* closed */ } }
 function when(ms: number): string { return ms > 0 ? new Date(ms).toISOString() : "never"; }
 function realSleep(ms: number): void { try { execFileSync("sleep", [String(Math.max(0, ms) / 1000)]); } catch (e) { /* interrupted */ } }
@@ -280,12 +282,12 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
   for (const w of c.warns) err(w);
   if (o.status) return status(o, c);
   if (o.dry) { for (const l of dryRun(o, c, now)) out(l); return 0; }
-  if (!curlBin()) { err("export needs curl (AGENTGLASS_CURL)"); return 2; }
+  if (!curlBin()) { fail("usage", "export needs curl (AGENTGLASS_CURL)"); return 2; }
   const hx = expandHeaders(c, envMap());
-  if (hx.err) { err(hx.err); return 2; }
-  const pe = plainOk(o.url, c, hx.headers.length > 0); if (pe) { err(pe); return 2; }
+  if (hx.err) { fail("usage", hx.err); return 2; }
+  const pe = plainOk(o.url, c, hx.headers.length > 0); if (pe) { fail("usage", pe); return 2; }
   const held = lock(o.url);
-  if (held !== 0) { err("another export to " + safeUrl(o.url) + " is running, pid " + String(held)); return 3; }
+  if (held !== 0) { fail("busy", "another export to " + safeUrl(o.url) + " is running, pid " + String(held)); return 3; }
   try {
     const st = loadState(o.url); if (st.warn) err(st.warn);
     const ns = nativeNow(select(o).roots);
@@ -333,23 +335,23 @@ function liveExport(args: string[]): number {
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? ""; const v = args[i + 1] ?? "";
     if (a === "--otlp") { flag = v; i++; }
-    else if (a === "--since") { const t = timeArg(v, now); if (isNaN(t)) { err("--since takes 30m, 24h, 7d, YYYY-MM-DD or all (got " + v + ")"); return 2; } since = t; i++; }
+    else if (a === "--since") { const t = timeArg(v, now); if (isNaN(t)) { fail("usage", "--since takes 30m, 24h, 7d, YYYY-MM-DD or all (got " + v + ")"); return 2; } since = t; i++; }
     else if (a === "--content") c.content = true;
     else if (a === "--no-subagents") subagents = false;
-    else if (a === "--native") { native = v; i++; if (["warn", "skip", "include"].indexOf(native) < 0) { err("--native takes warn, skip or include"); return 2; } }
-    else if (a === "--compression") { comp = v; i++; if (comp !== "gzip" && comp !== "none") { err("--compression takes gzip or none"); return 2; } }
-    else if (a === "--batch") { batch = Number(v); i++; if (!(Number.isInteger(batch) && batch >= 1 && batch <= 100000)) { err("--batch needs a whole number of spans, 1–100000"); return 2; } }
+    else if (a === "--native") { native = v; i++; if (["warn", "skip", "include"].indexOf(native) < 0) { fail("usage", "--native takes warn, skip or include"); return 2; } }
+    else if (a === "--compression") { comp = v; i++; if (comp !== "gzip" && comp !== "none") { fail("usage", "--compression takes gzip or none"); return 2; } }
+    else if (a === "--batch") { batch = Number(v); i++; if (!(Number.isInteger(batch) && batch >= 1 && batch <= 100000)) { fail("usage", "--batch needs a whole number of spans, 1–100000"); return 2; } }
     else if (a === "--filter") { filter = filter ? filter + " and " + v : v; i++; }
-    else if (a === "--harness") { harness = v; i++; if (!isHarness(harness)) { err("--harness must be one of " + harnessIds().join(", ")); return 2; } }
+    else if (a === "--harness") { harness = v; i++; if (!isHarness(harness)) { fail("usage", "--harness must be one of " + harnessIds().join(", ")); return 2; } }
   }
-  const sf = sessFilter(filter); if (sf.err) { err(sf.err); return 2; }
+  const sf = sessFilter(filter); if (sf.err) { fail("usage", sf.err); return 2; }
   const url = endpointOf(flag.startsWith("--") ? "" : flag, c, env);
-  if (!url) { err("--otlp needs a URL"); return 2; }
-  const ue = urlErr(url); if (ue) { err(ue); return 2; }
-  if (!curlBin()) { err("export needs curl (AGENTGLASS_CURL)"); return 2; }
-  const hx = expandHeaders(c, envMap()); if (hx.err) { err(hx.err); return 2; }
-  const pe = plainOk(url, c, hx.headers.length > 0); if (pe) { err(pe); return 2; }
-  const held = lock(url); if (held !== 0) { err("another export to " + safeUrl(url) + " is running, pid " + String(held)); return 3; }
+  if (!url) { fail("usage", "--otlp needs a URL"); return 2; }
+  const ue = urlErr(url); if (ue) { fail("usage", ue); return 2; }
+  if (!curlBin()) { fail("usage", "export needs curl (AGENTGLASS_CURL)"); return 2; }
+  const hx = expandHeaders(c, envMap()); if (hx.err) { fail("usage", hx.err); return 2; }
+  const pe = plainOk(url, c, hx.headers.length > 0); if (pe) { fail("usage", pe); return 2; }
+  const held = lock(url); if (held !== 0) { fail("busy", "another export to " + safeUrl(url) + " is running, pid " + String(held)); return 3; }
   const st = loadState(url); if (st.warn) err(st.warn);
   let gz = (comp || c.compression) === "gzip" && (st.gzip || comp === "gzip");
   if (gz) { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } if (!gzipProbe(d)) { gz = false; err("this build cannot write compressed bodies: sending uncompressed"); } }
@@ -400,7 +402,7 @@ H.cli.unshift((args: string[]): boolean => {
   S.cli = true;
   const c = loadCfg();
   const p = parseExport(args, c, Date.now(), envMap());
-  if (p.err) { err(p.err); process.exit(2); }
+  if (p.err) { fail("usage", p.err); process.exit(2); }
   discover();
   process.exit(runExport(p.o, c));
   return true;

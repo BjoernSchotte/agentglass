@@ -12,7 +12,8 @@ check() { # file, allowed specifiers (space separated)
 }
 [ -f src/features/palette/apply.ts ] && [ -f src/features/palette/open.ts ] || { echo "FAIL apply.ts / open.ts missing"; exit 1; }
 check src/features/palette/apply.ts "../../state.ts ./ref.ts ./open.ts ./view.ts ../../model/sessions.ts"
-check src/features/palette/open.ts "node:fs node:path ../../platform/index.ts ./instance.ts ../../model/types.ts ../../state.ts ../../hooks.ts ../../model/sessions.ts ../../ui/transcript.ts ../../util/json.ts ./ref.ts ./handoff.ts ./rundir.ts ./spool.ts ../agentenv.ts ../clihelp.ts ../../util/config.ts ./urlhandler.ts"
+check src/features/palette/open.ts "node:fs node:path ../../platform/index.ts ./instance.ts ../../model/types.ts ../../state.ts ../../hooks.ts ../../model/sessions.ts ../../ui/transcript.ts ../../util/json.ts ./ref.ts ./handoff.ts ./rundir.ts ./spool.ts ../agentenv.ts ../clihelp.ts ../../util/config.ts ./urlhandler.ts ../../model/sessref.ts ../../model/procs.ts"
+# (sessref + procs: `open current|last|parent` resolves the agent's own session before a link is handed off; both only read)
 # the modules apply.ts reaches also hold side effects (view.ts runs palette items, open.ts starts a TUI): pin the names
 # it takes from them, so a link can only select, open a transcript or prefill the palette
 names() { grep -o "import {[^}]*} from \"$2\"" "$1" | sed 's/import {\(.*\)} from.*/\1/' | tr -d ' '; }

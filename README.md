@@ -480,6 +480,7 @@ B, side by side with Δ (B − A, more cost, errors or duration red) and B/A.
 agentglass compare 3f2a9c 7b11e0                                   # two sessions by id prefix
 agentglass compare claude:3f2a9c… codex:7b11e0… --no-subagents --json | jq '.a.metrics, .b.metrics'
 agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 'repo is agentglass'
+agentglass compare last current                                  # inside an agent: this run vs the one before (JSON, this project)
 ```
 In `--json`, `metrics.cost` is the total and `costByMode` its split by billing mode (`api` is real spend, the rest
 list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an id prefix under 6 characters
@@ -654,6 +655,7 @@ agentglass open 'claude:5f1e…#call=toolu_01Abc'          # …at a tool call (
 agentglass open 'agentglass://open/codex/019a2c…#call=c1' # the URL form (Y copies it)
 agentglass open 019a2c --print                          # resolve only: {harness,id,path,title,cwd,anchor,url} (pipes and agents too)
 agentglass open 019a2c --print-url                      # the canonical agentglass://open/<harness>/<id> link
+agentglass open current --print-url                     # inside an agent: a link to its own session (current | last | parent)
 agentglass open '019a2c#turn=2026-09-30T10:00:00.000Z'  # a turn by its start time as logged (~1: the 2nd turn starting then; #turn=3: the 3rd)
 agentglass open 4bf92f3577b34da6a3ce929d0e0e4736         # an OTLP trace id from `agentglass export` → that session and turn
 agentglass open 4bf92f3577b34da6a3ce929d0e0e4736/00f067aa0ba902b7  # …and a span in it: the call, request or subagent
