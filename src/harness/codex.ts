@@ -3,7 +3,7 @@
 import { statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { type Obj, obj, str, parse as parseJson } from "../util/json.ts";
-import { CODEX, readText, readBytes, listDir } from "../util/fs.ts";
+import { CODEX, readText, readBytes, listDir, listDirCached } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
@@ -21,7 +21,7 @@ const titles = new Map<string, string>(); // thread names from session_index.jso
 let indexM = 0;
 function scan(add: AddFn): void {
   const walk = (dir: string, archived: boolean, depth: number): void => {
-    for (const f of listDir(dir)) {
+    for (const f of listDirCached(dir)) {
       const p = join(dir, f);
       if (f.endsWith(".jsonl")) add(p, f.length > 42 ? f.slice(-42, -6) : f, "", archived);
       else if (depth < 3 && /^\d+$/.test(f)) walk(p, archived, depth + 1);

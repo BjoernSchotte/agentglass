@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join, dirname } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
-import { CLAUDE, readText, readBytes, listDir } from "../util/fs.ts";
+import { CLAUDE, readText, readBytes, listDir, listDirCached } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
@@ -18,12 +18,12 @@ const PROJECTS = join(CLAUDE, "projects");
 
 // ~/.claude/projects/<project>/<session>.jsonl, subagents in <project>/<session>/subagents/agent-<id>.jsonl
 function scan(add: AddFn): void {
-  for (const proj of listDir(PROJECTS)) {
-    for (const f of listDir(join(PROJECTS, proj))) {
+  for (const proj of listDirCached(PROJECTS)) {
+    for (const f of listDirCached(join(PROJECTS, proj))) {
       if (f.endsWith(".jsonl")) { add(join(PROJECTS, proj, f), f.slice(0, -6), "", false); continue; }
       if (f.length !== 36) continue; // <session-uuid>/ dirs hold subagent transcripts
       const sd = join(PROJECTS, proj, f, "subagents");
-      for (const a of listDir(sd)) if (a.endsWith(".jsonl")) add(join(sd, a), a.slice(6, -6), f, false);
+      for (const a of listDirCached(sd)) if (a.endsWith(".jsonl")) add(join(sd, a), a.slice(6, -6), f, false);
     }
   }
 }

@@ -51,6 +51,24 @@ export function readLines(path: string, start: number, end: number, align: boole
   return { lines: text.split("\n"), next: start + z + 1 };
 }
 export function listDir(p: string): string[] { try { return readdirSync(p); } catch (e) { return []; } }
+// listDir for the session scans: the last listing is reused while the directory's mtime stands and is over 2 s old (a
+// change within the same coarse mtime tick must not be missed), and at least once a minute it is listed anyway
+// (filesystems whose directory mtime does not move). A missing directory lists as [] and is forgotten. The array is
+// shared: callers must not change it.
+export const FS_CLOCK = { now: (): number => Date.now() };
+export const FS_STATS = { lists: 0 }; // real listings (checks)
+const DIRS = new Map<string, { mt: number; at: number; names: string[] }>();
+const FRESH_MS = 2000; const RELIST_MS = 60000;
+export function listDirCached(p: string): string[] {
+  let mt = 0;
+  try { mt = statSync(p).mtimeMs; } catch (e) { DIRS.delete(p); return []; }
+  const now = FS_CLOCK.now(); const e = DIRS.get(p);
+  if (e && e.mt === mt && now - mt >= FRESH_MS && now - e.at < RELIST_MS) return e.names;
+  FS_STATS.lists++;
+  const names = listDir(p);
+  DIRS.set(p, { mt, at: now, names });
+  return names;
+}
 export function run(cmd: string, args: string[]): string {
   try { return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 }); } catch (e) { return ""; }
 }

@@ -11,8 +11,19 @@ import { H, applyMeta } from "../hooks.ts";
 export const sessions = new Map<string, Sess>();
 export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 
+// a known log is stat'ed when it is pid-linked or written within a day; the rest in turns, 1/ROT of them per scan (~once a
+// minute at the hot scan interval): a history of thousands of old logs was most of a scan
+const ROT = 20; const RECENT_MS = 86400000;
+const SCAN = { no: 0, now: 0 };
+const rots = new Map<string, number>();
+function rotOf(path: string): number {
+  const r = rots.get(path); if (r !== undefined) return r;
+  let h = 0; for (let i = 0; i < path.length; i++) h = (h * 31 + path.charCodeAt(i)) % ROT;
+  rots.set(path, h); return h;
+}
 function addFile(h: Harness, path: string, id: string, archived: boolean, seen: Set<string>, parent: string): void {
   let s = sessions.get(path);
+  if (s && s.pid <= 0 && SCAN.now - s.mtime >= RECENT_MS && rotOf(path) !== SCAN.no % ROT) { seen.add(path); return; } // not its turn
   const fresh = !s;
   if (!s) { s = newSess(h, id, path, archived); s.parent = parent; }
   const st = sourceOf(h).stat(s);
@@ -21,15 +32,17 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, seen: 
     sessions.set(path, s); SG.gen++;
     const m = harnessOf(h).meta; if (m) m(s);
   }
-  restat(s, st.size, st.mtime, epochOf(s));
-  applyMeta(s);
+  if (restat(s, st.size, st.mtime, epochOf(s)) || fresh) applyMeta(s); // head and tail reads apply it after they change fields
   seen.add(path);
 }
-// new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file
-export function restat(s: Sess, size: number, mtime: number, ep: string): void {
+// new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file.
+// true = something changed
+export function restat(s: Sess, size: number, mtime: number, ep: string): boolean {
+  const moved = s.mtime !== mtime || s.size !== size;
   s.mtime = mtime; s.size = size;
-  if (ep === s.ep) return;
+  if (ep === s.ep) return moved;
   s.ep = ep; s.tailSize = -1; s.headDone = false; s.evs = [];
+  return true;
 }
 // live probe: stat only pid-linked sessions (no spawn, no directory listing) so a streaming agent is seen within the probe
 // interval and its tail follows without waiting for scan(); unlinked sessions are left to scan(). true = one grew
@@ -47,8 +60,9 @@ let scanned = false;
 export function scan(): void {
   if (!scanned) { scanned = true; for (const f of H.firstScan) f(); }
   const seen = new Set<string>();
+  SCAN.no++; SCAN.now = Date.now();
   for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, seen, parent));
-  for (const k of [...sessions.keys()]) if (!seen.has(k)) { sessions.delete(k); SG.gen++; }
+  for (const k of [...sessions.keys()]) if (!seen.has(k)) { sessions.delete(k); rots.delete(k); SG.gen++; }
 }
 // A log only grows: once it reaches past the head window, what reading the head did is final (a shorter log: until it
 // grows; a record source counts records). That outcome — the session fields it changed, the first prompt and the
@@ -177,9 +191,27 @@ export function parentOf(s: Sess): Sess | null {
   if (p && (p.parent || sessions.get(p.path) !== p)) { indexRoots(); p = ROOTS.m.get(k); }
   return p ?? null;
 }
+// everything buildView reads, as one cheap pass of number adds: the session set, each session's mtime, pid and parent,
+// which subagents are active (time-based auto-expand), the expanded/collapsed sets, the active filters' matches and the
+// selection. Equal signatures build equal views. ps = the active filters' predicates
+function sigOf(ps: ((s: Sess) => boolean)[]): string {
+  const now = Date.now(); let mt = 0; let pid = 0; let par = 0; let act = 0; let hit = 0; let n = 0;
+  for (const s of sessions.values()) {
+    mt += s.mtime; pid += s.pid; par += s.parent.length;
+    if (s.parent && now - s.mtime < 45000) act += 1 + (s.mtime % 1000003); // subActive
+    if (ps.length && matchesAll(ps, s)) { n++; hit += 1 + (s.mtime % 1000003) + s.parent.length; }
+  }
+  let ex = ""; for (const k of expanded) ex += k + "\n"; ex += "|"; for (const k of collapsed) ex += k + "\n";
+  return String(SG.gen) + "|" + String(sessions.size) + "|" + String(mt) + "|" + String(pid) + "|" + String(par) + "|" + String(act) + "|" +
+    String(ps.length) + ":" + String(n) + ":" + String(hit) + "|" + String(S.sel) + "|" + ex;
+}
+function activePreds(): ((s: Sess) => boolean)[] { const ps: ((s: Sess) => boolean)[] = []; for (const f of H.listFilter) { const p = f(); if (p) ps.push(p); } return ps; }
+export function viewSig(): string { return sigOf(activePreds()); }
+let lastSig = ""; let lastView: Sess[] = [];
 export function buildView(): void {
   // the predicates once per build: a filter's matching set is computed once, not per session (n² with 2k sessions)
-  const ps: ((s: Sess) => boolean)[] = []; for (const f of H.listFilter) { const p = f(); if (p) ps.push(p); }
+  const ps = activePreds();
+  const sig = sigOf(ps); if (sig === lastSig && S.view === lastView) return; // nothing it reads changed: S.view stays the same array
   const filtering = ps.length > 0; const matches = (s: Sess): boolean => matchesAll(ps, s);
   const roots = new Map<string, Sess>();
   for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; if (!s.parent) roots.set(s.h + ":" + s.id, s); }
@@ -210,6 +242,7 @@ export function buildView(): void {
   S.view = out;
   if (cur) { const i = S.view.indexOf(cur); if (i >= 0) S.sel = i; }
   S.sel = Math.max(0, Math.min(S.sel, S.view.length - 1));
+  lastSig = sigOf(ps); lastView = S.view; // after the selection moved with its session
 }
 // bounds-checked reads: in scriptc an out-of-range object read traps instead of yielding undefined
 export function sessAt(i: number): Sess | null { return i >= 0 && i < S.view.length ? S.view[i] : null; }
