@@ -45,6 +45,7 @@ export function harnessOfArgs(args: string): string {
 // 1.5 s was ~2,200 objects and a children map per refresh); the children map is rebuilt only when a pid came, went or
 // moved; a pid's harness only when its args changed
 let tracked = new Set<number>(); // the harness trees' pids of the last refresh: the platform reads them fresh
+let passNo = 0;
 let kids = new Map<number, number[]>();
 // a process's command line is worth reading (it may be an agent) when its name (comm, ≤ 15 bytes) may be one: an agent's
 // own name, an interpreter that runs one, or a launcher that execs into one; the rest are read on the platform's full pass
@@ -53,6 +54,7 @@ export function argsWorth(comm: string): boolean {
   return LAUNCH.indexOf(comm) >= 0 || harnessOfProc(comm) !== "" || OTHER.indexOf(comm) >= 0 || harnessOfArgs(comm) !== "";
 }
 export function refreshProcs(): void {
+  passNo++;
   const rows = OS.listProcs(tracked, argsWorth);
   let moved = false;
   for (const r of rows) {
@@ -84,7 +86,8 @@ export function refreshProcs(): void {
     while (stack.length) {
       const q = allProcs.get(stack.pop() as number);
       if (!q) continue;
-      q.cpu = OS.cpuOf(q.pid, q.cpu, now); tr.add(q.pid);
+      q.cpu = OS.cpuOf(q.pid, q.cpu, now);
+      if (q === p || (q.pid + passNo) % 2 === 0) tr.add(q.pid); // the agent every pass, its children every other one (their cpu is the delta since their last read)
       p.tcpu += q.cpu; p.trss += q.rss; if (q !== p) p.kids++;
       for (const c of kids.get(q.pid) ?? []) stack.push(c);
     }
