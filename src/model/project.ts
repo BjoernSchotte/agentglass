@@ -8,7 +8,7 @@ import { existsSync, realpathSync, statSync, readdirSync, openSync, writeSync, c
 import { basename, dirname, join, resolve } from "node:path";
 import { scrubRemote } from "../util/giturl.ts";
 import { SSH, sshTarget, sshStamp } from "../util/sshcfg.ts";
-import { HOME, readText, run } from "../util/fs.ts";
+import { HOME, readText, run, cacheDir } from "../util/fs.ts";
 import { type Obj, obj, str } from "../util/json.ts";
 import { home } from "../util/text.ts";
 
@@ -181,7 +181,7 @@ export const P = { ver: 0, todo: 0, dirty: false, sync: false };
 const GIT: GitRun[] = [run]; // the git runner for sync resolves (checks swap in a stub)
 export function setGit(g: GitRun): void { GIT[0] = g; }
 // AGENTGLASS_CACHE_DIR: branch builds keep their caches apart (like the ledger)
-export const PROJECTS_FILE = join(process.env.AGENTGLASS_CACHE_DIR || join(HOME, ".agentglass", "cache"), "projects.json");
+export const PROJECTS_FILE = join(cacheDir(), "projects.json");
 
 export function identOfCwd(cwd: string): Ident | null {
   if (!cwd) return NONE;

@@ -414,6 +414,7 @@ agentglass --json --filter 'tool is Bash and status is error' | jq '.[].title'  
 agentglass --json --filter 'repo is agentglass' --filter 'cost > 2'           # --filter repeats (AND)
 agentglass --json --pinned                                                     # also apply the TUI's pins
 agentglass --watch --filter 'harness is pi and event is_one_of tool result'    # only pi's calls and results
+agentglass --watch --filter 'event is alert'                                   # only alert transitions
 ```
 A bad expression exits 2 with the message and a caret under the column.
 
@@ -845,10 +846,11 @@ export AGENTGLASS_SQLITE3="/opt/bin/sqlite3"   # OpenCode sessions are read with
 export AGENTGLASS_CURL="/opt/bin/curl"         # … or, without sqlite3, over the OpenCode service's HTTP API with curl
 export AGENTGLASS_KIRO="kiro-cli"
 export AGENTGLASS_GEMINI="gemini --approval-mode auto_edit"   # headless sends may edit files
-export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate usage-ledger cache (default ~/.agentglass/cache)
+export AGENTGLASS_CACHE_DIR="/tmp/ag-cache"   # a separate cache: ledger, call rows, projects, price lists (default ~/.agentglass/cache)
 export AGENTGLASS_CONFIG="/tmp/ag-config.json"   # another config file (default ~/.agentglass/config.json)
 export AGENTGLASS_RUN_DIR="/tmp/ag-run"   # single-instance lock and link inbox (default ~/.agentglass/run; must be yours, 0700)
 export AGENTGLASS_PALETTE_FILE="/tmp/ag-palette.json"   # the palette's recent picks (default ~/.agentglass/palette.json)
+export AGENTGLASS_THEME_FILE="/tmp/ag-theme"   # the theme T persists (default ~/.agentglass/theme)
 export AGENTGLASS_OTLP_DIR="/tmp/ag-otlp"     # OTLP export state, lock and request bodies (default ~/.agentglass/otlp)
 ```
 

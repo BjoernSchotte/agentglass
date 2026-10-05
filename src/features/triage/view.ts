@@ -22,8 +22,8 @@ import { statsDrillTool, statsPeriod } from "../usage/stats.ts";
 import type { Clause } from "../query/types.ts";
 import { parse, print, printClause, sameClause } from "../query/parse.ts";
 import { compile, eachCall } from "../query/eval.ts";
-import { addClause, addAll, effective, localFor, setLocal, setPins, shownClause, pinToast } from "../query/scope.ts";
-import { complete } from "../query/ui.ts";
+import { addClause, addAll, effective, includeClause, localFor, setLocal, setPins, shownClause, pinToast } from "../query/scope.ts";
+import { cycleNext, exprErr, newCyc } from "../query/ui.ts";
 import { type TRow, rank, fmtLift, fmtPct, chiStr } from "./score.ts";
 import { type Run, type Result, type TJob, PRESETS, presetOf, newRun, labelOf, triageJob, triageStep, triageProgress, triageCfg, periodOf, periodLabel, guardText, shown, slowKeep, without } from "./run.ts";
 
@@ -241,9 +241,9 @@ export function includeSel(neg: boolean): string {
   let msg = "";
   const ii = incOrigin.indexOf(st.run.origin);
   if (ii >= 0) { const fn = incFn[ii]; msg = fn(c); }
-  else if (isTab(st.run.origin)) { const a = addClause(localFor(st.run.origin), c); setLocal(st.run.origin, a.cs); msg = st.run.origin + " filter: + " + shownClause(c) + (a.note ? " (" + a.note + ")" : ""); }
+  else if (isTab(st.run.origin)) { const a = includeClause(localFor(st.run.origin), c); setLocal(st.run.origin, a.cs); msg = st.run.origin + " filter: + " + shownClause(c) + (a.note ? " (" + a.note + ")" : ""); }
   else msg = "+ " + shownClause(c);
-  st.run.scope = addClause(st.run.scope, c).cs; changed(st); V.want = rowKey(r);
+  st.run.scope = includeClause(st.run.scope, c).cs; changed(st); V.want = rowKey(r); // narrows, also a pinned set
   say("info", msg);
   return msg;
 }
@@ -313,7 +313,7 @@ function guardKeys(st: TState, k: string): void {
   if (isTab(o)) setLocal(o, without(localFor(o), off));
   const e = setPins(print(without(S.pins, off))); if (e) { say("err", e.msg); return; }
   st.run.scope = without(st.run.scope, off); st.run.dropped = without(st.run.dropped, off); changed(st);
-  say("info", "removed " + expr(off) + " from " + (isTab(o) ? o + "/" : "") + "pins");
+  pinToast("removed " + expr(off) + " from " + (isTab(o) ? o + "/" : "") + "pins");
 }
 function keyView(st: TState, k: string): boolean {
   if (st.picker) {
@@ -425,21 +425,16 @@ function slice(): void {
   if (counting()) pump();
 }
 // the typed selection (preset 7): live validation, tab completion
-let cycBase = ""; let cycCands: string[] = []; let cycI = 0; let cycLast = "";
-function exprErr(t: string): string { if (!t.trim()) return "type a selection, e.g. tool is Bash and status is error"; const p = parse(t); if (p.err) return p.err.msg; const c = compile(p.cs, "stats"); return c.err ? c.err.msg : ""; }
+const cyc = newCyc();
+function selErr(t: string): string { return exprErr(t, "stats", "type a selection, e.g. tool is Bash and status is error"); }
 H.input.push((action: string, ev: string, text: string): boolean => {
   if (action !== "triage") return false;
   const st = T.st; if (!st) return false;
-  if (ev === "change") { S.inputErr = text.trim() ? exprErr(text) : ""; if (text !== cycLast) cycCands = []; return false; }
-  if (ev === "tab") {
-    if (cycCands.length && text === cycLast) cycI = (cycI + 1) % cycCands.length;
-    else { const cs = complete(text, true); if (!cs.length) return false; const m = /\S*$/.exec(text); const cur = m ? m[0] : ""; cycBase = text.slice(0, text.length - cur.length); cycCands = cs; cycI = 0; }
-    const next = cycBase + (cycCands[cycI] ?? "") + " "; S.inputText = next; cycLast = next; S.inputErr = exprErr(next);
-    return false;
-  }
+  if (ev === "change") { S.inputErr = text.trim() ? selErr(text) : ""; if (!text.trim()) S.inputErrCol = -1; if (text !== cyc.last) cyc.cands = []; return false; }
+  if (ev === "tab") { const next = cycleNext(cyc, text); if (next) { S.inputText = next; S.inputErr = selErr(next); } return false; }
   if (ev === "esc") { S.inputErr = ""; return false; }
   if (ev !== "enter") return false;
-  const e = exprErr(text); if (e) { S.inputErr = e; return true; }
+  const e = selErr(text); if (e) { S.inputErr = e; return true; }
   const r = st.run; r.sel = parse(text).cs; r.preset = 7; r.slow = false; if (r.base === "group" && !r.group.length) r.base = "rest";
   st.picker = false; st.expand = ""; changed(st);
   return false;

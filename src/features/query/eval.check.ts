@@ -85,6 +85,9 @@ let ev2 = true; if (c1) for (const p of wf.event) if (!p(c1, "tool", "Read", "/a
 eq("watch event preds reject", String(ev2), "false");
 const pw = compile(parse("program is npm").cs, "watch").f ?? EMPTY; let ev3 = true; if (c1) for (const p of pw.event) if (!p(c1, "tool", "Bash", "npm test && ls")) ev3 = false;
 eq("watch program from args", String(ev3), "true");
+// alert lines are events too: event is alert keeps them, an event or call clause for something else drops them
+const al = (src: string): string => { const ps = parse(src); if (ps.err) return "err"; const r = compile(ps.cs, "watch"); if (r.err || !r.f) return "err"; let k = true; if (c1) for (const q of r.f.event) if (!q(c1, "alert", "", "")) k = false; return String(k); };
+eq("watch alert lines", [al("event is alert"), al("event is tool"), al("tool is Bash"), al("event is_not tool"), al("harness is claude")].join(","), "true,false,false,true,true");
 const p = compile(parse("harness is pi and cost > 2").cs, "procs"); eq("procs dims", p.f ? p.f.dimmed.map(printClause).join("|") : "", "cost > 2");
 eq("event outside watch", compile(parse("event is tool").cs, "list").err ? "err" : "ok", "err");
 // units
