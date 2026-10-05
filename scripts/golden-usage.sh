@@ -37,7 +37,7 @@ ag() {
   d="$scratch/$1"; b=$2; shift 2
   env AGENTGLASS_CACHE_DIR="$d/cache" AGENTGLASS_CONFIG="$d/config.json" AGENTGLASS_RULES="$d/rules.json" \
     AGENTGLASS_RUN_DIR="$d/run" AGENTGLASS_PALETTE_FILE="$d/palette.json" AGENTGLASS_THEME_FILE="$d/theme" \
-    AGENTGLASS_OTLP_DIR="$d/otlp" AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 nice -n 10 "$b" "$@"
+    AGENTGLASS_OTLP_DIR="$d/otlp" AGENTGLASS_PRICES="$d/prices.json" AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 nice -n 10 "$b" "$@"
 }
 hf=""; [ -z "$harness" ] || hf="--harness $harness"
 # runs <side> <bin>: the list first (on a cold cache it indexes), then the filters and cost rows

@@ -49,7 +49,7 @@ t0=$(ms)
 pid=$(tmux new-session -d -P -F '#{pane_pid}' -s "$ses" -x 160 -y 45 \
   "exec env AGENTGLASS_CACHE_DIR='$scratch/cache' AGENTGLASS_CONFIG='$scratch/config.json' AGENTGLASS_RULES='$scratch/rules.json' \
    AGENTGLASS_RUN_DIR='$scratch/run' AGENTGLASS_PALETTE_FILE='$scratch/palette.json' AGENTGLASS_THEME_FILE='$scratch/theme' \
-   AGENTGLASS_OTLP_DIR='$scratch/otlp' AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 $dbg nice -n 10 '$bin'")
+   AGENTGLASS_OTLP_DIR='$scratch/otlp' AGENTGLASS_PRICES='$scratch/prices.json' AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 $dbg nice -n 10 '$bin'")
 alive() { [ -r "/proc/$pid/stat" ] || { echo "footprint.sh: agentglass exited (pid $pid)" >&2; exit 1; }; }
 
 first=-1
