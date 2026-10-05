@@ -40,7 +40,7 @@ function statusGlyph(s: Sess): string {
 // as renderSessions draws it from these inputs; the preview by its session's fields, last events (the tail is read here
 // as the frame would), its subagents and the usage its sections show
 function rowKey(s: Sess, sub: boolean, last: boolean): string {
-  const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + ago(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + ago(s.last) + "|" + s.cwd + "|" +
+  const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + agoK(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + agoK(s.last) + "|" + s.cwd + "|" +
     (s.subs.length ? (isOpen(s) ? "v" : ">") + String(activeSubs(s)) + "/" + String(s.subs.length) : ""));
   let b = ""; for (const f of H.rowBadges) b += f(s);
   return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b;
@@ -49,7 +49,11 @@ function usageKey(s: Sess): string {
   return String(s.inTok) + "," + String(s.outTok) + "," + String(s.cacheRTok) + "," + String(s.cacheWTok) + "," + String(s.cost) + "," + String(s.unkTok) + "," + String(s.unkCr) + "," +
     String(s.tools) + "," + String(s.linesAdd) + "," + String(s.linesDel) + "," + s.bill + s.plan + s.billSrc + (s.attention ? "!" : "") + s.stuck;
 }
-export function listSig(): string {
+// clock false: without the "ago" texts (an unfocused TUI draws for a change of data, not of the clock)
+const SIGT = { clock: true };
+function agoK(t: number): string { return SIGT.clock ? ago(t) : ""; }
+export function listSig(clock: boolean = true): string {
+  SIGT.clock = clock;
   const o: string[] = [String(S.W) + "x" + String(S.H), String(S.top), String(S.sel), String(S.listH), String(S.view.length), boxChips("sessions", S.W)];
   for (let r = 0; r < S.listH; r++) {
     const s = sessAt(S.top + r); if (!s) break;
@@ -60,13 +64,13 @@ export function listSig(): string {
   if (s) {
     if (s.headDone) loadTail(s); // as the frame reads it (a head is read by the frame itself)
     const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
-    o.push(s.path + "|" + bytes(s.size) + "|" + (s.headDone ? "h" : "") + s.cwd + "|" + s.branch + "|" + s.remote + "|" + s.model + "|" + ago(s.mtime) + "|" + String(s.pid) + s.status + s.name + "|" +
+    o.push(s.path + "|" + bytes(s.size) + "|" + (s.headDone ? "h" : "") + s.cwd + "|" + s.branch + "|" + s.remote + "|" + s.model + "|" + agoK(s.mtime) + "|" + String(s.pid) + s.status + s.name + "|" +
       (s.pid ? tmuxTarget(s.pid) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
     // the preview lists the 6 most active subagents (renderSessions' order); the usage sums all of them
     let u = 0; for (const c of s.subs) u += c.cost + c.inTok + c.outTok + c.cacheRTok + c.cacheWTok + c.tools + c.linesAdd + c.linesDel + c.unkTok;
     o.push(String(s.subs.length) + ":" + String(u));
     if (s.subs.length) for (const c of s.subs.slice().sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime).slice(0, 6))
-      o.push(c.path + (subActive(c) ? "A" : "a") + ago(c.mtime) + "|" + titleOf(c) + "|" + activity(c));
+      o.push(c.path + (subActive(c) ? "A" : "a") + agoK(c.mtime) + "|" + titleOf(c) + "|" + activity(c));
   }
   return o.join("\n");
 }

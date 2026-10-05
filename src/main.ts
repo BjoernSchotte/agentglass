@@ -101,7 +101,7 @@ function renderTop(step: boolean): void {
 // on every change as before.
 function listShown(): boolean { return S.tab === 0 && S.mode === "list"; }
 function headSig(): string { const o: string[] = [statsKey(), String(S.tab)]; for (const f of H.headerWidgets) o.push(f(S.W)); return o.join("\n"); }
-function bodySig(): string { return String(gitGen()) + "/" + String(gitTouches()) + "\n" + listSig(); }
+function bodySig(): string { return String(gitGen()) + "/" + String(gitTouches()) + "\n" + listSig(!sc.unf); }
 // once per turn at most (several jobs ask in one turn): true = the body moved (a frame); a moved header alone marks only
 // that row (the cpu graph and the stats move every process scan). head = also look at the header: only the process
 // scan and a ledger tick that booked something move it (an alarm count is drawn by the watch job's alarm frame)
@@ -159,7 +159,7 @@ function body(j: Job, now: number): () => void {
     const toast = S.toast !== "" && now - S.toastAt < S.toastMs + 500; // includes the frame that removes it
     // unfocused (a tmux pane beside the focused one may still show it): a frame at the render job's 5 s beat when what
     // the list shows moved (looked at here only, not by every job), no spinner or header steps; focus-in draws at once
-    if (sc.unf) { VIS.unf = false; const mv = listShown() && shownMoved(true); VIS.unf = true; if (S.dirty || toast || mv) { lastBuild = now; S.frame++; render(); } else if (headDirty) { headDirty = false; renderTop(false); } return; }
+    if (sc.unf) { VIS.unf = false; const mv = listShown() && shownMoved(false); VIS.unf = true; if (S.dirty || toast || mv) { lastBuild = now; S.frame++; render(); } return; }
     const list = listShown();
     const clock = now - lastBuild >= forceMs(sc.lv) && (!list || now - lastBuild >= SAFETY_MS || shownMoved(false));
     if (sc.fixed || S.dirty || toast || clock || (S.animating && !list)) { lastBuild = now; S.frame++; render(); return; }
