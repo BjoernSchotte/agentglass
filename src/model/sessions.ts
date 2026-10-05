@@ -4,7 +4,7 @@ import { firstLine } from "../util/text.ts";
 import { own } from "../util/own.ts";
 import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
-import { readBytes, KNOWN } from "../util/fs.ts";
+import { readBytes, KNOWN, FS_STATS } from "../util/fs.ts";
 import { S } from "../state.ts";
 import { H, applyMeta } from "../hooks.ts";
 
@@ -15,24 +15,33 @@ export const SG = { gen: 0 }; // bumped whenever a session is added or removed (
 // a known log is stat'ed when it is pid-linked or written within a day; the rest in turns, 1/ROT of them per scan (~once a
 // minute at the hot scan interval): a history of thousands of old logs was most of a scan
 const ROT = 20; const RECENT_MS = 86400000;
-const SCAN = { no: 0, now: 0, seen: 0, gone: [] as string[] };
+const SCAN = { no: 0, now: 0, seen: 0, gone: [] as string[], gen: -1, n: -1 };
 // a log's turn: from the characters before its extension (ids, random enough), no lookup per log and scan
 function rotOf(path: string): number { const n = path.length; let h = 0; for (let i = Math.max(0, n - 14); i < n - 6; i++) h = h * 7 + path.charCodeAt(i); return h % ROT; }
-// counts what it saw (scan() finds what went from the count; no set of paths per scan)
-function addFile(h: Harness, path: string, id: string, archived: boolean, parent: string): void {
-  let s = sessions.get(path);
-  if (s && s.pid <= 0 && SCAN.now - s.mtime >= RECENT_MS && rotOf(path) !== SCAN.no % ROT) { SCAN.seen++; if (H.meta.length) applyMeta(s); return; } // not its turn
-  const fresh = !s;
-  if (!s) { s = newSess(h, id, path, archived); s.parent = parent; }
+// a known session at its turn: stat, new size/mtime; false = its log is gone
+function refresh(h: Harness, s: Sess, turn: number): boolean {
+  if (s.pid <= 0 && SCAN.now - s.mtime >= RECENT_MS && turn !== SCAN.no % ROT) { SCAN.seen++; if (H.meta.length) applyMeta(s); return true; } // not its turn
   const st = sourceOf(h).stat(s);
-  if (!st) { if (!fresh) SCAN.gone.push(path); return; } // gone (a new session is not in the map yet)
-  if (fresh) {
-    sessions.set(path, s); SG.gen++;
-    const m = harnessOf(h).meta; if (m) m(s);
-  }
-  if (restat(s, st.size, st.mtime, epochOf(s)) || fresh || H.meta.length) applyMeta(s); // head and tail reads apply it after they change fields; --redact (H.meta) fakes every scanned session as before: a writer path that skips it must not leak
-  SCAN.seen++;
+  if (!st) { SCAN.gone.push(s.path); return false; }
+  if (restat(s, st.size, st.mtime, epochOf(s)) || H.meta.length) applyMeta(s); // head and tail reads apply it after they change fields; --redact (H.meta) fakes every scanned session as before: a writer path that skips it must not leak
+  SCAN.seen++; return true;
 }
+// counts what it saw (scan() finds what went from the count; no set of paths per scan); the session, null = none
+function addFile(h: Harness, path: string, id: string, archived: boolean, parent: string): Sess | null {
+  const known = sessions.get(path);
+  if (known) return refresh(h, known, rotOf(path)) ? known : null;
+  const s = newSess(h, id, path, archived); s.parent = parent;
+  const st = sourceOf(h).stat(s);
+  if (!st) return null; // gone (a new session is not in the map yet)
+  sessions.set(path, s); SG.gen++;
+  const m = harnessOf(h).meta; if (m) m(s);
+  restat(s, st.size, st.mtime, epochOf(s)); applyMeta(s);
+  SCAN.seen++; return s;
+}
+// per harness: what its last scan listed and the sessions those were. A scan that lists the same paths (no directory
+// was listed again: the listings are the cached ones, no log came) walks those sessions instead: no lookup per log
+interface Listed { paths: string[]; sess: (Sess | null)[] }
+const LISTED = new Map<string, Listed>();
 // new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file.
 // true = something changed
 export function restat(s: Sess, size: number, mtime: number, ep: string): boolean {
@@ -54,17 +63,34 @@ export function probeLive(): boolean {
   }
   return changed;
 }
+function sameList(a: string[], b: string[]): boolean { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
 let scanned = false;
 export function scan(): void {
   if (!scanned) { scanned = true; for (const f of H.firstScan) f(); }
   SCAN.no++; SCAN.now = Date.now(); SCAN.seen = 0; SCAN.gone = [];
-  for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => addFile(ad.id, path, id, archived, parent));
+  if (SG.gen !== SCAN.gen || sessions.size !== SCAN.n) LISTED.clear(); // sessions came or went outside a scan (trash, checks)
+  for (const ad of HARNESSES) {
+    const paths: string[] = []; const ids: string[] = []; const pars: string[] = []; const arch: boolean[] = [];
+    const l0 = FS_STATS.lists;
+    ad.scan((path: string, id: string, parent: string, archived: boolean) => { paths.push(path); ids.push(id); pars.push(parent); arch.push(archived); });
+    const m = LISTED.get(ad.id);
+    if (m && FS_STATS.lists === l0 && sameList(m.paths, paths)) { // the same listing: its sessions, in turns
+      for (let i = 0; i < m.sess.length; i++) { const s = m.sess[i]; if (s && !refresh(ad.id, s, i % ROT)) m.sess[i] = null; }
+      continue;
+    }
+    const sess: (Sess | null)[] = [];
+    for (let i = 0; i < paths.length; i++) sess.push(addFile(ad.id, paths[i] ?? "", ids[i] ?? "", arch[i] ?? false, pars[i] ?? ""));
+    LISTED.set(ad.id, { paths, sess });
+  }
+  if (SCAN.gone.length) LISTED.clear(); // the walks above hold sessions that go now
   for (const p of SCAN.gone) if (sessions.delete(p)) SG.gen++; // listed but no longer there
-  if (SCAN.seen === sessions.size) return; // every known log listed once: nothing else went
+  if (SCAN.seen === sessions.size) { SCAN.gen = SG.gen; SCAN.n = sessions.size; return; } // every known log listed once: nothing else went
+  LISTED.clear();
   const seen = new Set<string>(); // something went (or a path was listed twice): list again by name
   for (const ad of HARNESSES) ad.scan((path: string, id: string, parent: string, archived: boolean) => { seen.add(path); });
   for (const p of SCAN.gone) seen.delete(p);
   for (const k of [...sessions.keys()]) if (!seen.has(k)) { sessions.delete(k); SG.gen++; }
+  SCAN.gen = SG.gen; SCAN.n = sessions.size;
 }
 // A log only grows: once it reaches past the head window, what reading the head did is final (a shorter log: until it
 // grows; a record source counts records). That outcome — the session fields it changed, the first prompt and the
