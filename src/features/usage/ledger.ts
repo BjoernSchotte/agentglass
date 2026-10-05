@@ -129,7 +129,8 @@ let fullAt = 0; let fullSig = -1; let hot: Sess[] = [];
 const RUN = { done: 0, total: 0, hist: 0 };
 export const TICK_STATS = { applied: 0, sidecars: 0, visits: 0, full: 0 }; // counters for the checks
 // re-apply every session on the next full pass (something changed totals in place, e.g. a re-pricing)
-export function reapplyAll(): void { for (const k of TK.values()) k.a = null; fullAt = 0; }
+export const LGEN = { reapply: 0 }; // bumped by reapplyAll: totals derived from every session's numbers re-sum (summary.ts)
+export function reapplyAll(): void { for (const k of TK.values()) k.a = null; fullAt = 0; LGEN.reapply++; }
 function tkOf(s: Sess): Tk { let k = TK.get(s.path); if (!k) { k = { a: null, off: -1, s: null, side: 0, c: 0, z: 0, h: false }; TK.set(s.path, k); } return k; }
 function apply(s: Sess, a: Acc, k: Tk): void { applyAcc(s, a); k.a = a; k.off = a.off; k.s = s; TICK_STATS.applied++; }
 function contrib(s: Sess, a: Acc): number { return Math.min(a.off, s.size) + (a.stall === s.size && a.off < s.size ? s.size - a.off : 0); }

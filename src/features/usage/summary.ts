@@ -4,14 +4,14 @@ import { H } from "../../hooks.ts";
 import { say } from "../../state.ts";
 import { section } from "../../util/config.ts";
 import { OS } from "../../platform/index.ts";
-import { sessions } from "../../model/sessions.ts";
-import { ledger } from "./ledger.ts";
-import { L, todayKey, lastDays } from "./record.ts";
+import { sessions, SG } from "../../model/sessions.ts";
+import { ledger, LGEN } from "./ledger.ts";
+import { type Acc, L, todayKey, lastDays } from "./record.ts";
 import { PGEN } from "./pricing.ts";
 import { type PRow, type SessAcc, priceRows } from "./pricerows.ts";
 import { type Bill, MODES } from "./billing.ts";
 import { modeOf } from "./bill-live.ts";
-import { type ModeSum, type DayCost, type Budget, type BState, newSum, addDay, parseBudget, budgetState, stateOf, notifyOnce, projectToday, projectMonth, daysLeftInMonth, monthStart } from "./costs.ts";
+import { type ModeSum, type DayCost, type Budget, type BState, newSum, addDay, addSum, parseBudget, budgetState, stateOf, notifyOnce, projectToday, projectMonth, daysLeftInMonth, monthStart } from "./costs.ts";
 
 export const budget: Budget = parseBudget(section("budget"));
 
@@ -51,6 +51,59 @@ export function dayCosts(days: string[], harness: string): DayCost[][] {
   }
   return out;
 }
+// ── the TUI's all-harness sums, kept per local day (header widget, Stats) ──
+// One aggregate per day of the window (this month + the last 15 days): its mode sums and per-mode hourly costs over every
+// session. A refresh re-sums only the days a changed session has in the window (usually today), found by one cheap pass
+// (entry object, offset, sidecar stamp, billing label, pid); a new day, a re-pricing, a changed session set, and every 60 s
+// (the billing evidence behind modeOf is re-checked at that pace) re-sum them all.
+// One-shot CLI runs (cost) and other harness filters keep the full sums: same values, summed day by day here (floating
+// point association may differ in the last digit, never in a shown cent: summary-inc.check.ts).
+interface DayAgg { m: ModeSum; dc: DayCost[] /* per mode */ }
+interface SessSig { a: Acc | null; off: number; xm: number; mode: string; days: string[] /* its window days, as summed */ }
+const INC = { on: false, key: "", at: 0, days: new Map<string, DayAgg>(), sig: new Map<string, SessSig>(), resums: 0 };
+H.start.push(() => { INC.on = true; }); // the TUI; a one-shot run sums once anyway
+function dayAggOf(k: string): DayAgg {
+  const m = newSum(); const dc: DayCost[] = []; for (let i = 0; i < MODES.length; i++) dc.push({ key: k, cost: 0, hc: zeros24() });
+  for (const s of sessions.values()) {
+    const a = ledger.get(s.path); if (!a) continue;
+    const d = a.days.get(k); if (!d) continue;
+    addDay(m, d, (p: string): Bill => modeOf(s, p));
+    if (d.cost <= 0) continue;
+    for (const [p, c] of d.cp) {
+      const x = dc[MODES.indexOf(modeOf(s, p))]; if (!x) continue;
+      x.cost += c; const f = c / d.cost;
+      for (let h = 0; h < 24; h++) x.hc[h] = (x.hc[h] ?? 0) + (d.hc[h] ?? 0) * f;
+    }
+  }
+  INC.resums++;
+  return { m, dc };
+}
+function windowDays(a: Acc, win: Set<string>): string[] { const o: string[] = []; for (const k of a.days.keys()) if (win.has(k)) o.push(k); return o; }
+// brings INC.days up to date for the window
+function incSync(win: string[], now: number): void {
+  const ws = new Set<string>(win);
+  const key = win.join(",") + "|" + String(LGEN.reapply) + "|" + String(PGEN.n) + "|" + String(SG.gen) + "|" + String(sessions.size);
+  const all = key !== INC.key || now - INC.at >= 60000 || now < INC.at; INC.key = key; if (all) INC.at = now;
+  const touched = new Set<string>();
+  const seen = INC.sig;
+  for (const s of sessions.values()) {
+    const a = ledger.get(s.path) ?? null; const g = seen.get(s.path);
+    const mode = s.bill + "|" + String(s.pid); // the label bill-live derives from the evidence modeOf reads
+    if (g && g.a === a && (!a || (g.off === a.off && g.xm === a.xM)) && g.mode === mode) continue;
+    const days = a ? windowDays(a, ws) : [];
+    if (g) for (const k of g.days) touched.add(k); // what it added before (an entry restarted or moved)
+    for (const k of days) touched.add(k);
+    seen.set(s.path, { a, off: a ? a.off : 0, xm: a ? a.xM : 0, mode, days });
+  }
+  if (all) { INC.days.clear(); for (const k of win) INC.days.set(k, dayAggOf(k)); if (seen.size > sessions.size) for (const p of [...seen.keys()]) if (!sessions.has(p)) seen.delete(p); return; }
+  for (const k of touched) if (ws.has(k)) INC.days.set(k, dayAggOf(k));
+}
+function incSum(keys: string[]): ModeSum { const m = newSum(); for (const k of keys) { const d = INC.days.get(k); if (d) addSum(m, d.m); } return m; }
+function incRows(keys: string[]): DayCost[][] {
+  const out: DayCost[][] = [];
+  for (let i = 0; i < MODES.length; i++) { const r: DayCost[] = []; for (const k of keys) { const d = INC.days.get(k); const x = d ? d.dc[i] : undefined; r.push(x ? { key: k, cost: x.cost, hc: x.hc.slice() } : { key: k, cost: 0, hc: zeros24() }); } out.push(r); }
+  return out;
+}
 export interface Proj { today: number; month: number } // -1 = not enough history
 // series = the last 15 local days (oldest first, today last) + month-to-date cost; a series without any cost projects 0
 function project(series: DayCost[], mtd: number, hour: number, left: number): Proj {
@@ -83,13 +136,15 @@ export interface CostNow {
   budget: Budget; bs: BState;
 }
 const nows = new Map<string, { ver: number; at: number; c: CostNow }>();
+export const SUMMARY_TEST = { inc: (on: boolean): void => { INC.on = on; nows.clear(); sums.clear(); }, fresh: (): void => { nows.clear(); sums.clear(); }, resums: (): number => INC.resums };
 export function costNow(harness: string): CostNow {
   const hit = nows.get(harness);
   if (hit && fresh(hit.ver, hit.at)) return hit.c;
   const now = Date.now(); const hour = new Date(now).getHours(); const left = daysLeftInMonth(now);
-  const d15 = lastDays(15); const mk = monthStart(now);
-  const month = sumDays(mk, harness);
-  const rows = dayCosts(d15, harness);
+  const d15 = lastDays(15); const mk = monthStart(now); const inc = INC.on && harness === "";
+  if (inc) { const win = mk.slice(); for (const k of d15) if (win.indexOf(k) < 0) win.push(k); incSync(win, now); }
+  const month = inc ? incSum(mk) : sumDays(mk, harness);
+  const rows = inc ? incRows(d15) : dayCosts(d15, harness);
   const projByMode: Proj[] = [];
   for (let i = 0; i < MODES.length; i++) projByMode.push(project(rows[i] ?? [], month.by[i] ?? 0, hour, left));
   const counted = (i: number): boolean => budget.counts.indexOf(MODES[i] ?? "unknown") >= 0;
@@ -99,7 +154,7 @@ export function costNow(harness: string): CostNow {
   const projCounted = project(sumRows(rows, counted), mtdCounted, hour, left);
   const bs = budgetState(budget, month, projByMode.map((p: Proj) => p.month));
   bs.projected = projCounted.month; bs.state = stateOf(budget, bs.used, bs.projected);
-  const c: CostNow = { today: sumDays([todayKey()], harness), week: sumDays(lastDays(7), harness), month, projByMode,
+  const c: CostNow = { today: inc ? incSum([todayKey()]) : sumDays([todayKey()], harness), week: inc ? incSum(lastDays(7)) : sumDays(lastDays(7), harness), month, projByMode,
     proj: project(sumRows(rows, (i: number) => true), mtdAll, hour, left), projCounted, budget, bs };
   nows.set(harness, { ver: L.ver, at: now, c });
   return c;
