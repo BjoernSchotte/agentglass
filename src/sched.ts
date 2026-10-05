@@ -79,8 +79,13 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
   const x = sc.js.get(j);
   if (j === "tick" && sc.burst) return sc.lv === "hot" ? 250 : b; // ledger indexing: 100 ms slices at 250 ms while hot, no stretch
   let e = x ? Math.max(b, 20 * x.ew) : b;
-  if (j === "render" && sc.unf) e = Math.max(e, 1000); // unfocused: draw ≤ 1/s, ingest and alarms keep their cadence
+  if (j === "render" && sc.unf) e = Math.max(e, 5000); // unfocused: nobody looks — frames only for a change (an alarm draws at once: main.ts watch)
   if (j === "fast") e = Math.max(e, sc.fastMs);
+  if (sc.unf) { // unfocused: no marquee steps (a replay goes on), the live probe rides on the watch job (its alarm latency), size seldom
+    if (j === "fast" && sc.fastMs > 50) return -1;
+    if (j === "probe" && live) return -1;
+    if (j === "size") e = Math.max(e, 10000);
+  }
   return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
 }
 
@@ -137,7 +142,7 @@ export function sleepFor(sc: Sched, now: number, live: boolean, armed: boolean):
 // (marquee: one row instead of a whole frame, ~6 steps/s), dirty = unfocused, left to the 1/s render cap
 export function fastDraw(full: boolean, header: boolean, unf: boolean): string {
   if (!full && !header) return "";
-  if (unf) return "dirty";
+  if (unf) return full ? "dirty" : ""; // unfocused: a marquee step is not drawn at all
   return full ? "full" : "header";
 }
 // a frame is built at least this often even when nothing is dirty ("3m ago" texts)

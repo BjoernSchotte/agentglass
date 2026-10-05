@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ProcFs, parseStat, ttyName, cmdlineText, etimeText, scanProcs, procfsUsable, btimeOf, PROCFS_STATS } from "./procfs.ts";
+import { type ProcFs, parseStat, ttyName, cmdlineText, etimeText, scanProcs, knownProcs, procfsUsable, btimeOf, PROCFS_STATS } from "./procfs.ts";
 import { parsePs } from "./posix.ts";
 import type { ProcRow } from "./types.ts";
 
@@ -162,6 +162,18 @@ rows = scanProcs(fs, T0 + 40000, none(), false, want);
 rmSync(join(root, "1200"), { recursive: true, force: true });
 rows = scanProcs(fs, T0 + 41500, none(), false, want);
 eq("short-lived: one name read, no stat", String(PROCFS_STATS.comm - c0) + "/" + String(PROCFS_STATS.stat - s0), "1/0");
+
+// a pass without the listing (an unfocused TUI): known pids only, tracked ones read fresh, a gone tracked one dropped,
+// a new pid not seen
+proc(1300, "claude", 1, 0, 100, 100, "claude\0");
+rows = scanProcs(fs, T0 + 50000, none(), true, want);
+const t13 = new Set<number>(); t13.add(1300);
+proc(1300, "claude", 1, 0, 250, 100, "claude\0"); proc(1301, "node", 1, 0, 0, 100, "node\0x\0");
+rows = knownProcs(fs, T0 + 51500, t13);
+const k13 = byPid(rows, 1300); eq("known: tracked cpu fresh", k13 ? k13.cpu.toFixed(1) : "", "100.0");
+ok("known: a new pid waits for the listing", byPid(rows, 1301) === null, "listed");
+rmSync(join(root, "1300"), { recursive: true, force: true });
+rows = knownProcs(fs, T0 + 53000, t13); ok("known: a gone tracked pid dropped", byPid(rows, 1300) === null, "kept");
 
 // ── fallback to ps: /proc missing or without a boot time ──
 ok("missing root → not usable", !procfsUsable({ root: join(root, "nope"), hz: 100, page: 4096, btime: 1 }), "usable");

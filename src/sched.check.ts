@@ -97,9 +97,13 @@ eq("fast armed idle", String(every(sc, "fast", false, true)), "-1");
 
 // ── unfocused cap ──
 sc = newSched(false, false, t); sc.lv = "hot"; sc.unf = true;
-eq("unf render hot", String(every(sc, "render", false, false)), "1000");
+eq("unf render hot", String(every(sc, "render", false, false)), "5000");
 eq("unf tick hot", String(every(sc, "tick", false, false)), "500");
 eq("unf probe hot", String(every(sc, "probe", false, false)), "250");
+eq("unf probe hot, live: rides on watch", String(every(sc, "probe", true, false)), "-1");
+sc.fastMs = 150; eq("unf marquee paused", String(every(sc, "fast", false, true)), "-1");
+sc.fastMs = 50; eq("unf replay goes on", String(every(sc, "fast", false, true)), "50"); sc.fastMs = 150;
+eq("unf size", String(every(sc, "size", false, false)), "10000");
 eq("unf watch live", String(every(sc, "watch", true, false)), "1500");
 sc.lv = "away";
 eq("unf render away", String(every(sc, "render", false, false)), "5000");
@@ -181,7 +185,7 @@ eq("duration measured", String(px ? px.ew >= 9 : false), "true"); // 0.3 × 30
 eq("fast nothing", fastDraw(false, false, false), "");
 eq("fast header", fastDraw(false, true, false), "header");
 eq("fast full", fastDraw(true, true, false), "full");
-eq("fast unfocused header", fastDraw(false, true, true), "dirty");
+eq("fast unfocused header: nothing", fastDraw(false, true, true), "");
 eq("fast unfocused full", fastDraw(true, false, true), "dirty");
 
 // ── fast arm seam ──

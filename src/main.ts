@@ -106,8 +106,9 @@ function bodySig(): string { return String(gitGen()) + "/" + String(gitTouches()
 // that row (the cpu graph and the stats move every process scan). head = also look at the header: only the process
 // scan and a ledger tick that booked something move it (an alarm count is drawn by the watch job's alarm frame)
 const VIS = { head: "", body: "", turn: -1, hturn: -1, moved: false };
-let turnNo = 0; let wakeSeen = 0; let headDirty = false;
+let turnNo = 0; let wakeSeen = 0; let procsPass = 0; let headDirty = false;
 function shownMoved(head: boolean): boolean {
+  if (sc.unf) return false; // unfocused: what only the clock or a stream moved waits for focus-in (a full frame then)
   if (head && VIS.hturn !== turnNo) { VIS.hturn = turnNo; const h = headSig(); if (h !== VIS.head) { VIS.head = h; headDirty = true; } }
   if (VIS.turn === turnNo) return VIS.moved;
   VIS.turn = turnNo; const b = bodySig(); VIS.moved = b !== VIS.body; VIS.body = b;
@@ -136,7 +137,7 @@ function alarmSig(): string { let o = ""; for (const s of sessions.values()) if 
 function probe(): void { if (probeLive()) { act.grow = Date.now(); if (!listShown() || shownMoved(false)) S.dirty = true; } }
 function body(j: Job, now: number): () => void {
   if (j === "size") return sizeJob;
-  if (j === "procs") return () => { refreshProcs(); if (WAKE_ALL.at !== wakeSeen) { wakeSeen = WAKE_ALL.at; const x = sc.js.get("scan"); if (x) x.last = 0; } /* a new agent: scan at once (its log may be there already) */ if (!listShown() || shownMoved(true)) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
+  if (j === "procs") return () => { procsPass++; refreshProcs(!sc.unf || procsPass % 2 === 0); /* unfocused: new pids looked for every other pass (3 s), the agents' cpu every pass (alarm samples) */ if (WAKE_ALL.at !== wakeSeen) { wakeSeen = WAKE_ALL.at; const x = sc.js.get("scan"); if (x) x.last = 0; } /* a new agent: scan at once (its log may be there already) */ if (!listShown() || shownMoved(true)) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
   if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; } };
   if (j === "slow") return () => { refreshSlow(); S.dirty = true; };
   if (j === "probe") return probe;
@@ -156,6 +157,7 @@ function body(j: Job, now: number): () => void {
   };
   return () => { // render: build only when something changed, a toast is up, or the clock texts are due; else turn the spinners
     const toast = S.toast !== "" && now - S.toastAt < S.toastMs + 500; // includes the frame that removes it
+    if (sc.unf) { if (S.dirty || toast) { lastBuild = now; S.frame++; render(); } return; } // unfocused: frames only for a change, no clock texts, spinners or header steps (focus-in draws all)
     const list = listShown();
     const clock = now - lastBuild >= forceMs(sc.lv) && (!list || now - lastBuild >= SAFETY_MS || shownMoved(false));
     if (sc.fixed || S.dirty || toast || clock || (S.animating && !list)) { lastBuild = now; S.frame++; render(); return; }
@@ -182,7 +184,8 @@ function onFocus(f: string): void {
   const now = Date.now();
   if (f === "out") { act.focusOut = now; sc.unf = true; return; }
   act.focusOut = 0; act.input = now; sc.unf = false; // the user looks again: hot, full repaint (the terminal may have dropped frames)
-  resetFrame(); S.dirty = true;
+  resetFrame(); S.dirty = true; VIS.body = ""; VIS.head = "";
+  for (const j of ["size", "procs", "scan", "probe", "tick"]) { const x = sc.js.get(j); if (x) x.last = 0; } // a fresh look at once, not what the unfocused cadence left
 }
 function onData(d: Uint8Array): void {
   let user = false;

@@ -1,17 +1,18 @@
 #!/bin/sh
 # TUI footprint of one agentglass binary on this host's real transcripts: first frame, RSS, CPU (self + children).
 #   sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>]
-#                           [--config <config.json>] [--debug]
+#                           [--config <config.json>] [--debug] [--away]
 # Prints: first_frame_ms, rss_mb_5s, rss_mb_30s, rss_mb_end, cpu_self_pct, cpu_children_pct, cpu_total_pct (one per line,
 # CPU in % of one core over the window after the warm-up). Runs the TUI niced in a detached 160x45 tmux pane with every
 # AGENTGLASS_* path in the scratch dir and AGENTGLASS_AGENT=0; --warm copies the cache first (the original is never
 # written); --config copies a config.json in (e.g. a pinned filter); --debug sets AGENTGLASS_DEBUG_REFRESH=1 and prints
-# the pane's last row (the debug footer) as `debug <text>`. Linux only (/proc). Kills only its own tmux session.
+# the pane's last row (the debug footer) as `debug <text>`; --away reports a focus-out to the TUI after its first frame
+# (the terminal's focus event: nobody looks). Linux only (/proc). Kills only its own tmux session.
 set -e
 export LC_ALL=C # decimal points in awk/sleep whatever the locale
 [ "$(uname -s)" = Linux ] || { echo "footprint.sh: Linux only"; exit 2; }
-usage() { echo "usage: sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>] [--config <file>] [--debug]" >&2; exit 2; }
-bin=""; mode=""; warm=""; warmup=30; window=120; scratch=""; config=""; debug=0
+usage() { echo "usage: sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>] [--config <file>] [--debug] [--away]" >&2; exit 2; }
+bin=""; mode=""; warm=""; warmup=30; window=120; scratch=""; config=""; debug=0; away=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) bin=$2; shift ;;
@@ -22,6 +23,7 @@ while [ $# -gt 0 ]; do
     --scratch) scratch=$2; shift ;;
     --config) config=$2; shift ;;
     --debug) debug=1 ;;
+    --away) away=1 ;;
     *) usage ;;
   esac
   shift
@@ -59,6 +61,7 @@ while [ $(($(ms) - t0)) -lt 60000 ]; do
   sleep 0.05
 done
 [ $first -ge 0 ] || { echo "footprint.sh: no first frame within 60 s" >&2; exit 1; }
+[ $away = 0 ] || tmux send-keys -t "$ses" -l "$(printf '\033[O')" # focus out, as a terminal reports it
 # until <s>: sleep until s seconds after the start
 until_s() { d=$(($1 * 1000 - ($(ms) - t0))); [ $d -le 0 ] || sleep "$(awk -v d="$d" 'BEGIN { printf "%.3f", d / 1000 }')"; alive; }
 r5=-1; r30=-1; c0=""; w0=0

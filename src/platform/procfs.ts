@@ -154,6 +154,21 @@ export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: b
   for (const [pid, p] of PF.wait) if (p !== pass) PF.wait.delete(pid); // gone before its second pass (or read now)
   return out;
 }
+// a pass without the /proc listing: the pids seen last time, the tracked ones read fresh (cpu, a gone one dropped);
+// new pids wait for the next listing pass
+export function knownProcs(fs: ProcFs, now: number, tracked: Set<number>): ProcRow[] {
+  const out = PF.out; out.length = 0;
+  for (const [pid, e] of PF.ents) {
+    if (tracked.has(pid)) {
+      const st = readStat(fs, pid);
+      if (!st || st.start !== e.start) { PF.ents.delete(pid); continue; } // gone (or reused: the next listing reads it as new)
+      const r = e.row; r.ppid = st.ppid;
+      if (now - e.at >= 500) { r.cpu = Math.max(0, (st.ticks - e.t) / fs.hz / ((now - e.at) / 1000) * 100); e.t = st.ticks; e.at = now; }
+    }
+    out.push(e.row);
+  }
+  return out;
+}
 // /proc is usable: a numbered entry and a boot time (else the caller falls back to ps)
 export function procfsUsable(fs: ProcFs): boolean {
   if (fs.btime <= 0 || fs.hz <= 0 || fs.page <= 0) return false;

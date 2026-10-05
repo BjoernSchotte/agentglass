@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { userInfo } from "node:os";
 import { HOME, readText, readBytes, listDir, run } from "../util/fs.ts";
 import type { Platform, ProcRow } from "./types.ts";
-import { type ProcFs, scanProcs, btimeOf, procfsUsable } from "./procfs.ts";
+import { type ProcFs, scanProcs, knownProcs, btimeOf, procfsUsable } from "./procfs.ts";
 import { psProcs, devOf, detached, freeName, ownerModeOf, fileInfoOf } from "./posix.ts";
 
 // the process table from /proc (procfs.ts): no ps child, and only new, young and tracked pids are read on most passes;
@@ -14,12 +14,12 @@ const PFS: ProcFs = { root: "/proc", hz: 0, page: 0, btime: 0 };
 const FULL_MS = 30000;
 let useProc = -1; let lastFull = 0;
 function clkTck(): number { if (!PFS.hz) PFS.hz = Number(run("getconf", ["CLK_TCK"]).trim()) || 100; return PFS.hz; }
-function listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean): ProcRow[] {
+function listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean, discover: boolean): ProcRow[] {
   if (useProc < 0) { clkTck(); PFS.page = Number(run("getconf", ["PAGESIZE"]).trim()) || 4096; PFS.btime = btimeOf(PFS.root); useProc = procfsUsable(PFS) ? 1 : 0; }
   if (!useProc) return psProcs();
-  const now = Date.now(); const full = now - lastFull >= FULL_MS;
+  const now = Date.now(); const full = discover && now - lastFull >= FULL_MS;
   if (full) lastFull = now;
-  return scanProcs(PFS, now, tracked, full, wantArgs);
+  return discover ? scanProcs(PFS, now, tracked, full, wantArgs) : knownProcs(PFS, now, tracked);
 }
 // ps %cpu on Linux is the lifetime average, so fresh helpers read as 100%+ and long-lived agents as idle →
 // diff utime+stime between refreshes instead: scanProcs already did from the stat it just read (reported); the ps

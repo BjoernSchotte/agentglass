@@ -54,9 +54,10 @@ const LAUNCH = ["node", "bun", "deno", "npx", "npm", "pnpm", "env", "sh", "bash"
 export function argsWorth(comm: string): boolean {
   return LAUNCH.indexOf(comm) >= 0 || harnessOfProc(comm) !== "" || OTHER.indexOf(comm) >= 0 || harnessOfArgs(comm) !== "";
 }
-export function refreshProcs(): void {
+// discover: look for new pids too (an unfocused TUI does it every other pass; the agents' own cpu is read every pass)
+export function refreshProcs(discover: boolean = true): void {
   passNo++;
-  const rows = OS.listProcs(tracked, argsWorth);
+  const rows = OS.listProcs(tracked, argsWorth, discover);
   let moved = false; const fresh: Proc[] = [];
   for (const r of rows) {
     let p = allProcs.get(r.pid);
