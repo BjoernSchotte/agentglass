@@ -35,6 +35,10 @@ writeFileSync(u(1), "{}\n"); writeFileSync(u(2), "{}\n");
 scan(); eq("two logs", String(sessions.size), "2");
 writeFileSync(u(3), "{}\n"); scan(); eq("a new log", String(sessions.size), "3");
 scan(); eq("steady", String(sessions.size), "3");
+// the same listing again (the scan walks the sessions it holds): a log that grew shows its new size in the map
+for (let i = 0; i < 3; i++) scan();
+writeFileSync(u(1), "{}\n{}\n"); scan();
+const g1 = sessions.get(u(1)); eq("grown log's size in the map", g1 ? String(g1.size) : "-", String(statSync(u(1)).size));
 rmSync(u(2)); scan(); eq("a deleted log goes", String(sessions.size) + " " + String(sessions.has(u(2))), "2 false");
 // --redact (H.meta): every scan applies it to every listed session, also unchanged ones and old ones not stat'ed this
 // scan (a writer path that skips applyMeta must not leave a real value on screen)

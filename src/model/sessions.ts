@@ -30,7 +30,8 @@ function refresh(h: Harness, s: Sess, turn: number): boolean {
 function addFile(h: Harness, path: string, id: string, archived: boolean, parent: string): Sess | null {
   const known = sessions.get(path);
   if (known) return refresh(h, known, rotOf(path)) ? known : null;
-  const s = newSess(h, id, path, archived); s.parent = parent;
+  let s: Sess | undefined = known; // typed as the map's (a fresh record bound to a const was copied into the map by scriptc 0.1.7: updates after set were lost)
+  if (!s) { s = newSess(h, id, path, archived); s.parent = parent; }
   const st = sourceOf(h).stat(s);
   if (!st) return null; // gone (a new session is not in the map yet)
   sessions.set(path, s); SG.gen++;
