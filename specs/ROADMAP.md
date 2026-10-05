@@ -25,6 +25,12 @@ Kiro, Gemini CLI).
 | 7 | [command-palette](command-palette/spec.md) | Ctrl+K palette, `agentglass open <session>` deep links, single-instance link hand-off | cli-agent-mode (`src/model/sessref.ts`, `addCmd()`, `format.ts`); otlp-export (`TurnCursor`, trace id scheme, `sha256.ts`), repo-view, filter-language |
 | 7 | [adaptive-refresh](adaptive-refresh/spec.md) | refresh cadence follows activity, lower idle CPU, rendering capped at 1/s while the terminal is unfocused; alarms stay at 1.5 s while agents run | — |
 
+## Round 2 (after 2026.10.4)
+
+| Spec | What it adds | Depends on |
+|---|---|---|
+| [tui-footprint](tui-footprint/spec.md) | TUI memory and CPU: streamed one-session-per-line ledger cache, lazy columnar call rows, ledger/scan/view/git work only on change, Linux `/proc` process scan instead of `ps`, frames on visible change, cold-start indexing gauge; golden comparison keeps every number identical (RSS ~820 → ≤ 300 MB, CPU 19 % → ≤ 2 %) | — (shares `codec.ts`/`VERSION` with model-prices) |
+
 ## Why this order
 1. **Phase 1** fixes numbers people already read (cost, titles, turns) and is small — every later feature builds on
    correct numbers.
