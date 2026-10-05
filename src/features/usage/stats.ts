@@ -10,7 +10,7 @@ import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { ledger, accOf, pending } from "./ledger.ts";
 import { type Day, L, todayKey, lastDays, startOfDay, skillUses, newDay, heavy } from "./record.ts";
-import { PRICES_FROM } from "./pricing.ts";
+import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
 import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText } from "./costs.ts";
 import { type Bill, type GW, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
@@ -147,7 +147,7 @@ function billingOf(rows: HA[]): string[] {
 }
 // line 1's tail within w columns: prices + billing; narrow drops the price source first, then trailing harnesses ("+2")
 function sourcesOf(rows: HA[], w: number): string {
-  const pr = fg(C.dim) + "   prices: " + PRICES_FROM + RST; const bs = billingOf(rows);
+  const pr = fg(C.dim) + "   prices: " + pricesFrom() + RST; const bs = billingOf(rows);
   const bl = (n: number, lead: string): string => !bs.length ? "" : fg(C.dim) + lead + "billing: " + RST + bs.slice(0, n).join(fg(C.dim) + " · " + RST) + (n < bs.length ? fg(C.dim) + " +" + String(bs.length - n) + RST : "");
   if (vwidth(pr + bl(bs.length, " · ")) <= w) return pr + bl(bs.length, " · ");
   if (!bs.length) return pr;
@@ -727,6 +727,6 @@ H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], [
   ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
   ["B", "budget: current state and the config path"], ["t", "triage the Stats filter's calls (drill-down: that tool's errors)"], ["C", "compare this period with the previous one (today vs yesterday, 7 days vs the 7 before)"],
   ["/  p  P", "filter Stats (tool is Bash, repo is x, day >= -3d…) · pin it · edit pins"],
-  ["", "costs = API list price (" + PRICES_FROM + "); ~/.agentglass/prices.json overrides"],
+  ["", "costs = API list price (" + pricesFrom() + "); ~/.agentglass/prices.json overrides"],
   ["", "cost tags: spend = API key (real), plan = list-price equivalent, cloud = Bedrock/Vertex/Foundry, gw = gateway, ? = unknown; * = assumed from current config"],
   ["", "projection: today from the 14-day hourly profile, month from the 14-day mean; history = what is still on disk"]] });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // An adapter's usage(a, line) turns one transcript line into calls of bucket → tool/pend/lines/file/tokens;
 // its result lines close a pending call with done() from calls.ts. Everything else (budgets, caching, stats) is the ledger's.
-import { price, cost } from "./pricing.ts";
+import { price, cost, stripTiers } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 import { type Call, DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
 import { numAt } from "../../util/text.ts";
@@ -265,8 +265,8 @@ function count(a: Acc, d: Day, nIn: number, nOut: number, nCr: number, w5: numbe
   a.inTok = a.inTok + nIn; a.outTok = a.outTok + nOut; a.cr = a.cr + nCr; a.cw = a.cw + w5 + w1;
   d.inTok = d.inTok + nIn; d.outTok = d.outTok + nOut; d.cr = d.cr + nCr; d.cw = d.cw + w5 + w1;
 }
-// the per-model key of um/mt: the model as booked without gemini's leading "?" (its unpriced marker)
-function mkey(model: string): string { const m = model.startsWith("?") ? model.slice(1) : model; return m || "unknown"; }
+// the per-model key of um/mt: the model as booked without gemini's tier tags ("@2027", ">200k") and old ledgers' leading "?"
+export function mkey(model: string): string { const m = stripTiers(model); return m || "unknown"; }
 function slot(d: Day, model: string): number[] {
   const k = mkey(model); let r = d.mt.get(k);
   if (!r) { r = [0, 0, 0, 0, 0]; d.mt.set(own(k), r); }
