@@ -7,7 +7,7 @@
 import { openSync, writeSync, closeSync, renameSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str } from "../../util/json.ts";
-import { HOME, readText } from "../../util/fs.ts";
+import { readText, cacheDir } from "../../util/fs.ts";
 import { section } from "../../util/config.ts";
 
 // $ per million tokens; cw1 = 1-hour cache write; -1 = not in the list (derived from input like the built-in table)
@@ -33,9 +33,8 @@ export function remoteCfg(): RemoteCfg {
   const h = typeof c["refreshHours"] === "number" ? (c["refreshHours"] as number) : 24;
   return { source: src, hours: Math.max(1, h), offline, error: "" };
 }
-// beside the ledger: AGENTGLASS_CACHE_DIR moves both (read per call: the env may change after import, e.g. in checks)
-function dir(): string { const e = process.env.AGENTGLASS_CACHE_DIR; return e ? e : join(HOME, ".agentglass", "cache"); }
-export function pricesFile(source: string): string { return join(dir(), "prices-" + source + ".json"); }
+// beside the ledger: AGENTGLASS_CACHE_DIR moves both
+export function pricesFile(source: string): string { return join(cacheDir(), "prices-" + source + ".json"); }
 
 // ── normalize: a raw list → first-party model id → $/Mtok ──
 function n(v: unknown, scale: number): number { return typeof v === "number" && isFinite(v as number) && (v as number) >= 0 ? (v as number) * scale : -1; }
@@ -90,7 +89,7 @@ export function loadCached(source: string): Remote | null {
   return { source, fetchedAt: typeof o["fetchedAt"] === "number" ? (o["fetchedAt"] as number) : 0, etag: str(o["etag"]), prices };
 }
 function save(r: Remote): void {
-  mkdirSync(dir(), { recursive: true });
+  mkdirSync(cacheDir(), { recursive: true });
   const f = pricesFile(r.source); const tmp = f + ".tmp";
   const fd = openSync(tmp, "w"); writeSync(fd, JSON.stringify(toObj(r))); closeSync(fd);
   renameSync(tmp, f); // atomic: never a torn cache
