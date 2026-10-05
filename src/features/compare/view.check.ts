@@ -74,6 +74,8 @@ if (!st) { bad++; console.log("FAIL no compare state"); } else {
   S.mode = "view"; S.fview = "compare"; st.sec = 0;
   onInput("a"); eq("a edits group A", S.mode + " " + S.inputText, "input session is claude:a1");
   S.inputText = "tol is Bash"; onInput("enter"); eq("bad expression stays open", S.mode + " " + (S.inputErr.indexOf("did you mean tool") >= 0 ? "err" : S.inputErr), "input err");
+  onInput("ctrl-u"); for (const ch of "harn") onInput(ch); onInput("tab"); onInput("tab"); eq("group: tab after a unique key goes on", S.inputText, "harness is ");
+  onInput("ctrl-u"); for (const ch of "status is bogus") onInput(ch); eq("group: error column", String(S.inputErrCol), "10");
   S.inputText = "model ~ sonnet"; onInput("enter"); eq("expression group", S.mode + " " + print(st.A.cs) + " " + String(st.A.single === null), "view model ~ sonnet true");
   eq("sessions row with an expression", compareLines(st, 120, 40).some((l) => /sessions\s+1\s+1/.test(l)) ? "ok" : compareLines(st, 120, 40).join("\n"), "ok");
   eq("1 on a group", (() => { onInput("1"); return S.toast; })(), "group A is not a single session");

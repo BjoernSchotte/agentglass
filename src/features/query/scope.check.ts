@@ -3,7 +3,7 @@
 import { S } from "../../state.ts";
 import type { Clause } from "./types.ts";
 import { parse, print } from "./parse.ts";
-import { type PinStore, addClause, addAll, effective, initPins, setPins, pinAll, setLocal, localFor, hiddenByPins, onScopeChange } from "./scope.ts";
+import { type PinStore, addClause, includeClause, addAll, effective, initPins, setPins, pinAll, setLocal, localFor, hiddenByPins, onScopeChange } from "./scope.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -21,6 +21,9 @@ r = addClause(P("tool is_not Bash"), one("tool is Bash")); eq("is_not vs is same
 r = addClause(P("harness is_one_of pi opencode gemini"), one("harness is_not gemini")); eq("one_of minus is_not narrows", T(r.cs), "harness is_one_of pi opencode"); eq("narrow toast", r.note, "narrowed: harness is_one_of pi opencode");
 r = addClause(P("harness is_one_of pi gemini"), one("harness is_not_one_of gemini pi")); eq("one_of minus all of it: newer replaces", T(r.cs), "harness is_not_one_of gemini pi");
 r = addClause(P("harness is_one_of pi gemini"), one("harness is_not Gemini")); eq("narrow ignores case", T(r.cs), "harness is pi");
+r = includeClause(P("harness is_one_of pi opencode gemini"), one("harness is Gemini")); eq("include narrows a set", T(r.cs), "harness is gemini"); eq("include toast", r.note, "narrowed: harness is gemini");
+r = includeClause(P("harness is_one_of pi opencode"), one("harness is codex")); eq("include outside the set: merge rules", T(r.cs), "harness is_one_of pi opencode codex");
+r = includeClause(P("harness is_not pi"), one("harness is_not opencode")); eq("include exclude: merge rules", T(r.cs), "harness is_not_one_of pi opencode");
 r = addClause(P("tool is Bash"), one("tool is_not Edit")); eq("is vs is_not other value: AND", T(r.cs), "tool is Bash and tool is_not Edit");
 r = addClause(P("cost > 2"), one("cost > 5")); eq("same direction", T(r.cs), "cost > 5"); eq("same dir toast", r.note, "replaced: cost > 5");
 r = addClause(P("cost > 2"), one("cost >= 1")); eq("same direction >=", T(r.cs), "cost >= 1");

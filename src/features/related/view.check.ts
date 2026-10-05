@@ -104,6 +104,8 @@ if (!tv) { bad++; console.log("FAIL no transcript"); } else {
   eq("/ harness is codex", show(), "write:Edit shell:shell");
   onInput("/"); onInput("ctrl-u"); for (const ch of "tool is") onInput(ch); onInput("enter");
   eq("bad filter keeps the input open", S.mode + " " + String(S.inputErr !== ""), "input true");
+  eq("related: error column", String(S.inputErrCol), "5"); // "tool is": the value is missing, the operator is marked
+  onInput("ctrl-u"); for (const ch of "harn") onInput(ch); onInput("tab"); onInput("tab"); eq("related: tab completes, then goes on", S.inputText, "harness is ");
   onInput("esc"); onInput("/"); onInput("ctrl-u"); onInput("enter"); done();
   // ── enter → another session's transcript, focused; esc back ──
   const st4 = relState();

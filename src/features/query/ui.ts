@@ -191,7 +191,7 @@ function onPins(ev: string, text: string): boolean {
   if (ev === "change") { const p = parse(text); S.inputErr = p.err ? p.err.msg : ""; S.inputErrCol = p.err ? p.err.col : -1; return false; }
   if (ev === "enter") {
     const e = setPins(text);
-    if (e) { S.inputErr = e.msg; return true; }
+    if (e) { S.inputErr = e.msg; S.inputErrCol = e.col; return true; }
     S.inputErr = ""; say("info", S.pins.length ? "pinned: " + shownText(S.pins, " and ") : "pins cleared");
     return false;
   }
@@ -271,20 +271,33 @@ export function complete(text: string, cursorAtEnd: boolean): string[] {
   const out: string[] = []; for (const c of candidates(w.slice(0, -1))) if (c.toLowerCase().startsWith(cur) && out.indexOf(c) < 0) out.push(c);
   return out;
 }
-// repeated tab cycles through the candidates of the word the first tab completed
-interface Cyc { base: string; cands: string[]; i: number; last: string }
-const cyc: Cyc = { base: "", cands: [], i: 0, last: "" };
+// repeated tab cycles through the candidates of the word the first tab completed (every filter input shares this)
+export interface Cyc { base: string; cands: string[]; i: number; last: string }
+export function newCyc(): Cyc { return { base: "", cands: [], i: 0, last: "" }; }
+// the text after a tab on t, "" when nothing completes; a unique completion does not cycle: tab goes on to the next word
+export function cycleNext(c: Cyc, t: string): string {
+  if (c.cands.length > 1 && t === c.last) c.i = (c.i + 1) % c.cands.length;
+  else {
+    const cands = complete(t, true); if (!cands.length) return "";
+    const w = words(t); const cur: string = w[w.length - 1] ?? "";
+    c.base = t.slice(0, t.length - cur.length); c.cands = cands; c.i = 0;
+  }
+  c.last = c.base + (c.cands[c.i] ?? "") + " ";
+  return c.last;
+}
+// a filter input's error text ("" = valid, empty = `empty`), its parse error's column into S.inputErrCol (the footer
+// marks it, the CLI's caret)
+export function exprErr(t: string, ctx: Ctx, empty: string): string {
+  S.inputErrCol = -1;
+  if (!t.trim()) return empty;
+  const p = parse(t); if (p.err) { S.inputErrCol = p.err.col; return p.err.msg; }
+  const c = compile(p.cs, ctx); return c.err ? c.err.msg : "";
+}
+const cyc = newCyc();
 let completing = false; // a change made by tab itself keeps the cycle; any other edit starts over
 function tabComplete(): void {
-  const t: string = S.inputText;
-  if (cyc.cands.length > 1 && t === cyc.last) cyc.i = (cyc.i + 1) % cyc.cands.length; // a unique one: tab goes on to the next word
-  else {
-    const cands = complete(t, true); if (!cands.length) return;
-    const w = words(t); const cur: string = w[w.length - 1] ?? "";
-    cyc.base = t.slice(0, t.length - cur.length); cyc.cands = cands; cyc.i = 0;
-  }
-  const next: string = cyc.base + (cyc.cands[cyc.i] ?? "") + " ";
-  S.inputText = next; cyc.last = next;
+  const next = cycleNext(cyc, S.inputText); if (!next) return;
+  S.inputText = next;
   completing = true; for (const f of H.input) f(S.inputAction, "change", next); completing = false;
 }
 

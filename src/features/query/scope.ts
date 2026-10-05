@@ -50,6 +50,18 @@ export function addClause(scope: Clause[], c: Clause): { cs: Clause[]; note: str
   cs.push(c);
   return { cs, note: "" };
 }
+// triage + (an included row's value): `is a` into a scope with `is_one_of a b` narrows it to `is a` — the row came from
+// that set, so the user means AND, not the typed filter's union; anything else follows addClause
+export function includeClause(scope: Clause[], c: Clause): { cs: Clause[]; note: string } {
+  if (c.op === "is" && c.vals.length === 1 && canUnion(c.key)) {
+    const v = (c.vals[0] ?? "").toLowerCase();
+    for (let i = 0; i < scope.length; i++) {
+      const o = scope[i]; if (o.key !== c.key || EQ.indexOf(o.op) < 0 || o.vals.length < 2) continue;
+      for (const x of o.vals) if (x.toLowerCase() === v) { const cs = scope.slice(); const m = withVals(o, "is", [x]); cs[i] = m; return { cs, note: "narrowed: " + shownClause(m) }; }
+    }
+  }
+  return addClause(scope, c);
+}
 export function addAll(scope: Clause[], add: Clause[]): { cs: Clause[]; notes: string[] } {
   let cs = scope; const notes: string[] = [];
   for (const c of add) { const r = addClause(cs, c); cs = r.cs; if (r.note) notes.push(r.note); }
