@@ -1,7 +1,8 @@
 // agentglass — self-check for the live probe: scriptc build src/model/sessions.check.ts -o ssc && ./ssc
 // SPDX-License-Identifier: Apache-2.0
 import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { newSess } from "./types.ts";
+import { newSess, type Sess } from "./types.ts";
+import { H } from "../hooks.ts";
 import { sessions, probeLive, scan } from "./sessions.ts";
 import { CLAUDE } from "../util/fs.ts";
 
@@ -35,6 +36,14 @@ scan(); eq("two logs", String(sessions.size), "2");
 writeFileSync(u(3), "{}\n"); scan(); eq("a new log", String(sessions.size), "3");
 scan(); eq("steady", String(sessions.size), "3");
 rmSync(u(2)); scan(); eq("a deleted log goes", String(sessions.size) + " " + String(sessions.has(u(2))), "2 false");
+// --redact (H.meta): every scan applies it to every listed session, also unchanged ones and old ones not stat'ed this
+// scan (a writer path that skips applyMeta must not leave a real value on screen)
+let metas = 0; H.meta.push((x: Sess): void => { metas++; if (x.title && !x.title.startsWith("F-")) x.title = "F-" + x.title; });
+scan(); const m1 = metas; scan();
+eq("meta per listed session per scan", String(metas - m1), String(sessions.size));
+const one = sessions.get(u(1)); if (one) { one.title = "real title"; one.mtime = 1; } // a writer that set a field without applyMeta, on an old log
+scan(); eq("faked on the next scan", one ? one.title : "", "F-real title");
+H.meta.pop();
 rmSync(CLAUDE, { recursive: true, force: true }); scan(); eq("all gone", String(sessions.size), "0");
 console.log(bad ? bad + " failed" : "sessions: all checks passed");
 if (bad) process.exit(1);
