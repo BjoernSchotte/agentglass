@@ -1,7 +1,7 @@
 // agentglass — self-check for loading a ledger cache saved under other prices: scriptc build src/features/usage/cacheload.check.ts -o cl && ./cl
 // SPDX-License-Identifier: Apache-2.0
 // Runs under check.sh's temp HOME: the cache lives in $HOME/.agentglass/cache, kiro logs under $HOME/.kiro/sessions/cli.
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { H } from "../../hooks.ts";
 import { HOME, cacheDir } from "../../util/fs.ts";
@@ -42,9 +42,13 @@ const sx = newSess("codex", "a", "/w/a.jsonl", false); sx.size = 100; sessions.s
 loadUser(JSON.parse('{"gpt-6.1-sol":{"input":2,"output":2}}'));
 ROWS.on = true; L.idx++;
 for (const f of H.onQuit) f();
-const saved = JSON.parse(readFileSync(join(cacheDir(), "ledger.json"), "utf8")) as Record<string, unknown>;
-const so = (saved["sessions"] as Record<string, unknown>)["/w/a.jsonl"] as Record<string, unknown>;
+// saved as ledger.jsonl (header line, one line per session); the migrated ledger.json is gone
+const lines = readFileSync(join(cacheDir(), "ledger.jsonl"), "utf8").split("\n");
+const saved = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+let so: Record<string, unknown> | null = null;
+for (const l of lines.slice(1)) { if (!l) continue; const o = JSON.parse(l) as Record<string, unknown>; if (o["path"] === "/w/a.jsonl") so = o; }
 const tt = (so ? so["t"] : []) as number[];
+ok("old ledger.json removed", !existsSync(join(cacheDir(), "ledger.json")), "kept");
 ok("saved sig = current", saved["prices"] === pricesSig(), String(saved["prices"]));
 ok("saved numbers under that sig", Math.abs((tt[4] ?? 0) - 4000 / 1e6) < 1e-12, String(tt[4]));
 console.log(bad ? bad + " failed" : "cacheload: all checks passed");

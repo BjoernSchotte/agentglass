@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Sess } from "../../model/types.ts";
 import { lastDays } from "../usage/record.ts";
-import type { Call } from "../usage/facts.ts";
+import type { Rows } from "../usage/rows.ts";
 import { HB } from "../usage/calls.ts";
 import { parse } from "./parse.ts";
 import { type Compiled, EMPTY, compile } from "./eval.ts";
@@ -53,7 +53,7 @@ const bashT = totals(F("tool is Bash"), days2).perTool.get("Bash");
 eq("Bash timed 2 of 3", bashT ? bashT.dn + "/" + bashT.n : "none", "2/3");
 const bashB = totals(all, days2).perTool.get("Bash");
 eq("Bash timed 2 of 3 (buckets)", bashB ? bashB.dn + "/" + bashB.n : "none", "2/3");
-const sl = aggregateWhere(all, days2, ["tool"], "count", (s: Sess, c: Call) => c.ms >= 1500);
+const sl = aggregateWhere(all, days2, ["tool"], "count", (s: Sess, r: Rows, i: number) => r.ms[i] >= 1500);
 eq("aggregateWhere", dump(first(sl)), "Bash=1/0,exec=1/0");
 eq("minus", dump(first(minus(aggregate(all, "call", days2, ["tool"], "count"), sl))), "Bash=2/1,Edit=1/0,Grep=1/1,Read=2/0,shell=2/1");
 eq("session hour = start hour", dump(first(aggregate(all, "session", days2, ["hour"], "count"))), "10=1/1,14=1/1,9=1/1,unknown=1/0");

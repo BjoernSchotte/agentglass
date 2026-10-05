@@ -27,6 +27,7 @@ import { indexing } from "./features/usage/ledger.ts";
 import { replaying } from "./features/replay.ts";
 import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
 import { compactHelp } from "./features/clihelp.ts";
+import { debugExtras } from "./util/selfmem.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
@@ -145,7 +146,7 @@ function turn(): void {
   relevel(now);
   for (const j of due(sc, now, live(), armed())) runJob(sc, j, body(j, now), () => Date.now(), warnJob);
   relevel(Date.now()); // a job may have changed the level (a file grew, indexing finished)
-  if (DBG.on) DBG.line = debugLine(sc, live(), armed(), why);
+  if (DBG.on) DBG.line = debugLine(sc, live(), armed(), why, debugExtras());
 }
 // gen: a newer schedule (input woke the loop early) makes the older pending timer a no-op, so one chain runs
 function schedule(ms: number): void { const g = ++gen; setTimeout(() => { if (g === gen) loop(); }, ms); }
@@ -174,7 +175,7 @@ function onData(d: Uint8Array): void {
     if (!x || now - x.last >= 250) runJob(sc, "size", termSize, () => Date.now(), warnJob);
   }
   const was = sc.lv; relevel(now);
-  if (DBG.on) DBG.line = debugLine(sc, live(), armed(), why);
+  if (DBG.on) DBG.line = debugLine(sc, live(), armed(), why, debugExtras());
   render(); // typing latency is never capped
   if (sc.lv !== was) schedule(16); // the loop may sleep at a slower level: overdue jobs run on the next turn, not up to 1 s later
 }

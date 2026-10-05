@@ -3,6 +3,7 @@
 import type { Ev } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
 import { type Call, DICT, intern } from "../usage/facts.ts";
+import { rowsFrom, newRows } from "../usage/rows.ts";
 import { type Obs, type MVal, approvalWait, commandAge, stalledFor, spinningFor, repeatRun } from "../detect.ts";
 import { type Rule, loadRules } from "./config.ts";
 import { metricOf, procMetric, sessMetric } from "./metrics.ts";
@@ -67,14 +68,15 @@ eq("cost", v(sessMetric(rule('{"id":"c","metric":"session_cost","degraded":1}'),
 eq("tokens", v(sessMetric(rule('{"id":"t","metric":"session_tokens","degraded":1}'), s)), "116");
 
 // call metrics: 30 Bash (10 errors: every third), 5 Edit ok, 2 Bash unfinished, npm programs on the last 5 Bash
-const rows: Call[] = [];
+const calls: Call[] = [];
 function row(t: number, tool: string, err: number, progs: string[]): Call {
   const ps: number[] = []; for (const p of progs) ps.push(intern(DICT.prog, p));
   return { t, tool: intern(DICT.tool, tool), model: -1, mq: 0, progs: ps, cmds: [], files: [], ms: err < 0 ? -1 : 100, err, out: 0, cid: "" };
 }
-for (let i = 0; i < 30; i++) rows.push(row(now - (40 - i) * 1000, "Bash", i % 3 === 0 ? 1 : 0, i >= 25 ? ["npm"] : ["ls"]));
-for (let i = 0; i < 5; i++) rows.push(row(now - 5000 + i, "Edit", 0, []));
-rows.push(row(now, "Bash", -1, [])); rows.push(row(now, "Bash", -1, []));
+for (let i = 0; i < 30; i++) calls.push(row(now - (40 - i) * 1000, "Bash", i % 3 === 0 ? 1 : 0, i >= 25 ? ["npm"] : ["ls"]));
+for (let i = 0; i < 5; i++) calls.push(row(now - 5000 + i, "Edit", 0, []));
+calls.push(row(now, "Bash", -1, [])); calls.push(row(now, "Bash", -1, []));
+const rows = rowsFrom(calls);
 const o0 = obs(0, true, [], []);
 const m = (j: string): string => v(metricOf(rule(j), s, o0, 0, rows, new Map<string, MVal>()));
 eq("rate bash", m('{"id":"r","metric":"tool_error_rate","where":"tool is Bash","degraded":"30%"}'), "0.333");
@@ -90,8 +92,8 @@ eq("rate whole session", m('{"id":"r","metric":"tool_error_rate","degraded":"30%
 const loopEdit = obs(0, true, [ev("tool", "Edit\u0000a.ts"), ev("tool", "Edit\u0000a.ts"), ev("tool", "Edit\u0000a.ts")], []);
 const loopBash = obs(0, true, [call, call, call], []);
 const rr = '{"id":"b","metric":"repeat_run","where":"tool is Bash","degraded":5}';
-eq("repeat where: Edit loop", v(metricOf(rule(rr), s, loopEdit, 0, [], new Map<string, MVal>())), "absent");
-eq("repeat where: Bash loop", v(metricOf(rule(rr), s, loopBash, 0, [], new Map<string, MVal>())), "3");
+eq("repeat where: Edit loop", v(metricOf(rule(rr), s, loopEdit, 0, newRows(), new Map<string, MVal>())), "absent");
+eq("repeat where: Bash loop", v(metricOf(rule(rr), s, loopBash, 0, newRows(), new Map<string, MVal>())), "3");
 // memo: one computation per key per tick
 const memo = new Map<string, MVal>();
 const r1 = rule('{"id":"a","metric":"session_cost","degraded":1}'); const r2 = rule('{"id":"b","metric":"session_cost","critical":9}');

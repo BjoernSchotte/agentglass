@@ -7,7 +7,7 @@ import type { Sess } from "../../model/types.ts";
 import { sessions, titleOf } from "../../model/sessions.ts";
 import { ledger } from "../usage/ledger.ts";
 import { L, dayKey, type ModelUse, modelUses, unionMin } from "../usage/record.ts";
-import type { Call } from "../usage/facts.ts";
+import type { Rows } from "../usage/rows.ts";
 import { DICT, nameOf } from "../usage/facts.ts";
 import { fmtMs, pct } from "../usage/calls.ts";
 import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, split } from "../usage/costs.ts";
@@ -98,7 +98,7 @@ function plan(j: CmpJob): void {
 function modelCalls(f: Compiled | null, t: TotJob | null, s: Sess, into: Map<string, number>): void {
   if (!f || !t) return;
   const dks = t.t.pdays.get(s.path); if (!dks) return;
-  callsIn(f, s, new Set<string>(dks), callCutoff(), (c: Call) => { const m = c.model >= 0 ? nameOf(DICT.model, c.model) : "unknown"; into.set(m, (into.get(m) ?? 0) + 1); });
+  callsIn(f, s, new Set<string>(dks), callCutoff(), (r: Rows, i: number) => { const m = r.model[i] >= 0 ? nameOf(DICT.model, r.model[i] + 0) : "unknown"; into.set(m, (into.get(m) ?? 0) + 1); });
 }
 
 const cache = new Map<string, { ver: number; at: number; cmp: Cmp }>();

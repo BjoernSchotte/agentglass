@@ -25,10 +25,10 @@ eq("mcp server", mcpServer("mcp__claude_ai_Claude_Docs__read") + "|" + mcpServer
 eq("histogram buckets", [hb(3), hb(10), hb(99), hb(3600000)].join(","), "0,1,3,15");
 // durations + per-command error attribution
 const st = newTS(); const p1 = newCnt(); const c1 = newCnt(); const p2 = newCnt(); const c2 = newCnt();
-const pd: Pend = { t: 1000, ts: "", arg: "", st, sh: [p1, c1, p2, c2], row: null, sp: [], name: "Bash", cmd: "", id: "a", end: 0, dn: [] };
+const pd: Pend = { t: 1000, ts: "", arg: "", st, sh: [p1, c1, p2, c2], rows: null, ri: -1, sp: [], name: "Bash", cmd: "", id: "a", end: 0, dn: [] };
 done(pd, 400, true, 10, "a", [0, 3]);
 eq("per-command errors", [p1.err, p2.err].join(","), "0,1");
-done({ t: 0, ts: "", arg: "", st, sh: [], row: null, sp: [], name: "Bash", cmd: "", id: "b", end: 0, dn: [] }, 2000, false, 0, "b", []);
+done({ t: 0, ts: "", arg: "", st, sh: [], rows: null, ri: -1, sp: [], name: "Bash", cmd: "", id: "b", end: 0, dn: [] }, 2000, false, 0, "b", []);
 eq("stats", [st.err, st.dn, st.max, st.slow.length, st.errs.length].join(","), "1,2,2000,2,1");
 eq("p95 capped at max", String(pct(st.hist, 0.95, st.max)), "1581");
 console.log(bad ? bad + " failed" : "usage calls: all checks passed");

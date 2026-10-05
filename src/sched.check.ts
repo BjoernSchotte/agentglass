@@ -143,14 +143,15 @@ eq("invalid", m.mode + "|" + String(m.err.indexOf("fast") >= 0), "adaptive|true"
 
 // ── debug line ──
 sc = newSched(false, false, t); sc.lv = "hot";
-eq("debug starts", debugLine(sc, false, false, "").slice(0, 7), "lvl hot");
+eq("debug starts", debugLine(sc, false, false, "", "").slice(0, 7), "lvl hot");
 cost(sc, "procs", 200);
-eq("procs slow", String(debugLine(sc, true, false, "").indexOf("procs slow") >= 0), "true");
-eq("procs not slow without live", String(debugLine(sc, false, false, "").indexOf("procs slow") >= 0), "false");
-eq("debug why", debugLine(sc, false, false, "grow").slice(0, 14), "lvl hot (grow)");
+eq("procs slow", String(debugLine(sc, true, false, "", "").indexOf("procs slow") >= 0), "true");
+eq("procs not slow without live", String(debugLine(sc, false, false, "", "").indexOf("procs slow") >= 0), "false");
+eq("debug extra after the level", debugLine(sc, false, false, "grow", "rss 12M").slice(0, 26), "lvl hot (grow) · rss 12M ·");
+eq("debug why", debugLine(sc, false, false, "grow", "").slice(0, 14), "lvl hot (grow)");
 eq("hotWhy", hotWhy(act(t - 1000, 0, false, t - 1000, true, false)), "input+grow+index");
 const j0: Job = "tick";
-eq("debug shows tick", String(debugLine(sc, false, false, "").indexOf(j0 + " 0ms/500ms") >= 0), "true");
+eq("debug shows tick", String(debugLine(sc, false, false, "", "").indexOf(j0 + " 0ms/500ms") >= 0), "true");
 
 // ── runJob: a throwing job never escapes, warns once per job, is still recorded ──
 sc = newSched(false, false, t);

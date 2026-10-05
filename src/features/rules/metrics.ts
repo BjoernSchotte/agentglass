@@ -2,7 +2,7 @@
 // metrics from the ledger totals, call metrics from filter-language's per-call rows
 // SPDX-License-Identifier: Apache-2.0
 import type { Sess } from "../../model/types.ts";
-import type { Call } from "../usage/facts.ts";
+import type { Rows } from "../usage/rows.ts";
 import { callMatches } from "../query/eval.ts";
 import { type Obs, type MVal, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, toolName } from "../detect.ts";
 import { type Rule, paramDefault } from "./config.ts";
@@ -32,15 +32,15 @@ export function sessMetric(r: Rule, s: Sess): MVal {
   return absent();
 }
 // rows matching the rule's call clauses (all rows without a where); window N = the last N matching rows with a result
-export function callMetric(r: Rule, s: Sess, rows: Call[]): MVal {
+export function callMetric(r: Rule, s: Sess, rows: Rows): MVal {
   const f = r.wf;
   let n = 0; let done = 0; let errs = 0; let at = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const c = rows[i];
-    if (f && !callMatches(f, s, c)) continue;
-    if (r.window > 0) { if (c.err < 0) continue; if (done >= r.window) break; }
-    n++; if (c.err >= 0) done++; if (c.err === 1) errs++;
-    if (c.t > at) at = c.t;
+  for (let i = rows.n - 1; i >= 0; i--) {
+    if (f && !callMatches(f, s, rows, i)) continue;
+    const e = rows.err[i] + 0; const t = rows.t[i] + 0;
+    if (r.window > 0) { if (e < 0) continue; if (done >= r.window) break; }
+    n++; if (e >= 0) done++; if (e === 1) errs++;
+    if (t > at) at = t;
   }
   if (r.metric === "tool_calls") return val(n, at || s.mtime);
   if (r.metric === "tool_errors") return val(errs, at || s.mtime);
@@ -64,7 +64,7 @@ function memoKey(r: Rule): string {
   let p = ""; for (const [k, v] of r.params) p += k + "=" + String(v) + ";";
   return r.metric + "|" + p + "|" + String(r.window) + "|" + String(r.minCalls) + "|" + r.where;
 }
-export function metricOf(r: Rule, s: Sess, o: Obs, turnAt: number, rows: Call[], memo: Map<string, MVal>): MVal {
+export function metricOf(r: Rule, s: Sess, o: Obs, turnAt: number, rows: Rows, memo: Map<string, MVal>): MVal {
   const k = memoKey(r);
   const hit = memo.get(k); if (hit) return hit;
   let v = absent();

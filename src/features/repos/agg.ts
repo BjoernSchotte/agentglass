@@ -10,7 +10,8 @@ import { P, labelOf, real } from "../../model/project.ts";
 import { ledger } from "../usage/ledger.ts";
 import { L, unionMin, spanMin, heavy } from "../usage/record.ts";
 import { type Cnt, newCnt } from "../usage/calls.ts";
-import { type Call, DICT, nameOf, localOf } from "../usage/facts.ts";
+import { DICT, nameOf, localOf } from "../usage/facts.ts";
+import type { Rows } from "../usage/rows.ts";
 import { type ModeSum, newSum, addDay } from "../usage/costs.ts";
 import type { Bill } from "../usage/billing.ts";
 import { modeOf } from "../usage/bill-live.ts";
@@ -95,11 +96,11 @@ export function allDays(): string[] {
 interface RowDay { n: number; err: number; names: Map<string, Cnt> }
 function rowDays(f: Compiled, days: string[]): Map<string, RowDay> {
   const m = new Map<string, RowDay>();
-  eachCall(f, days, (s: Sess, c: Call) => {
-    const k = s.path + "\t" + localOf(c.t).day;
+  eachCall(f, days, (s: Sess, rw: Rows, ri: number) => {
+    const k = s.path + "\t" + localOf(rw.t[ri]).day;
     let r = m.get(k); if (!r) { r = { n: 0, err: 0, names: new Map<string, Cnt>() }; m.set(k, r); }
-    r.n++; const e = c.err === 1 ? 1 : 0; r.err += e;
-    const t = cntOf(r.names, nameOf(DICT.tool, c.tool)); t.n++; t.err += e;
+    r.n++; const e = rw.err[ri] === 1 ? 1 : 0; r.err += e;
+    const t = cntOf(r.names, nameOf(DICT.tool, rw.tool[ri])); t.n++; t.err += e;
   });
   return m;
 }

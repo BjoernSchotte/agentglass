@@ -7,10 +7,11 @@ import { H, complete, display, realCwd, screenOut } from "../hooks.ts";
 import { S } from "../state.ts";
 import { sessions, loadHead, loadTail, subActive } from "../model/sessions.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
-import { accOf, ledger, rowsOf } from "./usage/ledger.ts";
+import { accOf, rowsOf, callsOf } from "./usage/ledger.ts";
 import { type Acc, modelUses, isoMs, dayKey, heavy, newAcc } from "./usage/record.ts";
 import { type PRow, type SessAcc, priceRows } from "./usage/pricerows.ts";
-import { type Call, ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
+import { ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
+import type { Rows } from "./usage/rows.ts";
 import { callCutoff } from "./usage/callcache.ts";
 import { sessMatches, dayMatches, eachCall } from "./query/eval.ts";
 import { sessDim } from "./query/agg.ts";
@@ -220,10 +221,11 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
   if (ROWS.on) {
     srcs.push("calls");
     // the days to read: from since (or the oldest row of these sessions) through today
-    let first = Math.max(sinceMs, callCutoff()); if (sinceMs <= 0) { first = Date.now(); for (const p of fam) { const a = ledger.get(p); if (a) for (const c of a.calls) if (c.t < first) first = c.t; } first = Math.max(first, callCutoff()); }
-    eachCall(cf.f, daysFrom(first, Date.now()), (s: Sess, c: Call): void => {
-      if (c.err !== 1 || c.t < sinceMs || !fam.has(s.path)) return;
-      items.push({ s, tool: nameOf(DICT.tool, c.tool), t: c.t, ts: new Date(c.t).toISOString(), ms: c.ms, id: c.cid, arg: "", argKnown: false });
+    let first = Math.max(sinceMs, callCutoff()); if (sinceMs <= 0) { first = Date.now(); for (const p of fam) { const x = sessions.get(p); if (x) { const r = callsOf(x); for (let i = 0; i < r.n; i++) if (r.t[i] < first) first = r.t[i] + 0; } } first = Math.max(first, callCutoff()); }
+    eachCall(cf.f, daysFrom(first, Date.now()), (s: Sess, r: Rows, i: number): void => {
+      const t = r.t[i] + 0;
+      if (r.err[i] !== 1 || t < sinceMs || !fam.has(s.path)) return;
+      items.push({ s, tool: nameOf(DICT.tool, r.tool[i] + 0), t, ts: new Date(t).toISOString(), ms: r.ms[i] + 0, id: r.cid[i] ?? "", arg: "", argKnown: false });
     });
   }
   // before the rows' retention (or without rows): the recent failures; call clauses cannot test them, so then there are none
@@ -280,7 +282,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
   }
   // with call clauses: the session-days holding a matching row
   const hit = new Set<string>();
-  if (f.needsCalls) { const ps = new Set<string>(); for (const s of cands) ps.add(s.path); eachCall(f, daysFrom(from, Date.now()), (s: Sess, c: Call): void => { if (ps.has(s.path)) hit.add(s.path + "\t" + localOf(c.t).day); }); }
+  if (f.needsCalls) { const ps = new Set<string>(); for (const s of cands) ps.add(s.path); eachCall(f, daysFrom(from, Date.now()), (s: Sess, r: Rows, i: number): void => { if (ps.has(s.path)) hit.add(s.path + "\t" + localOf(r.t[i] + 0).day); }); }
   for (const s of cands) {
     const a = accOf(s); let used = false; const ka = newAcc();
     for (const [k, d] of a.days) {

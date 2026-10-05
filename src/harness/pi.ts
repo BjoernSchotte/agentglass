@@ -226,7 +226,7 @@ function usage(a: Acc, l: string): void {
     book(a, obj(m["usage"]), "", iso, "");
     const id = str(m["toolCallId"]); const p = a.pend.get(id);
     const det = obj(m["details"]);
-    const pm = p && p.row ? nameOf(DICT.model, p.row.model) : ""; // nested calls were issued by the parent call's message
+    const pr = p ? p.rows : null; const pm = p && pr && p.ri >= 0 && p.ri < pr.n ? nameOf(DICT.model, pr.model[p.ri] + 0) : ""; // nested calls were issued by the parent call's message
     if (p) {
       a.pend.delete(id);
       const t = isoMs(iso);
