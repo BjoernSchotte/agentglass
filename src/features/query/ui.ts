@@ -81,6 +81,8 @@ export const MPS = { asks: 0 }; // matchingPaths calls (checks: a pass over sess
 // "filtering n/m" and an empty list says so instead of "no sessions match". One-shot runs and other callers read at once.
 const FILL = { on: false, fkey: "", total: 0, queue: [] as string[] };
 function filling(): boolean { return FILL.on || TERM.tui; } // the TUI (from its first frame on) or a check
+// the list's filter changed to one without call rows (or none): stop reading rows nobody asked for
+function fillStop(): void { if (FILL.queue.length) FILL.queue = []; FILL.fkey = ""; FILL.total = 0; }
 export function fillOnForTest(on: boolean): void { FILL.on = on; FILL.fkey = ""; FILL.queue = []; }
 // one slice of reads; true when it read something
 export function fillStep(ms: number): boolean {
@@ -99,13 +101,16 @@ export function matchingPaths(f: Compiled, lazy = ""): Set<string> {
   MPS.asks++;
   const defer = lazy !== "" && filling() && (f.call.length > 0 || f.rowx.length > 0);
   const key = String(L.ver) + "|" + liveSig(timeStep(f.cs));
-  const mk = f.key + (defer ? "\u0000" + lazy : ""); const hit = mp.get(mk); if (hit && hit.key === key) return hit.paths;
+  // a list fill of another filter ran or stopped since: this one's deferred sessions must be queued again
+  const own = !(defer && lazy === "list" && FILL.fkey !== f.key);
+  const mk = f.key + (defer ? "\u0000" + lazy : ""); const hit = mp.get(mk); if (hit && hit.key === key && own) return hit.paths;
   const out = new Set<string>(); const later: Sess[] = [];
   for (const s of sessions.values()) {
     // a model clause reads rows already in the session test: defer before it; other session clauses are cheap
     if (defer && rowsPending(f, s) && (f.rowx.length > 0 || sessMatches(f, s))) { later.push(s); continue; }
     if (matchSession(f, s, null)) out.add(s.path);
   }
+  if (lazy === "list" && !defer) fillStop(); // the list's filter no longer reads rows: the rest of an earlier fill is moot
   if (defer && lazy === "list") {
     later.sort((x: Sess, y: Sess) => x.mtime - y.mtime); // popped from the end: newest first
     const q: string[] = []; for (const s of later) q.push(s.path);
@@ -393,7 +398,7 @@ H.keys.push((mode: string, k: string): boolean => {
 });
 
 // ── hooks into the list and the process table ──
-H.listFilter.push(() => { const f = tabFilter("Sessions", "list"); if (f === EMPTY) return null; const m = matchingPaths(f, "list"); return (s: Sess): boolean => m.has(s.path); });
+H.listFilter.push(() => { const f = tabFilter("Sessions", "list"); if (f === EMPTY) { fillStop(); return null; } const m = matchingPaths(f, "list"); return (s: Sess): boolean => m.has(s.path); });
 H.procFilter.push((p: Proc): boolean => {
   if (!S.pins.length) return true;
   const f = compiledOf(S.pins, "procs"); if (f === EMPTY) return true;

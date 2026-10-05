@@ -123,6 +123,11 @@ eq("age < 2s: a second later it no longer does", String(matchingPaths(fa).has(yn
   const first = matchingPaths(fb, "list"); const st = fillState(fb);
   eq("first pass reads nothing, defers", String(first.size) + " left " + String(st.left) + "/" + String(st.total) + " unread " + String(unread.size), "0 left " + String(st.total) + "/" + String(st.total) + " unread " + String(unread.size));
   eq("something deferred", String(st.total > 0), "true");
+  // the list's filter changes to one without call rows: the rest of the fill stops (no reads nobody asked for)
+  const fh = compile(parse("harness is claude").cs, "list").f ?? EMPTY;
+  matchingPaths(fh, "list");
+  eq("filter without rows: fill stopped", String(fillStep(0)) + " " + String(fillState(fb).left), "false 0");
+  matchingPaths(fb, "list"); eq("back to the call filter: deferred again", String(fillState(fb).left === st.total), "true");
   setLocal("Sessions", parse("tool is Bash").cs);
   eq("empty list says filtering", String(emptyText("sessions").indexOf("filtering") >= 0), "true");
   let guard = 0; while (fillStep(0) && guard < 50) { guard++; matchingPaths(fb, "list"); }
