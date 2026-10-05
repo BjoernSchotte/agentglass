@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Bill, MODES, tag } from "./billing.ts";
 import { type Obj, arr } from "../../util/json.ts";
-import { type Day, dayKey } from "./record.ts";
+import { type Acc, type Day, dayKey } from "./record.ts";
+import { resolve } from "./pricing.ts";
 
 export function kfmt(n: number): string {
   if (n < 1000) return String(Math.round(n));
@@ -16,18 +17,42 @@ export function grp(n: number): string {
   return out;
 }
 
-// by[i] = cost of MODES[i]; unk/um = unpriced tokens (per model), uc = credits without a rate
-export interface ModeSum { by: number[]; unk: number; um: Map<string, number>; uc: number }
-export function newSum(): ModeSum { return { by: [0, 0, 0, 0, 0], unk: 0, um: new Map<string, number>(), uc: 0 }; }
+// by[i] = cost of MODES[i]; unk/um = unpriced tokens (per model), uc = credits without a rate; est = the share priced
+// through a prices.json alias (an estimate: figures holding any get ≈, also on an API key)
+export interface ModeSum { by: number[]; unk: number; um: Map<string, number>; uc: number; est: number }
+export function newSum(): ModeSum { return { by: [0, 0, 0, 0, 0], unk: 0, um: new Map<string, number>(), uc: 0, est: 0 }; }
+// a day's alias-priced cost: its priced-token rows whose model resolves through an alias now
+export function estDay(d: Day): number {
+  let e = 0;
+  for (const [k, r] of d.tp) {
+    const usd = r[5] ?? -1; if (usd <= 0) continue;
+    const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1);
+    const z = resolve(k.slice(t2 + 1), k.slice(t1 + 1, t2)); if (z && z.src === "alias") e += usd;
+  }
+  return e;
+}
+export function estOf(a: Acc): number { return estTop(a).usd; }
+// a session's alias-priced cost and the model holding most of it (the preview names it)
+export function estTop(a: Acc): { usd: number; model: string; n: number } {
+  const by = new Map<string, number>(); let usd = 0;
+  for (const d of a.days.values()) for (const [k, r] of d.tp) {
+    const v = r[5] ?? -1; if (v <= 0) continue;
+    const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1); const m = k.slice(t2 + 1);
+    const z = resolve(m, k.slice(t1 + 1, t2)); if (!z || z.src !== "alias") continue;
+    usd += v; by.set(z.key, (by.get(z.key) ?? 0) + v);
+  }
+  let model = ""; let mv = 0; for (const [m, v] of by) if (v > mv) { mv = v; model = m; }
+  return { usd, model, n: by.size };
+}
 // one session-day into the sum; mode resolves each provider's cost (pi/OpenCode per provider, else the session's mode)
 export function addDay(m: ModeSum, d: Day, mode: (prov: string) => Bill): void {
   for (const [p, c] of d.cp) { const i = MODES.indexOf(mode(p)); if (i >= 0) m.by[i] = (m.by[i] ?? 0) + c; }
-  m.unk = m.unk + d.unk; m.uc = m.uc + d.uc;
+  m.unk = m.unk + d.unk; m.uc = m.uc + d.uc; m.est = m.est + estDay(d);
   for (const [k, n] of d.um) m.um.set(k, (m.um.get(k) ?? 0) + n);
 }
 export function addSum(m: ModeSum, o: ModeSum): void {
   for (let i = 0; i < MODES.length; i++) m.by[i] = (m.by[i] ?? 0) + (o.by[i] ?? 0);
-  m.unk = m.unk + o.unk; m.uc = m.uc + o.uc;
+  m.unk = m.unk + o.unk; m.uc = m.uc + o.uc; m.est = m.est + o.est;
   for (const [k, n] of o.um) m.um.set(k, (m.um.get(k) ?? 0) + n);
 }
 export function total(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; return t; }
@@ -37,16 +62,17 @@ export function single(m: ModeSum): Bill | "" {
   for (let i = 0; i < MODES.length; i++) if ((m.by[i] ?? 0) > 0) { if (r) return ""; r = MODES[i] ?? "unknown"; }
   return r;
 }
-// only API-key spend is real money as shown; everything else is a list-price estimate (≈)
-export function money(c: number, bill: Bill | ""): string { return (bill === "api" ? "$" : "≈$") + (c < 1000 ? c.toFixed(2) : grp(c)); }
-export function moneyTag(c: number, bill: Bill): string { return money(c, bill) + " " + tag(bill); }
+// only API-key spend is real money as shown; everything else is a list-price estimate (≈), and so is a figure with
+// alias-priced cost in it (est)
+export function money(c: number, bill: Bill | "", est = false): string { return (bill === "api" && !est ? "$" : "≈$") + (c < 1000 ? c.toFixed(2) : grp(c)); }
+export function moneyTag(c: number, bill: Bill, est = false): string { return money(c, bill, est) + " " + tag(bill); }
 // "$3.10 spend + ≈$9.20 plan"; narrow: the total alone
 export function split(m: ModeSum, narrow: boolean): string {
-  const one = single(m);
-  if (narrow || !one && total(m) === 0) return money(total(m), one);
-  if (one) return moneyTag(total(m), one);
+  const one = single(m); const est = m.est > 1e-9;
+  if (narrow || !one && total(m) === 0) return money(total(m), one, est);
+  if (one) return moneyTag(total(m), one, est);
   const parts: string[] = [];
-  for (let i = 0; i < MODES.length; i++) if ((m.by[i] ?? 0) > 0) parts.push(moneyTag(m.by[i] ?? 0, MODES[i] ?? "unknown"));
+  for (let i = 0; i < MODES.length; i++) if ((m.by[i] ?? 0) > 0) parts.push(moneyTag(m.by[i] ?? 0, MODES[i] ?? "unknown", est)); // which mode holds the alias share is not kept: all parts say ≈
   return parts.join(" + ");
 }
 // "gpt-x 900K · custom 300K · +2 models · kiro 120 credits (set kiroCreditUsd)", "" when nothing is unpriced

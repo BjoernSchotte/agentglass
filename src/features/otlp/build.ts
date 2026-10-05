@@ -237,6 +237,7 @@ function chatFor(b: SessB, sd: Side, tr: XTurn, par: XSpan, key: string, t0: num
 function book(b: SessB, c: XSpan, x: Booking): void {
   c.nIn = c.nIn + x.nIn; c.nOut = c.nOut + x.nOut; c.cr = c.cr + x.cr; c.cw = c.cw + x.cw; c.cost = c.cost + x.cost; c.unk = c.unk + x.unk;
   if (x.exact) c.exact = true;
+  c.costSrc = !c.costSrc || c.costSrc === x.src ? x.src : "mixed"; if (x.est) c.costEst = true;
   c.hasUsage = true;
   if (x.prov) c.bill = modeOf(b.root, x.prov); // pi/OpenCode: the request's provider decides
 }

@@ -24,7 +24,8 @@ const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
   costs today, over the last 7 days and this month, by billing mode:
     spend = API key (real spend)   plan = subscription (list-price equivalent)
     cloud = Bedrock/Vertex/Foundry/Azure   gateway = proxy/gateway   unknown = not detectable
-  plus unpriced usage (tokens of models without a price, Kiro credits without kiroCreditUsd),
+  plus unpriced usage (tokens of models without a price, Kiro credits without kiroCreditUsd; agentglass prices sets them),
+  estimatedUsd = the share priced through a prices.json alias (≈, also on an API key),
   the projected month (needs 3+ days of history) and the budget from ~/.agentglass/config.json:
     { "budget": { "monthlyUsd": 200, "counts": ["api", "metered", "gateway"], "warnAt": 0.8 } }
 
@@ -53,9 +54,9 @@ function json(c: CostNow): Obj {
   const pb: Obj = {}; for (let i = 0; i < MODES.length; i++) { const p = c.projByMode[i]; pb[MODES[i] ?? ""] = p && p.month >= 0 ? round(p.month) : null; }
   const b = c.budget;
   return {
-    today: { byMode: byMode(c.today), unpriced: unpriced(c.today) },
-    week: { byMode: byMode(c.week), unpriced: unpriced(c.week) },
-    month: { byMode: byMode(c.month), unpriced: unpriced(c.month), projected: c.proj.month >= 0 ? { byMode: pb, total: round(c.proj.month) } : null },
+    today: { byMode: byMode(c.today), estimatedUsd: round(c.today.est), unpriced: unpriced(c.today) },
+    week: { byMode: byMode(c.week), estimatedUsd: round(c.week.est), unpriced: unpriced(c.week) },
+    month: { byMode: byMode(c.month), estimatedUsd: round(c.month.est), unpriced: unpriced(c.month), projected: c.proj.month >= 0 ? { byMode: pb, total: round(c.proj.month) } : null },
     budget: b.usd > 0 ? { monthlyUsd: b.usd, counts: b.counts, used: round(c.bs.used), projected: c.bs.projected >= 0 ? round(c.bs.projected) : null, state: c.bs.state, approx: c.bs.approx } : null,
   };
 }
@@ -71,13 +72,13 @@ function text(c: CostNow): void {
   out(hd);
   for (const r of rows) {
     let l = r.name.padEnd(L);
-    for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; l += pad(money(r.m.by[i] ?? 0, MODES[i] ?? "unknown"), W); }
+    for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; l += pad(money(r.m.by[i] ?? 0, MODES[i] ?? "unknown", r.m.est > 1e-9), W); }
     l += pad(r.m.unk > 0 ? kfmt(r.m.unk) + " tok" : "—", W);
     out(l);
   }
   let pl = "projected month".padEnd(L);
-  for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; const p = c.projByMode[i]; pl += pad(p && p.month >= 0 ? money(p.month, MODES[i] ?? "unknown") : "—", W); }
-  out(pl + (c.proj.month < 0 ? "   (needs 3+ days of history)" : "   (total " + money(c.proj.month, cols.length === 1 && cols[0] === 0 ? "api" : "") + ")"));
+  for (let k = 0; k < cols.length; k++) { const i = cols[k] ?? 0; const p = c.projByMode[i]; pl += pad(p && p.month >= 0 ? money(p.month, MODES[i] ?? "unknown", c.month.est > 1e-9) : "—", W); }
+  out(pl + (c.proj.month < 0 ? "   (needs 3+ days of history)" : "   (total " + money(c.proj.month, cols.length === 1 && cols[0] === 0 ? "api" : "", c.month.est > 1e-9) + ")"));
   out("");
   const uw = unpricedLine(c.week, 5); const um = unpricedLine(c.month, 5);
   out("unpriced (month): " + (um || "none"));

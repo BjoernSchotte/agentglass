@@ -12,10 +12,10 @@ import { ledger, accOf, pending } from "./ledger.ts";
 import { type Day, L, todayKey, lastDays, startOfDay, skillUses, newDay, heavy } from "./record.ts";
 import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
-import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText } from "./costs.ts";
+import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText, estTop } from "./costs.ts";
 import { type Bill, type GW, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
-import { costNow, budget } from "./summary.ts";
+import { costNow, budget, sourceCounts } from "./summary.ts";
 import { REDACT } from "../redact-on.ts";
 import { CONFIG_FILE } from "../../util/config.ts";
 import { HARNESSES, harnessOf, harnessIndex } from "../../harness/index.ts";
@@ -147,7 +147,8 @@ function billingOf(rows: HA[]): string[] {
 }
 // line 1's tail within w columns: prices + billing; narrow drops the price source first, then trailing harnesses ("+2")
 function sourcesOf(rows: HA[], w: number): string {
-  const pr = fg(C.dim) + "   prices: " + pricesFrom() + RST; const bs = billingOf(rows);
+  const sc = sourceCounts(period()); const from = pricesFrom();
+  const pr = fg(C.dim) + "   prices: " + (from === "built-in" ? from : "built-in + " + from) + (sc ? " · " + sc : "") + RST; const bs = billingOf(rows);
   const bl = (n: number, lead: string): string => !bs.length ? "" : fg(C.dim) + lead + "billing: " + RST + bs.slice(0, n).join(fg(C.dim) + " · " + RST) + (n < bs.length ? fg(C.dim) + " +" + String(bs.length - n) + RST : "");
   if (vwidth(pr + bl(bs.length, " · ")) <= w) return pr + bl(bs.length, " · ");
   if (!bs.length) return pr;
@@ -158,7 +159,7 @@ function sourcesOf(rows: HA[], w: number): string {
 function cellOf(x: HA): string {
   if (x.cost === 0 && (x.unk > 0 || x.ms.uc > 0)) return "?";
   const one = single(x.ms);
-  return one ? moneyTag(total(x.ms), one) : total(x.ms) > 0 ? money(total(x.ms), "") + " mixed" : money(0, "");
+  return one ? moneyTag(total(x.ms), one, x.ms.est > 1e-9) : total(x.ms) > 0 ? money(total(x.ms), "") + " mixed" : money(0, "");
 }
 // modes whose cost counts (budget.counts, or all without a budget) are all API spend: figures without ≈
 function allApi(): boolean {
@@ -191,7 +192,7 @@ function renderStats(): void {
   // still too long (80 columns): the parts the table below repeats go first — unpriced, sessions, cache write, lines
   const l2f = (narrow: boolean, drop: number): string => fg(C.yellow) + CSI + "1m" + split(t.ms, narrow) + RST + (wide ? "   " : "  ") + fg(C.cyan) + "↑" + sp + kfmt(t.inTok) + RST + fg(C.sub) + " in  " + RST + fg(C.purple) + "↓" + sp + kfmt(t.outTok) + RST + fg(C.sub) + " out  " + RST +
     fg(C.accent) + "↻" + sp + kfmt(t.cr) + RST + fg(C.sub) + (wide ? " cache read" : " cr") + RST + (drop >= 3 ? "" : "  " + fg(C.accent) + "⇡" + sp + kfmt(t.cw) + RST + fg(C.sub) + (wide ? " cache write" : " cw") + RST) + dot +
-    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + (drop >= 4 ? "" : dot + linesStr(t.add, t.del)) + (drop >= 2 ? "" : dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST) + (t.ms.unk > 0 && drop < 1 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
+    fg(C.text) + CSI + "1m" + grp(t.tools) + RST + fg(C.sub) + (wide ? " tool calls" : " tools") + RST + (drop >= 4 ? "" : dot + linesStr(t.add, t.del)) + (drop >= 2 ? "" : dot + fg(C.text) + t.sess + RST + fg(C.sub) + " sessions" + RST) + (t.ms.est > 0.005 && drop < 1 ? fg(C.dim) + " · " + money(t.ms.est, "", true) + " by alias" + RST : "") + (t.ms.unk > 0 && drop < 1 ? fg(C.dim) + " · unpriced " + kfmt(t.ms.unk) + " tok" + RST : "");
   const sc = g.scoped ? fg(C.dim) + " · cost: days with matching calls" + RST : "";
   let l2 = l2f(false, 0);
   for (let d = 0; d <= 4 && vwidth(l2 + sc) > W - 4; d++) l2 = l2f(true, d);
@@ -245,7 +246,7 @@ function renderStats(): void {
   for (let i = 0; i < nh; i++) row(i < g.rows.length ? g.rows[i] : ha(""), 8 + i, "");
   put(1, 8 + nh, " " + fg(C.line) + "─".repeat(W - 4) + RST + " ");
   row(t, 9 + nh, "Σ total");
-  if (up) { const ul = fg(C.dim) + fit("unpriced", 10) + RST + fg(C.sub) + up + RST; put(1, 10 + nh, " " + fitStyled(ul, W - 4) + fillTo(fitStyled(ul, W - 4), W - 4) + " "); }
+  if (up) { const ul = fg(C.dim) + fit("unpriced", 10) + RST + fg(C.sub) + up + RST + fg(C.dim) + " · $ set prices" + RST; put(1, 10 + nh, " " + fitStyled(ul, W - 4) + fillTo(fitStyled(ul, W - 4), W - 4) + " "); }
   // bottom: top tools | activity
   const y0 = 11 + nh + (up ? 1 : 0); const bh = Ht - 1 - y0;
   if (bh < 5) return;
@@ -679,7 +680,9 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   const tok = fg(C.cyan) + "↑" + kfmt(s.inTok) + " " + RST + fg(C.purple) + "↓" + kfmt(s.outTok) + " " + RST + fg(C.accent) + "↻" + kfmt(s.cacheRTok + s.cacheWTok) + RST;
   const bill = asBill(s.bill); const pl = bill === "plan" && s.plan ? fg(C.sub) + " (" + planLabel(s.plan, REDACT) + ")" + RST : "";
   // narrow (60 columns): the lines, then the tool count go whole rather than being cut mid-figure
-  const tl = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill)) + RST + pl, fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST, linesStr(s.linesAdd, s.linesDel)];
+  const es = estTop(a); // alias-priced share: an estimate, ≈ even on an API key
+  const tl = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill, es.usd > 1e-9)) + RST + pl, fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST, linesStr(s.linesAdd, s.linesDel)];
+  if (es.usd > 0.005) tl.splice(1, 0, fg(C.dim) + "incl. " + money(es.usd, "", true) + " alias (" + es.model + (es.n > 1 ? " +" + String(es.n - 1) : "") + ")" + RST);
   while (tl.length > 1 && vwidth(tl.join(dot)) > w) tl.pop();
   const out = [tl.join(dot)];
   const pad = fit("", 9);

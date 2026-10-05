@@ -14,6 +14,7 @@ import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { accOf } from "./usage/ledger.ts";
 import { type SkillUse, skillUses } from "./usage/record.ts";
+import { estOf } from "./usage/costs.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
@@ -58,7 +59,7 @@ const AT_OPT = opt("--at", "<iso>", "--related: anchor on the first event at/aft
 const MINUTES_OPT = opt("--minutes", "N", "--related: window ±N minutes, 1–240 (default related.minutes, 10)", "10", []);
 const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
 export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "parent", "kind", "subagents",
-  "activity", "tokens", "costUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git"];
+  "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git"];
 function cmd(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
 function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.arg ? " " + o.arg : ""), summary: o.summary, options: [], fields: [], group: "opt" }; }
 addCmd(cmd("", "agentglass", "interactive TUI", [], []));
@@ -96,14 +97,15 @@ function usage(): string {
   conflict = {kind: conflict|overlap|clobber, with: [session ids]} or null; config related.minutes, related.conflictMinutes)
 
 --json fields: id harness title cwd branch remote model path updated bytes live pid status parent kind subagents
-  activity tokens{in,out,cacheRead,cacheWrite} costUsd billing{mode,plan,source} unpricedTokens unpricedCredits
+  activity tokens{in,out,cacheRead,cacheWrite} costUsd costEstimatedUsd billing{mode,plan,source} unpricedTokens unpricedCredits
   tools linesAdded linesRemoved attention stuck skills[{name,source,n}] repo{key,label,kind,worktree,top,remote}
   alerts[{rule,severity,value,unit,threshold,since,message,labels,acked}] (live sessions; durations s, ratios 0–1, USD)
   git{commits[{sha,branch,subject,at,how,counted,status,merge,add,del}],produced,prs[{url,number,how}],issues[],links[{url,how}],
   costPerCommit,noReflog} (null = no git worktree; how = observed ✓ | reflog ≈ | shared — only observed is counted;
   status = present|missing|amended|elsewhere — without --git "unknown" (elsewhere: a banner sha not in the repo) and
   add/del null; subagents' commits count for the parent)
-  (costUsd = API list price, null when only unpriced usage exists; billing.mode = api|plan|metered|gateway|unknown,
+  (costUsd = API list price, null when only unpriced usage exists; costEstimatedUsd = its share priced through a
+  prices.json alias (an estimate); billing.mode = api|plan|metered|gateway|unknown,
   source = session|process|config — config = assumed from the current config files;
   skills source = command: a slash command / $mention, model: the agent chose it;
   repo = the project: worktrees and clones of one remote share key, kind = git|gitdir|path|none, null = no cwd known)
@@ -174,7 +176,7 @@ export function jsonSess(s: Sess): Obj {
     updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status,
     parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
     tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
-    costUsd: s.cost < 0 ? null : s.cost, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
+    costUsd: s.cost < 0 ? null : s.cost, costEstimatedUsd: Math.round(estOf(accOf(s)) * 1e6) / 1e6, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
     unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
     attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null), repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
   };

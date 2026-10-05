@@ -61,4 +61,15 @@ printf '{"budget":{"monthlyUsd":1},}\n' > "$t/home/.agentglass/config.json"
 eq "broken config" "$(run cost --json 2>"$t/err" | jq -r '.budget')" null
 grep -q "config.json is not valid JSON" "$t/err" || { echo "FAIL no warning for a broken config.json"; cat "$t/err"; fail=1; }
 eq "broken config: one warning" "$(grep -c 'not valid JSON' "$t/err")" 1
+# model-prices: an alias prices the unknown model like claude-sonnet-4-5 — an estimate, ≈ even on an API key
+rm -f "$t/home/.agentglass/config.json"
+printf '{"gpt-x-unknown":{"alias":"claude-sonnet-4-5"}}\n' > "$t/home/.agentglass/prices.json"
+j=$(run --json)
+eq "alias: estimated share" "$(echo "$j" | jq -r '.[0].costEstimatedUsd')" 0.015
+eq "alias: nothing unpriced" "$(echo "$j" | jq -r '.[0].unpricedTokens')" 0
+eq "alias: cost" "$(echo "$j" | jq -r '.[0].costUsd')" 3.015
+run cost | grep "^today" | grep -q "≈\$3.02" || { echo "FAIL alias: no ≈ on the api figure"; run cost; fail=1; }
+eq "alias: by model" "$(run cost --by model --json | jq -r '.rows[] | select(.key=="gpt-x-unknown") | .priceSource + " " + (.estimated|tostring)')" "alias true"
+rm -f "$t/home/.agentglass/prices.json"
+eq "alias gone: unpriced again" "$(run --json | jq -r '.[0].unpricedTokens')" 5000
 [ $fail = 0 ] && echo "cost cli: all checks passed"; exit $fail
