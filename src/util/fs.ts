@@ -55,7 +55,7 @@ export function listDir(p: string): string[] { try { return readdirSync(p); } ca
 // change within the same coarse mtime tick must not be missed), and at least once a minute it is listed anyway
 // (filesystems whose directory mtime does not move). A missing directory lists as [] and is forgotten. The array is
 // shared: callers must not change it.
-// aged: the caller knows the directory gets no new entries now (a subagent dir of a session not written within a day):
+// aged: the caller knows the directory gets no new entries now (the subagent dir of an idle session):
 // its mtime is looked at only once a minute, and a missing one is remembered as missing for that long
 export const FS_CLOCK = { now: (): number => Date.now() };
 export const FS_STATS = { lists: 0, stats: 0 }; // real listings and directory stats (checks)

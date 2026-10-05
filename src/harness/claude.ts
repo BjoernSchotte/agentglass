@@ -20,7 +20,7 @@ const PROJECTS = join(CLAUDE, "projects");
 // a project dir's logs and subagent dirs as paths, kept while its listing is the same (no path building per scan)
 const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][] }>();
 const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
-const DAY_MS = 86400000;
+const IDLE_MS = 300000; // a session not written for 5 min spawns no subagent (the spawning call is written first)
 function scan(add: AddFn): void {
   for (const proj of listDirCached(PROJECTS)) {
     const pd = join(PROJECTS, proj); const names = listDirCached(pd);
@@ -37,8 +37,8 @@ function scan(add: AddFn): void {
     const now = Date.now();
     for (const d of m.subs) {
       const sd = d[0] ?? ""; const f = d[1] ?? "";
-      const pm = KNOWN.mtime(d[2] ?? ""); // its session not written within a day: no new subagents now, looked at once a minute
-      const ns = listDirCached(sd, pm > 0 && now - pm >= DAY_MS);
+      const pm = KNOWN.mtime(d[2] ?? ""); // its session idle (or gone): no new subagents now, the dir looked at once a minute
+      const ns = listDirCached(sd, pm === 0 || now - pm >= IDLE_MS);
       let k = SD.get(sd);
       if (!k || k.names !== ns) { k = { names: ns, logs: [] }; for (const a of ns) if (a.endsWith(".jsonl")) k.logs.push([join(sd, a), a.slice(6, -6)]); SD.set(sd, k); }
       for (const l of k.logs) add(l[0] ?? "", l[1] ?? "", f, false);
