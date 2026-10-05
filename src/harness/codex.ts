@@ -1,7 +1,7 @@
 // agentglass — Codex (~/.codex) adapter
 // SPDX-License-Identifier: Apache-2.0
 import { statSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { type Obj, obj, str, parse as parseJson } from "../util/json.ts";
 import { CODEX, readText, listDir } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
@@ -84,6 +84,29 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   }
 }
 
+// a forked rollout (fork_context subagents) starts with a copy of its parent's history, calls included, under new
+// timestamps: a call whose call_id the parent rollout logged is the parent's (booked there), not the fork's
+const FORKED = new Set<string>(); // "<rollout path>\t<call id>" of the parent's calls, for every rollout checked (FORK_SEEN)
+const FORK_SEEN = new Set<string>();
+function parentCalls(path: string): void {
+  FORK_SEEN.add(path);
+  const m = /"forked_from_id":"([^"]+)"/.exec(readText(path, 0, 16384)); const pid = m ? m[1] ?? "" : "";
+  if (!pid) return;
+  const name = "-" + pid + ".jsonl"; let pp = "";
+  for (const f of listDir(dirname(path))) if (f.endsWith(name)) pp = join(dirname(path), f); // forks usually start the same day
+  if (!pp) scan((p: string, id: string, parent: string, archived: boolean): void => { if (p.endsWith(name)) pp = p; });
+  if (!pp) return; // the parent is gone: the fork owns what it holds
+  let size = 0; try { size = statSync(pp).size; } catch (e) { return; }
+  for (const l of readText(pp, 0, size).split("\n")) {
+    const h = l.slice(0, 200); if (h.indexOf("_call\"") < 0 || h.indexOf("_call_output\"") >= 0) continue;
+    const c = /"call_id":"([^"]+)"/.exec(l); if (c) FORKED.add(path + "\t" + (c[1] ?? ""));
+  }
+}
+function copiedCall(a: Acc, id: string): boolean {
+  if (!a.p || !id) return false;
+  if (!FORK_SEEN.has(a.p)) parentCalls(a.p);
+  return FORKED.has(a.p + "\t" + id);
+}
 const SHELL = ["exec_command", "shell", "shell_command", "container.exec"];
 function usage(a: Acc, l: string): void {
   const h = l.slice(0, 200); // cheap pre-filter: most bytes are tool outputs and messages we never parse
@@ -114,6 +137,7 @@ function usage(a: Acc, l: string): void {
   const p = obj(o["payload"]); if (!p) return;
   const iso = str(o["timestamp"]);
   if (ctx) { const m = str(p["model"]); if (m) a.model = m; return; }
+  if (call && copiedCall(a, str(p["call_id"]))) return; // the parent's call, copied into this fork
   const d = bucket(a, 0, iso);
   if (call) {
     const t = str(p["type"]);

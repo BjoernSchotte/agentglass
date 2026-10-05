@@ -33,9 +33,10 @@ function result(call: string, ts: string): string {
   return "{\"type\":\"user\",\"timestamp\":\"" + ts + "\",\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"" + call + "\",\"type\":\"tool_result\",\"content\":\"x\"}]},\"uuid\":\"r-" + call + "\"}";
 }
 function put(path: string, lines: string[]): void { writeFileSync(path, lines.join("\n") + "\n"); }
-function sess(path: string, parent: string): Sess {
+function sess(path: string, parent: string): Sess { return sessOf("claude", path, parent); }
+function sessOf(h: string, path: string, parent: string): Sess {
   let s = sessions.get(path);
-  if (!s) { s = newSess("claude", path.slice(path.lastIndexOf("/") + 1, -6), path, false); s.parent = parent; sessions.set(path, s); }
+  if (!s) { s = newSess(h, path.slice(path.lastIndexOf("/") + 1, -6), path, false); s.parent = parent; sessions.set(path, s); }
   s.size = statSync(path).size; s.mtime = Date.now();
   return s;
 }
@@ -156,6 +157,21 @@ reset();
   const ts = finish(newSessB(f, []), { now: Date.now() + 86400000, quietMs: 600000, content: false, subagents: true });
   let r = 0; let n = 0; for (const t of ts) for (const x of t.spans) if (x.op === "chat") { r += x.cr; n++; }
   eq("otlp: a copy's requests carry no tokens", String(r) + " in " + String(n) + " chat span(s)", "4000 in 1 chat span(s)");
+}
+
+// ── Codex: a forked rollout (fork_context subagent) starts with a copy of its parent's history, calls included ──
+reset();
+{
+  const PID = "019d24d0-99f7-7d61-94aa-158608eb5206"; const FID = "019d24d1-11d6-7452-a702-ead2b435dd14";
+  const PP = dir + "/p1/rollout-2026-03-25T12-45-43-" + PID + ".jsonl"; const FP = dir + "/p1/rollout-2026-03-25T12-46-14-" + FID + ".jsonl";
+  const meta = (id: string, ts: string, fork: string): string => "{\"timestamp\":\"" + ts + "\",\"type\":\"session_meta\",\"payload\":{\"id\":\"" + id + "\"" + (fork ? ",\"forked_from_id\":\"" + fork + "\"" : "") + ",\"timestamp\":\"" + ts + "\",\"cwd\":\"/w\"}}";
+  const call = (id: string, ts: string): string => "{\"timestamp\":\"" + ts + "\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls " + "x".repeat(500) + "\\\"}\",\"call_id\":\"" + id + "\"}}";
+  const out = (id: string, ts: string): string => "{\"timestamp\":\"" + ts + "\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"" + id + "\",\"output\":\"ok\"}}";
+  put(PP, [meta(PID, "2026-03-25T11:45:43.000Z", ""), call("call_A", "2026-03-25T11:45:50.000Z"), out("call_A", "2026-03-25T11:45:51.000Z"), call("call_B", "2026-03-25T11:46:00.000Z"), out("call_B", "2026-03-25T11:46:01.000Z")]);
+  put(FP, [meta(FID, "2026-03-25T11:46:14.623Z", PID), call("call_A", "2026-03-25T11:46:14.624Z"), out("call_A", "2026-03-25T11:46:14.624Z"), call("call_B", "2026-03-25T11:46:14.624Z"), out("call_B", "2026-03-25T11:46:14.624Z"), call("call_C", "2026-03-25T11:46:18.397Z"), out("call_C", "2026-03-25T11:46:18.536Z")]);
+  const p = sessOf("codex", PP, ""); const f = sessOf("codex", FP, "");
+  all([f, p]);
+  eq("codex fork: the copied calls stay the parent's", String((ledger.get(PP) ?? accOf(p)).tools) + "/" + String((ledger.get(FP) ?? accOf(f)).tools), "2/1");
 }
 
 // ── a message split over several lines (thinking, then text, then a call) stays one booking in its own file ──

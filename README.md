@@ -874,9 +874,14 @@ Notes:
 
 - **Claude Code**: when a request falls back to another model (`usage.iterations`), each attempt is billed on its own
   model, so a failed attempt on a pricier model counts. Skills count as slash-command uses (`/name`, paired with the
-  skill's base-directory line) and as model uses (`Skill` tool calls).
+  skill's base-directory line) and as model uses (`Skill` tool calls). A forked, resumed or background-continued
+  session, the same session under a second project dir and a forked subagent copy earlier messages into their own
+  file: each API message (and prompt) is booked once, in the file where it appeared first (earliest timestamp, then the
+  root session before a subagent, then the path). The copies still show in the transcript but add no tokens, cost,
+  tool calls or turns there.
 - **Codex**: the preview and `--json` show the session's git remote (`remote`) with credentials, query and fragment
   removed; a remote that still looks suspicious is not shown. Skills you mention with `$name` count as command uses.
+  A forked rollout (`fork_context` subagents) starts with a copy of its parent's calls: those stay the parent's.
   OpenCode skills you activate count as command uses, its `skill` tool and Gemini `activate_skill` calls as model uses;
   pi `/skill:name` prompts count as command uses and show as `/skill:name <args>` (not the expanded skill file).
 - **pi**: honors `PI_CODING_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR` and `sessionDir` in pi's `settings.json`.
