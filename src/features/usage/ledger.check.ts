@@ -89,11 +89,19 @@ eq("gauge never 100% while indexing", gaugeText({ done: 9999, total: 10000, left
 // a one-shot complete() leaves the read logs' day maps as text (a cold index must not hold every day decoded); they decode
 // again on use, unchanged
 const call = (id: string): string => "{\"type\":\"assistant\",\"timestamp\":\"" + TS + "\",\"requestId\":\"rq" + id + "\",\"message\":{\"id\":\"mm" + id + "\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu" + id + "\",\"name\":\"Bash\",\"input\":{\"command\":\"make " + id + "\"}}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n";
-const e = sess("e", call("1") + call("2"));
+const res = (id: string): string => "{\"type\":\"user\",\"timestamp\":\"" + TS + "\",\"uuid\":\"uu" + id + "\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu" + id + "\",\"is_error\":true,\"content\":\"x\"}]}}\n";
+const e = sess("e", call("1") + res("1") + call("2") + res("2"));
 complete(e);
 const ea = ledger.get(e.path); let packed = 0; let cmds = 0;
 if (ea) for (const d of ea.days.values()) { if (!d.hx && d.hv) packed++; cmds += heavy(d).cmds.size; }
 eq("complete packs day maps to text, decodable", String(packed) + " " + String(cmds), "1 2");
+// …but not the day a pending call still books into: its result (a later read: --watch, a live log) lands in that day's
+// tool and command counters
+const g = sess("g", call("8") + res("8") + call("9"));
+complete(g); grow(g, res("9")); complete(g);
+const ga = ledger.get(g.path); let errs = ""; let cerr = 0;
+if (ga) for (const d of ga.days.values()) { const t = heavy(d).tt.get("Bash"); errs = t ? String(t.n) + "/" + String(t.err) : "none"; for (const x of heavy(d).cmds.values()) cerr += x.err; }
+eq("a pending call's result after complete() is counted", errs + " " + String(cerr), "2/2 2");
 rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "ledger: all checks passed");
 if (bad) process.exit(1);

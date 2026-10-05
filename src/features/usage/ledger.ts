@@ -9,7 +9,7 @@ import { TERM } from "../../term.ts";
 import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
-import { type Acc, L, newAcc, startOfDay, flushSpans, packHeavy } from "./record.ts";
+import { type Acc, L, newAcc, startOfDay, flushSpans, packAcc } from "./record.ts";
 import { type Rows, newRows } from "./rows.ts";
 import { scrape } from "./vcs.ts";
 import { OWN, reconcile, release } from "./owners.ts";
@@ -237,7 +237,7 @@ export function complete(s: Sess): void {
   }
   // a one-shot run is done with these logs: their day detail maps go back to text (a cold full index holds every day of
   // every log at once otherwise); a later reader decodes a day again on use
-  if (blocking()) for (const p of readNow) { const a = ledger.get(p); if (a) for (const d of a.days.values()) packHeavy(d); }
+  if (blocking()) for (const p of readNow) { const a = ledger.get(p); if (a) packAcc(a); }
   readNow.length = 0;
 }
 const readNow: string[] = []; // logs finish() read bytes of during this complete()

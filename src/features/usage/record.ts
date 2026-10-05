@@ -32,6 +32,17 @@ export function heavy(d: Day): Heavy { let h = d.hx; if (!h) { h = d.hv ? HEAVY.
 // back to text (one-shot runs, once a session is read to its end): the decoded maps are several times their text, and the
 // save writes this text as is instead of encoding them then
 export function packHeavy(d: Day): void { const h = d.hx; if (!h) return; const t = HEAVY.encode(h); if (!t) return; d.hv = own(t); d.hx = null; } // "": no codec in this program
+// every day of a session back to text except those a pending call still books into: its result (a later read) updates
+// the TS and Cnt objects it holds from that day's maps, which a re-decode would not see
+export function packAcc(a: Acc): void {
+  const held: TS[] = []; for (const p of a.pend.values()) held.push(p.st); // scriptc: no Set of objects
+  for (const d of a.days.values()) {
+    const h = d.hx; if (!h) continue;
+    let busy = false;
+    if (held.length) for (const st of h.tt.values()) { for (const x of held) if (x === st) { busy = true; break; } if (busy) break; }
+    if (!busy) packHeavy(d);
+  }
+}
 export function peekHeavy(d: Day): Heavy { const h = d.hx; return h ? h : d.hv ? HEAVY.decode(d.hv) : newHeavy(); }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
