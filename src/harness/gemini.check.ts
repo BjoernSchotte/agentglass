@@ -209,6 +209,10 @@ for (let k = 0; k <= bytes(FULL); k++) {
   const D = "dddddddd-0000-4000-8000-000000000004"; // a migrated legacy session: summary in a header longer than 4 KB
   write(T + "/app/chats/session-2026-10-01T12-00-dddddddd.jsonl", "{\"sessionId\":\"" + D + "\",\"projectHash\":\"ab\",\"summary\":\"" + "s".repeat(9000) + "\",\"kind\":\"main\"}\n" + user);
   write(T + "/app/chats/" + A + "/" + SUB + ".jsonl", hdr(SUB, "subagent") + user);
+  // another gemini's startup deleted it while it had no message (session retention), the next message recreated it
+  // without the header: listed under the filename's short id. A first line still being written is not
+  write(T + "/app/chats/session-2026-10-01T13-00-eeeeeeee.jsonl", user + user);
+  write(T + "/app/chats/session-2026-10-01T14-00-ffffffff.jsonl", "{\"sessionId\":\"ffff");
   write(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl", hdr(B, "main") + user + user);
   write(T + "/app-1/chats/session-2026-10-01T11-00-bbbbbbbb.jsonl", hdr(B, "main")); // startup-only copy a resume leaves behind
   write(T + "/app-1/chats/session-2026-10-01T09-00-bbbbbbbb.json", "{}"); // legacy whole-file JSON: out of scope
@@ -220,7 +224,7 @@ for (let k = 0; k <= bytes(FULL); k++) {
   });
   ok("roots", gemini.roots().join(" ") === T, gemini.roots().join(" "));
   ok("scan: one entry per session, cwd dirs only, legacy and copies skipped", found.slice().sort().join(" | ") ===
-    "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl bbbbbbbb  | app/chats/aaaaaaaa-0000-4000-8000-000000000001/cccccccc-0000-4000-8000-000000000003.jsonl cccccccc aaaaaaaa | app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl aaaaaaaa  | app/chats/session-2026-10-01T12-00-dddddddd.jsonl dddddddd ", found.slice().sort().join(" | "));
+    "app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl bbbbbbbb  | app/chats/aaaaaaaa-0000-4000-8000-000000000001/cccccccc-0000-4000-8000-000000000003.jsonl cccccccc aaaaaaaa | app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl aaaaaaaa  | app/chats/session-2026-10-01T12-00-dddddddd.jsonl dddddddd  | app/chats/session-2026-10-01T13-00-eeeeeeee.jsonl eeeeeeee ", found.slice().sort().join(" | "));
   const mA = byPath.get(T + "/app/chats/session-2026-10-01T10-00-aaaaaaaa.jsonl"); const mB = byPath.get(T + "/app-1/chats/session-2026-10-01T10-00-bbbbbbbb.jsonl");
   const sub = byPath.get(T + "/app/chats/" + A + "/" + SUB + ".jsonl");
   const mt = gemini.meta;

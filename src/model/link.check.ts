@@ -36,6 +36,11 @@ const tw2 = linkByCwd([GP(5, 10000, ""), GP(6, 15000, "")], [G("a-sess", 9900, 1
 ok("gemini: two procs a few s apart, each its own (older written last)", tw2.get("a-sess") === 5 && tw2.get("b-sess") === 6, show(tw2));
 const tw3 = linkByCwd([GP(6, 15000, ""), GP(5, 10000, "")], [G("a-sess", 9900, 11000), G("b-rewritten", 9950, 1000)]);
 ok("gemini: the newer process before its first session takes no other", tw3.get("a-sess") === 5 && tw3.size === 1, show(tw3));
+// a second Gemini's startup deletes the first one's session file while it has no message yet (session retention: no
+// resumable content); its next message recreates the file without the header (start unknown). The newer process takes
+// the one with its known start, the older one the headerless file, whichever was written last
+const hl = linkByCwd([GP(5, 10000, ""), GP(6, 15000, "")], [G("a-headerless", 9900, 0), G("b-sess", 9500, 16000)]);
+ok("gemini: a headerless session goes to the process with none of its own", hl.get("a-headerless") === 5 && hl.get("b-sess") === 6, show(hl));
 // the process start is a lower bound (etime: whole seconds) or exact (/proc): a header up to 1 s before it still counts
 ok("gemini: header 0.5 s before the process start (clock rounding) is its own", linkByCwd([GP(5, 10000, "")], [G("mine", 9000, 9995)]).get("mine") === 5, "");
 ok("gemini: header 5 s before the process start is not", linkByCwd([GP(5, 10000, "")], [G("old", 9000, 9950)]).size === 0, "");

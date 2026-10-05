@@ -174,6 +174,14 @@ function headerId(path: string): string {
   if (id) hdrIds.set(path, id);
   return id;
 }
+// a session file without the header: another gemini's startup deleted it while it had no message yet (session retention
+// drops files with nothing to resume) and its next record recreated it. Its id: the filename's short one (session-<time>-
+// <id8>.jsonl); "" = not such a file (a first line still being written, a header)
+function headerlessId(path: string, name: string): string {
+  const o = header(path); if (!o || str(o["sessionId"]) || !(str(o["type"]) || obj(o["$set"]))) return "";
+  const id8 = name.slice(name.length - 14, name.length - 6);
+  return name.charAt(name.length - 15) === "-" && /^[0-9a-f]{8}$/.test(id8) ? id8 : "";
+}
 // the header's startTime (epoch ms, 0 unknown), cached once read: live-process linking (procs.ts) takes only sessions
 // that began after the process started (Gemini rewrites an older session file of the project when it starts)
 const hdrStart = new Map<string, number>();
@@ -222,7 +230,7 @@ function scanRoots(add: AddFn): void {
     const best = new Map<string, string>(); const size = new Map<string, number>();
     for (const f of names) {
       if (!f.startsWith("session-") || !f.endsWith(".jsonl")) continue;
-      const p = join(cd, f); const id = headerId(p); if (!id) continue;
+      const p = join(cd, f); const id = headerId(p) || headerlessId(p, f); if (!id) continue;
       const n = statSize(p); const b = size.get(id);
       if (b === undefined || n > b) { best.set(id, p); size.set(id, n); }
     }

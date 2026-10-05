@@ -20,7 +20,9 @@ export function daemonWarn(pid: number, label: string, stop: string, live: Live[
 // still counts as the newest in its cwd: the process is taken to be its client and links nothing.
 // With session and process starts (Gemini, which rewrites an older session of the project when it starts):
 // - a new process's own sessions are those begun since it started (1 s slack: an etime start is a lower bound in whole
-//   seconds); the most recently started process picks first, so two in one project each get theirs. None yet = no link;
+//   seconds); the most recently started process picks first, so two in one project each get theirs. A session with an
+//   unknown start (gemini recreated a file another one's startup deleted: no header) only when it has none of those.
+//   None = no link;
 // - a resume links the session it continues: an id, gemini's index (by start, sessions with messages, 1-based), or
 //   "latest" (the last started of those with messages begun before it); an id not listed yet links nothing;
 // - an in-TUI resume (the process records into an older session from then on; its startup one stays empty): a lone
@@ -51,7 +53,8 @@ export function linkByCwd(procs: CwdProc[], sess: CwdSess[], lastMsg: (path: str
     let i = -1;
     if (p.resume) i = resumed(p, l, all.get(k) ?? [], lastMsg);
     else if (p.start > 0) {
-      for (let j = 0; j < l.length && i < 0; j++) { const st = l[j]?.start ?? 0; if (st === 0 || st >= p.start - SLACK) i = j; }
+      for (let j = 0; j < l.length && i < 0; j++) if ((l[j]?.start ?? 0) >= p.start - SLACK) i = j;
+      for (let j = 0; j < l.length && i < 0; j++) if ((l[j]?.start ?? 0) === 0) i = j; // start unknown: when none is surely its own
       if ((n.get(k) ?? 0) === 1) {
         let o = -1; let ot = -1; // its own session's last message: read only once an older one got a message since (a tail read)
         for (let j = 0; j < l.length; j++) {
