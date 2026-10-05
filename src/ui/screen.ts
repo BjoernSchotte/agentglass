@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { S } from "../state.ts";
 import { C, CSI, RST, fg, bg, heat } from "./theme.ts";
-import { width, vwidth, clean, fit, fitStyled } from "../util/text.ts";
+import { width, vwidth, clean, fit, fitStyled, escAt, cw } from "../util/text.ts";
 import { harnessOf, isHarness } from "../harness/index.ts";
 
 export const buf: string[] = [];
-export const bufRow: number[] = []; // the screen row of each buf entry (frame.ts writes changed rows only)
-export function put(x: number, y: number, s: string): void { if (y >= 0 && y < S.H) { buf.push(CSI + (y + 1) + ";" + (x + 1) + "H" + s); bufRow.push(y); } }
-export function clearBuf(): void { buf.length = 0; bufRow.length = 0; }
+export const bufRow: number[] = []; export const bufCol: number[] = []; // each buf entry's screen cell (frame.ts writes changed rows only)
+export function put(x: number, y: number, s: string): void { if (y >= 0 && y < S.H) { buf.push(CSI + (y + 1) + ";" + (x + 1) + "H" + s); bufRow.push(y); bufCol.push(x); } }
+export function clearBuf(): void { buf.length = 0; bufRow.length = 0; bufCol.length = 0; }
 // the frame as one string per screen row (each row's puts in order)
 export function bufRows(): string[] {
   const rows: string[] = []; for (let y = 0; y < S.H; y++) rows.push("");
@@ -43,7 +43,39 @@ export function badge(h: string): string {
   return fg(ad.color()) + CSI + "1m" + g + RST + fg(ad.color()) + fit(" " + ad.label, BADGE_W - width(g)) + RST;
 }
 export const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-export function spin(): string { S.animating = true; return SPIN[S.frame % SPIN.length]; } // animating: the render job keeps building frames
+// a spinner is drawn as this one-cell mark; the frame writer puts the current glyph there (frame.ts), so a step of the
+// spinners rewrites only their cells and a frame's text does not change with the phase (main.ts compares it)
+export const SPIN_MARK = "\uE000";
+export function spin(): string { S.animating = true; return SPIN_MARK; } // animating: the render job keeps the spinners turning
+export function spinGlyph(): string { return SPIN[S.frame % SPIN.length]; }
+// the screen cells of the frame's visible spinners (a later write on the same row may cover one: a modal, an overlay)
+// with the style in effect there; drawn by frame.ts
+export interface SpinCell { y: number; x: number; style: string }
+function spanOf(t: string, from: number): number { let w = 0; let i = from; while (i < t.length) { const e = escAt(t, i); if (e) { i += e; continue; } const c = t.codePointAt(i) ?? 0; w += cw(c); i += c > 0xffff ? 2 : 1; } return w; }
+export function spinCells(): SpinCell[] {
+  const out: SpinCell[] = [];
+  for (let k = 0; k < buf.length; k++) {
+    const t = buf[k] ?? ""; if (t.indexOf(SPIN_MARK) < 0) continue;
+    const y = (bufRow[k] ?? 0) + 0; let x = (bufCol[k] ?? 0) + 0;
+    let i = t.indexOf("H") + 1; let style = "";
+    while (i < t.length) {
+      const e = escAt(t, i);
+      if (e) { const q = t.slice(i, i + e); if (q.endsWith("m")) style = q === RST || q === CSI + "m" ? "" : style + q; i += e; continue; }
+      const c = t.codePointAt(i) ?? 0;
+      if (t.charAt(i) === SPIN_MARK) {
+        let hid = false;
+        for (let j = k + 1; j < buf.length && !hid; j++) {
+          if ((bufRow[j] ?? -1) + 0 !== y) continue;
+          const u = buf[j] ?? ""; const x0 = (bufCol[j] ?? 0) + 0;
+          if (u.indexOf(CSI + "2K") >= 0 || (x >= x0 && x < x0 + spanOf(u, u.indexOf("H") + 1))) hid = true;
+        }
+        if (!hid) out.push({ y, x, style });
+      }
+      x += cw(c); i += c > 0xffff ? 2 : 1;
+    }
+  }
+  return out;
+}
 // braille area graph (btop style): values 0..max, each cell holds 2 samples × 4 levels
 export function braille(vals: number[], w: number, h: number, max: number): string[] {
   const rows: string[] = [];

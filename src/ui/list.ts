@@ -27,13 +27,44 @@ function actLines(s: Sess, w: number): void {
   for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], w, false, ACT.lines); while (ACT.ev.length < ACT.lines.length) ACT.ev.push(i); }
 }
 
+// the status glyph's kind: b busy (spinner), l live idle ●, r recent ○, o old ·
+function glyphKind(s: Sess): string {
+  if (s.pid) return working(s) || Date.now() - s.mtime < 8000 ? "b" : "l";
+  return Date.now() - s.mtime < 120000 ? "r" : "o";
+}
 function statusGlyph(s: Sess): string {
-  if (s.pid) {
-    const busy = working(s) || Date.now() - s.mtime < 8000;
-    return busy ? fg(C.green) + spin() + RST : fg(C.yellow) + "●" + RST;
+  const k = glyphKind(s);
+  return k === "b" ? fg(C.green) + spin() + RST : k === "l" ? fg(C.yellow) + "●" + RST : k === "r" ? fg(C.green) + "○" + RST : fg(C.dim) + "·" + RST;
+}
+// what the Sessions list and its preview show, without drawing them (main.ts: a frame is built when it moved). Each row
+// as renderSessions draws it from these inputs; the preview by its session's fields, last events (the tail is read here
+// as the frame would), its subagents and the usage its sections show
+function rowKey(s: Sess, sub: boolean, last: boolean): string {
+  const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + ago(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + ago(s.last) + "|" + s.cwd + "|" +
+    (s.subs.length ? (isOpen(s) ? "v" : ">") + String(activeSubs(s)) + "/" + String(s.subs.length) : ""));
+  let b = ""; for (const f of H.rowBadges) b += f(s);
+  return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b;
+}
+function usageKey(s: Sess): string {
+  return String(s.inTok) + "," + String(s.outTok) + "," + String(s.cacheRTok) + "," + String(s.cacheWTok) + "," + String(s.cost) + "," + String(s.unkTok) + "," + String(s.unkCr) + "," +
+    String(s.tools) + "," + String(s.linesAdd) + "," + String(s.linesDel) + "," + s.bill + s.plan + s.billSrc + (s.attention ? "!" : "") + s.stuck;
+}
+export function listSig(): string {
+  const o: string[] = [String(S.W) + "x" + String(S.H), String(S.top), String(S.sel), String(S.listH), String(S.view.length), boxChips("sessions", S.W)];
+  for (let r = 0; r < S.listH; r++) {
+    const s = sessAt(S.top + r); if (!s) break;
+    const nx = sessAt(S.top + r + 1);
+    o.push(rowKey(s, s.depth === 1, !(nx && nx.depth === 1)));
   }
-  if (Date.now() - s.mtime < 120000) return fg(C.green) + "○" + RST;
-  return fg(C.dim) + "·" + RST;
+  const s = current();
+  if (s) {
+    if (s.headDone) loadTail(s); // as the frame reads it (a head is read by the frame itself)
+    const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
+    o.push(s.path + "|" + bytes(s.size) + "|" + (s.headDone ? "h" : "") + s.cwd + "|" + s.branch + "|" + s.remote + "|" + s.model + "|" + ago(s.mtime) + "|" + String(s.pid) + s.status + s.name + "|" +
+      (s.pid ? tmuxTarget(s.pid) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
+    for (const c of s.subs) o.push(c.path + (subActive(c) ? "A" : "a") + ago(c.mtime) + "|" + titleOf(c) + "|" + activity(c) + "|" + usageKey(c));
+  }
+  return o.join("\n");
 }
 // H.rowBadges slot: only takes room when a feature registered one
 function badgeSlot(s: Sess, b: string): string {

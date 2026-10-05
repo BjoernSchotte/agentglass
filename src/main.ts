@@ -7,11 +7,11 @@ import { H, tabAt, viewOf, screenOut, armed, backlog } from "./hooks.ts";
 import { sessions, scan, buildView, probeLive, sessAt, current } from "./model/sessions.ts";
 import { procs, refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
-import { buf, put, renderModal, clearBuf, bufRows } from "./ui/screen.ts";
-import { flushRows, flushPart, resetFrame } from "./ui/frame.ts";
-import { renderHeader, statsKey } from "./ui/header.ts";
+import { buf, put, renderModal, clearBuf, bufRows, spinCells, spinGlyph } from "./ui/screen.ts";
+import { flushRows, flushPart, flushSpin, resetFrame } from "./ui/frame.ts";
+import { renderHeader, renderHeaderStep, statsKey } from "./ui/header.ts";
 import { renderFooter } from "./ui/footer.ts";
-import { renderSessions } from "./ui/list.ts";
+import { renderSessions, listSig } from "./ui/list.ts";
 import { renderProcs } from "./ui/procs.ts";
 import { renderTranscript } from "./ui/transcript.ts";
 import { renderDetail } from "./ui/detail.ts";
@@ -28,6 +28,7 @@ import { replaying } from "./features/replay.ts";
 import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
 import { compactHelp } from "./features/clihelp.ts";
 import { debugExtras } from "./util/selfmem.ts";
+import { gitGen, gitTouches } from "./features/vcs/attrib.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
@@ -63,7 +64,7 @@ import "./features/update.ts";
 import "./features/otlp/export.ts";
 
 function render(): void {
-  S.dirty = false; S.animating = false; // spin() sets animating again while something on screen turns
+  S.dirty = false; S.animating = false; headDirty = false; // spin() sets animating again while something on screen turns
   clearBuf();
   renderHeader();
   const mode = S.mode; const pm = S.prevMode;
@@ -83,36 +84,36 @@ function render(): void {
   if (mode === "help") renderHelp();
   for (const f of H.overlays) f();
   if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
-  flushRows(bufRows(), (s: string) => { process.stdout.write(s); }); // only the rows that changed
+  flushRows(bufRows(), (s: string) => { process.stdout.write(s); }, spinCells(), spinGlyph()); // only the rows that changed
 }
 // the header row alone (a marquee step): a full frame costs ~3× more to build, and the marquee moves ~6 times a second
-function renderTop(): void {
+// step: a marquee step (only the flexible widget moved: the last header's layout is reused)
+function renderTop(step: boolean): void {
   clearBuf();
-  renderHeader();
+  if (!step || !renderHeaderStep()) renderHeader();
   if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
   flushPart(bufRows(), (s: string) => { process.stdout.write(s); });
 }
-// what the Sessions list shows that the ledger, the process scan or a tail read can change: the header's stats and
-// widgets, the visible rows and the preview's session. A frame is built when it moved (not on every ledger tick or
-// process scan); other tabs and views draw on every change as before. Time-based texts are the render job's 1 s frame.
+// what the Sessions list shows (header stats and widgets, the rows, the preview: ui/list.ts listSig, the git line's
+// attribution) without drawing it. Ledger ticks, process scans, live probes and the watchdog mark the list dirty only
+// when it moved; the render job's clock frame is built only when it moved too (or every 5 s). Other tabs and views draw
+// on every change as before.
 function listShown(): boolean { return S.tab === 0 && S.mode === "list"; }
-function visibleSig(): string {
-  const o: string[] = [statsKey()];
-  for (const f of H.headerWidgets) o.push(f(S.W));
-  o.push(String(S.view.length));
-  for (let r = 0; r < S.listH; r++) {
-    const s = sessAt(S.top + r); if (!s) break;
-    o.push(s.path + ":" + String(s.size) + ":" + String(s.cost) + ":" + String(s.inTok + s.outTok) + ":" + String(s.pid) + s.status + (s.attention ? "!" : "") + s.stuck);
-  }
-  const c = current();
-  if (c) {
-    let sc = 0; for (const x of c.subs) sc += x.cost + x.inTok + x.outTok + x.size;
-    o.push("P" + c.path + ":" + String(c.size) + ":" + String(c.evs.length) + ":" + String(c.pid) + c.status + c.name + ":" + String(c.subs.length) + ":" + String(sc) + ":" + c.bill);
-  }
-  return o.join("|");
+function headSig(): string { const o: string[] = [statsKey(), String(S.tab)]; for (const f of H.headerWidgets) o.push(f(S.W)); return o.join("\n"); }
+function bodySig(): string { return String(gitGen()) + "/" + String(gitTouches()) + "\n" + listSig(); }
+// once per turn at most (several jobs ask in one turn): the body moved (a frame), only the header row moved (that row:
+// the cpu graph and the stats move every process scan), or nothing
+const VIS = { head: "", body: "", turn: -1, moved: false };
+let turnNo = 0; let headDirty = false;
+function shownMoved(): boolean {
+  if (VIS.turn === turnNo) return VIS.moved;
+  VIS.turn = turnNo;
+  const h = headSig(); const b = bodySig();
+  VIS.moved = b !== VIS.body; if (!VIS.moved && h !== VIS.head) headDirty = true;
+  VIS.head = h; VIS.body = b;
+  return VIS.moved;
 }
-let lastVis = "";
-function shownMoved(): boolean { const g = visibleSig(); if (g === lastVis) return false; lastVis = g; return true; }
+const SAFETY_MS = 5000; // a full Sessions frame at least this often, whatever the signature says
 
 // ── adaptive refresh: one self-rescheduling setTimeout loop over named jobs (src/sched.ts decides what is due) ──
 const mode = refreshMode(process.env.AGENTGLASS_REFRESH ?? "", str(section("refresh")["mode"]));
@@ -130,7 +131,7 @@ function sizeJob(): void { if (termSize()) render(); } // a resize repaints at o
 function scanSum(): string { let n = 0; let z = 0; for (const s of sessions.values()) { n++; z += s.size; } return n + ":" + z; }
 // attention/stuck of the watched (live) sessions: an alarm that changes must be drawn
 function alarmSig(): string { let o = ""; for (const s of sessions.values()) if (s.pid > 0) o += s.path + (s.attention ? "!" : ".") + s.stuck + "|"; return o; }
-function probe(): void { if (probeLive()) { act.grow = Date.now(); S.dirty = true; } }
+function probe(): void { if (probeLive()) { act.grow = Date.now(); if (!listShown() || shownMoved()) S.dirty = true; } }
 function body(j: Job, now: number): () => void {
   if (j === "size") return sizeJob;
   if (j === "procs") return () => { refreshProcs(); if (!listShown() || shownMoved()) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
@@ -144,22 +145,25 @@ function body(j: Job, now: number): () => void {
   };
   // alarm latency = the watch interval: probe first (the probe may sleep up to 1 s, the tail follows the stat), and a
   // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap)
-  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } };
+  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved()) S.dirty = true; }; // the watchdog read tails: busy/idle glyphs
   if (j === "fast") return () => {
     let d = false; for (const f of H.onFastTick) if (f()) d = true;
     let hd = false; for (const f of H.onHeaderTick) if (f()) hd = true;
     const w = fastDraw(d, hd, sc.unf); // armed animation draws at its own pace; unfocused: the 1/s cap
-    if (w === "full") render(); else if (w === "header") renderTop(); else if (w === "dirty") S.dirty = true;
+    if (w === "full") render(); else if (w === "header") renderTop(true); else if (w === "dirty") S.dirty = true;
   };
-  return () => { // render: build only when something changed, animates, a toast is up, or the clock texts are due
+  return () => { // render: build only when something changed, a toast is up, or the clock texts are due; else turn the spinners
     const toast = S.toast !== "" && now - S.toastAt < S.toastMs + 500; // includes the frame that removes it
-    if (!(sc.fixed || S.dirty || S.animating || toast || now - lastBuild >= forceMs(sc.lv))) return;
-    lastBuild = now; S.frame++; render();
+    const list = listShown();
+    const clock = now - lastBuild >= forceMs(sc.lv) && (!list || now - lastBuild >= SAFETY_MS || shownMoved());
+    if (sc.fixed || S.dirty || toast || clock || (S.animating && !list)) { lastBuild = now; S.frame++; render(); return; }
+    if (headDirty) { headDirty = false; renderTop(false); } // the header row only
+    if (S.animating) { S.frame++; flushSpin(spinGlyph(), (o: string) => { process.stdout.write(o); }); } // the spinner cells only
   };
 }
 function warnJob(m: string): void { say("err", m); S.dirty = true; }
 function turn(): void {
-  const now = Date.now();
+  const now = Date.now(); turnNo++;
   relevel(now);
   for (const j of due(sc, now, live(), armed())) runJob(sc, j, body(j, now), () => Date.now(), warnJob);
   relevel(Date.now()); // a job may have changed the level (a file grew, indexing finished)

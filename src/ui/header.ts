@@ -53,9 +53,23 @@ export function renderHeader(): void {
   for (let i = 0; i < L.x0.length; i++) { tabX0.push(L.x0[i]); tabX1.push(L.x1[i]); }
   const rw = width(wide[L.ri].replace(ESC_RE, "")); const sh = rights[L.ri]; // shown left-aligned in the measured width
   const right = sh + " ".repeat(Math.max(0, rw - width(sh.replace(ESC_RE, ""))));
-  const free = Math.max(0, W - L.x - rw); const wid = widgets(free);
+  const free = Math.max(0, W - L.x - rw);
+  HC.ok = L.x <= W; HC.W = W; HC.tab = S.tab; HC.pre = L.s; HC.free = free; HC.right = W - L.x > rw ? right : ""; HC.fx = fixed(free);
+  putRow(widgets(free, HC.fx));
+}
+// the parts of the last full header that a marquee step keeps (only the flexible widget moves)
+const HC = { ok: false, W: 0, tab: -1, pre: "", free: 0, right: "", fx: "" };
+function putRow(wid: string): void {
+  if (!HC.ok) { put(0, 0, fitStyled(HC.pre, HC.W)); return; } // a badge can push the last tabs off a very narrow row
   const ww = width(wid.replace(ESC_RE, ""));
-  put(0, 0, L.x > W ? fitStyled(L.s, W) : L.s + wid + " ".repeat(Math.max(0, free - ww)) + (W - L.x > rw ? right : "")); // a badge can push the last tabs off a very narrow row
+  put(0, 0, HC.pre + wid + " ".repeat(Math.max(0, HC.free - ww)) + HC.right);
+}
+// a marquee step: the header row again from the last full header with only the flexible widget rebuilt (the stats,
+// tabs and fixed widgets are what the last frame showed; a change there marks the frame dirty). false = no usable layout
+export function renderHeaderStep(): boolean {
+  if (!HC.pre || HC.W !== S.W || HC.tab !== S.tab) return false;
+  putRow(widgets(HC.free, HC.fx));
+  return true;
 }
 interface Layout { s: string; x: number; x0: number[]; x1: number[]; ri: number; k: number; lost: boolean }
 // logo + tabs (compact: the inactive ones as their number) and which of the right-hand stats fit beside the widgets;
@@ -98,9 +112,9 @@ function fits(free: number): string[] {
   return parts;
 }
 // those plus the flexible one (the ticker) in the rest; called once a frame: the ticker keeps its slot width
-function widgets(free: number): string {
+function widgets(free: number, fx: string): string {
   if (!(H.headerWidgets.length || H.headerFlex.length) || free <= 1) return "";
-  const fx = fixed(free); const parts: string[] = fx ? [fx] : [];
+  const parts: string[] = fx ? [fx] : [];
   const room = free - 1 - (fx ? width(fx.replace(ESC_RE, "")) + 1 : 0) - 2;
   if (room > 8) for (const f of H.headerFlex) { const w = f(room); if (w) { parts.push(fg(C.line) + "│" + RST + " " + w); break; } }
   return parts.length ? fitStyled(parts.join(" "), free - 1) : "";
