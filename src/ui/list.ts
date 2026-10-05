@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { base } from "../util/json.ts";
 import { width, vwidth, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM, localDay } from "../util/text.ts";
-import type { Sess } from "../model/types.ts";
+import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current } from "../model/sessions.ts";
@@ -17,6 +17,15 @@ import { link, sessUrl } from "../util/hyper.ts";
 // mouse hit map for the preview, rebuilt every frame
 export const prevKind: number[] = []; export const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
 export const prevKids: Sess[] = [];
+// the preview's activity lines (the last 25 events wrapped and styled) while the session's events are the same array (a
+// tail read makes a new one), at the same width and colors: formatting them was the bulk of a frame
+const ACT = { evs: [] as Ev[], w: -1, theme: "", lines: [] as string[], ev: [] as number[] };
+function actLines(s: Sess, w: number): void {
+  const theme = C.text + C.cyan + C.dim + C.sel + C.accent;
+  if (ACT.evs === s.evs && ACT.w === w && ACT.theme === theme) return;
+  ACT.evs = s.evs; ACT.w = w; ACT.theme = theme; ACT.lines = []; ACT.ev = [];
+  for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], w, false, ACT.lines); while (ACT.ev.length < ACT.lines.length) ACT.ev.push(i); }
+}
 
 function statusGlyph(s: Sess): string {
   if (s.pid) {
@@ -111,8 +120,7 @@ export function renderSessions(): void {
       }
     }
     lines.push(fg(C.line) + "─".repeat(iw2) + RST);
-    const act: string[] = []; const actEv: number[] = [];
-    for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], iw2, false, act); while (actEv.length < act.length) actEv.push(i); }
+    actLines(s, iw2); const act = ACT.lines; const actEv = ACT.ev;
     const room = ph - 2 - lines.length;
     const from = Math.max(0, act.length - room);
     for (let i = from; i < act.length; i++) { lines.push(act[i]); hit(2, actEv[i]); }

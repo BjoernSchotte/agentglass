@@ -6,7 +6,15 @@ import { width, vwidth, clean, fit, fitStyled } from "../util/text.ts";
 import { harnessOf, isHarness } from "../harness/index.ts";
 
 export const buf: string[] = [];
-export function put(x: number, y: number, s: string): void { if (y >= 0 && y < S.H) buf.push(CSI + (y + 1) + ";" + (x + 1) + "H" + s); }
+export const bufRow: number[] = []; // the screen row of each buf entry (frame.ts writes changed rows only)
+export function put(x: number, y: number, s: string): void { if (y >= 0 && y < S.H) { buf.push(CSI + (y + 1) + ";" + (x + 1) + "H" + s); bufRow.push(y); } }
+export function clearBuf(): void { buf.length = 0; bufRow.length = 0; }
+// the frame as one string per screen row (each row's puts in order)
+export function bufRows(): string[] {
+  const rows: string[] = []; for (let y = 0; y < S.H; y++) rows.push("");
+  for (let i = 0; i < buf.length; i++) { const y = (bufRow[i] ?? -1) + 0; if (y >= 0 && y < rows.length) rows[y] += buf[i] ?? ""; }
+  return rows;
+}
 export function box(x: number, y: number, w: number, h: number, title: string, info: string, focus: boolean): void {
   const bc = fg(focus ? C.accent : C.line);
   let t = title ? " " + clean(title) + " " : "";

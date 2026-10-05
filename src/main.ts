@@ -4,12 +4,12 @@
 import { writeSync } from "node:fs";
 import { S, say } from "./state.ts";
 import { H, tabAt, viewOf, screenOut, armed, backlog } from "./hooks.ts";
-import { sessions, scan, buildView, probeLive } from "./model/sessions.ts";
+import { sessions, scan, buildView, probeLive, sessAt, current } from "./model/sessions.ts";
 import { procs, refreshProcs, refreshSlow } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
-import { buf, put, renderModal } from "./ui/screen.ts";
-import { flush, resetFrame, partial } from "./ui/frame.ts";
-import { renderHeader } from "./ui/header.ts";
+import { buf, put, renderModal, clearBuf, bufRows } from "./ui/screen.ts";
+import { flushRows, flushPart, resetFrame } from "./ui/frame.ts";
+import { renderHeader, statsKey } from "./ui/header.ts";
 import { renderFooter } from "./ui/footer.ts";
 import { renderSessions } from "./ui/list.ts";
 import { renderProcs } from "./ui/procs.ts";
@@ -63,8 +63,7 @@ import "./features/otlp/export.ts";
 
 function render(): void {
   S.dirty = false; S.animating = false; // spin() sets animating again while something on screen turns
-  buf.length = 0;
-  buf.push("\x1b[?2026h");
+  clearBuf();
   renderHeader();
   const mode = S.mode; const pm = S.prevMode;
   const fv = mode === "view" || (pm === "view" && (mode === "help" || mode === "input" || mode === "confirm" || mode === "palette")) ? viewOf(S.fview) : null;
@@ -82,19 +81,37 @@ function render(): void {
   if (mode === "confirm") renderModal("confirm", [S.confirmText, "", "y  yes      n / esc  cancel"], C.yellow);
   if (mode === "help") renderHelp();
   for (const f of H.overlays) f();
-  buf.push("\x1b[?2026l");
   if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
-  flush(buf.join(""), (s: string) => { process.stdout.write(s); });
+  flushRows(bufRows(), (s: string) => { process.stdout.write(s); }); // only the rows that changed
 }
 // the header row alone (a marquee step): a full frame costs ~3× more to build, and the marquee moves ~6 times a second
 function renderTop(): void {
-  buf.length = 0;
-  buf.push("\x1b[?2026h");
+  clearBuf();
   renderHeader();
-  buf.push("\x1b[?2026l");
   if (H.screenFilter.length) for (let i = 0; i < buf.length; i++) buf[i] = screenOut(buf[i] ?? "");
-  partial(buf.join(""), (s: string) => { process.stdout.write(s); });
+  flushPart(bufRows(), (s: string) => { process.stdout.write(s); });
 }
+// what the Sessions list shows that the ledger, the process scan or a tail read can change: the header's stats and
+// widgets, the visible rows and the preview's session. A frame is built when it moved (not on every ledger tick or
+// process scan); other tabs and views draw on every change as before. Time-based texts are the render job's 1 s frame.
+function listShown(): boolean { return S.tab === 0 && S.mode === "list"; }
+function visibleSig(): string {
+  const o: string[] = [statsKey()];
+  for (const f of H.headerWidgets) o.push(f(S.W));
+  o.push(String(S.view.length));
+  for (let r = 0; r < S.listH; r++) {
+    const s = sessAt(S.top + r); if (!s) break;
+    o.push(s.path + ":" + String(s.size) + ":" + String(s.cost) + ":" + String(s.inTok + s.outTok) + ":" + String(s.pid) + s.status + (s.attention ? "!" : "") + s.stuck);
+  }
+  const c = current();
+  if (c) {
+    let sc = 0; for (const x of c.subs) sc += x.cost + x.inTok + x.outTok + x.size;
+    o.push("P" + c.path + ":" + String(c.size) + ":" + String(c.evs.length) + ":" + String(c.pid) + c.status + c.name + ":" + String(c.subs.length) + ":" + String(sc) + ":" + c.bill);
+  }
+  return o.join("|");
+}
+let lastVis = "";
+function shownMoved(): boolean { const g = visibleSig(); if (g === lastVis) return false; lastVis = g; return true; }
 
 // ── adaptive refresh: one self-rescheduling setTimeout loop over named jobs (src/sched.ts decides what is due) ──
 const mode = refreshMode(process.env.AGENTGLASS_REFRESH ?? "", str(section("refresh")["mode"]));
@@ -115,14 +132,14 @@ function alarmSig(): string { let o = ""; for (const s of sessions.values()) if 
 function probe(): void { if (probeLive()) { act.grow = Date.now(); S.dirty = true; } }
 function body(j: Job, now: number): () => void {
   if (j === "size") return sizeJob;
-  if (j === "procs") return () => { refreshProcs(); S.dirty = true; }; // header CPU graph, Processes tab
+  if (j === "procs") return () => { refreshProcs(); if (!listShown() || shownMoved()) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
   if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; } };
   if (j === "slow") return () => { refreshSlow(); S.dirty = true; };
   if (j === "probe") return probe;
   if (j === "tick") return () => {
     if (S.mode === "list" && S.tab === 0) buildView();
     const v = L.ver; for (const f of H.onTick) f();
-    if (L.ver !== v) S.dirty = true;
+    if (L.ver !== v && (!listShown() || shownMoved())) S.dirty = true;
   };
   // alarm latency = the watch interval: probe first (the probe may sleep up to 1 s, the tail follows the stat), and a
   // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap)

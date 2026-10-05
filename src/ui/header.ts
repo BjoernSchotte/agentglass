@@ -12,8 +12,16 @@ import { TOTALMEM } from "./procs.ts";
 // clickable tab spans, rebuilt every frame
 export const tabX0: number[] = []; export const tabX1: number[] = [];
 
+// what the stats on the right show (counts, cpu with its graph, memory): main.ts draws a frame when it changed
+export function statsKey(): string {
+  let live = 0; let busy = 0;
+  for (const s of sessions.values()) if (s.pid) { live++; if (working(s)) busy++; }
+  const cpu = cpuHist.length ? cpuHist[cpuHist.length - 1] : 0;
+  let mem = 0; for (const p of procs) mem += p.trss;
+  return String(live) + "/" + String(busy) + "/" + cpu.toFixed(1) + "/" + bytes(mem) + "/" + braille(cpuHist, S.W >= 150 ? 16 : 6, 1, Math.max(100, Math.max(...cpuHist.slice(-32))))[0];
+}
 export function renderHeader(): void {
-  const W = S.W;
+  const W = S.W; fitMemo.clear();
   let live = 0; let busy = 0;
   for (const s of sessions.values()) if (s.pid) { live++; if (working(s)) busy++; }
   const cpu = cpuHist.length ? cpuHist[cpuHist.length - 1] : 0;
@@ -75,13 +83,18 @@ function layout(W: number, tabs: string[], compact: boolean, rights: string[]): 
 }
 // the fixed-size header widgets that fit in free columns ("" = none)
 function fixed(free: number): string { return fits(free).join(" "); }
+// per frame (renderHeader clears it): the layout asks for the same free widths several times, and the widgets walk
+// every session (alarm counts, today's cost, the allowance gauge)
+const fitMemo = new Map<number, string[]>();
 function fits(free: number): string[] {
+  const hit = fitMemo.get(free); if (hit) return hit;
   const parts: string[] = []; let used = 0;
   if (free > 1) for (const f of H.headerWidgets) {
     const w = f(Math.max(0, free - 1 - used)); const ww = width(w.replace(ESC_RE, ""));
     if (!w || ww > free - 1 - used) continue; // not every widget sizes itself (the alarm counts)
     parts.push(w); used += ww + 1;
   }
+  fitMemo.set(free, parts);
   return parts;
 }
 // those plus the flexible one (the ticker) in the rest; called once a frame: the ticker keeps its slot width
