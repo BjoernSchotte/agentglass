@@ -81,6 +81,10 @@ const y = byPid(rows, 600); eq("young first", y ? y.args : "", "sh -c node x");
 proc(600, "node", 500, 34816, 0, (1000 + 2) * 100 + 300, "node\0/x/gemini\0");
 rows = scanProcs(fs, T0 + 6500, none(), false);
 const y2 = byPid(rows, 600); eq("young exec seen", y2 ? y2.args : "", "node /x/gemini");
+// …but a young interpreter is not re-read: its command line stays, its children are new pids
+s0 = PROCFS_STATS.stat;
+rows = scanProcs(fs, T0 + 7000, none(), false);
+eq("young node: no re-read", String(PROCFS_STATS.stat - s0), "0");
 // an old untracked pid's exec waits for the full pass
 proc(1, "init", 0, 0, 10, 100, "/sbin/init\0splash\0");
 rows = scanProcs(fs, T0 + 8000, none(), false);

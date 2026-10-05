@@ -51,6 +51,9 @@ export function btimeOf(root: string): number {
 }
 // a pid younger than this re-reads its cmdline every pass: exec chains (sh -c → node → agent) settle within it
 export const YOUNG_MS = 10000;
+// launchers that exec into what they start (sh -c, env, npx…): only these are re-read while young; an interpreter or a
+// binary keeps its command line, its children are new pids
+const EXECS = ["sh", "bash", "zsh", "dash", "fish", "env", "npx", "npm", "pnpm", "yarn", "bunx", "uv", "uvx", "sudo", "nohup", "timeout", "script", "exec"];
 export const PROCFS_STATS = { stat: 0, cmdline: 0 }; // reads, for checks
 // per pid: the row handed out (kept across passes) and the last stat sample for the CPU delta
 // comm = the name from the last stat; args = its command line was read (only for processes that may be agents: want)
@@ -94,7 +97,7 @@ function pidOf(name: string): number {
   return name.length ? n : -1;
 }
 // one pass: rows of every pid under fs.root. A pid is read when it is new, tracked (a harness tree: cpu, resident size),
-// young (< 10 s) while its name may be an agent's or a launcher's (exec chains), or on a full pass; a reused pid shows
+// young (< 10 s) while its name is a launcher's (exec chains: EXECS), or on a full pass; a reused pid shows
 // in its start time. The command line is read only where want(comm) — an agent's or a launcher's name — or for a tracked
 // pid or its new child, and again when the name changed (an exec); other rows have args "". cpu is the recent % from
 // the tick delta since the last sample (0 on the first). The array is reused: callers read it before the next pass.
@@ -106,7 +109,7 @@ export function scanProcs(fs: ProcFs, now: number, tracked: Set<number>, full: b
     const pid = pidOf(name); if (pid < 0) continue;
     let e = PF.ents.get(pid);
     const tr = tracked.has(pid);
-    const young = e !== undefined && now - e.startMs < YOUNG_MS && want(e.comm);
+    const young = e !== undefined && now - e.startMs < YOUNG_MS && EXECS.indexOf(e.comm) >= 0;
     if (!e || full || young || tr) {
       const st = readStat(fs, pid);
       if (!st) { if (e) PF.ents.delete(pid); continue; } // gone between the listing and the read
