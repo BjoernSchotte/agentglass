@@ -5,7 +5,7 @@ import { H } from "../hooks.ts";
 import { home } from "../util/text.ts";
 import { CONFIG_FILE } from "../util/config.ts";
 import { remoteCfg, loadCached, stale, refresh, SOURCES } from "./usage/remote.ts";
-import { pricesFrom } from "./usage/pricing.ts";
+import { pricesFrom, PRICES_FILE } from "./usage/pricing.ts";
 import { reloadPrices } from "./usage/repricer.ts";
 
 const OPT_IN = "opt in: " + home(CONFIG_FILE) + ' → {"prices": {"source": "' + SOURCES.join('" | "') + '", "refreshHours": 24}}';
@@ -35,5 +35,10 @@ H.cli.push((args: string[]): boolean => {
 });
 
 H.helpSections.push({ name: "prices", ctx: "", keys: [
-  ["now", pricesFrom()], ["--update-prices", "fetch the opted-in list now"], ["config.json", '"prices": {"source": …} opts in'],
+  ["$", "in Stats: the price panel — ↑↓ model · ↵ / e price ($/Mtok: in out [cacheRead [cacheWrite [cacheWrite1h]]]) · a alias · x remove · esc close"],
+  ["sources", "user (prices.json) > ≈ alias (an estimate) > gw <provider> (pi models.json / OpenCode config, that provider only) > community list > built-in"],
+  ["", "harness = the harness reported the cost itself (pi, OpenCode, fx): a user price applies only to its unpriced messages"],
+  ["", "gw <provider> is a price source; the gw cost tag is a billing mode (proxy/gateway) — different things"],
+  ["file", home(PRICES_FILE) + " (AGENTGLASS_PRICES=<path>); a change re-prices history in place, no re-index"],
+  ["now", pricesFrom()], ["--update-prices", "fetch the opted-in community list now (agentglass prices update)"], ["config.json", '"prices": {"source": …} opts in'],
   ["OFFLINE=1", "AGENTGLASS_OFFLINE=1: never fetch (cache still used)"] ] });
