@@ -41,7 +41,8 @@ function addFile(h: Harness, path: string, id: string, archived: boolean, parent
 }
 // per harness: what its last scan listed and the sessions those were. A scan that lists the same paths (no directory
 // was listed again: the listings are the cached ones, no log came) walks those sessions instead: no lookup per log
-interface Listed { paths: string[]; sess: (Sess | null)[] }
+interface Listed { paths: string[]; ids: string[]; pars: string[]; arch: boolean[]; sess: (Sess | null)[] }
+const NOPATHS: string[] = [];
 const LISTED = new Map<string, Listed>();
 // new size/mtime; another cursor epoch (the source switched transport) invalidates what was read: like a rewritten file.
 // true = something changed
@@ -64,24 +65,30 @@ export function probeLive(): boolean {
   }
   return changed;
 }
-function sameList(a: string[], b: string[]): boolean { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
 let scanned = false;
 export function scan(): void {
   if (!scanned) { scanned = true; for (const f of H.firstScan) f(); }
   SCAN.no++; SCAN.now = Date.now(); SCAN.seen = 0; SCAN.gone = [];
   if (SG.gen !== SCAN.gen || sessions.size !== SCAN.n) LISTED.clear(); // sessions came or went outside a scan (trash, checks)
   for (const ad of HARNESSES) {
+    const m = LISTED.get(ad.id); const prev = m ? m.paths : NOPATHS;
+    // while the walk repeats the last listing path by path nothing is copied; at the first difference the arrays start
     const paths: string[] = []; const ids: string[] = []; const pars: string[] = []; const arch: boolean[] = [];
+    let same = m !== undefined; let n = 0;
     const l0 = FS_STATS.lists;
-    ad.scan((path: string, id: string, parent: string, archived: boolean) => { paths.push(path); ids.push(id); pars.push(parent); arch.push(archived); });
-    const m = LISTED.get(ad.id);
-    if (m && FS_STATS.lists === l0 && sameList(m.paths, paths)) { // the same listing: its sessions, in turns
+    ad.scan((path: string, id: string, parent: string, archived: boolean) => {
+      if (same && n < prev.length && prev[n] === path) { n++; return; }
+      if (same) { same = false; for (let i = 0; i < n; i++) { paths.push(prev[i] ?? ""); ids.push(m ? m.ids[i] ?? "" : ""); pars.push(m ? m.pars[i] ?? "" : ""); arch.push(m ? m.arch[i] ?? false : false); } }
+      paths.push(path); ids.push(id); pars.push(parent); arch.push(archived);
+    });
+    if (m && same && n === prev.length && FS_STATS.lists === l0) { // the same listing: its sessions, in turns
       for (let i = 0; i < m.sess.length; i++) { const s = m.sess[i]; if (s && !refresh(ad.id, s, i % ROT)) m.sess[i] = null; }
       continue;
     }
+    if (same && m) for (let i = 0; i < n; i++) { paths.push(prev[i] ?? ""); ids.push(m.ids[i] ?? ""); pars.push(m.pars[i] ?? ""); arch.push(m.arch[i] ?? false); } // a shorter listing
     const sess: (Sess | null)[] = [];
     for (let i = 0; i < paths.length; i++) sess.push(addFile(ad.id, paths[i] ?? "", ids[i] ?? "", arch[i] ?? false, pars[i] ?? ""));
-    LISTED.set(ad.id, { paths, sess });
+    LISTED.set(ad.id, { paths, ids, pars, arch, sess });
   }
   if (SCAN.gone.length) LISTED.clear(); // the walks above hold sessions that go now
   for (const p of SCAN.gone) if (sessions.delete(p)) SG.gen++; // listed but no longer there

@@ -19,16 +19,18 @@ const PROJECTS = join(CLAUDE, "projects");
 // ~/.claude/projects/<project>/<session>.jsonl, subagents in <project>/<session>/subagents/agent-<id>.jsonl
 // a project dir's logs and subagent dirs as paths, kept while its listing is the same (no path building per scan)
 const PJ = new Map<string, { names: string[]; logs: string[][]; subs: string[][] }>();
+const TOP = { names: [] as string[], pds: [] as string[] }; // the project dirs' paths while the projects listing stands
 const SD = new Map<string, { names: string[]; logs: string[][] }>(); // the same per subagent dir
-const IDLE_MS = 300000; const DAY_MS = 86400000;
+const IDLE_MS = 300000; const DAY_MS = 86400000; // a session not written for 5 min spawns no subagent (the spawning call is written first)
 // a live session (registry) whose log the scan does not know yet wakes every project dir for a minute, when it first
 // shows and whenever its registry entry moves (a first prompt creates the log); ids = the logs the scan lists
 const WAKE = { at: 0, ids: new Set<string>(), unknown: new Map<string, string>() };
-const IDLE_MS_DOC = 0; // a session not written for 5 min spawns no subagent (the spawning call is written first)
 function scan(add: AddFn): void {
   const quiet = Date.now() - WAKE.at < 60000 ? -1 : DAY_MS; // a project dir unchanged for a day: once a minute, unless a new live session is unknown
-  for (const proj of listDirCached(PROJECTS)) {
-    const pd = join(PROJECTS, proj); const names = listDirCached(pd, quiet);
+  const top = listDirCached(PROJECTS);
+  if (top !== TOP.names) { TOP.names = top; TOP.pds = []; for (const proj of top) TOP.pds.push(join(PROJECTS, proj)); }
+  for (const pd of TOP.pds) {
+    const names = listDirCached(pd, quiet);
     let m = PJ.get(pd);
     if (!m || m.names !== names) {
       m = { names, logs: [], subs: [] };
