@@ -32,6 +32,7 @@ export const H = {
   modal: [] as ((mode: string, key: string) => boolean)[], // every mode, before everything else (the palette: ctrl-k and its own keys); true = handled
   overlays: [] as (() => void)[], // drawn last, over the view and the footer (the palette box)
   actions: [] as Action[], // named actions for the palette (src/features/palette/actions.ts and features)
+  dynActions: [] as (() => Action[])[], // actions built when the palette opens (one per unpriced model: model-prices), after the key-bound ones
   sessionActions: [] as ((s: Sess) => Action | null)[], // extra entries of a session's palette actions (→); run gets the origin ctx
   mouse: [] as ((mode: string, b: number, x: number, y: number, press: boolean) => boolean)[], // raw SGR mouse (b 0 left, 2 right, 64/65 wheel; 0-based x/y) before built-ins; true = handled
   enrich: [] as ((s: Sess) => void)[], // before a session is shown in preview/transcript/detail (runs every frame: cache!)
@@ -55,6 +56,7 @@ export const H = {
   screenFilter: [] as ((s: string) => string)[], // every chunk written to the terminal (TUI frame chunks, CLI output lines); must keep visible widths
   listFilter: [] as (() => ((s: Sess) => boolean) | null)[], // once per buildView: the predicate of an active filter (null = none); a top-level session stays when every predicate passes for it or one of its subagents, matching subagents are expanded, the others hidden
   input: [] as ((action: string, ev: string, text: string) => boolean)[], // the input line of S.inputAction: ev change | enter | esc | tab; enter → true keeps it open
+  confirmed: [] as ((action: string) => void)[], // a feature's y/n question (actions.ts confirm) answered yes, with its S.confirmAction
   procFilter: [] as ((p: Proc) => boolean)[], // the Processes table shows a root process when every hook passes
   boxChips: [] as ((where: string, w: number) => string)[], // styled filter chips for a built-in box title ("sessions" | "processes"), w = room
   emptyText: [] as ((where: string) => string)[], // the line an empty built-in list shows instead of the stock one ("" = stock)

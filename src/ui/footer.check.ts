@@ -89,6 +89,13 @@ const long = "title ~ \"" + "a".repeat(60) + "\" and status is bogus";
 ok("mark: scrolled text", markedAt(long, long.indexOf("bogus"), 80) === "b", markedAt(long, long.indexOf("bogus"), 80));
 ok("mark: scrolled out of view", markedAt(long, 0, 80) === "", markedAt(long, 0, 80));
 ok("mark: at the end, the cursor", markedAt("status is", 9, 80) === "▏", markedAt("status is", 9, 80));
+{ // a long label is cut before the text and its error are (price lines name the model and every field)
+  S.W = 80; S.H = 30; S.mode = "input"; S.inputLabel = "price codex-auto-review ($/Mtok: in out [cacheRead [cacheWrite [cacheWrite1h]]])"; S.inputText = "abc 1"; S.inputErr = "\"abc\" is not a number"; S.inputErrCol = -1; S.toast = "";
+  buf.length = 0; renderFooter();
+  const at = "\x1b[" + String(S.H) + ";1H"; let row = ""; for (const b of buf) if (b.startsWith(at)) row = b.slice(at.length);
+  const plain = row.split(/\x1b\[[0-9;]*m/).join("");
+  ok("long label: text and error stay visible", plain.indexOf("abc 1") >= 0 && plain.indexOf("is not a number") >= 0 && width(plain) <= 80, plain);
+}
 S.inputErr = ""; S.inputErrCol = -1; S.mode = "list";
 console.log(bad ? bad + " failed" : "footer: all checks passed");
 process.exit(bad ? 1 : 0);

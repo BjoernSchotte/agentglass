@@ -15,15 +15,17 @@ export function renderFooter(): void {
   const y = Ht - 1;
   const mode = S.mode;
   if (mode === "input") {
-    const room = W - width(S.inputLabel) - 4;
     const txt = clean(S.inputText) + "▏";
     const err = S.inputErr ? "  " + clean(S.inputErr) : "";
+    // a long label (price lines name the model and the fields) is cut before the text and its error are: ≥ 40 cells for them
+    const lab = fit(S.inputLabel, Math.max(8, Math.min(width(S.inputLabel), W - 4 - Math.min(40, width(txt) + width(err) + 12))));
+    const room = W - width(lab) - 4;
     const tw = Math.min(width(txt), Math.max(10, room - width(err))); // the error stays visible next to the text
     const cps = Array.from(txt); const scrolled = width(txt) > tw; const cut = scrolled ? Math.max(0, cps.length - (tw - 1)) : 0; // code points scrolled away
     const shown = scrolled ? "…" + cps.slice(cut).join("") : txt;
     // the error's column: a UTF-16 offset into the raw text → code points of the cleaned one, then past the "…"
     const ec = S.inputErr && S.inputErrCol >= 0 ? Array.from(clean(S.inputText.slice(0, S.inputErrCol))).length - cut : -1;
-    put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + S.inputLabel + " ❯ " + RST + bg(C.sel) + fg(C.text) + marked(shown, ec < 0 ? -1 : ec + (scrolled ? 1 : 0)) + fg(C.red) + fit(err, Math.max(0, room - width(shown))) + RST);
+    put(0, y, bg(C.sel) + fg(C.accent) + CSI + "1m" + " " + lab + " ❯ " + RST + bg(C.sel) + fg(C.text) + marked(shown, ec < 0 ? -1 : ec + (scrolled ? 1 : 0)) + fg(C.red) + fit(err, Math.max(0, room - width(shown))) + RST);
     renderToast(); // e.g. a link that waits for this prompt
     return;
   }

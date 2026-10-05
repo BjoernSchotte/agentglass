@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { newSess } from "../model/types.ts";
 import { newAcc, dayKey } from "../features/usage/record.ts";
 import { kiro, kiroTurns } from "./kiro.ts";
-import { userRate } from "../features/usage/pricing.ts";
+import { kiroRate } from "../features/usage/pricing.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, g: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + g); } }
@@ -62,7 +62,7 @@ ok("ISO-string turn not on the .json mtime day", !isoS.has(dayKey(new Date(SEP24
   write(dir + "/44444444-4444-4444-4444-444444444444.json", "{\"session_state\":{\"conversation_metadata\":{\"user_turn_metadatas\":[{\"end_timestamp\":" + String(SEP15 / 1000) + ",\"input_token_count\":1,\"output_token_count\":1,\"metering_usage\":[{\"unit\":\"credit\",\"value\":3}]}]}}}");
   const s = newSess("kiro", "44444444-4444-4444-4444-444444444444", p, false); const a = newAcc();
   const side = kiro.usageSidecar; if (side) side(s, a);
-  if (userRate("kiroCreditUsd") > 0 || Number(process.env.AGENTGLASS_KIRO_CREDIT_USD ?? "") > 0) ok("credits with a rate are priced", a.cost > 0 && a.uc === 0 && a.unk === 0, String(a.cost));
+  if (kiroRate() > 0) ok("credits with a rate are priced", a.cost > 0 && a.uc === 0 && a.unk === 0, String(a.cost));
   else ok("credits apart", a.uc === 3 && a.unk === 0 && a.cost === 0, a.uc + " / " + a.unk);
 }
 

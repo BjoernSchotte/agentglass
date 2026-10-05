@@ -32,6 +32,7 @@ import "./features/replay.ts";
 import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
 import "./features/cli.ts";
 import "./features/cost-cli.ts";
+import "./features/prices-cli.ts";
 import "./features/queries.ts";
 import "./features/themes.ts";
 import "./features/ticker.ts";

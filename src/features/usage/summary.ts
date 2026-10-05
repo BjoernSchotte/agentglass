@@ -7,6 +7,8 @@ import { OS } from "../../platform/index.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
 import { L, todayKey, lastDays } from "./record.ts";
+import { PGEN } from "./pricing.ts";
+import { type PRow, type SessAcc, priceRows } from "./pricerows.ts";
 import { type Bill, MODES } from "./billing.ts";
 import { modeOf } from "./bill-live.ts";
 import { type ModeSum, type DayCost, type Budget, type BState, newSum, addDay, parseBudget, budgetState, stateOf, notifyOnce, projectToday, projectMonth, daysLeftInMonth, monthStart } from "./costs.ts";
@@ -115,3 +117,25 @@ H.onTick.push(() => {
   lastCheck = Date.now();
   notifyOnce(costNow("").bs, todayKey(), budgetSend);
 });
+
+// the price rows of the given days over every session (Stats subtitle counts, the price panel), harness "" = all;
+// cached per ledger version and price table (≤ 5 s like the sums)
+const prs = new Map<string, { ver: number; at: number; pg: number; rows: PRow[] }>();
+export function pricedRows(days: string[], harness: string): PRow[] {
+  const key = harness + "|" + days.join(",");
+  const hit = prs.get(key);
+  if (hit && hit.pg === PGEN.n && fresh(hit.ver, hit.at)) return hit.rows;
+  const list: SessAcc[] = [];
+  for (const s of sessions.values()) { if (harness && s.h !== harness) continue; const a = ledger.get(s.path); if (a) list.push({ a, h: s.h }); }
+  const rows = priceRows(list, days);
+  prs.set(key, { ver: L.ver, at: Date.now(), pg: PGEN.n, rows });
+  return rows;
+}
+// models with usage in the period per non-default source: "2 user · 1 alias · 1 gw" ("" = none)
+export function sourceCounts(days: string[]): string {
+  let u = 0; let al = 0; let g = 0;
+  for (const r of pricedRows(days, "")) { if (r.src === "user") u++; else if (r.src === "alias") al++; else if (r.src === "gateway") g++; }
+  const ps: string[] = [];
+  if (u) ps.push(String(u) + " user"); if (al) ps.push(String(al) + " alias"); if (g) ps.push(String(g) + " gw");
+  return ps.join(" · ");
+}

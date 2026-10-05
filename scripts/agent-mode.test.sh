@@ -123,7 +123,7 @@ eq "export: JSON usage error" "$rc|$(jq -r '.error.code' < "$t/e")" "2|usage"
 set +e; agent update --bogus > "$t/o" 2> "$t/e"; rc=$?; set -e
 eq "update: usage exit 2" "$rc|$(jq -r '.error.code' < "$t/e")" "2|usage"
 c=$(agent cost --by model --format csv)
-eq "cost csv header" "$(printf "%s\n" "$c" | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions"
+eq "cost csv header" "$(printf "%s\n" "$c" | head -1)" "key,in,out,cacheRead,cacheWrite,costUsd,unpricedTokens,sessions,priceSource,estimated"
 eq "cost csv rows" "$(printf "%s\n" "$c" | tail -n +2 | cut -d, -f1 | tr '\n' ' ')" "claude-sonnet-4-5 total "
 eq "agent summary = cost --json" "$(agent cost | jq -c 'keys')" '["budget","month","today","week"]'
 

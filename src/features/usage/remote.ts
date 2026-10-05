@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Off unless ~/.agentglass/config.json has {"prices": {"source": "litellm" | "models.dev", "refreshHours": 24}};
 // AGENTGLASS_OFFLINE=1 stops fetching (an already cached list still applies). The request is a plain GET of a public file: no ids, usage or paths are sent.
-// Only the first-party model prices are kept (a few KB); a new list applies from the next start, so every cost in one
-// run comes from one table (and the ledger cache, keyed on the prices, re-indexes once when they really changed).
+// Only the first-party model prices are kept (a few KB); a refresh in the TUI applies at once (usage/repricer.ts re-prices
+// the ledger in place), and a ledger cache saved under other prices is re-priced on load.
 import { openSync, writeSync, closeSync, renameSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str } from "../../util/json.ts";
@@ -111,7 +111,7 @@ export async function refresh(c: RemoteCfg): Promise<string> {
     const prices = c.source === "litellm" ? fromLitellm(raw) : fromModelsDev(raw);
     if (prices.size < MIN_MODELS) return "prices: " + c.source + " list looks broken (" + prices.size + " models) — kept the old one";
     save({ source: c.source, fetchedAt: Date.now(), etag: res.headers.get("etag") ?? "", prices });
-    return "prices: " + c.source + " updated (" + prices.size + " models) — applies on next start";
+    return "prices: " + c.source + " updated (" + prices.size + " models)";
   } catch (e) {
     return "prices: " + c.source + " failed: " + String(e);
   }

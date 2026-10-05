@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // An adapter's usage(a, line) turns one transcript line into calls of bucket → tool/pend/lines/file/tokens;
 // its result lines close a pending call with done() from calls.ts. Everything else (budgets, caching, stats) is the ledger's.
-import { price, cost } from "./pricing.ts";
+import { resolve, cost, stripTiers } from "./pricing.ts";
 import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
 import { type Call, DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
 import { numAt } from "../../util/text.ts";
@@ -13,11 +13,13 @@ export { dayKey };
 // tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"; skills "<command | model>\t<skill name>"
 // cp = cost per provider ("" = the session's single provider), hc = cost per local hour,
 // mt = per model [in, out, cacheRead, cacheWrite, costUsd] (same model key as um)
+// tp = table-priced tokens per "<local hour>\t<provider key>\t<booked model key>" → [in, out, cacheRead, write5m, write1h, usd]
+//   (usd -1 = unpriced): what reprice() re-prices in place when a price changes; harness-reported costs and kiro credits stay out
 // act = active minutes, flat sorted merged [s0,e0,s1,e1,…] local minutes of the day (e exclusive, ≤ ACT_MAX intervals)
 // hx = the heavy part (heavy()); hv = that part as the cache stored it (JSON text), until something asks for it
 export interface Day {
   tools: number; hx: Heavy | null; hv: string; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
-  um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>; act: number[];
+  um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>; act: number[]; tp: Map<string, number[]>;
 }
 // per tool, per program, per command line, per file: ~90 % of the ledger cache. A run that never looks at them (cost,
 // --json) reads them back as text and writes that text out again; heavy() decodes a day's on first use (HEAVY: codec.ts)
@@ -86,7 +88,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
   return { tools: 0, hx: newHeavy(), hv: "", skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
-    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [] };
+    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>() };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
 // tsIso/tsMs: the time of the last bucket() call, for the call rows tool() appends (0 = none: Date.now() fallback)
@@ -265,8 +267,8 @@ function count(a: Acc, d: Day, nIn: number, nOut: number, nCr: number, w5: numbe
   a.inTok = a.inTok + nIn; a.outTok = a.outTok + nOut; a.cr = a.cr + nCr; a.cw = a.cw + w5 + w1;
   d.inTok = d.inTok + nIn; d.outTok = d.outTok + nOut; d.cr = d.cr + nCr; d.cw = d.cw + w5 + w1;
 }
-// the per-model key of um/mt: the model as booked without gemini's leading "?" (its unpriced marker)
-function mkey(model: string): string { const m = model.startsWith("?") ? model.slice(1) : model; return m || "unknown"; }
+// the per-model key of um/mt: the model as booked without gemini's tier tags ("@2027", ">200k") and old ledgers' leading "?"
+export function mkey(model: string): string { const m = stripTiers(model); return m || "unknown"; }
 function slot(d: Day, model: string): number[] {
   const k = mkey(model); let r = d.mt.get(k);
   if (!r) { r = [0, 0, 0, 0, 0]; d.mt.set(own(k), r); }
@@ -291,28 +293,93 @@ export function unpriced(a: Acc, d: Day, model: string, n: number): void {
 }
 // credits without a $ rate (kiro): a unit of their own, never mixed into tokens
 export function credits(a: Acc, d: Day, n: number): void { a.uc = a.uc + n; d.uc = d.uc + n; }
-// the harness reports its own cost (OpenCode, pi): booked as is; usd <= 0 = unknown (0 for models it has no price for) → priced like tokens()
+// the harness reports its own cost (OpenCode, pi): booked as is, never re-priced; usd <= 0 = unknown (0 for models it has no price for) → priced like tokens()
 export function usageExact(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number, prov = ""): void {
   if (usd <= 0) { tokens(a, d, model, nIn, nOut, nCr, w5, w1, prov); return; }
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   addCost(a, d, usd, prov, model);
-  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, cost: usd, unk: 0, exact: true, prov });
+  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, cost: usd, unk: 0, exact: true, prov, src: "harness", est: false });
 }
 export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, prov = ""): void {
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
-  const p = price(model);
-  const usd = p ? cost(p, nIn, nOut, nCr, w5, w1) : 0; const unk = p ? 0 : nIn + nOut + nCr + w5 + w1;
-  if (p) addCost(a, d, usd, prov, model);
-  else unpriced(a, d, model, unk);
-  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, cost: usd, unk, exact: false, prov });
+  const usd = tableTok(a, d, model, prov, nIn, nOut, nCr, w5, w1);
+  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, cost: usd >= 0 ? usd : 0, unk: usd >= 0 ? 0 : nIn + nOut + nCr + w5 + w1, exact: false, prov, src: tkSrc, est: tkSrc === "alias" });
+}
+// ── table-priced tokens: priced through the resolver now, kept per (hour, provider, model) row so a price change can
+// re-price them (reprice) without reading a log again ──
+let tkSrc = ""; // the last tableTok()'s price source ("unpriced" when none), for the booking tap
+let lastD: Day | null = null; let lastH = -1; let lastP = ""; let lastM = ""; let lastRow: number[] = []; // hot path: same row as the last booking
+function tpRow(d: Day, h: number, prov: string, model: string): number[] {
+  if (d === lastD && h === lastH && prov === lastP && model === lastM) return lastRow;
+  const k = h + "\t" + prov + "\t" + model;
+  let r = d.tp.get(k);
+  if (!r) { r = [0, 0, 0, 0, 0, -2]; d.tp.set(own(k), r); } // -2: no state yet (the first booking sets it)
+  lastD = d; lastH = h; lastP = prov; lastM = model; lastRow = r;
+  return r;
+}
+// tokens priced by the table (or booked unpriced) into their row and every aggregate; returns the cost, -1 = unpriced
+export function tableTok(a: Acc, d: Day, model: string, prov: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number): number {
+  const r = resolve(model, prov); tkSrc = r ? r.src : "unpriced";
+  const row = tpRow(d, tsHour, prov, model);
+  if (row[5] !== -2 && (row[5] < 0) !== (r === null)) repriceRow(a, d, tsHour, prov, model, row); // a table change nobody re-priced yet
+  if (row[5] === -2) row[5] = r ? 0 : -1;
+  row[0] = row[0] + nIn; row[1] = row[1] + nOut; row[2] = row[2] + nCr; row[3] = row[3] + w5; row[4] = row[4] + w1;
+  if (!r) { unpriced(a, d, model, nIn + nOut + nCr + w5 + w1); return -1; }
+  const usd = cost(r.p, nIn, nOut, nCr, w5, w1);
+  row[5] = row[5] + usd;
+  addCost(a, d, usd, prov, model);
+  return usd;
+}
+const EPS = 1e-9;
+function snap(x: number): number { return Math.abs(x) < EPS ? 0 : x; }
+// one row's booked state (cost, or tokens as unpriced) out of / into every aggregate: totals, provider share, hour, model
+function rowState(a: Acc, d: Day, h: number, prov: string, model: string, row: number[], usd: number, sign: number): void {
+  if (usd >= 0) {
+    const x = sign * usd;
+    a.cost = snap(a.cost + x); d.cost = snap(d.cost + x);
+    const c = d.cp.get(prov); d.cp.set(c === undefined ? own(prov) : prov, snap((c ?? 0) + x));
+    d.hc[h] = snap((d.hc[h] ?? 0) + x);
+    const m = slot(d, model); m[4] = snap((m[4] ?? 0) + x);
+    return;
+  }
+  const n = sign * (row[0] + row[1] + row[2] + row[3] + row[4]);
+  a.unk = snap(a.unk + n); d.unk = snap(d.unk + n);
+  const k = mkey(model); const u = snap((d.um.get(k) ?? 0) + n);
+  if (u > 0) d.um.set(d.um.has(k) ? k : own(k), u); else d.um.delete(k);
+}
+// re-price one row under the current table; returns the cost delta
+function repriceRow(a: Acc, d: Day, h: number, prov: string, model: string, row: number[]): number {
+  const r = resolve(model, prov);
+  const nu = r ? cost(r.p, row[0], row[1], row[2], row[3], row[4]) : -1;
+  const old = row[5];
+  if (old < -1.5) return 0; // no state yet
+  if (nu >= 0 && old >= 0 && Math.abs(nu - old) <= EPS * Math.max(1, Math.abs(old))) return 0; // unchanged (summed per booking vs. at once)
+  if (nu < 0 && old < 0) return 0;
+  rowState(a, d, h, prov, model, row, old, -1);
+  rowState(a, d, h, prov, model, row, nu, 1);
+  row[5] = nu;
+  return (nu >= 0 ? nu : 0) - (old >= 0 ? old : 0);
+}
+// every table-priced row of a session under the current table (prices.json, gateway, community changed); returns the cost delta
+export function reprice(a: Acc): number {
+  let dl = 0;
+  for (const d of a.days.values()) {
+    if (!d.tp.size) continue;
+    for (const [k, row] of d.tp) {
+      const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1);
+      dl += repriceRow(a, d, Number(k.slice(0, t1)), k.slice(t1 + 1, t2), k.slice(t2 + 1), row);
+    }
+  }
+  return dl;
 }
 // reasoning tokens: already inside out (adapters fold them in), kept apart for the OTLP export's reasoning attribute
 export function reasoning(a: Acc, d: Day, n: number): void { if (n > 0) a.rs = a.rs + n; }
 // one booking as tokens()/usageExact() made it (Claude fallback iterations: one per attempt), for the OTLP exporter's
-// per-request spans; prov = honest-costs' provider key ("" = the session's single provider). null outside the exporter.
-export interface Booking { model: string; nIn: number; nOut: number; cr: number; cw: number; cost: number; unk: number; exact: boolean; prov: string }
+// per-request spans; prov = honest-costs' provider key ("" = the session's single provider); src = the price source
+// (pricing.ts PSrc, "harness" for a reported cost, "unpriced"), est = priced through an alias. null outside the exporter.
+export interface Booking { model: string; nIn: number; nOut: number; cr: number; cw: number; cost: number; unk: number; exact: boolean; prov: string; src: string; est: boolean }
 let bookTap: ((b: Booking) => void) | null = null;
 export function setBookTap(f: ((b: Booking) => void) | null): void { bookTap = f; }
 
