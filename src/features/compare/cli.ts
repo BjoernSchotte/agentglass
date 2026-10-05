@@ -21,6 +21,10 @@ import { compile, sessMatches } from "../query/eval.ts";
 import { cliFilter } from "../query/cli.ts";
 import { shown } from "../triage/run.ts";
 import { resolveSession, sessionOf, sessionErrCode } from "./key.ts";
+import type { Sess } from "../../model/types.ts";
+import { resolveRef } from "../../model/sessref.ts";
+import { projectClause } from "../query/project.ts";
+import { type Scope, agentHost, agentScope, visible, cliError } from "../agentenv.ts";
 import { type Group, type Side, type Cmp, groupOfSession, groupOfExpr, groupClauses, compareGroups } from "./metrics.ts";
 import { toolRows, cntRows, fileLists } from "./sections.ts";
 
@@ -30,7 +34,8 @@ const HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--
   side-by-side diff of two runs or two groups: cost, turns, tokens, cache use, tool mix, errors, durations,
   lines, files and models, with Δ (B − A) and B/A.
 
-  <session>           <harness>:<id> (claude:3f2a…) or a unique id prefix of at least 6 characters
+  <session>           <harness>:<id> (claude:3f2a…), a unique id prefix of at least 6 characters, or current | last | parent
+                      (as for agentglass session)
   --a / --b '<expr>'  any filter expression per group, e.g. 'model ~ opus' vs 'model ~ sonnet',
                       'day >= -6d' vs 'day >= -13d and day < -6d' (this week vs the last)
   --filter '<scope>'  clauses both groups must also match (repeatable; pins are not applied)
@@ -41,10 +46,13 @@ const HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--
                       activeMs = minutes with activity (a session: at most wallMs); unknown values (unpriced cost,
                       untimed calls) are null
 
+  inside a coding agent: --json is the default and the scope is the current repo (--all-projects: every one)
+
   exit codes: 0 ok · 2 usage (bad expression or option, id prefix < 6, A = B) · 3 unknown session · 4 ambiguous prefix`;
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
-function fail(msg: string, code = 2): never { process.stderr.write(screenOut("agentglass: compare: " + msg) + "\n"); process.exit(code); }
+// inside an agent one JSON line ({"error": …}), else "agentglass: compare: msg"; exit 2 usage, 3 not found, 4 ambiguous
+function fail(msg: string, code = 2, hint = ""): never { cliError(code === 4 ? "ambiguous" : code === 3 ? "not_found" : "usage", screenOut("compare: " + msg), hint, code); }
 
 interface Opts { pos: string[]; a: string; b: string; hasA: boolean; hasB: boolean; filters: string[]; subs: boolean; json: boolean }
 function parseArgs(args: string[]): Opts {
@@ -58,6 +66,7 @@ function parseArgs(args: string[]): Opts {
     else if (a === "--b") { o.b = val(); o.hasB = true; }
     else if (a === "--filter") o.filters.push(val());
     else if (a === "--help" || a === "-h") { out(HELP); process.exit(0); }
+    else if (a === "--all-projects" || a === "--project-only") continue; // the agent-mode scope (agentScope reads them)
     else if (a.startsWith("-")) fail("unknown option " + a + " (see agentglass compare --help)");
     else o.pos.push(a);
   }
@@ -67,11 +76,20 @@ function parseArgs(args: string[]): Opts {
   if (!ex && o.pos.length !== 2) fail(o.pos.length < 2 ? "needs two sessions (or --a '<expr>' --b '<expr>'); see agentglass compare --help" : "takes two sessions, got " + String(o.pos.length));
   return o;
 }
-function sessGroup(v: string): Group {
-  const r = resolveSession(v); if (r.err) fail(r.err, sessionErrCode(r.err));
-  const s = sessionOf(r.v); if (!s) fail("session \"" + v + "\": no such session", 3);
-  loadHead(s); // the title comes from the transcript's head for most harnesses
-  return groupOfSession(s);
+function sessGroup(v: string, sc: Scope): Group {
+  let s: Sess | null = null;
+  if (v === "current" || v === "last" || v === "parent") { // the agent's own sessions, as `agentglass session` takes them
+    const f = resolveRef(v, false, (x: Sess): boolean => visible(x, sc));
+    if (!f.s) fail("session \"" + v + "\": " + f.msg, f.code || 3, f.hint);
+    s = f.s as Sess;
+  } else {
+    const r = resolveSession(v); if (r.err) fail(r.err, sessionErrCode(r.err));
+    s = sessionOf(r.v); if (!s) fail("session \"" + v + "\": no such session", 3);
+    if (!visible(s as Sess, sc)) cliError("out_of_scope", "compare: session " + (s as Sess).id + " belongs to another project", "use --all-projects", 3);
+  }
+  const g = s as Sess;
+  loadHead(g); // the title comes from the transcript's head for most harnesses
+  return groupOfSession(g);
 }
 function exprGroup(src: string): Group {
   cliFilter([src], "", false, false, false); // parse errors: message + caret, exit 2
@@ -120,7 +138,7 @@ function toJson(c: Cmp): Obj {
     tools.push({ tool: display("tool", r.kid ? r.key : r.label, null), a: { n: r.nA, err: r.errA, p50: orNull(r.p50A), p95: orNull(r.p95A) }, b: { n: r.nB, err: r.errB, p50: orNull(r.p50B), p95: orNull(r.p95B) }, shareDiff: r6(r.shB - r.shA), chi2: r.chi2 < 0 ? null : Math.round(r.chi2 * 10) / 10 });
   }
   const programs: Obj[] = []; for (const r of cntRows(c, "prog")) programs.push({ program: shown("program", r.key), a: { n: r.nA, err: r.errA }, b: { n: r.nB, err: r.errB } });
-  const fl = fileLists(c); const names = (xs: { shown: string }[]): string[] => xs.map((f: { shown: string }): string => display("file", f.shown, null)); // --redact: fakes, as the view shows them
+  const fl = fileLists(c); const names = (xs: { shown: string }[]): string[] => xs.map((f: { shown: string }): string => display("file", f.shown, null));
   return {
     a: { expr: print(c.A.cs), n: c.a.n, metrics: metricsOf(c.a) }, b: { expr: print(c.B.cs), n: c.b.n, metrics: metricsOf(c.b) }, subagents: c.subs,
     tools, programs, files: { onlyA: names(fl.onlyA), onlyB: names(fl.onlyB), both: names(fl.both) },
@@ -165,13 +183,19 @@ function compare(args: string[]): void {
   discover(); // session ids resolve against the scanned sessions
   for (const f of o.filters) cliFilter([f], "", false, false, false);
   let scope: Clause[] = []; for (const f of o.filters) scope = addAll(scope, parse(f).cs).cs;
-  const A = o.pos.length ? sessGroup(o.pos[0] ?? "") : exprGroup(o.a);
-  const B = o.pos.length ? sessGroup(o.pos[1] ?? "") : exprGroup(o.b);
+  // inside an agent: JSON, and only the current project unless widened (the output goes to the agent's model provider)
+  const sc = agentScope(args);
+  if (agentHost().on) {
+    o.json = true;
+    if (sc.name === "project" && !o.pos.length) scope = addAll(scope, parse(projectClause(sc.cwd)).cs).cs;
+  }
+  const A = o.pos.length ? sessGroup(o.pos[0] ?? "", sc) : exprGroup(o.a);
+  const B = o.pos.length ? sessGroup(o.pos[1] ?? "", sc) : exprGroup(o.b);
   const fa = compile(groupClauses(A, scope, o.subs), "json").f; const fb = compile(groupClauses(B, scope, o.subs), "json").f;
   if (fa && fb && fa.key === fb.key) fail("A and B are the same");
   completeFor(A, scope, o.subs); completeFor(B, scope, o.subs);
   const c = compareGroups(A, B, scope, o.subs, null);
-  if (o.json) out(process.stdout.isTTY ? JSON.stringify(toJson(c), null, 2) : JSON.stringify(toJson(c)));
+  if (o.json) out(process.stdout.isTTY && !agentHost().on ? JSON.stringify(toJson(c), null, 2) : JSON.stringify(toJson(c)));
   else text(c, scope, !!process.stdout.isTTY);
   for (const f of H.onQuit) f(); // the groups' sessions were indexed: keep that work for the next run
   process.exit(0);

@@ -3,7 +3,7 @@
 import type { Proc, Sess } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
-import { type AgentHost, detectHost, ancestry, currentFrom, parseDur, setHost, interactive } from "./agentenv.ts";
+import { type AgentHost, detectHost, ancestry, currentFrom, parseDur, setHost, interactive, markerHarnesses, innerHost } from "./agentenv.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -28,6 +28,15 @@ eq("kiro", host({ KIRO_SESSION_ID: "k1" }, []), "true|kiro|k1|env:KIRO_SESSION_I
 eq("AGENT alone", host({ AGENT: "1" }, []), "false|||");
 eq("nothing", host({}, []), "false|||");
 eq("empty marker", host({ CLAUDECODE: "" }, []), "false|||");
+// nested agents (pi started from a Claude Code shell): several harnesses' markers; the process tree names the inner one
+const nest = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "c1", AI_AGENT: "claude-code_2_agent", GEMINI_CLI: "1", OPENCODE: "1", OPENCODE_SESSION_ID: "ses_o", PI_SESSION_ID: "p1" };
+eq("marker harnesses", markerHarnesses(nest).join(","), "claude,gemini,opencode");
+eq("marker harnesses: one", markerHarnesses({ CLAUDECODE: "1", AI_AGENT: "claude-code_x" }).join(","), "claude");
+const outer = detectHost(nest, []);
+eq("inner opencode", hs(innerHost(outer, nest, "opencode", 42)), "true|opencode|ses_o|env:CLAUDECODE+ancestor:pid 42");
+eq("inner gemini (no id var)", hs(innerHost(outer, nest, "gemini", 7)), "true|gemini||env:CLAUDECODE+ancestor:pid 7");
+eq("inner = outer", hs(innerHost(outer, nest, "claude", 9)), hs(outer));
+eq("no harness ancestor", hs(innerHost(outer, nest, "", 0)), hs(outer));
 eq("--no-agent", host({ CLAUDECODE: "1" }, ["--no-agent"]), "false|||");
 eq("AGENTGLASS_AGENT=0", host({ AGENTGLASS_AGENT: "0", CLAUDECODE: "1" }, []), "false|||");
 eq("--agent", host({}, ["--agent"]), "true|||flag");

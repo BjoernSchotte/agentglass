@@ -268,17 +268,6 @@ function scrubStyled(s: string): string {
 // rt/rp/rb/rn/rk: the real title, prompt, branch, name and subagent kind as last parsed (filters match them: realMeta)
 interface Rec { cwd: string; real: string; title: string; branch: string; name: string; remote: string; kind: string; rt: string; rp: string; rb: string; rn: string; rk: string }
 const recs = new Map<string, Rec>();
-// branch names outside a session's own field (commit branches, the repo view's rows): the fake of the first session
-// on that branch, trunk names as "main", else a stable feature-branch fake (one per real name)
-const TRUNKS = ["main", "master", "develop", "dev", "trunk", "HEAD"];
-const brFake = new Map<string, string>(); const brShown = new Set<string>(); let brPool: string[] = [];
-function fakeBranch(b: string): string {
-  if (!b || b.startsWith("(") || brShown.has(b)) return b; // "(detached)", or a session's branch already shown faked
-  if (TRUNKS.indexOf(b) >= 0) return "main";
-  const f = brFake.get(b); if (f !== undefined) return f;
-  if (!brPool.length) for (const t of TITLES) brPool.push("feat/" + slug(t));
-  return uniq("branch", b, brPool);
-}
 function recOf(s: Sess): Rec {
   let r = recs.get(s.path);
   if (!r) { r = { cwd: "", real: "", title: pick(s.parent ? SUBS : TITLES, s.id), branch: "", name: "", remote: "", kind: "", rt: "", rp: "", rb: "", rn: "", rk: "" }; recs.set(s.path, r); }
@@ -311,16 +300,56 @@ function fakeRemote(url: string): string {
   const m = /^([a-z+]+:\/\/[^/]*)(\/.*)?$/.exec(url); if (!m) return url;
   const path = m[2] ?? ""; if (!path) return url;
   if ((m[1] ?? "") === "file://") return "file://" + fakeRepo(path);
-  return (m[1] ?? "") + "/" + fakeRepo(path.slice(1));
+  return fakeHost(m[1] ?? "") + "/" + fakeRepo(path.slice(1));
 }
-// git linkage: a forge URL keeps host, kind segment, number and sha, its owner/repo path faked; a commit subject → a title
+// public forges stay (their URL shape is the point); a self-hosted one names the company: git.example.com, port kept
+const FORGES = ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "gitea.com", "dev.azure.com", "sr.ht", "git.sr.ht"];
+function fakeHost(origin: string): string {
+  const m = /^([a-z+]+:\/\/)(?:[^@/]*@)?([^:/]+)(:\d+)?$/.exec(origin); if (!m) return origin;
+  const h = (m[2] ?? "").toLowerCase();
+  return FORGES.indexOf(h) >= 0 || h === "localhost" ? origin : (m[1] ?? "") + "git.example.com" + (m[3] ?? "");
+}
+// git linkage: a forge URL keeps a public host, kind segment, number and sha, its owner/repo path faked; a commit subject → a title
 const VCS_SEG = /\/(-\/merge_requests|-\/issues|-\/commit|pull|pulls|pull-requests|issues|commits?)\/[0-9a-f]+$/;
 function fakeVcs(text: string): string {
   const m = /^(https?:\/\/[^/]+)\/(.*)$/.exec(text);
   if (!m) return pick(TITLES, "vcs\t" + text);
   const rest = m[2] ?? ""; const k = VCS_SEG.exec("/" + rest); const at = k ? rest.length - (k[0] ?? "").length + 1 : rest.length;
   const segs = rest.slice(0, Math.max(0, at - 1)).split("/").filter((x: string) => x.length > 0).map((x: string) => fakeProject(x));
-  return (m[1] ?? "") + "/" + segs.join("/") + (k ? k[0] ?? "" : "");
+  return fakeHost(m[1] ?? "") + "/" + segs.join("/") + (k ? k[0] ?? "" : "");
+}
+// a branch → a fake, one-to-one across the run: a session's branch, its commit rows and the Repos list agree; a fake maps
+// to itself (rows built from already-faked session fields pass through display again)
+const MAINLINE = ["main", "master", "develop", "dev", "trunk", "HEAD"];
+const brFake = new Map<string, string>(); const brFakes = new Set<string>();
+function fakeBranch(real: string): string {
+  if (!real || brFakes.has(real)) return real;
+  if (MAINLINE.indexOf(real) >= 0) return "main";
+  const hit = brFake.get(real); if (hit !== undefined) return hit;
+  const b = "feat/" + (slug(pick(TITLES, "branch\t" + real)) || "work");
+  let f = b; for (let n = 2; brFakes.has(f); n++) f = b + "-" + String(n);
+  brFake.set(real, f); brFakes.add(f);
+  return f;
+}
+// a transcript path names the real cwd in its store's project directory (Claude: every non-alphanumeric → "-", pi:
+// --a-b-c--, Gemini: tmp/<basename>/): the session's cwd spelled that way becomes the fake cwd's, a directory no known
+// cwd spells (a session without a cwd line, one that moved) is faked as a whole; only that segment, the rest is scrubbed
+function claudeDir(p: string): string { return p.replace(/[^A-Za-z0-9]/g, "-"); }
+function piDir(p: string): string { return "--" + p.slice(1).replace(/[\/\\:]/g, "-") + "--"; }
+const STORES: { at: string; spell: (cwd: string) => string; fake: (d: string) => string }[] = [
+  { at: "/.claude/projects/", spell: claudeDir, fake: (d: string): string => { const h = claudeDir(HOME) + "-"; return d.startsWith(h) ? h + fakeProject(d.slice(h.length)) : fakeProject(d); } },
+  { at: "/.pi/agent/sessions/", spell: piDir, fake: (d: string): string => { const h = piDir(HOME).slice(0, -1); return d.startsWith(h) && d.endsWith("--") ? h + fakeProject(d.slice(h.length, -2)) + "--" : fakeProject(d); } },
+  { at: "/.gemini/tmp/", spell: base, fake: fakeProject }, // older Gemini named it by a sha256 of the cwd: faked too
+];
+function fakePath(p: string, s: Sess | null): string {
+  const r = s ? recs.get(s.path) : undefined;
+  for (const st of STORES) {
+    const i = p.indexOf(st.at); if (i < 0) continue;
+    const a = i + st.at.length; const j = p.indexOf("/", a); const d = p.slice(a, j > 0 ? j : p.length); if (!d) continue;
+    const f = r && r.real && r.cwd && d === st.spell(r.real) ? st.spell(r.cwd) : st.fake(d);
+    return scrubText(p.slice(0, a) + f + p.slice(a + d.length));
+  }
+  return scrubText(p);
 }
 function kept(s: Sess): boolean {
   const r = recs.get(s.path);
@@ -331,12 +360,12 @@ function kept(s: Sess): boolean {
 }
 function meta(s: Sess): void {
   const r = recOf(s);
-  if (s.cwd && s.cwd !== r.cwd) { r.real = s.cwd; learnPath(s.cwd, false); r.cwd = fakeCwd(s.cwd); s.cwd = r.cwd; slugs.set(slugKey(r.real), slugKey(r.cwd)); }
+  if (s.cwd && s.cwd !== r.cwd) { r.real = s.cwd; learnPath(s.cwd, false); r.cwd = fakeCwd(s.cwd); s.cwd = r.cwd; }
   if (s.title !== r.title) r.rt = s.title;
   s.title = r.title;
   if (s.prompt && !s.prompt.startsWith(r.title)) r.rp = s.prompt; // a faked user event's text starts with the fake title
   if (s.prompt) s.prompt = r.title;
-  if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = TRUNKS.indexOf(s.branch) >= 0 ? "main" : "feat/" + slug(r.title); s.branch = r.branch; if (!brFake.has(r.rb)) brFake.set(r.rb, r.branch); brShown.add(r.branch); }
+  if (s.branch && s.branch !== r.branch) { r.rb = s.branch; r.branch = fakeBranch(s.branch); s.branch = r.branch; }
   if (s.remote && s.remote !== r.remote) { r.remote = "https://github.com/acme/" + (slug(r.title) || "repo"); s.remote = r.remote; }
   if (s.name && s.name !== r.name) { r.rn = s.name; r.name = (base(r.cwd) || "session") + "-" + "0123456789abcdef".charAt(hash(s.name) % 16) + "0123456789abcdef".charAt(hash(s.name + "#") % 16); s.name = r.name; }
   if (s.kind && s.kind !== r.kind) { r.rk = s.kind; r.kind = fakeAgent(s.kind); s.kind = r.kind; if (s.h === "gemini") toolAgent(r.rk); }
@@ -412,18 +441,6 @@ function fakeEv(e: Ev, evs: Ev[], i: number, title: string): void {
   else { e.text = scrubText(e.text); return; }
   e.full = "";
 }
-// log paths name the project dir as a slug of the cwd (Claude "-home-u-code-x", pi "--home-u-code-x--"); the word
-// scrubber leaves ordinary words in it ("mayflower", the tool's own name): a slug of a known real cwd becomes its fake's
-const slugs = new Map<string, string>();
-function slugKey(p: string): string { return p.replace(/[^A-Za-z0-9]/g, "-").replace(/^-+|-+$/g, ""); }
-function fakeLogPath(p: string): string {
-  const segs = p.split("/");
-  for (let i = 0; i < segs.length; i++) {
-    const sg = segs[i] ?? ""; const k = slugKey(sg); const f = k ? slugs.get(k) : undefined;
-    if (f !== undefined) { const lead = sg.slice(0, sg.length - sg.replace(/^-+/, "").length); const tail = sg.slice(sg.replace(/-+$/, "").length); segs[i] = lead + f + tail; }
-  }
-  return segs.join("/");
-}
 // meta lines carry free text after a fixed label (--watch, the transcript): the label stays, the text is faked —
 // "! <shell command>", "⟲ <status> · <task summary>", "⇄ <peer> · <message>", "branch: <summary>", "[error] <message>",
 // "/command <args>"; anything else (turn complete, model → x, skill: x) is scrubbed
@@ -483,7 +500,7 @@ function display(kind: string, text: string, s: Sess | null): string {
   if (kind === "remote") return fakeRemote(text);
   if (kind === "vcs") return fakeVcs(text);
   if (kind === "branch") return fakeBranch(text);
-  if (kind === "logpath") return fakeLogPath(text);
+  if (kind === "path") return s && kept(s) ? text : fakePath(text, s);
   if (kind === "tool") return agentTool(text); // a tool name: Gemini runs a subagent as a tool named after it
   if (kind.startsWith("filter:")) { // a filter chip's value, by its key
     const k = kind.slice(7);

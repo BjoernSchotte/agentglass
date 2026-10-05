@@ -18,7 +18,7 @@ import { type Compiled, EMPTY, sessMatches, dayMatches, eachCall } from "../quer
 import { contentOk } from "../query/ui.ts";
 import { identOf } from "../query/project.ts";
 import { type GitInfo, allInfo } from "../vcs/attrib.ts";
-import { realCwd } from "../../hooks.ts";
+import { realCwd, realMeta } from "../../hooks.ts";
 
 export interface FileAgg { n: number; add: number; del: number; by: Set<string> }
 export interface HarnessAgg { sess: number; cost: number; unk: number }
@@ -161,7 +161,7 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
     r.worktrees.set(id.worktree || basename(id.top) || id.label, id.top); // clones and linked worktrees each count
     const h = haOf(r.byHarness, s.h); h.cost += cost; h.unk += unk;
     const pc = pcOf(s); r.commits += pc.n;
-    bookBranches(r.branches, pc, s.branch, !s.parent, cost, unk);
+    bookBranches(r.branches, pc, realMeta(s).branch, !s.parent, cost, unk); // real: commit rows carry real branches (--redact fakes both at output)
     if (rootCommits(s) === 0) r.spendNoCommit += cost;
     const g = gi.get(s.path); if (g) for (const l of g.prs) if (l.how === "created" && ownPr(l.url, r.remote) && r.prs.indexOf(l.url) < 0) r.prs.push(l.url);
     if (!s.parent) { r.sessions++; h.sess++; if (s.pid) r.live++; r.paths.push(s.path); }

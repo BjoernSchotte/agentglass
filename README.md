@@ -92,7 +92,7 @@ in the background. Which one is stuck? Which one just rewrote your auth layer? W
 ## Privacy mode
 
 Streaming, screenshotting or demoing? `agentglass --redact` swaps session titles, project names,
-paths, branches and subagent tasks for consistent fakes, replaces the content of other sessions with
+paths (also the transcript `path` in `--json`), branches and subagent tasks for consistent fakes, replaces the content of other sessions with
 neutral stand-ins, and scrubs your username, home path, e-mail addresses, secrets and anything listed
 in `~/.agentglass/redact.txt` from every pixel — at the same width, so the layout stays intact.
 `AGENTGLASS_REDACT_KEEP=<path-substring>` keeps chosen sessions readable (they are still scrubbed).
@@ -376,8 +376,8 @@ transcript at the tool call that made the commit or printed the link, `y` copies
 - Local only: transcripts, `.git/logs/HEAD` read as a file (never written), and a few budgeted `git` calls — one
   `git log --no-walk` per opened git view for full shas and diff stats (closed sessions are cached in
   `~/.agentglass/cache/vcs.json`), at most one spawn per 500 ms. No `fetch`, no forge API. Committer names and emails
-  are never stored. Under `--redact` subjects and URLs are faked (numbers and short shas kept; a full 40-hex sha is
-  masked like any key-shaped string).
+  are never stored. Under `--redact` subjects, branches and URLs are faked (numbers and short shas kept, a self-hosted
+  forge's host becomes `git.example.com`; a full 40-hex sha is masked like any key-shaped string).
 - Kiro logs no per-call times: its banners count, its quiet commits show ≈. fx is matched by `call_id`.
 
 ## Filters
@@ -479,6 +479,7 @@ B, side by side with Δ (B − A, more cost, errors or duration red) and B/A.
 agentglass compare 3f2a9c 7b11e0                                   # two sessions by id prefix
 agentglass compare claude:3f2a9c… codex:7b11e0… --no-subagents --json | jq '.a.metrics, .b.metrics'
 agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 'repo is agentglass'
+agentglass compare last current                                  # inside an agent: this run vs the one before (JSON, this project)
 ```
 In `--json`, `metrics.cost` is the total and `costByMode` its split by billing mode (`api` is real spend, the rest
 list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an id prefix under 6 characters
@@ -653,6 +654,7 @@ agentglass open 'claude:5f1e…#call=toolu_01Abc'          # …at a tool call (
 agentglass open 'agentglass://open/codex/019a2c…#call=c1' # the URL form (Y copies it)
 agentglass open 019a2c --print                          # resolve only: {harness,id,path,title,cwd,anchor,url} (pipes and agents too)
 agentglass open 019a2c --print-url                      # the canonical agentglass://open/<harness>/<id> link
+agentglass open current --print-url                     # inside an agent: a link to its own session (current | last | parent)
 agentglass open '019a2c#turn=2026-09-30T10:00:00.000Z'  # a turn by its start time as logged (~1: the 2nd turn starting then; #turn=3: the 3rd)
 agentglass open 4bf92f3577b34da6a3ce929d0e0e4736         # an OTLP trace id from `agentglass export` → that session and turn
 agentglass open 4bf92f3577b34da6a3ce929d0e0e4736/00f067aa0ba902b7  # …and a span in it: the call, request or subagent

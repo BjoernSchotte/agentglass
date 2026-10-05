@@ -5,12 +5,14 @@ import { writeSync } from "node:fs";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
 import { join } from "node:path";
-import { H, screenOut, startTui } from "../../hooks.ts";
+import { H, screenOut, startTui, display } from "../../hooks.ts";
 import { OS } from "../../platform/index.ts";
 import { scan, buildView, loadHead, loadTail, titleOf, parentOf, expanded, collapsed } from "../../model/sessions.ts";
 import { openTranscriptAt } from "../../ui/transcript.ts";
 import { type Obj, str } from "../../util/json.ts";
-import { type Ref, type Target, parseRef, resolve, canonicalUrl } from "./ref.ts";
+import { type Ref, type Target, SELF, parseRef, resolve, canonicalUrl } from "./ref.ts";
+import { resolveRef } from "../../model/sessref.ts";
+import { refreshProcs, refreshSlow } from "../../model/procs.ts";
 import { agentHost, cliError, errLine } from "../agentenv.ts";
 import { addCmd, opt } from "../clihelp.ts";
 import { type FInfo, type InfoFn, RUN_DIR, myUid, secureDir, lockHolder } from "./rundir.ts";
@@ -45,7 +47,7 @@ export function applyTarget(t: Target): void {
 export function targetObj(t: Target, r: Ref): Obj {
   const s = t.s as Sess;
   return {
-    harness: s.h, id: s.id, path: s.path, title: titleOf(s), cwd: s.cwd,
+    harness: s.h, id: s.id, path: display("path", s.path, s), title: titleOf(s), cwd: s.cwd,
     anchor: t.kind ? { kind: t.kind, turn: t.turn >= 0 ? t.turn : null, ts: t.ts || null, callId: t.kind === "tool" || t.kind === "result" ? t.id || null : null } : null,
     url: canonicalUrl(s, t.ukey, t.uval),
   };
@@ -77,7 +79,7 @@ export function openArgs(args: string[]): OpenArgs {
   return o;
 }
 
-addCmd({ cmd: "open", usage: "agentglass open <ref>", summary: "start the TUI on a session and event (a running agentglass shows it instead)\n(<ref> = <id> | <id prefix ≥ 6> | <harness>:<id> [#call=<id> | #ts=<iso> | #turn=<start ts>[~k] | #turn=<n> | #span=<span id>] | agentglass://open/[<harness>/]<id>[#…] | <OTLP trace id>[/<span id>])", options: [
+addCmd({ cmd: "open", usage: "agentglass open <ref>", summary: "start the TUI on a session and event (a running agentglass shows it instead)\n(<ref> = current | last | parent | <id> | <id prefix ≥ 6> | <harness>:<id> [#call=<id> | #ts=<iso> | #turn=<start ts>[~k] | #turn=<n> | #span=<span id>] | agentglass://open/[<harness>/]<id>[#…] | <OTLP trace id>[/<span id>])", options: [
   opt("--print", "", "print the resolution as JSON instead of opening it (also in pipes and inside an agent)", "", []),
   opt("--print-url", "", "print the canonical agentglass:// link", "", []),
   opt("--new-instance", "", "always start a new TUI, never hand the link to a running one", "", []),
@@ -91,6 +93,14 @@ H.cli.unshift((args: string[]): boolean => {
   const o = openArgs(args);
   const r = parseRef(o.ref);
   if (!r.ok) cliError("usage", r.err, "agentglass open --help shows the link forms", 2); // nothing contacted, nothing scanned
+  if (!r.harness && !r.trace && SELF.indexOf(r.sess) >= 0) { // current | last | parent: this process's view, then a plain link
+    S.cli = true; scan(); refreshProcs(); refreshSlow(); buildView(); // as discover(): current needs processes linked to sessions
+    const f = resolveRef(r.sess, false, (x: Sess): boolean => !!x);
+    if (!f.s) cliError(f.err || "not_found", f.msg, f.hint, f.code || 3);
+    const s = f.s as Sess; r.harness = s.h; r.sess = s.id;
+    o.ref = canonicalUrl(s, r.akey, r.akey === "turn" && r.ak ? r.aval + "~" + String(r.ak) : r.aval);
+    S.cli = false;
+  }
   const tty = process.stdout.isTTY === true;
   if (o.print || o.printUrl || !tty || agentHost().on) {
     S.cli = true;
