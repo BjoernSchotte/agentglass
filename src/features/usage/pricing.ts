@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { join } from "node:path";
 import { type Obj, obj, str } from "../../util/json.ts";
-import { HOME, readText } from "../../util/fs.ts";
+import { HOME, readWhole } from "../../util/fs.ts";
 import { type Remote, remoteCfg, loadCached } from "./remote.ts";
 
 // cr/cw/cw1 < 0 = derive from input (cache read 0.1×, cache write 5m 1.25×, 1h 2×)
@@ -54,12 +54,13 @@ function changed(): void { memo.clear(); PGEN.n++; }
 
 // prices.json: AGENTGLASS_PRICES (tests, scratch runs) or ~/.agentglass/prices.json
 export const PRICES_FILE = process.env.AGENTGLASS_PRICES || join(HOME, ".agentglass", "prices.json");
-// the parsed file (null: missing or invalid); bad = why it is invalid ("" = fine or missing)
+// the parsed file (null: missing, blank or unusable); bad = why it is unusable ("" = fine, missing or blank): a file that
+// exists but cannot be read (a directory, no permission, over 1 MiB) is reported like invalid JSON, never taken as empty
 export function readUserFile(path: string): { o: Obj | null; bad: string } {
-  let t = "";
-  try { t = readText(path, 0, 1048576); } catch (e) { return { o: null, bad: "" }; }
-  if (!t.trim()) return { o: null, bad: "" };
-  try { const o = obj(JSON.parse(t)); return o ? { o, bad: "" } : { o: null, bad: "not a JSON object" }; } catch (e) { return { o: null, bad: String(e) }; }
+  const r = readWhole(path, 1048576);
+  if (r.err) return { o: null, bad: "cannot be read (" + r.err + ")" };
+  if (!r.text.trim()) return { o: null, bad: "" };
+  try { const o = obj(JSON.parse(r.text)); return o ? { o, bad: "" } : { o: null, bad: "not a JSON object" }; } catch (e) { return { o: null, bad: "not valid JSON (" + String(e) + ")" }; }
 }
 // the user layer from prices.json's object (null = none); returns one warning per entry it skipped
 // {"<model-prefix>": {"input", "output", "cacheRead", "cacheWrite", "cacheWrite1h"} | {"alias": "<model>"}, "kiroCreditUsd": n}

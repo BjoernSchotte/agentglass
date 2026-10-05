@@ -53,5 +53,6 @@ loadUser(null); setGateway(new Map<string, Price[]>());
 ok("price() wrapper", price("claude-sonnet-4-5") !== null, "null");
 ok("AGENTGLASS_PRICES honoured", PRICES_FILE === (process.env.AGENTGLASS_PRICES || PRICES_FILE) && PRICES_FILE.endsWith(".json"), PRICES_FILE);
 const rf = readUserFile("/nonexistent/prices.json"); ok("missing file: no object, no error", rf.o === null && rf.bad === "", rf.bad);
+const rd = readUserFile("/"); ok("unreadable (a directory): says so, not silently empty", rd.o === null && rd.bad.indexOf("cannot be read") === 0, rd.bad);
 console.log(bad ? bad + " failed" : "pricing: all checks passed");
 if (bad) process.exit(1);

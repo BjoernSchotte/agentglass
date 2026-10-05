@@ -199,7 +199,7 @@ function unsetCmd(args: string[]): void {
   const json = wantJson(args); const before = resolve(storedKey(model), "");
   if (!userEntry(PRICES_FILE, model)) {
     const u = readUserFile(PRICES_FILE);
-    if (u.bad) cliError("prices_file", PRICES_FILE + " is not valid JSON (" + u.bad + ")", "fix " + home(PRICES_FILE) + " (it was not changed)", 1);
+    if (u.bad) cliError("prices_file", PRICES_FILE + ": " + u.bad, "fix " + home(PRICES_FILE) + " (it was not changed)", 1);
     if (json) out(JSON.stringify({ model, stored: storedKey(model), before: stateObj(before), after: stateObj(before), file: PRICES_FILE, removed: false }));
     else out(model + ": nothing to remove (source: " + (before ? before.src : "unpriced") + ")");
     process.exit(0);
