@@ -69,7 +69,7 @@ cmp -s "$t/p/prices.json" "$t/p/before" || { echo "FAIL invalid file changed"; f
 grep -q "not valid JSON" "$t/err" || { echo "FAIL invalid file message"; cat "$t/err"; fail=1; }
 # agent mode: one JSON error line on stderr, nothing on stdout
 rm -f "$t/p/prices.json"
-set +e; AGENTGLASS_AGENT=1 run prices set z --in x --out 1 > "$t/out" 2> "$t/err"; rc=$?; set -e
+set +e; (AGENTGLASS_AGENT=1 run prices set z --in x --out 1) > "$t/out" 2> "$t/err"; rc=$?; set -e
 eq "agent exit" "$rc" 2
 eq "agent stdout empty" "$(wc -c < "$t/out" | tr -d ' ')" 0
 eq "agent error code" "$(head -1 "$t/err" | jq -r '.error.code')" usage
