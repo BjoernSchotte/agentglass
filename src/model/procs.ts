@@ -46,6 +46,7 @@ export function harnessOfArgs(args: string): string {
 // moved; a pid's harness only when its args changed
 let tracked = new Set<number>(); // the harness trees' pids of the last refresh: the platform reads them fresh
 let passNo = 0;
+export const PG = { gen: 0 }; // bumps when a pid came, went or moved (caches of the process tree key on it)
 let kids = new Map<number, number[]>();
 // a process's command line is worth reading (it may be an agent) when its name (comm, ≤ 15 bytes) may be one: an agent's
 // own name, an interpreter that runs one, or a launcher that execs into one; the rest are read on the platform's full pass
@@ -71,6 +72,7 @@ export function refreshProcs(): void {
     moved = true;
   }
   if (moved) {
+    PG.gen++;
     kids = new Map<number, number[]>();
     for (const p of allProcs.values()) { const k = kids.get(p.ppid); if (k) k.push(p.pid); else kids.set(p.ppid, [p.pid]); }
   }
