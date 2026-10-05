@@ -50,6 +50,13 @@ function usageKey(s: Sess): string {
   return String(s.inTok) + "," + String(s.outTok) + "," + String(s.cacheRTok) + "," + String(s.cacheWTok) + "," + String(s.cost) + "," + String(s.unkTok) + "," + String(s.unkCr) + "," +
     String(s.tools) + "," + String(s.linesAdd) + "," + String(s.linesDel) + "," + s.bill + s.plan + s.billSrc + (s.attention ? "!" : "") + s.stuck;
 }
+// which sessions the visible rows show and each one's glyph kind (busy, live, recent, old): an unfocused TUI draws a
+// change here at once (main.ts), the rest at its 5 s beat
+export function listPresence(): string {
+  let o = String(S.view.length);
+  for (let r = 0; r < S.listH; r++) { const s = sessAt(S.top + r); if (!s) break; o += "|" + s.path + (s.depth === 1 ? (subActive(s) ? "A" : "a") : glyphKind(s)); }
+  return o;
+}
 // clock false: without the "ago" texts (an unfocused TUI draws for a change of data, not of the clock)
 const SIGT = { clock: true };
 function agoK(t: number): string { return SIGT.clock ? ago(t) : ""; }

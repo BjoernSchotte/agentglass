@@ -5,13 +5,13 @@ import { writeSync } from "node:fs";
 import { S, say } from "./state.ts";
 import { H, tabAt, viewOf, screenOut, armed, backlog } from "./hooks.ts";
 import { sessions, scan, buildView, probeLive, sessAt, current } from "./model/sessions.ts";
-import { procs, refreshProcs, refreshSlow } from "./model/procs.ts";
+import { procs, refreshProcs, refreshSlow, PEND } from "./model/procs.ts";
 import { C, CSI } from "./ui/theme.ts";
 import { buf, put, renderModal, clearBuf, bufRows, spinCells, spinGlyph } from "./ui/screen.ts";
 import { flushRows, flushPart, flushSpin, resetFrame } from "./ui/frame.ts";
 import { renderHeader, renderHeaderStep, statsKey } from "./ui/header.ts";
 import { renderFooter } from "./ui/footer.ts";
-import { renderSessions, listSig } from "./ui/list.ts";
+import { renderSessions, listSig, listPresence } from "./ui/list.ts";
 import { renderProcs } from "./ui/procs.ts";
 import { renderTranscript } from "./ui/transcript.ts";
 import { renderDetail } from "./ui/detail.ts";
@@ -115,6 +115,10 @@ function shownMoved(head: boolean): boolean {
   if (VIS.moved) headDirty = false; // the frame draws the header too
   return VIS.moved;
 }
+// unfocused: a session that appears, goes, starts, ends or turns busy/idle in the visible rows is drawn at once, not at
+// the render job's 5 s beat (a pane beside the focused one shows it; asked by the jobs that move it)
+let pres = "";
+function presence(): void { if (!sc.unf || !listShown()) return; const p = listPresence(); if (p !== pres) { pres = p; S.frame++; render(); } }
 const SAFETY_MS = 5000; // a full Sessions frame at least this often, whatever the signature says
 
 // ── adaptive refresh: one self-rescheduling setTimeout loop over named jobs (src/sched.ts decides what is due) ──
@@ -137,8 +141,8 @@ function alarmSig(): string { let o = ""; for (const s of sessions.values()) if 
 function probe(): void { if (probeLive()) { act.grow = Date.now(); if (!listShown() || shownMoved(false)) S.dirty = true; } }
 function body(j: Job, now: number): () => void {
   if (j === "size") return sizeJob;
-  if (j === "procs") return () => { procsPass++; refreshProcs(!sc.unf || procsPass % 2 === 0); /* unfocused: new pids looked for every other pass (3 s), the agents' cpu every pass (alarm samples) */ if (WAKE_ALL.at !== wakeSeen) { wakeSeen = WAKE_ALL.at; const x = sc.js.get("scan"); if (x) x.last = 0; } /* a new agent: scan at once (its log may be there already) */ if (!listShown() || shownMoved(true)) S.dirty = true; }; // header CPU graph, Processes tab, the preview's process line
-  if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; } };
+  if (j === "procs") return () => { procsPass++; refreshProcs(!sc.unf || procsPass % 2 === 0); /* unfocused: new pids looked for every other pass (3 s), the agents' cpu every pass (alarm samples) */ if (WAKE_ALL.at !== wakeSeen) { wakeSeen = WAKE_ALL.at; for (const k of ["scan", "slow"]) { const x = sc.js.get(k); if (x) x.last = 0; } } /* a new agent: scan at once (its log may be there already), its cwd at once (links it) */ sc.pend = PEND.young > 0; if (!listShown() || shownMoved(true)) S.dirty = true; presence(); }; // header CPU graph, Processes tab, the preview's process line
+  if (j === "scan") return () => { scan(); buildView(); const g = scanSum(); if (g !== scanSig) { scanSig = g; S.dirty = true; presence(); } };
   if (j === "slow") return () => { refreshSlow(); S.dirty = true; };
   if (j === "probe") return probe;
   if (j === "tick") return () => {
@@ -148,7 +152,7 @@ function body(j: Job, now: number): () => void {
   };
   // alarm latency = the watch interval: probe first (the probe may sleep up to 1 s, the tail follows the stat), and a
   // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap)
-  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved(false)) S.dirty = true; }; // the watchdog read tails: busy/idle glyphs
+  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved(false)) S.dirty = true; else presence(); }; // the watchdog read tails: busy/idle glyphs
   if (j === "fast") return () => {
     let d = false; for (const f of H.onFastTick) if (f()) d = true;
     let hd = false; for (const f of H.onHeaderTick) if (f()) hd = true;

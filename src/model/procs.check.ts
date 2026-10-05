@@ -1,9 +1,9 @@
 // agentglass — self-check for process → harness detection: scriptc build src/model/procs.check.ts -o prc && ./prc
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, rmSync } from "node:fs";
-import { harnessOfArgs, linkOne, wakeScan } from "./procs.ts";
+import { harnessOfArgs, linkOne, wakeScan, applyRows, PEND, allProcs } from "./procs.ts";
 import type { Proc } from "./types.ts";
-import { WAKE_H, WAKE_DIRS, listDirCached, FS_STATS, FS_CLOCK } from "../util/fs.ts";
+import { WAKE_ALL, WAKE_H, WAKE_DIRS, listDirCached, FS_STATS, FS_CLOCK } from "../util/fs.ts";
 import { projectDirOf } from "../harness/claude.ts";
 import { CLAUDE, CODEX } from "../util/fs.ts";
 import { newSess, type Sess } from "./types.ts";
@@ -63,4 +63,20 @@ ok("woken harness: stat", FS_STATS.stats === st0 + 1, "");
 WAKE_H.clear(); WAKE_DIRS.add(qd); st0 = FS_STATS.stats; listDirCached(qd, 0, "claude");
 ok("woken dir: stat", FS_STATS.stats === st0 + 1, "");
 WAKE_DIRS.clear(); rmSync(qd, { recursive: true, force: true });
-console.log(bad ? bad + " failed" : "procs: all checks passed (" + String(cases.length + 14) + " cases)"); process.exit(bad ? 1 : 0);
+// a launcher that execs into an agent (zsh -c pi, npx gemini): the agent shows as an args change of a known pid, and
+// wakes the scan like a new agent pid
+FS_CLOCK.now = (): number => Date.now(); allProcs.clear();
+function row(pid: number, ppid: number, args: string, etime: string): { pid: number; ppid: number; cpu: number; rss: number; etime: string; tty: string; args: string } { return { pid, ppid, cpu: 0, rss: 0, etime, tty: "", args }; }
+WAKE_ALL.at = 0; applyRows([row(900, 1, "zsh -c pi hi", "00:01")]);
+ok("a launcher wakes nothing", WAKE_ALL.at === 0, String(WAKE_ALL.at));
+applyRows([row(900, 1, "node /u/bin/pi hi", "00:02")]);
+ok("its exec into an agent wakes the scan", WAKE_ALL.at > 0, String(WAKE_ALL.at));
+WAKE_ALL.at = 0; applyRows([row(900, 1, "node /u/bin/pi hi", "00:03"), row(901, 900, "node /u/bin/gemini", "00:01")]);
+ok("an agent under an agent wakes nothing", WAKE_ALL.at === 0, String(WAKE_ALL.at));
+allProcs.clear();
+// young roots with no session keep the scan quick (sched pend); an old one (a daemon) does not
+wakeScan([pr(20, "pi", "", ""), pr(21, "codex", "/c", "")], 5000); ok("no etime: not young", PEND.young === 0, String(PEND.young));
+const y = pr(22, "pi", "", ""); y.etime = "02:10"; const o = pr(23, "codex", "/c", ""); o.etime = "1-02:00:00"; const l = pr(24, "pi", "", "/s/x.jsonl"); l.etime = "00:05";
+wakeScan([y, o, l], 5000); ok("one young pending root", PEND.young === 1, String(PEND.young));
+WAKE_H.clear(); WAKE_DIRS.clear();
+console.log(bad ? bad + " failed" : "procs: all checks passed (" + String(cases.length + 19) + " cases)"); process.exit(bad ? 1 : 0);

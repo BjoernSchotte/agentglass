@@ -106,6 +106,10 @@ sc.fastMs = 150; eq("unf marquee paused", String(every(sc, "fast", false, true))
 sc.fastMs = 50; eq("unf replay goes on", String(every(sc, "fast", false, true)), "50"); sc.fastMs = 150;
 eq("unf size", String(every(sc, "size", false, false)), "10000");
 eq("unf watch live", String(every(sc, "watch", true, false)), "1500");
+// a young agent with no session yet: its first log may come any moment, in any level (a first prompt)
+sc.lv = "away"; eq("away scan", String(every(sc, "scan", false, false)), "15000");
+sc.pend = true; eq("away scan, agent pending", String(every(sc, "scan", false, false)), "2000"); eq("away slow, agent pending", String(every(sc, "slow", false, false)), "2000"); sc.pend = false;
+eq("away slow", String(every(sc, "slow", false, false)), "30000");
 sc.lv = "away";
 eq("unf render away", String(every(sc, "render", false, false)), "5000");
 sc.lv = "hot"; sc.unf = false;

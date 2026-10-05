@@ -6,6 +6,8 @@ import { OS } from "../platform/index.ts";
 import { HARNESSES, harnessOfProc } from "../harness/index.ts";
 import type { Live } from "../harness/types.ts";
 import type { Proc, Sess } from "./types.ts";
+import type { ProcRow } from "../platform/types.ts";
+import { etimeSec } from "../features/detect.ts";
 import { sessions, SG } from "./sessions.ts";
 import { S } from "../state.ts";
 import { linkByCwd, daemonWarn, type CwdProc } from "./link.ts";
@@ -48,30 +50,38 @@ let tracked = new Set<number>(); // the harness trees' pids of the last refresh:
 let passNo = 0;
 export const PG = { gen: 0 }; // bumps when a pid came, went or moved (caches of the process tree key on it)
 let kids = new Map<number, number[]>();
-// a process's command line is worth reading (it may be an agent) when its name (comm, ≤ 15 bytes) may be one: an agent's
-// own name, an interpreter that runs one, or a launcher that execs into one; the rest are read on the platform's full pass
-const LAUNCH = ["node", "bun", "deno", "npx", "npm", "pnpm", "env", "sh", "bash", "zsh", "dash", "fish", "python", "python3", "uv", "uvx"];
+// a new process is read at once (else a pass later, if still there) and its command line re-read on full passes when its
+// name (comm, ≤ 15 bytes) may be an agent's: an agent's own name, an interpreter that runs one (node 24 names its main
+// thread "MainThread": Gemini CLI shows so), or a launcher that execs into one
+const LAUNCH = ["node", "MainThread", "bun", "deno", "npx", "npm", "pnpm", "env", "sh", "bash", "zsh", "dash", "fish", "python", "python3", "uv", "uvx"];
 export function argsWorth(comm: string): boolean {
   return LAUNCH.indexOf(comm) >= 0 || harnessOfProc(comm) !== "" || OTHER.indexOf(comm) >= 0 || harnessOfArgs(comm) !== "";
 }
-// discover: look for new pids too (an unfocused TUI does it every other pass; the agents' own cpu is read every pass)
-export function refreshProcs(discover: boolean = true): void {
-  passNo++;
-  const rows = OS.listProcs(tracked, argsWorth, discover);
+// the platform's rows into the process objects; true = a pid came, went or moved. A new agent — a new pid, or a known
+// one that exec'd into one (zsh -c pi, npx gemini) — that is no agent's child wakes the session scan: its log may land
+// in a quiet dir
+export function applyRows(rows: ProcRow[]): boolean {
   let moved = false; const fresh: Proc[] = [];
   for (const r of rows) {
     let p = allProcs.get(r.pid);
     if (!p) { p = { pid: r.pid, ppid: r.ppid, cpu: r.cpu, rss: r.rss, etime: r.etime, tty: r.tty, args: r.args, h: harnessOfArgs(r.args), cwd: "", tcpu: 0, trss: 0, kids: 0, sess: "" }; allProcs.set(r.pid, p); moved = true; if (p.h) fresh.push(p); continue; }
     if (p.ppid !== r.ppid) { p.ppid = r.ppid; moved = true; }
-    if (p.args !== r.args) { p.args = r.args; p.h = harnessOfArgs(r.args); }
+    if (p.args !== r.args) { const was = p.h; p.args = r.args; p.h = harnessOfArgs(r.args); if (p.h && !was) fresh.push(p); }
     p.cpu = r.cpu; p.rss = r.rss; p.etime = r.etime; p.tty = r.tty;
   }
-  for (const p of fresh) { const par = allProcs.get(p.ppid); if (!par || !par.h) { WAKE_ALL.at = Date.now(); break; } } // a new agent: its log may land in a quiet dir
+  for (const p of fresh) { const par = allProcs.get(p.ppid); if (!par || !par.h) { WAKE_ALL.at = Date.now(); break; } }
   if (allProcs.size !== rows.length) { // pids went
     const live = new Set<number>(); for (const r of rows) live.add(r.pid);
     for (const k of [...allProcs.keys()]) if (!live.has(k)) allProcs.delete(k);
     moved = true;
   }
+  return moved;
+}
+// discover: look for new pids too (an unfocused TUI does it every other pass; the agents' own cpu is read every pass)
+export function refreshProcs(discover: boolean = true): void {
+  passNo++;
+  const rows = OS.listProcs(tracked, argsWorth, discover);
+  const moved = applyRows(rows);
   if (moved) {
     PG.gen++;
     kids = new Map<number, number[]>();
@@ -123,10 +133,15 @@ export function refreshProcs(discover: boolean = true): void {
 }
 // an agent process with no session yet may write a new log any moment (a first prompt), often in a dir quiet for long:
 // its harness's dirs (or just its session dir, when the harness names it from the cwd) are looked at every scan
+// PEND.young: such agents started within the last 10 min (main.ts scans every 2 s while there is one, in any level; an
+// older one — a daemon never linked to a session — leaves the scan at its level's pace)
+export const PEND = { young: 0 };
+const YOUNG_S = 600;
 export function wakeScan(roots: Proc[], now: number): void {
-  WAKE_DIRS.clear();
+  WAKE_DIRS.clear(); PEND.young = 0;
   for (const p of roots) {
     if (!p.h || p.sess) continue;
+    if (p.etime && etimeSec(p.etime) < YOUNG_S) PEND.young++;
     let wd: ((cwd: string) => string) | null = null; for (const ad of HARNESSES) if (ad.id === p.h) { const f = ad.wakeDir; if (f) wd = f; }
     if (wd && (p.cwd || p.h !== "claude")) WAKE_DIRS.add(wd(p.cwd)); else WAKE_H.set(p.h, now); // Claude names its dir from the cwd (known after the slow job)
   }

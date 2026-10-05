@@ -13,9 +13,11 @@ export interface JS { last: number; ew: number } // last run, EWMA of its durati
 // unf: focus-out reported and no focus-in since (render capped at 1/s); burst: ledger indexing pending, its tick keeps
 // the level's cadence (the 100 ms slice per tick is the one intentional burst, not a cost to stretch away)
 // fastMs: the fast job's interval while armed (50 ms for a replay; the marquee steps every 150 ms: more turns only cost)
-export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; burst: boolean; js: Map<string, JS>; fastMs: number }
+// pend: a young agent has no session yet (its first log may come any moment: scan and slow run every 2 s in any level)
+export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean; burst: boolean; js: Map<string, JS>; fastMs: number; pend: boolean }
 
 const LV: Level[] = ["hot", "warm", "idle", "away"];
+const PEND_MS = 2000; // scan and slow while a young agent has no session yet (procs.ts PEND)
 const JUMP = 600000; // a job last run more than 10 min ago (suspend) or in the future (clock went back) runs now
 const ALARM = 1500; // watch and procs while an agent is live: alarm latency wins over the budget
 // base intervals hot / warm / idle / away; -1 = not scheduled at that level. hot never polls data faster than the old
@@ -60,7 +62,7 @@ export function levelOf(a: Act): Level {
 export function newSched(fixed: boolean, winch: boolean, now: number): Sched {
   const js = new Map<string, JS>();
   for (const j of JOBS) js.set(j, { last: now, ew: 0 });
-  return { fixed, winch, lv: "warm", unf: false, burst: false, js, fastMs: 50 };
+  return { fixed, winch, lv: "warm", unf: false, burst: false, js, fastMs: 50, pend: false };
 }
 
 export function base(j: Job, lv: Level, live: boolean, fixed: boolean, winch: boolean): number {
@@ -88,6 +90,7 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
     if (j === "tick") e = Math.max(e, 1000); // ingest within a second of the watch job reading it (alarm values)
     if (j === "scan") e = Math.max(e, 6000); // a new agent scans at once (main.ts: procs)
   }
+  if ((j === "scan" || j === "slow") && sc.pend) e = Math.min(e, PEND_MS); // slow: its cwd links the log (pi, OpenCode, Gemini)
   return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
 }
 
