@@ -25,6 +25,12 @@ Kiro, Gemini CLI).
 | 7 | [command-palette](command-palette/spec.md) | Ctrl+K palette, `agentglass open <session>` deep links, single-instance link hand-off | cli-agent-mode (`src/model/sessref.ts`, `addCmd()`, `format.ts`); otlp-export (`TurnCursor`, trace id scheme, `sha256.ts`), repo-view, filter-language |
 | 7 | [adaptive-refresh](adaptive-refresh/spec.md) | refresh cadence follows activity, lower idle CPU, rendering capped at 1/s while the terminal is unfocused; alarms stay at 1.5 s while agents run | — |
 
+## Round 2 (after 2026.10.4)
+
+| Spec | What it adds | Depends on |
+|---|---|---|
+| [model-prices](model-prices/spec.md) | price unknown models from the TUI (`$` in Stats, palette) and the CLI (`agentglass prices`), aliases (estimates, `≈`), per-model costs from pi/OpenCode configs, price sources in Stats/`--json`/OTLP, price changes re-price the ledger in memory (`Day.tp`, no re-index) | honest-costs (`Day.mt/um/cp/hc`), cli-agent-mode, command-palette (`H.dynActions`); shares the cache codec and `VERSION` with tui-footprint |
+
 ## Why this order
 1. **Phase 1** fixes numbers people already read (cost, titles, turns) and is small — every later feature builds on
    correct numbers.
