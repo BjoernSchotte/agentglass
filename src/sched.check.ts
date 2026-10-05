@@ -98,7 +98,8 @@ eq("fast armed idle", String(every(sc, "fast", false, true)), "-1");
 // ── unfocused cap ──
 sc = newSched(false, false, t); sc.lv = "hot"; sc.unf = true;
 eq("unf render hot", String(every(sc, "render", false, false)), "5000");
-eq("unf tick hot", String(every(sc, "tick", false, false)), "500");
+eq("unf tick hot", String(every(sc, "tick", false, false)), "1000");
+eq("unf scan hot", String(every(sc, "scan", false, false)), "6000");
 eq("unf probe hot", String(every(sc, "probe", false, false)), "250");
 eq("unf probe hot, live: rides on watch", String(every(sc, "probe", true, false)), "-1");
 sc.fastMs = 150; eq("unf marquee paused", String(every(sc, "fast", false, true)), "-1");

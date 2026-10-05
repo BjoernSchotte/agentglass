@@ -85,6 +85,8 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
     if (j === "fast" && sc.fastMs > 50) return -1;
     if (j === "probe" && live) return -1;
     if (j === "size") e = Math.max(e, 10000);
+    if (j === "tick") e = Math.max(e, 1000); // ingest within a second of the watch job reading it (alarm values)
+    if (j === "scan") e = Math.max(e, 6000); // a new agent scans at once (main.ts: procs)
   }
   return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
 }
