@@ -159,15 +159,17 @@ export function isOpen(s: Sess): boolean {
   if (collapsed.has(s.path)) return false;
   return expanded.has(s.path) || activeSubs(s) > 0; // auto-expand while subagents work
 }
-// every H.listFilter passes (the filter language's Sessions filter)
-function matches(s: Sess): boolean { for (const f of H.listFilter) if (!f(s)) return false; return true; }
+// every active H.listFilter predicate passes (the filter language's Sessions filter)
+function matchesAll(ps: ((s: Sess) => boolean)[], s: Sess): boolean { for (const f of ps) if (!f(s)) return false; return true; }
 export function parentOf(s: Sess): Sess | null {
   if (!s.parent) return null;
   for (const p of sessions.values()) if (!p.parent && p.h === s.h && p.id === s.parent) return p;
   return null;
 }
 export function buildView(): void {
-  let filtering = false; for (const f of H.listFiltering) if (f()) filtering = true;
+  // the predicates once per build: a filter's matching set is computed once, not per session (n² with 2k sessions)
+  const ps: ((s: Sess) => boolean)[] = []; for (const f of H.listFilter) { const p = f(); if (p) ps.push(p); }
+  const filtering = ps.length > 0; const matches = (s: Sess): boolean => matchesAll(ps, s);
   const roots = new Map<string, Sess>();
   for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; if (!s.parent) roots.set(s.h + ":" + s.id, s); }
   for (const s of sessions.values()) {

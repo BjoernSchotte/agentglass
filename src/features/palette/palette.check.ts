@@ -150,6 +150,13 @@ ok("one project item for the repo and its worktree", pi.length === 1 && identNow
 if (pi.length === 1) { while (selected() !== null && selected()?.id !== pi[0].id && P.sel < rows().length - 1) key("\x1b[B"); key("\r"); }
 ok("Sessions filtered to that repo", S.view.indexOf(r1) >= 0 && S.view.indexOf(r2) >= 0 && S.view.indexOf(s1) < 0, String(S.view.length));
 setLocal("Sessions", []);
+// a project whose directory is gone (a removed worktree) says so in its hint; the existing repo's does not
+const rg = addSess(dir, "rrrrrr-0003", "in a removed dir", convo(9, dir + "/removed-wt"), Date.now() - 5 * 86400000, "");
+key("\x0b"); type("#");
+const gp = rows().find((r) => r.proj !== "" && r.text === repoShown(rg));
+ok("a gone project's hint says gone", gp !== undefined && gp.hint.endsWith(" · gone"), JSON.stringify(rows().map((r) => r.text + "|" + r.hint)));
+ok("the existing repo's hint does not", pi.length === 1 && rows().some((r) => r.id === pi[0].id && r.hint.indexOf("gone") < 0), "");
+key("\x1b"); sessions.delete(rg.path); buildView();
 // every row of the box is equally wide (the input row was one column short), also with a query wider than the box
 for (const q of ["", "todo", "x".repeat(150)]) {
   key("\x0b"); type(q); buf.length = 0; renderPalette();

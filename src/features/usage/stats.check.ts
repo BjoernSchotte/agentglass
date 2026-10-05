@@ -4,6 +4,7 @@ import { toolRows, allowGauge, open, statsTotalsFor, statsSummaryFor, periodMess
 import { parse } from "../query/parse.ts";
 import { EMPTY, compile } from "../query/eval.ts";
 import { fxBase } from "../query/fixture.ts";
+import { MPS } from "../query/ui.ts";
 import { type Cnt, newCnt } from "./calls.ts";
 import { vwidth } from "../../util/text.ts";
 
@@ -35,6 +36,11 @@ for (const ex of ["", "harness is codex", "repo is agentglass", "subagent is fal
 ok("today unfiltered", statsSummaryFor("").tools === 8, String(statsSummaryFor("").tools));
 const cs = statsSummaryFor("tool is Bash and status is error"); const ct = statsTotalsFor("tool is Bash and status is error");
 ok("call-scoped", cs.scoped && cs.tools === 1 && ct.callScoped && ct.tools === 1 && cs.cost === ct.cost && cs.cost > 0, [cs.scoped, cs.tools, ct.tools, cs.cost, ct.cost].join(","));
+// a content clause asks its matching paths once per aggregation, not per session or call row (each ask walks every session)
+for (const ex of ["content ~ zzz", "content ~ zzz and tool is Bash"]) {
+  const n0 = MPS.asks; statsSummaryFor(ex);
+  ok("content paths asked once: " + ex, MPS.asks - n0 === 1, String(MPS.asks - n0));
+}
 const old = compile(parse("day is 2020-01-01").cs, "stats").f ?? EMPTY;
 ok("empty period ∩ day", periodMessage(old, statsPeriod()) === "today does not match day is 2020-01-01", periodMessage(old, statsPeriod()));
 ok("period intersects", periodMessage(compile(parse("day is today").cs, "stats").f ?? EMPTY, statsPeriod()) === "", "");

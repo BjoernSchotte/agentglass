@@ -119,8 +119,9 @@ export function commandAge(o: Obs): MVal {
   let old: Cmd | null = null; for (const c of o.cmds) if (!old || c.age > old.age) old = c;
   return old ? mv(old.age, "", old.name, "", o.now - old.age * 1000) : absent();
 }
-// log-silent seconds while busy, the tree idle (avg < cpuBelow) and no tool command running
+// log-silent seconds while busy, the tree idle (avg < cpuBelow), no tool command running and no approval asked
 export function stalledFor(o: Obs, cpuBelow: number, samples: number): MVal {
+  if (o.asks) return absent(); // it waits for the user (approval title): approval_wait says so; ⚠ stalled after an acked ◆ misled
   if (!o.busy || o.cpu.length < samples || o.cmds.length) return absent();
   const cpu = avgTail(o.cpu, samples);
   return cpu < cpuBelow ? mv((o.now - o.mtime) / 1000, "", "", cpu.toFixed(1), o.mtime) : absent();
