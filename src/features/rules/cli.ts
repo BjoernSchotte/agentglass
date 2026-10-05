@@ -88,7 +88,8 @@ H.cli.push((args: string[]): boolean => {
   S.cli = true;
   const sub = args[1] ?? "";
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(HELP); process.exit(0); } // rules check --help too
-  const bad = args.slice(2).filter((a: string) => ["--json", "--examples", "--all-projects", "--project-only", "--help", "-h"].indexOf(a) < 0);
+  const own = sub === "check" ? "--json" : "--examples"; // each subcommand's one option; the agent-mode scope flags pass
+  const bad = args.slice(2).filter((a: string) => [own, "--all-projects", "--project-only"].indexOf(a) < 0);
   if ((sub === "check" || sub === "defaults") && bad.length) usage("rules " + sub + ": unknown option " + (bad[0] ?? ""));
   if (sub === "check") {
     const exists = fileMtime(RULES_FILE) >= 0;
