@@ -123,8 +123,9 @@ writeFileSync(join(root, "uptime"), "1000.50 31000.00\n");
 rows = scanProcs(fs, (1700000000 + 1001) * 1000, none(), true);
 const u1 = byPid(rows, 1); eq("etime from uptime", u1 ? u1.etime : "", "16:39");
 
-// only processes whose name may be an agent's or a launcher's get their command line read (want); a tracked one and a
-// tracked pid's new child always; an exec (another comm) re-reads it
+// a process whose name may be an agent's or a launcher's (want) is read at once; any other waits a pass and, still
+// there, gets its command line read once (an agent under an odd name: node 24's "MainThread", a wrapper's title); a
+// wanted, tracked or young one is re-read; an exec (another comm) re-reads it
 const want = (c: string): boolean => c === "node" || c === "claude";
 proc(1100, "cron", 1, 0, 0, 100, "/usr/sbin/cron\0-f\0");
 proc(1101, "node", 1, 0, 0, 100, "node\0/x/claude\0");
@@ -133,7 +134,12 @@ rows = scanProcs(fs, T0 + 19900, none(), false, want); // cron waits a pass, nod
 ok("non-agent waits, agent at once", byPid(rows, 1100) === null && byPid(rows, 1101) !== null, "");
 rows = scanProcs(fs, T0 + 20000, none(), false, want);
 const cr = byPid(rows, 1100); const nd = byPid(rows, 1101);
-eq("not an agent's name: no cmdline", cr ? cr.args : "x", ""); eq("node: cmdline", nd ? nd.args : "", "node /x/claude"); eq("one cmdline read", String(PROCFS_STATS.cmdline - n0), "1");
+eq("not an agent's name: cmdline once it stays", cr ? cr.args : "x", "/usr/sbin/cron -f"); eq("node: cmdline", nd ? nd.args : "", "node /x/claude"); eq("two cmdline reads", String(PROCFS_STATS.cmdline - n0), "2");
+proc(1103, "MainThread", 1, 0, 0, 100, "node\0/u/bin/gemini\0-i\0hi\0");
+rows = scanProcs(fs, T0 + 20100, none(), false, want); rows = scanProcs(fs, T0 + 20200, none(), false, want);
+const mt = byPid(rows, 1103); eq("an agent under an odd name (node 24's MainThread)", mt ? mt.args : "", "node /u/bin/gemini -i hi");
+n0 = PROCFS_STATS.cmdline; rows = scanProcs(fs, T0 + 20300, none(), true, want);
+eq("a full pass re-reads only wanted command lines", String(PROCFS_STATS.cmdline - n0), "3"); // not cron 1100, not 1103
 const t11 = new Set<number>(); t11.add(1100);
 proc(1102, "sh", 1100, 0, 0, 100, "sh\0-c\0ls\0");
 rows = scanProcs(fs, T0 + 21400, t11, false, want); // the shell waits a pass

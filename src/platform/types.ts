@@ -10,7 +10,7 @@ export interface Platform {
   name: string;
   // every process on the machine; tracked = the pids whose cpu/rss the caller needs fresh (harness trees): an adapter
   // that reads incrementally (Linux /proc) re-reads those every call and the rest only when new or on a periodic full
-  // pass, and may leave args "" for a process whose name (comm) wantArgs rejects and that is not tracked
+  // pass; a new process whose name (comm) wantArgs rejects may show a pass later (most such live less than a pass)
   // discover false: no look for new pids this call (the known ones, tracked read fresh; ps adapters list all anyway)
   listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean, discover: boolean): ProcRow[];
   // recent cpu% of a process (not a lifetime average) given the cpu listProcs reported; called once per refresh for each process shown
