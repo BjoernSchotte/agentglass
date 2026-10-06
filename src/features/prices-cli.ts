@@ -27,9 +27,9 @@ const LIST_OPTS = setOptions("prices", [
 const SET_OPTS = setOptions("prices set", [
   opt("--in", "<$>", "input $ per million tokens (required)", "", []), opt("--out", "<$>", "output $ per million tokens (required)", "", []),
   opt("--cache-read", "<$>", "cache read $/Mtok", "0.1 × in", []), opt("--cache-write", "<$>", "5-minute cache write $/Mtok", "1.25 × in", []),
-  opt("--cache-write-1h", "<$>", "1-hour cache write $/Mtok", "2 × in", []), opt("--json", "", "{model, stored, before, after, file, note}", "", [])]);
-const ALIAS_OPTS = setOptions("prices alias", [opt("--json", "", "{model, stored, before, after, file, note}", "", [])]);
-const UNSET_OPTS = setOptions("prices unset", [opt("--json", "", "{model, stored, before, after, file, removed}", "", [])]);
+  opt("--cache-write-1h", "<$>", "1-hour cache write $/Mtok", "2 × in", []), opt("--json", "", "{model, stored, provider, before, after, file, note}", "", [])]);
+const ALIAS_OPTS = setOptions("prices alias", [opt("--json", "", "{model, stored, provider, before, after, file, note}", "", [])]);
+const UNSET_OPTS = setOptions("prices unset", [opt("--json", "", "{model, stored, provider, before, after, file, removed}", "", [])]);
 const HELP = `usage: agentglass prices [--json] [--since today|<n>d|YYYY-MM-DD] [--unpriced]
        agentglass prices set <model> --in <$> --out <$> [--cache-read <$>] [--cache-write <$>] [--cache-write-1h <$>]
        agentglass prices alias <model> <target>
@@ -125,24 +125,31 @@ function describe(r: Resolved | null): string {
   return r.src + " " + p;
 }
 function stateObj(r: Resolved | null): Obj { return { source: r ? r.src : "unpriced", via: r ? r.via : "", price: priceObj(r ? r.p : null) }; }
-// the harness-reported note for a model, from the cached ledger (no log is read: the sessions as last indexed)
-function noteOf(model: string): string {
+// the model's price row over all days, from the cached ledger (no log is read: the sessions as last indexed); null = no use
+let rowMemo: PRow | null = null; let rowFor = "";
+function rowOf(model: string): PRow | null {
+  const k = storedKey(model); if (rowFor === k) return rowMemo;
   discover(); // loads the ledger cache (H.firstScan)
   const list: SessAcc[] = [];
   for (const [path, a] of ledger) { const s = sessions.get(path); list.push({ a, h: s ? s.h : "" }); }
-  const k = storedKey(model);
-  for (const r of priceRows(list, null)) if (r.model === k || storedKey(r.model) === k) return reportedNote(r);
-  return "";
+  rowFor = k; rowMemo = null;
+  for (const r of priceRows(list, null)) if (r.model === k || storedKey(r.model) === k) { rowMemo = r; break; }
+  return rowMemo;
 }
+// the harness-reported note for a model
+function noteOf(model: string): string { const r = rowOf(model); return r ? reportedNote(r) : ""; }
+// the provider the model's tokens are mostly booked under ("" = none): a gateway price applies only there, so the
+// before/after lines resolve with it, as `prices` and the Stats panel show the row
+function provOf(model: string): string { const r = rowOf(model); return r ? r.prov : ""; }
 function write(model: string, e: Obj | null): void {
   try { setUserEntry(PRICES_FILE, model, e); }
   catch (x) { cliError("prices_file", x instanceof Error ? x.message : String(x), "fix " + home(PRICES_FILE) + " (it was not changed)", 1); }
   reloadPrices("cli"); // the user layer again, and the ledger this run loaded re-priced (its cache saves consistent)
 }
 function report(json: boolean, model: string, before: Resolved | null, extra: Obj, note: string): void {
-  const k = storedKey(model); const after = resolve(k, "");
+  const k = storedKey(model); const prov = provOf(model); const after = resolve(k, prov);
   if (json) {
-    const o: Obj = { model, stored: k, before: stateObj(before), after: stateObj(after), file: PRICES_FILE, note };
+    const o: Obj = { model, stored: k, provider: prov, before: stateObj(before), after: stateObj(after), file: PRICES_FILE, note };
     for (const x of Object.keys(extra)) o[x] = extra[x];
     out(JSON.stringify(o));
   } else {
@@ -177,7 +184,7 @@ function setCmd(args: string[]): void {
     return r.p ? r.p.o : -1;
   };
   const p: PriceIn = { i: rate("--in"), o: rate("--out"), cr: rate("--cache-read"), cw: rate("--cache-write"), cw1: rate("--cache-write-1h") };
-  const before = resolve(storedKey(model), "");
+  const before = resolve(storedKey(model), provOf(model));
   const note = noteOf(model);
   write(model, entryOf(p));
   report(wantJson(args), model, before, {}, note);
@@ -189,18 +196,18 @@ function aliasCmd(args: string[]): void {
   const tr = resolve(tk, "");
   if (tr && tr.src === "alias") usage("aliases do not chain: " + target + " is an alias of " + tr.via, "agentglass prices alias " + model + " " + tr.via);
   if (!tr) usage(target + " has no price — set one first (agentglass prices set " + target + " …)", "agentglass prices set " + target + " --in <$> --out <$>");
-  const before = resolve(k, "");
+  const before = resolve(k, provOf(model));
   const note = noteOf(model);
   write(model, { alias: tk });
   report(wantJson(args), model, before, {}, note);
 }
 function unsetCmd(args: string[]): void {
   const model = positional(args, 1, [], ["--json"], "unset")[0] ?? "";
-  const json = wantJson(args); const before = resolve(storedKey(model), "");
+  const json = wantJson(args); const prov = provOf(model); const before = resolve(storedKey(model), prov);
   if (!userEntry(PRICES_FILE, model)) {
     const u = readUserFile(PRICES_FILE);
     if (u.bad) cliError("prices_file", PRICES_FILE + ": " + u.bad, "fix " + home(PRICES_FILE) + " (it was not changed)", 1);
-    if (json) out(JSON.stringify({ model, stored: storedKey(model), before: stateObj(before), after: stateObj(before), file: PRICES_FILE, removed: false }));
+    if (json) out(JSON.stringify({ model, stored: storedKey(model), provider: prov, before: stateObj(before), after: stateObj(before), file: PRICES_FILE, removed: false }));
     else out(model + ": nothing to remove (source: " + (before ? before.src : "unpriced") + ")");
     process.exit(0);
   }
