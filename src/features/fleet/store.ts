@@ -34,8 +34,9 @@ export function spoolOf(k: string): Spool | null {
   return { rcAt: at, rc, err: firstErr(readText(spoolPath(k, "err"), 0, 4096)) };
 }
 // the first stderr line that says something (ssh warnings about known_hosts additions come first and are not the cause)
+// (control characters, C1 included, become spaces: the text comes from the remote host and reaches a terminal)
 export function firstErr(t: string): string {
-  const ls = t.split("\n").map((l: string) => l.trim()).filter((l: string) => l !== "");
+  const ls = t.split("\n").map((l: string) => l.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim()).filter((l: string) => l !== "");
   for (const l of ls) if (!/^Warning: Permanently added/.test(l)) return l.slice(0, 300);
   return ls.length ? (ls[0] ?? "").slice(0, 300) : "";
 }

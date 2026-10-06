@@ -24,6 +24,9 @@ ok("version", allowed(["agentglass", "--version"]).err === "" && allowed(["agent
 const REF: string[][] = [["sh", "-c", "x"], ["agentglass", "--json"], ["agentglass", "fleet", "pull", "--days", "999"], ["agentglass", "fleet", "pull", "--days", "0"], ["agentglass", "fleet", "pull", "--days"],
   ["agentglass", "fleet", "pull", "--x"], ["agentglass-evil", "fleet", "pull"], ["agentglass", "fleet", "serve"], ["agentglass", "fleet", "pull", "--redact", "--redact"],
   ["agentglass", "--version", "--x"], ["agentglass"], ["agentglass", "open", "x"], ["agentglass", "fleet", "pull", "--days", "7", "--days", "8"]];
+// what a hostile viewer might send: each refused by the splitter or the allow-list, never run
+for (const s of ["agentglass\rfleet pull", "agentglass fleet pull --days=7", "agentglass fleet pull --no-redact", "agentglass fleet pull # x", "agentglass fleet pull --days 7*",
+  "agentglass --redact=0 fleet pull", "agentglass fleet pull -- --x", "agentglass fleet  pull --days '7 ;id'"]) { const r = words(s); ok("hostile " + JSON.stringify(s), r.err !== "" || allowed(r.w).err !== "", W(s)); }
 for (const w of REF)
   ok("refused " + w.join(" "), allowed(w).err === 'only fleet pull and --version are allowed', A(w));
 const k = keyLine("/h/.local/bin/agentglass", "ssh-ed25519 AAAAC3Nz me@x", "100.64.0.0/10", true);
@@ -34,6 +37,8 @@ ok("newline in key", keyLine("/a/agentglass", "ssh-ed25519 AAAA a\nssh-rsa BBBB"
 ok("quote in key", keyLine("/a/agentglass", "ssh-ed25519 AAAA a\"b", "", false).err !== "", "accepted");
 ok("options in key", keyLine("/a/agentglass", "command=\"x\" ssh-ed25519 AAAA", "", false).err !== "", "accepted");
 ok("bad from", keyLine("/a/agentglass", "ssh-ed25519 AAAA", "1.2.3.4\" x", false).err !== "", "accepted");
+ok("escape in the key comment", keyLine("/a/agentglass", "ssh-ed25519 AAAA a\u001b]0;x\u0007b", "", false).err !== "", "accepted");
+ok("non-ASCII key comment", keyLine("/a/agentglass", "ssh-ed25519 AAAA björn@laptop", "", false).err === "", "refused");
 ok("space in path", keyLine("/a b/agentglass", "ssh-ed25519 AAAA", "", false).err.indexOf("plain path") >= 0, "accepted");
 console.log(bad ? String(bad) + " failed" : "fleet serve: all checks passed");
 if (bad) process.exit(1);

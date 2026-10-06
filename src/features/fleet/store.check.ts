@@ -39,6 +39,7 @@ writeFileSync(join(dir, "ws.rc"), "255\n"); writeFileSync(join(dir, "ws.err"), "
 const sp = spoolOf("ws");
 ok("spool rc + first real err line", sp !== null && sp.rc === 255 && sp.err === "ssh: connect to host ws port 22: Connection refused", JSON.stringify(sp));
 ok("firstErr empty", firstErr("") === "", "x");
+ok("firstErr: no terminal escapes from the remote", firstErr("\u001b[2J\u009b31mevil\u0007\n") === "[2J 31mevil", JSON.stringify(firstErr("\u001b[2J\u009b31mevil\u0007\n")));
 for (const f of ["old.jsonl", "old.r.jsonl", "old.rc", "old.rc.tmp", "ws.r.jsonl", "notes.txt", "Bad.jsonl"]) writeFileSync(join(dir, f), "x");
 const outside = join(HOME, "agdir", "old.jsonl"); writeFileSync(outside, "x");
 forget(["ws", "cut"]);

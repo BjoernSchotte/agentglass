@@ -64,7 +64,7 @@ export function allowed(w: string[]): { args: string[]; redact: boolean; err: st
   }
   return { args, redact, err: "" };
 }
-const KEY_RE = /^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com) [A-Za-z0-9+\/=]+( [^\n"]{0,200})?$/;
+const KEY_RE = /^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com) [A-Za-z0-9+\/=]+( [^\u0000-\u001f\u007f-\u009f"]{0,200})?$/; // the comment: no quote, no control character
 // the authorized_keys line that limits pub to fleet serve (restrict: no pty, forwarding, agent, X11, ~/.ssh/rc)
 export function keyLine(execPath: string, pub: string, from: string, redact: boolean): { line: string; err: string } {
   const k = pub.trim();

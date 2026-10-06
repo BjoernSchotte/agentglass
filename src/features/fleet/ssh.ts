@@ -2,7 +2,7 @@
 // shared connection; the tick only stats the .rc file and reads the report a window of lines at a time
 // SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
-import { openSync, writeSync, closeSync, unlinkSync, renameSync } from "node:fs";
+import { openSync, writeSync, closeSync, unlinkSync, renameSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { sha256Hex } from "../../util/sha256.ts";
 import { readText } from "../../util/fs.ts";
@@ -45,9 +45,10 @@ export function sshOpts(cp: string): string[] {
   const o = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "-o", "Compression=yes"];
   return cp ? o.concat(["-o", "ControlMaster=auto", "-o", "ControlPath=" + cp, "-o", "ControlPersist=600"]) : o;
 }
-// options, then the destination (never starting with "-": config.ts), then the remote words, each quoted
+// options, "--", the destination (never starting with "-": config.ts), then the remote words, each quoted. OpenSSH parses
+// options again after the destination unless "--" ended them: nothing after it is ever an option
 export function sshArgs(h: HostCfg, days: number, redact: boolean, cp: string): string[] {
-  const a = sshOpts(cp).concat([h.ssh, q(h.agentglass), q("fleet"), q("pull"), q("--days"), q(String(days))]);
+  const a = sshOpts(cp).concat(["--", h.ssh, q(h.agentglass), q("fleet"), q("pull"), q("--days"), q(String(days))]);
   if (redact) a.push(q("--redact"));
   return a;
 }
@@ -86,7 +87,7 @@ export function parseStatus(err: string, h: HostCfg): { code: string; msg: strin
 }
 export const FEEDTEST = { timeoutMs: 0 }; // checks: a short timeout
 function writeFileAtomic(path: string, text: string): void {
-  try { const tmp = path + ".w"; const fd = openSync(tmp, "w"); writeSync(fd, text); closeSync(fd); renameSync(tmp, path); } catch (e) { /* the pid file is a courtesy */ }
+  try { const tmp = path + ".w"; const fd = openSync(tmp, "w"); chmodSync(tmp, 0o600); writeSync(fd, text); closeSync(fd); renameSync(tmp, path); } catch (e) { /* the pid file is a courtesy */ }
 }
 function alive(pid: number): boolean { if (pid <= 0) return false; try { process.kill(pid, 0); return true; } catch (e) { return String(e).indexOf("EPERM") >= 0; } }
 // a pull another agentglass started (a CLI run next to the TUI): still running → wait for its .rc instead of a second one

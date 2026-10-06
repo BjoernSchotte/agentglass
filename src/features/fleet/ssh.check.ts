@@ -23,10 +23,10 @@ ok("control path too long", controlPath("/" + "x".repeat(80), "ws") === "", cont
 ok("control path at the limit", controlPath("/" + "x".repeat(74), "ws") !== "" && controlPath("/" + "x".repeat(75), "ws") === "", String(("/" + "x".repeat(74) + "/f-012345678901").length));
 const h: HostCfg = { name: "ws", ssh: "me@ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" };
 const want = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "-o", "Compression=yes",
-  "-o", "ControlMaster=auto", "-o", "ControlPath=/r/f-0123", "-o", "ControlPersist=600", "me@ws", "'agentglass'", "'fleet'", "'pull'", "'--days'", "'7'", "'--redact'"];
+  "-o", "ControlMaster=auto", "-o", "ControlPath=/r/f-0123", "-o", "ControlPersist=600", "--", "me@ws", "'agentglass'", "'fleet'", "'pull'", "'--days'", "'7'", "'--redact'"];
 ok("argv", JSON.stringify(sshArgs(h, 7, true, "/r/f-0123")) === JSON.stringify(want), JSON.stringify(sshArgs(h, 7, true, "/r/f-0123")));
 const noSh = sshArgs(h, 3, false, "");
-ok("argv without sharing", noSh.indexOf("ControlMaster=auto") < 0 && noSh[noSh.length - 1] === "'3'" && noSh.indexOf("me@ws") === 11, JSON.stringify(noSh));
+ok("argv without sharing", noSh.indexOf("ControlMaster=auto") < 0 && noSh[noSh.length - 1] === "'3'" && noSh.indexOf("me@ws") === 12 && noSh[11] === "--", JSON.stringify(noSh));
 ok("status ssh", statusOf(255, "ssh: Could not resolve hostname ws: Name or service not known", h, 90).msg.indexOf("Could not resolve hostname") >= 0, "msg");
 ok("status publickey", statusOf(255, "me@ws: Permission denied (publickey).", h, 90).msg.indexOf("ssh-agent") >= 0, statusOf(255, "me@ws: Permission denied (publickey).", h, 90).msg);
 ok("status 127", statusOf(127, "", h, 90).msg.indexOf("set fleet.hosts[].agentglass") >= 0 && statusOf(127, "", h, 90).code === "missing", "127");
