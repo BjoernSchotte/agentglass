@@ -34,7 +34,8 @@ import { DEBUG_PARTS } from "../../util/selfmem.ts";
 import { MSTAT } from "./merge.ts";
 
 // on: hosts configured and this run pulls; force: the palette's "refresh now"; due/fails/doneAt per host name
-const T = { on: false, force: false, due: new Map<string, number>(), fails: new Map<string, number>(), busy: new Map<string, boolean>(), seeded: new Set<string>(), gen: 0, nossh: false };
+// rgen: bumped by a new report or a freshness change (the fleet figures follow it; gen also follows the live stream)
+const T = { rgen: 0, fsig: "", on: false, force: false, due: new Map<string, number>(), fails: new Map<string, number>(), busy: new Map<string, boolean>(), seeded: new Set<string>(), gen: 0, nossh: false };
 export const BACKOFF_MS = [30000, 60000, 120000, 240000, 480000, 900000];
 // the interval a host is pulled at: refreshSeconds, at least 300 s while nobody looks
 export function intervalMs(c: FleetCfg, away: boolean): number { return (away ? Math.max(c.refreshS, 300) : c.refreshS) * 1000; }
@@ -97,6 +98,8 @@ function tick(): void {
   }
   if (fresh) { reapply(); for (const rh of FLEET.hosts) if (rh.dupOf && !rh.merged && !T.seeded.has("dup:" + rh.cfg.name)) { T.seeded.add("dup:" + rh.cfg.name); say("warn", "fleet host " + rh.cfg.name + " is the same machine as " + rh.dupOf + ": not merged (agentglass fleet status)"); } }
   if (syncFresh(now) || fresh) { T.gen++; S.dirty = true; }
+  let fs = ""; for (const rh of FLEET.hosts) fs += rh.fresh ? "1" : "0";
+  if (fresh || fs !== T.fsig) { T.fsig = fs; T.rgen++; } // what the fleet figures depend on moved: a report, a host's freshness
   for (const m of toasts.slice(-3)) say("warn", m); // a burst after a long gap: the last ones
   if (T.nossh) return;
   const force = T.force; T.force = false;
@@ -179,12 +182,13 @@ const OV = { k: "", v: new Set<string>() };
 const FN: FleetNow = { at: 0, gen: -1, cn: null, hdr: null, ov: new Set<string>(), per: [], approx: false };
 function fleetNow(cn: CostNow): FleetNow {
   const now = Date.now(); const c = FLEET.cfg;
-  if (!c || (FN.gen === T.gen && FN.cn === cn && now - FN.at < 5000)) return FN;
+  const away = AWAY.on; // nobody looks: the fleet figures follow a minute behind, the merge every 5 minutes (a report still merges at once)
+  if (!c || (FN.gen === T.rgen && (away || FN.cn === cn) && now - FN.at < (away ? 60000 : 5000))) return FN;
   const hs = merged();
-  const ok = String(T.gen) + "|" + String(sessions.size) + "|" + String(SG.gen);
+  const ok = String(FLEET.rowsGen) + "|" + String(sessions.size) + "|" + String(SG.gen);
   if (OV.k !== ok) { OV.k = ok; const loc: Sess[] = []; for (const s of sessions.values()) if (!s.parent) loc.push(s); OV.v = overlap(loc, hs); } // the session sets moved
-  const ov = OV.v; const fc = fleetCost(cn, hs, now, c, ov.size, 30000); const bs = fleetBudget(fc); FD.m += Date.now() - now;
-  FN.at = now; FN.gen = T.gen; FN.cn = cn; FN.ov = ov; FN.approx = fc.approx;
+  const ov = OV.v; const fc = fleetCost(cn, hs, now, c, ov.size, away ? 300000 : 30000); const bs = fleetBudget(fc); FD.m += Date.now() - now;
+  FN.at = now; FN.gen = T.rgen; FN.cn = cn; FN.ov = ov; FN.approx = fc.approx;
   FN.hdr = { today: fc.today, state: bs.state, approx: fc.marked };
   FN.per = fc.perHost.map((p) => ({ name: p.name, usd: p.today, wk: p.week, stale: p.stale, age: p.age, local: p.local }));
   return FN;
@@ -204,8 +208,8 @@ FLEET_HOOK.line = (w: number, week: boolean): string => {
 // generation and 5 s, as the cost figures: the header draws every frame, and this machine's part stats ~/.claude.json
 const AL = { at: 0, gen: -1, claude: null as Allow | null, codex: null as RlWin[] | null };
 function allowNow(): void {
-  const now = Date.now(); if (AL.gen === T.gen && now - AL.at < 5000) return;
-  AL.at = now; AL.gen = T.gen; const hs = merged();
+  const now = Date.now(); if (AL.gen === T.rgen && now - AL.at < 5000) return;
+  AL.at = now; AL.gen = T.rgen; const hs = merged();
   AL.claude = hs.length ? claudeOf(hs, now) : null; AL.codex = hs.length ? codexOf(hs) : null;
 }
 FLEET_HOOK.claude = (): Allow | null => { if (!T.on) return null; allowNow(); return AL.claude; };

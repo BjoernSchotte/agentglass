@@ -31,7 +31,7 @@ import type { HostFeed, HostReport, FeedState, OwnRow, LiveRow } from "./model.t
 export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null; applied: HostReport | null; beatAt: number; live: Map<string, LiveRow>;
   mine: HostReport | null; mineAt: number; via: string; vkind: string; merged: boolean }
 // localId: this machine's hostId(); intervalMs: the effective refresh interval (stretched while the TUI is unfocused)
-export const FLEET = { hosts: [] as RemoteHost[], cfg: null as FleetCfg | null, localId: "", intervalMs: 60000 };
+export const FLEET = { hosts: [] as RemoteHost[], cfg: null as FleetCfg | null, localId: "", intervalMs: 60000, rowsGen: 0 }; // rowsGen: bumped when a host's rows are rebuilt
 const OBJ = new Map<string, Obj>(); // remote row path → its --json object (preview, fleet --json)
 export function rowObj(s: Sess): Obj | null { return s.host ? OBJ.get(s.path) ?? null : null; }
 function num(v: unknown): number { return typeof v === "number" ? v as number : 0; }
@@ -117,6 +117,7 @@ function show(rh: RemoteHost, r: HostReport, at: number, src: RemoteHost, dup: s
   }
   for (const s of rh.rows) OBJ.delete(s.path);
   rh.dupOf = dup; rh.applied = r;
+  FLEET.rowsGen++;
   if (dup) rh.rows = [];
   else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh, rh.vkind !== "dir"); overlay(rh, Date.now()); }
   RG.gen++;
