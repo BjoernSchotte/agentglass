@@ -42,6 +42,10 @@ export function devOf(tty: string): string { return tty && tty !== "??" && tty !
 export function detached(cmd: string, args: string[]): void {
   try { const ch = spawn(cmd, args, { stdio: "ignore", detached: true }); ch.on("error", (e: Error) => { /* not installed */ }); ch.unref(); } catch (e) { /* best effort */ }
 }
+// the same spawn, returning the child's pid (it leads its own process group: kill(-pid) ends it and its children); 0 = failed
+export function detachedPid(cmd: string, args: string[]): number {
+  try { const ch = spawn(cmd, args, { stdio: "ignore", detached: true }); ch.on("error", (e: Error) => { /* not installed */ }); const pid = ch.pid ?? 0; ch.unref(); return pid; } catch (e) { return 0; }
+}
 // a name for path inside dir that is not taken yet: "x.jsonl", "x 2.jsonl", "x 3.jsonl", …
 export function freeName(dir: string, path: string): string {
   const b = basename(path);

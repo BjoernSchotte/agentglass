@@ -1,0 +1,50 @@
+// agentglass — self-check for the fleet spool: scriptc build src/features/fleet/store.check.ts -o st && ./st
+// SPDX-License-Identifier: Apache-2.0
+import { mkdirSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { HOME } from "../../util/fs.ts";
+import { OS } from "../../platform/index.ts";
+import { str } from "../../util/json.ts";
+import { FORMAT, type HostReport } from "./model.ts";
+import { reportLines, sessRowOf } from "./report.ts";
+import { fleetDir, ensureDir, keyOf, newReader, readStep, forget, spoolOf, firstErr } from "./store.ts";
+
+let bad = 0;
+function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
+const dir = join(HOME, "agdir", "fleet"); process.env["AGENTGLASS_FLEET_DIR"] = dir;
+ok("fleetDir from env at call time", fleetDir() === dir, fleetDir());
+ok("ensureDir", ensureDir() === "", ensureDir());
+const fi = OS.fileInfo(dir);
+ok("0700", fi !== null && fi.kind === "dir" && (fi.mode & 0o077) === 0, fi ? String(fi.mode) : "missing");
+const g = join(HOME, "open"); mkdirSync(g); chmodSync(g, 0o770);
+process.env["AGENTGLASS_FLEET_DIR"] = g;
+ok("group-writable refused", ensureDir().indexOf("allows group/other access") >= 0, ensureDir());
+process.env["AGENTGLASS_FLEET_DIR"] = dir;
+ok("keyOf", keyOf("ws", true) === "ws.r" && keyOf("ws", false) === "ws", keyOf("ws", true));
+const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 1, priceSig: "" }, sessions: [], cost: null, allowance: null, live: null, exact: false };
+for (let i = 0; i < 900; i++) rep.sessions.push(sessRowOf({ id: "s" + String(i), harness: "codex", title: "ünïcode " + String(i) }));
+writeFileSync(join(dir, "ws.jsonl"), reportLines(rep).join("\n") + "\n");
+const r = newReader("ws");
+const a = readStep(r, 256); const b = readStep(r, 256); const c = readStep(r, 256);
+ok("three windows unfinished", a === undefined && b === undefined && c === undefined, String(r.p.sessions.length));
+const d = readStep(r, 256);
+const last = d ? d.sessions[d.sessions.length - 1] : undefined; const lt = last ? str(last.s["title"]) : "";
+ok("then the report", d !== undefined && d !== null && d.sessions.length === 900 && lt === "ünïcode 899", d ? String(d.sessions.length) + " " + lt : "none " + r.p.err);
+writeFileSync(join(dir, "cut.jsonl"), reportLines(rep).slice(0, 50).join("\n") + "\n");
+const rc = newReader("cut"); let x = readStep(rc, 256); while (x === undefined) x = readStep(rc, 256);
+ok("no end: null + incomplete", x === null && rc.p.err === "incomplete report", rc.p.err);
+const rm = newReader("missing"); const y = readStep(rm, 256);
+ok("missing file", y === null && rm.p.err === "no report", rm.p.err);
+writeFileSync(join(dir, "ws.rc"), "255\n"); writeFileSync(join(dir, "ws.err"), "Warning: Permanently added 'ws' (ED25519) to the list of known hosts.\nssh: connect to host ws port 22: Connection refused\n");
+const sp = spoolOf("ws");
+ok("spool rc + first real err line", sp !== null && sp.rc === 255 && sp.err === "ssh: connect to host ws port 22: Connection refused", JSON.stringify(sp));
+ok("firstErr empty", firstErr("") === "", "x");
+for (const f of ["old.jsonl", "old.r.jsonl", "old.rc", "old.rc.tmp", "ws.r.jsonl", "notes.txt", "Bad.jsonl"]) writeFileSync(join(dir, f), "x");
+const outside = join(HOME, "agdir", "old.jsonl"); writeFileSync(outside, "x");
+forget(["ws", "cut"]);
+ok("forget removes old", !existsSync(join(dir, "old.jsonl")) && !existsSync(join(dir, "old.r.jsonl")) && !existsSync(join(dir, "old.rc")) && !existsSync(join(dir, "old.rc.tmp")), "kept");
+ok("forget keeps configured", existsSync(join(dir, "ws.jsonl")) && existsSync(join(dir, "ws.r.jsonl")) && existsSync(join(dir, "ws.rc")) && existsSync(join(dir, "cut.jsonl")), "removed");
+ok("forget keeps foreign names", existsSync(join(dir, "notes.txt")) && existsSync(join(dir, "Bad.jsonl")), "removed");
+ok("forget stays inside", existsSync(outside), "removed outside");
+console.log(bad ? String(bad) + " failed" : "fleet store: all checks passed");
+if (bad) process.exit(1);
