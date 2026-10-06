@@ -10,7 +10,7 @@ import { type Sess, newSess } from "../../model/types.ts";
 import type { SState } from "../../model/state.ts";
 import type { HostCfg } from "./config.ts";
 import type { LiveRow } from "./model.ts";
-import { type WState, newWState, watchLines, alertLine, BEAT_MS, REPEAT_MS } from "./watch.ts";
+import { type WState, newWState, watchLines, alertLine, betterState, BEAT_MS, REPEAT_MS } from "./watch.ts";
 import { type WatchEv, watchFeed, feedWatch, watchArgs, WATCH_MAX, WATCH_SNIPPET } from "./watchfeed.ts";
 import { type RemoteHost, overlay, liveFresh, LIVE_FRESH_MS, newRemote } from "./hosts.ts";
 import { alertOut, turnDue } from "./tui.ts";
@@ -23,6 +23,9 @@ const dir = join(HOME, "fleet"); process.env["AGENTGLASS_FLEET_DIR"] = dir; mkdi
 function st(live: boolean, busy: boolean): SState { return { live, busy, attention: false, approval: false, stuck: "" }; }
 function kinds(ls: string[]): string { const o: string[] = []; for (const l of ls) { const x = parse(l); if (x) o.push(Object.keys(x)[0] ?? ""); } return o.join(","); }
 
+// twins (one session under two project dirs, one of them live): one state per key, the live one, so the stream does not
+// flap between them every second
+ok("of two states of a session the live one", betterState(st(true, false), st(false, false)) && !betterState(st(false, false), st(true, false)) && betterState(st(true, true), st(true, false)), "");
 // ── the remote side: pure lines over stub states and a fake clock ──
 const w: WState = newWState(); let t = 1000000;
 let ls = watchLines(w, [{ key: "claude:a", st: st(true, true) }, { key: "claude:b", st: st(true, false) }], t);

@@ -43,6 +43,8 @@ export function watchLines(w: WState, rows: { key: string; st: SState }[], now: 
   if (now - w.beat >= BEAT_MS) { w.beat = now; out.push(JSON.stringify({ beat: now })); }
   return out;
 }
+// of two states of one session: the live one, then the busy one, then one that wants attention
+export function betterState(a: SState, b: SState): boolean { if (a.live !== b.live) return a.live; if (a.busy !== b.busy) return a.busy; return (a.attention || a.approval) && !(b.attention || b.approval); }
 export function alertLine(key: string, a: AlertT, at: number): string {
   const labels: Obj = {}; for (const l of a.labels) labels[l[0] ?? ""] = l[1] ?? "";
   return JSON.stringify({ alert: { key, rule: a.rule, severity: a.severity, state: a.state, value: a.value, threshold: a.threshold, labels, message: a.message, at } });
@@ -64,13 +66,16 @@ export function watchCli(args: string[]): void {
     tick: (t: number): void => {
       if (t - last < 1000) return; // the loop polls every 500 ms; state once a second is enough for a viewer
       last = t;
-      const rows: { key: string; st: SState }[] = [];
+      // one state per key: a session read under two project dirs (twins) is one session, live if either copy is
+      const by = new Map<string, SState>(); const ks: string[] = [];
       for (const s of sessions.values()) {
         if (s.parent) continue;
         const k = keyOf(s);
         if (!s.pid && !w.st.has(k)) continue;
-        rows.push({ key: k, st: sessState(s, approvalOf, working) });
+        const st = sessState(s, approvalOf, working); const prev = by.get(k);
+        if (!prev) { by.set(k, st); ks.push(k); } else if (betterState(st, prev)) by.set(k, st);
       }
+      const rows: { key: string; st: SState }[] = []; for (const k of ks) { const st = by.get(k); if (st) rows.push({ key: k, st }); }
       for (const l of watchLines(w, rows, t)) emit(l);
     },
     stop: (): void => {},

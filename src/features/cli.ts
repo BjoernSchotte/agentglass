@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
 import { H, complete, screenOut, display } from "../hooks.ts";
-import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity } from "../model/sessions.ts";
+import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, probeLive } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf, window } from "../harness/index.ts";
 import { type Obj, base } from "../util/json.ts";
@@ -346,7 +346,7 @@ export function watch(o: Opts, sink: Sink | null): void {
     if ((o.forMs > 0 && now - t0 >= o.forMs) || (o.idle && now - lastOut >= IDLE_MS)) quit(); // a sink flushes first
     // every: [scan, processes + rules, slow process facts] in 500 ms ticks (fleet watch polls less: a budget per host)
     if (tick % (o.every[0] ?? 4) === 0) scan();
-    if (tick % (o.every[1] ?? 3) === 0) { refreshProcs(); liveDiff(); if (o.alerts && (lines || sink)) alerts(); }
+    if (tick % (o.every[1] ?? 3) === 0) { refreshProcs(); if (!lines) probeLive(); liveDiff(); if (o.alerts && (lines || sink)) alerts(); } // a sink reads no logs: the live ones' sizes for their tails (busy)
     if (tick % (o.every[2] ?? 10) === 0) { refreshSlow(); liveDiff(); }
     if (lines) poll();
     if (sink) sink.tick(Date.now());
