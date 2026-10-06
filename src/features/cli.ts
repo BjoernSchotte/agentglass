@@ -303,7 +303,7 @@ export function watch(o: Opts, sink: Sink | null): void {
   const alerts = (): void => {
     const rs = rules(); const lk = looker(); const now = Date.now(); const led = ledgerRule(rs);
     for (const s of sessions.values()) {
-      if (!watched(s) || !wanted(s, o)) { forgetSession(s.path); continue; }
+      if (!watched(s) || !wanted(s, o)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } forgetSession(s.path); continue; } // as the TUI: an ended session keeps no flag
       const shown = !o.cf || cliWatchEvent(o.cf, s, "alert", "", ""); // event/call clauses: an alert line is an event too
       if (led && now - (ledAt.get(s.path) ?? 0) >= 10000) { ledAt.set(s.path, now); ledgerComplete(s); } // cost, tokens, call rows
       loadTail(s);
