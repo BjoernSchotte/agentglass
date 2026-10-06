@@ -1,7 +1,6 @@
 #!/bin/sh
 # agentglass receive against the built binary on 127.0.0.1:0: auth, formats, limits, pinning, rate, rotation, scrub,
 # listen policy, lock, disk budget, status, service, signals: sh scripts/receive.test.sh
-# check: timing — Expect: 100-continue latency bound; runs alone after the pool
 set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR
 export AGENTGLASS_AGENT=0
@@ -138,13 +137,15 @@ PY
 eq "odd places" "$(post /v1/traces "$tsc" application/json "$t/odd.json")" 200
 eq "nothing from odd places on disk" "$(cat "$hub"/*/*.jsonl | grep -c 'SECRET-\|l@example.com' || true)" 0
 
-# Expect: 100-continue with a 4 MB body: no stall
+# Expect: 100-continue with a 4 MB body: no stall. curl waits up to --expect100-timeout for the 100 before it sends the
+# body anyway: 10 s, so a server that never says 100 takes 10 s here, whatever the runner's load (a 0.2 s bound on the
+# whole request failed on a loaded macOS runner at 0.22 s)
 python3 -c "
 import json
 print(json.dumps({'resourceSpans':[{'resource':{'attributes':[]},'scopeSpans':[{'spans':[{'traceId':'%032x'%i,'spanId':'%016x'%i,'name':'x'*180} for i in range(19000)]}]}]}))" > "$t/4mb.json"
-tt=$(printf 'header = "Authorization: Bearer %s"\n' "$tpb" | curl -s -o /dev/null -w '%{time_total} %{http_code}' -K - -H 'Content-Type: application/json' -H 'Expect: 100-continue' --data-binary "@$t/4mb.json" "http://127.0.0.1:$port/v1/traces")
+tt=$(printf 'header = "Authorization: Bearer %s"\n' "$tpb" | curl -s -o /dev/null -w '%{time_total} %{http_code}' -K - -H 'Content-Type: application/json' -H 'Expect: 100-continue' --expect100-timeout 10 --data-binary "@$t/4mb.json" "http://127.0.0.1:$port/v1/traces")
 eq "4 MB with Expect: code" "${tt#* }" 200
-awk -v x="${tt% *}" 'BEGIN { exit !(x < 0.2) }' || { echo "FAIL Expect: 100-continue took ${tt% *} s"; fail=1; }
+awk -v x="${tt% *}" 'BEGIN { exit !(x < 5) }' || { echo "FAIL Expect: 100-continue took ${tt% *} s (no 100 Continue: curl waited for it)"; fail=1; }
 
 # expansion bombs (authenticated; after the Expect timing: a grown heap must not slow that check): tiny gzip bodies whose parse tree or decoded JSON would take gigabytes → 413, RSS bounded
 python3 - "$t" <<'PY'
