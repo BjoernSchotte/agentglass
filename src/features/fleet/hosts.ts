@@ -50,7 +50,8 @@ export function rowsOf(h: string, r: HostReport, at: number): Sess[] {
     if (hit && hit.o === o) { hit.s.rat = at; OBJ.set(path, o); seen.add(path); out.push(hit.s); continue; } // the same --json object: the same row
     const s = newSess(harness, id, path, false);
     s.host = h; s.rat = at; s.rlive = o["live"] === true; s.headDone = true; s.tailSize = 0;
-    s.title = str(o["title"]) || (hostByName(h)?.cfg.kind === "otlp" ? id : "(no prompt yet)"); // a hub host sends titles only when its export opts in: the id shows s.cwd = str(o["cwd"]); s.branch = str(o["branch"]); s.remote = str(o["remote"]); s.model = str(o["model"]);
+    // a hub host (otlp-hub) sends titles only when its export opts in: no title there means "not sent", so the id shows
+    s.title = str(o["title"]) || (hostByName(h)?.cfg.kind === "otlp" ? id : "(no prompt yet)"); s.cwd = str(o["cwd"]); s.branch = str(o["branch"]); s.remote = str(o["remote"]); s.model = str(o["model"]);
     const t = Date.parse(str(o["updated"])); s.mtime = t > 0 ? t : 0; s.last = s.mtime; s.size = num(o["bytes"]);
     s.status = str(o["status"]); s.kind = str(o["kind"]);
     const tk = obj(o["tokens"]) ?? {}; s.inTok = num(tk["in"]); s.outTok = num(tk["out"]); s.cacheRTok = num(tk["cacheRead"]); s.cacheWTok = num(tk["cacheWrite"]);
