@@ -42,9 +42,38 @@ jobs:
         run: |
           . scripts/release-lib.sh; notes_for "$VERSION" > notes.md; [ -s notes.md ] || echo "Release $VERSION" > notes.md
           sh scripts/publish-release.sh "$TAG" out notes.md stable "agentglass $VERSION"
+  # the formula is rendered here (scripts/formula.sh: agentglass plus agentglass-receive-tls where an archive ships it), proven
+  # by a native brew install + test, then committed to the tap (its generic update-formula.yml only swaps versions and
+  # checksums, so it could never add the second binary)
   tap:
     needs: [meta, publish]
     runs-on: ubuntu-24.04
+    env: { TAG: "${{ needs.meta.outputs.tag }}", VERSION: "${{ needs.meta.outputs.version }}" }
     steps:
-      - env: { GH_TOKEN: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
-        run: gh workflow run update-formula.yml -R BjoernSchotte/homebrew-tap -f formula=agentglass -f tag="${{ needs.meta.outputs.tag }}" -f repository=BjoernSchotte/agentglass
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { ref: "${{ needs.meta.outputs.sha }}", persist-credentials: false }
+      - name: render the formula from the published assets
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          mkdir -p assets && gh release download "$TAG" -D assets && sh scripts/verify-release-assets.sh assets
+          sh scripts/formula.sh assets "$VERSION" > agentglass.rb
+      - name: brew audit, install, test
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          git config --global user.name "agentglass release"; git config --global user.email "agentglass-ci@example.invalid"
+          brew tap-new agentglass-proof/tap
+          brew trust agentglass-proof/tap   # current Homebrew refuses formulae from untrusted taps
+          cp agentglass.rb "$(brew --repository agentglass-proof/tap)/Formula/agentglass.rb"
+          brew audit --strict --formula agentglass-proof/tap/agentglass
+          brew install --formula agentglass-proof/tap/agentglass
+          brew test agentglass-proof/tap/agentglass
+          if tar -tzf assets/agentglass-linux-x64.tar.gz | grep -qx agentglass-receive-tls; then "$(brew --prefix)/bin/agentglass-receive-tls" --version; fi
+          brew uninstall --force agentglass && brew untap agentglass-proof/tap
+      - name: commit it to the tap
+        env: { GH_TOKEN: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
+        run: |
+          p=repos/BjoernSchotte/homebrew-tap/contents/Formula/agentglass.rb
+          if old=$(gh api "$p" -q .sha) && gh api -X PUT "$p" -f message="Update agentglass to $TAG" -f content="$(base64 -w0 agentglass.rb)" -f sha="$old" > /dev/null; then exit 0; fi
+          # a token without contents access to the tap: its own update (versions and checksums; the install block stays as it was)
+          echo "::warning::could not commit Formula/agentglass.rb to the tap (HOMEBREW_TAP_TOKEN needs contents: write there) — falling back to update-formula.yml"
+          gh workflow run update-formula.yml -R BjoernSchotte/homebrew-tap -f formula=agentglass -f tag="$TAG" -f repository=BjoernSchotte/agentglass
