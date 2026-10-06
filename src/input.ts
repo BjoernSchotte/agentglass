@@ -6,7 +6,7 @@ import { remoteOnly } from "./model/remote.ts";
 import { H, tabAt } from "./hooks.ts";
 import { buildView, titleOf, parentOf, isOpen, expanded, collapsed, current } from "./model/sessions.ts";
 import { procView, procAt, procSess, sharedDaemon } from "./model/procs.ts";
-import { NONE_PANE, paneOfSess, paneNowPid, sendTo, focusOn, paneText } from "./mux/index.ts";
+import { NONE_PANE, paneNow, paneNowPid, sendTo, focusOn, paneText, unreachable } from "./mux/index.ts";
 import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, owner, sendPrompt, resume, killPid, trash } from "./actions.ts";
 import { openTranscript, moveCur, cycleSub } from "./ui/transcript.ts";
 import { openDetail, stepDetail } from "./ui/detail.ts";
@@ -14,7 +14,7 @@ import { prevKind, prevIdx, prevKids } from "./ui/list.ts";
 import { footX0, footX1, footKey } from "./ui/footer.ts";
 import { tabX0, tabX1 } from "./ui/header.ts";
 import { quit } from "./term.ts";
-import { harnessOf } from "./harness/index.ts";
+import { harnessOf, isHarness } from "./harness/index.ts";
 import { OS } from "./platform/index.ts";
 
 export function tokens(s: string): string[] {
@@ -162,7 +162,10 @@ export function onInput(k: string): void {
       }
     }
     else if ((k === "s" || k === "R" || k === "x" || k === "D") && remoteOnly(current(), k === "s" ? "send" : k === "R" ? "resume" : k === "x" ? "stop" : "trash")) { /* told */ }
-    else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) { const pk = s.pid ? paneOfSess(s).kind : ""; ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (" + (pk === "none" ? "live" : pk) + ")" : " (headless)"), "send", ""); } }
+    else if (k === "s") { // a live agent no pane holds: why, before a prompt is typed for nothing
+      const c = current(); const s = c ? owner(c) : null;
+      if (s) { const pk = s.pid ? paneNow(s).kind : ""; if (pk === "none") say("warn", unreachable(s.pid, harnessOf(s.h).label)); else ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (" + pk + ")" : " (headless)"), "send", ""); }
+    }
     else if (k === "R") { const s = current(); if (s) resume(s); }
     else if (k === "x") { const s = current(); const w = s && s.pid ? sharedDaemon(targetPid()) : ""; if (w) say("warn", w); else if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
     else if (k === "D") { const s = current(); if (s) { if (s.pid) say("warn", "session is live — stop it first"); else if (!harnessOf(s.h).files) say("warn", harnessOf(s.h).label + " sessions can't be moved to the trash"); else confirm("Move “" + clean(titleOf(s)).slice(0, 40) + "” to " + OS.trashName + "?", "trash"); } }
@@ -180,15 +183,17 @@ export function onInput(k: string): void {
       else if (p) confirm(k === "x" ? "SIGTERM " + p.h + " pid " + p.pid + "?" : "SIGKILL " + p.h + " pid " + p.pid + " (no cleanup)?", k === "x" ? "TERM" : "KILL");
     }
     else if (k === "s") {
-      const p = procAt(S.psel); const s = p ? procSess(p) : null; const t = p && !s ? paneNowPid(p.pid) : NONE_PANE;
-      if (s) { const pk = paneOfSess(s).kind; ask("send to " + s.h + " (" + (pk === "none" ? "live" : pk) + ")", "send", ""); }
-      else if (t.kind !== "none") ask("send to " + paneText(t), "sendpane", ""); // fresh agent without a session file yet
-      else say("warn", "no session linked and not in a tmux or herdr pane");
+      const p = procAt(S.psel); const t = p ? paneNowPid(p.pid) : NONE_PANE; const s = p ? procSess(p) : null;
+      if (p && t.kind === "none") say("warn", unreachable(p.pid, labelOf(p.h))); // the process has no pane: why
+      else if (s) ask("send to " + s.h + " (" + t.kind + ")", "send", "");
+      else if (p) ask("send to " + paneText(t), "sendpane", ""); // fresh agent without a session file yet
     }
-    else if (k === "a") { const p = procAt(S.psel); if (p) focusOn(paneNowPid(p.pid)); }
+    else if (k === "a") { const p = procAt(S.psel); const t = p ? paneNowPid(p.pid) : NONE_PANE; if (p && t.kind === "none") say("warn", unreachable(p.pid, labelOf(p.h))); else if (p) focusOn(t); }
     S.psel = Math.max(0, Math.min(S.psel, procView.length - 1));
   }
 }
+// a process's harness for people (the Processes tab also lists agents without an adapter, by their name)
+function labelOf(h: string): string { return isHarness(h) ? harnessOf(h).label : h || "agent"; }
 export function onMouse(k: string): void {
   const m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(k);
   if (!m) return;
