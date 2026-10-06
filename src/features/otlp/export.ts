@@ -13,9 +13,10 @@ import { curlBin, otlpDir } from "../../util/http.ts";
 import { gzipProbe } from "../../util/gzip.ts";
 import { dayKey } from "../usage/record.ts";
 import { REDACT } from "../redact-on.ts";
-import { parse as parseQuery } from "../query/parse.ts";
+import { parse as parseQuery, print as printQuery } from "../query/parse.ts";
 import type { Clause } from "../query/types.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
+import { judgeable, needsLedgerOf, needsHeadOf, fixedOf } from "../query/cli.ts";
 import { discover, opts as watchOpts, watch } from "../cli.ts";
 import { agentScope, visible, errLine } from "../agentenv.ts";
 import { opt, setOptions } from "../clihelp.ts";
@@ -65,6 +66,15 @@ export function sessFilter(src: string): { f: Compiled | null; err: string } {
   }
   const all = compile(p.cs, "json");
   return all.err ? { f: null, err: "--filter: " + all.err.msg } : { f: all.f, err: "" };
+}
+// one session against --filter, judged only once it can be (query/cli.ts judgeable: the head read, a cwd in it; an
+// unread session never passes a negated clause); clauses on the ledger's numbers bring it up to date first (live: at
+// most every 10 s per session). Live export asks on every poll, after reading what the session wrote
+const ledAt = new Map<string, number>();
+export function sessPass(f: Compiled, s: Sess, now: number): boolean {
+  if (!judgeable(f.cs, s)) return false;
+  if (needsLedgerOf(f.cs)) { const at = ledAt.get(s.path); if (at === undefined || now - at >= 10000) { ledAt.set(s.path, now); complete(s); } }
+  return sessMatches(f, s);
 }
 // an http(s) URL without spaces or control characters (it goes into curl's config as one line)
 export function urlErr(url: string): string {
@@ -185,7 +195,7 @@ function select(o: ExOpts): Sel {
     if (o.harness && s.h !== o.harness) continue;
     if (o.ids.length && !o.ids.some((id: string) => s.id === id || s.id.startsWith(id))) continue;
     if (o.since > 0 && s.mtime > 0 && s.mtime < o.since) continue; // nothing written since: no turn starts inside
-    if (f && !sessMatches(f, s)) continue;
+    if (f && !sessPass(f, s, Date.now())) continue;
     roots.push(s);
   }
   roots.sort((a, b) => a.mtime - b.mtime || (a.path < b.path ? -1 : 1));
@@ -379,7 +389,7 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
 function liveExport(args: string[]): number {
   const c = loadCfg(); const env = envMap(); const now = Date.now();
   for (const w of c.warns) err(w);
-  let flag = ""; let since = now; let subagents = true; let native = c.native; let noLogs = false; let comp = ""; let batch = c.batch; let filter = ""; let harness = "";
+  let flag = ""; let since = now; let subagents = true; let native = c.native; let noLogs = false; let comp = ""; let batch = c.batch; let filter = ""; let harness = ""; let pinned = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? ""; const v = args[i + 1] ?? "";
     if (a === "--otlp") { flag = v; i++; }
@@ -393,6 +403,14 @@ function liveExport(args: string[]): number {
     else if (a === "--batch") { batch = Number(v); i++; if (!(Number.isInteger(batch) && batch >= 1 && batch <= 100000)) { fail("usage", "--batch needs a whole number of spans, 1–100000"); return 2; } }
     else if (a === "--filter") { filter = filter ? filter + " and " + v : v; i++; }
     else if (a === "--harness") { harness = v; i++; if (!isHarness(harness)) { fail("usage", "--harness must be one of " + harnessIds().join(", ")); return 2; } }
+    else if (a === "--pinned") pinned = true;
+  }
+  // the TUI's pins as they are now (the JSONL lines and alerts apply them too); one an export cannot apply is refused, not
+  // dropped: the run would send more than the pins say
+  if (pinned && S.pins.length) {
+    const pf = printQuery(S.pins); const pe = sessFilter(pf).err;
+    if (pe) { fail("usage", "--pinned: " + pe.replace(/^--filter: /, "").replace(/^export --filter takes/, "an export takes") + " — unpin it (P in the TUI), or pass the session clauses as --filter '<expr>'"); return 2; }
+    filter = filter ? filter + " and " + pf : pf;
   }
   const sf = sessFilter(filter); if (sf.err) { fail("usage", sf.err); return 2; }
   const url = endpointOf(flag.startsWith("--") ? "" : flag, c, env);
@@ -421,7 +439,9 @@ function liveExport(args: string[]): number {
   const cf = sf.f; // session clauses select what is exported
   const L = newLive(since); L.content = c.content; L.subagents = subagents; L.cfg = c; L.logs = lu.url !== "";
   const sc = agentScope(args);
-  L.want = (s: Sess): boolean => (!harness || s.h === harness) && (!cf || sessMatches(cf, s)) && visible(s, sc);
+  L.want = (s: Sess): boolean => (!harness || s.h === harness) && (!cf || sessPass(cf, s, Date.now())) && visible(s, sc);
+  const fixed = cf && needsHeadOf(cf.cs) ? fixedOf(cf.cs) : null; // judged out on cwd, branch, cost…: it may come in later
+  L.track = (s: Sess): boolean => fixed !== null && cf !== null && (!harness || s.h === harness) && visible(s, sc) && sessMatches(fixed, s) && judgeable(cf.cs, s);
   let skipFrom = new Map<string, number>(); let nativeAt = 0;
   L.skip = (t: XTurn): boolean => { const sk = skipFrom.get(t.h); return marked(st, t.path, t.key) || (sk !== undefined && t.t0 >= sk); };
   const sendWith = (timeoutS: number) => (turns: XTurn[]): boolean => {
