@@ -88,11 +88,13 @@ export function choosePid(fg: number[], harnessOfRoot: (pid: number) => string, 
   for (const p of fg) if (harnessOfRoot(p) !== "") return p;
   return 0;
 }
-// read herdr's state for the approval signal now? A blocked reading is re-read every look until it clears; else only
-// while the log is quiet ≥ 3 s mid-turn (busy) or for a harness that hides its dialogs: every look (1.5 s; 1.4 s
-// margin) for the first minute, then every 6 s. An agent writing its log is at no dialog
+// read herdr's state for the approval signal now? A blocked reading is re-read until it clears, else only while the log
+// is quiet ≥ 3 s mid-turn (busy) or for a harness that hides its dialogs: every look (1.5 s; 1.4 s margin) for the first
+// minute of quiet, then every 6 s (a dialog left open for hours costs one read per 6 s, not per look; an answer makes
+// the agent write, which stales the reading at once). An agent writing its log is at no dialog
 export function pollDue(quietMs: number, busy: boolean, hidden: boolean, wasBlocked: boolean, sinceLastMs: number): boolean {
-  return wasBlocked || (quietMs >= 3000 && (busy || hidden) && sinceLastMs >= (quietMs < 60000 ? 1400 : 6000));
+  const gap = quietMs < 60000 ? 1400 : 6000;
+  return wasBlocked ? sinceLastMs >= (quietMs < 60000 ? 0 : gap) : quietMs >= 3000 && (busy || hidden) && sinceLastMs >= gap;
 }
 // a reading older than the session's last log write is stale: the agent moved on since
 export function fresh(at: number, mtime: number): boolean { return at > 0 && at >= mtime; }

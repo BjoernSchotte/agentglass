@@ -19,19 +19,19 @@ import { type HWs, parseAgents, parseLabels, parseWorkspaces, parseProcInfo, par
 const MIN_SEND = "0.8.2"; // the first herdr that refuses a prompt while the agent is at a dialog (agent_blocked)
 const PI_CAP = 8; // pane process-info calls per non-forced refresh (≈ 6 ms each)
 // one agent pane: mp is the pane handed out (updated in place, so a caller holding it sees new readings)
-interface Rec { mp: MuxPane; wsId: string; tabId: string; label: string; key: string; path: string; pid: number; seen: boolean; cwd: string }
+interface Rec { mp: MuxPane; wsId: string; tabId: string; label: string; key: string; path: string; pid: number; seen: boolean; cwd: string; tried: number } // tried: the last process-info that found no agent
 interface Srv { sock: string; skipUntil: number; at: number; labelsAt: number; look: number; recs: Map<string, Rec>; ws: Map<string, string>; tabs: Map<string, string>; wsList: HWs[]; ver: string; verAt: number }
 const HS = {
   bin: "", binDone: false, cfgWarned: false, badOutWarned: false,
   learned: new Set<string>(), named: [] as string[], namedAt: 0, sockAt: -1, socks: [] as string[],
-  dirty: false, lastAt: 0, seen: new Set<number>(),
+  dirty: false, fresh: false, lastAt: 0, seen: new Set<number>(),
   ps: new Map<number, MuxProc>(), byPid: new Map<number, Rec>(), sending: new Set<string>(), sendNo: 0,
 };
 const servers = new Map<string, Srv>();
 // checks: forget the binary, sockets, maps, versions and skips
 export function herdrReset(): void {
   HS.bin = ""; HS.binDone = false; HS.cfgWarned = false; HS.badOutWarned = false; HS.learned.clear(); HS.named = []; HS.namedAt = 0; HS.sockAt = -1; HS.socks = [];
-  HS.dirty = false; HS.lastAt = 0; HS.seen.clear(); HS.ps.clear(); HS.byPid.clear(); HS.sending.clear(); servers.clear(); MUX_EVENTS.jumped = false;
+  HS.dirty = false; HS.fresh = false; HS.lastAt = 0; HS.seen.clear(); HS.ps.clear(); HS.byPid.clear(); HS.sending.clear(); servers.clear(); MUX_EVENTS.jumped = false;
 }
 function envOf(k: string): string { const v = process.env[k]; return v !== undefined ? v : ""; }
 function onPath(name: string): string {
@@ -119,10 +119,10 @@ function readAgents(s: Srv, now: number): boolean {
   for (const x of s.recs.values()) x.seen = false;
   for (const a of l.agents) {
     let x = s.recs.get(a.term);
-    if (!x) { x = { mp: { kind: "herdr", id: a.pane, term: a.term, server: s.sock, ws: "", wsId: "", tab: "", status: "", at: 0 }, wsId: "", tabId: "", label: "", key: "", path: "", pid: 0, seen: true, cwd: "" }; s.recs.set(a.term, x); }
+    if (!x) { x = { mp: { kind: "herdr", id: a.pane, term: a.term, server: s.sock, ws: "", wsId: "", tab: "", status: "", at: 0 }, wsId: "", tabId: "", label: "", key: "", path: "", pid: 0, seen: true, cwd: "", tried: 0 }; s.recs.set(a.term, x); }
     const ref = sessRef(a.label, a.sKind, a.sVal);
     x.seen = true; x.mp.id = a.pane; x.mp.status = a.status; x.mp.at = now; x.wsId = a.ws; x.tabId = a.tab; x.label = a.label; x.cwd = a.cwd;
-    if (x.key !== ref.key || x.path !== ref.path) { x.key = ref.key; x.path = ref.path; x.pid = 0; } // another session in the pane: resolve again
+    if (x.key !== ref.key || x.path !== ref.path) { x.key = ref.key; x.path = ref.path; x.pid = 0; x.tried = 0; } // another session in the pane: resolve again
   }
   const gone: string[] = []; for (const [k, x] of s.recs) if (!x.seen) gone.push(k);
   for (const k of gone) s.recs.delete(k);
@@ -147,14 +147,15 @@ export const herdr: Mux = {
     for (const p of ps) {
       if (p.root !== p.pid || HS.seen.has(p.pid)) continue;
       HS.seen.add(p.pid);
-      if (mac) { HS.dirty = true; continue; }
+      if (mac) { HS.dirty = true; HS.fresh = true; continue; }
       const e = envHerdr(OS.envOf(p.pid));
-      if (e.pane) HS.dirty = true;
+      if (e.pane) { HS.dirty = true; HS.fresh = true; }
       if (e.sock && !pin && !HS.learned.has(e.sock)) { HS.learned.add(e.sock); HS.sockAt = -1; }
     }
     if (HS.seen.size > ps.length * 2 + 64) for (const k of [...HS.seen]) if (!HS.ps.has(k)) HS.seen.delete(k);
     if (!force && !HS.dirty && now - HS.lastAt < 30000 && now >= HS.lastAt) return false;
     HS.dirty = false; HS.lastAt = now;
+    const fresh = HS.fresh || force; HS.fresh = false; // a new agent process: panes without one are asked again
     const was = sigOf(); let pi = 0;
     for (const s of live(now)) {
       if (!readAgents(s, now)) continue;
@@ -166,16 +167,15 @@ export const herdr: Mux = {
         x.pid = 0;
         const k = x.key || x.path ? known(x.key, x.path) : 0;
         if (k) { x.pid = rootOf(k) || k; continue; }
-        if (!force && pi >= PI_CAP) continue; // the rest next pass
+        // a pane whose foreground is no agent agentglass knows (another tool, a shell): again after 60 s or a new agent
+        if (x.tried && !fresh && now - x.tried < 60000 && now >= x.tried) continue;
+        if (!force && pi >= PI_CAP) { HS.dirty = true; continue; } // the rest next slow pass
         pi++;
         const r = call(s.sock, ["pane", "process-info", "--pane", x.mp.id]);
         const fg = r.ok ? parseProcInfo(r.out) : [];
         const c = choosePid(fg, harnessOfRoot, x.label);
-        if (c) x.pid = rootOf(c) || c;
-        else if (pi >= PI_CAP && !force) HS.dirty = true;
+        if (c) { x.pid = rootOf(c) || c; x.tried = 0; } else x.tried = now;
       }
-      // panes left unresolved by the cap: the next slow pass goes on
-      for (const x of s.recs.values()) if (!x.pid && !force && pi >= PI_CAP) HS.dirty = true;
     }
     index();
     return sigOf() !== was;

@@ -33,6 +33,7 @@ ok("due: idle, not hidden", !pollDue(9000, false, false, false, 99999), "");
 ok("due: idle, hidden (gemini)", pollDue(9000, false, true, false, 1500), "");
 ok("due: backoff after 60 s", !pollDue(60000, true, false, false, 3000) && pollDue(60000, true, false, false, 6000), "");
 ok("due: blocked re-read", pollDue(100, false, false, true, 0), "");
+ok("due: blocked for long: every 6 s", !pollDue(600000, false, false, true, 1500) && pollDue(600000, false, false, true, 6000), "");
 ok("fresh", fresh(2000, 1999) && fresh(2000, 2000) && !fresh(1999, 2000) && !fresh(0, 0), "");
 ok("place", placeLabel("webapp", "2", "w7:p1A", false) === "webapp › 2 · w7:p1A", placeLabel("webapp", "2", "w7:p1A", false));
 ok("place redact", placeLabel("webapp", "2", "w7:p1A", true) === "w7:p1A", "");
