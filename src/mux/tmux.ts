@@ -57,5 +57,5 @@ export const tmux: Mux = {
     if (process.env.TMUX) { run("tmux", ["switch-client", "-t", p.id]); say("ok", "switched to " + p.id); }
     else say("warn", "not inside tmux — attach with: tmux a -t " + p.id);
   },
-  start: (h: string, args: string[], cwd: string, top: string, label: string): boolean => false,
+  start: (h: string, id: string, args: string[], cwd: string, top: string, label: string): boolean => false,
 };

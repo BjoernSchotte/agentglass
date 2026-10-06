@@ -23,7 +23,7 @@ function stub(kind: string, pids: number[], key: string): Mux {
     status: (p: MuxPane, due: boolean, look: number, now: number): string => "",
     send: (p: MuxPane, msg: string): void => {},
     focus: (p: MuxPane): void => {},
-    start: (h: string, args: string[], cwd: string, top: string, label: string): boolean => false,
+    start: (h: string, id: string, args: string[], cwd: string, top: string, label: string): boolean => false,
   };
 }
 setMuxes([stub("tmux", [10], ""), stub("herdr", [10, 20], "claude:S2")]);

@@ -6,13 +6,13 @@ import type { Sess } from "../model/types.ts";
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
 import { tmux } from "./tmux.ts";
 import { none, NONE_PANE } from "./none.ts";
+import { herdr } from "./herdr.ts";
 import { placeLabel } from "./herdr-parse.ts";
 import { REDACT } from "../features/redact-on.ts";
-export { NONE_PANE };
+import { MUX_EVENTS } from "./events.ts";
+export { NONE_PANE, MUX_EVENTS };
 
-export const MUXES: Mux[] = [tmux];
-// set by a successful jump or start (a plugin popup quits on it: the user lands in the pane)
-export const MUX_EVENTS = { jumped: false };
+export const MUXES: Mux[] = [tmux, herdr];
 const LAST = { ps: [] as MuxProc[], known: (key: string, path: string): number => 0, look: 0, sharedAt: -1, sharedId: 0 };
 // checks: replace the adapters (MUXES keeps its identity) / forget the last processes and looks
 export function setMuxes(ms: Mux[]): void { MUXES.length = 0; for (const m of ms) MUXES.push(m); }
@@ -43,9 +43,9 @@ export function paneNowPid(pid: number): MuxPane { muxRefresh(LAST.ps, Date.now(
 export function sendTo(p: MuxPane, msg: string): void { muxOf(p.kind).send(p, msg); }
 export function focusOn(p: MuxPane): void { muxOf(p.kind).focus(p); }
 // resume an ended session in a new pane of the first multiplexer that can (herdr, when agentglass runs inside it)
-export function startIn(h: string, args: string[], cwd: string, top: string, label: string): boolean {
+export function startIn(h: string, id: string, args: string[], cwd: string, top: string, label: string): boolean {
   const now = Date.now();
-  for (const m of MUXES) if (m.present(now) && m.start(h, args, cwd, top, label)) return true;
+  for (const m of MUXES) if (m.present(now) && m.start(h, id, args, cwd, top, label)) return true;
   return false;
 }
 export function muxLinks(): MuxLink[] { const out: MuxLink[] = []; const now = Date.now(); for (const m of MUXES) if (m.present(now)) for (const l of m.links()) out.push(l); return out; }

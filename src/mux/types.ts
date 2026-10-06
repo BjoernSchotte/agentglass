@@ -33,5 +33,5 @@ export interface Mux {
   focus: (p: MuxPane) => void;                   // shows its own toast
   // start a harness in a new pane of this multiplexer (resume of an ended session): false = not possible here (the
   // caller falls back to the in-terminal resume); true = started or failed with its own toast
-  start: (h: string, args: string[], cwd: string, top: string, label: string) => boolean;
+  start: (h: string, id: string, args: string[], cwd: string, top: string, label: string) => boolean; // id: the session id (names the agent)
 }

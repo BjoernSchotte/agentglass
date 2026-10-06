@@ -15,5 +15,5 @@ export const none: Mux = {
   status: (p: MuxPane, due: boolean, look: number, now: number): string => "",
   send: (p: MuxPane, msg: string): void => { say("warn", "session is live outside tmux and herdr — cannot inject input safely"); },
   focus: (p: MuxPane): void => { say("warn", "not in a tmux or herdr pane"); },
-  start: (h: string, args: string[], cwd: string, top: string, label: string): boolean => false,
+  start: (h: string, id: string, args: string[], cwd: string, top: string, label: string): boolean => false,
 };
