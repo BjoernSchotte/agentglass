@@ -89,7 +89,7 @@ budget.usd = 10; budget.counts = ["api"];
 const bs = fleetBudget(fleetCost(ln, merged(), now, cfg, 0));
 ok("fleet budget over", bs.state === "over" && bs.used === 15, JSON.stringify(bs));
 budget.usd = 0;
-// allowance: newest fetchedAt per account, never a sum
+// allowance: newest fetchedAt per account, never a sum (40 + 55; the reset time is now-based and may hold the digits 95)
 const al = fleetAllowance(null, merged());
 const cl = al ? al["claude"] : null;
 ok("allowance newest", Array.isArray(cl) && JSON.stringify(cl).indexOf("\"pct\":55") >= 0 && JSON.stringify(cl).indexOf("\"pct\":40") < 0 && JSON.stringify(cl).indexOf("\"pct\":95") < 0, JSON.stringify(al));
