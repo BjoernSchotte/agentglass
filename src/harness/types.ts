@@ -59,8 +59,8 @@ export interface HarnessAdapter {
   liveFile?: (path: string) => boolean; // the harness keeps its transcript open while running: is this open file one?
   liveRegistry?: (alive: (pid: number) => boolean, harnessOfPid: (pid: number) => string) => Live[]; // the harness writes a pid ↔ session registry (harnessOfPid: "" = no agent process)
   noApproval?: boolean; // it never asks before running a tool call (pi): no approval wait is ever guessed for it
-  approvalTitle?: (title: string) => boolean; // its terminal title (read from its tmux pane) says it waits for the user to approve a tool call
-  hiddenApproval?: boolean; // it logs a tool call only once it ran: outside tmux its approval dialog looks like a finished turn (detect.ts approvalGuess)
+  approvalTitle?: (title: string) => boolean; // its terminal title (read from its multiplexer pane's title, tmux) says it waits for the user to approve a tool call
+  hiddenApproval?: boolean; // it logs a tool call only once it ran: without a multiplexer that reports dialogs (tmux title, herdr state) its approval dialog looks like a finished turn (detect.ts approvalGuess)
   bareReply?: (s: Sess) => boolean; // its newest message is a reply with nothing in it yet (no event shows it): a tool call it has not logged, maybe awaiting approval
   daemon?: string; // its registry pids are one shared daemon running many sessions: never signalled from here; how the user stops it
 

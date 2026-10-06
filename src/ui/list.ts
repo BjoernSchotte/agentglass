@@ -6,7 +6,8 @@ import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current, isLive, FRESH } from "../model/sessions.ts";
-import { tmuxTarget } from "../model/procs.ts";
+import { paneOfPid, paneText, paneTextIn } from "../mux/index.ts";
+import { herdrRow } from "../mux/rowstate.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, badge, BADGE_W, spin } from "./screen.ts";
 import { evLines } from "./transcript.ts";
@@ -28,10 +29,11 @@ export function actLines(s: Sess, w: number): string[] {
   return ACT.lines;
 }
 
-// the status glyph's kind: b busy (spinner), l live idle ●, r recent ○, o old ·
-function glyphKind(s: Sess): string {
+// the status glyph's kind: b busy (spinner; also while herdr sees the agent working with its log quiet: a long tool run,
+// a thinking model), l live idle ●, r recent ○, o old ·
+export function glyphKind(s: Sess): string {
   if (s.host) return isLive(s) ? (s.status === "busy" ? "b" : "l") : FRESH.ok(s.host) && Date.now() - s.mtime < 120000 ? "r" : "o"; // a remote row: as its report says while fresh
-  if (s.pid) return working(s) || Date.now() - s.mtime < 8000 ? "b" : "l";
+  if (s.pid) return working(s) || Date.now() - s.mtime < 8000 || herdrRow(s) === "working" ? "b" : "l";
   return Date.now() - s.mtime < 120000 ? "r" : "o";
 }
 function statusGlyph(s: Sess): string {
@@ -45,7 +47,7 @@ function rowKey(s: Sess, sub: boolean, last: boolean): string {
   const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + agoK(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + agoK(s.last) + "|" + s.cwd + "|" + (s.host ? (FRESH.ok(s.host) ? "f" : "s" + agoK(s.rat)) + "|" : "") +
     (s.subs.length ? (isOpen(s) ? "v" : ">") + String(activeSubs(s)) + "/" + String(s.subs.length) : ""));
   let b = ""; for (const f of H.rowBadges) b += f(s);
-  return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b;
+  return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b + "|" + herdrRow(s);
 }
 function usageKey(s: Sess): string {
   return String(s.inTok) + "," + String(s.outTok) + "," + String(s.cacheRTok) + "," + String(s.cacheWTok) + "," + String(s.cost) + "," + String(s.unkTok) + "," + String(s.unkCr) + "," +
@@ -74,7 +76,7 @@ export function listSig(clock: boolean = true): string {
     if (s.headDone) loadTail(s); // as the frame reads it (a head is read by the frame itself)
     const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
     o.push(s.path + "|" + bytes(s.size) + "|" + (s.headDone ? "h" : "") + s.cwd + "|" + s.branch + "|" + s.remote + "|" + s.model + "|" + agoK(s.mtime) + "|" + String(s.pid) + s.status + s.name + "|" +
-      (s.pid ? tmuxTarget(s.pid) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
+      (s.pid ? paneText(paneOfPid(s.pid)) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
     // the preview lists the 6 most active subagents (renderSessions' order); the usage sums all of them
     let u = 0; for (const c of s.subs) u += c.cost + c.inTok + c.outTok + c.cacheRTok + c.cacheWTok + c.tools + c.linesAdd + c.linesDel + c.unkTok;
     o.push(String(s.subs.length) + ":" + String(u));
@@ -154,7 +156,7 @@ export function renderSessions(): void {
     if (s.model) kv("model", s.model, C.cyan);
     kv("updated", ago(s.mtime) + " ago · " + localDay(new Date(s.mtime).toISOString()) + " " + localHM(new Date(s.mtime).toISOString()), C.sub); // both local: a UTC day next to a local clock was off by one around midnight
     if (s.host) { for (const f of H.remoteCard) for (const l of f(s, iw2)) lines.push(fitStyled(l, iw2)); } // a remote row: its report's facts, nothing read here
-    else if (s.pid) { const t = tmuxTarget(s.pid); kv("process", "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : "") + (t ? " · tmux " + t : ""), C.green); }
+    else if (s.pid) { const pre = "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : ""); const t = paneTextIn(paneOfPid(s.pid), iw2 - 9 - Array.from(pre).length - 3); kv("process", pre + (t ? " · " + t : ""), C.green); }
     else kv("process", s.archived ? "archived" : "not running", C.dim);
     if (!s.host && (s.depth === 1 || s.parent)) { const par = parentOf(s); kv("subagent", s.kind + (s.name ? " · " + s.name : "") + (par ? "  ↰ " + titleOf(par) : ""), C.cyan); }
     if (!s.host) for (const f of H.previewSections) for (const l of f(s, iw2)) lines.push(fitStyled(l, iw2));

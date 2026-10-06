@@ -80,8 +80,9 @@ function spawnJob(job: Job): string {
   } catch (e) { return "notify command failed: " + String(e); }
   return "";
 }
-// the desktop body's lead: a guess (approval?) leads, like the approval rule's prefix; "likely" qualifies the prefix
-function lead(r: Rule, v: MVal): string { return v.hint === "likely" ? r.prefix.trimEnd() + " (likely) " : (v.hint ? v.hint + " " : "") + r.prefix; }
+// the desktop body's lead: a guess (approval?) leads, like the approval rule's prefix; "likely" qualifies the prefix;
+// "herdr" (herdr saw the dialog) is no guess: the plain prefix
+export function lead(r: Rule, v: MVal): string { return v.hint === "likely" ? r.prefix.trimEnd() + " (likely) " : (v.hint && v.hint !== "herdr" ? v.hint + " " : "") + r.prefix; }
 // one transition: bell + desktop (fire/escalate, notify rules, not acked, not in --watch, throttled per session), the command
 // on every state in notify.on regardless of acknowledgement (in --watch only with --notify)
 export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boolean, cmdOn: boolean, cfg: NotifyCfg, v: MVal, message: string, since: number): void {

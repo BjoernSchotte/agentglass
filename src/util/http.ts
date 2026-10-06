@@ -40,8 +40,9 @@ function loopback(url: string): boolean { const m = /^[a-z]+:\/\/(?:[^@/]*@)?(\[
 let seq = 0;
 // POST body (JSON, gzip-compressed when gz) with the given headers. URL and headers go to curl on stdin (-K -), the body
 // through a 0600 file named in that config: argv and the environment never hold a token. No --fail: the status is read
-// from --write-out, Retry-After from the dumped headers. Proxies apply, except to loopback.
-export function postJson(url: string, headers: string[][], body: Uint8Array, timeoutS: number, gz: boolean): PostRes {
+// from --write-out, Retry-After from the dumped headers. Proxies apply, except to loopback. tls = [ca, cert, key] paths
+// ("" = unset): config lines too, never argv; curl reads the files.
+export function postJson(url: string, headers: string[][], body: Uint8Array, timeoutS: number, gz: boolean, tls: string[] = ["", "", ""]): PostRes {
   const res: PostRes = { status: 0, body: "", err: "", exit: -1, retryAfter: 0 };
   const b = curlBin();
   if (!b) { res.err = "no curl"; return res; }
@@ -53,9 +54,11 @@ export function postJson(url: string, headers: string[][], body: Uint8Array, tim
   try {
     if (!writeBin(bf, body)) { res.err = "cannot write " + bf; return res; }
     const cfg: string[] = ["url = " + cq(url)];
+    const tk = ["cacert", "cert", "key"]; for (let i = 0; i < 3; i++) { const p = tls[i] ?? ""; if (p) cfg.push((tk[i] ?? "") + " = " + cq(p)); }
     for (const h of headers) cfg.push("header = " + cq((h[0] ?? "") + ": " + (h[1] ?? "")));
     cfg.push("header = " + cq("Content-Type: application/json"));
     if (gz) cfg.push("header = " + cq("Content-Encoding: gzip"));
+    cfg.push("header = \"Expect:\""); // no Expect: 100-continue: curl would wait up to 1 s for an interim answer on bodies over 1 MB
     cfg.push("request = \"POST\"", "data-binary = " + cq("@" + bf), "dump-header = " + cq(hf), "write-out = \"\\n%{http_code}\"", "max-time = " + cq(String(timeoutS)));
     if (loopback(url)) cfg.push("noproxy = \"localhost,127.0.0.1,::1\"");
     // sh runs curl so its exit code comes back on stdout (execFileSync throws on a non-zero exit and keeps no output)

@@ -5,7 +5,8 @@ import { mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "
 import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { type XTurn, newSpan } from "./types.ts";
-import { newLive, liveTick, enqueue, liveStop } from "./live.ts";
+import { newLive, liveTick, enqueue, liveStop, enqueueLog, flushLogs } from "./live.ts";
+import { type XLog, heartbeat } from "./logs.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + got + " want " + want); } }
@@ -74,6 +75,76 @@ eq("approval wait recorded", call ? call.attrs.map((a) => a.k + "=" + String(a.n
   eq("closed before the start: not sent", got6.join(","), "");
   sessions.delete(p6);
 }
+// ── the logs stream (otlp-complete 2.3, 2.6): state on change + 300 s repeat + recovery, heartbeat every 30 s, turn.open once ──
+{
+  const pl = dir + "/logs-" + CID + ".jsonl"; writeFileSync(pl, lines.slice(0, 9).join("\n") + "\n"); // turn 1 open
+  const sl: Sess = newSess("claude", "logs", pl, false); sl.pid = 4250; sessions.set(pl, sl);
+  let t = Date.parse("2026-09-01T10:01:00.000Z"); sl.mtime = t - 1000;
+  const LL = newLive(t); LL.logs = true; LL.want = (x: Sess) => x.path === pl; LL.warn = (m: string) => { warns.push(m); };
+  let bz = true; LL.busyRule = (x) => !!x && bz; LL.approval = (x: Sess) => x ? "" : "";
+  const got: XLog[] = []; let lok = true; let lcalls = 0;
+  LL.sendLogs = (ls: XLog[]): boolean => { lcalls++; if (lok) for (const l of ls) got.push(l); return lok; };
+  const nm = (from: number): string => { // record names without "agentglass.", state records with their true flags
+    const out: string[] = [];
+    for (const l of got.slice(from)) {
+      let f = ""; if (l.name === "agentglass.session.state") { const on: string[] = []; for (const a of l.attrs) if (a.t === "b" && a.b) on.push(a.k.slice(19)); f = "(" + on.join("+") + ")"; }
+      out.push(l.name.slice(11) + f);
+    }
+    return out.join(",");
+  };
+  const noSpans = (ts: XTurn[]): boolean => ts.length >= 0;
+  liveTick(LL, t, noSpans);
+  eq("logs: start snapshot", nm(0), "session.state(live+busy),turn.open,heartbeat");
+  eq("logs: turn.open carries the turn's ids", got.length > 1 ? String(got[1].traceId.length === 32 && got[1].spanId.length === 16 && got[1].traceId === got[0].traceId) : "", "true");
+  t += 5000; bz = false; liveTick(LL, t, noSpans);
+  t += 5000; sl.attention = true; liveTick(LL, t, noSpans);
+  t += 5000; liveTick(LL, t, noSpans); // no change
+  eq("logs: exactly the changes", nm(3), "session.state(live),session.state(live+attention)");
+  const n1 = got.length;
+  t += 15000; liveTick(LL, t, noSpans); // 30 s after the first beat
+  eq("logs: heartbeat at 30 s", nm(n1), "heartbeat");
+  const n2 = got.length;
+  t += 300000; liveTick(LL, t, noSpans); // 5 min later, no change
+  eq("logs: 300 s repeat while live", nm(n2), "session.state(live+attention),heartbeat");
+  // a new turn opens: one turn.open; polling again: none
+  appendFileSync(pl, lines[9] + "\n"); sl.mtime = t; const n3 = got.length;
+  t += 1000; liveTick(LL, t, noSpans); t += 6000; liveTick(LL, t, noSpans);
+  eq("logs: one turn.open per turn", got.slice(n3).filter((l: XLog) => l.name === "agentglass.turn.open").length.toString(), "1");
+  // a failing receiver: backoff; once it works again every live session's state is re-sent
+  lok = false; sl.attention = false; const c0 = lcalls; const n4 = got.length;
+  t += 6000; liveTick(LL, t, noSpans);
+  eq("logs: failed flush keeps the queue", String(lcalls - c0) + " " + String(LL.lq.length > 0), "1 true");
+  t += 1000; liveTick(LL, t, noSpans);
+  eq("logs: no retry before the backoff", String(lcalls - c0), "1");
+  lok = true; t += 5000; liveTick(LL, t, noSpans); t += 6000; liveTick(LL, t, noSpans);
+  eq("logs: recovery re-sends the state", nm(n4), "session.state(live),session.state(live)");
+  // the alert transitions the --watch loop hands over
+  LL.pend.push({ s: sl, a: { rule: "loop", severity: "critical", state: "fire", value: 9, threshold: 8, labels: [], message: "m" } });
+  const n5 = got.length; t += 6000; liveTick(LL, t, noSpans);
+  eq("logs: one alert record", String(got.slice(n5).filter((l: XLog) => l.name === "agentglass.alert").length) + " " + String(got.slice(n5).filter((l: XLog) => l.name === "agentglass.alert")[0]?.sev), "1 17");
+  // stop: the final flush includes the log queue
+  enqueueLog(LL, heartbeat(t, 0, 0, 0)); const n6 = got.length;
+  liveStop(LL, noSpans, 5000);
+  eq("logs: stop flushes logs", nm(n6), "heartbeat");
+  // overflow: 2001 queued → 2000, one warning
+  const LO = newLive(0); LO.logs = true; const wo: string[] = []; LO.warn = (m: string) => { wo.push(m); };
+  for (let i = 0; i <= 2000; i++) enqueueLog(LO, heartbeat(i, 0, 0, 0));
+  eq("logs: overflow drops the oldest", String(LO.lq.length) + " " + String(LO.lq[0]?.t) + " warns " + String(wo.length), "2000 1 warns 1");
+  // off (--no-logs, 404/405): nothing queued; halted (TLS): nothing sent
+  const LN = newLive(0); LN.logs = false; let nc = 0; LN.sendLogs = (ls: XLog[]): boolean => { nc += ls.length + 1; return true; }; LN.want = (x: Sess) => x.path === pl;
+  liveTick(LN, t, noSpans); liveTick(LN, t + 60000, noSpans);
+  eq("logs off: nothing queued or sent", String(LN.lq.length) + " " + String(nc), "0 0");
+  const LH = newLive(0); LH.logs = true; let hc = 0; LH.sendLogs = (ls: XLog[]): boolean => { hc += ls.length + 1; return true; }; LH.want = (x: Sess) => x.path === pl;
+  LH.halt = "the receiver requires a client certificate"; liveTick(LH, t, noSpans); flushLogs(LH, t + 60000);
+  eq("halted: nothing sent", String(hc) + " " + String(LH.lq.length), "0 0");
+  // a 404 switches the stream off inside sendLogs: the queue is dropped
+  const LF = newLive(0); LF.logs = true; LF.want = (x: Sess) => x.path === pl; let fc = 0;
+  LF.sendLogs = (ls: XLog[]): boolean => { fc++; if (ls.length) LF.logs = false; return false; };
+  liveTick(LF, t, noSpans); liveTick(LF, t + 60000, noSpans);
+  eq("404: one request, then off", String(fc) + " " + String(LF.lq.length) + " " + String(LF.logs), "1 0 false");
+  sessions.delete(pl);
+}
+
 // late events: turn 2 closes by quiet time (2 min); a later result opens a continuation turn, turn 2 is not sent again
 appendFileSync(p, lines[11] + "\n"); s.mtime = T; T += 1000; liveTick(L, T, send);
 T += 130000; liveTick(L, T, send);
@@ -84,7 +155,7 @@ eq("late event: continuation turn", sent.slice(1).join(","), "2026-09-01T10:05:0
 // a failing backend: the turns stay queued, retried after a backoff
 const L2 = newLive(0); L2.warn = (m: string) => { warns.push(m); };
 const big = (k: string, n: number): XTurn => {
-  const t: XTurn = { h: "claude", rootId: "x", path: "/x", key: k, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx: [], fxOn: false };
+  const t: XTurn = { h: "claude", rootId: "x", path: "/x", key: k, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx: [], fxOn: false, title: "", repoKey: "" };
   for (let i = 0; i < n; i++) t.spans.push(newSpan("execute_tool", "x", "s" + String(i), "", 1, "x"));
   return t;
 };

@@ -43,7 +43,7 @@ export function renderFooter(): void {
   else if (mode === "palette") { k("↵", "run"); k("→", "session actions"); k("tab", "scope"); tk = "esc"; tw = "close"; }
   else if (mode === "transcript") { k("↑↓/jk", "event"); k("↵", "details"); k("g/G", "top/end"); k("f", "follow"); k("t", "expand tools"); k("n/N", "subagents"); k("u", "parent"); k("s", "send"); k("R", "resume"); tk = "esc"; tw = "back"; }
   else if (S.tab === 0) { const cs = sessAt(S.sel); k("↵", cs && cs.host ? "remote" : "open"); /* a remote row (fleet): Enter says how to open it there */ k("/", "filter"); k("␣", "subagents"); k("p", "pin"); k("P", "pins"); k("F", "full-text"); k("h", "harness"); k("l", "live"); k("s", "send"); k("R", "resume"); k("x", "kill", 3); k("D", "trash", 3); }
-  else if (S.tab === 1) { k("↵", "session"); k("s", "send"); k("x", "SIGTERM"); k("X", "SIGKILL", 3); k("a", "attach tmux"); k("P", "pins"); tk = "q"; tw = "quit"; }
+  else if (S.tab === 1) { k("↵", "session"); k("s", "send"); k("x", "SIGTERM"); k("X", "SIGKILL", 3); k("a", "jump"); k("P", "pins"); tk = "q"; tw = "quit"; }
   else { tk = "q"; tw = "quit"; }
   // feature hints ([key, label, tier?]) after the built-in ones (in a full-screen view they are all of its keys); a
   // feature's esc renames the closing one (e.g. "back to related")

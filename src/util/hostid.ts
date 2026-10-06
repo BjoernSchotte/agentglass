@@ -1,60 +1,55 @@
-// agentglass — this machine's identity for fleet reports and OTLP host.id: a hash of the machine id and the uid (two
-// users on one machine are two hosts), overridable by ~/.agentglass/host-id (containers built from one image share
-// /etc/machine-id); a random id is written there when no machine id can be read
+// agentglass — the host id: one stable key per machine and user, shared by the fleet view and the OTLP export (fleet spec 3)
 // SPDX-License-Identifier: Apache-2.0
-import { openSync, writeSync, closeSync, renameSync, mkdirSync } from "node:fs";
+// SHA-256 of "agentglass/host/v1|<machine id>|<uid>", 16 hex digits: the machine id never leaves the host, two users on one
+// machine are two hosts. ~/.agentglass/host-id (16 hex digits) overrides it, and holds a random id where no machine id
+// can be read (containers built from one image share /etc/machine-id: their owners write distinct files).
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
-import { userInfo } from "node:os";
-import { HOME, readWhole } from "./fs.ts";
+import { openSync, writeSync, closeSync, chmodSync, renameSync, mkdirSync, unlinkSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { HOME, readText } from "./fs.ts";
 import { sha256Hex } from "./sha256.ts";
 
-// checks repoint these; idFile "" = ~/.agentglass/host-id at first use
+// checks repoint these; idFile "" = ~/.agentglass/host-id, resolved at first use
 export const HOSTID = { machineFiles: ["/etc/machine-id", "/var/lib/dbus/machine-id"], idFile: "", ioreg: "ioreg" };
-const memo = { id: "", name: "" };
-export const HOSTID_TEST = { reset: (): void => { memo.id = ""; memo.name = ""; } };
+let id = ""; let hname = "";
+export const HOSTID_TEST = { reset: (): void => { id = ""; hname = ""; } };
+const HEX = "0123456789abcdef";
 
-// the value of `"IOPlatformUUID" = "…"` in `ioreg -rd1 -c IOPlatformExpertDevice` output; "" = absent
-export function machineIdFrom(ioregOut: string): string {
-  const m = /"IOPlatformUUID"\s*=\s*"([^"]+)"/.exec(ioregOut);
-  return m ? m[1] ?? "" : "";
-}
+// the IOPlatformUUID line of `ioreg -rd1 -c IOPlatformExpertDevice`, "" if absent
+export function machineIdFrom(ioregOut: string): string { const m = /"IOPlatformUUID"\s*=\s*"([^"]+)"/.exec(ioregOut); return m ? m[1] ?? "" : ""; }
 export function hostIdOf(machineId: string, uid: number): string { return sha256Hex("agentglass/host/v1|" + machineId + "|" + String(uid)).slice(0, 16); }
 function idFile(): string { return HOSTID.idFile || join(HOME, ".agentglass", "host-id"); }
-function usable(id: string): boolean { return id.length >= 8 && !/^0+$/.test(id); } // an all-zero id is a placeholder (some images)
+function uid(): number { try { const u = Number(execFileSync("id", ["-u"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim()); return u >= 0 ? u : -1; } catch (e) { return -1; } }
 function machineId(): string {
-  for (const f of HOSTID.machineFiles) { const r = readWhole(f, 4096); const t = r.text.trim(); if (!r.err && usable(t)) return t; }
+  for (const f of HOSTID.machineFiles) { const v = readText(f, 0, 256).trim(); if (v && !/^0+$/.test(v)) return v; }
   if (process.platform !== "darwin") return "";
   try { return machineIdFrom(execFileSync(HOSTID.ioreg, ["-rd1", "-c", "IOPlatformExpertDevice"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 })); } catch (e) { return ""; }
 }
-const HEX = "0123456789abcdef";
 function randomId(): string { let s = ""; for (let i = 0; i < 16; i++) s += HEX[Math.floor(Math.random() * 16) % 16] ?? "0"; return s; }
-// atomic, owner-only (dir 0700, file 0600); false = could not write (the id is then only this process's)
-function writeId(path: string, id: string): boolean {
-  const old = process.umask(0o077);
+// atomic: a reader never sees a half-written id (dir 0700, file 0600)
+function writeId(p: string, v: string): void {
+  const tmp = p + ".tmp-" + String(process.pid);
   try {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const tmp = path + ".tmp"; const fd = openSync(tmp, "w"); writeSync(fd, id + "\n"); closeSync(fd); renameSync(tmp, path);
-    return true;
-  } catch (e) { return false; } finally { process.umask(old); }
+    mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
+    const fd = openSync(tmp, "w"); chmodSync(tmp, 0o600);
+    try { writeSync(fd, v + "\n"); } finally { closeSync(fd); }
+    renameSync(tmp, p);
+  } catch (e) { try { unlinkSync(tmp); } catch (e2) { /* not written */ } }
 }
-// cached per process: the host-id file when it holds 16 lowercase hex digits, else the machine id hash, else a random id
-// written to the file and used from then on
+// cached per process
 export function hostId(): string {
-  if (memo.id) return memo.id;
-  const f = readWhole(idFile(), 256).text.trim();
-  if (/^[0-9a-f]{16}$/.test(f)) { memo.id = f; return f; }
-  const m = machineId();
-  if (m) { memo.id = hostIdOf(m, userInfo().uid); return memo.id; }
-  const r = randomId(); writeId(idFile(), r); memo.id = r;
-  return r;
+  if (id) return id;
+  const f = idFile(); const o = readText(f, 0, 64).trim();
+  if (/^[0-9a-f]{16}$/.test(o)) { id = o; return id; }
+  const m = machineId(); const u = uid();
+  if (m && u >= 0) { id = hostIdOf(m, u); return id; }
+  id = randomId(); writeId(f, id);
+  return id;
 }
-// `uname -n` up to the first dot, cached; "unknown" when it fails
+// `uname -n` up to the first dot, "unknown" on failure (fleet; the OTLP exporter keeps the full name for host.name)
 export function hostName(): string {
-  if (memo.name) return memo.name;
-  let n = "";
-  try { n = execFileSync("uname", ["-n"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).trim(); } catch (e) { n = ""; }
-  const i = n.indexOf(".");
-  memo.name = (i > 0 ? n.slice(0, i) : n) || "unknown";
-  return memo.name;
+  if (hname) return hname;
+  try { hname = execFileSync("uname", ["-n"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split(".")[0] ?? ""; } catch (e) { hname = ""; }
+  if (!hname) hname = "unknown";
+  return hname;
 }
