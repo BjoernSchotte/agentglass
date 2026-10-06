@@ -152,6 +152,7 @@ async function update(args: string[]): Promise<number> {
       return fail("downloaded binary failed its self-check (expected " + tv + " " + tch + ") — nothing changed", 1);
     try { copyFileSync(exe, exe + ".prev"); renameSync(cand, exe); }
     catch (e) { return fail("cannot replace " + exe + ": " + String(e), 1); }
+    updateTls(arc, x, exe);
     if (!o.tag) try { setConfig("update", "channel", tch); } catch (e) { errLine("agentglass update", "config", "channel not saved: " + (e instanceof Error ? e.message : String(e)), ""); } // --tag is one-off: the saved channel stays
     rewriteInstallJson(exe, tch, tv);
     say(o, "updated " + BUILD.version + " → " + tv + " (" + tch + ")", { updated: true, from: BUILD.version, to: tv, channel: tch, tag: target.tag });
@@ -159,6 +160,14 @@ async function update(args: string[]): Promise<number> {
   } finally { rmrf(work); }
 }
 
+// the optional HTTPS receiver ships in the same archive (otlp-hub 11.4): replaced next to agentglass when the archive
+// has it, so `agentglass receive --tls-cert` never runs an older one
+function updateTls(arc: string, x: string, exe: string): void {
+  try { execFileSync("tar", ["-xzf", arc, "-C", x, "agentglass-receive-tls"], { stdio: "ignore" }); } catch (e) { return; }
+  const c = join(x, "agentglass-receive-tls");
+  try { chmodSync(c, 0o755); renameSync(c, join(dirname(exe), "agentglass-receive-tls")); }
+  catch (e) { errLine("agentglass update", "partial", "agentglass-receive-tls not updated: " + (e instanceof Error ? e.message : String(e)), ""); }
+}
 // first in line: the generic CLI handler would take `update --json` for a --json snapshot
 H.cli.unshift((args: string[]): boolean => {
   if (args[0] !== "update" || args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) return false; // help: cli.ts prints the record

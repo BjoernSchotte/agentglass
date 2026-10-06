@@ -10,4 +10,9 @@ got=$(./agentglass --version)
 case "$target" in darwin-*) nm -u ./agentglass | grep -q '_proc_listallpids' || { echo "package.sh: $target binary has no libproc binding (build.sh --ffi)" >&2; exit 1; } ;; esac
 # Linux builds promise glibc 2.36+ (Debian 12): refuse a binary that needs anything newer
 case "$target" in linux-*) sh "$(dirname "$0")/glibc-floor.sh" ./agentglass 2.36 || { echo "package.sh: $target binary needs a newer glibc than 2.36" >&2; exit 1; } ;; esac
-mkdir -p dist && tar -czf "dist/agentglass-$target.tar.gz" agentglass
+# the optional built-in HTTPS receiver (otlp-hub 11.4) ships in the same archive when its C-backend build passed
+extra=""; if [ -x agentglass-receive-tls ]; then
+  tv=$(./agentglass-receive-tls --version) && [ "$tv" = "$want" ] || { echo "package.sh: agentglass-receive-tls version '$tv' != '$want'" >&2; exit 1; }
+  extra=agentglass-receive-tls
+fi
+mkdir -p dist && tar -czf "dist/agentglass-$target.tar.gz" agentglass $extra

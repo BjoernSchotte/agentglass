@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as http from "node:http";
 import { writeSync, existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { type Obj, obj, str } from "../../util/json.ts";
 import { HOME, readWhole, run } from "../../util/fs.ts";
@@ -57,8 +57,12 @@ function serve(args: string[]): void {
     if (!existsSync(bin)) die("built-in HTTPS needs " + TLS_BIN + " next to " + process.execPath, "install it from the release archive (install.sh does), or keep 127.0.0.1 and use tailscale serve / a TLS proxy", 2);
     const a = ["--listen", c.listen, "--dir", c.dir, "--tls-cert", expandHome(c.tls[0] ?? ""), "--tls-key", expandHome(c.tls[1] ?? "")];
     if (c.listenPublic) a.push("--listen-public");
-    const r = spawnSync(bin, a, { stdio: "inherit" });
-    process.exit(typeof r.status === "number" ? r.status as number : 1);
+    const ch = spawn(bin, a, { stdio: "inherit" });
+    const fwd = (): void => { try { ch.kill("SIGTERM"); } catch (e) { /* gone */ } }; // a service manager stops the parent: the child goes too
+    process.on("SIGTERM", fwd); process.on("SIGINT", fwd);
+    ch.on("exit", (code: number | null) => { process.exit(typeof code === "number" ? code : 1); });
+    ch.on("error", (e: Error) => { die("cannot start " + bin + ": " + e.message, "", 2); });
+    return;
   }
   const l = splitListen(c.listen); if (!l) die("bad listen address", "", 2);
   const rt = newRt(c);
@@ -130,6 +134,8 @@ export function statusWarnings(st: Obj, toks: Tok[], now: number, funnel: string
   for (const t of toks) if (t.expires && live(t, now) && t.expires - now < 7 * 86400000) w.push("token of " + t.name + " expires " + new Date(t.expires).toISOString().slice(0, 10) + " — agentglass receive token rotate " + t.name);
   const hosts = obj(st["hosts"]) ?? {};
   for (const n of Object.keys(hosts)) { const h = obj(hosts[n]) ?? {}; const sc = h["scrubbed"]; if (typeof sc === "number" && (sc as number) > 0) w.push("scrubbed " + String(sc) + " content attribute(s) from " + n + " — check its export settings (otlp.content off, or --redact)"); }
+  const te = st["tlsExpires"];
+  if (typeof te === "number" && (te as number) > 0 && (te as number) - now < 14 * 86400000) w.push((te as number) <= now ? "the TLS certificate expired " + new Date(te as number).toISOString().slice(0, 10) + " — exporters refuse it; replace the files (reloaded within 5 s)" : "the TLS certificate expires " + new Date(te as number).toISOString().slice(0, 10) + " — renew it (the files are reloaded within 5 s)");
   if (funnel) w.push(funnel);
   return w;
 }

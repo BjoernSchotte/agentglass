@@ -1,0 +1,38 @@
+name: receive-tls
+# agentglass-receive-tls on all four release targets (C backend + TLS smoke test, as build-artifacts.yml does), for PRs
+# that touch it: the release must not be the first place a target's C build of it fails (2026.10.3: a C-backend-only
+# construct broke the release)
+on:
+  pull_request:
+    paths: ["src/receive-tls.ts", "src/features/hub/**", "src/util/inflate.ts", "scripts/build-tls.sh", "scripts/receive-tls.test.sh", ".github/workflows/receive-tls.yml", ".github/workflows/build-artifacts.yml"]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency: { group: "receive-tls-${{ github.ref }}", cancel-in-progress: true }
+jobs:
+  build:
+    name: tls ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-24.04, container: "debian:12", flags: "" }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, container: "debian:12", flags: "" }
+          - { target: darwin-x64, os: macos-15-intel, container: "", flags: "--backend c" }
+          - { target: darwin-arm64, os: macos-14, container: "", flags: "" }
+    steps:
+      - if: matrix.container != ''
+        run: apt-get update -qq && apt-get install -y -qq clang git curl xz-utils ca-certificates binutils openssl
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm i -g scriptc@0.1.7
+      - run: ./build.sh
+        env: { SCRIPTC_FLAGS: "${{ matrix.flags }}" }
+      - run: sh scripts/build-tls.sh
+      - if: always()
+        shell: sh
+        run: |
+          echo "${{ matrix.target }}: agentglass-receive-tls ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

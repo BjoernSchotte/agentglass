@@ -24,12 +24,12 @@ interface Win { t: number[]; b: number[] } // one token name's last minute: requ
 interface Conn { s: Socket; t: ReturnType<typeof setTimeout> | null }
 export interface Rt {
   cfg: RecvCfg; toks: TokStore; hosts: Map<string, HostStat>; unauth: Map<string, number>; rate: Map<string, Win>;
-  full: boolean; used: number; todayB: number; day: string; enforcedAt: number; started: number; port: number; tlsNote: string;
+  full: boolean; used: number; todayB: number; day: string; enforcedAt: number; started: number; port: number; tlsNote: string; tlsExpires: number;
   conns: Conn[]; inflight: number; closing: boolean; clock: () => number;
 }
 export function newRt(cfg: RecvCfg): Rt {
   return { cfg, toks: tokStore(tokensFile(cfg.dir)), hosts: new Map<string, HostStat>(), unauth: new Map<string, number>(), rate: new Map<string, Win>(),
-    full: false, used: 0, todayB: 0, day: "", enforcedAt: 0, started: Date.now(), port: 0, tlsNote: "", conns: [], inflight: 0, closing: false, clock: (): number => Date.now() };
+    full: false, used: 0, todayB: 0, day: "", enforcedAt: 0, started: Date.now(), port: 0, tlsNote: "", tlsExpires: 0, conns: [], inflight: 0, closing: false, clock: (): number => Date.now() };
 }
 function bump(m: Map<string, number>, k: string): void { m.set(k, (m.get(k) ?? 0) + 1); }
 export function hostStat(rt: Rt, name: string): HostStat {
@@ -283,7 +283,7 @@ export function statusObj(rt: Rt, now: number): Obj {
   }
   const un: Obj = {}; for (const k of rt.unauth.keys()) un[k] = rt.unauth.get(k) ?? 0;
   return { pid: process.pid, listen: rt.cfg.listen, port: rt.port, dir: rt.cfg.dir, startedAt: rt.started, at: now, hosts, refused: un,
-    disk: { usedBytes: rt.used, todayBytes: rt.todayB, maxBytes: rt.cfg.maxDiskMB * MB, full: rt.full }, retentionDays: rt.cfg.retentionDays, tls: rt.tlsNote };
+    disk: { usedBytes: rt.used, todayBytes: rt.todayB, maxBytes: rt.cfg.maxDiskMB * MB, full: rt.full }, retentionDays: rt.cfg.retentionDays, tls: rt.tlsNote, tlsExpires: rt.tlsExpires };
 }
 export function writeStatus(rt: Rt, now: number): void { writePrivate(join(rt.cfg.dir, "status.json"), JSON.stringify(statusObj(rt, now)) + "\n"); }
 // after listen: the port file, the 10 s status flush and the 10 min housekeeping; returns a stop function
