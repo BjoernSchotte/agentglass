@@ -53,6 +53,12 @@ function hostOf(name: string, hostId: string, paths: string[]): FleetHost {
   return { name, hostId, r: rep, shiftMin: 0 };
 }
 interface Tot { tok: number[]; cost: number }
+// every entry of a merge, per day (host, key, day: tokens and cost): the sliced merge must give the very same entries
+function entriesOf(x: Exact | null): string {
+  const o: string[] = [];
+  for (const e of x ? x.accs : []) for (const [d, v] of e.a.days) o.push(e.host + "|" + e.key + "|" + d + "|" + [v.inTok, v.outTok, v.cr, v.cw, Math.round(v.cost * 1e9), Math.round(v.unk)].join(","));
+  return o.sort().join("\n") + "#" + String(x ? x.removed : -1) + "/" + String(x ? x.corrected : -1);
+}
 function totOf(accs: Acc[]): Tot { const t = [0, 0, 0, 0]; let c = 0; for (const a of accs) { t[0] = (t[0] ?? 0) + a.inTok; t[1] = (t[1] ?? 0) + a.outTok; t[2] = (t[2] ?? 0) + a.cr; t[3] = (t[3] ?? 0) + a.cw; c += a.cost; } return { tok: t, cost: c }; }
 // the truth: every path on one machine
 function truth(paths: string[]): Tot { reset(); for (const p of paths) complete(sess(p)); const as: Acc[] = []; for (const p of paths) { const a = ledger.get(p); if (a) as.push(a); } return totOf(as); }
@@ -74,7 +80,7 @@ function fleet(local: { logs: LocalLog[]; accs: Acc[] }, hosts: FleetHost[], rep
   const j = mergeStart(local.logs, "ffffffffffffffff", hosts, rep, (p: string, u: number): LocalRows => { const a = ledger.get(p); return a ? { rows: rowsFor(p, "claude", a).rows, ok: true, done: true } : { rows: [], ok: false, done: true }; }, newXCache(), "", "");
   let steps = 1; while (!mergeStep(j, 0)) steps++;
   const bs: Acc[] = local.accs.slice(); for (const s of j.x?.accs ?? []) bs.push(s.a);
-  ok("sliced merge (" + String(steps) + " steps) = at once", same(totOf(bs), totOf(as)) && (j.x?.removed ?? -1) === x.removed && (j.x?.corrected ?? -1) === x.corrected && steps >= 2, show(totOf(bs)) + " vs " + show(totOf(as)));
+  ok("sliced merge (" + String(steps) + " steps) = at once, entry by entry and day by day", same(totOf(bs), totOf(as)) && entriesOf(j.x) === entriesOf(x) && steps >= 2, show(totOf(bs)) + " vs " + show(totOf(as)));
   slicedSteps = Math.max(slicedSteps, steps);
   return { t: totOf(as), x };
 }
@@ -128,15 +134,16 @@ ws = hostOf("ws", "1111111111111111", [A]);
 r = fleet(localOf([Lq]), [ws], false);
 ok("local later copy: corrected, totals equal the truth", same(r.t, want5) && r.x.corrected === 1, show(r.t) + " want " + show(want5) + " corrected " + String(r.x.corrected));
 
-// 4b. long sessions: 700 messages; vm1 holds earlier copies of all of them (ws's shadow loses each, a slice of 256 rows at
-// a time) and this machine later ones (a correction of 700 rows across slices): sliced = at once (fleet() compares)
+// 4b. long sessions: 700 messages; vm1 holds earlier copies of every other one (ws's shadow loses 350, a slice of 256 rows
+// at a time, and keeps the rest: a row taken out twice would show) and this machine later ones of all (a correction of
+// 700 rows across slices): sliced = at once (fleet() compares)
 const longL: string[] = []; const longE: string[] = []; const longV: string[] = [];
-for (let q = 0; q < 700; q++) { const id = "long" + String(q); const mm = String(10 + (q % 50)).padStart(2, "0"); longE.push(asst(id, "2026-09-03T08:" + mm + ":00.000Z", 3, 2, 1, 1)); longL.push(asst(id, "2026-09-03T09:" + mm + ":00.000Z", 3, 2, 1, 1)); longV.push(asst(id, "2026-09-03T10:" + mm + ":00.000Z", 3, 2, 1, 1)); }
+for (let q = 0; q < 700; q++) { const id = "long" + String(q); const mm = String(10 + (q % 50)).padStart(2, "0"); if (q % 2 === 0) longE.push(asst(id, "2026-09-03T08:" + mm + ":00.000Z", 3, 2, 1, 1)); longL.push(asst(id, "2026-09-03T09:" + mm + ":00.000Z", 3, 2, 1, 1)); longV.push(asst(id, "2026-09-03T10:" + mm + ":00.000Z", 3, 2, 1, 1)); }
 const LA = put("long-ws", longL); const LB = put("long-vm", longE); const LV = put("long-here", longV);
 const wantLong = truth([LA, LB, LV]);
 ws = hostOf("ws", "1111111111111111", [LA]); vm = hostOf("vm1", "2222222222222222", [LB]);
 r = fleet(localOf([LV]), [ws, vm], false);
-ok("long sessions: the truth, 700 removed and 700 corrected", same(r.t, wantLong) && r.x.removed === 700 && r.x.corrected === 700, show(r.t) + " want " + show(wantLong) + " " + String(r.x.removed) + "/" + String(r.x.corrected));
+ok("long sessions: the truth, 350 removed and 700 corrected", same(r.t, wantLong) && r.x.removed === 350 && r.x.corrected === 700, show(r.t) + " want " + show(wantLong) + " " + String(r.x.removed) + "/" + String(r.x.corrected));
 
 // 5. re-pricing: a price set on this machine prices every host's table-priced usage
 ws = hostOf("ws", "1111111111111111", [A]); vm = hostOf("vm1", "2222222222222222", [B]);
@@ -198,10 +205,15 @@ for (const sd of [42, 7, 1234, 99, 2026]) {
     const xc = newXCache(); const rows = (p: string): OwnRow[] | null => { const a = ledger.get(p); return a ? rowsFor(p, "claude", a).rows : null; };
     const loc = localOf(lps);
     const t1 = (x: Exact): Tot => { const as: Acc[] = loc.accs.slice(); for (const e of x.accs) as.push(e.a); return totOf(as); };
+    // the same kept merges in the smallest slices, with their own cache: entry by entry the same as at once
+    const xcS = newXCache(); const rowsS = (p: string, u: number): LocalRows => { const r0 = rows(p); return { rows: r0 ?? [], ok: r0 !== null, done: true }; };
+    const sliced = (ls: LocalLog[], hs: FleetHost[]): Exact | null => { const j = mergeStart(ls, "ffffffffffffffff", hs, false, rowsS, xcS, "s1", ""); while (!mergeStep(j, 0)) { /* one unit a step */ } return j.x; };
     const x1 = exactFleet(loc.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, xc, "s1");
+    ok("kept merge in slices = at once", entriesOf(sliced(loc.logs, [hA, hB, hC])) === entriesOf(x1), "differs");
     ok("cached merge: the truth", same(t1(x1), wantR), show(t1(x1)));
     const x2 = exactFleet(loc.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, xc, "s1");
     ok("cached merge again: the same", same(t1(x2), wantR), show(t1(x2)));
+    ok("kept merge again in slices = at once", entriesOf(sliced(loc.logs, [hA, hB, hC])) === entriesOf(x2), "differs");
     const lp = lps[0] ?? ""; writeFileSync(lp, (logs.get(lk) ?? []).concat(extra).join("\n") + "\n");
     const s0 = sessions.get(lp); if (s0) { s0.size = statSync(lp).size; complete(s0); }
     const a0 = ledger.get(lp);
@@ -209,6 +221,7 @@ for (const sd of [42, 7, 1234, 99, 2026]) {
     const t2 = (x: Exact): Tot => { const as: Acc[] = loc2.accs.slice(); for (const e of x.accs) as.push(e.a); return totOf(as); };
     const x3 = exactFleet(loc2.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, xc, "s1");
     ok("cached merge after the local log grew: the truth", same(t2(x3), wantPost), show(t2(x3)) + " want " + show(wantPost) + " grown " + String(!!a0));
+    ok("kept merge in slices after the local log grew = at once", entriesOf(sliced(loc2.logs, [hA, hB, hC])) === entriesOf(x3), "differs");
     const x4 = exactFleet(loc2.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, null, "");
     ok("cached = uncached", same(t2(x4), t2(x3)), show(t2(x4)));
     // a host's log grows (a copy that beats another host's, a message of its own): its next report appends rows to the
@@ -232,6 +245,7 @@ for (const sd of [42, 7, 1234, 99, 2026]) {
       const x5 = exactFleet(loc3.logs, "ffffffffffffffff", [hA, hB2, hC], false, rows, xc, "s1");
       ok("the kept index grew, or rebuilt when a part was reset (an ownership move inside the host)", reset > 0 ? MSTAT.full === f0 + 1 : MSTAT.grown === g0 + 1 && MSTAT.full === f0, String(MSTAT.grown - g0) + "/" + String(MSTAT.full - f0) + " reset " + String(reset));
       if (!reset) grownSeen++;
+      ok("kept merge in slices after a host's rows grew = at once", entriesOf(sliced(loc3.logs, [hA, hB2, hC])) === entriesOf(x5), "differs");
       ok("kept merge after a host's rows grew: the truth", appended > 0 && same(t3(x5), wantPost3), show(t3(x5)) + " want " + show(wantPost3) + " appended " + String(appended));
       const x6 = exactFleet(loc3.logs, "ffffffffffffffff", [hA, hB2, hC], false, rows, null, "");
       ok("kept = fresh after the host grew", same(t3(x6), t3(x5)) && x6.removed === x5.removed && x6.corrected === x5.corrected, show(t3(x6)) + " " + String(x6.removed) + "/" + String(x5.removed));
