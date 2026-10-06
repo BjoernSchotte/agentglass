@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { obj, arr } from "../../util/json.ts";
-import { newAgg, ingestLine, reportsOf, prune, msgHash } from "./map.ts";
+import { newAgg, ingestLine, reportsOf, prune, msgHash, restoreHost, extraOf } from "./map.ts";
 import type { HostReport } from "../fleet/model.ts";
 import { exactFleet } from "../fleet/merge.ts";
 let bad = 0;
@@ -117,6 +117,19 @@ ok("resolved alert gone", r !== null && r.live !== null && (r.live[0]?.alerts.le
 // malformed lines are ignored
 a = newAgg(); ingestLine(a, "{x", null); ingestLine(a, "[]", null); ingestLine(a, "{\"resourceSpans\":[{\"resource\":3}]}", null);
 ok("garbage ignored", a.hosts.size === 0, String(a.hosts.size));
+// "updated" is activity: an idle state record sent later (the exporter's 300 s repeat) does not move it; a busy one does
+const upd0 = String(sess0(rep(reportsOf((() => { const g = newAgg(); ingestLine(g, SAMPLE, null); return g; })(), t0, true, 3650), "00112233445566ff"), "updated"));
+const stLine = (busy: boolean, ms: number): string => "{\"resourceLogs\":[{\"resource\":{\"attributes\":[" + kv("host.id", "00112233445566ff") + "," + kv("service.name", "claude-code") + "]},\"scopeLogs\":[{\"scope\":{\"name\":\"agentglass\"},\"logRecords\":[{\"timeUnixNano\":\"" + ns(ms) + "\",\"eventName\":\"agentglass.session.state\",\"attributes\":[" + kv("gen_ai.conversation.id", "11111111-1111-4111-8111-111111111111") + "," + kb("agentglass.session.live", true) + "," + kb("agentglass.session.busy", busy) + "]}]}]}]}";
+a = newAgg(); ingestLine(a, SAMPLE, null); ingestLine(a, stLine(false, t0 + 3600000), null);
+ok("an idle state record keeps updated", String(sess0(rep(reportsOf(a, t0, true, 3650), "00112233445566ff"), "updated")) === upd0, String(sess0(rep(reportsOf(a, t0, true, 3650), "00112233445566ff"), "updated")) + " want " + upd0);
+ingestLine(a, stLine(true, t0 + 7200000), null);
+ok("a busy state record moves it", String(sess0(rep(reportsOf(a, t0, true, 3650), "00112233445566ff"), "updated")) === new Date(t0 + 7200000).toISOString(), String(sess0(rep(reportsOf(a, t0, true, 3650), "00112233445566ff"), "updated")));
+// restored (a restart) while only a state record dated the session: its chat spans arriving later still set the model
+a = newAgg(); ingestLine(a, stLine(true, t0 + 7200000), null);
+const pre = rep(reportsOf(a, t0, true, 3650), "00112233445566ff");
+const b2 = newAgg(); if (pre) restoreHost(b2, "00112233445566ff", pre, extraOf(a, "00112233445566ff"));
+ingestLine(b2, SAMPLE, null);
+ok("model after a restore", sess0(rep(reportsOf(b2, t0, true, 3650), "00112233445566ff"), "model") === "claude-sonnet-4-5", js(sess0(rep(reportsOf(b2, t0, true, 3650), "00112233445566ff"), "model")));
 // a line whose parse tree would not fit (a hostile Collector file: 7 MB of "{},") is skipped and counted, not parsed
 a = newAgg(); ingestLine(a, "{\"resourceSpans\":[{\"resource\":{\"attributes\":[" + "{},".repeat(2100000) + "{}]}}]}", null);
 ok("oversized line skipped", a.oversized === 1 && a.hosts.size === 0, String(a.oversized));

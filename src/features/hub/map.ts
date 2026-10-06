@@ -184,13 +184,14 @@ function logs(a: Agg, rs: Obj, label: Label | null): void {
       const conv = s(m, "gen_ai.conversation.id"); if (!conv) continue;
       if (ev !== "agentglass.session.state" && ev !== "agentglass.alert") continue; // turn.open: no session of its own
       const x = sessAgg(h, harness, conv);
-      if (t > x.updated) x.updated = t;
       if (ev === "agentglass.session.state") {
         if (x.live && x.live.at > t) continue;
         const ttl = s(m, "agentglass.session.title"); if (ttl) x.title = ttl;
         where(x, m);
         x.live = { key: x.key, at: t, live: b(m, "agentglass.session.live"), busy: b(m, "agentglass.session.busy"), attention: b(m, "agentglass.session.attention"), approval: b(m, "agentglass.session.approval"), stuck: s(m, "agentglass.session.stuck"), alerts: [] };
-        if (t > x.updated) x.updated = t;
+        // "updated" is the session's last activity: a busy state is activity, a repeat or an idle transition is only
+        // when the exporter looked (every 300 s while live) — it moves updated only for a session no span has dated yet
+        if ((x.live.busy || x.updated === 0) && t > x.updated) x.updated = t;
         h.changed = true;
       } else if (ev === "agentglass.alert") {
         const rule = s(m, "agentglass.alert.rule"); const st = s(m, "agentglass.alert.state");
@@ -246,7 +247,11 @@ function jsonOf(x: SessAgg, live: LiveRow | null): Obj {
   const alerts: Obj[] = []; for (const al of x.alerts.values()) alerts.push(al);
   const tok: Obj = {}; tok["in"] = x.tin; tok["out"] = x.tout; tok["cacheRead"] = x.tcr; tok["cacheWrite"] = x.tcw;
   const bill: Obj = {}; bill["mode"] = topMode(x); bill["plan"] = ""; bill["source"] = x.native ? "otlp-native" : "otlp";
-  let repo: Obj | null = null; if (x.repoKey) { repo = {}; repo["key"] = x.repoKey; repo["label"] = x.repoName || x.cwd.slice(x.cwd.lastIndexOf("/") + 1); repo["kind"] = ""; repo["worktree"] = ""; repo["top"] = ""; repo["remote"] = x.remote; }
+  let repo: Obj | null = null;
+  if (x.repoKey) { // a "path:" key is a directory without git: its label, kind and top are the path itself (as the source has them)
+    const path = x.repoKey.startsWith("path:") ? x.repoKey.slice(5) : "";
+    repo = {}; repo["key"] = x.repoKey; repo["label"] = path || x.repoName || x.cwd.slice(x.cwd.lastIndexOf("/") + 1); repo["kind"] = path ? "path" : ""; repo["worktree"] = ""; repo["top"] = path; repo["remote"] = x.remote;
+  }
   const vals: Obj = {};
   vals["id"] = x.id; vals["harness"] = x.h; vals["title"] = x.title; vals["cwd"] = x.cwd; vals["branch"] = x.branch; vals["remote"] = x.remote || null; vals["model"] = x.model;
   vals["path"] = null; vals["updated"] = new Date(x.updated || 0).toISOString(); vals["bytes"] = 0; vals["live"] = live ? live.live : false; vals["pid"] = 0;
@@ -329,7 +334,7 @@ export function restoreHost(a: Agg, key: string, r: HostReport, x: HostExtra): v
     const tok = obj(o["tokens"]) ?? {}; const repo = obj(o["repo"]);
     ss.title = str(o["title"]); ss.cwd = str(o["cwd"]); ss.branch = str(o["branch"]); ss.remote = str(o["remote"]); ss.model = str(o["model"]);
     ss.repoKey = repo ? str(repo["key"]) : ""; ss.repoName = repo ? str(repo["label"]) : "";
-    const up = Date.parse(str(o["updated"])); ss.updated = up > 0 ? up : 0; ss.modelAt = ss.updated;
+    const up = Date.parse(str(o["updated"])); ss.updated = up > 0 ? up : 0; ss.modelAt = ss.model ? ss.updated : 0; // no model yet: the next chat span sets it
     ss.tin = numOf(tok["in"]); ss.tout = numOf(tok["out"]); ss.tcr = numOf(tok["cacheRead"]); ss.tcw = numOf(tok["cacheWrite"]);
     ss.unk = numOf(o["unpricedTokens"]); ss.tools = numOf(o["tools"]); ss.subs = numOf(o["subagents"]);
     const c = o["costUsd"]; ss.priced = typeof c === "number" && (c as number) > 0; ss.cost = numOf(c);
