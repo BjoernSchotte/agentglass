@@ -14,7 +14,7 @@ import { todayKey } from "../usage/record.ts";
 import { FORMAT, type DayRow, type HostReport, type HostFeed, newFeedState, noOwned } from "./model.ts";
 import { sessRowOf } from "./report.ts";
 import type { FleetCfg, HostCfg } from "./config.ts";
-import { FLEET, setFleet, rowsOf, applyReport, idMap, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, syncFresh, hostByName, merged, rowObj, reapply, overlay, watcher } from "./hosts.ts";
+import { FLEET, setFleet, rowsOf, applyReport, idMap, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, syncFresh, hostByName, merged, rowObj, reapply, overlay, watcher, mergeTick } from "./hosts.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -152,5 +152,14 @@ vm2.mine = rz; vm2.mineAt = now; reapply();
 const pz = pricedRows([todayKey()], "").find((x) => x.model === "claude-zeta-9");
 ok("14: a remote unpriced model in the price panel", !!pz && pz.src === "unpriced" && pz.unk === 1200, JSON.stringify(pz ? { s: pz.src, u: pz.unk } : null));
 ok("14: not in one harness's rows (Stats per harness stay local)", !pricedRows([todayKey()], "codex").some((x) => x.model === "claude-zeta-9"), "leaked");
+// the TUI merges in slices: a result of another host set never stands for this one (a new exact host would count $0,
+// a gone one would still count) — until the new merge is done, each exact host's own figures, marked ≈
+pricedRows([todayKey()], ""); // a result of the hosts as they are
+nas.mine = ex(rep("8888888888888888", [{ id: "n2", live: false }], 1, true, null)); nas.mineAt = now; reapply(); // another machine under that name
+const fx = fleetCost(ln, merged(), now, cfg3, 0, 30000, false); const fxn = fx.perHost.find((p) => p.name === "nas");
+ok("a new exact host while merging: its own figure, ≈, not the old result", !fx.exact && fx.marked && fx.merging !== null && !!fxn && fxn.today === 1, JSON.stringify({ exact: fx.exact, marked: fx.marked, nas: fxn ? fxn.today : null }));
+mergeTick(Infinity);
+const fy = fleetCost(ln, merged(), now, cfg3, 0, 30000, false);
+ok("the merge done: exact again, no chip", fy.exact && fy.merging === null, JSON.stringify({ exact: fy.exact, merging: fy.merging }));
 console.log(bad ? String(bad) + " failed" : "fleet hosts: all checks passed");
 if (bad) process.exit(1);

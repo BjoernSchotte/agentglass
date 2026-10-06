@@ -233,10 +233,11 @@ function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; retu
 // ── the exact merge (spec 13): local Claude logs and every exact report, cached until a report or the ledger moves. The
 // TUI runs it in time slices (mergeTick from its tick: the first merge of 2 hosts mirroring 200 k messages took 4.7 s in
 // one piece, and a viewer's first one also rebuilds its msgrows sidecars); a CLI run at once ──
-const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null, gen: 0, ms: 0, sums: 0, max: 0, smax: 0 }; // ms/sums: time spent merging and summing, max/smax: the longest merge slice and sum (the debug footer)
+const EX = { at: 0, ver: -1, sig: "", cs: "", x: null as Exact | null, gen: 0, ms: 0, sums: 0, max: 0, smax: 0 }; // cs: the host set x was merged from; ms/sums: time spent merging and summing, max/smax: the longest merge slice and sum (the debug footer)
 export function mergeMs(): number[] { const o = [EX.ms, EX.sums, EX.max, EX.smax]; EX.ms = 0; EX.sums = 0; EX.max = 0; EX.smax = 0; return o; }
 export function mergeGen(): number { return EX.gen; } // bumped by every finished merge
-export function merged0(): boolean { return EX.x !== null; } // a first merge result exists
+// a merge result of the current host set exists (one of another set never stands for it)
+export function merged0(): boolean { return EX.x !== null && (!RUN.r || RUN.r.csig === EX.cs); }
 const XC = newXCache(); // what the merge keeps between rounds (merge.ts)
 // a merge in progress: the inputs it started with (sig/ver/at: what EX takes when it is done), this machine's Claude logs
 // hashed one after another (ss, i → ll), then the job
@@ -270,7 +271,7 @@ export function mergeTick(until: number): boolean {
     }
     if (!r.job) r.job = mergeStart(r.ll, FLEET.localId, r.fh, r.reprice, localRows, XC, r.csig, r.pv, costDays(r.at));
     if (!mergeStep(r.job, until)) return false;
-    EX.at = r.at; EX.ver = r.ver; EX.sig = r.sig; EX.x = r.job.x; EX.gen++; RUN.r = null;
+    EX.at = r.at; EX.ver = r.ver; EX.sig = r.sig; EX.cs = r.csig; EX.x = r.job.x; EX.gen++; RUN.r = null;
     return true;
   } finally { const d = Date.now() - t0; EX.ms += d; if (until !== Infinity && d > EX.max) EX.max = d; }
 }
@@ -284,14 +285,17 @@ export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: numb
     fh.push({ name: rh.cfg.name, hostId: r.hello.hostId, r, shiftMin: sh }); sig.push(rh.cfg.name + "@" + String(rh.okAt) + "#" + String(r.hello.now));
     csig.push(rh.cfg.name + "@" + r.hello.hostId + "~" + String(sh)); // its rows' changes the merge finds itself
   }
-  if (RUN.r) { if (!sync) return EX.x; mergeTick(Infinity); } // one merge at a time: the next starts from what this one leaves
+  // sync = false returns the last result while a merge runs, only when it is of the same hosts (names, ids, time zones):
+  // with a host added or gone it would count a new exact host as $0 or a gone one still — null: their own figures, ≈
+  const cs = csig.join("|"); const last = EX.cs === cs ? EX.x : null;
+  if (RUN.r) { if (!sync) return last; mergeTick(Infinity); } // one merge at a time: the next starts from what this one leaves
   const sg = sig.join("|"); const hit = EX.x;
-  if (hit && sg === EX.sig && (EX.ver === L.ver || now - EX.at < maxAgeMs)) return hit;
+  if (hit && sg === EX.sig && cs === EX.cs && (EX.ver === L.ver || now - EX.at < maxAgeMs)) return hit;
   const ss: Sess[] = []; for (const s of sessions.values()) if (s.h === "claude" && ledger.has(s.path)) ss.push(s);
   forgetIds((p: string): boolean => ledger.has(p)); // logs gone since: their ids
-  RUN.r = { sig: sg, ver: L.ver, at: now, fh, csig: csig.join("|"), reprice, pv: String(PGEN.n), ss, i: 0, ll: [], job: null, t0: now };
-  if (sync) mergeTick(Infinity);
-  return EX.x;
+  RUN.r = { sig: sg, ver: L.ver, at: now, fh, csig: cs, reprice, pv: String(PGEN.n), ss, i: 0, ll: [], job: null, t0: now };
+  if (sync) { mergeTick(Infinity); return EX.x; }
+  return last;
 }
 export function entOf(x: Shadow): Ent { return { a: x.a, mode: (p: string): Bill => modeOfShadow(x, p) }; }
 function sumHost(es: Ent[], days: string[]): number { return tot(sumDaysOf(es, days)); }
