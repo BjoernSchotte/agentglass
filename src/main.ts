@@ -30,6 +30,7 @@ import { compactHelp } from "./features/clihelp.ts";
 import { debugExtras } from "./util/selfmem.ts";
 import { WAKE_ALL } from "./util/fs.ts";
 import { gitGen, gitTouches } from "./features/vcs/attrib.ts";
+import { MUX_EVENTS } from "./mux/events.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
@@ -172,7 +173,10 @@ function body(j: Job, now: number): () => void {
   };
 }
 function warnJob(m: string): void { say("err", m); S.dirty = true; }
+// agentglass as a herdr plugin popup: a successful jump or resume in herdr quits it (the popup must not cover the pane)
+const POPUP = (process.env.HERDR_PLUGIN_ID ?? "") !== "";
 function turn(): void {
+  if (POPUP && MUX_EVENTS.jumped) quit();
   const now = Date.now(); turnNo++;
   relevel(now);
   for (const j of due(sc, now, live(), armed())) runJob(sc, j, body(j, now), () => Date.now(), warnJob);

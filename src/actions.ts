@@ -8,9 +8,12 @@ import { OS } from "./platform/index.ts";
 import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
-import { sessions, SG, scan, buildView, parentOf, current } from "./model/sessions.ts";
+import { sessions, SG, scan, buildView, parentOf, current, titleOf } from "./model/sessions.ts";
 import { refreshProcs, rootOf, procAt, procSess, sharedDaemon } from "./model/procs.ts";
-import { paneNow, sendTo, focusOn } from "./mux/index.ts";
+import { paneNow, sendTo, focusOn, startIn } from "./mux/index.ts";
+import { tabLabel } from "./mux/herdr-parse.ts";
+import { identOf } from "./features/query/project.ts";
+import { REDACT } from "./features/redact-on.ts";
 import { harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
 import { realCwd } from "./hooks.ts";
@@ -105,13 +108,21 @@ export function resume(sub: Sess): void {
   if (s.pid) { const p = paneNow(s); if (p.kind === "none") say("warn", "already running (pid " + s.pid + ")"); else focusOn(p); return; }
   const rs = harnessOf(s.h).resume;
   if (!rs) { say("warn", harnessOf(s.h).label + " can't resume a session by id"); return; }
+  // inside herdr: a new tab in the workspace owning the session's directory (the agent must not live in our pane)
+  const id = identOf(s);
+  if (startIn(s.h, s.id, rs(s), cwdOf(s), id ? id.top : "", tabLabel(titleOf(s), s.id, REDACT))) return;
   const c = cmdOf(s.h);
-  const args = c.slice(1).concat(rs(s));
-  leave();
-  try { execFileSync(c[0], args, { stdio: "inherit", cwd: cwdOf(s) }); } catch (e) { /* non-zero exit */ }
-  enter();
-  refreshProcs(); scan(); buildView();
+  ACT_IO.inTerminal(c[0], c.slice(1).concat(rs(s)), cwdOf(s));
 }
+// the in-terminal resume: leave the TUI, run the agent here, come back when it exits (a seam for checks)
+export const ACT_IO = {
+  inTerminal: (cmd: string, args: string[], cwd: string): void => {
+    leave();
+    try { execFileSync(cmd, args, { stdio: "inherit", cwd }); } catch (e) { /* non-zero exit */ }
+    enter();
+    refreshProcs(); scan(); buildView();
+  },
+};
 export function killPid(pid: number, sig: string): void {
   if (!pid) { say("warn", "no process linked"); return; }
   const w = sharedDaemon(pid); if (w) { say("warn", w); return; }
