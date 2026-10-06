@@ -43,12 +43,19 @@ sys.stdout.buffer.write(out); sys.exit(code if code >= 0 else 128 - code)
 PY
 pty() { lim=$1; shift; run python3 "$t/pty.py" "$lim" "$@"; }
 run_dir="$h/.agentglass/run"; inbox="$run_dir/inbox"
-# the server: a TUI under a PTY for up to 60 s
-pty 60 "$t/ag" > /dev/null 2>&1 &
+# the server: a TUI under a PTY for up to 120 s
+pty 120 "$t/ag" > /dev/null 2>&1 &
 i=0; while [ ! -f "$run_dir/tui.lock" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 srv=$(cat "$run_dir/tui.lock" 2>/dev/null | tr -d '\n'); [ -n "$srv" ] || { echo "FAIL no server lock"; exit 1; }
 eq "run dir 0700" "$(stat -c %a "$run_dir" 2>/dev/null || stat -f %Lp "$run_dir")" 700
 eq "lock 0600" "$(stat -c %a "$run_dir/tui.lock" 2>/dev/null || stat -f %Lp "$run_dir/tui.lock")" 600
+# ready: the lock is taken before the first frame, while the TUI's start may still hold its loop (a loaded CI runner took
+# over 2 s there); a link the server answers (an unknown session: exit 3 either way) says it polls its inbox now. The
+# product's 2 s stays: the timed checks below run against a server that is up
+# (a start held for 3 s here, as a loaded runner holds it: the readiness wait must ride it out)
+kill -STOP "$srv"; ( sleep 3; kill -CONT "$srv" ) &
+i=0; while [ $i -lt 15 ]; do o=$(pty 10 "$t/ag" open zzzzzzzz-1 2>&1) || true; case "$o" in *"asked the running agentglass"*) break ;; esac; i=$((i + 1)); done
+[ $i -lt 15 ] || { echo "FAIL the server never answered a link: $o"; exit 1; }
 n0=$(pgrep -c -f "$t/ag" || true)
 # a link while the server runs: handed off, exit 0, no second TUI, inbox empty
 s0=$(date +%s)
