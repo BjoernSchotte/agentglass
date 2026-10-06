@@ -43,6 +43,9 @@ export interface HostFeed {
   poll(now: number): FeedState;    // cheap: stats a file or two, parses only what changed, never blocks
   stop(): void;                    // kill what start() spawned (on quit)
 }
-export interface Owned { key: string; rows: OwnRow[] } // one session's owned rows (session key: SessRow.key)
+// one session's owned rows; key: the session key (SessRow.key), optionally "|<part>" when a session's rows come in parts
+// (one per log of its tree: each grows on its own, so a snapshot delta carries only new rows)
+export interface Owned { key: string; rows: OwnRow[] }
+export function ownSess(key: string): string { const i = key.indexOf("|"); return i >= 0 ? key.slice(0, i) : key; }
 export function noOwned(): Owned[] { return []; }
 export function newFeedState(): FeedState { return { report: null, okAt: 0, tryAt: 0, err: "", code: "", busy: false }; }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { type Acc, peekHeavy, mkey } from "../usage/record.ts";
-import { type DayRow, type Hello, type HostReport, type OwnRow, type Owned, type SessRow } from "./model.ts";
+import { type DayRow, type Hello, type HostReport, type OwnRow, type Owned, type SessRow, ownSess } from "./model.ts";
 import { helloOf } from "./report.ts";
 
 export const SNAP = "agentglass-snapshot/v1";
@@ -104,8 +104,10 @@ export function applySnap(cur: HostReport | null, x: Snap): HostReport {
     if (o.reset && !o.rows.length) own.delete(o.key); // the key owns nothing any more
     else own.set(o.key, o.reset || !old ? o.rows : old.concat(o.rows));
   }
+  const bySess = new Map<string, OwnRow[]>();
+  for (const [k, v] of own) { const sk = ownSess(k); const o = bySess.get(sk); bySess.set(sk, o ? o.concat(v) : v); }
   const sessions: SessRow[] = [];
-  for (const k of order) { const s = keep.get(k); if (!s) continue; sessions.push({ s: s.s, key: s.key, days: s.days, own: own.get(k) ?? [], prov: s.prov }); keep.delete(k); }
+  for (const k of order) { const s = keep.get(k); if (!s) continue; sessions.push({ s: s.s, key: s.key, days: s.days, own: bySess.get(k) ?? [], prov: s.prov }); keep.delete(k); }
   sessions.sort((a: SessRow, b: SessRow) => { const ua = str(a.s["updated"]); const ub = str(b.s["updated"]); return ua < ub ? 1 : ua > ub ? -1 : 0; });
   const owned: Owned[] = []; for (const [k, v] of own) owned.push({ key: k, rows: v });
   return { hello: helloOf(x.head), sessions, cost: x.cost, allowance: x.allowance, live: cur && !x.full ? cur.live : null, exact: true, owned };

@@ -4,7 +4,7 @@
 import { mkdirSync, writeFileSync, appendFileSync, unlinkSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
-import type { OwnRow, Owned, SessRow } from "./model.ts";
+import { type OwnRow, type Owned, type SessRow, ownSess } from "./model.ts";
 import { type Snap, type OwnLine, newSnapParse, feedSnap, snapLines, applySnap } from "./snap.ts";
 import { type PeerState, buildSnap, baseFor, savePeer, loadPeer, peersDir, newGen, MAX_PEERS } from "./snapshot.ts";
 import { msgHash } from "../usage/msgrows.ts";
@@ -25,7 +25,7 @@ writeFileSync(join(p, "s3.jsonl"), user("s3", iso(30)) + asst("s3", "m4", iso(30
 function round(x: Snap): Snap { const q = newSnapParse(); feedSnap(q, snapLines(x)); return q; }
 const keys = (x: Snap): string => x.sess.map((r: SessRow) => r.key).sort().join(",");
 const P = "00112233445566ff";
-function ownOf(x: Snap, key: string): OwnLine | null { for (const o of x.own) if (o.key === key) return o; return null; }
+function ownOf(x: Snap, key: string): OwnLine | null { for (const o of x.own) if (ownSess(o.key) === key) return o; return null; }
 function req(ack: string, full: boolean): Snap {
   const st = loadPeer(P); const base = baseFor(st, ack, full);
   const b = buildSnap(7, base, Date.now()); const q = round(b.snap);
@@ -67,7 +67,7 @@ unlinkSync(join(p, "s3.jsonl"));
 const g = req(unk.gen, false);
 ok("deleted → gone", g.gone.indexOf("claude:s3") >= 0 && !!ownOf(g, "claude:s3") && (ownOf(g, "claude:s3")?.reset ?? false) && (ownOf(g, "claude:s3")?.rows.length ?? 1) === 0, JSON.stringify(g.gone));
 const gr = applySnap(applySnap(null, unk), g);
-ok("gone applied", !gr.sessions.some((s: SessRow) => s.key === "claude:s3") && !gr.owned.some((o: Owned) => o.key === "claude:s3"), JSON.stringify(gr.sessions.map((s: SessRow) => s.key)));
+ok("gone applied", !gr.sessions.some((s: SessRow) => s.key === "claude:s3") && !gr.owned.some((o: Owned) => ownSess(o.key) === "claude:s3"), JSON.stringify(gr.sessions.map((s: SessRow) => s.key)));
 // peer files: 0600, at most MAX_PEERS
 st = { acked: null, pending: null };
 for (let i = 0; i < MAX_PEERS + 1; i++) savePeer("aa" + String(i).padStart(14, "0"), st, { gen: newGen(), sig: new Map<string, string>() });

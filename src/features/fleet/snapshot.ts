@@ -103,27 +103,35 @@ function priceNow(r: OwnRow): OwnRow {
   if (z) { n[5] = cost(z.p, n[0] ?? 0, n[1] ?? 0, n[2] ?? 0, n[3] ?? 0, n[4] ?? 0); n[6] = 1; } else { n[5] = -1; n[6] = 0; }
   return { h: r.h, key: r.key, d: r.d, hr: r.hr, m: r.m, prov: r.prov, n };
 }
-// a session's owned rows: bookings on the cost days in full, the rest ownership-only (one per message)
-function ownOf(ss: Sess[], days: Set<string>): { rows: OwnRow[]; ok: boolean } {
-  const out: OwnRow[] = []; const only = new Set<string>(); let ok = true;
-  for (const s of ss) {
-    if (s.h !== "claude") continue;
-    const a = ledger.get(s.path); if (!a) continue;
-    const r = rowsFor(s.path, "claude", a); if (!r.ok) ok = false;
-    for (const x of r.rows) {
-      if (!x.h) continue;
-      if (days.has(x.d)) out.push(priceNow(x));
-      else if (!only.has(x.h)) { only.add(x.h); out.push({ h: x.h, key: x.key, d: "", hr: 0, m: "", prov: "", n: [] }); }
-    }
+// one log's owned rows: bookings on the cost days in full, the rest ownership-only (one per message). A log's rows only
+// grow (msgrows appends), so a delta carries its new rows alone; each log of a session tree is its own own-line key
+function ownOfLog(path: string, a: Acc, days: Set<string>): { rows: OwnRow[]; ok: boolean } {
+  const out: OwnRow[] = []; const only = new Set<string>();
+  const r = rowsFor(path, "claude", a);
+  for (const x of r.rows) {
+    if (!x.h) continue;
+    if (days.has(x.d)) out.push(priceNow(x));
+    else if (!only.has(x.h)) { only.add(x.h); out.push({ h: x.h, key: x.key, d: "", hr: 0, m: "", prov: "", n: [] }); }
   }
-  return { rows: out, ok };
+  return { rows: out, ok: r.ok };
 }
+// the row of a session outside the list window: what the cost and the merge read (billing, time), not the list's fields
+function shortSess(s: Sess): Obj {
+  return { id: s.id, harness: s.h, updated: new Date(s.mtime).toISOString(), live: false, kind: s.kind, costUsd: s.cost < 0 ? null : s.cost,
+    billing: { mode: s.bill || "unknown", plan: REDACT ? "" : s.plan, source: s.billSrc }, tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok } };
+}
+// the own-line key of one log of a session: "<session key>|<its file name>" (the session's own id or a subagent's agent
+// id: unique within the session's tree; ownSess() takes the session back)
+function logKey(sess: string, path: string): string { const b = path.slice(path.lastIndexOf("/") + 1); return sess + "|" + (b.endsWith(".jsonl") ? b.slice(0, b.length - 6) : b); }
+// what a log's rows depend on: its read state, its owned set, the cost days, the price table (else: unchanged since base)
+function cheapOf(a: Acc, cdSig: string, ps: string): string { return a.ep + ":" + String(a.off) + ":" + (a.mv ? "t" + String(a.mv.length) : "m" + String(a.mo.size)) + ":" + cdSig + ":" + ps; }
 // signature of a row list: count, last hash, token and cost sums (an append keeps the prefix's)
 function rowSig(rows: OwnRow[], n: number): string {
   let t = 0; let u = 0; for (let i = 0; i < n && i < rows.length; i++) { const r = rows[i]; if (!r) continue; for (let j = 0; j < 5; j++) t += r.n[j] ?? 0; u += Math.max(0, r.n[5] ?? 0); }
   const last = n > 0 ? rows[n - 1] : undefined;
   return String(n) + ":" + (last ? last.h : "") + ":" + String(t) + ":" + String(Math.round(u * 1e6));
 }
+const NONE = "none"; // a row set that is empty: nothing on the wire
 function sigN(sig: string): number { const i = sig.indexOf(":"); return i > 0 ? Number(sig.slice(0, i)) : -1; }
 // every top-level session the snapshot covers: the cost days' (usage), the list window's, the live ones; and every other
 // top-level Claude session (ownership only)
@@ -137,7 +145,9 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
     if (s.mtime >= from || livePid(s) > 0) win.push(s); else if (s.h === "claude") rest.push(s);
   }
   win.sort((a: Sess, b: Sess) => b.mtime - a.mtime);
-  for (const s of win) { loadHead(s); loadTail(s, true); const t: Sess[] = []; tree(s, t); for (const x of t) complete(x); peers(s); }
+  const listFrom = now - days * DAY_MS;
+  // indexed first (cost-only sessions: their logs alone; listed ones also head, tail and git, as --json does)
+  for (const s of win) { const t: Sess[] = []; tree(s, t); for (const x of t) complete(x); if (s.mtime >= listFrom || livePid(s) > 0) { loadHead(s); loadTail(s, true); peers(s); } }
   for (const s of rest) { const t: Sess[] = []; tree(s, t); for (const x of t) complete(x); } // ownership needs every Claude log indexed (a cold host: once)
   const x = newSnap(); const next: Gen = { gen: newGen(), sig: new Map<string, string>() }; let inexact = 0;
   const b = base ? base.sig : new Map<string, string>();
@@ -149,17 +159,40 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
     if (old !== undefined && on >= 0 && on < rows.length && rowSig(rows, on) === old) x.own.push({ key, reset: false, rows: rows.slice(on) });
     else x.own.push({ key, reset: true, rows });
   };
+  const cdl = [...cd].sort(); const cdSig = (cdl[0] ?? "") + "-" + (cdl[cdl.length - 1] ?? ""); const ps = pricesSig();
   for (const s of win) {
     const t: Sess[] = []; tree(s, t); const accs = accsOf(t);
     const key = s.h + ":" + s.id;
-    const row: SessRow = { s: jsonSess(s), key, days: dayRows(accs, cd), own: null, prov: provOf(s, accs) };
-    const text = JSON.stringify({ s: row.s, d: row.days ?? [], p: row.prov });
-    const sg = sha256Hex(text).slice(0, 16); next.sig.set("s:" + key, sg);
-    if (b.get("s:" + key) !== sg) x.sess.push(row);
-    if (s.h === "claude") { const o = ownOf(t, cd); if (!o.ok) inexact++; send(key, o.rows); }
+    // a session only the cost figures need (not in the list window, not live): a short row; any session that is not live:
+    // nothing rebuilt while its logs, billing, the cost days and the price table stay as they were
+    // a listed one that is not live: the same while its logs are, rebuilt at least every 10 minutes (git and repo facts)
+    const live = livePid(s) > 0; const listed = s.mtime >= listFrom || live;
+    let cheap = "";
+    if (!live) {
+      cheap = cdSig + ":" + ps + ":" + s.bill + ":" + String(s.mtime) + ":" + (listed ? "L" + String(Math.floor(now / 600000)) : "C");
+      for (const a of accs) cheap += ":" + a.ep + "/" + String(a.off) + "/" + String(a.xM);
+      next.sig.set("q:" + key, cheap);
+    }
+    const oldS = b.get("s:" + key);
+    if (cheap && oldS !== undefined && b.get("q:" + key) === cheap) next.sig.set("s:" + key, oldS);
+    else {
+      const row: SessRow = { s: listed ? jsonSess(s) : shortSess(s), key, days: dayRows(accs, cd), own: null, prov: provOf(s, accs) };
+      const sg = sha256Hex(JSON.stringify({ s: row.s, d: row.days ?? [], p: row.prov })).slice(0, 16); next.sig.set("s:" + key, sg);
+      if (oldS !== sg) x.sess.push(row);
+    }
+    for (const c of t) {
+      if (c.h !== "claude") continue;
+      const a = ledger.get(c.path); if (!a) continue;
+      const lk = logKey(key, c.path); const cheap = cheapOf(a, cdSig, ps); next.sig.set("c:" + lk, cheap);
+      const old = b.get("o:" + lk);
+      if (old !== undefined && b.get("c:" + lk) === cheap) { next.sig.set("o:" + lk, old); continue; } // untouched since base: no rows read
+      const o = ownOfLog(c.path, a, cd); if (!o.ok) inexact++;
+      if (o.rows.length) send(lk, o.rows);
+      else { next.sig.set("o:" + lk, NONE); if (old !== undefined && old !== NONE) x.own.push({ key: lk, reset: true, rows: [] }); } // owns nothing (all copies): remembered, not re-read
+    }
   }
   for (const s of rest) {
-    const t: Sess[] = []; tree(s, t); const key = s.h + ":" + s.id;
+    const t: Sess[] = []; tree(s, t); const key = s.h + ":" + s.id + "|*";
     // cheap signature first (the owned set's stored size): hashing ids only when it changed
     let cheap = "k"; for (const c of t) { const a = ledger.get(c.path); if (a) cheap += ":" + (a.mv ? "t" + String(a.mv.length) : "m" + String(a.mo.size)); }
     const ck = "c:" + key; next.sig.set(ck, cheap);
@@ -169,11 +202,12 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
     for (const c of t) { const a = ledger.get(c.path); if (a && c.h === "claude") for (const r of ownKeys(c.path, a)) if (!seen.has(r.h)) { seen.add(r.h); rows.push(r); } }
     if (rows.length) send(key, rows); else next.sig.delete(ck);
   }
+  if (inexact) x.head["inexact"] = inexact; // logs whose rows do not add up to the ledger: the viewer marks the host ≈
   // what the base had and this run has not: a session row goes (gone), a row set empties (an own reset without rows)
   for (const k of b.keys()) {
-    if (next.sig.has(k)) continue;
+    if (next.sig.has(k) || k.startsWith("c:") || k.startsWith("q:")) continue;
     if (k.startsWith("s:")) x.gone.push(k.slice(2));
-    else if (k.startsWith("o:")) x.own.push({ key: k.slice(2), reset: true, rows: [] });
+    else if (k.startsWith("o:") && b.get(k) !== NONE) x.own.push({ key: k.slice(2), reset: true, rows: [] });
   }
   x.head = { version: BUILD.version, hostId: hostId(), hostName: REDACT ? "" : hostName(), os: process.platform, tzOffsetMin: -new Date(now).getTimezoneOffset(), redact: REDACT, days, now, priceSig: pricesSig() };
   x.gen = next.gen; x.base = base ? base.gen : ""; x.full = !base;

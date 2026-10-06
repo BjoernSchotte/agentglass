@@ -11,7 +11,7 @@ import { type Acc, type Day, newAcc, newDay, mkey, reprice } from "../usage/reco
 import { resolve, cost } from "../usage/pricing.ts";
 import { type Bill, MODES } from "../usage/billing.ts";
 import { str, obj } from "../../util/json.ts";
-import type { DayRow, HostReport, OwnRow, SessRow } from "./model.ts";
+import { type DayRow, type HostReport, type OwnRow, type SessRow, ownSess } from "./model.ts";
 
 export interface Occ { host: string; hostId: string; key: string; row: OwnRow }
 // a before b in the ownership order (spec 13.2)
@@ -135,12 +135,12 @@ export function exactFleet(local: LocalLog[], localId: string, hosts: FleetHost[
     if (k0 === undefined || first(key, idOf(i), sk, k0, idOf(bi.get(h) ?? -1), bs.get(h) ?? "")) { bk.set(h, key); bi.set(h, i); bs.set(h, sk); }
   };
   for (const l of local) for (const r of l.keys) offer(r.h, r.key, -1, l.skey);
-  for (let i = 0; i < hosts.length; i++) { const fh = hosts[i]; if (!fh) continue; for (const o of fh.r.owned) for (const r of o.rows) offer(r.h, r.key, i, o.key); }
+  for (let i = 0; i < hosts.length; i++) { const fh = hosts[i]; if (!fh) continue; for (const o of fh.r.owned) { const sk = ownSess(o.key); for (const r of o.rows) offer(r.h, r.key, i, sk); } }
   const wins = (h: string, i: number, sk: string): boolean => bi.get(h) === i && bs.get(h) === sk;
   const out: Shadow[] = []; let removed = 0; let corrected = 0; const inexact: string[] = [];
   for (let i = 0; i < hosts.length; i++) {
     const fh = hosts[i]; if (!fh) continue;
-    const om = new Map<string, OwnRow[]>(); for (const o of fh.r.owned) om.set(o.key, o.rows);
+    const om = new Map<string, OwnRow[]>(); for (const o of fh.r.owned) { const sk = ownSess(o.key); const p = om.get(sk); om.set(sk, p ? p.concat(o.rows) : o.rows); }
     for (const sr of fh.r.sessions) {
       if (!sr.days) continue;
       const a = shadowOf(sr, fh.shiftMin);
