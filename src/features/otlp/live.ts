@@ -125,7 +125,8 @@ function logTick(L: Live, now: number): void {
 }
 // on the spans' cadence (every 5 s or at 512 records), one request; failures back off like the span queue
 export function flushLogs(L: Live, now: number): void {
-  if (!L.logs || L.halt || !L.lq.length || now < L.logRetryAt) return;
+  if (L.halt) { L.lq = []; return; } // a TLS failure stopped the run: nothing more goes out
+  if (!L.logs || !L.lq.length || now < L.logRetryAt) return;
   if (L.lq.length < FLUSH_SPANS && now - L.lastLogFlush < FLUSH_MS) return;
   L.lastLogFlush = now;
   const batch = L.lq.slice(0);
