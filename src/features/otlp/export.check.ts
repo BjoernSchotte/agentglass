@@ -5,8 +5,10 @@
 import { mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { newSpan, type XTurn } from "./types.ts";
+import { emailNote } from "./native.ts";
+import { HOME } from "../../util/fs.ts";
 import { cfgFrom } from "./config.ts";
-import { type ExOpts, parseExport, batches, timeArg, runExport, fxDelta, fxAccepted, acks, ack } from "./export.ts";
+import { type ExOpts, parseExport, batches, timeArg, runExport, fxDelta, fxAccepted, acks, ack, cfgStatus, enddate } from "./export.ts";
 import { newState, markTurn, loadState, saveState } from "./state.ts";
 import { discover } from "../cli.ts";
 
@@ -157,6 +159,22 @@ eq("415 → plain, remembered", enc1 + " / " + enc2, "gz+plain / plain");
 reset([]);
 run(["--resend", "--harness", "claude", "--compression", "gzip"]);
 eq("--compression gzip tries again", readFileSync(dir + "/enc", "utf8").trim(), "gz");
+
+// --status: TLS, logs, titles, detail (otlp-complete 1.5, 6), the user.email note (4.7)
+eq("enddate", enddate("notAfter=Jan  2 00:00:00 2020 GMT\n") + " " + enddate("notAfter=Oct 18 09:30:00 2026 GMT") + " " + enddate("garbage"), "2020-01-02 2026-10-18 ");
+{
+  const hd = HOME + "/st"; mkdirSync(hd, { recursive: true }); writeFileSync(hd + "/ca.crt", "x"); writeFileSync(hd + "/c.crt", "x"); writeFileSync(hd + "/c.key", "x"); chmodSync(hd + "/c.key", 0o600);
+  const cs = cfgStatus("https://h.example:4318/v1/traces", cfgFrom({ tls: { ca: hd + "/ca.crt", cert: hd + "/c.crt", key: hd + "/c.key" }, titles: true, detail: "meta" }), new Map<string, string>(), "2026-10-06");
+  eq("status tls", cs.tls, "ca " + hd + "/ca.crt · client certificate " + hd + "/c.crt");
+  eq("status logs/titles/detail", cs.logs + " " + String(cs.titles) + " " + cs.detail, "https://h.example:4318/v1/logs (live mode only) true meta");
+  eq("status: logs off", cfgStatus("https://h.example/x", cfgFrom({}), new Map<string, string>(), "2026-10-06").logs, "logs off: set otlp.logsEndpoint for https://h.example/x");
+  eq("status: logs disabled", cfgStatus("https://h.example/v1/traces", cfgFrom({ logs: false }), new Map<string, string>(), "2026-10-06").logs, "off (otlp.logs is false)");
+  eq("status: tls off", cfgStatus("https://h.example/v1/traces", cfgFrom({}), new Map<string, string>(), "2026-10-06").tls, "off");
+  chmodSync(hd + "/c.key", 0o644);
+  eq("status: tls error shown", String(cfgStatus("https://h.example/v1/traces", cfgFrom({ tls: { cert: hd + "/c.crt", key: hd + "/c.key" } }), new Map<string, string>(), "2026-10-06").tls.indexOf("chmod 600") >= 0), "true");
+  rmSync(hd, { recursive: true, force: true });
+}
+eq("user.email note", String(emailNote([{ h: "claude", on: "on", src: "" }]).indexOf("user.email") >= 0) + " " + emailNote([{ h: "claude", on: "off", src: "" }, { h: "codex", on: "on", src: "" }]), "true ");
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("otlp export: all checks passed");

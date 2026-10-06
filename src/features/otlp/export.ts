@@ -12,6 +12,7 @@ import { HOME } from "../../util/fs.ts";
 import { curlBin, otlpDir } from "../../util/http.ts";
 import { gzipProbe } from "../../util/gzip.ts";
 import { dayKey } from "../usage/record.ts";
+import { REDACT } from "../redact-on.ts";
 import { parse as parseQuery } from "../query/parse.ts";
 import type { Clause } from "../query/types.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
@@ -25,7 +26,7 @@ import { newSessB, finish, fxChat } from "./build.ts";
 import { encodeRequest } from "./encode.ts";
 import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl, tlsOf, tlsUrlErr, logsUrlOf, logHeaders, hostOf } from "./config.ts";
 import { type ExpState, loadState, saveState, lock, unlock, marked, markTurn, markFx } from "./state.ts";
-import { type Native, detectNative, applyPolicy, projectDirs } from "./native.ts";
+import { type Native, detectNative, applyPolicy, projectDirs, emailNote } from "./native.ts";
 import { GZ, sendBatch } from "./send.ts";
 
 export interface ExOpts {
@@ -256,27 +257,67 @@ export function dryRun(o: ExOpts, c: OtlpCfg, now: number): string[] {
   c.content = o.content; c.detail = o.detail;
   return batches(b.turns, o.batch, MAX_BYTES, c).map((x: Batch) => x.json);
 }
+// a certificate's notAfter as YYYY-MM-DD (openssl x509 -enddate), "" without openssl or on any error
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export function certEnd(path: string): string {
+  let o = ""; try { o = execFileSync("openssl", ["x509", "-noout", "-enddate", "-in", path], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }); } catch (e) { return ""; }
+  return enddate(o);
+}
+// "notAfter=Jan  2 00:00:00 2020 GMT" → "2020-01-02"
+export function enddate(o: string): string {
+  const m = /notAfter=([A-Z][a-z]{2})\s+(\d{1,2})\s+[\d:]+\s+(\d{4})/.exec(o); if (!m) return "";
+  const mi = MON.indexOf(m[1] ?? ""); if (mi < 0) return "";
+  return (m[3] ?? "") + "-" + String(mi + 1).padStart(2, "0") + "-" + (m[2] ?? "").padStart(2, "0");
+}
+// the TLS, logs, titles and detail settings (otlp-complete 1.5, 6): no network; certificate expiry when openssl exists
+export interface CfgStatus { tls: string; tlsCa: string; tlsCert: string; tlsExpires: string; logs: string; logsUrl: string; titles: boolean; detail: string }
+export function cfgStatus(url: string, c: OtlpCfg, env: Map<string, string>, today: string): CfgStatus {
+  const r: CfgStatus = { tls: "off", tlsCa: "", tlsCert: "", tlsExpires: "", logs: "", logsUrl: "", titles: c.titles, detail: c.detail };
+  const tx = tlsOf(c, env, "TRACES");
+  if (tx.err) r.tls = "error: " + tx.err;
+  else if (tx.tls.some((p: string) => p !== "")) {
+    r.tlsCa = tx.tls[0] ?? ""; r.tlsCert = tx.tls[1] ?? "";
+    r.tlsExpires = r.tlsCert ? certEnd(r.tlsCert) : "";
+    const parts: string[] = [];
+    parts.push(r.tlsCa ? "ca " + r.tlsCa : "ca: the system's");
+    if (r.tlsCert) parts.push("client certificate " + r.tlsCert + (r.tlsExpires ? " (expires " + r.tlsExpires + (r.tlsExpires < today ? " — EXPIRED" : "") + ")" : ""));
+    r.tls = parts.join(" · ");
+    const ue = url ? tlsUrlErr(url, tx.tls) : ""; if (ue) r.tls += " — " + ue;
+  }
+  if (!c.logs) r.logs = "off (otlp.logs is false)";
+  else if (!url) r.logs = "(no endpoint)";
+  else { const lu = logsUrlOf(url, !!c.endpoint, c, env); r.logsUrl = lu.url ? safeUrl(lu.url) : ""; r.logs = lu.url ? safeUrl(lu.url) + " (live mode only)" : lu.why; }
+  return r;
+}
 function status(o: ExOpts, c: OtlpCfg): number {
   const st = o.url ? loadState(o.url) : null;
   const ns = nativeNow(select(o).roots);
   const gz = o.compression || c.compression;
   const probe = (() => { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } return gzipProbe(d); })();
   const gzState = gz === "none" ? "off (compression none)" : !probe ? "off (this build cannot write compressed bodies)" : st && !st.gzip ? "off (" + (st.gzipNote || "the endpoint refused gzip") + "; --compression gzip tries again)" : "on";
+  const cs = cfgStatus(o.url, c, envMap(), new Date().toISOString().slice(0, 10));
+  const note = emailNote(ns);
   if (o.json) {
     const hs = ns.map((n: Native) => ({ harness: n.h, native: n.on, source: n.src || null, nativeSince: st && st.nativeSince.has(n.h) ? when(st.nativeSince.get(n.h) ?? 0) : null }));
-    out(JSON.stringify({ endpoint: o.url ? safeUrl(o.url) : null, policy: o.native, lastExport: st && st.last ? when(st.last) : null, gzip: gzState, sessions: st ? st.sessions.size : 0, harnesses: hs }));
+    out(JSON.stringify({ endpoint: o.url ? safeUrl(o.url) : null, policy: o.native, lastExport: st && st.last ? when(st.last) : null, gzip: gzState, sessions: st ? st.sessions.size : 0, harnesses: hs,
+      tls: { status: cs.tls, ca: cs.tlsCa || null, cert: cs.tlsCert || null, expires: cs.tlsExpires || null }, logs: { endpoint: cs.logsUrl || null, status: cs.logs }, titles: cs.titles, detail: cs.detail, notes: note ? [note] : [] }));
     return 0;
   }
   out("endpoint     " + (o.url ? safeUrl(o.url) : "(none set)"));
   out("policy       --native " + o.native + (o.native === "warn" ? " (export everything, warn about harnesses that export themselves)" : ""));
   out("last export  " + (st ? when(st.last) : "never") + (st ? "  (" + String(st.sessions.size) + " sessions tracked)" : ""));
   out("gzip         " + gzState);
+  out("tls          " + cs.tls);
+  out("logs         " + cs.logs);
+  out("titles       " + (cs.titles ? "on (otlp.titles)" : "off" + (REDACT ? " (--redact sends the fake titles)" : "")));
+  out("detail       " + cs.detail + (c.content ? " (--content implies meta)" : ""));
   out("");
   out("harness   own OTLP export   since (skip policy)        source");
   for (const n of ns) {
     const since = st && st.nativeSince.has(n.h) ? when(st.nativeSince.get(n.h) ?? 0) : "-";
     out(n.h.padEnd(10) + n.on.padEnd(18) + since.padEnd(27) + (n.src || "-"));
   }
+  if (note) { out(""); out(note); }
   return 0;
 }
 // exit 0 = everything sent (or nothing to send), 1 = some requests failed (the rest is marked), 2 = usage, 3 = locked
