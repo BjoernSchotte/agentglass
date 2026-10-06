@@ -1,6 +1,6 @@
 // agentglass — self-check for the herdr CLI parsing and decision rules (shapes of herdr 0.9.1, fake values): sh scripts/check.sh
 // SPDX-License-Identifier: Apache-2.0
-import { parseAgents, parseLabels, parseProcInfo, parseError, parseVersion, versionAtLeast, sessRef, choosePid, pollDue, fresh, placeLabel, sendOutcome, envHerdr, parseWorkspaces, workspaceFor, rowState, tabLabel, parseCreated } from "./herdr-parse.ts";
+import { parseAgents, parseLabels, parseProcInfo, parseError, parseVersion, versionAtLeast, sessRef, choosePid, pollDue, fresh, placeLabel, sendOutcome, envHerdr, parseWorkspaces, workspaceFor, rowState, tabLabel, parseCreated, workspaceByPanes } from "./herdr-parse.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const AL = '{"id":"cli:agent:list","result":{"agents":[' +
@@ -67,5 +67,7 @@ ok("version none", parseVersion("status: running\n") === "" && versionAtLeast("1
 ok("row: blocked", rowState("blocked", 10000, 0, 20000) === "blocked", "");
 ok("tab label cut", tabLabel("ÄÖÜ".repeat(20), "abc", false).length === 24 && tabLabel("", "abcdef0123", false) === "abcdef01", "");
 ok("env empty", envHerdr(new Uint8Array(0)).sock === "", "");
+ok("agent cwd", parseAgents('{"result":{"agents":[{"agent":"claude","cwd":"/w/x","pane_id":"w1:p1","terminal_id":"t"}]}}').agents[0]?.cwd === "/w/x", "");
+ok("ws by panes", workspaceByPanes("/w/x/src", [["/w", "w1"], ["/w/x", "w2"], ["/w/xy", "w3"]]) === "w2" && workspaceByPanes("/w/xy2", [["/w/xy", "w3"]]) === "" && workspaceByPanes("/a", [["/", "w9"]]) === "", "");
 console.log(bad ? bad + " failed" : "herdr-parse: all checks passed");
 if (bad) process.exit(1);

@@ -4,7 +4,7 @@
 import { type Obj, parse, obj, arr, str } from "../util/json.ts";
 
 // one agent pane of `herdr agent list`: ws/tab are herdr ids (w7, w7:t6); label = herdr's agent name (claude, codex, amp…)
-export interface HAgent { pane: string; term: string; ws: string; tab: string; label: string; status: string; sKind: string; sVal: string }
+export interface HAgent { pane: string; term: string; ws: string; tab: string; label: string; status: string; sKind: string; sVal: string; cwd: string }
 export interface HList { ok: boolean; agents: HAgent[] } // ok false = not the expected JSON
 function result(text: string): Obj | null { const o = parse(text.trim()); return o ? obj(o["result"]) : null; }
 export function parseAgents(text: string): HList {
@@ -14,7 +14,7 @@ export function parseAgents(text: string): HList {
     const a = obj(v); if (!a) continue;
     const pane = str(a["pane_id"]); const term = str(a["terminal_id"]); if (!pane || !term) continue;
     const ss = obj(a["agent_session"]);
-    out.push({ pane, term, ws: str(a["workspace_id"]), tab: str(a["tab_id"]), label: str(a["agent"]), status: str(a["agent_status"]), sKind: ss ? str(ss["kind"]) : "", sVal: ss ? str(ss["value"]) : "" });
+    out.push({ pane, term, ws: str(a["workspace_id"]), tab: str(a["tab_id"]), label: str(a["agent"]), status: str(a["agent_status"]), sKind: ss ? str(ss["kind"]) : "", sVal: ss ? str(ss["value"]) : "", cwd: str(a["cwd"]) });
   }
   return { ok: true, agents: out };
 }
@@ -148,6 +148,16 @@ export function workspaceFor(cwd: string, top: string, ws: HWs[]): number {
   for (let i = 0; i < ws.length; i++) if (ws[i]?.repoRoot === top && ws[i]?.checkout === top) return i;
   for (let i = 0; i < ws.length; i++) if (ws[i]?.repoRoot === top) return i;
   return -1;
+}
+// a plain workspace (no worktree) holding the directory: the one with the agent pane whose cwd contains it most closely
+// (whole path segments); "" none. pairs: [cwd, workspace id] of the agent panes
+export function workspaceByPanes(cwd: string, pairs: string[][]): string {
+  let best = ""; let bl = -1;
+  if (cwd) for (const pr of pairs) {
+    const p = pr[0] ?? ""; const w = pr[1] ?? "";
+    if (p && p !== "/" && w && (cwd === p || cwd.startsWith(p + "/")) && p.length > bl) { best = w; bl = p.length; }
+  }
+  return best;
 }
 // the herdr state that changes a session's row: working (spinner), blocked (◆), done (finished, not seen: ✓); only a
 // reading ≤ 30 s old and not older than the log's last write; "" = agentglass's own glyph

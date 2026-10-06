@@ -14,12 +14,12 @@ import { REDACT } from "../features/redact-on.ts";
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
 import { MUX_EVENTS } from "./events.ts";
 import { type HWs, parseAgents, parseLabels, parseWorkspaces, parseProcInfo, parseVersion, parseCreated, parseError, versionAtLeast,
-  sessRef, choosePid, placeLabel, sendOutcome, errOutcome, envHerdr, workspaceFor, HARNESS_LABELS } from "./herdr-parse.ts";
+  sessRef, choosePid, placeLabel, sendOutcome, errOutcome, envHerdr, workspaceFor, workspaceByPanes, HARNESS_LABELS } from "./herdr-parse.ts";
 
 const MIN_SEND = "0.8.2"; // the first herdr that refuses a prompt while the agent is at a dialog (agent_blocked)
 const PI_CAP = 8; // pane process-info calls per non-forced refresh (≈ 6 ms each)
 // one agent pane: mp is the pane handed out (updated in place, so a caller holding it sees new readings)
-interface Rec { mp: MuxPane; wsId: string; tabId: string; label: string; key: string; path: string; pid: number; seen: boolean }
+interface Rec { mp: MuxPane; wsId: string; tabId: string; label: string; key: string; path: string; pid: number; seen: boolean; cwd: string }
 interface Srv { sock: string; skipUntil: number; at: number; labelsAt: number; look: number; recs: Map<string, Rec>; ws: Map<string, string>; tabs: Map<string, string>; wsList: HWs[]; ver: string; verAt: number }
 const HS = {
   bin: "", binDone: false, cfgWarned: false, badOutWarned: false,
@@ -119,9 +119,9 @@ function readAgents(s: Srv, now: number): boolean {
   for (const x of s.recs.values()) x.seen = false;
   for (const a of l.agents) {
     let x = s.recs.get(a.term);
-    if (!x) { x = { mp: { kind: "herdr", id: a.pane, term: a.term, server: s.sock, ws: "", wsId: "", tab: "", status: "", at: 0 }, wsId: "", tabId: "", label: "", key: "", path: "", pid: 0, seen: true }; s.recs.set(a.term, x); }
+    if (!x) { x = { mp: { kind: "herdr", id: a.pane, term: a.term, server: s.sock, ws: "", wsId: "", tab: "", status: "", at: 0 }, wsId: "", tabId: "", label: "", key: "", path: "", pid: 0, seen: true, cwd: "" }; s.recs.set(a.term, x); }
     const ref = sessRef(a.label, a.sKind, a.sVal);
-    x.seen = true; x.mp.id = a.pane; x.mp.status = a.status; x.mp.at = now; x.wsId = a.ws; x.tabId = a.tab; x.label = a.label;
+    x.seen = true; x.mp.id = a.pane; x.mp.status = a.status; x.mp.at = now; x.wsId = a.ws; x.tabId = a.tab; x.label = a.label; x.cwd = a.cwd;
     if (x.key !== ref.key || x.path !== ref.path) { x.key = ref.key; x.path = ref.path; x.pid = 0; } // another session in the pane: resolve again
   }
   const gone: string[] = []; for (const [k, x] of s.recs) if (!x.seen) gone.push(k);
@@ -194,7 +194,7 @@ export const herdr: Mux = {
   // one `agent list` per server per look, only when a caller says it is due; the last reading otherwise
   status: (p: MuxPane, due: boolean, look: number, now: number): string => {
     const s = servers.get(p.server);
-    if (s && due && s.look !== look && s.skipUntil <= now) { s.look = look; if (readAgents(s, now)) for (const x of s.recs.values()) labelsOf(s, x); }
+    if (s && due && s.look !== look && s.skipUntil <= now) { s.look = look; if (readAgents(s, now)) { for (const x of s.recs.values()) labelsOf(s, x); index(); } }
     return p.status;
   },
   send: (p: MuxPane, msg: string): void => {
@@ -234,11 +234,14 @@ export const herdr: Mux = {
     const own = envOf("HERDR_SOCKET_PATH");
     if (envOf("HERDR_ENV") !== "1" || !own || HARNESS_LABELS.indexOf(h) < 0 || sockets(Date.now()).indexOf(own) < 0) return false;
     const s = srvOf(own); const now = Date.now();
-    readLabels(s, now);
-    const wi = workspaceFor(cwd, top, s.wsList);
+    readLabels(s, now); if (readAgents(s, now)) index();
+    // the workspace: its worktree holds the directory, else its repo's, else one of its agents works in the directory
+    const wi = workspaceFor(cwd, top, s.wsList); const w = wi >= 0 ? s.wsList[wi] : undefined;
+    const pairs: string[][] = []; for (const x of s.recs.values()) pairs.push([x.cwd, x.wsId]);
+    const wid = w ? w.id : workspaceByPanes(cwd, pairs);
     let pane = ""; let tab = ""; let wsLabel = "";
-    if (wi >= 0) {
-      const w = s.wsList[wi]; const wid = w ? w.id : ""; wsLabel = w ? w.label : "";
+    if (wid) {
+      wsLabel = s.ws.get(wid) ?? "";
       const r = call(own, ["tab", "create", "--workspace", wid, "--cwd", cwd, "--label", label, "--no-focus"]);
       if (!r.ok) { const o = errOutcome(parseError(r.err), "herdr: could not create a tab"); say(o.kind, o.text); return true; }
       const c = parseCreated(r.out); pane = c.pane; tab = c.tab;
