@@ -22,7 +22,7 @@ import { kfmt, grp, moneyTag } from "../usage/costs.ts";
 import { type CostNow, costNow } from "../usage/summary.ts";
 import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
-import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed } from "./config.ts";
+import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed, openCmd } from "./config.ts";
 import type { HostReport } from "./model.ts";
 import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName } from "./hosts.ts";
 import { sshBin } from "./ssh.ts";
@@ -106,15 +106,17 @@ H.onTick.push(tick);
 H.onQuit.push((): void => { for (const rh of FLEET.hosts) rh.feed.stop(); }); // running pulls only: shared ssh masters persist (fleet status --close)
 
 // ── rows: the host tag before the title ──
+// ≈ after it (local rows: alone) when the session is also on another host: its cost may count twice (spec 7.2)
 export function hostTag(s: Sess): string {
-  if (!s.host) return "";
-  return fg(FRESH.ok(s.host) ? C.accent : C.dim) + s.host.slice(0, 4) + RST + " ";
+  const ov = T.on && FN.ov.size > 0 && FN.ov.has(s.h + ":" + s.id) ? fg(C.yellow) + "≈" + RST : "";
+  if (!s.host) return ov ? ov + " " : "";
+  return fg(FRESH.ok(s.host) ? C.accent : C.dim) + s.host.slice(0, 4) + RST + ov + " ";
 }
 H.rowPrefix.push(hostTag);
 REMOTE.hint = (s: Sess): string => sshHint(s);
 export function sshHint(s: Sess): string {
   const h = FLEET.cfg ? hostNamed(FLEET.cfg, s.host) : null;
-  return "ssh " + (h ? h.ssh : s.host) + " -t " + (h ? h.agentglass : "agentglass") + " open " + s.h + ":" + s.id;
+  return openCmd(h ?? { name: s.host, ssh: s.host, agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, s.h + ":" + s.id);
 }
 
 // ── fleet figures for the header and Stats (cached per rows generation and 5 s) ──
@@ -141,11 +143,19 @@ FLEET_HOOK.line = (w: number, week: boolean): string => {
   if (f.ov.size) l += fg(C.dim) + " · " + RST + fg(C.yellow) + String(f.ov.size) + " session" + (f.ov.size === 1 ? "" : "s") + " on 2+ hosts ≈" + RST;
   return vwidth(l) <= w ? l : fitStyled(l, w);
 };
-// allowance across hosts: per account the newest fetch (the fullest account shows), Codex the newest event
-FLEET_HOOK.claude = (): Allow | null => {
-  if (!T.on || !merged().length) return null;
-  const a = fleetAllowance(allowanceInfo(Date.now()), merged()); if (!a) return null;
-  let best: Allow | null = null; let top = -1; const now = Date.now();
+// allowance across hosts: per account the newest fetch (the fullest account shows), Codex the newest event. Per rows
+// generation and 5 s, as the cost figures: the header draws every frame, and this machine's part stats ~/.claude.json
+const AL = { at: 0, gen: -1, claude: null as Allow | null, codex: null as RlWin[] | null };
+function allowNow(): void {
+  const now = Date.now(); if (AL.gen === T.gen && now - AL.at < 5000) return;
+  AL.at = now; AL.gen = T.gen; const hs = merged();
+  AL.claude = hs.length ? claudeOf(hs, now) : null; AL.codex = hs.length ? codexOf(hs) : null;
+}
+FLEET_HOOK.claude = (): Allow | null => { if (!T.on) return null; allowNow(); return AL.claude; };
+FLEET_HOOK.codex = (): RlWin[] | null => { if (!T.on) return null; allowNow(); return AL.codex; };
+function claudeOf(hs: RemoteHost[], now: number): Allow | null {
+  const a = fleetAllowance(allowanceInfo(now), hs); if (!a) return null;
+  let best: Allow | null = null; let top = -1;
   for (const v of arr(a["claude"])) {
     const o = obj(v); if (!o) continue;
     const w = (x: unknown): { pct: number; reset: number } | null => { const q = obj(x); if (!q) return null; const r = typeof q["reset"] === "number" ? q["reset"] as number : 0; return r > now ? { pct: typeof q["pct"] === "number" ? q["pct"] as number : 0, reset: r } : null; };
@@ -154,13 +164,12 @@ FLEET_HOOK.claude = (): Allow | null => {
     if (m > top) { top = m; best = { h5, d7, hi: h5 && (!d7 || h5.pct > d7.pct) ? "5h" : "7d" }; }
   }
   return best;
-};
-FLEET_HOOK.codex = (): RlWin[] | null => {
-  if (!T.on || !merged().length) return null;
-  const a = fleetAllowance({ claude: null, codex: codexWins() }, merged()); const x = a ? obj(a["codex"]) : null; if (!x) return null;
+}
+function codexOf(hs: RemoteHost[]): RlWin[] | null {
+  const a = fleetAllowance({ claude: null, codex: codexWins() }, hs); const x = a ? obj(a["codex"]) : null; if (!x) return null;
   const ws: RlWin[] = []; for (const v of arr(x["wins"])) { const o = obj(v); if (o) ws.push({ pct: typeof o["pct"] === "number" ? o["pct"] as number : 0, min: typeof o["min"] === "number" ? o["min"] as number : 0, reset: typeof o["reset"] === "number" ? o["reset"] as number : 0 }); }
   return ws.length ? ws : null;
-};
+}
 
 // ── header: "· 3 hosts" (this machine included), problems after it; narrow drops the details, then the segment ──
 export interface HostMark { name: string; stale: boolean; ageMs: number; down: boolean }
