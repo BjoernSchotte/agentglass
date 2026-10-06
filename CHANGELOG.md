@@ -2,6 +2,21 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.8
+
+### Breaking changes
+
+- **cli:** no flag swallows the next one, unknown arguments exit 2 — 2026.10.3–2026.10.7 --watch --otlp --filter (config endpoint) exported every live session (#78) (e7a434f, [#78](https://github.com/BjoernSchotte/agentglass/pull/78))
+
+### Features
+
+- **hub:** agentglass receive (OTLP/HTTP, token per host, limits, scrub, budget, built-in HTTPS) and the hub reader (#75) (7318e96, [#75](https://github.com/BjoernSchotte/agentglass/pull/75))
+- **fleet:** exact fleet — snapshots, hashed message ownership, re-pricing, dir drops, live stream (fleet Part B) (#76) (68fd71c, [#76](https://github.com/BjoernSchotte/agentglass/pull/76))
+
+### Refactoring & other
+
+- **repo:** SECURITY.md, SHA-pinned actions, Dependabot, no token-shaped fixtures (#79) (7cada43, [#79](https://github.com/BjoernSchotte/agentglass/pull/79))
+
 ## 2026.10.7
 
 ### Breaking changes
