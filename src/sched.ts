@@ -19,7 +19,8 @@ export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean
 const LV: Level[] = ["hot", "warm", "idle", "away"];
 const PEND_MS = 2000; // scan and slow while a young agent has no session yet (procs.ts PEND)
 const JUMP = 600000; // a job last run more than 10 min ago (suspend) or in the future (clock went back) runs now
-const ALARM = 1500; // watch and procs while an agent is live: alarm latency wins over the budget
+const ALARM = 1500; // watch and procs while an agent is live: alarm latency wins over the budget. The tick keeps its
+// cadence and budget: the watch job books a live log the ledger is behind on before rules read it (main.ts)
 // base intervals hot / warm / idle / away; -1 = not scheduled at that level. hot never polls data faster than the old
 // fixed loop (procs 1.5 s, scan 3 s, slow 5 s, tick 500 ms): with agents streaming the level is hot nearly all day, and
 // faster polling there cost more than the old loop. hot is faster only where it is cheap: stat-only probe, render on change

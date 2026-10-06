@@ -12,7 +12,7 @@ import { ledger } from "./ledger.ts";
 import { todayKey, modelUses } from "./record.ts";
 import { kfmt, grp } from "./costs.ts";
 import { PRICES_FILE, resolve, readUserFile } from "./pricing.ts";
-import { type PRow, reportedNote, reportedShort, rates, srcLabel } from "./pricerows.ts";
+import { type PRow, reportedNote, reportedShort, rates, srcLabel, srcFit } from "./pricerows.ts";
 import { pricedRows } from "./summary.ts";
 import { parsePriceLine, entryOf, storedKey, setUserEntry, userEntry } from "./userprices.ts";
 import { reloadPrices, pricesWritten } from "./repricer.ts";
@@ -54,14 +54,16 @@ export function panelLines(rows: PRow[], w: number, h: number, sel: number, top:
     const r = rows[i]; const on = i === sel; const rt = r.p ? rates(r.p) : [];
     const lead = on ? fg(C.accent) + "▌" + RST : " ";
     const tx = on ? fg(C.text) + CSI + "1m" : fg(C.text);
-    let l = lead + tx + fit(r.model, mw) + RST + " " + fg(srcColor(r)) + fit(srcLabel(r), sw) + RST;
+    const sl = srcFit(r, sw);
+    let l = lead + tx + fit(r.model, mw) + RST + " " + fg(srcColor(r)) + fit(sl, sw) + RST;
     if (rates2) l += fg(C.sub) + rj(r.p ? (rt[0] ?? 0).toFixed(2) : "—", 8) + rj(r.p ? (rt[1] ?? 0).toFixed(2) : "—", 8) + RST;
     if (toks) l += fg(C.text) + rj(kfmt(r.tok), 9) + RST;
     l += (r.cost > 0 ? fg(C.yellow) : fg(C.dim)) + rj(cost(r), 11) + RST;
     out.push(l);
-    if (on) { // what the row's source means for a price set here
+    if (on) { // what the row's source means for a price set here; a shortened source in full first
       const n = reportedNote(r);
-      const why = n ? n : r.dead ? "alias target " + r.via + " has no price — set one or alias another model" : r.src === "unpriced" ? "no price: ↵ set one, a price it like another model" : r.provs.length ? "other providers: " + r.provs.map((p) => p.prov + " " + (p.src === "gateway" ? "gw " + p.via : p.src)).join(", ") : "";
+      const w0 = n ? n : r.dead ? "alias target " + r.via + " has no price — set one or alias another model" : r.src === "unpriced" ? "no price: ↵ set one, a price it like another model" : r.provs.length ? "other providers: " + r.provs.map((p) => p.prov + " " + (p.src === "gateway" ? "gw " + p.via : p.src)).join(", ") : "";
+      const why = (sl !== srcLabel(r) ? "source " + srcLabel(r) + (w0 ? " · " : "") : "") + w0;
       if (why && out.length - 1 < vis) out.push(fg(C.dim) + "   " + fit(why, avail - 3) + RST);
     }
   }

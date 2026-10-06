@@ -56,7 +56,8 @@ function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); }
 // exit 3 / 4 with one stderr line (and the candidates)
 export function failTarget(t: Target): never {
   if (t.code === 4) {
-    errLine("agentglass", "ambiguous", t.msg, "use more characters or <harness>:<id>");
+    const refs: string[] = []; for (const c of t.cands.slice(0, 5)) refs.push(c.h + ":" + c.id); // each resolves (twins are one session)
+    errLine("agentglass", "ambiguous", t.msg, "use one of: " + refs.join(", ") + (t.cands.length > 5 ? ", …" : ""));
     if (!agentHost().on) for (const c of t.cands.slice(0, 20)) { try { writeSync(2, screenOut(c.h + ":" + c.id + "  " + titleOf(c)) + "\n"); } catch (e) { /* closed */ } }
     process.exit(4);
   }

@@ -6,10 +6,10 @@ import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { H } from "../../hooks.ts";
 import { L } from "./record.ts";
-import { ledger, indexing, indexState, reapplyAll, complete, PACE, TICK_STATS, paceResetForTest } from "./ledger.ts";
+import { ledger, indexing, indexState, reapplyAll, complete, PACE, TICK_STATS, paceResetForTest, newRate, rateAdd } from "./ledger.ts";
 import { heavy } from "./record.ts";
 import "./codec.ts"; // the day-map text codec (packHeavy)
-import { gaugeText } from "./progress.ts";
+import { gaugeText, gaugeReset } from "./progress.ts";
 import "../../harness/index.ts";
 
 let bad = 0;
@@ -89,17 +89,45 @@ eq("(f) …and no more than ~3 steps in 2.8 s", String(at31 - at03 <= 3 * 104857
 eq("(f) not done", String(at31 < f.size), "true");
 PACE.share = 1; sessions.delete(f.path); ledger.delete(f.path);
 
-// the gauge text by room; the ETA only after 10 s of rate samples
-const now = 1000000;
-const s0 = { done: 34, total: 100, left: 8589934592, bps: 0, since: 0 };
-eq("gauge 40, no rate yet", gaugeText(s0, 40, now), "⟳ indexing 34% · 8.0G left");
-const s1 = { done: 34, total: 100, left: 8589934592, bps: 8589934592 / 180, since: now - 11000 };
-eq("gauge 40 with ETA", gaugeText(s1, 40, now), "⟳ indexing 34% · 8.0G left · ~3m");
-eq("gauge ETA waits 10 s", gaugeText({ done: 34, total: 100, left: 8589934592, bps: 1000, since: now - 5000 }, 40, now), "⟳ indexing 34% · 8.0G left");
-eq("gauge 30", gaugeText(s1, 30, now), "⟳ 34% · 8.0G");
-eq("gauge 10", gaugeText(s1, 10, now), "⟳ 34%");
-eq("gauge 4: no room", gaugeText(s1, 4, now), "");
-eq("gauge never 100% while indexing", gaugeText({ done: 9999, total: 10000, left: 1, bps: 0, since: 0 }, 8, now), "⟳ 99%");
+// the gauge text by room; the ETA "~…" until 30 s of indexing were sampled, then rounded (whole minutes to 10 min, 5 min
+// to an hour, 15 min above) and held against moves smaller than ¾ of a step
+gaugeReset();
+const G8 = 8589934592;
+const s0 = { done: 34, total: 100, left: G8, bps: 0, span: 0 };
+eq("gauge 40, no rate yet", gaugeText(s0, 40), "⟳ indexing 34% · 8.0G left · ~…");
+const s1 = { done: 34, total: 100, left: G8, bps: G8 / 180, span: 31000 };
+eq("gauge 40 with ETA", gaugeText(s1, 40), "⟳ indexing 34% · 8.0G left · ~3m");
+eq("gauge ETA waits 30 s", gaugeText({ done: 34, total: 100, left: G8, bps: 1000, span: 20000 }, 40), "⟳ indexing 34% · 8.0G left · ~…");
+eq("gauge 30", gaugeText(s1, 30), "⟳ 34% · 8.0G");
+eq("gauge 10", gaugeText(s1, 10), "⟳ 34%");
+eq("gauge 4: no room", gaugeText(s1, 4), "");
+eq("gauge never 100% while indexing", gaugeText({ done: 9999, total: 10000, left: 1, bps: 0, span: 0 }, 8), "⟳ 99%");
+const etaOf = (sec: number): string => { const t = gaugeText({ done: 1, total: 2, left: G8, bps: G8 / sec, span: 60000 }, 60); return t.slice(t.lastIndexOf("· ") + 2); };
+gaugeReset(); eq("ETA under a minute", etaOf(40), "<1m");
+gaugeReset(); eq("ETA 47 min: 5-min steps", etaOf(47 * 60), "~45m");
+gaugeReset(); eq("ETA 2h07: 15-min steps", etaOf(127 * 60), "~2h");
+gaugeReset(); eq("ETA 2h20", etaOf(140 * 60), "~2h15m");
+gaugeReset(); etaOf(180); eq("held: 3.4 min stays ~3m", etaOf(204), "~3m"); eq("held: 3.6 min stays ~3m", etaOf(216), "~3m"); eq("moves: 3.8 min → ~4m", etaOf(228), "~4m");
+// a cold index under the CPU budget books in bursts (credit spent, then waits; fast and slow logs): the rate is the
+// throughput over about the last two minutes, idle waits included, so the implied finish time holds still. A seeded run:
+// 6 GB at ~10 MB/s on average, every second 0 bytes half the time, else 0–40 MB
+{
+  gaugeReset(); const r = newRate(); let seed = 7; const rnd = (): number => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  let left = 6000 * 1048576; let t = 1000000; const fin: number[] = []; let tilde = 0;
+  for (let i = 0; i < 400 && left > 0; i++) {
+    const b = rnd() < 0.5 ? 0 : Math.floor(rnd() * 40 * 1048576); left = Math.max(0, left - b); t += 1000;
+    rateAdd(r, t, b, true);
+    const txt = gaugeText({ done: 1, total: 2, left, bps: r.bps, span: r.span }, 60); const e = txt.slice(txt.lastIndexOf("· ") + 2);
+    if (e === "~…") { tilde++; continue; }
+    const m = /^~(\d+)m$/.exec(e); if (m) fin.push(t / 1000 + Number(m[1] ?? "0") * 60);
+  }
+  eq("burst run: ~… for the first 30 s only", String(tilde), "30");
+  let lo = 1e18; let hi = 0; for (const x of fin.slice(30)) { lo = Math.min(lo, x); hi = Math.max(hi, x); } // after the first minute
+  eq("burst run: the implied finish moves < 2.5 min (was 8 min)", String(hi - lo < 150) + " (" + String(Math.round(hi - lo)) + " s)", "true (" + String(Math.round(hi - lo)) + " s)");
+  // idle time (nothing pending) is not indexing time: it neither counts as samples nor drags the rate down
+  const span = r.span; const bps = r.bps; rateAdd(r, t + 60000, 0, false); rateAdd(r, t + 61000, 0, true);
+  eq("idle: no samples, rate kept", String(r.span === span) + " " + String(r.bps === bps), "true true");
+}
 
 // a one-shot complete() leaves the read logs' day maps as text (a cold index must not hold every day decoded); they decode
 // again on use, unchanged

@@ -51,6 +51,26 @@ for (const w of [80, 120, 60]) {
   ok("source column at " + w, all.indexOf("unpriced") >= 0 && all.indexOf("harness") >= 0 && all.indexOf("built-in") >= 0, all);
   if (w >= 80) ok("price columns at " + w, all.indexOf("$IN") >= 0 && all.indexOf("3.00") >= 0, all);
 }
+// a long source at 80 columns (pi via a gateway, more providers, part harness-reported): shortened by meaning, never cut
+// mid-word ("gw cliproxy +har…"); the selected row's note spells it out
+{
+  const gp = (rows.find((r: PRow) => r.p !== null) ?? rows[0]).p;
+  const mk = (model: string): PRow => ({ model, src: "gateway", via: "cliproxy", more: 1, part: true, dead: false, p: gp, prov: "cliproxy",
+    inTok: 100, outTok: 10, cr: 0, cw: 0, tok: 110, unk: 0, cost: 0.5, reported: 0.25, est: 0, rh: "pi", provs: [] });
+  const all = [mk("claude-sonnet-5-5-0901")].concat(rows);
+  for (const w of [80, 100]) {
+    const row = panelLines(all, w, 10, 1, 0).map(strip)[1] ?? "";
+    ok("long source at " + w + ": not cut", row.indexOf("…") < 0, row);
+    ok("long source at " + w + ": provider and both marks", row.indexOf("cliproxy") >= 0 && row.indexOf("+1") >= 0 && /\+h(arness)?\b/.test(row), row);
+  }
+  const sel = panelLines(all, 80, 10, 0, 0).map(strip).join("\n");
+  ok("selected: the full source in its note", sel.indexOf("source gw cliproxy +1 +harness") >= 0, sel);
+  const wide = panelLines(all, 160, 10, 0, 0).map(strip).join("\n");
+  ok("wide: the full label, no source note", wide.indexOf("gw cliproxy +1 +harness") >= 0 && wide.indexOf("source gw") < 0, wide);
+  // a model id too long for 80 columns leaves SOURCE 12 cells: the provider's start and both marks, whole
+  const xl = panelLines([mk("claude-sonnet-5-5-20260901-preview")].concat(rows), 80, 10, 1, 0).map(strip)[1] ?? "";
+  ok("narrowest source keeps the marks", xl.indexOf("gw clip…+1+h ") >= 0, xl);
+}
 ok("note under the selected harness row", strip(panelLines(rows, 120, 10, rows.indexOf(pi ?? rows[0]), 0).join("\n")).indexOf("cost reported by pi — a user price applies only to its unpriced messages") >= 0, "no note");
 
 // palette: one "Set price for" per unpriced model of the period
