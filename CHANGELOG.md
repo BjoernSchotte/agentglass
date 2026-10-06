@@ -2,6 +2,16 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.9
+
+### Performance
+
+- **fleet:** sliced first merge, compact own rows; open test readiness; Homebrew installs receive-tls (#88) (42e76bf, [#88](https://github.com/BjoernSchotte/agentglass/pull/88))
+
+### Build & CI
+
+- **dependabot:** group only minor/patch action bumps; majors get their own PR (#81) (300ea64, [#81](https://github.com/BjoernSchotte/agentglass/pull/81))
+
 ## 2026.10.8
 
 ### Breaking changes
