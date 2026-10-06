@@ -17,10 +17,12 @@ d = sys.argv[1]
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         b = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        if self.headers.get("Content-Encoding") == "gzip": b = gzip.decompress(b)
-        open(d + "/req.log", "a").write(self.path + "\n")
+        z = self.headers.get("Content-Encoding") == "gzip"
+        if z: b = gzip.decompress(b)
+        open(d + "/req.log", "a").write(self.path + (" gz" if z else "") + "\n")
         open(d + "/" + self.path.strip("/").replace("/", "_") + ".jsonl", "ab").write(b + b"\n")
         st = 404 if self.path == "/v1/logs" and os.path.exists(d + "/mode404") else 200
+        if self.path == "/v1/logs" and os.path.exists(d + "/mode415") and self.headers.get("Content-Encoding") == "gzip": st = 415
         self.send_response(st); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
     def log_message(self, *a): pass
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
@@ -44,11 +46,11 @@ sleep 120 & agent=$!
 printf '{"pid":%s,"sessionId":"s1","status":"busy"}\n' "$agent" > "$t/home/.claude/sessions/$agent.json"
 printf '{"version":1,"builtins":false,"rules":[{"id":"spend","metric":"session_cost","op":">","critical":0.01,"ack":"none","notify":false,"message":"spent {value}","labels":{"team":"core"}}]}\n' > "$t/rules.json"
 run() { HOME="$t/home" AGENTGLASS_RULES="$t/rules.json" AGENTGLASS_OTLP_DIR="$t/otlp" AGENTGLASS_CACHE_DIR="$t/cache" AGENTGLASS_OFFLINE=1 AGENTGLASS_NOTIFY=0 "$t/ag" --watch --otlp "$url" --for 4s "$@" > "$t/out" 2> "$t/err"; }
-reset() { rm -f "$t/req.log" "$t"/v1_*.jsonl "$t/mode404"; rm -rf "$t/otlp"; }
+reset() { rm -f "$t/req.log" "$t"/v1_*.jsonl "$t/mode404" "$t/mode415"; rm -rf "$t/otlp"; }
 
 # 1. no --jsonl: the logs stream carries heartbeat, state, turn.open and the rule's alert; stdout stays empty
 reset; run
-has "logs request" "^/v1/logs$" "$t/req.log"
+has "logs request" "^/v1/logs" "$t/req.log"
 for n in agentglass.heartbeat agentglass.session.state agentglass.turn.open agentglass.alert; do has "record $n" "\"eventName\":\"$n\"" "$t/v1_logs.jsonl"; done
 has "alert label" "agentglass.alert.label.team" "$t/v1_logs.jsonl"
 has "host.id" "00112233445566ff" "$t/v1_logs.jsonl"
@@ -61,11 +63,16 @@ has "logs with --jsonl" "agentglass.alert" "$t/v1_logs.jsonl"
 # 3. a receiver without logs: 404 → off with one notice; the finished turn still goes out as spans
 reset; touch "$t/mode404"; run --since all
 has "404 notice" "takes no OTLP logs" "$t/err"
-eq "one logs request" "$(grep -c '^/v1/logs$' "$t/req.log")" 1
-has "spans continue" "^/v1/traces$" "$t/req.log"
+eq "one logs request" "$(grep -c '^/v1/logs' "$t/req.log")" 1
+has "spans continue" "^/v1/traces" "$t/req.log"
 # 4. --no-logs: none
 reset; run --no-logs --since all
-eq "--no-logs" "$(grep -c '^/v1/logs$' "$t/req.log" || true)" 0
-has "--no-logs spans" "^/v1/traces$" "$t/req.log"
+eq "--no-logs" "$(grep -c '^/v1/logs' "$t/req.log" || true)" 0
+has "--no-logs spans" "^/v1/traces" "$t/req.log"
+# 5. a logs endpoint that refuses gzip (415): sent plain from then on, one notice (not a gzip attempt per flush)
+reset; touch "$t/mode415"; run --compression gzip
+has "415 notice" "refused gzip: sending the logs uncompressed" "$t/err"
+eq "one gzip attempt on /v1/logs" "$(grep -c '^/v1/logs gz$' "$t/req.log")" 1
+has "logs sent plain" "^/v1/logs$" "$t/req.log"
 [ $fail = 0 ] && echo "otlp logs: ok"
 exit $fail
