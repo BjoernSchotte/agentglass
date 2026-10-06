@@ -145,7 +145,8 @@ Every screen in this README and the launch video was recorded this way.
   streaming: about 175 MB of memory (260–270 MB with a pinned call-row filter), first frame in under a second, and
   about 4 % of one core in front, under 2 % in the background. A first start shows the session list at once. The
   header shows `⟳ indexing 34% · 8.0G left · ~3m` while the history is indexed in the background (the whole process
-  stays at ≤ 20 % of one core meanwhile; about 8 min here). Numbers and method: `specs/tui-footprint/results.md`.
+  stays at ≤ 20 % of one core meanwhile; about 8 min here). The time left reads `~…` for the first 30 s, then follows
+  the throughput of about the last two minutes in steps (minutes, then 5 and 15 min). Numbers and method: `specs/tui-footprint/results.md`.
 
 ## Prices
 
