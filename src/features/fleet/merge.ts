@@ -7,11 +7,13 @@
 // occurrence is taken out of its session's shadow entry (exactly what its host booked for it); a losing local
 // occurrence goes into a correction entry for its log (negative amounts: the local ledger itself stays untouched).
 // Copies carry identical usage, so which occurrence wins changes attribution, never the totals.
-import { type Acc, type Day, newAcc, newDay, mkey, reprice } from "../usage/record.ts";
+import { type Acc, type Day, newAcc, newDay, mkey, reprice, lastDays } from "../usage/record.ts";
+import { monthStart } from "../usage/costs.ts";
 import { resolve, cost } from "../usage/pricing.ts";
 import { type Bill, MODES } from "../usage/billing.ts";
 import { str, obj } from "../../util/json.ts";
 import { type DayRow, type HostReport, type OwnRow, type SessRow, ownSess } from "./model.ts";
+import { type OwnChunk, hashCount, hashFind, fillRow, lenOf } from "./ownc.ts";
 
 export interface Occ { host: string; hostId: string; key: string; row: OwnRow }
 // a before b in the ownership order (spec 13.2)
@@ -25,6 +27,17 @@ export function ownerIndex(occs: Occ[]): Map<string, Occ> {
   const m = new Map<string, Occ>();
   for (const o of occs) { const b = m.get(o.row.h); if (!b || first(o.row.key, o.hostId, o.key, b.row.key, b.hostId, b.key)) m.set(o.row.h, o); }
   return m;
+}
+
+// the days a viewer's cost figures need (this month, the last 15 days for the projection) plus a day on each side for
+// the time-zone shift: what a snapshot carries day rows for, and what a local correction covers
+const DAY_MS = 86400000;
+export function costDays(now: number): Set<string> {
+  const o = new Set<string>(); for (const k of monthStart(now)) o.add(k); for (const k of lastDays(16)) o.add(k);
+  const t = new Date(now + DAY_MS); o.add(t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"));
+  const ks = [...o].sort(); const f = ks[0] ?? ""; const p = new Date(Date.parse(f + "T12:00:00") - DAY_MS);
+  o.add(p.getFullYear() + "-" + String(p.getMonth() + 1).padStart(2, "0") + "-" + String(p.getDate()).padStart(2, "0"));
+  return o;
 }
 
 // ── time zones (spec 14): (day, hour) on the host → on this machine, shifted by whole hours ──
@@ -101,6 +114,10 @@ export function subtract(a: Acc, row: OwnRow, shiftMin: number): void {
     const usd = Math.min(row.n[5] ?? 0, tp[5] ?? 0); if (usd > 0) { tp[5] = (tp[5] ?? 0) - usd; addCostTo(a, d, x.h, row.prov, row.m, -usd); }
   } else addUnk(a, d, row.m, -((tok[0] ?? 0) + (tok[1] ?? 0) + (tok[2] ?? 0) + (tok[3] ?? 0) + (tok[4] ?? 0)));
 }
+// a day a shadow lost every booking of (a copy another host or this machine owns): nothing any sum reads is left in it
+// (tools and turns stay with their host's rows: no figure reads them from a shadow)
+function emptyDay(d: Day): boolean { return d.inTok === 0 && d.outTok === 0 && d.cr === 0 && d.cw === 0 && Math.abs(d.cost) < 1e-9 && Math.abs(d.unk) < 1e-9 && d.uc === 0 && d.um.size === 0; }
+export function prune(a: Acc): void { for (const [k, d] of [...a.days.entries()]) if (emptyDay(d)) a.days.delete(k); }
 // a local losing occurrence: its booking as a negative amount, priced with the current table (the local ledger is)
 function correct(a: Acc, row: OwnRow): void {
   if (!row.n.length) return;
@@ -117,9 +134,9 @@ function correct(a: Acc, row: OwnRow): void {
 }
 
 // ── the merge ──
-// a local Claude log: its session key (ties), its owned messages (hs: hashes, ks: order keys, in the order the ledger
+// a local Claude log: its session key (ties), its owned messages (hs: hash ids, ks: order keys, in the order the ledger
 // claimed them: they only grow), its billing mode, its read offset (its booked rows move only with it)
-export interface LocalLog { path: string; skey: string; hs: string[]; ks: number[]; bill: string; off: number }
+export interface LocalLog { path: string; skey: string; hs: number[]; ks: number[]; bill: string; off: number } // hs: hash ids (ownc.ts)
 export interface FleetHost { name: string; hostId: string; r: HostReport; shiftMin: number }
 // one entry for the sums: an Acc and how its providers bill. host = the host's name ("" = a local correction)
 export interface Shadow { host: string; key: string; a: Acc; bill: string; prov: Map<string, string> }
@@ -129,32 +146,54 @@ export function modeOfShadow(x: Shadow, p: string): Bill { const m = x.prov.get(
 // owner index, extended by the rows a report appended (a host's own rows only grow; anything else rebuilds it), each
 // local log's hashes the hosts also hold and what it wins or loses (redone as the log grows or the owners of its hashes
 // change), each shadow and correction entry with exactly what it was built from (its day rows, the hashes it lost). A
-// merge then costs what moved, not every message of every host again
+// merge then costs what moved, not every message of every host again.
+// The owner index is in columns by hash id (ownc.ts): ok = the owner's order key, oi = its host index (-2 = no host holds
+// the hash), os = its session key (an id into sks)
 interface ShadowMemo { days: DayRow[]; lost: string; sh: Shadow; n: number }
-interface LocalMemo { hs: string[]; n: number; hits: number[]; lost: string[]; lostJ: string; built: string; steal: string[]; off: number; sh: Shadow | null; nl: number; inexact: boolean; done: boolean }
-export interface XCache { mode: string; sig: string; steal: Map<string, string>; bk: Map<string, number>; bi: Map<string, number>; bs: Map<string, string>; om: Map<string, OwnRow[]>; parts: Map<string, OwnRow[]>; shadows: Map<string, ShadowMemo>; logs: Map<string, LocalMemo> }
-export function newXCache(): XCache { return { mode: "", sig: "\u0000", steal: new Map<string, string>(), bk: new Map<string, number>(), bi: new Map<string, number>(), bs: new Map<string, string>(), om: new Map<string, OwnRow[]>(), parts: new Map<string, OwnRow[]>(), shadows: new Map<string, ShadowMemo>(), logs: new Map<string, LocalMemo>() }; }
+interface LocalMemo { hs: number[]; n: number; hits: number[]; lost: number[]; lostJ: string; built: string; stealH: number[]; stealW: string[]; off: number; sh: Shadow | null; nl: number; inexact: boolean; done: boolean }
+export interface XCache { mode: string; sig: string; steal: Map<number, string>; ok: Float64Array; oi: Int32Array; os: Int32Array; sks: string[]; ski: Map<string, number>; om: Map<string, OwnChunk[]>; parts: Map<string, OwnChunk[]>; shadows: Map<string, ShadowMemo>; logs: Map<string, LocalMemo> }
+export function newXCache(): XCache { return { mode: "", sig: "\u0000", steal: new Map<number, string>(), ok: new Float64Array(0), oi: new Int32Array(0), os: new Int32Array(0), sks: [], ski: new Map<string, number>(), om: new Map<string, OwnChunk[]>(), parts: new Map<string, OwnChunk[]>(), shadows: new Map<string, ShadowMemo>(), logs: new Map<string, LocalMemo>() }; }
 // how kept merges went (checks): owner index rebuilt, or extended by appended rows
 export const MSTAT = { full: 0, grown: 0 };
-// a host part's rows are the earlier ones plus new ones at the end (the same row objects: snap.ts applySnap concat)
-function grew(prev: OwnRow[], rows: OwnRow[]): boolean { const n = prev.length; return rows.length >= n && (n === 0 || (rows[0] === prev[0] && rows[n - 1] === prev[n - 1])); }
-// rowsOf: a local log's booked rows (the msgrows sidecar), asked only for logs that lose a message; null = unknown (the
-// log is reported in `inexact`). xc/sig: the cache kept between merges and the hosts' identity (names, ids, time zones:
-// a new sig rebuilds everything the hosts decide); pv: the price table's generation (a new one rebuilds every entry)
-export function exactFleet(local: LocalLog[], localId: string, hosts: FleetHost[], reprice: boolean, rowsOf: (path: string) => OwnRow[] | null, xc: XCache | null = null, sig = "", pv = ""): Exact {
-  const c = xc ?? newXCache();
-  const idOf = (i: number): string => i < 0 ? localId : (hosts[i]?.hostId ?? "");
+// a host part's chunks are the earlier ones plus new ones at the end (the same chunk objects: snap.ts applySnap concat)
+function grew(prev: OwnChunk[], rows: OwnChunk[]): boolean { const n = prev.length; return rows.length >= n && (n === 0 || (rows[0] === prev[0] && rows[n - 1] === prev[n - 1])); }
+// the index's columns cover every hash id there is (ids only grow; a new slot holds no owner)
+function cover(c: XCache): void {
+  const n = hashCount(); if (c.oi.length >= n) return;
+  const cap = Math.max(1024, n * 2, c.oi.length * 2); const ok = new Float64Array(cap); const oi = new Int32Array(cap); const os = new Int32Array(cap);
+  for (let i = 0; i < c.oi.length; i++) { ok[i] = c.ok[i] ?? 0; oi[i] = c.oi[i] ?? -2; os[i] = c.os[i] ?? 0; }
+  for (let i = c.oi.length; i < cap; i++) oi[i] = -2;
+  c.ok = ok; c.oi = oi; c.os = os;
+}
+function held(c: XCache, id: number): boolean { const i = Number(id); return i >= 0 && i < c.oi.length && (c.oi[i] ?? -2) !== -2; }
+function skId(c: XCache, k: string): number { const v = c.ski.get(k); if (v !== undefined) return v; c.ski.set(k, c.sks.length); c.sks.push(k); return c.sks.length - 1; }
+// a local log's booked rows (the msgrows sidecar); done = false: not ready yet (a sidecar being rebuilt in slices: ask
+// again); ok = false: unknown (the log is reported in `inexact`)
+export interface LocalRows { rows: OwnRow[]; ok: boolean; done: boolean }
+// ── the merge as a job (fleet follow-ups): the TUI runs it in time slices (step), a CLI run at once (exactFleet). It
+// works on the inputs it started with (reports never change in place; a newer one merges in the next job) ──
+const P_INDEX = 0; const P_LOCAL = 1; const P_SHADOW = 2; const P_CORR = 3; const P_DONE = 4;
+interface Append { i: number; sk: string; pk: string; rows: OwnChunk[]; from: number }
+export interface MergeJob {
+  c: XCache; local: LocalLog[]; localId: string; hosts: FleetHost[]; reprice: boolean; rowsOf: (path: string, until: number) => LocalRows; days: Set<string>; dsig: string;
+  full: boolean; appends: Append[]; ph: number; a: number; b: number; ci: number; ri: number; // cursors of the phase
+  rowsMoved: Set<string>; dirty: Set<string>; added: Set<number>; owner: Set<number>; stealMoved: Set<string>;
+  loses: number[]; seenL: Set<string>; keep: Set<string>; out: Shadow[]; removed: number; corrected: number; inexact: string[];
+  sb: ShadowBuild | null; cb: CorrBuild | null; // an entry half built when a slice ended
+  done: number; total: number; x: Exact | null;
+}
+// a shadow being built (its session's chunks, the hashes it loses, where the subtraction is) and a correction (its log's
+// rows, where it is): a session or log of thousands of messages spans slices
+interface ShadowBuild { mk: string; ds: DayRow[]; a: Acc; ls: Set<number>; lk: string; rows: OwnChunk[]; ci: number; ri: number }
+interface CorrBuild { rows: OwnRow[]; i: number; a: Acc; lost: Set<number> }
+// a new job: which of the hosts' rows moved since the last merge (appended rows, a reset or a gone part rebuilds the index).
+// days: the days a local correction covers (costDays: what the hosts' day rows cover too; empty = every day)
+export function mergeStart(local: LocalLog[], localId: string, hosts: FleetHost[], reprice: boolean, rowsOf: (path: string, until: number) => LocalRows, xc: XCache, sig: string, pv: string, days: Set<string> = new Set<string>()): MergeJob {
+  const c = xc;
   const mode = (reprice ? "r" : "n") + "\t" + localId + "\t" + pv;
   if (c.mode !== mode) { c.mode = mode; c.sig = "\u0000"; c.shadows.clear(); c.logs.clear(); c.steal.clear(); } // other prices, another viewer: every entry again
-  const offer = (h: string, key: number, i: number, sk: string): boolean => {
-    const k0 = c.bk.get(h);
-    if (k0 !== undefined && !first(key, idOf(i), sk, k0, idOf(c.bi.get(h) ?? -1), c.bs.get(h) ?? "")) return false;
-    c.bk.set(h, key); c.bi.set(h, i); c.bs.set(h, sk); return true;
-  };
-  // what moved in the hosts' rows since the last merge: appended rows (offered), the sessions they belong to, the
-  // sessions that lost a hash's ownership to them, the hashes new to the index or with another owner now
   let full = c.sig !== sig;
-  const appends: { i: number; sk: string; pk: string; rows: OwnRow[]; from: number }[] = [];
+  const appends: Append[] = [];
   if (!full) {
     const seen = new Set<string>();
     for (let i = 0; i < hosts.length && !full; i++) {
@@ -169,93 +208,186 @@ export function exactFleet(local: LocalLog[], localId: string, hosts: FleetHost[
     if (!full) for (const pk of c.parts.keys()) if (!seen.has(pk)) { full = true; break; } // a part gone
   }
   if (full) MSTAT.full++; else if (appends.length) MSTAT.grown++;
-  const rowsMoved = new Set<string>(); const dirty = new Set<string>(); const added = new Set<string>(); const owner = new Set<string>();
-  if (full) {
-    c.sig = sig; c.steal.clear(); c.bk = new Map<string, number>(); c.bi = new Map<string, number>(); c.bs = new Map<string, string>(); c.om = new Map<string, OwnRow[]>(); c.parts = new Map<string, OwnRow[]>(); // om: "<host index>\t<session key>" → its rows
-    for (let i = 0; i < hosts.length; i++) {
-      const fh = hosts[i]; if (!fh) continue;
-      for (const o of fh.r.owned) {
-        const sk = ownSess(o.key); const ok = String(i) + "\t" + sk; const p = c.om.get(ok); c.om.set(ok, p ? p.concat(o.rows) : o.rows); c.parts.set(String(i) + "\t" + o.key, o.rows);
-        for (const r of o.rows) offer(r.h, r.key, i, sk);
+  if (full) { c.sig = sig; c.steal.clear(); c.oi = new Int32Array(0); c.ok = new Float64Array(0); c.os = new Int32Array(0); c.sks = []; c.ski = new Map<string, number>(); c.om = new Map<string, OwnChunk[]>(); c.parts = new Map<string, OwnChunk[]>(); } // om: "<host index>\t<session key>" → its chunks
+  cover(c);
+  // progress: index parts (or appends), local logs, sessions, corrections (at most one per local log)
+  let parts = 0; if (full) { for (const fh of hosts) parts += fh.r.owned.length; } else parts = appends.length;
+  let sess = 0; for (const fh of hosts) sess += fh.r.sessions.length;
+  let dsig = ""; if (days.size) { const ks = [...days].sort(); dsig = (ks[0] ?? "") + "~" + (ks[ks.length - 1] ?? "") + "#" + String(ks.length); } // a correction is redone when its days move (midnight)
+  return { c, local, localId, hosts, reprice, rowsOf, days, dsig, full, appends, ph: P_INDEX, a: 0, b: 0, ci: 0, ri: 0,
+    rowsMoved: new Set<string>(), dirty: new Set<string>(), added: new Set<number>(), owner: new Set<number>(), stealMoved: new Set<string>(),
+    loses: [], seenL: new Set<string>(), keep: new Set<string>(), out: [], removed: 0, corrected: 0, inexact: [], sb: null, cb: null,
+    done: 0, total: parts + 2 * local.length + sess, x: null };
+}
+// one slice of the job, until the clock passes `until` (a step always makes some progress); true = finished (j.x)
+export function mergeStep(j: MergeJob, until: number): boolean {
+  const c = j.c; const hosts = j.hosts; const local = j.local;
+  const idOf = (i: number): string => { const x = Number(i); return x < 0 ? j.localId : (hosts[x]?.hostId ?? ""); };
+  let did = false; // a step always makes some progress: the clock is asked only after the first unit of work
+  const late = (): boolean => did && Date.now() >= until;
+  // offer occurrence (hash id h, order key, host index i, session key id sk) for h; true = it owns h now
+  const offer = (h: number, key: number, i: number, sk: number): boolean => {
+    const x = Number(h);
+    if (held(c, x) && !first(key, idOf(i), String(c.sks[Number(sk)] ?? ""), Number(c.ok[x] ?? 0), idOf(Number(c.oi[x] ?? -1)), String(c.sks[Number(c.os[x] ?? 0)] ?? ""))) return false;
+    c.ok[x] = key; c.oi[x] = i; c.os[x] = sk; return true;
+  };
+  let n = 0; // rows since the clock was read last
+  if (j.ph === P_INDEX && j.full) {
+    for (; j.a < hosts.length; j.a++, j.b = 0) {
+      const fh = hosts[j.a]; if (!fh) continue; const i = j.a;
+      for (; j.b < fh.r.owned.length; j.b++, j.ci = 0, j.ri = 0) {
+        const o = fh.r.owned[j.b]; if (!o) continue;
+        const sk = ownSess(o.key); const skx = skId(c, sk);
+        if (j.ci === 0 && j.ri === 0) { const ok = String(i) + "\t" + sk; const p = c.om.get(ok); c.om.set(ok, p ? p.concat(o.rows) : o.rows); c.parts.set(String(i) + "\t" + o.key, o.rows); }
+        for (; j.ci < o.rows.length; j.ci++, j.ri = 0) {
+          const ch = o.rows[j.ci]; if (!ch) continue;
+          for (; j.ri < ch.n; j.ri++) {
+            const h = Number(ch.h[j.ri] ?? -1); if (h >= 0) offer(h, Number(ch.k[j.ri] ?? 0), i, skx);
+            did = true; if (++n >= 2048) { n = 0; if (late()) { j.ri++; return false; } }
+          }
+        }
+        j.done++;
       }
     }
-  } else for (const a of appends) {
-    const mk = String(a.i) + "\t" + a.sk; const tail = a.rows.slice(a.from);
-    c.parts.set(a.pk, a.rows); const p = c.om.get(mk); c.om.set(mk, p ? p.concat(tail) : tail); rowsMoved.add(mk);
-    for (const r of tail) {
-      const had = c.bk.has(r.h); const pi = c.bi.get(r.h) ?? -1; const ps = c.bs.get(r.h) ?? "";
-      if (!offer(r.h, r.key, a.i, a.sk)) continue;
-      if (!had) added.add(r.h); else { owner.add(r.h); dirty.add(String(pi) + "\t" + ps); }
+    j.ph = P_LOCAL; j.a = 0;
+  } else if (j.ph === P_INDEX) {
+    for (; j.a < j.appends.length; j.a++, j.ci = 0, j.ri = 0) {
+      const ap = j.appends[j.a]; if (!ap) continue;
+      const mk = String(ap.i) + "\t" + ap.sk; const tail = ap.rows.slice(ap.from); const skx = skId(c, ap.sk);
+      if (j.ci === 0 && j.ri === 0) { c.parts.set(ap.pk, ap.rows); const p = c.om.get(mk); c.om.set(mk, p ? p.concat(tail) : tail); j.rowsMoved.add(mk); }
+      for (; j.ci < tail.length; j.ci++, j.ri = 0) {
+        const ch = tail[j.ci]; if (!ch) continue;
+        for (; j.ri < ch.n; j.ri++) {
+          const h = Number(ch.h[j.ri] ?? -1); if (h < 0) continue;
+          const had = held(c, h); const pi = Number(c.oi[h] ?? -2); const ps = String(c.sks[Number(c.os[h] ?? 0)] ?? "");
+          if (offer(h, Number(ch.k[j.ri] ?? 0), ap.i, skx)) { if (!had) j.added.add(h); else { j.owner.add(h); j.dirty.add(String(pi) + "\t" + ps); } }
+          did = true; if (++n >= 2048) { n = 0; if (late()) { j.ri++; return false; } }
+        }
+      }
+      j.done++;
     }
+    j.ph = P_LOCAL; j.a = 0;
   }
   // the local side: only the local messages some host also holds compete (any other one is this machine's alone: nothing
-  // to decide, and 200 k local ids stay out of the maps). c.steal: hash → the host occurrence a local copy beats ("<host
-  // index>\t<session key>"), kept across merges: a log's part changes only when the log is redone; stealMoved: the
+  // to decide, and 200 k local ids stay out of the index). c.steal: hash id → the host occurrence a local copy beats
+  // ("<host index>\t<session key>"), kept across merges: a log's part changes only when the log is redone; stealMoved: the
   // host sessions whose stolen hashes changed
-  const steal = c.steal; const stealMoved = new Set<string>();
-  const unsteal = (m: LocalMemo): void => { for (let q = 0; q + 1 < m.steal.length; q += 2) { const h = m.steal[q] ?? ""; const w = m.steal[q + 1] ?? ""; if (steal.get(h) === w) steal.delete(h); stealMoved.add(w); } m.steal = []; };
-  const loses: number[] = []; // local logs with a message a host owns
-  const seenL = new Set<string>();
-  for (let j = 0; j < local.length; j++) {
-    const l = local[j]; if (!l) continue; seenL.add(l.path);
-    let m = c.logs.get(l.path);
-    if (m && (m.hs !== l.hs || m.n > l.hs.length)) { unsteal(m); m = undefined; } // a re-read log: a new entry
-    if (!m) { m = { hs: l.hs, n: 0, hits: [], lost: [], lostJ: "", built: "", steal: [], off: -1, sh: null, nl: 0, inexact: false, done: false }; c.logs.set(l.path, m); }
-    let redo = full || !m.done || m.n !== l.hs.length;
-    if (full) { m.n = 0; m.hits = []; m.steal = []; }
-    else if (added.size || owner.size) { // hashes new to the index it already held; held hashes with another owner now
-      for (let i = 0; i < m.n; i++) if (added.has(l.hs[i] ?? "")) { m.hits.push(i); redo = true; }
-      if (!redo && owner.size) for (const i0 of m.hits) if (owner.has(l.hs[i0 + 0] ?? "")) { redo = true; break; }
-    }
-    for (let i = m.n; i < l.hs.length; i++) if (c.bk.has(l.hs[i] ?? "")) m.hits.push(i);
-    m.n = l.hs.length;
-    if (redo) {
-      unsteal(m); m.lost = [];
-      for (const i0 of m.hits) {
-        const i = i0 + 0; const h = l.hs[i] ?? ""; const hi = c.bi.get(h) ?? -1; const hs = c.bs.get(h) ?? "";
-        if (first(l.ks[i] ?? 0, localId, l.skey, c.bk.get(h) ?? 0, idOf(hi), hs)) { const w = String(hi) + "\t" + hs; m.steal.push(h); m.steal.push(w); steal.set(h, w); stealMoved.add(w); }
-        else m.lost.push(h);
+  const steal = c.steal;
+  const unsteal = (m: LocalMemo): void => { for (let q = 0; q < m.stealH.length; q++) { const h = Number(m.stealH[q] ?? -1); const w = m.stealW[q] ?? ""; if (steal.get(h) === w) steal.delete(h); j.stealMoved.add(w); } m.stealH = []; m.stealW = []; };
+  if (j.ph === P_LOCAL) {
+    for (; j.a < local.length; j.a++) {
+      if (late()) return false;
+      const l = local[j.a]; if (!l) continue; j.seenL.add(l.path); j.done++; did = true;
+      let m = c.logs.get(l.path);
+      if (m && (m.hs !== l.hs || m.n > l.hs.length)) { unsteal(m); m = undefined; } // a re-read log: a new entry
+      if (!m) { m = { hs: l.hs, n: 0, hits: [], lost: [], lostJ: "", built: "", stealH: [], stealW: [], off: -1, sh: null, nl: 0, inexact: false, done: false }; c.logs.set(l.path, m); }
+      let redo = j.full || !m.done || m.n !== l.hs.length;
+      if (j.full) { m.n = 0; m.hits = []; m.stealH = []; m.stealW = []; }
+      else if (j.added.size || j.owner.size) { // hashes new to the index it already held; held hashes with another owner now
+        for (let i = 0; i < m.n; i++) if (j.added.has(Number(l.hs[i] ?? -1))) { m.hits.push(i); redo = true; }
+        if (!redo && j.owner.size) for (const i0 of m.hits) if (j.owner.has(Number(l.hs[i0 + 0] ?? -1))) { redo = true; break; }
       }
-      m.lostJ = m.lost.join(","); m.done = true;
+      cover(c); // its hash ids are interned (a host that sends one later finds the same id): the index covers them
+      for (let i = m.n; i < l.hs.length; i++) if (held(c, Number(l.hs[i] ?? -1))) m.hits.push(i);
+      m.n = l.hs.length;
+      if (redo) {
+        unsteal(m); m.lost = [];
+        for (const i0 of m.hits) {
+          const i = i0 + 0; const h = Number(l.hs[i] ?? -1); if (!held(c, h)) continue;
+          const hi = Number(c.oi[h] ?? -1); const hs = String(c.sks[Number(c.os[h] ?? 0)] ?? "");
+          if (first(Number(l.ks[i] ?? 0), j.localId, l.skey, Number(c.ok[h] ?? 0), idOf(hi), hs)) { const w = String(hi) + "\t" + hs; m.stealH.push(h); m.stealW.push(w); steal.set(h, w); j.stealMoved.add(w); }
+          else m.lost.push(h);
+        }
+        m.lostJ = m.lost.join(","); m.done = true;
+      }
+      if (m.lost.length) j.loses.push(j.a); else { m.sh = null; m.nl = 0; m.inexact = false; m.off = -1; }
     }
-    if (m.lost.length) loses.push(j); else { m.sh = null; m.nl = 0; m.inexact = false; m.off = -1; }
+    for (const [k, m] of [...c.logs.entries()]) if (!j.seenL.has(k)) { unsteal(m); c.logs.delete(k); }
+    j.ph = P_SHADOW; j.a = 0; j.b = 0;
   }
-  for (const [k, m] of [...c.logs.entries()]) if (!seenL.has(k)) { unsteal(m); c.logs.delete(k); }
-  const out: Shadow[] = []; let removed = 0; let corrected = 0; const inexact: string[] = [];
-  const keep = new Set<string>();
-  for (let i = 0; i < hosts.length; i++) {
-    const fh = hosts[i]; if (!fh) continue;
-    for (const sr of fh.r.sessions) {
-      const ds = sr.days; if (!ds) continue;
-      const mk = String(i) + "\t" + sr.key; keep.add(mk);
-      const hit = c.shadows.get(mk);
-      if (!full && hit && hit.days === ds && !stealMoved.has(mk) && !rowsMoved.has(mk) && !dirty.has(mk)) { out.push(hit.sh); removed += hit.n; continue; } // same rows, owners, local copies
-      // the hashes this session loses: another host's earlier copy, or this machine's (stolen)
-      const rows = c.om.get(mk) ?? []; const lost: string[] = []; const ls = new Set<string>();
-      for (const r of rows) if (!ls.has(r.h) && (!(c.bi.get(r.h) === i && c.bs.get(r.h) === sr.key) || (steal.size > 0 && steal.get(r.h) === mk))) { ls.add(r.h); lost.push(r.h); }
-      const lk = String(rows.length) + ":" + lost.join(",");
-      if (hit && hit.days === ds && hit.lost === lk) { out.push(hit.sh); removed += hit.n; continue; }
-      const a = shadowOf(sr, fh.shiftMin);
-      for (const r of rows) if (ls.has(r.h)) subtract(a, r, fh.shiftMin);
-      if (reprice) repriceShadow(a);
-      const pm = new Map<string, string>(); for (const p of sr.prov) pm.set(p[0] ?? "", p[1] ?? "");
-      const sh: Shadow = { host: fh.name, key: sr.key, a, bill: a.bill, prov: pm };
-      c.shadows.set(mk, { days: ds, lost: lk, sh, n: ls.size });
-      out.push(sh); removed += ls.size;
+  if (j.ph === P_SHADOW) {
+    const scratch: OwnRow = { h: "", key: 0, d: "", hr: 0, m: "", prov: "", n: [] };
+    for (; j.a < hosts.length; j.a++, j.b = 0) {
+      const fh = hosts[j.a]; if (!fh) continue; const i = j.a;
+      for (; j.b < fh.r.sessions.length; j.b++) {
+        const sr = fh.r.sessions[j.b]; if (!sr) continue;
+        let bd = j.sb;
+        if (!bd) {
+          if (late()) return false;
+          j.done++; did = true;
+          const ds = sr.days; if (!ds) continue;
+          const mk = String(i) + "\t" + sr.key; j.keep.add(mk);
+          const hit = c.shadows.get(mk);
+          if (!j.full && hit && hit.days === ds && !j.stealMoved.has(mk) && !j.rowsMoved.has(mk) && !j.dirty.has(mk)) { j.out.push(hit.sh); j.removed += hit.n; continue; } // same rows, owners, local copies
+          // the hashes this session loses: another host's earlier copy, or this machine's (stolen)
+          const rows = c.om.get(mk) ?? []; const lost: number[] = []; const ls = new Set<number>(); const me = skId(c, sr.key);
+          for (const ch of rows) for (let r = 0; r < ch.n; r++) {
+            const h = Number(ch.h[r] ?? -1); if (h < 0 || ls.has(h)) continue;
+            if (!(Number(c.oi[h] ?? -2) === i && Number(c.os[h] ?? -1) === me) || (steal.size > 0 && steal.get(h) === mk)) { ls.add(h); lost.push(h); }
+          }
+          const lk = String(lenOf(rows)) + ":" + lost.join(",");
+          if (hit && hit.days === ds && hit.lost === lk) { j.out.push(hit.sh); j.removed += hit.n; continue; }
+          bd = { mk, ds, a: shadowOf(sr, fh.shiftMin), ls, lk, rows, ci: 0, ri: 0 }; j.sb = bd;
+        }
+        // its lost rows out of it, a slice at a time (a session of thousands of messages)
+        let n = 0;
+        for (; bd.ci < bd.rows.length; bd.ci++, bd.ri = 0) {
+          const ch = bd.rows[bd.ci]; if (!ch) continue;
+          for (; bd.ri < ch.n; bd.ri++) {
+            if (!bd.ls.has(Number(ch.h[bd.ri] ?? -1))) continue;
+            fillRow(ch, bd.ri, scratch, false); subtract(bd.a, scratch, fh.shiftMin); did = true;
+            if (++n >= 256) { n = 0; if (late()) { bd.ri++; return false; } }
+          }
+        }
+        j.sb = null; const a = bd.a;
+        if (bd.ls.size) prune(a);
+        if (j.reprice) repriceShadow(a);
+        const pm = new Map<string, string>(); for (const p of sr.prov) pm.set(p[0] ?? "", p[1] ?? "");
+        const sh: Shadow = { host: fh.name, key: sr.key, a, bill: a.bill, prov: pm };
+        c.shadows.set(bd.mk, { days: bd.ds, lost: bd.lk, sh, n: bd.ls.size });
+        j.out.push(sh); j.removed += bd.ls.size;
+      }
     }
+    for (const k of [...c.shadows.keys()]) if (!j.keep.has(k)) c.shadows.delete(k);
+    j.ph = P_CORR; j.a = 0; j.done += local.length - j.loses.length; // the logs that lose nothing: no correction to make
   }
-  for (const k of [...c.shadows.keys()]) if (!keep.has(k)) c.shadows.delete(k);
-  for (const j0 of loses) {
-    const l = local[j0 + 0]; if (!l) continue; const m = c.logs.get(l.path); if (!m) continue;
-    if (m.off === l.off && (m.sh || m.inexact) && m.lostJ === m.built) { if (m.inexact) inexact.push(l.path); else if (m.sh) { out.push(m.sh); corrected += m.nl; } continue; } // its rows and what it loses are as before
-    m.off = l.off; m.sh = null; m.nl = 0; m.inexact = false; m.built = m.lostJ;
-    const rows = rowsOf(l.path); if (!rows) { m.inexact = true; inexact.push(l.path); continue; }
-    const a = newAcc(); a.ro = true; const lost = new Set<string>();
-    for (const r of rows) if (r.h && c.bk.has(r.h) && !steal.has(r.h)) { correct(a, r); lost.add(r.h); } // a message no host holds stays this machine's
-    m.sh = { host: "", key: l.path, a, bill: l.bill, prov: new Map<string, string>() }; m.nl = lost.size;
-    corrected += lost.size; out.push(m.sh);
+  if (j.ph === P_CORR) {
+    for (; j.a < j.loses.length; j.a++) {
+      const l = local[Number(j.loses[j.a] ?? 0)]; if (!l) continue; const m = c.logs.get(l.path); if (!m) continue;
+      let cb = j.cb;
+      if (!cb) {
+        if (m.off === l.off && (m.sh || m.inexact) && m.lostJ + "|" + j.dsig === m.built) { j.done++; if (m.inexact) j.inexact.push(l.path); else if (m.sh) { j.out.push(m.sh); j.corrected += m.nl; } continue; } // its rows and what it loses are as before
+        if (late()) return false;
+        const lr = j.rowsOf(l.path, until); did = true; if (!lr.done) return false; // its sidecar is being rebuilt: the next slice goes on
+        j.done++;
+        m.off = l.off; m.sh = null; m.nl = 0; m.inexact = false; m.built = m.lostJ + "|" + j.dsig;
+        if (!lr.ok) { m.inexact = true; j.inexact.push(l.path); continue; }
+        const a0 = newAcc(); a0.ro = true;
+        cb = { rows: lr.rows, i: 0, a: a0, lost: new Set<number>() }; j.cb = cb;
+      }
+      // a message no host holds stays this machine's; a day outside the hosts' day rows keeps its local booking (no host
+      // carries it there: taking it out would count the message nowhere)
+      for (; cb.i < cb.rows.length; cb.i++) {
+        const r = cb.rows[cb.i]; if (!r || !r.h || (j.days.size > 0 && !j.days.has(r.d))) continue;
+        const h = hashFind(r.h); if (held(c, h) && !steal.has(h)) { correct(cb.a, r); cb.lost.add(h); }
+        did = true; if ((cb.i & 255) === 255 && late()) { cb.i++; return false; }
+      }
+      j.cb = null;
+      m.sh = { host: "", key: l.path, a: cb.a, bill: l.bill, prov: new Map<string, string>() }; m.nl = cb.lost.size;
+      j.corrected += cb.lost.size; j.out.push(m.sh);
+    }
+    j.ph = P_DONE;
   }
-  return { accs: out, removed, corrected, inexact };
+  j.x = { accs: j.out, removed: j.removed, corrected: j.corrected, inexact: j.inexact };
+  return true;
+}
+// rowsOf: a local log's booked rows (the msgrows sidecar), asked only for logs that lose a message; null = unknown (the
+// log is reported in `inexact`). xc/sig: the cache kept between merges and the hosts' identity (names, ids, time zones:
+// a new sig rebuilds everything the hosts decide); pv: the price table's generation (a new one rebuilds every entry)
+export function exactFleet(local: LocalLog[], localId: string, hosts: FleetHost[], reprice: boolean, rowsOf: (path: string) => OwnRow[] | null, xc: XCache | null = null, sig = "", pv = ""): Exact {
+  const j = mergeStart(local, localId, hosts, reprice, (p: string, u: number): LocalRows => { const r = rowsOf(p); return { rows: r ?? [], ok: r !== null, done: true }; }, xc ?? newXCache(), sig, pv);
+  while (!mergeStep(j, Infinity)) { /* runs to the end */ }
+  return j.x ?? { accs: [], removed: 0, corrected: 0, inexact: [] };
 }
 // re-price a shadow with this machine's table (spec 14); harness-reported cost (hx) has no tp row and stays as sent
 export function repriceShadow(a: Acc): void { reprice(a); }

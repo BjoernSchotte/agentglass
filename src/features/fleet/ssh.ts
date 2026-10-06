@@ -2,7 +2,7 @@
 // shared connection; the tick only stats the .rc file and reads the report a window of lines at a time
 // SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
-import { openSync, writeSync, closeSync, unlinkSync, renameSync, chmodSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { openSync, writeSync, closeSync, unlinkSync, renameSync, chmodSync, statSync, appendFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { sha256Hex } from "../../util/sha256.ts";
 import { readText } from "../../util/fs.ts";
@@ -124,14 +124,16 @@ export function saveFull(k: string, rep: HostReport, gen: string): boolean {
   } catch (e) { return false; }
 }
 // a finished snapshot read from the spool: applied when full or on the state's gen; then made durable (the spool file
-// becomes k.snap when full, else it is appended to the journal). false = not applied (another base: ask for a full one)
-export function applyDurable(k: string, ss: SnapState, x: Snap, text: string): boolean {
+// becomes k.snap when full, else it is appended to the journal). false = not applied (another base: ask for a full one).
+// src/len: the spool file and the bytes of it the snapshot took (a full one is copied whole, never held as a string: up
+// to 17 MB; a reader of k.snap stops at its end line)
+export function applyDurable(k: string, ss: SnapState, x: Snap, src: string, len: number): boolean {
   if (!x.full && x.base !== ss.gen) return false;
   ss.rep = applySnap(ss.rep, x); ss.gen = x.gen;
   try {
-    if (x.full) { writeFileSync(spoolPath(k, "snap.tmp"), text, { mode: 0o600 }); renameSync(spoolPath(k, "snap.tmp"), spoolPath(k, "snap")); try { unlinkSync(spoolPath(k, "j")); } catch (e) { /* none */ } }
+    if (x.full) { copyFileSync(src, spoolPath(k, "snap.tmp")); chmodSync(spoolPath(k, "snap.tmp"), 0o600); renameSync(spoolPath(k, "snap.tmp"), spoolPath(k, "snap")); try { unlinkSync(spoolPath(k, "j")); } catch (e) { /* none */ } }
     else {
-      appendFileSync(spoolPath(k, "j"), text); chmodSync(spoolPath(k, "j"), 0o600);
+      appendFileSync(spoolPath(k, "j"), readText(src, 0, len)); chmodSync(spoolPath(k, "j"), 0o600);
       const js = sizeOf(spoolPath(k, "j")); if (js > Math.max(JOURNAL_MIN, sizeOf(spoolPath(k, "snap")) / 2) && ss.rep) saveFull(k, ss.rep, ss.gen);
     }
   } catch (e) { ss.gen = ""; } // not durable: the next request asks for a full snapshot
@@ -209,8 +211,7 @@ export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => num
         const r = readSnapStep(sr, step());
         if (r) {
           if (srFile === "run") {
-            const text = readText(sr.path, 0, sr.off);
-            if (applyDurable(k, ss, r, text)) { st.report = ss.rep; st.okAt = sr.at; setErr({ code: "ok", msg: "ok" }); }
+            if (applyDurable(k, ss, r, sr.path, sr.off)) { st.report = ss.rep; st.okAt = sr.at; setErr({ code: "ok", msg: "ok" }); }
             else { ss.gen = ""; setErr({ code: "cut", msg: "snapshot on another generation: asking for a full one" }); }
             sr = null;
           } else if (srFile === "snap") { ss.rep = applySnap(null, r); ss.gen = r.gen; st.report = ss.rep; st.okAt = sr.at; if (!st.code) setErr({ code: "ok", msg: "ok" }); } // the cached state; its status stays the last run's

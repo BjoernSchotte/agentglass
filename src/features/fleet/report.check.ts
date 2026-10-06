@@ -10,13 +10,14 @@ const r: HostReport = { hello, sessions: [sessRowOf({ id: "a", harness: "claude"
 const ls = reportLines(r);
 ok("line order", ls.length === 6 && ls[0]?.startsWith("{\"hello\"") === true && ls[1]?.startsWith("{\"cost\"") === true && ls[2]?.startsWith("{\"allowance\"") === true && ls[5]?.startsWith("{\"end\"") === true, ls.join("\n"));
 const p = newParse(); feedLines(p, ls.slice(0, 1));
-ok("unfinished", toReport(p) === null && !p.done && p.err === "", JSON.stringify(p));
+ok("unfinished", toReport(p) === null && !p.done && p.err === "", String(p.done) + " " + p.err);
 feedLines(p, ls.slice(1));
 const back = toReport(p);
-ok("round trip", back !== null && JSON.stringify(back) === JSON.stringify(r), JSON.stringify(back));
+// the report as its lines (own rows are columns: compared on the wire, as they travel)
+ok("round trip", back !== null && reportLines(back).join("\n") === ls.join("\n") && back.owned.length === 0 && back.sessions.every((x) => x.own === null && x.days === null), back ? reportLines(back).join("\n") : "null");
 ok("keys", back !== null && (back.sessions[0]?.key ?? "") === "claude:a" && (back.sessions[1]?.key ?? "") === "codex:b", "keys");
 const cut = newParse(); feedLines(cut, ls.slice(0, 5));
-ok("no end: null", toReport(cut) === null && !cut.done, JSON.stringify(cut));
+ok("no end: null", toReport(cut) === null && !cut.done, String(cut.done) + " " + cut.err);
 ok("no end: parseReport says incomplete", parseReport(ls.slice(0, 5).join("\n")).err === "incomplete report", parseReport(ls.slice(0, 5).join("\n")).err);
 const wrong = newParse(); feedLines(wrong, ls.slice(0, 5).concat(["{\"end\":{\"sessions\":3}}"]));
 ok("end count", wrong.err === "incomplete report" && toReport(wrong) === null, wrong.err);

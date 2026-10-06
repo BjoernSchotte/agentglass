@@ -9,7 +9,7 @@ import { FORMAT, type HostReport, newFeedState, noOwned } from "./model.ts";
 import { sessRowOf } from "./report.ts";
 import type { FleetCfg } from "./config.ts";
 import { FLEET, setFleet, hostByName, newRemote } from "./hosts.ts";
-import { headerSeg, newAlerts, intervalMs, backoffMs, nextDue, sshHint, hostTag, HUB_OPEN } from "./tui.ts";
+import { headerSeg, newAlerts, intervalMs, backoffMs, nextDue, sshHint, hostTag, HUB_OPEN, mergeText } from "./tui.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -31,6 +31,15 @@ ok("header 5", headerSeg(3, marks, 5, false) === "", headerSeg(3, marks, 5, fals
 ok("header down", plain(headerSeg(2, [{ name: "vm1", stale: false, ageMs: 0, down: true }], 120, false)) === " · 2 hosts · vm1 ✗", plain(headerSeg(2, [{ name: "vm1", stale: false, ageMs: 0, down: true }], 120, false)));
 ok("header no ssh", plain(headerSeg(2, [], 120, true)) === " · hosts: no ssh", plain(headerSeg(2, [], 120, true)));
 ok("header fits", vwidth(headerSeg(3, marks, 18, false)) <= 18, String(vwidth(headerSeg(3, marks, 18, false))));
+// the merge's chip: before the host marks, dropped first when narrow
+ok("header merging 120", plain(headerSeg(3, marks, 120, false, "merging 34%")) === " · 3 hosts · merging 34% · vm1 stale 2h", plain(headerSeg(3, marks, 120, false, "merging 34%")));
+ok("header merging 30", plain(headerSeg(3, marks, 30, false, "merging 34%")) === " · 3 hosts · merging 34%", plain(headerSeg(3, marks, 30, false, "merging 34%")));
+ok("header merging 20", plain(headerSeg(3, marks, 20, false, "merging 34%")) === " · 3 hosts", plain(headerSeg(3, marks, 20, false, "merging 34%")));
+// "merging n%": the first merge at once; a later one after a second; never 100 %; nothing when none runs
+ok("merge chip: first", mergeText({ done: 34, total: 100, ms: 10 }, false) === "merging 34%", mergeText({ done: 34, total: 100, ms: 10 }, false));
+ok("merge chip: a later one, quick", mergeText({ done: 34, total: 100, ms: 300 }, true) === "", mergeText({ done: 34, total: 100, ms: 300 }, true));
+ok("merge chip: a later one, slow", mergeText({ done: 1, total: 3, ms: 1500 }, true) === "merging 33%", mergeText({ done: 1, total: 3, ms: 1500 }, true));
+ok("merge chip: capped at 99", mergeText({ done: 5, total: 5, ms: 0 }, false) === "merging 99%" && mergeText(null, false) === "", mergeText({ done: 5, total: 5, ms: 0 }, false));
 // alerts: a transition toasts once; the first report only seeds
 const rep = (alerts: unknown[]): HostReport => ({ hello: { format: FORMAT, version: "x", hostId: "1", hostName: "h", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 1, priceSig: "" },
   sessions: [sessRowOf({ id: "a", harness: "claude", title: "fix login", alerts })], cost: null, allowance: null, live: null, exact: false, owned: noOwned() });

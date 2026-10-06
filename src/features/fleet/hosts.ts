@@ -2,6 +2,7 @@
 // cost, budget and allowance. The only module that knows hosts exist; the rows never enter the sessions map
 // SPDX-License-Identifier: Apache-2.0
 import { H } from "../../hooks.ts";
+import { TERM } from "../../term.ts";
 import { type Sess, newSess } from "../../model/types.ts";
 import { FRESH, RG, sessions } from "../../model/sessions.ts";
 import { type Obj, obj, str } from "../../util/json.ts";
@@ -17,10 +18,11 @@ import { PGEN } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
 import { L, todayKey, lastDays } from "../usage/record.ts";
 import { modeOf } from "../usage/bill-live.ts";
-import { ownHashes, rowsFor } from "../usage/msgrows.ts";
-import { type LocalLog, type FleetHost, type Exact, type Shadow, exactFleet, modeOfShadow, newXCache } from "./merge.ts";
+import { ownIdsBy, rowsBy, forgetIds } from "../usage/msgrows.ts";
+import { hashId } from "./ownc.ts";
+import { type LocalLog, type LocalRows, type FleetHost, type Exact, type Shadow, type MergeJob, mergeStart, mergeStep, modeOfShadow, newXCache, costDays } from "./merge.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
-import type { HostFeed, HostReport, FeedState, OwnRow, LiveRow } from "./model.ts";
+import type { HostFeed, HostReport, FeedState, LiveRow } from "./model.ts";
 
 // mine/mineAt: the newest report of this entry's own feed; report/okAt: the report its rows show — its own, or another
 // feed's of the same host (spec 17: via = that entry's name, vkind its transport; "" = its own)
@@ -223,28 +225,58 @@ export function sumOf(cost: Obj | null): HostSum {
 export interface HostCost { name: string; today: number; week: number; month: number; age: number; stale: boolean; local: boolean }
 // approx: some figure is an estimate (a stale host, a session on 2+ hosts, a host without a projection); marked: the
 // period figures themselves are (stale or overlap: the header's and the Stats line's ≈)
-// exact: the exact merge priced it (some host delivered exact reports); removed: copies taken out across hosts
-export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; marked: boolean; perHost: HostCost[]; exact: boolean; removed: number }
+// exact: the exact merge priced it (some host delivered exact reports); removed: copies taken out across hosts;
+// merging: a merge running in slices (the TUI) with its progress, null = none (until the first one is done the exact
+// hosts count as their own cost objects, marked ≈)
+export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; marked: boolean; perHost: HostCost[]; exact: boolean; removed: number; merging: Progress | null }
 function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; return t; }
-// ── the exact merge (spec 13): local Claude logs and every exact report, cached until a report or the ledger moves ──
-const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null, gen: 0, ms: 0, sums: 0 }; // ms/sums: time spent merging and summing (the debug footer)
-export function mergeMs(): number[] { const o = [EX.ms, EX.sums]; EX.ms = 0; EX.sums = 0; return o; }
+// ── the exact merge (spec 13): local Claude logs and every exact report, cached until a report or the ledger moves. The
+// TUI runs it in time slices (mergeTick from its tick: the first merge of 2 hosts mirroring 200 k messages took 4.7 s in
+// one piece, and a viewer's first one also rebuilds its msgrows sidecars); a CLI run at once ──
+const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null, gen: 0, ms: 0, sums: 0, max: 0, smax: 0 }; // ms/sums: time spent merging and summing, max/smax: the longest merge slice and sum (the debug footer)
+export function mergeMs(): number[] { const o = [EX.ms, EX.sums, EX.max, EX.smax]; EX.ms = 0; EX.sums = 0; EX.max = 0; EX.smax = 0; return o; }
+export function mergeGen(): number { return EX.gen; } // bumped by every finished merge
+export function merged0(): boolean { return EX.x !== null; } // a first merge result exists
 const XC = newXCache(); // what the merge keeps between rounds (merge.ts)
-function localLogs(): LocalLog[] {
-  const out: LocalLog[] = [];
-  for (const s of sessions.values()) {
-    if (s.h !== "claude") continue;
-    const a = ledger.get(s.path); if (!a) continue;
-    let top = s; for (let g = 0; top.parent && g < 8; g++) { const p = sessions.get(top.parent); if (!p) break; top = p; }
-    const x = ownHashes(s.path, a);
-    out.push({ path: s.path, skey: top.h + ":" + top.id, hs: x.hs, ks: x.ks, bill: modeOf(s, ""), off: a.off });
-  }
-  return out;
+// a merge in progress: the inputs it started with (sig/ver/at: what EX takes when it is done), this machine's Claude logs
+// hashed one after another (ss, i → ll), then the job
+interface Run { sig: string; ver: number; at: number; fh: FleetHost[]; csig: string; reprice: boolean; pv: string; ss: Sess[]; i: number; ll: LocalLog[]; job: MergeJob | null; t0: number }
+const RUN = { r: null as Run | null };
+export interface Progress { done: number; total: number; ms: number } // ms: how long it has been running
+export function merging(now: number): Progress | null {
+  const r = RUN.r; if (!r) return null;
+  let parts = 0; let sess = 0; for (const h of r.fh) { parts += h.r.owned.length; sess += h.r.sessions.length; }
+  const j = r.job; const total = r.ss.length + (j ? j.total : parts + 2 * r.ss.length + sess);
+  return { done: r.i + (j ? j.done : 0), total: Math.max(1, total), ms: now - r.t0 };
 }
-function localRows(path: string): OwnRow[] | null { const a = ledger.get(path); if (!a) return null; const r = rowsFor(path, "claude", a); return r.ok ? r.rows : null; }
+function localRows(path: string, until: number): LocalRows {
+  const a = ledger.get(path); if (!a) return { rows: [], ok: false, done: true };
+  const r = rowsBy(path, "claude", a, until); if (!r) return { rows: [], ok: false, done: false };
+  return { rows: r.rows, ok: r.ok, done: true };
+}
 function localShift(hostTz: number): number { return -new Date().getTimezoneOffset() - hostTz; }
-// maxAgeMs: how long a result may be reused while only the local ledger moved (the TUI: 30 s; a CLI run: always fresh)
-export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: number): Exact {
+// one slice of the merge in progress, until the clock passes `until`; true = none left (EX.x is the newest result)
+export function mergeTick(until: number): boolean {
+  const r = RUN.r; if (!r) return true;
+  const t0 = Date.now();
+  try {
+    for (; r.i < r.ss.length; r.i++) { // this machine's Claude logs: their owned messages as hashes (the slow part: SHA-256 per id)
+      const s = r.ss[r.i]; if (!s) continue;
+      const a = ledger.get(s.path); if (!a) continue;
+      const x = ownIdsBy(s.path, a, until, hashId); if (!x) return false;
+      let top = s; for (let g = 0; top.parent && g < 8; g++) { const p = sessions.get(top.parent); if (!p) break; top = p; }
+      r.ll.push({ path: s.path, skey: top.h + ":" + top.id, hs: x.hs, ks: x.ks, bill: modeOf(s, ""), off: a.off });
+      if (Date.now() >= until && r.i + 1 < r.ss.length) { r.i++; return false; }
+    }
+    if (!r.job) r.job = mergeStart(r.ll, FLEET.localId, r.fh, r.reprice, localRows, XC, r.csig, r.pv, costDays(r.at));
+    if (!mergeStep(r.job, until)) return false;
+    EX.at = r.at; EX.ver = r.ver; EX.sig = r.sig; EX.x = r.job.x; EX.gen++; RUN.r = null;
+    return true;
+  } finally { const d = Date.now() - t0; EX.ms += d; if (until !== Infinity && d > EX.max) EX.max = d; }
+}
+// maxAgeMs: how long a result may be reused while only the local ledger moved (the TUI: 30 s; a CLI run: always fresh).
+// sync: run a merge to its end now (a CLI run); else start one for mergeTick and return the last result (null = none yet)
+export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: number, sync = true): Exact | null {
   const now = Date.now(); const fh: FleetHost[] = []; const sig: string[] = [reprice ? "r" : "n", String(PGEN.n)]; // a price change re-prices the shadows
   const csig: string[] = []; // what the merge's owner index depends on: each report's content, not its time
   for (const rh of hosts) {
@@ -252,11 +284,14 @@ export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: numb
     fh.push({ name: rh.cfg.name, hostId: r.hello.hostId, r, shiftMin: sh }); sig.push(rh.cfg.name + "@" + String(rh.okAt) + "#" + String(r.hello.now));
     csig.push(rh.cfg.name + "@" + r.hello.hostId + "~" + String(sh)); // its rows' changes the merge finds itself
   }
+  if (RUN.r) { if (!sync) return EX.x; mergeTick(Infinity); } // one merge at a time: the next starts from what this one leaves
   const sg = sig.join("|"); const hit = EX.x;
   if (hit && sg === EX.sig && (EX.ver === L.ver || now - EX.at < maxAgeMs)) return hit;
-  const x = exactFleet(localLogs(), FLEET.localId, fh, reprice, localRows, XC, csig.join("|"), String(PGEN.n));
-  EX.ms += Date.now() - now; EX.at = now; EX.ver = L.ver; EX.sig = sg; EX.x = x; EX.gen++;
-  return x;
+  const ss: Sess[] = []; for (const s of sessions.values()) if (s.h === "claude" && ledger.has(s.path)) ss.push(s);
+  forgetIds((p: string): boolean => ledger.has(p)); // logs gone since: their ids
+  RUN.r = { sig: sg, ver: L.ver, at: now, fh, csig: csig.join("|"), reprice, pv: String(PGEN.n), ss, i: 0, ll: [], job: null, t0: now };
+  if (sync) mergeTick(Infinity);
+  return EX.x;
 }
 export function entOf(x: Shadow): Ent { return { a: x.a, mode: (p: string): Bill => modeOfShadow(x, p) }; }
 function sumHost(es: Ent[], days: string[]): number { return tot(sumDaysOf(es, days)); }
@@ -271,19 +306,22 @@ function sumsOf(x: Exact): { all: Extra; per: Map<string, number[]> } {
   const td = [day]; const wk = lastDays(7); const mk = monthStart(Date.now()); const per = new Map<string, number[]>();
   for (const [h, hs] of byHost) per.set(h, [sumHost(hs, td), sumHost(hs, wk), sumHost(hs, mk)]);
   const all = extraOf(es);
-  SUMS.x = x; SUMS.day = day; SUMS.all = all; SUMS.per = per; EX.sums += Date.now() - t0;
+  SUMS.x = x; SUMS.day = day; SUMS.all = all; SUMS.per = per; const d = Date.now() - t0; EX.sums += d; if (d > EX.smax) EX.smax = d;
   return { all, per };
 }
 // this machine's figures plus each merged host's: exact reports through the merge (one table, this machine's days), Part A
 // reports as their own cost objects (each host's table and day boundaries)
-export function fleetCost(localNow0: CostNow, hosts: RemoteHost[], now: number, f: FleetCfg, ov: number, maxAgeMs = 0): FleetCost {
+// sync = false (the TUI): the merge runs in slices; until its first result the exact hosts count as their own cost
+// objects (each host's table and days, copies counted on every host that has them), marked ≈
+export function fleetCost(localNow0: CostNow, hosts: RemoteHost[], now: number, f: FleetCfg, ov: number, maxAgeMs = 0, sync = true): FleetCost {
   let exactN = 0; for (const rh of hosts) if (rh.report && rh.report.exact) exactN++;
-  const x = exactN ? exactMerge(hosts, f.reprice, maxAgeMs) : null;
+  const x = exactN ? exactMerge(hosts, f.reprice, maxAgeMs, sync) : null;
+  const mg = exactN ? merging(now) : null;
   const xs = x ? sumsOf(x) : null;
   const localNow = xs ? costWithX(xs.all) : localNow0;
   const today = newSum(); const week = newSum(); const month = newSum(); const proj: number[] = [];
   addSum(today, localNow.today); addSum(week, localNow.week); addSum(month, localNow.month);
-  let approx = ov > 0 || (!!x && x.inexact.length > 0); let marked = approx;
+  let approx = ov > 0 || (!!x && x.inexact.length > 0) || (exactN > 0 && !x); let marked = approx;
   for (let i = 0; i < MODES.length; i++) { const p = localNow.projByMode[i]; const v = p ? p.month : -1; proj.push(v >= 0 ? v : localNow.month.by[i] ?? 0); if (v < 0 && (localNow.month.by[i] ?? 0) > 0) approx = true; }
   const by = (host: string): number[] => xs ? xs.per.get(host) ?? [0, 0, 0] : [0, 0, 0];
   const lc = by("");
@@ -304,7 +342,7 @@ export function fleetCost(localNow0: CostNow, hosts: RemoteHost[], now: number, 
     if (stale) marked = true;
     per.push({ name: rh.cfg.name, today: tot(hs.today), week: tot(hs.week), month: tot(hs.month), age: now - rh.okAt, stale, local: false });
   }
-  return { today, week, month, projByMode: proj, approx, marked, perHost: per, exact: !!x, removed: x ? x.removed + x.corrected : 0 };
+  return { today, week, month, projByMode: proj, approx, marked, perHost: per, exact: !!x, removed: x ? x.removed + x.corrected : 0, merging: mg };
 }
 // the local budget over the fleet (one account, one budget; the hosts' own budgets are ignored)
 export function fleetBudget(fc: FleetCost): BState {
@@ -333,7 +371,7 @@ export function fleetAllowance(local: Obj | null, hosts: RemoteHost[]): Obj | nu
 // the price panel's extra entries: every shadow and correction of the merge (harness from the session key)
 function panelMerge(): Exact | null {
   const c = FLEET.cfg; const hs = merged(); if (!c || !hs.length) return null;
-  for (const rh of hs) if (rh.report && rh.report.exact) return exactMerge(hs, c.reprice, 30000); // cached: a signature compare
+  for (const rh of hs) if (rh.report && rh.report.exact) return exactMerge(hs, c.reprice, 30000, !TERM.tui); // cached: a signature compare (the TUI: a new merge runs in the tick's slices)
   return null;
 }
 PRICE_EXTRA.accs = (): SessAcc[] => {

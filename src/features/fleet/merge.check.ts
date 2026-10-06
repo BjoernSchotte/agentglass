@@ -11,10 +11,11 @@ import { ledger, complete } from "../usage/ledger.ts";
 import { forget } from "../usage/owners.ts";
 import { loadUser } from "../usage/pricing.ts";
 import type { Acc } from "../usage/record.ts";
-import { rowsFor, ownHashes, msgHash } from "../usage/msgrows.ts";
+import { rowsFor, ownHashes, ownIdsBy, msgHash } from "../usage/msgrows.ts";
 import { type HostReport, type OwnRow, type Owned, type SessRow, FORMAT, noOwned } from "./model.ts";
 import { dayRows } from "./snap.ts";
-import { type LocalLog, type FleetHost, type Exact, type Occ, type Shadow, exactFleet, ownerIndex, shiftDH, shadowOf, newXCache, MSTAT } from "./merge.ts";
+import { type LocalLog, type LocalRows, type FleetHost, type Exact, type Occ, type Shadow, exactFleet, ownerIndex, shiftDH, shadowOf, newXCache, mergeStart, mergeStep, MSTAT } from "./merge.ts";
+import { type OwnChunk, chunkOf, lenOf, rowsOfChunks, hashId } from "./ownc.ts";
 import "../../harness/index.ts";
 
 let bad = 0;
@@ -44,8 +45,9 @@ function hostOf(name: string, hostId: string, paths: string[]): FleetHost {
     const a = ledger.get(p); if (!a) continue;
     const r = rowsFor(p, "claude", a); ok(name + ": rows ok", r.ok, p);
     const key = "claude:" + p.slice(p.lastIndexOf("/") + 1, -6);
-    ss.push({ s: { harness: "claude", id: key.slice(7), billing: { mode: "api" } }, key, days: dayRows([a], allDays(a)), own: r.rows, prov: [] });
-    owned.push({ key, rows: r.rows });
+    const ch = [chunkOf(r.rows)];
+    ss.push({ s: { harness: "claude", id: key.slice(7), billing: { mode: "api" } }, key, days: dayRows([a], allDays(a)), own: ch, prov: [] });
+    owned.push({ key, rows: ch });
   }
   const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId, hostName: name, os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 0, priceSig: "" }, sessions: ss, cost: null, allowance: null, live: null, exact: true, owned };
   return { name, hostId, r: rep, shiftMin: 0 };
@@ -62,14 +64,21 @@ function localOf(paths: string[]): { logs: LocalLog[]; accs: Acc[] } {
 // the same logs as the ledger holds them now (no re-index)
 function localOf2(paths: string[]): { logs: LocalLog[]; accs: Acc[] } {
   const logs: LocalLog[] = []; const accs: Acc[] = [];
-  for (const p of paths) { const a = ledger.get(p); if (!a) continue; accs.push(a); const x = ownHashes(p, a); logs.push({ path: p, skey: "claude:" + p.slice(p.lastIndexOf("/") + 1, -6), hs: x.hs, ks: x.ks, bill: "api", off: a.off }); }
+  for (const p of paths) { const a = ledger.get(p); if (!a) continue; accs.push(a); const x = ownIdsBy(p, a, Infinity, hashId); if (!x) continue; logs.push({ path: p, skey: "claude:" + p.slice(p.lastIndexOf("/") + 1, -6), hs: x.hs, ks: x.ks, bill: "api", off: a.off }); }
   return { logs, accs };
 }
 function fleet(local: { logs: LocalLog[]; accs: Acc[] }, hosts: FleetHost[], rep: boolean): { t: Tot; x: Exact } {
   const x = exactFleet(local.logs, "ffffffffffffffff", hosts, rep, (p: string): OwnRow[] | null => { const a = ledger.get(p); return a ? rowsFor(p, "claude", a).rows : null; });
   const as: Acc[] = local.accs.slice(); for (const s of x.accs) as.push(s.a);
+  // the same merge in the smallest slices (a clock always past: one unit of work a step) gives the same entries
+  const j = mergeStart(local.logs, "ffffffffffffffff", hosts, rep, (p: string, u: number): LocalRows => { const a = ledger.get(p); return a ? { rows: rowsFor(p, "claude", a).rows, ok: true, done: true } : { rows: [], ok: false, done: true }; }, newXCache(), "", "");
+  let steps = 1; while (!mergeStep(j, 0)) steps++;
+  const bs: Acc[] = local.accs.slice(); for (const s of j.x?.accs ?? []) bs.push(s.a);
+  ok("sliced merge (" + String(steps) + " steps) = at once", same(totOf(bs), totOf(as)) && (j.x?.removed ?? -1) === x.removed && (j.x?.corrected ?? -1) === x.corrected && steps >= 2, show(totOf(bs)) + " vs " + show(totOf(as)));
+  slicedSteps = Math.max(slicedSteps, steps);
   return { t: totOf(as), x };
 }
+let slicedSteps = 0;
 function of(x: Exact, host: string): Shadow | null { for (const s of x.accs) if (s.host === host) return s; return null; }
 function same(a: Tot, b: Tot): boolean { return JSON.stringify(a.tok) === JSON.stringify(b.tok) && Math.abs(a.cost - b.cost) < 1e-9; }
 function show(t: Tot): string { return JSON.stringify(t.tok) + " $" + String(t.cost); }
@@ -118,6 +127,16 @@ const want5 = truth([A, Lq]);
 ws = hostOf("ws", "1111111111111111", [A]);
 r = fleet(localOf([Lq]), [ws], false);
 ok("local later copy: corrected, totals equal the truth", same(r.t, want5) && r.x.corrected === 1, show(r.t) + " want " + show(want5) + " corrected " + String(r.x.corrected));
+
+// 4b. long sessions: 700 messages; vm1 holds earlier copies of all of them (ws's shadow loses each, a slice of 256 rows at
+// a time) and this machine later ones (a correction of 700 rows across slices): sliced = at once (fleet() compares)
+const longL: string[] = []; const longE: string[] = []; const longV: string[] = [];
+for (let q = 0; q < 700; q++) { const id = "long" + String(q); const mm = String(10 + (q % 50)).padStart(2, "0"); longE.push(asst(id, "2026-09-03T08:" + mm + ":00.000Z", 3, 2, 1, 1)); longL.push(asst(id, "2026-09-03T09:" + mm + ":00.000Z", 3, 2, 1, 1)); longV.push(asst(id, "2026-09-03T10:" + mm + ":00.000Z", 3, 2, 1, 1)); }
+const LA = put("long-ws", longL); const LB = put("long-vm", longE); const LV = put("long-here", longV);
+const wantLong = truth([LA, LB, LV]);
+ws = hostOf("ws", "1111111111111111", [LA]); vm = hostOf("vm1", "2222222222222222", [LB]);
+r = fleet(localOf([LV]), [ws, vm], false);
+ok("long sessions: the truth, 700 removed and 700 corrected", same(r.t, wantLong) && r.x.removed === 700 && r.x.corrected === 700, show(r.t) + " want " + show(wantLong) + " " + String(r.x.removed) + "/" + String(r.x.corrected));
 
 // 5. re-pricing: a price set on this machine prices every host's table-priced usage
 ws = hostOf("ws", "1111111111111111", [A]); vm = hostOf("vm1", "2222222222222222", [B]);
@@ -203,9 +222,9 @@ for (const sd of [42, 7, 1234, 99, 2026]) {
       const wantPost3 = truth(post3);
       writeFileSync(hb, (logs.get(hbk) ?? []).concat(extra2).join("\n") + "\n");
       const fresh = hostOf("b", "bbbbbbbbbbbbbbbb", of2("b"));
-      const prevOwn = new Map<string, OwnRow[]>(); for (const o of hB.r.owned) prevOwn.set(o.key, o.rows);
+      const prevOwn = new Map<string, OwnChunk[]>(); for (const o of hB.r.owned) prevOwn.set(o.key, o.rows);
       const owned2: Owned[] = []; let appended = 0; let reset = 0;
-      for (const o of fresh.r.owned) { const pr = prevOwn.get(o.key); if (pr && o.rows.length >= pr.length) { owned2.push({ key: o.key, rows: pr.concat(o.rows.slice(pr.length)) }); appended += o.rows.length - pr.length; } else { owned2.push(o); reset++; } }
+      for (const o of fresh.r.owned) { const pr = prevOwn.get(o.key); const n0 = pr ? lenOf(pr) : 0; const n1 = lenOf(o.rows); if (pr && n1 >= n0) { owned2.push({ key: o.key, rows: n1 > n0 ? pr.concat([chunkOf(rowsOfChunks(o.rows).slice(n0))]) : pr }); appended += n1 - n0; } else { owned2.push(o); reset++; } }
       const hB2: FleetHost = { name: "b", hostId: "bbbbbbbbbbbbbbbb", shiftMin: 0, r: { hello: fresh.r.hello, sessions: fresh.r.sessions, cost: null, allowance: null, live: null, exact: true, owned: owned2 } };
       const loc3 = localOf(lps); // the local log as grown above, read again
       const t3 = (x: Exact): Tot => { const as: Acc[] = loc3.accs.slice(); for (const e of x.accs) as.push(e.a); return totOf(as); };
@@ -221,5 +240,6 @@ for (const sd of [42, 7, 1234, 99, 2026]) {
 }
 
 ok("some seed grew a host's rows without a reset", grownSeen > 0, String(grownSeen));
+ok("the sliced merges took many steps", slicedSteps >= 10, String(slicedSteps));
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("fleet merge: all checks passed");

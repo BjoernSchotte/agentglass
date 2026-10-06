@@ -24,7 +24,7 @@ import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
 import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed, openCmd } from "./config.ts";
 import type { HostReport } from "./model.ts";
-import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher, mergeMs } from "./hosts.ts";
+import { type RemoteHost, type Progress, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher, mergeMs, mergeGen, merged0, merging, mergeTick } from "./hosts.ts";
 import { sshBin, hostControlPath } from "./ssh.ts";
 import { forget, keyOf } from "./store.ts";
 import { makeFeeds, hostStatus, statusLines, redactOf, MAX_PARALLEL } from "./cli.ts";
@@ -155,12 +155,28 @@ function streams(now: number): boolean {
 // the debug footer's fleet part (AGENTGLASS_DEBUG_REFRESH=1): ms spent per 10 s in the feeds (t), the streams (s), the
 // figures (m: of which merging and summing)
 const FD = { t: 0, s: 0, m: 0, at: 0, line: "" };
-function fdRoll(now: number): void { if (!FD.at) FD.at = now; if (now - FD.at < 10000) return; const mm = mergeMs(); FD.line = "fleet " + String(Math.round(FD.t)) + "/" + String(Math.round(FD.s)) + "/" + String(Math.round(FD.m)) + " (merge " + String(mm[0] ?? 0) + ", sums " + String(mm[1] ?? 0) + ")ms/10s · index " + String(MSTAT.full) + " built " + String(MSTAT.grown) + " grown"; FD.t = 0; FD.s = 0; FD.m = 0; FD.at = now; }
+function fdRoll(now: number): void { if (!FD.at) FD.at = now; if (now - FD.at < 10000) return; const mm = mergeMs(); FD.line = "fleet " + String(Math.round(FD.t)) + "/" + String(Math.round(FD.s)) + "/" + String(Math.round(FD.m)) + " (merge " + String(mm[0] ?? 0) + " ≤" + String(mm[2] ?? 0) + ", sums " + String(mm[1] ?? 0) + " ≤" + String(mm[3] ?? 0) + ")ms/10s · index " + String(MSTAT.full) + " built " + String(MSTAT.grown) + " grown"; FD.t = 0; FD.s = 0; FD.m = 0; FD.at = now; }
 DEBUG_PARTS.push((): string => T.on ? FD.line : "");
 H.start.push(init);
 H.onTick.push((): void => { const t0 = Date.now(); tick(); const t1 = Date.now(); FD.t += t1 - t0; fdRoll(t1); });
 H.onTick.push((): void => { if (!T.on || T.nossh) return; const t0 = Date.now(); if (streams(t0)) { T.gen++; S.dirty = true; } FD.s += Date.now() - t0; });
 H.onQuit.push((): void => { for (const rh of FLEET.hosts) rh.feed.stop(); for (const w of WF.values()) w.stop(); }); // running pulls and streams: shared ssh masters persist (fleet status --close)
+// ── the exact merge in slices (fleet follow-ups): ≤ 50 ms a tick (12 ms while typing), the tick at the indexing burst
+// cadence meanwhile; the figures follow when it is done ──
+export const MERGE_SLICE_MS = 50;
+const MG = { chip: "" }; // the chip last drawn (a new percent repaints)
+H.onTick.push((): void => {
+  if (!T.on) return;
+  const t0 = Date.now(); if (!merging(t0)) return;
+  if (mergeTick(t0 + (S.mode === "input" ? 12 : MERGE_SLICE_MS))) { T.rgen++; MG.chip = ""; S.dirty = true; }
+  else { const c = mergeChip(Date.now()); if (c !== MG.chip) { MG.chip = c; S.dirty = true; } }
+  FD.m += Date.now() - t0;
+});
+H.backlog.push((): boolean => T.on && merging(Date.now()) !== null);
+// "merging 34%" while a merge runs: the first one (until then the exact hosts count as their own cost objects, marked ≈),
+// or a later one that takes more than a second (a price change re-prices every entry); "" otherwise
+export function mergeText(p: Progress | null, have: boolean): string { return p && (!have || p.ms >= 1000) ? "merging " + String(Math.min(99, Math.floor(p.done * 100 / p.total))) + "%" : ""; }
+function mergeChip(now: number): string { return T.on ? mergeText(merging(now), merged0()) : ""; }
 
 // ── rows: the host tag before the title ──
 // ≈ after it (local rows: alone) when the session is also on another host: its cost may count twice (spec 7.2)
@@ -181,18 +197,19 @@ export function sshHint(s: Sess): string {
 }
 
 // ── fleet figures for the header and Stats (cached per rows generation and 5 s) ──
-interface FleetNow { at: number; gen: number; cn: CostNow | null; hdr: FleetHdr | null; ov: Set<string>; per: { name: string; usd: number; wk: number; stale: boolean; age: number; local: boolean }[]; approx: boolean }
+// est: the exact hosts' figures are their own cost objects (no merge result yet): every host's figure is marked ≈
+interface FleetNow { at: number; gen: number; xg: number; cn: CostNow | null; hdr: FleetHdr | null; ov: Set<string>; per: { name: string; usd: number; wk: number; stale: boolean; age: number; local: boolean }[]; approx: boolean; est: boolean }
 const OV = { k: "", v: new Set<string>() };
-const FN: FleetNow = { at: 0, gen: -1, cn: null, hdr: null, ov: new Set<string>(), per: [], approx: false };
+const FN: FleetNow = { at: 0, gen: -1, xg: -1, cn: null, hdr: null, ov: new Set<string>(), per: [], approx: false, est: false };
 function fleetNow(cn: CostNow): FleetNow {
   const now = Date.now(); const c = FLEET.cfg;
   const away = AWAY.on; // nobody looks: the fleet figures follow a minute behind, the merge every 5 minutes (a report still merges at once)
-  if (!c || (FN.gen === T.rgen && (away || FN.cn === cn) && now - FN.at < (away ? 60000 : 5000))) return FN;
+  if (!c || (FN.gen === T.rgen && FN.xg === mergeGen() && (away || FN.cn === cn) && now - FN.at < (away ? 60000 : 5000))) return FN;
   const hs = merged();
   const ok = String(FLEET.rowsGen) + "|" + String(sessions.size) + "|" + String(SG.gen);
   if (OV.k !== ok) { OV.k = ok; const loc: Sess[] = []; for (const s of sessions.values()) if (!s.parent) loc.push(s); OV.v = overlap(loc, hs); } // the session sets moved
-  const ov = OV.v; const fc = fleetCost(cn, hs, now, c, ov.size, away ? 300000 : 30000); const bs = fleetBudget(fc); FD.m += Date.now() - now;
-  FN.at = now; FN.gen = T.rgen; FN.cn = cn; FN.ov = ov; FN.approx = fc.approx;
+  const ov = OV.v; const fc = fleetCost(cn, hs, now, c, ov.size, away ? 300000 : 30000, false); const bs = fleetBudget(fc); FD.m += Date.now() - now;
+  FN.at = now; FN.gen = T.rgen; FN.xg = mergeGen(); FN.cn = cn; FN.ov = ov; FN.approx = fc.approx; FN.est = !fc.exact && fc.merging !== null;
   FN.hdr = { today: fc.today, state: bs.state, approx: fc.marked };
   FN.per = fc.perHost.map((p) => ({ name: p.name, usd: p.today, wk: p.week, stale: p.stale, age: p.age, local: p.local }));
   return FN;
@@ -202,9 +219,10 @@ FLEET_HOOK.line = (w: number, week: boolean): string => {
   if (!T.on) return "";
   const f = fleetNow(costNow("")); const usd = (x: number): string => "$" + (x < 1000 ? x.toFixed(2) : grp(x));
   const parts: string[] = [];
-  for (const p of f.per) parts.push(fg(p.local ? C.text : C.accent) + p.name + RST + " " + fg(C.yellow) + (p.stale ? "≈" : "") + usd(week ? p.wk : p.usd) + RST + (p.stale ? fg(C.dim) + " (" + ago(Date.now() - p.age) + " old)" + RST : ""));
+  for (const p of f.per) parts.push(fg(p.local ? C.text : C.accent) + p.name + RST + " " + fg(C.yellow) + (p.stale || (f.est && !p.local) ? "≈" : "") + usd(week ? p.wk : p.usd) + RST + (p.stale ? fg(C.dim) + " (" + ago(Date.now() - p.age) + " old)" + RST : ""));
   for (const rh of FLEET.hosts) if (rh.cfg.enabled && (rh.cfg.kind === "ssh" || rh.cfg.kind === "dir") && !rh.report) parts.push(fg(C.dim) + rh.cfg.name + " —" + RST);
-  let l = fg(C.dim) + "fleet  " + RST + parts.join(fg(C.dim) + " · " + RST);
+  const mc = mergeChip(Date.now());
+  let l = fg(C.dim) + "fleet  " + RST + (mc ? fg(C.yellow) + mc + RST + fg(C.dim) + " · " + RST : "") + parts.join(fg(C.dim) + " · " + RST);
   if (f.ov.size) l += fg(C.dim) + " · " + RST + fg(C.yellow) + String(f.ov.size) + " session" + (f.ov.size === 1 ? "" : "s") + " on 2+ hosts ≈" + RST;
   return vwidth(l) <= w ? l : fitStyled(l, w);
 };
@@ -238,13 +256,15 @@ function codexOf(hs: RemoteHost[]): RlWin[] | null {
 
 // ── header: "· 3 hosts" (this machine included), problems after it; narrow drops the details, then the segment ──
 export interface HostMark { name: string; stale: boolean; ageMs: number; down: boolean }
-export function headerSeg(n: number, marks: HostMark[], w: number, nossh: boolean): string {
+// mg: the merge's progress chip ("merging 34%", "" = none): kept before the host marks while it fits
+export function headerSeg(n: number, marks: HostMark[], w: number, nossh: boolean, mg = ""): string {
   if (nossh) { const t = fg(C.dim) + " · " + RST + fg(C.yellow) + "hosts: no ssh" + RST; return vwidth(t) <= w ? t : ""; }
-  const base = fg(C.dim) + " · " + String(n) + " hosts" + RST;
+  const base0 = fg(C.dim) + " · " + String(n) + " hosts" + RST;
+  const base = mg && vwidth(base0) + 3 + vwidth(mg) <= w ? base0 + fg(C.dim) + " · " + RST + fg(C.yellow) + mg + RST : base0;
   let full = base;
   for (const m of marks) full += fg(C.dim) + " · " + RST + (m.down ? fg(C.red) + m.name + " ✗" : fg(C.yellow) + m.name + " stale " + ago(Date.now() - m.ageMs)) + RST;
   if (vwidth(full) <= w) return full;
-  return vwidth(base) <= w ? base : "";
+  return vwidth(base) <= w ? base : vwidth(base0) <= w ? base0 : "";
 }
 function marks(now: number): HostMark[] {
   const c = FLEET.cfg; const o: HostMark[] = []; if (!c) return o;
@@ -261,7 +281,7 @@ function counted(rh: RemoteHost): boolean { return rh.cfg.kind === "ssh" || rh.c
 H.headerWidgets.push((w: number): string => {
   if (!T.on || !FLEET.cfg || w < 24) return ""; // narrow: the cost widget before it keeps its place (the tabs turn to numbers for it)
   let n = 1; for (const rh of FLEET.hosts) if (rh.cfg.enabled && counted(rh) && !rh.dupOf) n++;
-  return headerSeg(n, marks(Date.now()), w, T.nossh);
+  return headerSeg(n, marks(Date.now()), w, T.nossh, mergeChip(Date.now()));
 });
 
 // ── the preview of a remote row: its report's facts and the command that opens it on the host ──
@@ -330,6 +350,7 @@ H.helpSections.push({ name: "fleet", ctx: "sessions", keys: [
   ["^K", "Fleet: refresh hosts now · Fleet: status (what works per host)"],
   ["", "Stats: the fleet line (≈ = stale, or a pulled host's session on 2+ hosts) · the cost widget sums the fleet"],
   ["", "exact hosts (snapshots): a message copied to several hosts counts once, priced with this machine's table and days"],
+  ["", "header / Stats: merging 34% while the hosts' messages are matched in the background (≈ figures until the first merge is done)"],
   ["", "live stream (fleet watch): remote running / waiting within seconds; critical remote alerts reach the desktop"],
   ["", "dir hosts: snapshots a host drops into a synced folder (agentglass fleet drop); never shown as running"],
   ["", "one machine under several entries (ssh and a drop, the hub): one host, its rows once, under the first entry"],

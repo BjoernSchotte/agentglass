@@ -8,6 +8,7 @@ import { type OwnRow, type Owned, type SessRow, ownSess } from "./model.ts";
 import { type Snap, type OwnLine, newSnapParse, feedSnap, snapLines, applySnap } from "./snap.ts";
 import { type PeerState, buildSnap, baseFor, savePeer, loadPeer, peersDir, newGen, MAX_PEERS } from "./snapshot.ts";
 import { msgHash } from "../usage/msgrows.ts";
+import { rowsOfChunk, rowsOfChunks } from "./ownc.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -37,7 +38,7 @@ function req(ack: string, full: boolean): Snap {
 const s1 = req("", false);
 ok("first: full, 3 sessions", s1.full && s1.base === "" && keys(s1) === "claude:s1,claude:s2,claude:s3", keys(s1));
 const own1 = ownOf(s1, "claude:s1");
-ok("first: own rows of s1 (2 messages, hashed)", !!own1 && own1.reset && own1.rows.length === 2 && own1.rows.some((r: OwnRow) => r.h === msgHash("m1")), JSON.stringify(own1));
+ok("first: own rows of s1 (2 messages, hashed)", !!own1 && own1.reset && own1.rows.n === 2 && rowsOfChunk(own1.rows).some((r: OwnRow) => r.h === msgHash("m1")), JSON.stringify(own1 ? rowsOfChunk(own1.rows) : []));
 ok("first: day rows", (s1.sess[0]?.days?.length ?? 0) >= 1, JSON.stringify(s1.sess[0]?.days ?? []));
 ok("no raw message id on the wire", snapLines(s1).join("\n").indexOf("\"m1\"") < 0, "leak");
 let rep = applySnap(null, s1);
@@ -47,25 +48,25 @@ rep = applySnap(rep, s2);
 appendFileSync(join(p, "s2.jsonl"), asst("s2", "m5", iso(1), 500));
 const s3 = req(s2.gen, false);
 const o3 = ownOf(s3, "claude:s2");
-ok("third: one session, its new own row only", keys(s3) === "claude:s2" && !!o3 && !o3.reset && o3.rows.length === 1 && (o3.rows[0]?.h ?? "") === msgHash("m5"), keys(s3) + " " + JSON.stringify(o3));
+ok("third: one session, its new own row only", keys(s3) === "claude:s2" && !!o3 && !o3.reset && o3.rows.n === 1 && (rowsOfChunk(o3.rows)[0]?.h ?? "") === msgHash("m5"), keys(s3));
 let st: PeerState = loadPeer(P);
 ok("state: acked = second, pending = third", (st.acked?.gen ?? "") === s2.gen && (st.pending?.gen ?? "") === s3.gen, JSON.stringify({ a: st.acked?.gen, p: st.pending?.gen }));
 // the third was lost: the next request acknowledges the second again → the same changes relative to it
 const s4 = req(s2.gen, false);
 const o4 = ownOf(s4, "claude:s2");
-ok("lost: delta again from the second", s4.base === s2.gen && keys(s4) === "claude:s2" && !!o4 && !o4.reset && o4.rows.length === 1, s4.base + " " + keys(s4));
+ok("lost: delta again from the second", s4.base === s2.gen && keys(s4) === "claude:s2" && !!o4 && !o4.reset && o4.rows.n === 1, s4.base + " " + keys(s4));
 rep = applySnap(rep, s4);
 // applying s4 (not the lost s3) gives the same report as a fresh full one
 const f = req("", true);
 const fr = applySnap(null, f);
-function norm(r: SessRow[]): string { const o: string[] = []; for (const x of r) { const ow: string[] = []; for (const y of x.own ?? []) ow.push(y.h + y.n.join(",")); o.push(x.key + JSON.stringify(x.days ?? []) + ow.join(";")); } return o.sort().join("\n"); }
+function norm(r: SessRow[]): string { const o: string[] = []; for (const x of r) { const ow: string[] = []; for (const y of rowsOfChunks(x.own ?? [])) ow.push(y.h + y.n.join(",")); o.push(x.key + JSON.stringify(x.days ?? []) + ow.join(";")); } return o.sort().join("\n"); }
 ok("deltas applied = a full snapshot", norm(rep.sessions) === norm(fr.sessions), norm(rep.sessions) + "\n vs " + norm(fr.sessions));
 const unk = req("ffffffffffffffff", false);
 ok("unknown ack → full", unk.full && unk.base === "" && unk.sess.length === 3, String(unk.full));
 // a deleted log → gone (and its rows reset empty)
 unlinkSync(join(p, "s3.jsonl"));
 const g = req(unk.gen, false);
-ok("deleted → gone", g.gone.indexOf("claude:s3") >= 0 && !!ownOf(g, "claude:s3") && (ownOf(g, "claude:s3")?.reset ?? false) && (ownOf(g, "claude:s3")?.rows.length ?? 1) === 0, JSON.stringify(g.gone));
+ok("deleted → gone", g.gone.indexOf("claude:s3") >= 0 && !!ownOf(g, "claude:s3") && (ownOf(g, "claude:s3")?.reset ?? false) && (ownOf(g, "claude:s3")?.rows.n ?? 1) === 0, JSON.stringify(g.gone));
 const gr = applySnap(applySnap(null, unk), g);
 ok("gone applied", !gr.sessions.some((s: SessRow) => s.key === "claude:s3") && !gr.owned.some((o: Owned) => ownSess(o.key) === "claude:s3"), JSON.stringify(gr.sessions.map((s: SessRow) => s.key)));
 // peer files: 0600, at most MAX_PEERS

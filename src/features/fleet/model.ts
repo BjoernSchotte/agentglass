@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Obj } from "../../util/json.ts";
 import type { SState } from "../../model/state.ts";
+import type { OwnChunk } from "./ownc.ts";
 
 export const FORMAT = "agentglass-fleet/v1";
 export interface Hello { format: string; version: string; hostId: string; hostName: string; os: string; tzOffsetMin: number; redact: boolean; days: number; now: number; priceSig: string }
@@ -20,7 +21,7 @@ export interface SessRow {
   s: Obj;                // the jsonSess object (the `--json` contract)
   key: string;           // host-local stable key: "<harness>:<id>"
   days: DayRow[] | null; // per-day usage (Part B feeds); null = only the totals in `s` (Part A pull)
-  own: OwnRow[] | null;  // Claude messages this session owns on its host (Part B, OTLP hub); null = unknown
+  own: OwnChunk[] | null; // Claude messages this session owns on its host (Part B, OTLP hub), in columns; null = unknown
   prov: string[][];      // [provider, billing mode] for multi-provider harnesses (pi, OpenCode); [] = the session's mode
 }
 // one session's live state: the SState sessState() computes on its host (model/state.ts, also the OTLP logs stream's
@@ -44,8 +45,9 @@ export interface HostFeed {
   stop(): void;                    // kill what start() spawned (on quit)
 }
 // one session's owned rows; key: the session key (SessRow.key), optionally "|<part>" when a session's rows come in parts
-// (one per log of its tree: each grows on its own, so a snapshot delta carries only new rows)
-export interface Owned { key: string; rows: OwnRow[] }
+// (one per log of its tree: each grows on its own, so a snapshot delta carries only new rows). rows: in columns (ownc.ts),
+// one chunk per snapshot line that added some: an append adds a chunk, the earlier ones stay the same objects
+export interface Owned { key: string; rows: OwnChunk[] }
 export function ownSess(key: string): string { const i = key.indexOf("|"); return i >= 0 ? key.slice(0, i) : key; }
 export function noOwned(): Owned[] { return []; }
 export function newFeedState(): FeedState { return { report: null, okAt: 0, tryAt: 0, err: "", code: "", busy: false }; }
