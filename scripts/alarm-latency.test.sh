@@ -27,9 +27,11 @@ cat > "$H/.agentglass/rules.json" <<EOF
            {"id": "tokens", "metric": "session_tokens", "degraded": 50000, "message": "tokens {value}"}]}
 EOF
 chmod 600 "$H/.agentglass/rules.json"
-# the agents: idle processes named pi and claude in their sessions' cwds (a symlink to an interpreter keeps the name in
-# argv[0] and comm; not to sleep: a multicall coreutils refuses another name)
-py=$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))'); ln -s "$py" "$t/bin/pi"; ln -s "$py" "$t/bin/claude"
+# the agents: idle processes named pi and claude in their sessions' cwds. Linux: a symlink to the interpreter keeps the
+# name in argv[0] and comm (not to sleep: a multicall coreutils refuses another name). macOS: a copy of sleep (a framework
+# Python re-execs Python.app with that path as argv[0], which names no agent)
+if [ "$(uname -s)" = Darwin ]; then for n in pi claude; do cp /bin/sleep "$t/bin/$n"; done
+else py=$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))'); ln -s "$py" "$t/bin/pi"; ln -s "$py" "$t/bin/claude"; fi
 python3 - "$t" "$H" <<'PY'
 import os, pty, sys, time, json, select, subprocess, signal, fcntl, termios, struct
 t, H = sys.argv[1:3]
@@ -40,7 +42,8 @@ def enc(p): return "".join(c if c.isalnum() and c.isascii() else "-" for c in p)
 fails = 0
 for k, mode in enumerate(("focused", "away")):
     W = "%s/w/app%d" % (t, k); C = "%s/w/api%d" % (t, k); os.makedirs(W); os.makedirs(C)
-    agents = [subprocess.Popen([t + "/bin/" + n, "-c", "import time; time.sleep(600)"], cwd=d) for n, d in (("pi", W), ("claude", C))]
+    idle = ["600"] if sys.platform == "darwin" else ["-c", "import time; time.sleep(600)"]
+    agents = [subprocess.Popen([t + "/bin/" + n] + idle, cwd=d) for n, d in (("pi", W), ("claude", C))]
     time.sleep(1.2) # a session starts after its process (cwd linking takes the newest session that started after it)
     pid_ = "a1a1a1a1-0000-4000-8000-00000000000%d" % k; cid = "c1c1c1c1-0000-4000-8000-00000000000%d" % k
     pdir = H + "/.pi/agent/sessions/--" + W.strip("/").replace("/", "-") + "--"; os.makedirs(pdir, exist_ok=True)
@@ -114,6 +117,8 @@ for k, mode in enumerate(("focused", "away")):
         ok = 0 <= cmd * 1000 <= bound and 0 <= bell * 1000 <= bound
         print("%-7s %-8s notify %5d ms  bell %5d ms%s" % (mode, name, cmd * 1000, bell * 1000, "" if ok else "  FAIL (bound %d ms)" % bound))
         if not ok: fails += 1
+    if fails: # what the TUI could see: the agents' command lines (an agent must be named by argv[0])
+        print(subprocess.run(["ps", "-o", "pid=,args=", "-p", ",".join(str(a.pid) for a in agents)], capture_output=True, text=True).stdout.rstrip())
     os.kill(child, signal.SIGTERM); pump(1)
     try: os.waitpid(child, 0)
     except ChildProcessError: pass
