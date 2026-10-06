@@ -38,6 +38,7 @@ case "$dest" in
        printf '{"end":{"sessions":1000}}\n'; exit 0 ;; # an agentglass without fleet (measured: 2026.10.5)
   cut) HOME="$FAKE_HOMES/h2" eval "$*" | sed '$d'; exit 0 ;;
 esac
+unset AGENTGLASS_FLEET_DIR AGENTGLASS_RUN_DIR # the viewer's: a host keeps its own peer state (ssh passes no environment)
 HOME="$FAKE_HOMES/$dest" eval "$*"
 SH
 chmod +x "$t/ssh"
