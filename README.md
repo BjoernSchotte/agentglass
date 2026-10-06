@@ -1093,11 +1093,12 @@ whose `host.id` changes under one subject are dropped). Run a Collector in Docke
 $(id -u):$(id -g)`): the reader skips files owned by another user (the image's default uid is 10001) and files
 others can write.
 
-**The viewer side** arrives with the fleet view's exact merge: a `fleet.hosts` entry with `"otlp":
-"~/.agentglass/hub"` (optional `"hosts": {"ci": "<host id>"}` names, `"trust"`, `"maxAgeDays"`) makes every host in
-that directory a fleet host. A turn's cost reaches the hub when the turn closes (spans are sent per finished turn);
-liveness and alerts arrive within seconds through the logs stream; a host whose heartbeat is over 90 s old stops
-showing as live. Not reconstructable from the export (null or 0 in `--json`): `pid`, `path`, `bytes`, lines
+**The viewer side:** a `fleet.hosts` entry with `"otlp": "~/.agentglass/hub"` (optional `"hosts": {"ci": "<host id>"}`
+names, `"trust"`, `"maxAgeDays"`) makes every host in that directory a fleet host: rows with its name in the list,
+`agentglass fleet --json`, `fleet status` (the source entry reports skipped files). Hub hosts report exactly (day rows,
+owned Claude messages): fleet's exact merge counts a message held by a hub host and another host once. A turn's cost reaches the hub when the turn closes (spans
+are sent per finished turn); liveness and alerts arrive within seconds through the logs stream; a host whose heartbeat
+is over 90 s old stops showing as live. Not reconstructable from the export (null or 0 in `--json`): `pid`, `path`, `bytes`, lines
 added/removed, skills, git commits. Keep the hub on an encrypted disk: agentglass does not encrypt the files (the key
 would sit next to them).
 

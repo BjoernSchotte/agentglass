@@ -3,8 +3,9 @@
 //   {"fleet": {"hosts": [{"name", "ssh" | "dir" | "otlp", "agentglass", "redact", "enabled"}], "localName", "refreshSeconds", "days", "timeoutSeconds"}}
 import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { rawSection } from "../../util/config.ts";
+import { hubSourceFrom, HUBS } from "../hub/config.ts";
 
-// kind: "ssh" (pulled here), "dir" / "otlp" (later transports: kept, disabled), "" never stored
+// kind: "ssh" (pulled here), "otlp" (a hub source: every host in its directory, otlp-hub), "dir" (later: kept, disabled)
 export interface HostCfg { name: string; ssh: string; agentglass: string; redact: boolean; enabled: boolean; kind: string; path: string }
 export interface FleetCfg { hosts: HostCfg[]; localName: string; refreshS: number; days: number; timeoutS: number; warns: string[] }
 export const NAME_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
@@ -40,8 +41,9 @@ function hostOf(v: unknown, i: number, localName: string, seen: Set<string>, w: 
   if (kind !== "ssh") {
     const p = str(o[kind]);
     if (!p) { w.push(who + ": " + kind + " must be a directory path — skipped"); return null; }
-    w.push(who + ": transport " + kind + " needs a newer agentglass — kept, not pulled");
     seen.add(name);
+    if (kind === "otlp") { HUBS.cfg.set(name, hubSourceFrom(o, who, w)); return { name, ssh: "", agentglass: "", redact, enabled, kind, path: p }; } // a hub source (otlp-hub)
+    w.push(who + ": transport " + kind + " needs a newer agentglass — kept, not pulled");
     return { name, ssh: "", agentglass: "", redact, enabled: false, kind, path: p };
   }
   const ssh = str(o["ssh"]);
@@ -76,10 +78,10 @@ export function loadFleet(): FleetCfg { if (!loaded) loaded = fleetFrom(rawSecti
 export const FLEET_TEST = { set: (c: FleetCfg | null): void => { loaded = c; } };
 // this run skips the fleet: --no-fleet or AGENTGLASS_FLEET=0
 export function fleetOff(): boolean { return process.argv.indexOf("--no-fleet") >= 0 || process.env["AGENTGLASS_FLEET"] === "0"; }
-// an enabled ssh host exists and this run does not skip the fleet
+// an enabled ssh host or hub source exists and this run does not skip the fleet
 export function fleetOn(c: FleetCfg): boolean {
   if (fleetOff()) return false;
-  for (const h of c.hosts) if (h.enabled && h.kind === "ssh") return true;
+  for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "otlp")) return true;
   return false;
 }
 export function hostNamed(c: FleetCfg, name: string): HostCfg | null { for (const h of c.hosts) if (h.name === name) return h; return null; }

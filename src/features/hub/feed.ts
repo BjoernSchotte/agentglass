@@ -12,7 +12,7 @@ import { type Source, newSource, readStep, trustOf, TICK_BYTES, TICK_LINES } fro
 import { type Agg, type Label, newAgg, ingestLine, reportsOf, prune } from "./map.ts";
 
 export interface HubHost { name: string; hostId: string; state: FeedState }
-export interface HostSource { name: string; poll(now: number, budget: { bytes: number; lines: number }): HubHost[]; hosts(): HubHost[]; status(): string[]; stop(): void }
+export interface HostSource { name: string; poll(now: number, budget: { bytes: number; lines: number }): HubHost[]; hosts(): HubHost[]; busy(): boolean; status(): string[]; stop(): void }
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 // host.name → the fleet name pattern ("" when nothing usable is left)
 export function sanitizeName(s: string): string {
@@ -21,12 +21,13 @@ export function sanitizeName(s: string): string {
   o = o.slice(0, 16); while (o.endsWith("-")) o = o.slice(0, o.length - 1);
   return NAME_RE.test(o) ? o : "";
 }
-export function hubSource(name: string, cfg: HubSrcCfg): HostSource {
+// reserved: names other fleet hosts already use (a derived name never takes one)
+export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = []): HostSource {
   const trust = trustOf(cfg.dir, cfg.trust);
   const src: Source = newSource(name, cfg.dir, trust, cfg.maxAgeDays);
   const agg: Agg = newAgg();
   const states = new Map<string, HubHost>(); // agg host key → its fleet host
-  const used = new Set<string>();
+  const used = new Set<string>(reserved);
   const labels = new Map<string, Label | null>(); // host directory → its label (receive layout)
   // the label of a file in a receive directory: <dir>/<host>/<file>, host id from <dir>/<host>/.host
   const labelOf = (file: string): Label | null => {
@@ -63,12 +64,15 @@ export function hubSource(name: string, cfg: HubSrcCfg): HostSource {
         const rep = reps.get(key); if (!rep) continue;
         let h = states.get(key);
         if (!h) { h = { name: nameFor(key, rep.hello.hostId, rep.hello.hostName), hostId: rep.hello.hostId, state: newFeedState() }; states.set(key, h); }
-        h.state.report = rep; h.state.okAt = now; h.state.tryAt = now; h.state.err = ""; h.state.code = "";
+        // the report's age is its data's: the newest span or heartbeat (a host whose export stopped turns stale)
+        const at = rep.hello.now > 0 ? Math.min(now, rep.hello.now) : now;
+        h.state.report = rep; h.state.okAt = at; h.state.tryAt = now; h.state.err = ""; h.state.code = "";
         changed.push(h);
       }
       for (const h of states.values()) h.state.busy = src.backlog; // the indexing gauge while a backlog is read
       return changed;
     },
+    busy(): boolean { return src.backlog; },
     hosts(): HubHost[] { const o: HubHost[] = []; for (const h of states.values()) o.push(h); return o; },
     status(): string[] {
       const o: string[] = [];

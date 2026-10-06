@@ -1,5 +1,6 @@
 // agentglass — self-check for the fleet config section: scriptc build src/features/fleet/config.check.ts -o fc && ./fc
 // SPDX-License-Identifier: Apache-2.0
+import { HUBS } from "../hub/config.ts";
 import { fleetFrom, fleetOn, splitHostRef, openCmd } from "./config.ts";
 
 let bad = 0;
@@ -31,8 +32,11 @@ ok("ranges", rng.refreshS === 60 && rng.days === 7 && rng.timeoutS === 90 && rng
 const ok2 = fleetFrom({ refreshSeconds: 15, days: 90, timeoutSeconds: 600 });
 ok("range ends", ok2.refreshS === 15 && ok2.days === 90 && ok2.timeoutS === 600 && ok2.warns.length === 0, JSON.stringify(ok2));
 const ot = fleetFrom({ hosts: [{ name: "ci", otlp: "/x" }] });
-ok("otlp kept", ot.hosts.length === 1 && (ot.hosts[0]?.kind ?? "") === "otlp" && !(ot.hosts[0]?.enabled ?? true) && has(ot.warns, "needs a newer agentglass"), JSON.stringify(ot));
-ok("otlp only: fleet off", !fleetOn(ot), "on");
+ok("otlp: a hub source, enabled", ot.hosts.length === 1 && (ot.hosts[0]?.kind ?? "") === "otlp" && (ot.hosts[0]?.enabled ?? false) && (ot.hosts[0]?.path ?? "") === "/x" && ot.warns.length === 0, JSON.stringify(ot));
+ok("otlp only: fleet on", fleetOn(ot), "off");
+const oh = fleetFrom({ hosts: [{ name: "hub", otlp: "/h", hosts: { ci: "0011223344556677", bad: "xyz" }, trust: "payload", maxAgeDays: 7 }] });
+const hc = HUBS.cfg.get("hub");
+ok("otlp: hub fields", hc !== undefined && hc.names.get("0011223344556677") === "ci" && hc.trust === "payload" && hc.maxAgeDays === 7 && has(oh.warns, "16 hex digits"), JSON.stringify(oh.warns));
 ok("two transports", fleetFrom({ hosts: [{ name: "ws", ssh: "a", dir: "/x" }] }).hosts.length === 0, "kept");
 ok("no transport", fleetFrom({ hosts: [{ name: "ws" }] }).hosts.length === 0, "kept");
 const many: unknown[] = []; for (let i = 0; i < 33; i++) many.push({ name: "h" + String(i), ssh: "h" + String(i) });

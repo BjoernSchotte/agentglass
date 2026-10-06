@@ -182,7 +182,9 @@ function logs(a: Agg, rs: Obj, label: Label | null): void {
       }
       if (ev === "agentglass.heartbeat") { if (t > h.beat) { h.beat = t; h.changed = true; } continue; }
       const conv = s(m, "gen_ai.conversation.id"); if (!conv) continue;
+      if (ev !== "agentglass.session.state" && ev !== "agentglass.alert") continue; // turn.open: no session of its own
       const x = sessAgg(h, harness, conv);
+      if (t > x.updated) x.updated = t;
       if (ev === "agentglass.session.state") {
         if (x.live && x.live.at > t) continue;
         const ttl = s(m, "agentglass.session.title"); if (ttl) x.title = ttl;

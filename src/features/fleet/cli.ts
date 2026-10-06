@@ -30,6 +30,7 @@ import type { HostFeed, FeedState } from "./model.ts";
 import { type RemoteHost, type FleetCost, FLEET, setFleet, reapply, merged, overlap, fleetCost, fleetBudget, freshOf, rowObj } from "./hosts.ts";
 import { sshFeed, idleFeed, sshBin, hostControlPath } from "./ssh.ts";
 import { forget } from "./store.ts";
+import { hubFeed, syncHubs } from "../hub/fleet.ts";
 import { pullCli, pullSessions } from "./pull.ts";
 import { serveCli, authorizeCli } from "./serve.ts";
 
@@ -47,7 +48,8 @@ const STRICT_EXIT = 5;
 export function redactOf(h: HostCfg): boolean { return REDACT || h.redact; } // a viewer under --redact pulls and reads only redacted reports
 export function makeFeeds(c: FleetCfg, spawn: (cmd: string, args: string[]) => number, lines: number): HostFeed[] {
   const fs: HostFeed[] = [];
-  for (const h of c.hosts) fs.push(h.enabled && h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines) : idleFeed(h.kind));
+  const names: string[] = []; for (const h of c.hosts) names.push(h.name);
+  for (const h of c.hosts) fs.push(h.enabled && h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines) : h.enabled && h.kind === "otlp" ? hubFeed(h, names) : idleFeed(h.kind));
   return fs;
 }
 function sleep(s: string): void { try { execFileSync("sleep", [s]); } catch (e) { /* interrupted */ } }
@@ -96,12 +98,13 @@ function setup(needSsh: boolean): FleetCfg {
   S.cli = true;
   const c = loadFleet();
   for (const w of c.warns) warn("config " + w);
-  let any = false; for (const h of c.hosts) if (h.enabled && h.kind === "ssh") any = true;
+  let any = false; let ssh = false; for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "otlp")) { any = true; if (h.kind === "ssh") ssh = true; }
   if (!any) cliError("usage", "no hosts configured", "add \"fleet\": {\"hosts\": [{\"name\": \"ws\", \"ssh\": \"…\"}]} to " + CONFIG_FILE, 2);
-  if (needSsh && !sshBin()) cliError("usage", "fleet needs ssh (AGENTGLASS_SSH)", "install OpenSSH's client, or point AGENTGLASS_SSH at it", 2);
+  if (needSsh && ssh && !sshBin()) cliError("usage", "fleet needs ssh (AGENTGLASS_SSH)", "install OpenSSH's client, or point AGENTGLASS_SSH at it", 2);
   const names: string[] = []; for (const h of c.hosts) names.push(h.name);
   forget(names); // a host removed from the config: its spool files go
   setFleet(c, hostId(), makeFeeds(c, detachedPid, 0)); // a CLI run reads each report whole
+  syncHubs(Date.now(), true); // hub sources: their hosts, read to the end
   return c;
 }
 function failedLines(fs: Failed[]): void {

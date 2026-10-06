@@ -91,7 +91,7 @@ budget.usd = 0;
 // allowance: newest fetchedAt per account, never a sum
 const al = fleetAllowance(null, merged());
 const cl = al ? al["claude"] : null;
-ok("allowance newest", Array.isArray(cl) && JSON.stringify(cl).indexOf("\"pct\":55") >= 0 && JSON.stringify(cl).indexOf("\"pct\":40") < 0 && JSON.stringify(cl).indexOf("95") < 0, JSON.stringify(al));
+ok("allowance newest", Array.isArray(cl) && JSON.stringify(cl).indexOf("\"pct\":55") >= 0 && JSON.stringify(cl).indexOf("\"pct\":40") < 0 && JSON.stringify(cl).indexOf("\"pct\":95") < 0, JSON.stringify(al)); // pct, not any "95": reset times are clock-derived
 // remote rows stay out of local paths
 const row = ws.rows[0];
 if (row) {

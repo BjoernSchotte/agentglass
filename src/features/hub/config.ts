@@ -101,6 +101,8 @@ export function listenOk(addr: string, pub: boolean, tls: boolean): string {
 }
 
 // a fleet.hosts entry with "otlp" (spec 2): the directory, display names for host ids, trust, age cut, native records
+// per fleet source entry: its hub fields (fleet/config.ts fills it while it parses fleet.hosts)
+export const HUBS = { cfg: new Map<string, HubSrcCfg>() };
 export interface HubSrcCfg { dir: string; names: Map<string, string>; trust: string; maxAgeDays: number; includeNative: boolean } // trust "" = by directory
 const HOSTID_RE = /^[0-9a-f]{16}$/;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;

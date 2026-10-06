@@ -24,10 +24,10 @@ echo 00112233445566ff > "$t/a/.agentglass/host-id"
 now=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 printf '{"type":"user","sessionId":"s1","cwd":"/tmp","timestamp":"%s","message":{"role":"user","content":"build it"}}\n' "$now" > "$p/s1.jsonl"
 printf '{"type":"assistant","sessionId":"s1","timestamp":"%s","message":{"id":"m1","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"sleep 100"}}],"usage":{"input_tokens":100000,"output_tokens":5000}}}\n' "$now" >> "$p/s1.jsonl"
-old=2026-09-01T11:00:00.000Z
+old=$(python3 -c "import datetime; print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%S.000Z'))") # finished, inside the fleet window
 printf '{"type":"user","sessionId":"s2","cwd":"/tmp","timestamp":"%s","message":{"role":"user","content":"hi"}}\n' "$old" > "$p/s2.jsonl"
 printf '{"type":"assistant","sessionId":"s2","timestamp":"%s","message":{"id":"m2","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"output_tokens":5}}}\n' "$old" >> "$p/s2.jsonl"
-touch -t 202609011100 "$p/s2.jsonl"
+touch -t "$(python3 -c "import datetime; print((datetime.datetime.now()-datetime.timedelta(days=2)).strftime('%Y%m%d%H%M'))")" "$p/s2.jsonl" # idle: its last turn counts as finished
 sleep 120 & agent=$!
 printf '{"pid":%s,"sessionId":"s1","status":"busy"}\n' "$agent" > "$t/a/.claude/sessions/$agent.json"
 printf '{"version":1,"builtins":false,"rules":[{"id":"spend","metric":"session_cost","op":">","critical":0.01,"ack":"none","notify":false,"message":"spent {value}"}]}\n' > "$t/rules.json"
@@ -62,6 +62,25 @@ lv = {l["key"]: l for l in h["live"]}
 if not lv.get("claude:s1", {}).get("live"): bad("s1 not live from the heartbeat/state: %r" % h["live"])
 if lv.get("claude:s1", {}).get("alerts") != 1: bad("the rule's alert is not on s1: %r" % h["live"])
 if not h.get("exact"): bad("host not exact")
+sys.exit(0 if ok else 1)
+PY
+# the viewer: the hub directory as a fleet source; its host appears with A's sessions
+mkdir -p "$t/v/.agentglass"; printf '{"fleet":{"hosts":[{"name":"hub","otlp":"%s","hosts":{"lap":"00112233445566ff"}}]}}\n' "$hub" > "$t/v/.agentglass/config.json"
+V() { HOME="$t/v" AGENTGLASS_CACHE_DIR="$t/vcache" AGENTGLASS_OFFLINE=1 AGENTGLASS_NOTIFY=0 AGENTGLASS_FLEET_DIR="$t/vfleet" "$t/ag" "$@"; }
+V fleet --json > "$t/fleet.json" 2> "$t/fleet.err" || { echo "FAIL fleet --json: $(cat "$t/fleet.err")"; fail=1; }
+V fleet status --json > "$t/status.json" 2>> "$t/fleet.err" || { echo "FAIL fleet status: $(cat "$t/fleet.err")"; fail=1; }
+python3 - "$t/fleet.json" "$t/a.json" "$t/status.json" <<'PY' || fail=1
+import json, sys
+rows = json.load(open(sys.argv[1])); src = {s["id"]: s for s in json.load(open(sys.argv[2]))}; st = json.load(open(sys.argv[3]))
+ok = True
+def bad(m): global ok; print("FAIL " + m); ok = False
+lap = [r for r in rows if r.get("host") == "lap"]
+if {r["id"] for r in lap} != {"s1", "s2"}: bad("fleet --json: host lap (named by the hosts map) with s1, s2: %r" % [(r.get("host"), r["id"]) for r in rows])
+for r in lap:
+    if r["id"] == "s2" and (abs((r["costUsd"] or 0) - (src["s2"]["costUsd"] or 0)) > 1e-9 or r["tokens"] != src["s2"]["tokens"]): bad("fleet s2 differs from the source: %r vs %r" % (r, src["s2"]))
+hosts = {h["name"]: h for h in (st if isinstance(st, list) else st.get("hosts", []))}
+if "lap" not in hosts or hosts["lap"].get("kind") != "otlp" or hosts["lap"].get("hostId") != "00112233445566ff": bad("fleet status lacks the hub host: %r" % list(hosts))
+if "hub" not in hosts: bad("fleet status lacks the source entry")
 sys.exit(0 if ok else 1)
 PY
 kill -TERM $srv; wait $srv 2>/dev/null || true; srv=""
