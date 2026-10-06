@@ -365,8 +365,8 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
   return s;
 }
 export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
-export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]);
-export const WS_FIELDS = COST_FIELDS.concat(["workspaceId"]); // --by workspace: the herdr workspace id (null for (none) and total) // --by model: where each model's price comes from, alias-priced (≈)
+export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]); // --by model: where each model's price comes from, alias-priced (≈)
+export const WS_FIELDS = COST_FIELDS.concat(["workspaceId"]); // --by workspace: the herdr workspace id (null for (none) and total)
 function envelope(rows: Obj[], source: string, sc: Scope): string { return JSON.stringify({ rows, source, scope: sc.name }); }
 // json → the {rows, source, scope} envelope (compact inside an agent and in pipes); other formats → bare rows
 // rc: the exit code when stdout cannot be written (the caller's own, e.g. cost --check's 3)
