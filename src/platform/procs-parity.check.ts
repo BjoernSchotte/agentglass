@@ -30,7 +30,7 @@ sleepMs(300);
 if (mac) ok("native libproc on macOS", nativeProcs(), "ps fallback (built without --ffi?)");
 // ps before and after the scan: only pids whose ps row did not change in between are compared (a busy host execs and
 // grows processes all the time); a command line ps cut at a column limit (≥ 200 characters) need only be a prefix
-const t0 = Date.now(); const ps0 = byPid(psProcs());
+const ps0 = byPid(psProcs());
 let rows: ProcRow[] = [];
 if (mac) rows = nativeProcs() ? scanSource(libprocSource(), Date.now(), new Set<number>(), true, (c: string): boolean => true) : [];
 else {
@@ -38,7 +38,7 @@ else {
   rows = scanProcs(fs, Date.now(), new Set<number>(), true);
 }
 const scan = byPid(rows);
-const ps1 = byPid(psProcs());
+const t1 = Date.now(); const ps1 = byPid(psProcs());
 for (const r of ps1.values()) if (r.ppid === top) run("kill", ["-KILL", String(r.pid)]); // the orphan-to-be
 tree.kill("SIGKILL");
 let stable = 0; let both = 0; let compared = 0; let off = 0;
@@ -54,7 +54,9 @@ for (const [pid, a] of ps0) {
   if (s.ppid !== a.ppid) { off++; console.log("FAIL " + what + " ppid: scan " + String(s.ppid) + " ps " + String(a.ppid)); }
   if (s.tty !== a.tty) { off++; console.log("FAIL " + what + " tty: scan " + s.tty + " ps " + a.tty); }
   if (s.args !== a.args && !(a.args.length >= 200 && s.args.startsWith(a.args))) { off++; console.log("FAIL " + what + " args: scan " + JSON.stringify(s.args) + " ps " + JSON.stringify(a.args)); }
-  const psStart = t0 - etimeSec(a.etime) * 1000; // etime: whole seconds, rounded down
+  // etime: whole seconds, rounded down; from the second ps, which every compared pid predates (procps reads the uptime
+  // once at its start: a pid forked while the first ps ran has a negative age there, printed as a wrapped huge etime)
+  const psStart = t1 - etimeSec(b.etime) * 1000;
   if (Math.abs(s.start - psStart) > 1500) { off++; console.log("FAIL " + what + " start: scan " + String(s.start) + " ps ~" + String(psStart)); }
   const lo = Math.min(a.rss, b.rss); const hi = Math.max(a.rss, b.rss);
   if (hi <= lo * 1.05 && (s.rss < lo * 0.75 || s.rss > hi * 1.25)) { off++; console.log("FAIL " + what + " rss: scan " + String(s.rss) + " ps " + String(a.rss)); }

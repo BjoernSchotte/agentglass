@@ -59,8 +59,9 @@ if (process.platform !== "darwin" || !nativeProcs()) {
   let psMs = 0; let m = 1; const parts = String(pt.stdout).trim().split(/[-:]/);
   for (let i = parts.length - 1; i >= 0; i--) { psMs += Number(parts[i]) * m * 1000; m = m === 1 ? 60 : m === 60 ? 3600 : 86400; }
   if (b0 && b1) {
-    // a loaded runner may give the spinner less than a core: the share is loose, ps's own cpu time is the yardstick
-    const pct = (b1.cpuMs - b0.cpuMs) / (t1 - t0) * 100; ok("busy child 30–130 %", pct >= 30 && pct <= 130, pct.toFixed(1));
+    // ps's own cpu time is the yardstick for the time units (a wrong timebase is off 41.7×); the share of the wall
+    // clock only bounds it from above: a loaded runner may give the spinner any part of a core
+    const pct = (b1.cpuMs - b0.cpuMs) / (t1 - t0) * 100; ok("busy child 0–130 %", pct > 0 && pct <= 130, pct.toFixed(1));
     ok("busy child cpu time = ps time", psMs >= 200 && Math.abs(b1.cpuMs - psMs) <= Math.max(60, psMs * 0.2), String(b1.cpuMs) + " vs ps " + String(psMs));
   } else ok("busy child stat", false, "null");
   eq("cwd", lpCwd(process.pid), realpathSync(process.cwd()));
