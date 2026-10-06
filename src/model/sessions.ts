@@ -10,12 +10,12 @@ import { H, applyMeta, remoteRows } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
 KNOWN.mtime = (path: string): number => { const s = sessions.get(path); return s ? s.mtime : 0; };
-export const SG = { gen: 0 };
+export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 // fleet: a remote row is live while its host's report said so and that report is fresh (features/fleet/hosts.ts sets ok);
 // RG.gen moves whenever remote rows or their freshness change (buildView's signature)
 export const FRESH = { ok: (host: string): boolean => true };
 export const RG = { gen: 0 };
-export function isLive(s: Sess): boolean { return s.pid > 0 || (s.host !== "" && s.rlive && FRESH.ok(s.host)); } // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
+export function isLive(s: Sess): boolean { return s.pid > 0 || (s.host !== "" && s.rlive && FRESH.ok(s.host)); }
 
 // a known log is stat'ed every scan when it is pid-linked or written within 10 min, every 4th when within a day; the rest
 // in turns, 1/ROT of them per scan (~every 2 min at the hot scan interval): a history of old logs was most of a scan

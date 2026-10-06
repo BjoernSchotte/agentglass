@@ -60,9 +60,9 @@ export const H = {
   procFilter: [] as ((p: Proc) => boolean)[], // the Processes table shows a root process when every hook passes
   boxChips: [] as ((where: string, w: number) => string)[], // styled filter chips for a built-in box title ("sessions" | "processes"), w = room
   emptyText: [] as ((where: string) => string)[], // the line an empty built-in list shows instead of the stock one ("" = stock)
-  backlog: [] as (() => boolean)[],
+  backlog: [] as (() => boolean)[], // true = a feature has background work its onTick slices through (filter head reads): tick at the indexing burst cadence
   remoteRows: [] as (() => Sess[])[], // fleet: read-only rows of other hosts (s.host set), appended to the top-level list by buildView
-  remoteCard: [] as ((s: Sess, w: number) => string[])[], // the preview of a remote row, instead of previewSections (nothing local to read) // true = a feature has background work its onTick slices through (filter head reads): tick at the indexing burst cadence
+  remoteCard: [] as ((s: Sess, w: number) => string[])[], // the preview of a remote row, instead of previewSections (nothing local to read)
 };
 export function startTui(): void { for (const f of H.tui) f(); }
 export function backlog(): boolean { for (const f of H.backlog) if (f()) return true; return false; }
