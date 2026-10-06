@@ -4,7 +4,7 @@
 import { H } from "../../hooks.ts";
 import { S, say } from "../../state.ts";
 import type { Sess } from "../../model/types.ts";
-import { sessions, current, FRESH } from "../../model/sessions.ts";
+import { sessions, current, FRESH, SG } from "../../model/sessions.ts";
 import { REMOTE } from "../../model/remote.ts";
 import { AWAY } from "../../sched.ts";
 import { type Obj, obj, str, arr } from "../../util/json.ts";
@@ -24,12 +24,14 @@ import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
 import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed, openCmd } from "./config.ts";
 import type { HostReport } from "./model.ts";
-import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher } from "./hosts.ts";
+import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher, mergeMs } from "./hosts.ts";
 import { sshBin, hostControlPath } from "./ssh.ts";
 import { forget, keyOf } from "./store.ts";
 import { makeFeeds, hostStatus, statusLines, redactOf, MAX_PARALLEL } from "./cli.ts";
 import { type WatchFeed, type WatchEv, watchFeed } from "./watchfeed.ts";
 import { OS } from "../../platform/index.ts";
+import { DEBUG_PARTS } from "../../util/selfmem.ts";
+import { MSTAT } from "./merge.ts";
 
 // on: hosts configured and this run pulls; force: the palette's "refresh now"; due/fails/doneAt per host name
 const T = { on: false, force: false, due: new Map<string, number>(), fails: new Map<string, number>(), busy: new Map<string, boolean>(), seeded: new Set<string>(), gen: 0, nossh: false };
@@ -108,7 +110,7 @@ function tick(): void {
 }
 // ── the live stream (spec 16): per host with watch: true once it delivered an exact report (its agentglass has fleet watch) ──
 const WF = new Map<string, WatchFeed>();
-const NOTIFIED = new Set<string>(); const TURN_AT = new Map<string, number>();
+const NOTIFIED = new Set<string>(); const TURN_AT = new Map<string, number>(); const SPOLL = new Map<string, number>();
 export const TURN_SOON_MS = 5000; export const TURN_GAP_MS = 10000;
 // a closed remote turn moved its costs: the host's next snapshot within 5 s, at most one per 10 s
 export function turnDue(due: number, now: number, lastTurn: number): number { const t = Math.max(now + TURN_SOON_MS, lastTurn + TURN_GAP_MS); return Math.min(due, t); }
@@ -131,10 +133,13 @@ function streams(now: number): boolean {
     let w = WF.get(c.name);
     if (!w) { w = watchFeed(c, keyOf(c.name, redactOf(c)), redactOf(c), hostControlPath(c), detachedPid); WF.set(c.name, w); }
     if (!w.running()) w.start(now);
+    if (now - (SPOLL.get(c.name) ?? 0) < 1000) continue; // the stream is read once a second (its lines are state, not events)
+    SPOLL.set(c.name, now);
     const ev: WatchEv = w.poll(now); const was = liveFresh(rh, now); rh.beatAt = w.beatAt();
     for (const l of ev.rows) rh.live.set(l.key, l);
     if (rh.live.size > 5000) rh.live.clear();
-    if (ev.rows.length || was !== liveFresh(rh, now)) { if (overlay(p, now)) moved = true; } // the host's rows (another feed's entry may show them)
+    if (was !== liveFresh(rh, now)) { if (overlay(p, now)) moved = true; } // the host's rows (another feed's entry may show them)
+    else if (ev.rows.length) { const ks: string[] = []; for (const l of ev.rows) ks.push(l.key); if (overlay(p, now, ks)) moved = true; }
     for (const a of ev.alerts) {
       const o = alertOut(p.cfg.name, titleOf(p, str(a["key"])), a, NOTIFIED);
       say(o.notify ? "err" : "warn", o.msg);
@@ -144,9 +149,14 @@ function streams(now: number): boolean {
   }
   return moved;
 }
+// the debug footer's fleet part (AGENTGLASS_DEBUG_REFRESH=1): ms spent per 10 s in the feeds (t), the streams (s), the
+// figures (m: of which merging and summing)
+const FD = { t: 0, s: 0, m: 0, at: 0, line: "" };
+function fdRoll(now: number): void { if (!FD.at) FD.at = now; if (now - FD.at < 10000) return; const mm = mergeMs(); FD.line = "fleet " + String(Math.round(FD.t)) + "/" + String(Math.round(FD.s)) + "/" + String(Math.round(FD.m)) + " (merge " + String(mm[0] ?? 0) + ", sums " + String(mm[1] ?? 0) + ")ms/10s · index " + String(MSTAT.full) + " built " + String(MSTAT.grown) + " grown"; FD.t = 0; FD.s = 0; FD.m = 0; FD.at = now; }
+DEBUG_PARTS.push((): string => T.on ? FD.line : "");
 H.start.push(init);
-H.onTick.push(tick);
-H.onTick.push((): void => { if (!T.on || T.nossh) return; if (streams(Date.now())) { T.gen++; S.dirty = true; } });
+H.onTick.push((): void => { const t0 = Date.now(); tick(); const t1 = Date.now(); FD.t += t1 - t0; fdRoll(t1); });
+H.onTick.push((): void => { if (!T.on || T.nossh) return; const t0 = Date.now(); if (streams(t0)) { T.gen++; S.dirty = true; } FD.s += Date.now() - t0; });
 H.onQuit.push((): void => { for (const rh of FLEET.hosts) rh.feed.stop(); for (const w of WF.values()) w.stop(); }); // running pulls and streams: shared ssh masters persist (fleet status --close)
 
 // ── rows: the host tag before the title ──
@@ -165,12 +175,15 @@ export function sshHint(s: Sess): string {
 
 // ── fleet figures for the header and Stats (cached per rows generation and 5 s) ──
 interface FleetNow { at: number; gen: number; cn: CostNow | null; hdr: FleetHdr | null; ov: Set<string>; per: { name: string; usd: number; wk: number; stale: boolean; age: number; local: boolean }[]; approx: boolean }
+const OV = { k: "", v: new Set<string>() };
 const FN: FleetNow = { at: 0, gen: -1, cn: null, hdr: null, ov: new Set<string>(), per: [], approx: false };
 function fleetNow(cn: CostNow): FleetNow {
   const now = Date.now(); const c = FLEET.cfg;
   if (!c || (FN.gen === T.gen && FN.cn === cn && now - FN.at < 5000)) return FN;
-  const hs = merged(); const loc: Sess[] = []; for (const s of sessions.values()) if (!s.parent) loc.push(s);
-  const ov = overlap(loc, hs); const fc = fleetCost(cn, hs, now, c, ov.size, 30000); const bs = fleetBudget(fc);
+  const hs = merged();
+  const ok = String(T.gen) + "|" + String(sessions.size) + "|" + String(SG.gen);
+  if (OV.k !== ok) { OV.k = ok; const loc: Sess[] = []; for (const s of sessions.values()) if (!s.parent) loc.push(s); OV.v = overlap(loc, hs); } // the session sets moved
+  const ov = OV.v; const fc = fleetCost(cn, hs, now, c, ov.size, 30000); const bs = fleetBudget(fc); FD.m += Date.now() - now;
   FN.at = now; FN.gen = T.gen; FN.cn = cn; FN.ov = ov; FN.approx = fc.approx;
   FN.hdr = { today: fc.today, state: bs.state, approx: fc.marked };
   FN.per = fc.perHost.map((p) => ({ name: p.name, usd: p.today, wk: p.week, stale: p.stale, age: p.age, local: p.local }));

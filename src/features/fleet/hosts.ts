@@ -11,14 +11,14 @@ import { HOSTQ } from "../query/eval.ts";
 import { HOST_ENUM } from "../query/attrs.ts";
 import { type Bill, MODES } from "../usage/billing.ts";
 import { type ModeSum, type BState, newSum, addSum, budgetState, monthStart } from "../usage/costs.ts";
-import { type CostNow, type Ent, budget, costWith, sumDaysOf, PRICE_EXTRA } from "../usage/summary.ts";
+import { type CostNow, type Ent, type Extra, budget, costWithX, extraOf, sumDaysOf, PRICE_EXTRA } from "../usage/summary.ts";
 import type { SessAcc } from "../usage/pricerows.ts";
 import { PGEN } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
 import { L, todayKey, lastDays } from "../usage/record.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { ownHashes, rowsFor } from "../usage/msgrows.ts";
-import { type LocalLog, type FleetHost, type Exact, type Shadow, exactFleet, modeOfShadow } from "./merge.ts";
+import { type LocalLog, type FleetHost, type Exact, type Shadow, exactFleet, modeOfShadow, newXCache } from "./merge.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
 import type { HostFeed, HostReport, FeedState, OwnRow, LiveRow } from "./model.ts";
 
@@ -38,14 +38,17 @@ function num(v: unknown): number { return typeof v === "number" ? v as number : 
 export function remotePath(host: string, harness: string, id: string): string { return "@" + host + "/" + harness + ":" + id; }
 
 // a report's sessions as rows (spec 7.1): pid 0, path "@host/harness:id" (never a file), head and tail done
+const ROWC = new Map<string, { o: Obj; s: Sess }>(); // remote row path → the row built from that --json object (a report that kept it keeps the row)
 export function rowsOf(h: string, r: HostReport, at: number): Sess[] {
-  const out: Sess[] = [];
+  const out: Sess[] = []; const seen = new Set<string>();
   const from = r.hello.now - Math.max(1, r.hello.days) * 86400000; // a snapshot carries the cost window's sessions: the list shows `days`
   for (const row of r.sessions) {
     const o = row.s; const harness = str(o["harness"]); const id = str(o["id"]);
     if (!harness || !id) continue;
     if (r.exact && o["live"] !== true && Date.parse(str(o["updated"])) < from) continue;
-    const s = newSess(harness, id, remotePath(h, harness, id), false);
+    const path = remotePath(h, harness, id); const hit = ROWC.get(path);
+    if (hit && hit.o === o) { hit.s.rat = at; OBJ.set(path, o); seen.add(path); out.push(hit.s); continue; } // the same --json object: the same row
+    const s = newSess(harness, id, path, false);
     s.host = h; s.rat = at; s.rlive = o["live"] === true; s.headDone = true; s.tailSize = 0;
     s.title = str(o["title"]) || "(no prompt yet)"; s.cwd = str(o["cwd"]); s.branch = str(o["branch"]); s.remote = str(o["remote"]); s.model = str(o["model"]);
     const t = Date.parse(str(o["updated"])); s.mtime = t > 0 ? t : 0; s.last = s.mtime; s.size = num(o["bytes"]);
@@ -55,9 +58,10 @@ export function rowsOf(h: string, r: HostReport, at: number): Sess[] {
     const b = obj(o["billing"]) ?? {}; s.bill = str(b["mode"]) || "unknown"; s.plan = str(b["plan"]); s.billSrc = str(b["source"]);
     s.unkTok = num(o["unpricedTokens"]); s.unkCr = num(o["unpricedCredits"]); s.tools = num(o["tools"]); s.linesAdd = num(o["linesAdded"]); s.linesDel = num(o["linesRemoved"]);
     s.attention = o["attention"] === true; s.stuck = str(o["stuck"]);
-    OBJ.set(s.path, o);
+    OBJ.set(s.path, o); ROWC.set(path, { o, s }); seen.add(path);
     out.push(s);
   }
+  for (const k of [...ROWC.keys()]) if (k.startsWith("@" + h + "/") && !seen.has(k)) ROWC.delete(k);
   return out;
 }
 // a stale report's rows are not live: no attention, no stuck mark (the report's values come back when it is fresh)
@@ -85,17 +89,20 @@ export function watcher(rh: RemoteHost): boolean {
   for (const x of FLEET.hosts) { if (x === rh) return true; if ((x === p || (x.merged && x.dupOf === p.cfg.name)) && canWatch(x)) return false; }
   return true;
 }
-export function overlay(rh: RemoteHost, now: number): boolean {
+// keys: only these sessions changed in the stream (its beat state did not): only their rows are looked at
+export function overlay(rh: RemoteHost, now: number, keys: string[] | null = null): boolean {
   const src = liveSrc(rh); const on = liveFresh(src, now); if (!src.live.size && !on) return false;
   let moved = false;
-  for (const s of rh.rows) {
+  const one = (s: Sess): void => {
     const l = on ? src.live.get(s.h + ":" + s.id) ?? null : null; // the stream names every live session: one it does not name is not live
     const o = OBJ.get(s.path);
     const live = l ? l.live : on ? false : rh.fresh && !!o && o["live"] === true;
     const att = l ? l.attention || l.approval : rh.fresh && !!o && o["attention"] === true;
     const stk = l ? l.stuck : rh.fresh && o ? str(o["stuck"]) : "";
     if (s.rlive !== live || s.attention !== att || s.stuck !== stk) { s.rlive = live; s.attention = att; s.stuck = stk; moved = true; }
-  }
+  };
+  if (keys) { for (const k of keys) { const i = k.indexOf(":"); const hit = ROWC.get(remotePath(rh.cfg.name, k.slice(0, i), k.slice(i + 1))); if (hit && i > 0 && rh.rows.length && !rh.dupOf) one(hit.s); } }
+  else for (const s of rh.rows) one(s);
   if (moved) RG.gen++;
   return moved;
 }
@@ -104,6 +111,10 @@ function show(rh: RemoteHost, r: HostReport, at: number, src: RemoteHost, dup: s
   rh.report = r; rh.okAt = at; rh.via = src === rh ? "" : src.cfg.name; rh.vkind = src.cfg.kind; rh.merged = merged;
   const c = FLEET.cfg; if (c) rh.fresh = freshOf(rh, Date.now(), c, FLEET.intervalMs);
   if (rh.applied === r && rh.dupOf === dup) return; // the same rows as last round
+  const was = rh.applied;
+  if (was && !dup && rh.dupOf === "" && was.sessions === r.sessions && was.hello.days === r.hello.days) { // a delta that changed no session: the rows stay, newer
+    rh.applied = r; for (const s of rh.rows) s.rat = at; markFresh(rh.rows, rh.fresh, rh.vkind !== "dir"); overlay(rh, Date.now()); RG.gen++; return;
+  }
   for (const s of rh.rows) OBJ.delete(s.path);
   rh.dupOf = dup; rh.applied = r;
   if (dup) rh.rows = [];
@@ -158,12 +169,15 @@ function freshKind(kind: string, name: string, at: number, now: number, f: Fleet
 }
 export function freshAt(okAt: number, now: number, f: FleetCfg, intervalMs: number): boolean { return now - okAt <= 2 * intervalMs + f.timeoutS * 1000; }
 // recomputes every host's freshness; true = one changed (rows re-marked, the view's signature moved)
+const LIVE_ON = new Map<string, boolean>(); // host name → its live stream was beating at the last syncFresh
 export function syncFresh(now: number): boolean {
   const f = FLEET.cfg; if (!f) return false;
   let moved = false;
   for (const rh of FLEET.hosts) {
     const fr = freshOf(rh, now, f, FLEET.intervalMs);
+    const on = liveFresh(liveSrc(rh), now); const was = LIVE_ON.get(rh.cfg.name); LIVE_ON.set(rh.cfg.name, on);
     if (fr !== rh.fresh) { rh.fresh = fr; markFresh(rh.rows, fr, (rh.vkind || rh.cfg.kind) !== "dir"); moved = true; }
+    else if (was === on) continue; // nothing to lay over again (the stream's new states are laid over as they arrive)
     if (overlay(rh, now)) moved = true; // a stream that stopped beating: its states fall back to the report's
   }
   if (moved) RG.gen++;
@@ -211,7 +225,9 @@ export interface HostCost { name: string; today: number; week: number; month: nu
 export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; marked: boolean; perHost: HostCost[]; exact: boolean; removed: number }
 function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; return t; }
 // ── the exact merge (spec 13): local Claude logs and every exact report, cached until a report or the ledger moves ──
-const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null, gen: 0 };
+const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null, gen: 0, ms: 0, sums: 0 }; // ms/sums: time spent merging and summing (the debug footer)
+export function mergeMs(): number[] { const o = [EX.ms, EX.sums]; EX.ms = 0; EX.sums = 0; return o; }
+const XC = newXCache(); // what the merge keeps between rounds (merge.ts)
 function localLogs(): LocalLog[] {
   const out: LocalLog[] = [];
   for (const s of sessions.values()) {
@@ -219,7 +235,7 @@ function localLogs(): LocalLog[] {
     const a = ledger.get(s.path); if (!a) continue;
     let top = s; for (let g = 0; top.parent && g < 8; g++) { const p = sessions.get(top.parent); if (!p) break; top = p; }
     const x = ownHashes(s.path, a);
-    out.push({ path: s.path, skey: top.h + ":" + top.id, hs: x.hs, ks: x.ks, bill: modeOf(s, "") });
+    out.push({ path: s.path, skey: top.h + ":" + top.id, hs: x.hs, ks: x.ks, bill: modeOf(s, ""), off: a.off });
   }
   return out;
 }
@@ -228,36 +244,54 @@ function localShift(hostTz: number): number { return -new Date().getTimezoneOffs
 // maxAgeMs: how long a result may be reused while only the local ledger moved (the TUI: 30 s; a CLI run: always fresh)
 export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: number): Exact {
   const now = Date.now(); const fh: FleetHost[] = []; const sig: string[] = [reprice ? "r" : "n", String(PGEN.n)]; // a price change re-prices the shadows
-  for (const rh of hosts) { const r = rh.report; if (!r || !r.exact) continue; fh.push({ name: rh.cfg.name, hostId: r.hello.hostId, r, shiftMin: localShift(r.hello.tzOffsetMin) }); sig.push(rh.cfg.name + "@" + String(rh.okAt) + "#" + String(r.hello.now)); }
+  const csig: string[] = []; // what the merge's owner index depends on: each report's content, not its time
+  for (const rh of hosts) {
+    const r = rh.report; if (!r || !r.exact) continue; const sh = localShift(r.hello.tzOffsetMin);
+    fh.push({ name: rh.cfg.name, hostId: r.hello.hostId, r, shiftMin: sh }); sig.push(rh.cfg.name + "@" + String(rh.okAt) + "#" + String(r.hello.now));
+    csig.push(rh.cfg.name + "@" + r.hello.hostId + "~" + String(sh)); // its rows' changes the merge finds itself
+  }
   const sg = sig.join("|"); const hit = EX.x;
   if (hit && sg === EX.sig && (EX.ver === L.ver || now - EX.at < maxAgeMs)) return hit;
-  const x = exactFleet(localLogs(), FLEET.localId, fh, reprice, localRows);
-  EX.at = now; EX.ver = L.ver; EX.sig = sg; EX.x = x; EX.gen++;
+  const x = exactFleet(localLogs(), FLEET.localId, fh, reprice, localRows, XC, csig.join("|"), String(PGEN.n));
+  EX.ms += Date.now() - now; EX.at = now; EX.ver = L.ver; EX.sig = sg; EX.x = x; EX.gen++;
   return x;
 }
 export function entOf(x: Shadow): Ent { return { a: x.a, mode: (p: string): Bill => modeOfShadow(x, p) }; }
 function sumHost(es: Ent[], days: string[]): number { return tot(sumDaysOf(es, days)); }
+// the merge's entries summed once per merge result and day (the header asks every few seconds): all of them for the
+// fleet's figures, and per host name ("" = this machine's corrections) [today, week, month]
+const SUMS = { x: null as Exact | null, day: "", all: null as Extra | null, per: new Map<string, number[]>() };
+function sumsOf(x: Exact): { all: Extra; per: Map<string, number[]> } {
+  const day = todayKey(); const hit = SUMS.all;
+  if (hit && SUMS.x === x && SUMS.day === day) return { all: hit, per: SUMS.per };
+  const t0 = Date.now(); const es: Ent[] = []; const byHost = new Map<string, Ent[]>();
+  for (const s of x.accs) { const e = entOf(s); es.push(e); const p = byHost.get(s.host); if (p) p.push(e); else byHost.set(s.host, [e]); }
+  const td = [day]; const wk = lastDays(7); const mk = monthStart(Date.now()); const per = new Map<string, number[]>();
+  for (const [h, hs] of byHost) per.set(h, [sumHost(hs, td), sumHost(hs, wk), sumHost(hs, mk)]);
+  const all = extraOf(es);
+  SUMS.x = x; SUMS.day = day; SUMS.all = all; SUMS.per = per; EX.sums += Date.now() - t0;
+  return { all, per };
+}
 // this machine's figures plus each merged host's: exact reports through the merge (one table, this machine's days), Part A
 // reports as their own cost objects (each host's table and day boundaries)
 export function fleetCost(localNow0: CostNow, hosts: RemoteHost[], now: number, f: FleetCfg, ov: number, maxAgeMs = 0): FleetCost {
   let exactN = 0; for (const rh of hosts) if (rh.report && rh.report.exact) exactN++;
   const x = exactN ? exactMerge(hosts, f.reprice, maxAgeMs) : null;
-  const ents: Ent[] = []; if (x) for (const s of x.accs) ents.push(entOf(s));
-  const localNow = x ? costWith(ents) : localNow0;
+  const xs = x ? sumsOf(x) : null;
+  const localNow = xs ? costWithX(xs.all) : localNow0;
   const today = newSum(); const week = newSum(); const month = newSum(); const proj: number[] = [];
   addSum(today, localNow.today); addSum(week, localNow.week); addSum(month, localNow.month);
   let approx = ov > 0 || (!!x && x.inexact.length > 0); let marked = approx;
   for (let i = 0; i < MODES.length; i++) { const p = localNow.projByMode[i]; const v = p ? p.month : -1; proj.push(v >= 0 ? v : localNow.month.by[i] ?? 0); if (v < 0 && (localNow.month.by[i] ?? 0) > 0) approx = true; }
-  const td = [todayKey()]; const wk = lastDays(7); const mk = monthStart(now);
-  const by = (host: string): Ent[] => { const o: Ent[] = []; if (x) for (const s of x.accs) if (s.host === host) o.push(entOf(s)); return o; };
+  const by = (host: string): number[] => xs ? xs.per.get(host) ?? [0, 0, 0] : [0, 0, 0];
   const lc = by("");
-  const per: HostCost[] = [{ name: f.localName, today: tot(localNow0.today) + sumHost(lc, td), week: tot(localNow0.week) + sumHost(lc, wk), month: tot(localNow0.month) + sumHost(lc, mk), age: 0, stale: false, local: true }];
+  const per: HostCost[] = [{ name: f.localName, today: tot(localNow0.today) + (lc[0] ?? 0), week: tot(localNow0.week) + (lc[1] ?? 0), month: tot(localNow0.month) + (lc[2] ?? 0), age: 0, stale: false, local: true }];
   for (const rh of hosts) {
     const r = rh.report; if (!r) continue;
     if (r.exact && x) {
       const stale = !freshOf(rh, now, f, FLEET.intervalMs); if (stale) { approx = true; marked = true; }
       const es = by(rh.cfg.name);
-      per.push({ name: rh.cfg.name, today: sumHost(es, td), week: sumHost(es, wk), month: sumHost(es, mk), age: now - rh.okAt, stale, local: false });
+      per.push({ name: rh.cfg.name, today: es[0] ?? 0, week: es[1] ?? 0, month: es[2] ?? 0, age: now - rh.okAt, stale, local: false });
       continue;
     }
     const hs = sumOf(r.cost);

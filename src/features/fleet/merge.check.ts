@@ -12,9 +12,9 @@ import { forget } from "../usage/owners.ts";
 import { loadUser } from "../usage/pricing.ts";
 import type { Acc } from "../usage/record.ts";
 import { rowsFor, ownHashes, msgHash } from "../usage/msgrows.ts";
-import { type HostReport, type OwnRow, type SessRow, FORMAT, noOwned } from "./model.ts";
+import { type HostReport, type OwnRow, type Owned, type SessRow, FORMAT, noOwned } from "./model.ts";
 import { dayRows } from "./snap.ts";
-import { type LocalLog, type FleetHost, type Exact, type Occ, type Shadow, exactFleet, ownerIndex, shiftDH, shadowOf } from "./merge.ts";
+import { type LocalLog, type FleetHost, type Exact, type Occ, type Shadow, exactFleet, ownerIndex, shiftDH, shadowOf, newXCache, MSTAT } from "./merge.ts";
 import "../../harness/index.ts";
 
 let bad = 0;
@@ -57,8 +57,12 @@ function truth(paths: string[]): Tot { reset(); for (const p of paths) complete(
 // local logs indexed in the (reset) ledger
 function localOf(paths: string[]): { logs: LocalLog[]; accs: Acc[] } {
   reset(); for (const p of paths) complete(sess(p));
+  return localOf2(paths);
+}
+// the same logs as the ledger holds them now (no re-index)
+function localOf2(paths: string[]): { logs: LocalLog[]; accs: Acc[] } {
   const logs: LocalLog[] = []; const accs: Acc[] = [];
-  for (const p of paths) { const a = ledger.get(p); if (!a) continue; accs.push(a); const x = ownHashes(p, a); logs.push({ path: p, skey: "claude:" + p.slice(p.lastIndexOf("/") + 1, -6), hs: x.hs, ks: x.ks, bill: "api" }); }
+  for (const p of paths) { const a = ledger.get(p); if (!a) continue; accs.push(a); const x = ownHashes(p, a); logs.push({ path: p, skey: "claude:" + p.slice(p.lastIndexOf("/") + 1, -6), hs: x.hs, ks: x.ks, bill: "api", off: a.off }); }
   return { logs, accs };
 }
 function fleet(local: { logs: LocalLog[]; accs: Acc[] }, hosts: FleetHost[], rep: boolean): { t: Tot; x: Exact } {
@@ -138,7 +142,8 @@ ok("half-hour zone rounds", shiftDH("2026-09-01", 10, 330).h === 16 || shiftDH("
 // 7. three hosts and this machine, 60 messages, each copied 1–4 times across them at random times (copies are common:
 // 235 k distinct ids in 423 k occurrences on one real machine): the merged totals equal one machine reading every log
 let seed = 42; function rnd(n: number): number { seed = (seed * 48271) % 2147483647; return Math.floor(seed / 7) % n; } // Park–Miller: exact in doubles
-for (const sd of [42, 7, 1234]) {
+let grownSeen = 0;
+for (const sd of [42, 7, 1234, 99, 2026]) {
   seed = sd;
   const owners = ["l", "a", "b", "c"]; const logs = new Map<string, string[]>();
   for (const o of owners) for (let j = 0; j < 2; j++) logs.set(o + String(j), []);
@@ -162,7 +167,59 @@ for (const sd of [42, 7, 1234]) {
   // the hosts in another order: the same totals
   r = fleet(localOf(of2("l")), [hC, hA, hB], false);
   ok("host order does not matter", same(r.t, wantR), show(r.t));
+  // the merge the TUI keeps across rounds (an XCache): the same totals, and again after a local log grew by a copy that
+  // beats a host's (it now owns that message) and a message of its own
+  const lps = of2("l"); const donor = [...(logs.get("a0") ?? []), ...(logs.get("b0") ?? []), ...(logs.get("c0") ?? [])][0] ?? "";
+  if (lps.length && donor) {
+    const ti = donor.indexOf("\"timestamp\":\"") + 13; const early = donor.slice(0, ti) + "2026-09-09T08:00:00.000Z" + donor.slice(donor.indexOf("\"", ti));
+    const extra = [early, asst("own" + String(sd), "2026-09-11T08:00:00.000Z", 5, 5, 5, 5)];
+    const lk = [...paths.entries()].filter((e) => e[1] === lps[0]).map((e) => e[0])[0] ?? "";
+    const post2: string[] = []; for (const [k, ls] of logs) if (ls.length) post2.push(put("post2-" + k, k === lk ? ls.concat(extra) : ls));
+    const wantPost = truth(post2);
+    const xc = newXCache(); const rows = (p: string): OwnRow[] | null => { const a = ledger.get(p); return a ? rowsFor(p, "claude", a).rows : null; };
+    const loc = localOf(lps);
+    const t1 = (x: Exact): Tot => { const as: Acc[] = loc.accs.slice(); for (const e of x.accs) as.push(e.a); return totOf(as); };
+    const x1 = exactFleet(loc.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, xc, "s1");
+    ok("cached merge: the truth", same(t1(x1), wantR), show(t1(x1)));
+    const x2 = exactFleet(loc.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, xc, "s1");
+    ok("cached merge again: the same", same(t1(x2), wantR), show(t1(x2)));
+    const lp = lps[0] ?? ""; writeFileSync(lp, (logs.get(lk) ?? []).concat(extra).join("\n") + "\n");
+    const s0 = sessions.get(lp); if (s0) { s0.size = statSync(lp).size; complete(s0); }
+    const a0 = ledger.get(lp);
+    const loc2 = localOf2(lps);
+    const t2 = (x: Exact): Tot => { const as: Acc[] = loc2.accs.slice(); for (const e of x.accs) as.push(e.a); return totOf(as); };
+    const x3 = exactFleet(loc2.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, xc, "s1");
+    ok("cached merge after the local log grew: the truth", same(t2(x3), wantPost), show(t2(x3)) + " want " + show(wantPost) + " grown " + String(!!a0));
+    const x4 = exactFleet(loc2.logs, "ffffffffffffffff", [hA, hB, hC], false, rows, null, "");
+    ok("cached = uncached", same(t2(x4), t2(x3)), show(t2(x4)));
+    // a host's log grows (a copy that beats another host's, a message of its own): its next report appends rows to the
+    // same parts (as applySnap does), and the kept merge extends its owner index instead of rebuilding it
+    const hb = of2("b")[0] ?? ""; const donor2 = [...(logs.get("a0") ?? []), ...(logs.get("c0") ?? []), ...(logs.get("a1") ?? [])][1] ?? "";
+    if (hb && donor2) {
+      const t2i = donor2.indexOf("\"timestamp\":\"") + 13; const early2 = donor2.slice(0, t2i) + "2026-09-08T08:00:00.000Z" + donor2.slice(donor2.indexOf("\"", t2i));
+      const hbk = [...paths.entries()].filter((e) => e[1] === hb).map((e) => e[0])[0] ?? "";
+      const extra2 = [early2, asst("bown" + String(sd), "2026-09-12T08:00:00.000Z", 7, 7, 7, 7)];
+      const post3: string[] = []; for (const [k, ls] of logs) if (ls.length) post3.push(put("post3-" + k, (k === lk ? ls.concat(extra) : ls).concat(k === hbk ? extra2 : [])));
+      const wantPost3 = truth(post3);
+      writeFileSync(hb, (logs.get(hbk) ?? []).concat(extra2).join("\n") + "\n");
+      const fresh = hostOf("b", "bbbbbbbbbbbbbbbb", of2("b"));
+      const prevOwn = new Map<string, OwnRow[]>(); for (const o of hB.r.owned) prevOwn.set(o.key, o.rows);
+      const owned2: Owned[] = []; let appended = 0; let reset = 0;
+      for (const o of fresh.r.owned) { const pr = prevOwn.get(o.key); if (pr && o.rows.length >= pr.length) { owned2.push({ key: o.key, rows: pr.concat(o.rows.slice(pr.length)) }); appended += o.rows.length - pr.length; } else { owned2.push(o); reset++; } }
+      const hB2: FleetHost = { name: "b", hostId: "bbbbbbbbbbbbbbbb", shiftMin: 0, r: { hello: fresh.r.hello, sessions: fresh.r.sessions, cost: null, allowance: null, live: null, exact: true, owned: owned2 } };
+      const loc3 = localOf(lps); // the local log as grown above, read again
+      const t3 = (x: Exact): Tot => { const as: Acc[] = loc3.accs.slice(); for (const e of x.accs) as.push(e.a); return totOf(as); };
+      const g0 = MSTAT.grown; const f0 = MSTAT.full;
+      const x5 = exactFleet(loc3.logs, "ffffffffffffffff", [hA, hB2, hC], false, rows, xc, "s1");
+      ok("the kept index grew, or rebuilt when a part was reset (an ownership move inside the host)", reset > 0 ? MSTAT.full === f0 + 1 : MSTAT.grown === g0 + 1 && MSTAT.full === f0, String(MSTAT.grown - g0) + "/" + String(MSTAT.full - f0) + " reset " + String(reset));
+      if (!reset) grownSeen++;
+      ok("kept merge after a host's rows grew: the truth", appended > 0 && same(t3(x5), wantPost3), show(t3(x5)) + " want " + show(wantPost3) + " appended " + String(appended));
+      const x6 = exactFleet(loc3.logs, "ffffffffffffffff", [hA, hB2, hC], false, rows, null, "");
+      ok("kept = fresh after the host grew", same(t3(x6), t3(x5)) && x6.removed === x5.removed && x6.corrected === x5.corrected, show(t3(x6)) + " " + String(x6.removed) + "/" + String(x5.removed));
+    }
+  }
 }
 
+ok("some seed grew a host's rows without a reset", grownSeen > 0, String(grownSeen));
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("fleet merge: all checks passed");

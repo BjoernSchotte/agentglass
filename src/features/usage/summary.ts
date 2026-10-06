@@ -189,12 +189,19 @@ export function dayCostsOf(es: Ent[], days: string[]): DayCost[][] {
   return out;
 }
 function plus(a: ModeSum, b: ModeSum): ModeSum { const m = newSum(); addSum(m, a); addSum(m, b); return m; }
+// the given entries' period sums and last-15-days series (what costWith adds to this machine's), for one day: a caller
+// whose entries did not change keeps it (key: the day it was made on)
+export interface Extra { day: string; today: ModeSum; week: ModeSum; month: ModeSum; rows: DayCost[][] }
+export function extraOf(es: Ent[]): Extra {
+  const now = Date.now(); const td = todayKey();
+  return { day: td, today: sumDaysOf(es, [td]), week: sumDaysOf(es, lastDays(7)), month: sumDaysOf(es, monthStart(now)), rows: dayCostsOf(es, lastDays(15)) };
+}
 // this machine's figures plus the given entries (the fleet's exact merge): the same sums, series and projections
-export function costWith(es: Ent[]): CostNow {
-  const now = Date.now(); const d15 = lastDays(15); const mk = monthStart(now); const td = [todayKey()]; const wk = lastDays(7);
-  const p = parts("", now); const rows = p.rows; const extra = dayCostsOf(es, d15); // fresh series: added into in place
-  for (let i = 0; i < rows.length; i++) { const r = rows[i]; const x = extra[i]; if (!r || !x) continue; for (let j = 0; j < r.length; j++) { const a = r[j]; const b = x[j]; if (!a || !b) continue; a.cost += b.cost; for (let h = 0; h < 24; h++) a.hc[h] = (a.hc[h] ?? 0) + (b.hc[h] ?? 0); } }
-  return costFrom(plus(p.today, sumDaysOf(es, td)), plus(p.week, sumDaysOf(es, wk)), plus(p.month, sumDaysOf(es, mk)), rows, now);
+export function costWith(es: Ent[]): CostNow { return costWithX(extraOf(es)); }
+export function costWithX(x: Extra): CostNow {
+  const now = Date.now(); const p = parts("", now); const rows = p.rows; // fresh series: added into in place
+  for (let i = 0; i < rows.length; i++) { const r = rows[i]; const e = x.rows[i]; if (!r || !e) continue; for (let j = 0; j < r.length; j++) { const a = r[j]; const b = e[j]; if (!a || !b) continue; a.cost += b.cost; for (let h = 0; h < 24; h++) a.hc[h] = (a.hc[h] ?? 0) + (b.hc[h] ?? 0); } }
+  return costFrom(plus(p.today, x.today), plus(p.week, x.week), plus(p.month, x.month), rows, now);
 }
 // the over-budget toast + desktop notification, at most once per calendar day
 export function budgetSend(msg: string): void {
