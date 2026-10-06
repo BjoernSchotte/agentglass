@@ -145,12 +145,13 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
   const why = "host.id " + refusedIds + " does not belong to token \"" + tok.name + "\" (pinned to " + pin + "; on a reinstalled machine: agentglass receive token add " + tok.name + " --repin)";
   if (!kept.length && refused) { bump(hs.rej, "host-id"); hs.requests++; fail(res, 403, pb, why, []); return; }
   root[key] = kept;
-  const line = JSON.stringify(root);
+  const ls = splitLines(root, key, logs);
   const d1 = hostDir(rt.cfg.dir, tok.name, pin, now);
-  const e = d1 || appendReq(rt.cfg.dir, tok.name, logs ? "logs" : "traces", line, now);
-  if (e) { rej(503, "write", "storage failed: " + e, [["Retry-After", "60"]]); return; }
-  accountWrite(rt, line.length + 1, now);
-  hs.requests++; hs.records += total - refused; hs.bytes += line.length + 1; hs.last = now; hs.scrubbed += scrubbed;
+  let e = d1; let n = 0;
+  for (const line of ls) { if (e) break; e = appendReq(rt.cfg.dir, tok.name, logs ? "logs" : "traces", line, now); if (!e) n += line.length + 1; }
+  if (e) { rej(503, "write", "storage failed: " + e, [["Retry-After", "60"]]); return; } // a retry re-sends: span-id dedup in the reader absorbs lines already written
+  accountWrite(rt, n, now);
+  hs.requests++; hs.records += total - refused; hs.bytes += n; hs.last = now; hs.scrubbed += scrubbed;
   if (beat) { hs.beatAt = now; hs.skewMs = now - beat; }
   if (refused) {
     bump(hs.rej, "host-id");
@@ -163,6 +164,35 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
   else send(res, 200, false, "{}", null, []);
 }
 
+// one request → stored lines of at most LINE_SPLIT bytes each (a 64 MB request would exceed the reader's line cap):
+// split by resource, then by scope, then by chunks of records; each line stays a valid Export…ServiceRequest
+export const LINE_SPLIT = 4 * MB;
+export function splitLines(root: Obj, key: string, logs: boolean): string[] {
+  const whole = JSON.stringify(root); if (whole.length <= LINE_SPLIT) return [whole];
+  const sk = logs ? "scopeLogs" : "scopeSpans"; const ik = logs ? "logRecords" : "spans";
+  const out: string[] = [];
+  const wrap = (rs: Obj, sc: Obj, items: string[]): string => {
+    const r: Obj = {}; for (const k of Object.keys(rs)) if (k !== sk) r[k] = rs[k];
+    const s: Obj = {}; for (const k of Object.keys(sc)) if (k !== ik) s[k] = sc[k];
+    const sj = JSON.stringify(s); const rj = JSON.stringify(r);
+    const scope = sj.slice(0, sj.length - 1) + (sj.length > 2 ? "," : "") + "\"" + ik + "\":[" + items.join(",") + "]}";
+    return "{\"" + key + "\":[" + rj.slice(0, rj.length - 1) + (rj.length > 2 ? "," : "") + "\"" + sk + "\":[" + scope + "]}]}";
+  };
+  for (const r of arr(root[key])) {
+    const rs = obj(r); if (!rs) continue;
+    for (const x of arr(rs[sk])) {
+      const sc = obj(x); if (!sc) continue;
+      let chunk: string[] = []; let size = 0; const room = LINE_SPLIT - wrap(rs, sc, []).length; // the envelope counts too
+      for (const it of arr(sc[ik])) {
+        const j = JSON.stringify(it);
+        if (chunk.length && size + j.length > room) { out.push(wrap(rs, sc, chunk)); chunk = []; size = 0; }
+        chunk.push(j); size += j.length + 1;
+      }
+      if (chunk.length) out.push(wrap(rs, sc, chunk));
+    }
+  }
+  return out.length ? out : [whole];
+}
 const PATHS = ["/v1/traces", "/v1/logs", "/v1/metrics"];
 // the request handler (http and https alike)
 export function handler(rt: Rt): (req: IncomingMessage, res: ServerResponse) => void {
