@@ -1,0 +1,11 @@
+{
+  "ffi_format": 1,
+  "functions": [
+    { "name": "agPids", "symbol": "ag_pids", "params": ["bytes"], "returns": "i32" },
+    { "name": "agStat", "symbol": "ag_stat", "params": ["i32", "bytes"], "returns": "i32" },
+    { "name": "agArgs", "symbol": "ag_args", "params": ["i32", "bytes"], "returns": "i32" },
+    { "name": "agCwd", "symbol": "ag_cwd", "params": ["i32", "bytes"], "returns": "i32" },
+    { "name": "agFiles", "symbol": "ag_files", "params": ["i32", "bytes"], "returns": "i32" }
+  ],
+  "libraries": ["libproc.c"]
+}
