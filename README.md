@@ -814,7 +814,9 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
 - **Content stays local:** without `--content` no prompt, answer, tool argument or result leaves the machine — only
   names, models, counts, durations, cwd and git remote (credentials scrubbed). `--content` adds them, each cut to
   `otlp.contentMax`. `--redact` exports the same fake names the screen shows, drops the `vcs.*` attributes and sends
-  `agentglass.repo.key` as a salted hash; the resource then carries `agentglass.redact = true`.
+  `agentglass.repo.key` as a salted hash (the first 16 hex digits of SHA-256 of `agentglass/repo/v1|<key>`: a receiver
+  that also gets plain exports hashes their key the same way to group both); the resource then carries
+  `agentglass.redact = true`.
 - **Opt-in extras:** `"titles": true` adds `agentglass.session.title` to each turn's root span and to the state records
   (a title is usually the first prompt, so it is off by default; under `--redact` the fake title is sent).
   `--detail meta` (or `"detail": "meta"`, implied by `--content`) adds `agentglass.tool.command` (the normalized shell
@@ -824,7 +826,8 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
 - **Always on:** `host.id` on every resource (16 hex digits of a SHA-256 over the machine id and your uid, or
   `~/.agentglass/host-id`; `"attributes": {"drop": ["host.id"]}` removes it; `host.name` stays opt-in),
   `agentglass.repo.key` (the project key `--json` shows as `repo.key`) on every span of a session in a project,
-  `agentglass.request.id` on Claude `chat` spans (Claude Code's `requestId`), and
+  `agentglass.request.id` on Claude `chat` spans (Claude Code's `requestId`, where the transcript has one: recent
+  Claude Code versions write it on few lines), and
   `agentglass.usage.cache_write_1h.input_tokens` (the 1-hour part of the cache writes, priced apart).
 - **Timing:** request start times are reconstructed (the previous event of the session to the response), so they
   include the harness's own queueing. Kiro and fx log no per-call times: their spans are spread over the turn and
@@ -936,8 +939,8 @@ The receiver contract — how to rebuild agentglass's view from the export:
    it has an `agentglass.turn.open`, no span yet, its session's latest state is busy, and the host is fresh.
 5. **Alerts:** `agentglass.alert` records are the host's own rules engine results; show them, do not re-evaluate.
 6. **The harnesses' own telemetry at the same receiver:** prefer agentglass records for usage and cost (history,
-   billing mode, price source). Claude Code's `api_request` log records join `agentglass.request.id` on `request_id`,
-   its `llm_request` spans join on `gen_ai.response.id`: a match is the same request, keep the agentglass one. Native
+   billing mode, price source). Claude Code's `api_request` log records join `agentglass.request.id` on `request_id`
+   (when the span has one), its `llm_request` spans join on `gen_ai.response.id`: a match is the same request, keep the agentglass one. Native
    metrics (`claude_code.cost.usage`, `claude_code.token.usage`, …) aggregate the same requests: never add them to span
    sums. Codex, Gemini CLI and OpenCode share no verified request id: join on session id, start ± 2 s, model and token
    counts and mark it approximate, switch their own export off on hosts that run agentglass, or use `--native skip`.
