@@ -14,7 +14,7 @@ import { REDACT } from "../features/redact-on.ts";
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
 import { MUX_EVENTS } from "./events.ts";
 import { type HWs, parseAgents, parseLabels, parseWorkspaces, parseProcInfo, parseVersion, parseCreated, parseError, versionAtLeast,
-  sessRef, choosePid, placeLabel, sendOutcome, errOutcome, envHerdr, workspaceFor, workspaceByPanes, HARNESS_LABELS } from "./herdr-parse.ts";
+  sessRef, choosePid, placeLabel, sendOutcome, errOutcome, envHerdr, workspaceFor, workspaceByPanes, START_KINDS } from "./herdr-parse.ts";
 
 const MIN_SEND = "0.8.2"; // the first herdr that refuses a prompt while the agent is at a dialog (agent_blocked)
 const PI_CAP = 8; // pane process-info calls per non-forced refresh (≈ 6 ms each)
@@ -240,7 +240,7 @@ export const herdr: Mux = {
   // workspace), the agent started there with its resume arguments, then focused; a failed start closes the tab
   start: (h: string, id: string, args: string[], cwd: string, top: string, label: string): boolean => {
     const own = envOf("HERDR_SOCKET_PATH");
-    if (envOf("HERDR_ENV") !== "1" || !own || HARNESS_LABELS.indexOf(h) < 0 || sockets(Date.now()).indexOf(own) < 0) return false;
+    if (envOf("HERDR_ENV") !== "1" || !own || START_KINDS.indexOf(h) < 0 || sockets(Date.now()).indexOf(own) < 0) return false;
     const s = srvOf(own); const now = Date.now();
     readLabels(s, now); if (readAgents(s, now)) index();
     // the workspace: its worktree holds the directory, else its repo's, else one of its agents works in the directory

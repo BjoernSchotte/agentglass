@@ -129,6 +129,7 @@ steps.push(() => {
   process.env["HERDR_ENV"] = "1"; process.env["HERDR_SOCKET_PATH"] = sock; herdrReset();
   w("tab-create.json", '{"id":"cli:tab:create","result":{"root_pane":{"pane_id":"w2:p9","tab_id":"w2:t4","terminal_id":"term_n","workspace_id":"w2"},"tab":{"label":"fix login","tab_id":"w2:t4","workspace_id":"w2"},"type":"tab_created"}}');
   ok("start: fx cannot", !herdr.start("fx", "S9", [], "/x", "", "t"), "");
+  ok("start: gemini cannot (herdr does not detect it: the start would time out)", !herdr.start("gemini", "S9", [], "/x", "", "t"), "");
   ok("start: started", herdr.start("claude", "S9abcdef12", ["--resume", "S9"], "/h/.herdr/worktrees/api/feat-x/src", "/r/api", "fix login"), "");
   ok("start: tab in the worktree's workspace", count("tab create --workspace w2 --cwd /h/.herdr/worktrees/api/feat-x/src --label fix login --no-focus") === 1, calls().join(" / "));
 });

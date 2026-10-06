@@ -73,6 +73,9 @@ export function versionAtLeast(v: string, min: string): boolean {
 }
 // herdr agent names that are agentglass harness ids (and kinds `agent start` takes)
 export const HARNESS_LABELS: string[] = ["claude", "codex", "gemini", "opencode", "pi", "kiro"];
+// the kinds a resume starts through `herdr agent start`: not gemini — herdr 0.9.1 does not detect Gemini CLI (its process
+// is "MainThread"), so the start times out after 30 s and its tab would close; Gemini resumes in agentglass's terminal
+export const START_KINDS: string[] = ["claude", "codex", "opencode", "pi", "kiro"];
 // a pane's session: kind id → key "<harness>:<id>", kind path → the session file; unknown agents and empty values → none
 export interface HRef { key: string; path: string }
 export function sessRef(label: string, kind: string, value: string): HRef {

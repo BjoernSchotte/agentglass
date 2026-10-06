@@ -895,6 +895,12 @@ environment) and spawns nothing when it is absent. For agents in herdr panes:
   `mux` and `workspace`, `cost --by workspace`, and the palette's "Sessions in this herdr workspace". An ended session
   belongs to the workspace whose worktree holds its directory.
 - tmux inside a herdr pane: tmux owns the agent (the innermost multiplexer wins).
+- Versions: send needs herdr ≥ 0.8.2 (older: "too old to send safely", nothing typed); exact links need ≥ 0.6.5 and
+  herdr's integration for the harness; jump and approval work with any herdr that has the commands.
+- **Gemini CLI**: herdr 0.9.1 does not detect Gemini CLI as an agent (its process is named `MainThread`), so a Gemini
+  pane gets none of the above: agentglass keeps its own Gemini handling (tmux title, or the approval guess outside
+  tmux), `s` gives its "cannot inject input" warning, and `R` on an ended Gemini session resumes in agentglass's own
+  terminal. Once herdr lists Gemini panes, send, jump, approval and links work as for the others.
 
 herdr rings its own bell for blocked and finished agents. To keep only herdr's, scope agentglass's two built-ins in
 `~/.agentglass/rules.json`:
