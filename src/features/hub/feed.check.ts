@@ -16,14 +16,14 @@ mk(join(rd, "tokens"), "");
 mk(join(rd, "ci", ".host"), "{\"name\":\"ci\",\"hostId\":\"00112233445566ff\",\"since\":1}\n");
 mk(join(rd, "ci", "traces-20260901.jsonl"), SAMPLE + "\n");
 mk(join(rd, "lap", "traces-20260901.jsonl"), SAMPLE.split("00112233445566ff").join("aaaaaaaaaaaaaaaa") + "\n");
-mk(join(rd, "stray.jsonl"), SAMPLE + "\n");
+mk(join(rd, "stray.jsonl"), SAMPLE + "\n"); mk(join(rd, "status.json"), "{\"pid\":1}\n");
 const s1 = hubSource("hub", { dir: rd, names: new Map<string, string>(), trust: "", maxAgeDays: 3650, includeNative: false });
 const got = s1.poll(Date.now(), { bytes: 1 << 30, lines: 1 << 30 });
 const names = got.map((h) => h.name).sort().join(",");
 ok("two hosts, named by their directories", names === "ci,lap", names);
 const ci = got.find((h) => h.name === "ci");
 ok("host id from .host", ci !== undefined && ci.hostId === "00112233445566ff" && ci.state.report !== null && ci.state.report.sessions.length === 1, JSON.stringify(ci?.hostId));
-ok("stray file outside a host directory ignored, said once", s1.status().join("\n").indexOf("outside a host directory") >= 0, s1.status().join("|"));
+ok("files in the root of a receive directory are not read (status.json, strays)", s1.status().join("\n").indexOf("outside a host directory") < 0, s1.status().join("|"));
 ok("nothing new: no hosts returned", s1.poll(Date.now(), big).length === 0, "returned");
 // a Collector directory: host = host.id; names from the hosts map, host.name, else <source>-<6 hex>
 const cd = join(HOME, "otel"); mkdirSync(cd, { recursive: true });

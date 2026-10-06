@@ -41,7 +41,8 @@ export function fileVerdict(path: string): string {
 // the readable request files of the source: the directory and its direct subdirectories, oldest change first
 export function scanFiles(src: Source): string[] {
   const now = src.clock(); const out: { p: string; mt: number }[] = [];
-  const dirs = [src.dir]; for (const n of listDir(src.dir)) { if (n.startsWith(".")) continue; const d = join(src.dir, n); try { if (statSync(d).isDirectory()) dirs.push(d); } catch (e) { /* gone */ } }
+  const dirs = src.trust === "label" ? [] : [src.dir]; // a receive directory keeps requests in host directories only (its root holds tokens, status.json)
+  for (const n of listDir(src.dir)) { if (n.startsWith(".")) continue; const d = join(src.dir, n); try { if (statSync(d).isDirectory()) dirs.push(d); } catch (e) { /* gone */ } }
   const live = new Set<string>();
   for (const d of dirs) for (const n of listDir(d)) {
     if (!NAME_RE.test(n) || n.endsWith(".tmp")) continue;
