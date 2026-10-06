@@ -217,7 +217,8 @@ ag receive status | grep -q "disk budget full" || { echo "FAIL status text does 
 stop
 
 ag receive service --print > "$t/unit"
-grep -q "ExecStart=$t/ag receive" "$t/unit" || grep -q "<string>$t/ag</string>" "$t/unit" || { echo "FAIL service unit: $(cat "$t/unit")"; fail=1; }
+# the binary's own path (macOS: mktemp's /var/… resolves to /private/var/…)
+grep -q "^ExecStart=/.*/ag receive$" "$t/unit" || { grep -q "<string>/.*/ag</string><string>receive</string>" "$t/unit"; } || { echo "FAIL service unit: $(cat "$t/unit")"; fail=1; }
 ag receive --help | grep -q "^usage: agentglass receive" || { echo "FAIL receive --help"; fail=1; }
 ag receive token --help | grep -q "rotate" || { echo "FAIL token --help"; fail=1; }
 [ $fail = 0 ] && echo "receive: ok"

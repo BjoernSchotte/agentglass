@@ -52,9 +52,9 @@ kill -TERM $srv; wait $srv 2>/dev/null || true; srv=""
 sleep 0.5
 if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then echo "FAIL the TLS child outlived SIGTERM to agentglass receive"; kill "$child"; fail=1; fi
 [ ! -e "$hub/receive.lock" ] || { echo "FAIL lock left behind"; fail=1; }
-# a public bind is allowed with TLS and --listen-public (127.0.0.2 stands in: tests never bind a public address)
+# --listen-public with TLS starts (on loopback: tests never bind a public address, and macOS has no 127.0.0.2)
 rm -f "$hub/port"
-HOME="$t/home" AGENTGLASS_HUB_DIR="$hub" AGENTGLASS_NOTIFY=0 "$t/agentglass-receive-tls" --tls-cert "$t/a.crt" --tls-key "$t/a.key" --listen 127.0.0.2:0 --listen-public 2> "$t/srv.err" & srv=$!
+HOME="$t/home" AGENTGLASS_HUB_DIR="$hub" AGENTGLASS_NOTIFY=0 "$t/agentglass-receive-tls" --tls-cert "$t/a.crt" --tls-key "$t/a.key" --listen 127.0.0.1:0 --listen-public 2> "$t/srv.err" & srv=$!
 i=0; while [ ! -s "$hub/port" ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done
 [ -s "$hub/port" ] || { echo "FAIL --listen-public with TLS did not start: $(cat "$t/srv.err")"; fail=1; }
 kill -TERM $srv; wait $srv 2>/dev/null || true; srv=""
