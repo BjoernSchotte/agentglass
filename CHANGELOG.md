@@ -2,6 +2,12 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.7
+
+### Breaking changes
+
+- **otlp:** --filter is judged on every poll — 2026.10.6 live export could send out-of-filter sessions' metadata (#77) (c469465, [#77](https://github.com/BjoernSchotte/agentglass/pull/77))
+
 ## 2026.10.6
 
 ### Features
