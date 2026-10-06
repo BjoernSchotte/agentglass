@@ -47,7 +47,8 @@ jobs:
         run: |
           for n in before after; do
             ref=$BEFORE; [ $n = before ] || ref=$AFTER
-            git worktree add --detach "$RUNNER_TEMP/wt-$n" "$ref"
+            c=$(git rev-parse --verify -q "$ref^{commit}" || git rev-parse --verify "origin/$ref^{commit}") # a branch name: origin's
+            git worktree add --detach "$RUNNER_TEMP/wt-$n" "$c"
             echo "$n: $ref = $(git -C "$RUNNER_TEMP/wt-$n" rev-parse --short HEAD)" | tee -a "$RUNNER_TEMP/notes"
             AGENTGLASS_SRC="$RUNNER_TEMP/wt-$n/src" AGENTGLASS_OUT="$RUNNER_TEMP/ag-$n" sh build.sh
           done
