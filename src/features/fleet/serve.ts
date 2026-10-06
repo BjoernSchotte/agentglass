@@ -39,7 +39,7 @@ export function words(s: string): { w: string[]; err: string } {
   if (inWord) w.push(cur);
   return { w, err: "" };
 }
-export const SERVE_REFUSED = "only fleet pull and --version are allowed";
+export const SERVE_REFUSED = "only fleet pull/snapshot/watch and --version are allowed";
 function base(p: string): string { const i = p.lastIndexOf("/"); return i >= 0 ? p.slice(i + 1) : p; }
 // the words of an allowed request → the child's argv (without the program word) and whether it asked for --redact
 export function allowed(w: string[]): { args: string[]; redact: boolean; err: string } {
@@ -50,16 +50,25 @@ export function allowed(w: string[]): { args: string[]; redact: boolean; err: st
     if (rest.length === 1 || (rest.length === 2 && rest[1] === "--json")) return { args: rest, redact: false, err: "" };
     return no;
   }
-  if (rest[0] !== "fleet" || rest[1] !== "pull") return no;
-  const args = ["fleet", "pull"]; let redact = false; let days = false;
+  const sub = rest[1] ?? "";
+  if (rest[0] !== "fleet" || (sub !== "pull" && sub !== "snapshot" && sub !== "watch")) return no;
+  const args = ["fleet", sub]; const seen = new Set<string>(); let redact = false;
   for (let i = 2; i < rest.length; i++) {
     const a = rest[i] ?? "";
-    if (a === "--redact" && !redact) { redact = true; args.push(a); continue; }
-    if (a === "--days" && !days) {
+    if (seen.has(a)) return no; // each flag once
+    seen.add(a);
+    if (a === "--redact") { redact = true; args.push(a); continue; }
+    if (a === "--days" && sub !== "watch") {
       const v = rest[i + 1] ?? ""; i++;
       if (!/^\d{1,2}$/.test(v) || Number(v) < 1 || Number(v) > 90) return no;
-      days = true; args.push(a); args.push(v); continue;
+      args.push(a); args.push(v); continue;
     }
+    if (sub === "snapshot" && (a === "--peer" || a === "--ack")) {
+      const v = rest[i + 1] ?? ""; i++;
+      if (!/^[0-9a-f]{16}$/.test(v)) return no; // ids only: never a path or an option
+      args.push(a); args.push(v); continue;
+    }
+    if (sub === "snapshot" && a === "--full") { args.push(a); continue; }
     return no;
   }
   return { args, redact, err: "" };
@@ -74,7 +83,8 @@ export function keyLine(execPath: string, pub: string, from: string, redact: boo
   return { line: "restrict," + (from ? "from=\"" + from + "\"," : "") + "command=\"" + execPath + " fleet serve" + (redact ? " --redact" : "") + "\" " + k, err: "" };
 }
 function err(msg: string): void { try { writeSync(2, "agentglass fleet serve: " + msg + "\n"); } catch (e) { /* closed */ } }
-// `fleet serve [--redact]`, run by sshd as the forced command: SSH_ORIGINAL_COMMAND is the request
+// `fleet serve [--redact]`, run by sshd as the forced command: SSH_ORIGINAL_COMMAND is the request (fleet pull, snapshot,
+// watch, --version; `fleet drop` writes locally and is never served)
 export function serveCli(args: string[]): void {
   for (let i = 2; i < args.length; i++) if (args[i] !== "--redact") cliError("usage", "unknown option " + (args[i] ?? "") + " for fleet serve", "agentglass fleet serve [--redact] (as an authorized_keys command=)", 2);
   const req = process.env["SSH_ORIGINAL_COMMAND"];

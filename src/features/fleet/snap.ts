@@ -87,7 +87,7 @@ export function feedSnap(p: Snap, lines: string[]): void {
 export function helloOfSnap(x: Snap): Hello { return helloOf(x.head); }
 
 // a finished snapshot onto the report a viewer holds (null = none yet). full → replaces everything; a delta replaces the
-// sessions it carries, appends or resets own rows, drops `gone` keys. The caller checks x.base against what it applied
+// sessions it carries, drops the `gone` sessions, appends or resets own rows (a reset without rows drops the key). The caller checks x.base against what it applied
 // last: a delta on another base must not apply (feed and dir reader do). The result is a new report (the old one stays
 // valid for whoever holds it); its `owned` map is shared with nobody
 export function applySnap(cur: HostReport | null, x: Snap): HostReport {
@@ -97,11 +97,12 @@ export function applySnap(cur: HostReport | null, x: Snap): HostReport {
     for (const o of cur.owned) own.set(o.key, o.rows);
     for (const s of cur.sessions) { keep.set(s.key, s); order.push(s.key); }
   }
-  for (const k of x.gone) { keep.delete(k); own.delete(k); }
+  for (const k of x.gone) keep.delete(k);
   for (const s of x.sess) { if (!keep.has(s.key)) order.push(s.key); keep.set(s.key, s); }
   for (const o of x.own) {
     const old = own.get(o.key);
-    own.set(o.key, o.reset || !old ? o.rows : old.concat(o.rows));
+    if (o.reset && !o.rows.length) own.delete(o.key); // the key owns nothing any more
+    else own.set(o.key, o.reset || !old ? o.rows : old.concat(o.rows));
   }
   const sessions: SessRow[] = [];
   for (const k of order) { const s = keep.get(k); if (!s) continue; sessions.push({ s: s.s, key: s.key, days: s.days, own: own.get(k) ?? [], prov: s.prov }); keep.delete(k); }

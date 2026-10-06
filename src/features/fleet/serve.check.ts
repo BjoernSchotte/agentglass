@@ -20,6 +20,16 @@ const A = (w: string[]): string => JSON.stringify(allowed(w));
 const p = allowed(["/x/agentglass", "fleet", "pull", "--days", "7", "--redact"]);
 ok("pull allowed", JSON.stringify(p.args) === JSON.stringify(["fleet", "pull", "--days", "7", "--redact"]) && p.redact && !p.err, JSON.stringify(p));
 ok("bare pull", allowed(["agentglass", "fleet", "pull"]).err === "" && !allowed(["agentglass", "fleet", "pull"]).redact, A(["agentglass", "fleet", "pull"]));
+const sn = allowed(["agentglass", "fleet", "snapshot", "--peer", "00112233445566ff", "--ack", "0011223344556677", "--days", "7"]);
+ok("snapshot allowed", !sn.err && JSON.stringify(sn.args) === JSON.stringify(["fleet", "snapshot", "--peer", "00112233445566ff", "--ack", "0011223344556677", "--days", "7"]), A(["agentglass", "fleet", "snapshot", "--peer", "00112233445566ff"]));
+ok("snapshot --full --redact", allowed(["agentglass", "fleet", "snapshot", "--full", "--redact"]).err === "" && allowed(["agentglass", "fleet", "snapshot", "--full", "--redact"]).redact, "");
+ok("snapshot --peer x refused", allowed(["agentglass", "fleet", "snapshot", "--peer", "x"]).err !== "", "allowed");
+ok("snapshot --peer twice refused", allowed(["agentglass", "fleet", "snapshot", "--peer", "00112233445566ff", "--peer", "00112233445566ff"]).err !== "", "allowed");
+ok("snapshot --ack ../x refused", allowed(["agentglass", "fleet", "snapshot", "--ack", "../../etc/passwd"]).err !== "", "allowed");
+ok("watch --redact allowed", allowed(["agentglass", "fleet", "watch", "--redact"]).err === "" && allowed(["agentglass", "fleet", "watch", "--redact"]).redact, "");
+ok("watch --days refused", allowed(["agentglass", "fleet", "watch", "--days", "7"]).err !== "", "allowed");
+ok("pull --full refused", allowed(["agentglass", "fleet", "pull", "--full"]).err !== "", "allowed");
+ok("drop refused", allowed(["agentglass", "fleet", "drop", "/tmp"]).err !== "", "allowed");
 ok("version", allowed(["agentglass", "--version"]).err === "" && allowed(["agentglass", "--version", "--json"]).err === "", A(["agentglass", "--version", "--json"]));
 const REF: string[][] = [["sh", "-c", "x"], ["agentglass", "--json"], ["agentglass", "fleet", "pull", "--days", "999"], ["agentglass", "fleet", "pull", "--days", "0"], ["agentglass", "fleet", "pull", "--days"],
   ["agentglass", "fleet", "pull", "--x"], ["agentglass-evil", "fleet", "pull"], ["agentglass", "fleet", "serve"], ["agentglass", "fleet", "pull", "--redact", "--redact"],
@@ -28,7 +38,7 @@ const REF: string[][] = [["sh", "-c", "x"], ["agentglass", "--json"], ["agentgla
 for (const s of ["agentglass\rfleet pull", "agentglass fleet pull --days=7", "agentglass fleet pull --no-redact", "agentglass fleet pull # x", "agentglass fleet pull --days 7*",
   "agentglass --redact=0 fleet pull", "agentglass fleet pull -- --x", "agentglass fleet  pull --days '7 ;id'"]) { const r = words(s); ok("hostile " + JSON.stringify(s), r.err !== "" || allowed(r.w).err !== "", W(s)); }
 for (const w of REF)
-  ok("refused " + w.join(" "), allowed(w).err === 'only fleet pull and --version are allowed', A(w));
+  ok("refused " + w.join(" "), allowed(w).err === 'only fleet pull/snapshot/watch and --version are allowed', A(w));
 const k = keyLine("/h/.local/bin/agentglass", "ssh-ed25519 AAAAC3Nz me@x", "100.64.0.0/10", true);
 ok("key line", k.line === 'restrict,from="100.64.0.0/10",command="/h/.local/bin/agentglass fleet serve --redact" ssh-ed25519 AAAAC3Nz me@x', JSON.stringify(k));
 ok("key line plain", keyLine("/a/agentglass", "ssh-ed25519 AAAA\n", "", false).line === 'restrict,command="/a/agentglass fleet serve" ssh-ed25519 AAAA', JSON.stringify(keyLine("/a/agentglass", "ssh-ed25519 AAAA\n", "", false)));
