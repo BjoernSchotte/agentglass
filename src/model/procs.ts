@@ -12,7 +12,7 @@ import { sessions, SG, SCANNED } from "./sessions.ts";
 import { S } from "../state.ts";
 import { linkByCwd, daemonWarn, type CwdProc, type CwdSess } from "./link.ts";
 import { H, applyMeta, realCwd } from "../hooks.ts";
-import { muxRefresh } from "../mux/index.ts";
+import { muxRefresh, muxLinks, muxSig, paneOfPid } from "../mux/index.ts";
 import type { MuxProc } from "../mux/types.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
@@ -167,6 +167,7 @@ function linkSig(): string {
   for (const [f, pid] of filePid) if (allProcs.has(pid)) o.push(f);
   let mt = 0; for (const ad of HARNESSES) if (ad.liveCwd) for (const s of sessions.values()) if (s.h === ad.id) mt += s.mtime;
   o.push(String(mt));
+  o.push(muxSig()); // a multiplexer's exact links (herdr agent_session) moved
   return o.join("\n");
 }
 export function refreshSlow(): void {
@@ -228,9 +229,12 @@ function linkSessions(): void {
     linkOne(s, pid, status, name);
   }
   if (linked.size > sessions.size) for (const k of [...linked.keys()]) if (!sessions.has(k)) linked.delete(k);
+  // a multiplexer's exact pairs (herdr: the agent_session its integrations report) for sessions still unlinked; before
+  // the cwd guess, never over a registry or open-transcript link. A pid tmux claims is tmux's (the innermost owns it)
+  const muxPids = linkMux();
   // harnesses with neither registry nor open transcript: process cwd ↔ newest session in that cwd
   // (registry pids are daemons, not TUIs; subagents never own a TUI)
-  const regPids = new Set<number>();
+  const regPids = new Set<number>(); for (const p of muxPids) regPids.add(p);
   for (const l of registry.values()) regPids.add(l.pid);
   for (const ad of HARNESSES) {
     if (!ad.liveCwd) continue;
@@ -249,6 +253,22 @@ function linkSessions(): void {
   const now = Date.now();
   for (const s of sessions.values()) if (s.pid) { const r = rootOf(s.pid); if (r) r.sess = s.path; heldBy.set(s.path, { pid: s.pid, at: now }); }
   if (heldBy.size > sessions.size) for (const k of [...heldBy.keys()]) if (!sessions.has(k)) heldBy.delete(k);
+}
+// checks: link with these agent roots (their cwds) as the process pass would
+export function linkForCheck(roots: Proc[]): void { procs = roots; linkSessions(); }
+export function linkSigForCheck(): string { return linkSig(); }
+function linkMux(): Set<number> {
+  const pids = new Set<number>(); const ls = muxLinks(); if (!ls.length) return pids;
+  const byKey = new Map<string, Sess>(); // a resumed session copied into a second project dir: the copy written last
+  for (const s of sessions.values()) { if (s.parent) continue; const k = s.h + ":" + s.id; const o = byKey.get(k); if (!o || s.mtime > o.mtime) byKey.set(k, s); }
+  for (const l of ls) {
+    if (!allProcs.has(l.pid) || paneOfPid(l.pid).kind === "tmux") continue;
+    const s = l.key ? byKey.get(l.key) : sessions.get(l.path);
+    const r = rootOf(l.pid); const pid = r ? r.pid : l.pid;
+    pids.add(pid);
+    if (s && !s.pid) linkOne(s, pid, "open", "");
+  }
+  return pids;
 }
 // session → the last pid linked to it and when (linkByCwd: an older session a headless --resume run wrote to is not
 // taken by a lone TUI in that project for an in-TUI resume once the run ended)
