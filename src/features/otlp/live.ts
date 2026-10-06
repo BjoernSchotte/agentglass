@@ -5,11 +5,16 @@
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { approvalOf } from "../watchdog.ts";
-import { type SessB, newSessB, advance, syncSubs, openCall } from "./build.ts";
+import { type SState, sessState, sameState } from "../../model/state.ts";
+import { type SessB, newSessB, advance, syncSubs, openCall, busyOf, repoKeyOf } from "./build.ts";
 import { type XTurn, type XSpan, attrD, attrB } from "./types.ts";
+import { type OtlpCfg, cfgFrom } from "./config.ts";
+import { type XLog, type AlertT, heartbeat, stateLog, turnOpenLog, alertLog, HEARTBEAT_S } from "./logs.ts";
 
 export const QUIET_LIVE = 120000; // a turn without a close marker counts as finished after 2 quiet minutes
 const FLUSH_MS = 5000; const FLUSH_SPANS = 512; const MAX_SPANS = 10000; const BACKOFF_MAX = 300000;
+const MAX_LOGS = 2000; const STATE_REPEAT = 300000; // logs stream (otlp-complete 2.6, 2.3)
+export interface PendAlert { s: Sess; a: AlertT }
 export interface Live {
   b: Map<string, SessB>; q: XTurn[]; qSpans: number; lastFlush: number; dropped: boolean; fails: number; retryAt: number;
   appr: Map<string, string>; // session path → the open call's span id waiting for approval
@@ -23,10 +28,20 @@ export interface Live {
   warn: (msg: string) => void;
   sent: number; lastOk: number;
   halt: string; // a TLS failure stopped sending for the run (the message); turns stay queued, unmarked
+  // ── the logs stream (otlp-complete 2): best effort, own bounded queue, never marked ──
+  logs: boolean; cfg: OtlpCfg; // on (a logs endpoint, not --no-logs, not answered 404/405); titles/attribute tables for the records
+  lq: XLog[]; lqDropped: boolean; lastLogFlush: number; logFails: number; logRetryAt: number; resendState: boolean;
+  lastBeat: number; st: Map<string, SState>; stAt: Map<string, number>; // last state per session path and when it was sent
+  opened: Set<string>; // open turns announced (path + key); a closed turn leaves it
+  pend: PendAlert[]; // rules transitions from the --watch loop (Sink.alert), queued on the next tick
+  sendLogs: (logs: XLog[]) => boolean; // false = failed (backoff); it may switch L.logs off (404/405) or set L.halt
+  busyRule: (b: SessB) => boolean; // the builder's busy rule (a stub in checks)
 }
 export function newLive(since: number): Live {
   return { b: new Map<string, SessB>(), q: [], qSpans: 0, lastFlush: 0, dropped: false, fails: 0, retryAt: 0, appr: new Map<string, string>(), apprAt: new Map<string, number>(), late: new Map<string, number[]>(), since, content: false, subagents: true, ticks: 0, running: new Set<string>(),
-    want: (s: Sess) => !!s, skip: (t: XTurn) => !t, approval: approvalOf, warn: (m: string) => { process.stderr.write("agentglass: " + m + "\n"); }, sent: 0, lastOk: 0, halt: "" };
+    want: (s: Sess) => !!s, skip: (t: XTurn) => !t, approval: approvalOf, warn: (m: string) => { process.stderr.write("agentglass: " + m + "\n"); }, sent: 0, lastOk: 0, halt: "",
+    logs: false, cfg: cfgFrom({}), lq: [], lqDropped: false, lastLogFlush: 0, logFails: 0, logRetryAt: 0, resendState: false, lastBeat: 0, st: new Map<string, SState>(), stAt: new Map<string, number>(),
+    opened: new Set<string>(), pend: [], sendLogs: (ls: XLog[]) => ls.length >= 0, busyRule: busyOf };
 }
 // over MAX_SPANS: the oldest whole turns go (unmarked, so a later export resends them)
 export function enqueue(L: Live, t: XTurn): void {
@@ -56,7 +71,7 @@ function attach(sp: XSpan, now: number): void {
   sp.attrs.push(attrD("agentglass.tool.approval_wait", Math.max(0, now - sp.t0) / 1000));
   sp.events.push({ name: "agentglass.approval_wait", t: now, attrs: [attrB("agentglass.estimated", true)] });
 }
-function approvals(L: Live, s: Sess, b: SessB, now: number): void {
+function approvals(L: Live, s: Sess, b: SessB, now: number): string {
   const op = b.open;
   const late = L.late.get(s.path);
   if (late && op) {
@@ -67,12 +82,59 @@ function approvals(L: Live, s: Sess, b: SessB, now: number): void {
   }
   const a = s.pid > 0 && op ? L.approval(s) : "";
   const was = L.appr.get(s.path);
-  if (a && was === undefined) { const c = openCall(b); L.appr.set(s.path, c ? c.spanId : ""); L.apprAt.set(s.path, now); return; }
-  if (a || was === undefined) return;
+  if (a && was === undefined) { const c = openCall(b); L.appr.set(s.path, c ? c.spanId : ""); L.apprAt.set(s.path, now); return a; }
+  if (a || was === undefined) return a;
   const since = L.apprAt.get(s.path) ?? now;
   L.appr.delete(s.path); L.apprAt.delete(s.path);
-  if (!was) { L.late.set(s.path, [since, now]); return; }
+  if (!was) { L.late.set(s.path, [since, now]); return a; }
   if (op) for (const sp of op.spans) if (sp.spanId === was) attach(sp, now);
+  return a;
+}
+// ── the logs stream ──
+// over MAX_LOGS: the oldest records go (one warning); state is re-sent once sending works again
+export function enqueueLog(L: Live, l: XLog): void {
+  if (!L.logs || L.halt) return;
+  L.lq.push(l);
+  if (L.lq.length > MAX_LOGS) {
+    L.lq = L.lq.slice(L.lq.length - MAX_LOGS);
+    if (!L.lqDropped) { L.lqDropped = true; L.warn("otlp: the logs queue is full (backend unreachable?) — dropping the oldest records; session state is re-sent once it is reachable"); }
+  }
+}
+// one top-level session after its poll: state on change / every 300 s while live / after a recovery, its open turn once
+function logSession(L: Live, s: Sess, b: SessB, appr: string, now: number): void {
+  const st = sessState(s, (x: Sess): string => x ? appr : "", (x: Sess): boolean => !!x && L.busyRule(b));
+  const prev = L.st.get(s.path); const at = L.stAt.get(s.path) ?? 0;
+  const due = prev ? !sameState(prev, st) || (st.live && (now - at >= STATE_REPEAT || L.resendState)) : st.live;
+  L.st.set(s.path, st);
+  if (due) { enqueueLog(L, stateLog(s, st, now, b.open, L.cfg, b.ver, repoKeyOf(s))); L.stAt.set(s.path, now); }
+  const op = b.open; if (!op) return;
+  const k = op.path + "\u0000" + op.key;
+  if (!L.opened.has(k)) { L.opened.add(k); enqueueLog(L, turnOpenLog(op, now)); }
+}
+function logTick(L: Live, now: number): void {
+  for (const p of L.pend) {
+    const b = L.b.get(p.s.path);
+    enqueueLog(L, alertLog(p.s, p.a, now, b ? b.open : null, L.cfg, b ? b.ver : ""));
+  }
+  L.pend = [];
+  if (now - L.lastBeat >= HEARTBEAT_S * 1000) {
+    L.lastBeat = now; let live = 0; let busy = 0; let att = 0;
+    for (const st of L.st.values()) if (st.live) { live++; if (st.busy) busy++; if (st.attention) att++; }
+    enqueueLog(L, heartbeat(now, live, busy, att));
+  }
+}
+// on the spans' cadence (every 5 s or at 512 records), one request; failures back off like the span queue
+export function flushLogs(L: Live, now: number): void {
+  if (!L.logs || L.halt || !L.lq.length || now < L.logRetryAt) return;
+  if (L.lq.length < FLUSH_SPANS && now - L.lastLogFlush < FLUSH_MS) return;
+  L.lastLogFlush = now;
+  const batch = L.lq.slice(0);
+  if (L.sendLogs(batch)) {
+    L.lq = L.lq.slice(batch.length);
+    if (L.logFails > 0) { L.resendState = true; L.lqDropped = false; } // a receiver catches up on the next poll
+    L.logFails = 0; L.logRetryAt = 0;
+  } else if (!L.logs || L.halt) L.lq = []; // switched off (404/405) or a TLS failure: nothing more goes out
+  else { L.logFails++; L.logRetryAt = now + Math.min(BACKOFF_MAX, FLUSH_MS * Math.pow(2, Math.min(10, L.logFails - 1))); }
 }
 // one poll: read every selected session, queue what closed, flush every 5 s or at 512 queued spans
 // The first poll also reads every session that may hold a running turn (a live process, or written within the quiet
@@ -80,26 +142,33 @@ function approvals(L: Live, s: Sess, b: SessB, now: number): void {
 // since --since is not read at all until it changes; its turns had all closed before the start.
 export function liveTick(L: Live, now: number, send: (turns: XTurn[]) => boolean): void {
   const first = L.ticks === 0; L.ticks++;
+  const resend = L.resendState;
   for (const s of sessions.values()) {
     if (s.parent && s.depth > 0) continue;
     let b = L.b.get(s.path);
-    if (!b) {
-      const maybeRunning = first && (s.pid > 0 || now - s.mtime < QUIET_LIVE);
+    if (!b) { // with the logs stream a session whose agent starts later is read too: its state is "now"
+      const maybeRunning = (first && (s.pid > 0 || now - s.mtime < QUIET_LIVE)) || (L.logs && s.pid > 0);
       if ((s.mtime < L.since && !maybeRunning) || !L.want(s)) continue;
       b = newSessB(s, L.subagents ? s.subs : []); L.b.set(s.path, b);
     } else if (L.subagents) syncSubs(b, s.subs);
-    approvals(L, s, b, now);
+    const appr = approvals(L, s, b, now);
     for (const t of advance(b, { now, quietMs: QUIET_LIVE, content: L.content, subagents: L.subagents })) {
-      const k = t.path + "\u0000" + t.key; const was = L.running.delete(k);
+      const k = t.path + "\u0000" + t.key; const was = L.running.delete(k); L.opened.delete(k);
       if ((t.t0 < L.since && !was) || L.skip(t)) continue;
       enqueue(L, t);
     }
     const op = b.open; if (first && op) L.running.add(op.path + "\u0000" + op.key);
+    if (L.logs) logSession(L, s, b, appr, now);
   }
+  if (resend) L.resendState = false;
+  if (L.logs) logTick(L, now);
   if (L.qSpans >= FLUSH_SPANS || now - L.lastFlush >= FLUSH_MS) flush(L, now, send);
+  flushLogs(L, now);
 }
-// SIGINT/SIGTERM: one last flush within the budget
+// SIGINT/SIGTERM: one last flush of spans and logs within the budget
 export function liveStop(L: Live, send: (turns: XTurn[]) => boolean, budgetMs: number): void {
-  if (!L.q.length || budgetMs <= 0) return;
-  L.retryAt = 0; flush(L, Date.now(), send);
+  if (budgetMs <= 0) return;
+  const t0 = Date.now();
+  if (L.q.length) { L.retryAt = 0; flush(L, t0, send); }
+  if (L.lq.length && Date.now() - t0 < budgetMs) { L.logRetryAt = 0; L.lastLogFlush = 0; flushLogs(L, Date.now()); }
 }

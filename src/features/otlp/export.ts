@@ -19,10 +19,11 @@ import { discover, opts as watchOpts, watch } from "../cli.ts";
 import { agentScope, visible, errLine } from "../agentenv.ts";
 import { opt, setOptions } from "../clihelp.ts";
 import { newLive, liveTick, liveStop } from "./live.ts";
+import { type XLog, type AlertT, encodeLogs } from "./logs.ts";
 import { type XTurn } from "./types.ts";
 import { newSessB, finish, fxChat } from "./build.ts";
 import { encodeRequest } from "./encode.ts";
-import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl, tlsOf, tlsUrlErr } from "./config.ts";
+import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl, tlsOf, tlsUrlErr, logsUrlOf, logHeaders, hostOf } from "./config.ts";
 import { type ExpState, loadState, saveState, lock, unlock, marked, markTurn, markFx } from "./state.ts";
 import { type Native, detectNative, applyPolicy, projectDirs } from "./native.ts";
 import { GZ, sendBatch } from "./send.ts";
@@ -337,7 +338,7 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
 function liveExport(args: string[]): number {
   const c = loadCfg(); const env = envMap(); const now = Date.now();
   for (const w of c.warns) err(w);
-  let flag = ""; let since = now; let subagents = true; let native = c.native; let comp = ""; let batch = c.batch; let filter = ""; let harness = "";
+  let flag = ""; let since = now; let subagents = true; let native = c.native; let noLogs = false; let comp = ""; let batch = c.batch; let filter = ""; let harness = "";
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? ""; const v = args[i + 1] ?? "";
     if (a === "--otlp") { flag = v; i++; }
@@ -345,6 +346,7 @@ function liveExport(args: string[]): number {
     else if (a === "--content") c.content = true;
     else if (a === "--detail") { c.detail = v; i++; if (v !== "none" && v !== "meta") { fail("usage", "--detail takes none or meta"); return 2; } }
     else if (a === "--no-subagents") subagents = false;
+    else if (a === "--no-logs") noLogs = true;
     else if (a === "--native") { native = v; i++; if (["warn", "skip", "include"].indexOf(native) < 0) { fail("usage", "--native takes warn, skip or include"); return 2; } }
     else if (a === "--compression") { comp = v; i++; if (comp !== "gzip" && comp !== "none") { fail("usage", "--compression takes gzip or none"); return 2; } }
     else if (a === "--batch") { batch = Number(v); i++; if (!(Number.isInteger(batch) && batch >= 1 && batch <= 100000)) { fail("usage", "--batch needs a whole number of spans, 1–100000"); return 2; } }
@@ -360,12 +362,23 @@ function liveExport(args: string[]): number {
   const pe = plainOk(url, c, hx.headers.length > 0); if (pe) { fail("usage", pe); return 2; }
   const tx = tlsOf(c, env, "TRACES"); if (tx.err) { fail("usage", tx.err); return 2; }
   const te = tlsUrlErr(url, tx.tls); if (te) { fail("usage", te); return 2; }
+  // the logs stream (otlp-complete 2.2): derived endpoint, its own headers and TLS variables, same checks as spans
+  if (noLogs) c.logs = false;
+  const lu = logsUrlOf(url, !!(flag && !flag.startsWith("--")) || !!c.endpoint, c, env);
+  let lhx: { headers: string[][]; err: string } = { headers: [], err: "" }; let ltx: { tls: string[]; err: string } = { tls: ["", "", ""], err: "" };
+  if (lu.url) {
+    const le = urlErr(lu.url); if (le) { fail("usage", "otlp.logsEndpoint: " + le.replace(/^--otlp /, "")); return 2; }
+    lhx = logHeaders(c, env); if (lhx.err) { fail("usage", lhx.err); return 2; }
+    const lp = plainOk(lu.url, c, lhx.headers.length > 0); if (lp) { fail("usage", lp); return 2; }
+    ltx = tlsOf(c, env, "LOGS"); if (ltx.err) { fail("usage", ltx.err); return 2; }
+    const lt = tlsUrlErr(lu.url, ltx.tls); if (lt) { fail("usage", lt); return 2; }
+  } else if (lu.why) err("otlp: " + lu.why);
   const held = lock(url); if (held !== 0) { fail("busy", "another export to " + safeUrl(url) + " is running, pid " + String(held)); return 3; }
   const st = loadState(url); if (st.warn) err(st.warn);
   let gz = (comp || c.compression) === "gzip" && (st.gzip || comp === "gzip");
   if (gz) { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } if (!gzipProbe(d)) { gz = false; err("this build cannot write compressed bodies: sending uncompressed"); } }
   const cf = sf.f; // session clauses select what is exported
-  const L = newLive(since); L.content = c.content; L.subagents = subagents;
+  const L = newLive(since); L.content = c.content; L.subagents = subagents; L.cfg = c; L.logs = lu.url !== "";
   const sc = agentScope(args);
   L.want = (s: Sess): boolean => (!harness || s.h === harness) && (!cf || sessMatches(cf, s)) && visible(s, sc);
   let skipFrom = new Map<string, number>(); let nativeAt = 0;
@@ -388,8 +401,19 @@ function liveExport(args: string[]): number {
     return all;
   };
   const send = sendWith(c.timeoutS);
+  // logs: best effort, one request per flush (gzip as spans); 404/405 = this receiver takes no logs; a TLS failure halts
+  let logTimeout = c.timeoutS; let logFailed = false;
+  L.sendLogs = (ls: XLog[]): boolean => {
+    if (!ls.length) return true;
+    const r = sendBatch({ url: lu.url, headers: lhx.headers, timeoutS: logTimeout, gzip: gz && !GZ.off, live: true, tls: ltx.tls }, encodeLogs(ls, c), realSleep);
+    if (r.ok) { if (logFailed) { logFailed = false; err("otlp: logs reach " + safeUrl(lu.url) + " again"); } return true; }
+    if (r.status === 404 || r.status === 405) { L.logs = false; err("otlp: " + hostOf(lu.url) + " takes no OTLP logs: the stream is off (HTTP " + String(r.status) + "); spans continue"); return false; }
+    if (r.final) { L.halt = r.msg; err("otlp: " + r.msg + " — sending stopped for this run; the turns stay unsent and `agentglass export` sends them once it is fixed"); return false; }
+    if (!logFailed) { logFailed = true; err("otlp: logs: " + r.msg + " — retrying with backoff"); }
+    return false;
+  };
   let statusAt = now;
-  err("otlp: exporting finished turns to " + safeUrl(url) + (since < now ? " (catching up since " + new Date(since).toISOString() + ")" : "") + "; Ctrl+C stops");
+  err("otlp: exporting finished turns to " + safeUrl(url) + (since < now ? " (catching up since " + new Date(since).toISOString() + ")" : "") + (L.logs ? ", live state to " + safeUrl(lu.url) : "") + "; Ctrl+C stops");
   watch(watchOpts(args), {
     tick: (t: number): void => {
       if (t - nativeAt >= 60000) { // the harnesses' own export: re-checked every minute
@@ -399,9 +423,10 @@ function liveExport(args: string[]): number {
         for (const n of d.notes) err(n);
       }
       liveTick(L, t, send);
-      if (t - statusAt >= 60000) { statusAt = t; err("otlp: " + (L.halt ? "halted: " + L.halt + "; " : "") + String(L.sent) + " spans sent, " + String(L.qSpans) + " queued, last ok " + (L.lastOk ? new Date(L.lastOk).toISOString() : "never")); }
+      if (t - statusAt >= 60000) { statusAt = t; err("otlp: " + (L.halt ? "halted: " + L.halt + "; " : "") + String(L.sent) + " spans sent, " + String(L.qSpans) + " queued, last ok " + (L.lastOk ? new Date(L.lastOk).toISOString() : "never") + (L.logs ? ", " + String(L.lq.length) + " log records queued" : "")); }
     },
-    stop: (): void => { try { liveStop(L, sendWith(Math.min(5, c.timeoutS)), 5000); saveState(url, st); } finally { unlock(url); } },
+    stop: (): void => { try { logTimeout = Math.min(5, c.timeoutS); liveStop(L, sendWith(Math.min(5, c.timeoutS)), 5000); saveState(url, st); } finally { unlock(url); } },
+    alert: (s: Sess, a: AlertT): void => { if (L.logs && !(s.parent && s.depth > 0) && L.want(s)) L.pend.push({ s, a }); },
   });
   return -1; // the poll loop keeps the process alive
 }

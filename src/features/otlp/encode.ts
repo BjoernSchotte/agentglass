@@ -154,7 +154,7 @@ function val(x: Attr): string {
   if (x.t === "b") return "{\"boolValue\":" + (x.b ? "true" : "false") + "}";
   return "{\"arrayValue\":{\"values\":[" + x.a.map((v: string) => "{\"stringValue\":" + JSON.stringify(v) + "}").join(",") + "]}}";
 }
-function attrsJson(a: Attr[]): string { return "[" + a.map((x: Attr) => "{\"key\":" + JSON.stringify(x.k) + ",\"value\":" + val(x) + "}").join(",") + "]"; }
+export function attrsJson(a: Attr[]): string { return "[" + a.map((x: Attr) => "{\"key\":" + JSON.stringify(x.k) + ",\"value\":" + val(x) + "}").join(",") + "]"; }
 function spanJson(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): string {
   let s = "{\"traceId\":\"" + t.traceId + "\",\"spanId\":\"" + sp.spanId + "\"";
   if (sp.parentId) s += ",\"parentSpanId\":\"" + sp.parentId + "\"";

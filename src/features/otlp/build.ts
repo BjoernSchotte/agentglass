@@ -61,7 +61,7 @@ const CMAX = 65536; // content kept per field while building (the encoder trunca
 // the session title as the list shows it (faked under --redact), "" before there is one
 function titleNow(s: Sess): string { if (!s.headDone) loadHead(s); const t = titleOf(s); return t === "(no prompt yet)" ? "" : cut(t, 256); }
 // the project identity key (repo-view; --json repo.key unredacted: the encoder hashes it under --redact), "" = none
-function repoKeyOf(s: Sess): string { const id = identSync(s); return id && id.kind !== "none" ? id.key : ""; }
+export function repoKeyOf(s: Sess): string { const id = identSync(s); return id && id.kind !== "none" ? id.key : ""; }
 function startTurn(b: SessB, e: Ev, t: number): XTurn {
   const k = e.ts ? e.ts + "#" + String(b.tsN.get(e.ts) ?? 0) : "i" + String(b.cur.n);
   if (e.ts) b.tsN.set(e.ts, (b.tsN.get(e.ts) ?? 0) + 1);
@@ -352,6 +352,7 @@ function readSide(b: SessB, sd: Side, o: BuildOpts): void {
   }
 }
 function quietFor(s: Sess, now: number): number { return now - s.mtime; }
+export function busyOf(b: SessB): boolean { return busyNow(b); }
 function busyNow(b: SessB): boolean { const s = b.root; const keep = s.evs; s.evs = b.tail; const v = busy(s); s.evs = keep; return v; }
 // reads what is new and returns the turns that closed: on the next prompt / a close marker, or by the completeness rule
 // (spec 2.3): not busy, no subagent active, quiet for o.quietMs — or the process is gone (2 min quiet, then a busy turn is "interrupted")

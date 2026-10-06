@@ -25,7 +25,8 @@ import { labelOf } from "../model/project.ts";
 import { keyShown, reposCli } from "./repos/cli.ts";
 import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
 import { livePid } from "./query/eval.ts";
-import { type Alert, stateOf, render, severityOf } from "./rules/engine.ts";
+import { type Alert, stateOf, render, severityOf, flags } from "./rules/engine.ts";
+import type { AlertT } from "./otlp/logs.ts";
 import { rules } from "./rules/state.ts";
 import { onTrans } from "./rules/notify.ts";
 import { complete as ledgerComplete } from "./usage/ledger.ts";
@@ -50,7 +51,8 @@ const NOTIFY_OPT = opt("--notify", "", "--watch: also run rules.json's notify co
 const REPOS_OPT = opt("--repos", "", "--json: one object per project instead of sessions (worktrees and clones of one remote merge)", "", []);
 const DAYS_OPT = opt("--days", "N", "--repos: the last N days (default 7, 0 = all history); day clauses of --filter narrow it", "7", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
-const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint (--since, --content, --no-subagents, --native, --compression, --batch as for export; JSONL lines then only with --jsonl)", "", []);
+const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint, plus a logs stream of live state (heartbeat, session state, turn.open, alerts) to its /v1/logs (--since, --content, --detail, --no-subagents, --native, --compression, --batch as for export; JSONL lines then only with --jsonl)", "", []);
+const NOLOGS_OPT = opt("--no-logs", "", "--watch --otlp: send no logs stream (also otlp.logs: false)", "", []);
 const JSONL_OPT = opt("--jsonl", "", "--watch --otlp: also print the JSONL event lines", "", []);
 const GIT_OPT = opt("--git", "", "--json: run git log for each listed session's commits (full sha, +add −del, present|missing|elsewhere)", "", []);
 const RELATED_OPT = opt("--related", "<session>", "--json: everything ±N min around an event in the same project, all sessions and harnesses, conflicts flagged", "", []);
@@ -66,7 +68,7 @@ addCmd(cmd("", "agentglass", "interactive TUI", [], []));
 addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
 addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
 addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, REPOS_OPT, DAYS_OPT, RELATED_OPT, EVENT_OPT, AT_OPT, MINUTES_OPT, GIT_OPT, ALLP_OPT, PONLY_OPT], JSON_FIELDS));
-addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, NOALERTS_OPT, NOTIFY_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT], []));
+addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, NOALERTS_OPT, NOTIFY_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT, NOLOGS_OPT], []));
 addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
 addCmd(cmd("prices", "agentglass prices [--unpriced]", "model prices: list/set/alias/unset; every model seen with its price and source\n(user, alias, gateway, community, built-in, harness, unpriced)\n(--since today|<n>d|YYYY-MM-DD, --json; --unpriced exits 4 when a model has no price; see agentglass prices --help)", [], []));
 addCmd(cmd("prices set", "agentglass prices set <model> --in <$> --out <$>", "price a model ($/Mtok) in prices.json (--cache-read, --cache-write, --cache-write-1h; history re-prices, no re-index)", [], []));
@@ -76,12 +78,12 @@ addCmd(cmd("triage", "agentglass triage [opts]", "what is different about a sele
 addCmd(cmd("compare", "agentglass compare <s1> <s2> [--json]", "A vs B: two sessions or periods side by side (cost, turns, tokens, tools, errors, files, models)\n(--a '<expr>' --b '<expr>' for any two groups, e.g. this week vs last; see agentglass compare --help)", [], []));
 addCmd(cmd("rules check", "agentglass rules check [--json]", "validate ~/.agentglass/rules.json (alert rules): effective rules + line:col problems", [], []));
 addCmd(cmd("rules defaults", "agentglass rules defaults [--examples]", "print the built-in alert rules as a ready-to-edit rules.json", [], []));
-addCmd(cmd("export", "agentglass export --otlp <url> [opts]", "send sessions to an OpenTelemetry (OTLP/HTTP) backend as GenAI traces, one per turn\n(--since 7d|24h|30m|YYYY-MM-DD|all, --until, --harness h, --session id, --filter '<session clauses>',\n--no-subagents, --content (prompts/outputs/tool I/O, off by default), --resend, --dry-run, --batch N,\n--compression gzip|none, --native warn|skip|include, --status, --json; re-runs send nothing twice)", [], []));
+addCmd(cmd("export", "agentglass export --otlp <url> [opts]", "send sessions to an OpenTelemetry (OTLP/HTTP) backend as GenAI traces, one per turn\n(--since 7d|24h|30m|YYYY-MM-DD|all, --until, --harness h, --session id, --filter '<session clauses>',\n--no-subagents, --content (prompts/outputs/tool I/O, off by default), --detail none|meta (shell command, file path),\n--resend, --dry-run, --batch N, --compression gzip|none, --native warn|skip|include, --status, --json;\nre-runs send nothing twice; otlp.tls for a CA / client certificate)", [], []));
 addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
 addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
 addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
 addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method)", [], []));
-for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, REPOS_OPT, DAYS_OPT, RELATED_OPT, EVENT_OPT, AT_OPT, MINUTES_OPT, GIT_OPT, NOALERTS_OPT, NOTIFY_OPT, FORMAT_OPT, FIELDS_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT]) addCmd(optRow(o));
+for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, REPOS_OPT, DAYS_OPT, RELATED_OPT, EVENT_OPT, AT_OPT, MINUTES_OPT, GIT_OPT, NOALERTS_OPT, NOTIFY_OPT, FORMAT_OPT, FIELDS_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT, NOLOGS_OPT]) addCmd(optRow(o));
 function usage(): string {
   return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
     `--json --repos fields: key label kind worktrees[{name,top}] sessions live last costUsd unpricedTokens tokens{in,out} calls errors
@@ -125,8 +127,9 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 }
 
 export interface Opts { git: boolean; live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null; days: number; jsonl: boolean }
-// a consumer of the --watch poll loop (the OTLP live export): tick after every poll, stop before exit
-export interface Sink { tick: (now: number) => void; stop: () => void }
+// a consumer of the --watch poll loop (the OTLP live export): tick after every poll, stop before exit, alert per rules
+// transition of a watched top-level session (the rules run for a sink unless --no-alerts, JSONL lines or not)
+export interface Sink { tick: (now: number) => void; stop: () => void; alert: (s: Sess, a: AlertT) => void }
 interface JAl { rule: string; severity: string; value: number; unit: string; threshold: number; since: string; message: string; labels: { [k: string]: string }; acked: boolean }
 interface WAl { rule: string; severity: string; state: string; value: number; threshold: number; labels: { [k: string]: string } }
 interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: null; id: null; text: string; alert: WAl }
@@ -310,20 +313,22 @@ export function watch(o: Opts, sink: Sink | null): void {
         const l: { [k: string]: string } = {}; for (const [k, v] of r.labels) l[k] = v;
         const w: WAlert = { ts: new Date(t.at).toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind: "alert", tool: null, id: null,
           text: oneLine(msg), alert: { rule: r.id, severity: severityOf(t.to || t.from), state: t.state, value: t.v, threshold: t.thr, labels: l } };
-        if (shown) { out(JSON.stringify(w)); lastOut = Date.now(); }
+        if (shown && lines) { out(JSON.stringify(w)); lastOut = Date.now(); }
+        if (sink) { const ls: string[][] = []; for (const [k, v] of r.labels) ls.push([k, v]); sink.alert(s, { rule: r.id, severity: w.alert.severity, state: t.state, value: t.v, threshold: t.thr, labels: ls, message: oneLine(msg) }); }
         onTrans(s, r, t, a.acked, true, o.notify, rs.notify, a.v, msg, a.lvAt); // --watch: never bell/desktop; the command with --notify
       }
+      const f = flags(rs, s.path); s.attention = f[0] === "1"; s.stuck = f[1] ?? ""; // as the TUI's watchdog tick does: the state a sink reads
     }
   };
   if (lines) poll();
-  if (o.alerts && lines) { refreshProcs(); alerts(); } // alert lines are JSONL too: with a sink only with --jsonl
+  if (o.alerts && (lines || sink)) { refreshProcs(); alerts(); } // alert lines only with JSONL; a sink gets every transition
   let tick = 0;
   setInterval(() => {
     tick++;
     const now = Date.now();
     if ((o.forMs > 0 && now - t0 >= o.forMs) || (o.idle && now - lastOut >= IDLE_MS)) quit(); // a sink flushes first
     if (tick % 4 === 0) scan();
-    if (tick % 3 === 0) { refreshProcs(); liveDiff(); if (o.alerts && lines) alerts(); }
+    if (tick % 3 === 0) { refreshProcs(); liveDiff(); if (o.alerts && (lines || sink)) alerts(); }
     if (tick % 10 === 0) { refreshSlow(); liveDiff(); }
     if (lines) poll();
     if (sink) sink.tick(Date.now());
