@@ -48,6 +48,10 @@ ts = readTokens(f).toks; ok("pinned", (checkToken(ts, t, now)?.pin ?? "") === "0
 ok("pin is first-only", pinToken(f, tokenHash(t), "8899aabbccddeeff") === "" && (readTokens(f).toks[0]?.pin ?? "") === "0011223344556677", "re-pinned");
 ok("repin keeps the token", addToken(f, "ci", 0, now, true) === "" && checkToken(readTokens(f).toks, t, now)?.pin === "", "pin not cleared");
 pinToken(f, tokenHash(t), "0011223344556677");
+const tn = addToken(f, "nat", 0, now, false);
+ok("a native host id (UUID) pins", pinToken(f, tokenHash(tn), "4c4c4544-0042-3510-8051-b4c04f4e3032") === "" && checkToken(readTokens(f).toks, tn, now)?.pin === "4c4c4544-0042-3510-8051-b4c04f4e3032", JSON.stringify(readTokens(f).toks));
+ok("a host id with spaces or newlines does not", pinToken(f, tokenHash(tn), "a b") !== "" && pinToken(f, tokenHash(tn), "x\n- 1 2") !== "", "pinned");
+revokeToken(f, "nat");
 
 // rotate: both during grace, old fails after; the pin carries over
 const t2 = rotateToken(f, "ci", 3600000, 0, now);

@@ -12,7 +12,7 @@ import { gunzipCapped, gzipIsize } from "../../util/inflate.ts";
 import { createOwn, readOwn, myUid } from "../palette/rundir.ts";
 import { OS } from "../../platform/index.ts";
 import type { RecvCfg } from "./config.ts";
-import { type Tok, type TokStore, tokStore, reloadTokens, checkToken, pinToken, tokensFile, dirProblem, live } from "./tokens.ts";
+import { type Tok, type TokStore, tokStore, reloadTokens, checkToken, pinToken, pinnable, tokensFile, dirProblem, live } from "./tokens.ts";
 import { decodeTraces, decodeLogs, partialPb } from "./otlppb.ts";
 import { scrubResource, scrubNeeded } from "./scrub.ts";
 import { hostDir, appendReq, enforce, compressClosed, writePrivate, utcDay } from "./store.ts";
@@ -131,6 +131,7 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
   for (const r of rss) {
     const o = obj(r); if (!o) continue;
     const hid = resHostId(o);
+    if (hid && !pinnable(hid)) { refused += recordsOf(o, logs); if (!refusedIds) refusedIds = hid.slice(0, 64); continue; } // unpinnable: never stored, never pins
     if (hid && !pin) {
       const e = pinToken(rt.toks.file, tok.hash, hid);
       if (e) { rej(503, "write", "cannot record the host pin: " + e, [["Retry-After", "60"]]); return; }

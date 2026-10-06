@@ -13,8 +13,9 @@ import { randomBytes, b64url, ctEq } from "../../util/rand.ts";
 
 export interface Tok { name: string; hash: string; created: number; expires: number; pin: string } // expires 0 = never, pin "" = none yet
 export const HOST_RE = /^[a-z0-9][a-z0-9-]{0,15}$/; // the fleet host-name pattern: names become directories
-const HOSTID_RE = /^[0-9a-f]{16}$/;
-const LINE_RE = /^([a-z0-9][a-z0-9-]{0,15}) ([0-9a-f]{64}) (\d{1,15}) (\d{1,15}) ([0-9a-f]{16}|-)$/;
+const PIN_RE = /^[A-Za-z0-9._:-]{1,128}$/; // agentglass sends 16 hex digits; native exporters may send a machine id or a UUID
+export function pinnable(hostId: string): boolean { return PIN_RE.test(hostId) && hostId !== "-"; }
+const LINE_RE = /^([a-z0-9][a-z0-9-]{0,15}) ([0-9a-f]{64}) (\d{1,15}) (\d{1,15}) ([A-Za-z0-9._:-]{1,128})$/;
 export const TOKEN_RE = /^agr_[A-Za-z0-9_-]{43}$/;
 export const TOKEN_MAX = 64 * 1024; // a token file larger than this is refused (thousands of hosts fit)
 export function tokensFile(dir: string): string { return join(dir, "tokens"); }
@@ -130,7 +131,7 @@ export function checkToken(ts: Tok[], presented: string, now: number): Tok | nul
 }
 // record the first accepted host.id under this token (by hash); "" ok, else the write error
 export function pinToken(file: string, hash: string, hostId: string): string {
-  if (!HOSTID_RE.test(hostId)) return "bad host id";
+  if (!pinnable(hostId)) return "a host.id of letters, digits and . _ : - (at most 128) is needed to pin";
   return edit(file, (ts: Tok[]): string => { for (const t of ts) if (t.hash === hash && !t.pin) t.pin = hostId; return ""; });
 }
 
