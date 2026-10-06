@@ -19,7 +19,9 @@ export interface Sched { fixed: boolean; winch: boolean; lv: Level; unf: boolean
 const LV: Level[] = ["hot", "warm", "idle", "away"];
 const PEND_MS = 2000; // scan and slow while a young agent has no session yet (procs.ts PEND)
 const JUMP = 600000; // a job last run more than 10 min ago (suspend) or in the future (clock went back) runs now
-const ALARM = 1500; // watch and procs while an agent is live: alarm latency wins over the budget
+const ALARM = 1500; // watch, procs and tick while an agent is live: alarm latency wins over the budget (tick books the
+// numbers rule values read: session cost and tokens, tool call and error counts)
+function alarmJob(j: Job): boolean { return j === "watch" || j === "procs" || j === "tick"; }
 // base intervals hot / warm / idle / away; -1 = not scheduled at that level. hot never polls data faster than the old
 // fixed loop (procs 1.5 s, scan 3 s, slow 5 s, tick 500 ms): with agents streaming the level is hot nearly all day, and
 // faster polling there cost more than the old loop. hot is faster only where it is cheap: stat-only probe, render on change
@@ -70,7 +72,7 @@ export function base(j: Job, lv: Level, live: boolean, fixed: boolean, winch: bo
   if (fixed) return fixedMs(j);
   if (j === "watch") return live ? ALARM : 5000;
   const v = numAt(row(j), LV.indexOf(lv), -1);
-  return j === "procs" && live ? Math.min(v, ALARM) : v;
+  return (j === "procs" || j === "tick") && live && v >= 0 ? Math.min(v, ALARM) : v;
 }
 
 // effective interval: base stretched to 20 × the job's average cost (≤ ~5% of a core), capped for alarms; -1 = paused
@@ -91,7 +93,7 @@ export function every(sc: Sched, j: Job, live: boolean, armed: boolean): number 
     if (j === "scan") e = Math.max(e, 6000); // a new agent scans at once (main.ts: procs)
   }
   if ((j === "scan" || j === "slow") && sc.pend) e = Math.min(e, PEND_MS); // slow: its cwd links the log (pi, OpenCode, Gemini)
-  return live && (j === "watch" || j === "procs") ? Math.min(e, ALARM) : e;
+  return live && alarmJob(j) ? Math.min(e, ALARM) : e;
 }
 
 function lastOf(sc: Sched, j: Job): number { const x = sc.js.get(j); return x ? x.last : 0; }

@@ -262,6 +262,8 @@ function tick(): void {
 // history is being indexed (a first index, a resume far behind, a log of a finished agent that grew): the refresh level
 // stays hot so the gauge advances, and the cache saves every 30 s. A live agent's appends are ingest, not indexing.
 export function indexing(): boolean { return RUN.hist > 0; }
+// a live (pid-linked) log has bytes the ledger has not booked: the watch job books them before rules read the numbers
+export function liveBehind(): boolean { for (const s of sessions.values()) { if (s.pid <= 0) continue; const a = ledger.get(s.path); if (!a || pending(s, a)) return true; } return false; }
 export interface IndexState { done: number; total: number; left: number; bps: number; span: number }
 // done/total over every log; bps: history bytes per second (Rate), 0 = unknown; span: ms of indexing time it has sampled
 export function indexState(): IndexState { return { done: L.done, total: L.total, left: Math.max(0, L.total - L.done), bps: RATE.bps, span: RATE.span }; }

@@ -2,7 +2,8 @@
 # build + run every self-check (src/**/*.check.ts) and shell test (scripts/*.test.sh) in parallel; exit 1 if any fails
 # CHECK_JOBS: parallel jobs (default: CPU count). CHECK_SCRIPTC_FLAGS: check build flags (default: --optimization dev
 # --strip: -O0 with cached object shards, same program behavior, about half the compile time; --strip skips macOS's
-# dsymutil; empty for -O2; also used for the tests' own builds). A check with a "// check: timing" line (a timing budget) builds -O2 and runs alone after the others.
+# dsymutil; empty for -O2; also used for the tests' own builds). A check with a "// check: timing" line (a timing budget) builds -O2 and runs alone after the others;
+# a shell test with a "# check: timing" line (a latency bound) runs alone after the others too.
 # The shell tests share one agentglass, built here once, in parallel with the checks: AGENTGLASS_BIN uses a prebuilt one
 # instead; else AGENTGLASS_OUT (default .scriptc/check/agentglass) with CHECK_BIN_FLAGS (default: the check flags).
 # CHECK_RELEASE_OUT: also build the release binary (-O2, as shipped) there and smoke-test it, as one more job.
@@ -21,6 +22,7 @@ limit() {
   return $rc
 }
 
+run_test() { limit 600 env -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR -u AGENTGLASS_PRICES sh "$1" >"$2" 2>&1; } # run_test <file> <log>
 run_check() { # run_check <id> <executable> <log>: sets rc
   # hermetic: a fresh temp HOME/XDG per check and no agent-dir or agentglass path overrides from the caller, so no check
   # can read or write the user's real home (sessions, ~/.agentglass config, cache, run dir, palette, theme)
@@ -67,7 +69,8 @@ if [ "${1:-}" = --job ]; then
            [ "$(cat "$CHECK_OUT/bin.done")" = 0 ] || { echo "skipped: agentglass build failed" > "$log"; rc=1; }
          fi
          # hermetic via their own temp HOME: no agentglass path overrides from the caller
-         [ $rc != 0 ] || limit 600 env -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR -u AGENTGLASS_PRICES sh "$f" >"$log" 2>&1 || rc=$? ;;
+         if [ $rc = 0 ] && grep -q '^# check: timing' "$f"; then rc=deferred # runs after the pool, alone
+         else [ $rc != 0 ] || run_test "$f" "$log" || rc=$?; fi ;;
   esac
   echo "$rc $(($(date +%s) - t0))" > "$CHECK_OUT/$id.status"; exit 0
 fi
@@ -107,10 +110,14 @@ node scripts/check-plan.mjs "$si" "$sn" $all > "$CHECK_OUT/queue"
 grep -qx bin "$CHECK_OUT/queue" || bin="" # on another shard
 grep -qx release "$CHECK_OUT/queue" && release=1 || release=""
 xargs -n 1 -P "$jobs" sh scripts/check.sh --job < "$CHECK_OUT/queue"
-for j in $(grep '^check:' "$CHECK_OUT/queue"); do # the timing checks, one at a time on an idle machine
+for j in $(grep -E '^(check|test):' "$CHECK_OUT/queue"); do # the timing checks and tests, one at a time on an idle machine
   id=$(printf %s "$j" | tr '/:.' '___'); set -- $(cat "$CHECK_OUT/$id.status")
   if [ "$1" = deferred ]; then
-    t0=$(date +%s); run_check "$id" "$PWD/.scriptc/check/$id/c" "$CHECK_OUT/$id.log"; rm -rf ".scriptc/check/$id"
+    t0=$(date +%s)
+    case "$j" in
+      check:*) run_check "$id" "$PWD/.scriptc/check/$id/c" "$CHECK_OUT/$id.log"; rm -rf ".scriptc/check/$id" ;;
+      test:*) rc=0; run_test "${j#test:}" "$CHECK_OUT/$id.log" || rc=$? ;;
+    esac
     echo "$rc $(($2 + $(date +%s) - t0))" > "$CHECK_OUT/$id.status"
   fi
 done
