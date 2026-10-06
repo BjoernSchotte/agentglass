@@ -209,7 +209,8 @@ if (ft.length === 2) eq("fx totals", String(ft[0].spans[1].total) + " " + String
   const tools = rt.length ? rt[0].spans.filter((x: XSpan) => x.op === "execute_tool") : [];
   eq("call details kept for the encoder", tools.map((x: XSpan) => x.tool + "=" + (x.cmd || "-") + "|" + (x.target ? x.target.slice(cwd.length) : "-")).join(","), REDACT ? tools.map((x: XSpan) => x.tool + "=" + (x.cmd || "-") + "|" + (x.target ? x.target.slice(cwd.length) : "-")).join(",") : "Bash=git push origin main|-,Read=-|/src/a.ts");
   eq("turn title", rt.length ? String(rt[0].title !== "" && rt[0].title.length <= 256) + (REDACT ? "" : " " + rt[0].title) : "", REDACT ? "true" : "true fix login bug");
-  eq("turn repo key", rt.length ? rt[0].repoKey : "", "path:" + cwd);
+  const rk = rt.length ? rt[0].repoKey : ""; // macOS: /tmp is /private/tmp, the key holds the resolved path
+  eq("turn repo key", rk.startsWith("path:/private/") ? "path:/" + rk.slice(14) : rk, "path:" + cwd);
 }
 
 rmSync(tmp, { recursive: true, force: true });
