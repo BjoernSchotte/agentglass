@@ -11,6 +11,9 @@ export interface XSpan {
   // facts the encoder turns into attributes
   model: string; respModel: string; provider: string; respId: string; models: string[];
   nIn: number; nOut: number; cr: number; cw: number; rs: number; cost: number; unk: number; exact: boolean; hasUsage: boolean; total: boolean; // total = fx: the growth of the session totals since the last export (export.ts fxDelta)
+  cw1: number; // chat: the part of cw written with the 1-hour TTL (Anthropic prices it apart)
+  reqId: string; // chat (Claude): the line's top-level requestId, the last one seen for the request ("" = none)
+  cmd: string; target: string; // execute_tool: the normalized command (shell) / the path argument (file calls) — sent only with detail meta
   provId: string; // chat: the provider id the record logged (pi/OpenCode: its config's name — a gateway, openrouter …), "" = none
   bill: string; // chat: honest-costs mode of this request ("" on other spans)
   costSrc: string; costEst: boolean; // chat: where its cost's price came from (pricing.ts PSrc, harness, unpriced; "mixed" over several) and whether an alias priced part of it
@@ -24,6 +27,8 @@ export interface XTurn {
   spans: XSpan[]; // spans[0] = the root invoke_agent
   fx: number[]; // fx: the session totals when this turn closed (in, out, cache read, cache write, $, unpriced); [] = none
   fxOn: boolean; // fx: this turn carries the session's delta in the current send (export.ts fxDelta)
+  title: string; // the session title when the turn started (faked under --redact), cut to 256; sent only with otlp.titles or --redact
+  repoKey: string; // the project identity key (repo-view, as --json repo.key shows it), "" = none
 }
 
 export function attrS(k: string, v: string): Attr { return { k, t: "s", s: v, n: 0, b: false, a: [] }; }
@@ -36,7 +41,7 @@ export function newSpan(op: string, name: string, spanId: string, parentId: stri
   return {
     op, name, spanId, parentId, kind: op === "chat" ? 3 : 1, t0, t1: t0, est: false, err: "", errMsg: "", sess, agent: "", attrs: [], events: [],
     model: "", respModel: "", provider: "", respId: "", models: [],
-    nIn: 0, nOut: 0, cr: 0, cw: 0, rs: 0, cost: 0, unk: 0, exact: false, hasUsage: false, total: false, provId: "", bill: "", costSrc: "", costEst: false,
+    nIn: 0, nOut: 0, cr: 0, cw: 0, cw1: 0, reqId: "", cmd: "", target: "", rs: 0, cost: 0, unk: 0, exact: false, hasUsage: false, total: false, provId: "", bill: "", costSrc: "", costEst: false,
     tool: "", callId: "", mcp: "", prog: "", exit: -1, skill: "", superseded: false, input: "", output: "", args: "", result: "", open: false,
   };
 }

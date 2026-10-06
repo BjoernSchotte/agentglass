@@ -9,6 +9,9 @@ import { REDACT } from "../redact-on.ts";
 import { scrubText } from "../redact.ts";
 import { identNow, labelOf } from "../../model/project.ts";
 import { mcpServer } from "../usage/calls.ts";
+import { catOf } from "../callgraph/model.ts";
+import { hostId } from "../../util/hostid.ts";
+import { sha256Hex } from "../../util/sha256.ts";
 import { type InMode, inputTokens, providerOf } from "./requests.ts";
 import { type OtlpCfg } from "./config.ts";
 import { type Attr, type XSpan, type XTurn, attrS, attrI, attrD, attrB, attrA, serviceName, agentName } from "./types.ts";
@@ -46,6 +49,13 @@ export function vcsOf(cwd: string, branch: string, remote: string): Attr[] {
 
 // ── attributes per span (spec 3.3/3.4) ──
 function cut(s: string, n: number): string { return s.length > n ? s.slice(0, n) : s; }
+// the project key a receiver groups by (otlp-complete 3.4): as --json shows it; under --redact a salted hash, so sessions
+// still group by project without the name leaving
+export function repoKeyAttr(key: string): Attr[] { return key ? [attrS("agentglass.repo.key", REDACT ? sha256Hex("agentglass/repo/v1|" + key).slice(0, 16) : key)] : []; }
+// titles (otlp-complete 3.2): with otlp.titles, or under --redact (then the fake title the screen shows); always scrubbed
+export function titleAttr(title: string, c: OtlpCfg): Attr[] { return (c.titles || REDACT) && title ? [attrS("agentglass.session.title", cut(scrubText(title), 256))] : []; }
+// a file call's path, relative to the session's cwd when inside it
+function relTo(p: string, cwd: string): string { const d = cwd.replace(/\/+$/, ""); return d && p.startsWith(d + "/") ? p.slice(d.length + 1) : p; }
 function msgs(role: string, text: string, max: number): string { return JSON.stringify([{ role, parts: [{ type: "text", content: cut(text, max) }] }]); }
 function usage(out: Attr[], t: XTurn, sp: XSpan, c: OtlpCfg): void {
   const prov = sp.provider || providerOf("", sp.model);
@@ -53,6 +63,7 @@ function usage(out: Attr[], t: XTurn, sp: XSpan, c: OtlpCfg): void {
   out.push(attrI("gen_ai.usage.output_tokens", sp.nOut));
   if (t.h !== "kiro" || sp.cr > 0) out.push(attrI("gen_ai.usage.cache_read.input_tokens", sp.cr));
   if (t.h !== "kiro" || sp.cw > 0) out.push(attrI("gen_ai.usage.cache_write.input_tokens", sp.cw));
+  if (sp.cw1 > 0) out.push(attrI("agentglass.usage.cache_write_1h.input_tokens", sp.cw1)); // priced apart from 5-minute writes
   if (sp.rs > 0) out.push(attrI("gen_ai.usage.reasoning.output_tokens", sp.rs));
   const unknown = sp.unk > 0 && sp.cost === 0;
   if (!unknown) out.push(attrD("agentglass.usage.cost", sp.cost)); // unknown cost is omitted, never 0
@@ -76,10 +87,12 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
   if (prov) a.push(attrS("gen_ai.provider.name", prov));
   if (t.cwd) a.push(attrS("process.working_directory", t.cwd));
   for (const v of vcs) a.push(v);
+  for (const v of repoKeyAttr(t.repoKey)) a.push(v);
   if (sp.op === "chat") {
     if (sp.model) a.push(attrS("gen_ai.request.model", sp.model));
     if (sp.respModel) a.push(attrS("gen_ai.response.model", sp.respModel));
     if (sp.respId) a.push(attrS("gen_ai.response.id", sp.respId));
+    if (sp.reqId) a.push(attrS("agentglass.request.id", sp.reqId)); // joins Claude Code's own api_request records (request_id)
     a.push(attrS("agentglass.billing.mode", sp.bill || "unknown"));
     if (sp.hasUsage) usage(a, t, sp, c);
     if (sp.provId) a.push(attrS("agentglass.provider.id", sp.provId));
@@ -92,6 +105,7 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
     if (root) {
       const nk = nativeKey(t.h); if (nk) a.push(attrS(nk, t.rootId));
       a.push(attrI("agentglass.turn.index", t.index));
+      for (const v of titleAttr(t.title, c)) a.push(v);
       if (t.compacted) a.push(attrB("gen_ai.conversation.compacted", true));
       if (sp.skill) a.push(attrS("gen_ai.skill.name", sp.skill));
     } else a.push(attrS("agentglass.session.id", sp.sess));
@@ -106,6 +120,11 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
     if (sp.prog) a.push(attrS("process.executable.name", sp.prog));
     if (sp.exit >= 0 && sp.prog) a.push(attrI("process.exit.code", sp.exit));
     if (sp.skill) a.push(attrS("gen_ai.skill.name", sp.skill));
+    if (c.detail === "meta" || c.content) { // call details (otlp-complete 3.5): the normalized command, the target path
+      const k = sv ? -1 : catOf(sp.tool);
+      if (k === 0 && sp.cmd) a.push(attrS("agentglass.tool.command", cut(scrubText(sp.cmd), 200)));
+      if ((k === 1 || k === 2) && sp.target) a.push(attrS("agentglass.tool.target", cut(scrubText(relTo(sp.target, t.cwd)), 256)));
+    }
     if (c.content && sp.args) a.push(attrS("gen_ai.tool.call.arguments", cut(sp.args, c.contentMax)));
     if (c.content && sp.result) a.push(attrS("gen_ai.tool.call.result", cut(sp.result, c.contentMax)));
   }
@@ -116,7 +135,7 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
   return tables(a, c);
 }
 // rename + drop last; under --redact every string passes the scrubber (vcs.* never get here then)
-function tables(a: Attr[], c: OtlpCfg): Attr[] {
+export function tables(a: Attr[], c: OtlpCfg): Attr[] {
   const out: Attr[] = [];
   for (const x of a) {
     if (c.drop.has(x.k)) continue;
@@ -135,7 +154,7 @@ function val(x: Attr): string {
   if (x.t === "b") return "{\"boolValue\":" + (x.b ? "true" : "false") + "}";
   return "{\"arrayValue\":{\"values\":[" + x.a.map((v: string) => "{\"stringValue\":" + JSON.stringify(v) + "}").join(",") + "]}}";
 }
-function attrsJson(a: Attr[]): string { return "[" + a.map((x: Attr) => "{\"key\":" + JSON.stringify(x.k) + ",\"value\":" + val(x) + "}").join(",") + "]"; }
+export function attrsJson(a: Attr[]): string { return "[" + a.map((x: Attr) => "{\"key\":" + JSON.stringify(x.k) + ",\"value\":" + val(x) + "}").join(",") + "]"; }
 function spanJson(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): string {
   let s = "{\"traceId\":\"" + t.traceId + "\",\"spanId\":\"" + sp.spanId + "\"";
   if (sp.parentId) s += ",\"parentSpanId\":\"" + sp.parentId + "\"";
@@ -148,13 +167,18 @@ function spanJson(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): string {
 }
 let host = "";
 function hostName(): string { if (!host) { try { host = execFileSync("uname", ["-n"], { encoding: "utf8" }).trim(); } catch (e) { host = "unknown"; } } return host; }
-function resource(h: string, ver: string, c: OtlpCfg): Attr[] {
-  const a: Attr[] = [attrS("service.name", serviceName(h))];
-  if (ver) a.push(attrS("service.version", ver));
+// a harness's resource; h = "" is agentglass's own (the logs stream's heartbeat: otlp-complete 2.4)
+export function resource(h: string, ver: string, c: OtlpCfg): Attr[] {
+  const a: Attr[] = [attrS("service.name", h ? serviceName(h) : "agentglass")];
+  if (h ? ver : BUILD.version) a.push(attrS("service.version", h ? ver : BUILD.version));
   a.push(attrS("os.type", process.platform === "darwin" ? "darwin" : "linux"));
+  a.push(attrS("host.id", hostId())); // a salted hash of machine id and uid (fleet spec 3): a receiver's per-host key
   if (c.hostName) a.push(attrS("host.name", hostName()));
-  a.push(attrS("agentglass.usage.input_tokens.semantics", c.inputTokens === "provider" ? "provider" : "inclusive"));
-  a.push(attrS("agentglass.source", "transcript"));
+  if (h) {
+    a.push(attrS("agentglass.usage.input_tokens.semantics", c.inputTokens === "provider" ? "provider" : "inclusive"));
+    a.push(attrS("agentglass.source", "transcript"));
+  }
+  if (REDACT) a.push(attrB("agentglass.redact", true)); // titles, paths and commands are fakes
   return tables(a, c);
 }
 // one request: a ResourceSpans per (harness, harness version), one scope "agentglass"
