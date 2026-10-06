@@ -1,12 +1,12 @@
 // agentglass — keyboard and mouse: raw input → key names → actions
 // SPDX-License-Identifier: Apache-2.0
-import { run } from "./util/fs.ts";
 import { clean, numAt } from "./util/text.ts";
 import { S, say } from "./state.ts";
 import { H, tabAt } from "./hooks.ts";
 import { buildView, titleOf, parentOf, isOpen, expanded, collapsed, current } from "./model/sessions.ts";
-import { procView, procAt, procSess, tmuxTarget, tmuxTargetNow, sharedDaemon } from "./model/procs.ts";
-import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, sendTmux, owner, sendPrompt, resume, killPid, trash } from "./actions.ts";
+import { procView, procAt, procSess, sharedDaemon } from "./model/procs.ts";
+import { NONE_PANE, paneOfSess, paneNowPid, sendTo, focusOn, paneText } from "./mux/index.ts";
+import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, owner, sendPrompt, resume, killPid, trash } from "./actions.ts";
 import { openTranscript, moveCur, cycleSub } from "./ui/transcript.ts";
 import { openDetail, stepDetail } from "./ui/detail.ts";
 import { prevKind, prevIdx, prevKids } from "./ui/list.ts";
@@ -53,7 +53,7 @@ export function onInput(k: string): void {
         S.mode = S.prevMode; S.inputErr = ""; S.inputErrCol = -1;
         const v = S.inputText;
         if (S.inputAction === "send") { const s = target(); if (s && v.trim()) sendPrompt(s, v); }
-        else if (S.inputAction === "sendpane") { const p = procAt(S.psel); const t = p ? tmuxTargetNow(p.pid) : ""; if (t && v.trim()) sendTmux(t, v); }
+        else if (S.inputAction === "sendpane") { const p = procAt(S.psel); if (p && v.trim()) sendTo(paneNowPid(p.pid), v); }
       }
     } else if (k === "esc") { S.mode = S.prevMode; inputEv("esc"); S.inputErr = ""; S.inputErrCol = -1; }
     else if (k === "tab") inputEv("tab");
@@ -160,7 +160,7 @@ export function onInput(k: string): void {
         buildView(); const i = S.view.indexOf(root); if (i >= 0 && cur !== root && !isOpen(root)) S.sel = i;
       }
     }
-    else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }
+    else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) { const pk = s.pid ? paneOfSess(s).kind : ""; ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (" + (pk === "none" ? "live" : pk) + ")" : " (headless)"), "send", ""); } }
     else if (k === "R") { const s = current(); if (s) resume(s); }
     else if (k === "x") { const s = current(); const w = s && s.pid ? sharedDaemon(targetPid()) : ""; if (w) say("warn", w); else if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
     else if (k === "D") { const s = current(); if (s) { if (s.pid) say("warn", "session is live — stop it first"); else if (!harnessOf(s.h).files) say("warn", harnessOf(s.h).label + " sessions can't be moved to the trash"); else confirm("Move “" + clean(titleOf(s)).slice(0, 40) + "” to " + OS.trashName + "?", "trash"); } }
@@ -178,12 +178,12 @@ export function onInput(k: string): void {
       else if (p) confirm(k === "x" ? "SIGTERM " + p.h + " pid " + p.pid + "?" : "SIGKILL " + p.h + " pid " + p.pid + " (no cleanup)?", k === "x" ? "TERM" : "KILL");
     }
     else if (k === "s") {
-      const p = procAt(S.psel); const s = p ? procSess(p) : null; const t = p ? tmuxTargetNow(p.pid) : "";
-      if (s) ask("send to " + s.h + " (live)", "send", "");
-      else if (t) ask("send to tmux " + t, "sendpane", ""); // fresh agent without a session file yet
-      else say("warn", "no session linked and not in tmux");
+      const p = procAt(S.psel); const s = p ? procSess(p) : null; const t = p && !s ? paneNowPid(p.pid) : NONE_PANE;
+      if (s) { const pk = paneOfSess(s).kind; ask("send to " + s.h + " (" + (pk === "none" ? "live" : pk) + ")", "send", ""); }
+      else if (t.kind !== "none") ask("send to " + paneText(t), "sendpane", ""); // fresh agent without a session file yet
+      else say("warn", "no session linked and not in a tmux or herdr pane");
     }
-    else if (k === "a") { const p = procAt(S.psel); const t = p ? tmuxTargetNow(p.pid) : ""; if (t && process.env.TMUX) { run("tmux", ["switch-client", "-t", t]); say("ok", "switched to " + t); } else say("warn", t ? "not inside tmux — attach with: tmux a -t " + t : "not running in tmux"); }
+    else if (k === "a") { const p = procAt(S.psel); if (p) focusOn(paneNowPid(p.pid)); }
     S.psel = Math.max(0, Math.min(S.psel, procView.length - 1));
   }
 }

@@ -1,6 +1,6 @@
 // agentglass — self-check for version parsing/ordering: sh scripts/check.sh
 // SPDX-License-Identifier: Apache-2.0
-import { parseVersion, compareVersions, parseDevTag, versionOfTag, installMethod } from "./version.ts";
+import { parseVersion, compareVersions, parseDevTag, versionOfTag, installMethod, versionInfo, CONTRACT } from "./version.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 function cmp(a: string, b: string): number { const x = parseVersion(a); const y = parseVersion(b); return x && y ? compareVersions(x, y) : 99; }
@@ -24,5 +24,7 @@ ok("linuxbrew", installMethod("/home/linuxbrew/.linuxbrew/Cellar/agentglass-dev/
 ok("script", installMethod("/home/u/.local/bin/agentglass", "stable", "{\"method\":\"script\",\"path\":\"/home/u/.local/bin/agentglass\"}") === "script", "");
 ok("script marker for another path", installMethod("/usr/local/bin/agentglass", "stable", "{\"method\":\"script\",\"path\":\"/home/u/.local/bin/agentglass\"}") === "unknown", "");
 ok("source", installMethod("/home/u/code/agentglass/agentglass", "local", "") === "source", "");
+// the CLI contract number (docs/cli-contract.md): an integer, in --version --json
+ok("contract", CONTRACT === 1 && versionInfo()["contract"] === 1, String(versionInfo()["contract"]));
 console.log(bad ? bad + " failed" : "version: all checks passed");
 process.exit(bad ? 1 : 0);

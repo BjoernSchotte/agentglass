@@ -97,5 +97,7 @@ ok("mark: at the end, the cursor", markedAt("status is", 9, 80) === "▏", marke
   ok("long label: text and error stay visible", plain.indexOf("abc 1") >= 0 && plain.indexOf("is not a number") >= 0 && width(plain) <= 80, plain);
 }
 S.inputErr = ""; S.inputErrCol = -1; S.mode = "list";
+// Processes: "a" jumps to the agent's pane, tmux or herdr (no tmux-only wording)
+{ const f = footer("list", 1, 160); ok("processes: a jump", f.indexOf("a jump") >= 0 && f.indexOf("tmux") < 0, f); }
 console.log(bad ? bad + " failed" : "footer: all checks passed");
 process.exit(bad ? 1 : 0);

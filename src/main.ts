@@ -30,6 +30,7 @@ import { compactHelp } from "./features/clihelp.ts";
 import { debugExtras } from "./util/selfmem.ts";
 import { WAKE_ALL } from "./util/fs.ts";
 import { gitGen, gitTouches } from "./features/vcs/attrib.ts";
+import { MUX_EVENTS } from "./mux/events.ts";
 // feature modules: import each once here for its side effects (they register on H)
 import "./features/replay.ts";
 import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
@@ -42,6 +43,7 @@ import "./features/ticker.ts";
 import "./features/watchdog.ts";
 import "./features/usage/cache.ts";
 import "./features/repos/ident.ts";
+import "./mux/attr.ts";
 import "./features/usage/stats.ts";
 import "./features/repos/tab.ts";
 import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
@@ -174,7 +176,10 @@ function body(j: Job, now: number): () => void {
   };
 }
 function warnJob(m: string): void { say("err", m); S.dirty = true; }
+// agentglass as a herdr plugin popup: a successful jump or resume in herdr quits it (the popup must not cover the pane)
+const POPUP = (process.env.HERDR_PLUGIN_ID ?? "") !== "";
 function turn(): void {
+  if (POPUP && MUX_EVENTS.jumped) quit();
   const now = Date.now(); turnNo++;
   relevel(now);
   for (const j of due(sc, now, live(), armed())) runJob(sc, j, body(j, now), () => Date.now(), warnJob);
@@ -190,8 +195,8 @@ function loop(): void {
 
 function onFocus(f: string): void {
   const now = Date.now();
-  if (f === "out") { act.focusOut = now; sc.unf = true; return; }
-  act.focusOut = 0; act.input = now; sc.unf = false; // the user looks again: hot, full repaint (the terminal may have dropped frames)
+  if (f === "out") { act.focusOut = now; sc.unf = true; S.unfocused = true; return; }
+  act.focusOut = 0; act.input = now; sc.unf = false; S.unfocused = false; // the user looks again: hot, full repaint (the terminal may have dropped frames)
   resetFrame(); S.dirty = true; VIS.body = ""; VIS.head = "";
   for (const j of ["size", "procs", "scan", "probe", "tick"]) { const x = sc.js.get(j); if (x) x.last = 0; } // a fresh look at once, not what the unfocused cadence left
 }
@@ -204,7 +209,7 @@ function onData(d: Uint8Array): void {
   }
   const now = Date.now();
   if (user) {
-    act.input = now; sc.unf = false; // a key or click means the user looks, even if the terminal's focus-in got lost
+    act.input = now; sc.unf = false; S.unfocused = false; // a key or click means the user looks, even if the terminal's focus-in got lost
     const x = sc.js.get("size"); // a resize usually comes with input: check it, at most every 250 ms
     if (!x || now - x.last >= 250) runJob(sc, "size", termSize, () => Date.now(), warnJob);
   }
