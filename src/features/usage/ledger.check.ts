@@ -6,7 +6,7 @@ import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { H } from "../../hooks.ts";
 import { L } from "./record.ts";
-import { ledger, indexing, indexState, reapplyAll, complete, PACE, TICK_STATS } from "./ledger.ts";
+import { ledger, indexing, indexState, reapplyAll, complete, PACE, TICK_STATS, paceResetForTest } from "./ledger.ts";
 import { heavy } from "./record.ts";
 import "./codec.ts"; // the day-map text codec (packHeavy)
 import { gaugeText } from "./progress.ts";
@@ -67,12 +67,27 @@ eq("(d) same bytes, no live agent: indexing", String(indexing()), "true");
 a.pid = 4242; let big = ""; while (big.length < 1100000) big += asst(1); grow(a, big); tick();
 eq("(d) live session > 1 MB behind: indexing", String(indexing()), "true");
 // (e) no byte cap: a 3 MB log is read within a few ticks of a 1 s slice
-PACE.sliceMs = 1000; a.pid = 0;
+PACE.sliceMs = 1000; PACE.share = 1; a.pid = 0; // no process budget in a check: the slice alone
 let more = ""; while (more.length < 3 * 1048576) more += asst(2); const d = sess("d", more);
 let k = 0; for (; k < 20 && !(L.done === L.total && ledger.has(d.path) && (ledger.get(d.path)?.off ?? 0) === d.size); k++) tick();
 eq("(e) 3 MB + 1 MB indexed within 20 ticks", String(k < 20 && L.done === L.total), "true");
 eq("(e) not indexing once done", String(indexing()), "false");
 const st = indexState(); eq("indexState done = total", String(st.done === st.total && st.left === 0), "true");
+// (f) the process budget: with no CPU share left (the rest of the process takes it all) history still advances, one step
+// (≤ 1 MB) a second, and no more than that
+PACE.sliceMs = 50; PACE.share = 0.001; paceResetForTest();
+let huge = ""; while (huge.length < 12 * 1048576) huge += asst(3); const f = sess("f", huge); huge = "";
+const offF = (): number => ledger.get(f.path)?.off ?? 0;
+const tf = Date.now(); let at03 = -1; let at31 = -1;
+while (Date.now() - tf < 3100) { // a 50 ms tick that keeps the core busy between ticks
+  tick(); const w = Date.now(); while (Date.now() - w < 50) { /* busy */ }
+  if (at03 < 0 && Date.now() - tf >= 300) at03 = offF();
+}
+at31 = offF();
+eq("(f) budget spent: history still advances (one step a second)", String(at31 > at03), "true");
+eq("(f) …and no more than ~3 steps in 2.8 s", String(at31 - at03 <= 3 * 1048576), "true");
+eq("(f) not done", String(at31 < f.size), "true");
+PACE.share = 1; sessions.delete(f.path); ledger.delete(f.path);
 
 // the gauge text by room; the ETA only after 10 s of rate samples
 const now = 1000000;

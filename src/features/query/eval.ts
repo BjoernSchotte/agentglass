@@ -10,7 +10,8 @@ import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/recor
 import { DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
-import { accOf, ledger, callsOf, unread } from "../usage/ledger.ts";
+import { accOf, ledger, callsOf, unread, LGEN } from "../usage/ledger.ts";
+import type { Acc } from "../usage/record.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
@@ -55,13 +56,15 @@ function stateOf(s: Sess): string {
 }
 function errorsOf(s: Sess): number { const a = ledger.get(s.path); let n = 0; if (a) for (const d of a.days.values()) for (const st of heavy(d).tt.values()) n += st.err; return n; }
 // session model ∪ the models of its call rows, per (path, L.ver)
-const models = new Map<string, { ver: number; ss: string[] }>();
+// keyed on the session's ledger entry (object, offset) and its own model: rows only change when the entry moves
+const models = new Map<string, { a: Acc | null; off: number; m: string; ss: string[] }>();
 function modelsOf(s: Sess): Val {
-  const hit = models.get(s.path); if (hit && hit.ver === L.ver) return hit.ss.length ? V(hit.ss) : UNK;
+  const a = ledger.get(s.path) ?? null; const hit = models.get(s.path);
+  if (hit && a && hit.a === a && hit.off === a.off && hit.m === s.model && !unread.has(s.path)) return hit.ss.length ? V(hit.ss) : UNK;
   const set = new Set<string>(); if (s.model) set.add(s.model.toLowerCase());
   const seen = new Set<number>(); const r = callsOf(s);
   for (let i = 0; i < r.n; i++) { const m = r.model[i] + 0; if (m >= 0 && !seen.has(m)) { seen.add(m); set.add(nameOf(DICT.model, m).toLowerCase()); } }
-  const ss = [...set]; models.set(s.path, { ver: L.ver, ss });
+  const ss = [...set]; const b = ledger.get(s.path) ?? null; models.set(s.path, { a: b, off: b ? b.off : -1, m: s.model, ss });
   return ss.length ? V(ss) : UNK;
 }
 // --redact: the real values (realMeta) — the screen shows fakes, filters (and pins saved without --redact) mean the real
@@ -340,6 +343,22 @@ function rowsMayMatch(ds: Map<string, Day>, cut: number, days: Set<string>, anyD
   if (cut !== cutDay.cut) { cutDay.cut = cut; cutDay.key = localOf(cut).day; }
   for (const k of ds.keys()) if (k >= cutDay.key && (anyDay || days.has(k))) return true;
   return false;
+}
+// matchSession with the session's row/day verdict kept: it stands while the session's ledger entry (object, offset), the
+// retention cut and the price generation (day.cost clauses) are unchanged; the session clauses are tested every time
+// (live, age, title… change without the ledger). A pinned call filter while agents stream re-reads only what moved.
+export interface RowMemo { a: Acc | null; off: number; cut: number; gen: number; hit: boolean }
+export const MEMO_STATS = { evals: 0 };
+export function matchSessionMemo(f: Compiled, s: Sess, memo: Map<string, RowMemo>): boolean {
+  if (!all1(f.sess, s)) return false;
+  if (!f.call.length && !f.day.length) return true;
+  const a = ledger.get(s.path) ?? null; const cut = callCutoff(); const m = memo.get(s.path);
+  if (a && m && m.a === a && m.off === a.off && m.cut === cut && m.gen === LGEN.reapply && !unread.has(s.path)) return m.hit;
+  MEMO_STATS.evals++;
+  const hit = matchSession(f, s, null);
+  const b = ledger.get(s.path) ?? null; // reading rows may have replaced a stale entry
+  memo.set(s.path, { a: b, off: b ? b.off : -1, cut, gen: LGEN.reapply, hit });
+  return hit;
 }
 // matchSession would read this session's calls file first (not read in this run yet, rows possibly in the window)
 const NO_DAYS = new Set<string>();
