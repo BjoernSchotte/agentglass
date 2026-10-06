@@ -227,6 +227,28 @@ for (const first of ["copy", "original"]) {
 reset();
 { sess(CONT_A, ""); const b = sess(CONT_B, ""); complete(b); eq("continuation, copy alone: settled like a full index", show(b), "cr 4000 out 9 tools 0 turns 1"); }
 
+// the same in Claude's real shape: a typed prompt carries no session_id (only sessionId, rewritten in the copy), and every
+// line of the background file says "sessionKind":"bg". A prompt follows the session_id of the lines before it in its file;
+// before the first such line (the very first prompt) a background file's line is the copy. The original owns all of its
+// prompts whichever file is read first and whatever the paths' order; the continuation's own prompt stays its own
+{
+  const bare = (l: string, file: string, bg: boolean): string => l.slice(0, -1) + ",\"sessionId\":\"" + file + "\"" + (bg ? ",\"sessionKind\":\"bg\"" : "") + "}";
+  const sid = (l: string, file: string, s: string, bg: boolean): string => bare(l, file, bg).slice(0, -1) + ",\"session_id\":\"" + s + "\"}";
+  const H2 = [prompt("cp1", D1), asst("cp-m1", D1, 1000, 5, ""), prompt("cp2", D1b), asst("cp-m2", D1b, 2000, 7, "")];
+  const ra: string[] = []; const rb: string[] = [];
+  for (const l of H2) { const p = l.indexOf("\"type\":\"user\"") >= 0; ra.push(p ? bare(l, CA, false) : sid(l, CA, CA, false)); rb.push(p ? bare(l, CB, true) : sid(l, CB, CA, true)); }
+  put(CONT_A, ra);
+  put(CONT_B, rb.concat([sid(asst("cb-x0", D2, 1, 1, ""), CB, CB, true), bare(prompt("cb2", D2b), CB, true), sid(asst("cb-m2", D2b, 4000, 9, ""), CB, CB, true)]));
+  for (const first of ["copy", "original"]) {
+    reset();
+    const a = sess(CONT_A, ""); const b = sess(CONT_B, "");
+    all(first === "copy" ? [b, a] : [a, b]);
+    eq("bg continuation, real shape (" + first + " first): the original owns its prompts", show(a) + " | " + show(b), "cr 3000 out 12 tools 0 turns 2 | cr 4001 out 10 tools 0 turns 1");
+  }
+  reset();
+  { sess(CONT_A, ""); const b = sess(CONT_B, ""); complete(b); eq("bg continuation, real shape, copy alone: settled like a full index", show(b), "cr 4001 out 10 tools 0 turns 1"); }
+}
+
 // a session started after /clear keeps its process's first session_id on its own lines: that names no copy, so the root
 // still owns what its forked subagent copied
 {

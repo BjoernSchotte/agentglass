@@ -11,6 +11,7 @@ import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
 import { OWN, claim } from "../features/usage/owners.ts";
 import { own } from "../util/own.ts";
+import { numAt } from "../util/text.ts";
 import type { AddFn, HarnessAdapter, Live } from "./types.ts";
 import { toolArg, blockText, isNoise, leadTag, prompts } from "./common.ts";
 
@@ -204,13 +205,22 @@ function claudeResult(a: Acc, l: string): void {
 }
 // false = the line names this log's own session (session_id: the session its process wrote it in; a background
 // continuation's copied lines keep the original's, sessionId is the new file's). Another session it names may own the
-// line's message (Acc.xs → carriers)
+// line's message (Acc.xs → carriers). A typed prompt carries no session_id: it belongs with the lines before it in its
+// file (a copied block is contiguous), kept in a.x[0] (Claude's adapter state, persisted: 0 none yet, 1 own, 2 another);
+// before the first, a line of a background file ("sessionKind":"bg", a.x[1] = 1) is a copy (such a file starts with
+// the original's history), any other is undecided as before. OWN.bg: of two equal copies, the non-background file wins
+const SID_OWN = 1; const SID_OTHER = 2;
 function copied(a: Acc, o: Obj): boolean {
-  const sid = str(o["session_id"]); if (!sid || !a.p) return true;
-  if (a.p.indexOf(sid) >= 0) return false;
+  while (a.x.length < 2) a.x.push(0);
+  if (str(o["sessionKind"]) === "bg") a.x[1] = 1;
+  const sid = str(o["session_id"]);
+  if (!sid || !a.p) return !a.p || numAt(a.x, 0, 0) !== SID_OWN;
+  if (a.p.indexOf(sid) >= 0) { a.x[0] = SID_OWN; return false; }
+  a.x[0] = SID_OTHER;
   if (!a.xs.has(sid)) a.xs.add(own(sid));
   return true;
 }
+OWN.bg = (path: string): boolean => { const a = OWN.accs().get(path); return !!a && numAt(a.x, 1, 0) === 1; };
 // a user line another log carries too (same uuid): its owner books the prompt
 function owned(a: Acc, o: Obj): boolean { const u = str(o["uuid"]); return !u || claim(a, "u:" + u, str(o["timestamp"]), copied(a, o)); }
 function userText(o: Obj): string { const m = obj(o["message"]); const c = m ? m["content"] : null; return typeof c === "string" ? c : blockText(c); }

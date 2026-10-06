@@ -4,8 +4,9 @@
 // Order of appearance: the copy's timestamp; then a line that names this log's own session (Claude's session_id: the session
 // a line was written in; a background continuation's copies keep the original's) before one that does not; then a root
 // session before a subagent; then a subagent that is not a fork before a fork (a fork starts with a copy of its parent agent's history);
-// then a log at home before one that is not (Claude: a twin of the session under another project dir is a copy); then the
-// path. A file that claims an earlier copy than the current owner's takes the message over and the owner re-reads
+// then a log that is no background continuation before one that is (Claude's "sessionKind":"bg": it starts with a copy of
+// the original's history, and a copied typed prompt names no session); then a log at home before one that is not (Claude:
+// a twin of the session under another project dir is a copy); then the path. A file that claims an earlier copy than the current owner's takes the message over and the owner re-reads
 // its whole log without it (OWN.restart), so per-day buckets, tool calls and turns move along. Owned ids live in each Acc
 // (mo, persisted with the ledger as text, decoded on first use); the index across files is built from them when a file
 // first claims a message.
@@ -20,6 +21,7 @@ export const OWN = {
   sub: (path: string): boolean => false,
   fork: (path: string): boolean => false,
   home: (path: string): boolean => true,
+  bg: (path: string): boolean => false,
   restart: (path: string): void => {},
 };
 interface Own { p: string; t: number }
@@ -48,6 +50,7 @@ function before(k1: number, p1: string, k2: number, p2: string): boolean {
   if (k1 !== k2) return k1 < k2;
   const s1 = OWN.sub(p1); if (s1 !== OWN.sub(p2)) return !s1;
   if (s1) { const f1 = OWN.fork(p1); if (f1 !== OWN.fork(p2)) return !f1; }
+  const b1 = OWN.bg(p1); if (b1 !== OWN.bg(p2)) return !b1;
   const h1 = OWN.home(p1); if (h1 !== OWN.home(p2)) return h1;
   return p1 < p2;
 }
