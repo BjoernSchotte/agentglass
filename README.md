@@ -1065,19 +1065,23 @@ agentglass --watch --otlp         # the rest, live (heartbeat, session state, al
   needs `--listen-public` **and** TLS; plain HTTP on a public address is refused.
 - **Built-in HTTPS:** `agentglass receive --tls-cert server.crt --tls-key server.key` runs `agentglass-receive-tls`
   (in the same release archive, installed next to `agentglass`; a separate binary because HTTPS needs scriptc's C
-  backend). Certificate and key are re-read within 5 s when the files change; `receive status` shows the expiry. No
-  client certificates: for mutual TLS use a Collector (below).
+  backend; `install.sh` and `agentglass update` install it, Homebrew does not yet). Both binaries must be of one
+  release. Certificate and key are re-read within 5 s when the files change; a key that does not belong to the
+  certificate is refused (at start: exit 2; on reload: the last good pair keeps serving); `receive status` shows the
+  expiry. No client certificates: for mutual TLS use a Collector (below).
 - **Behind a reverse proxy:** terminate TLS there and proxy HTTP/1.1 to `127.0.0.1:4318` with a body limit of 8 MB;
   agentglass ignores `X-Forwarded-For`.
 - **Limits:** 8 MB per request on the wire, 64 MB decompressed (a gzip bomb stops at the cap, whatever its trailer
-  claims), 20,000 spans or log records per request, 120 requests and 128 MB per token per minute (`429` with
-  `Retry-After`), 64 connections, 10 s for the headers, 60 s for the body. `Expect: 100-continue` is answered at once.
+  claims), 20,000 spans or log records and 100 JSON objects/arrays per record (2,010,000) per request, 120 requests
+  and 128 MB per token per minute and 8 bodies in flight per token (`429` with `Retry-After`), 64 connections, one
+  request per connection, 10 s for the headers, 60 s for the body. `Expect: 100-continue` is answered at once.
 - **Storage:** `~/.agentglass/hub/<host>/traces-YYYYMMDD.jsonl` and `logs-…` (UTC days, one request per line, larger
   requests split into lines of at most 8 MB), directories `0700`, files `0600`. Closed days are gzipped an hour after
   midnight UTC. `receive.maxDiskMB` (2048) and `receive.retentionDays` (30): older files go first, then the oldest
   closed days of any host; today's files are never deleted. When today's files alone exceed the budget, ingest
   answers `503` (exporters retry; agentglass's own resends from its transcripts) and `receive status` says so.
-- **Scrubbing at ingest** (a second line behind redaction at the source): `user.email` is always dropped; prompts,
+- **Scrubbing at ingest** (a second line behind redaction at the source), in every attribute list wherever it sits
+  (links and unknown members too): `user.email` is always dropped; prompts (also the harnesses' native `prompt`),
   outputs, tool arguments and results and status messages unless `receive.keepContent: true`; e-mail addresses and
   key-like tokens are masked in titles, commands, paths, exception messages and log bodies; `receive.drop` lists more
   keys to drop (e.g. `process.working_directory`). `receive status` names a host that sent content.
@@ -1094,7 +1098,8 @@ $(id -u):$(id -g)`): the reader skips files owned by another user (the image's d
 others can write.
 
 **The viewer side:** a `fleet.hosts` entry with `"otlp": "~/.agentglass/hub"` (optional `"hosts": {"ci": "<host id>"}`
-names, `"trust"`, `"maxAgeDays"`) makes every host in that directory a fleet host: rows with its name in the list,
+names, `"trust"`, `"maxAgeDays"`; `"includeNative"` is not supported yet: Codex, Gemini CLI and OpenCode native records
+are ignored, Claude Code's `api_request` records count for sessions agentglass does not export) makes every host in that directory a fleet host: rows with its name in the list,
 `agentglass fleet --json`, `fleet status` (the source entry reports skipped files). The reader keeps its place in
 `~/.agentglass/fleet/hub-<source>.state` (0600): a restart resumes without re-reading. Hub hosts report exactly (day rows,
 owned Claude messages): fleet's exact merge counts a message held by a hub host and another host once. A turn's cost reaches the hub when the turn closes (spans

@@ -121,5 +121,8 @@ export function hubSourceFrom(o: Obj, who: string, w: string[]): HubSrcCfg {
   if (typeof a === "number" && Number.isInteger(a as number) && (a as number) >= 1 && (a as number) <= 3650) age = a as number; else if (a !== undefined) w.push(who + ": maxAgeDays must be an integer 1–3650 — using 30");
   let nat = false; const n = o["includeNative"];
   if (typeof n === "boolean") nat = n as boolean; else if (n !== undefined) w.push(who + ": includeNative must be true or false — using false");
+  // spec 5.5: Codex, Gemini CLI and OpenCode records would join agentglass's only approximately, on fields no fixture
+  // verifies yet; until then the switch says so instead of doing nothing silently
+  if (nat) w.push(who + ": includeNative is not supported yet — Codex, Gemini CLI and OpenCode native records are ignored (Claude Code's api_request records count without it)");
   return { dir: expandHome(str(o["otlp"])), names, trust, maxAgeDays: age, includeNative: nat };
 }

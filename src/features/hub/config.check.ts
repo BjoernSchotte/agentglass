@@ -35,7 +35,7 @@ ok("v4-mapped loopback is not private by policy", !privateAddr("::ffff:127.0.0.1
 const w: string[] = [];
 const h = hubSourceFrom({ name: "hub", otlp: "~/h", hosts: { ci: "0011223344556677", "Bad": "0011223344556677", lap: "xyz" }, trust: "payload", maxAgeDays: 7, includeNative: true }, "fleet host hub", w);
 ok("hub source", h.dir === join(HOME, "h") && h.names.get("0011223344556677") === "ci" && h.trust === "payload" && h.maxAgeDays === 7 && h.includeNative, JSON.stringify([h.dir, h.trust, h.maxAgeDays]));
-ok("bad host ids/names warned", w.length === 2 && h.names.size === 1, JSON.stringify(w));
+ok("bad host ids/names warned, includeNative said to be ignored", w.length === 3 && h.names.size === 1 && (w[2] ?? "").indexOf("includeNative is not supported yet") >= 0, JSON.stringify(w));
 const w2: string[] = [];
 const h2 = hubSourceFrom({ otlp: "/srv/o", trust: "x", maxAgeDays: 0, includeNative: "y" }, "fleet host t", w2);
 ok("hub defaults", h2.trust === "" && h2.maxAgeDays === 30 && !h2.includeNative && w2.length === 3, JSON.stringify(w2));
