@@ -22,13 +22,15 @@ export interface Live {
   approval: (s: Sess) => string; // the watchdog's estimate (a stub in checks)
   warn: (msg: string) => void;
   sent: number; lastOk: number;
+  halt: string; // a TLS failure stopped sending for the run (the message); turns stay queued, unmarked
 }
 export function newLive(since: number): Live {
   return { b: new Map<string, SessB>(), q: [], qSpans: 0, lastFlush: 0, dropped: false, fails: 0, retryAt: 0, appr: new Map<string, string>(), apprAt: new Map<string, number>(), late: new Map<string, number[]>(), since, content: false, subagents: true, ticks: 0, running: new Set<string>(),
-    want: (s: Sess) => !!s, skip: (t: XTurn) => !t, approval: approvalOf, warn: (m: string) => { process.stderr.write("agentglass: " + m + "\n"); }, sent: 0, lastOk: 0 };
+    want: (s: Sess) => !!s, skip: (t: XTurn) => !t, approval: approvalOf, warn: (m: string) => { process.stderr.write("agentglass: " + m + "\n"); }, sent: 0, lastOk: 0, halt: "" };
 }
 // over MAX_SPANS: the oldest whole turns go (unmarked, so a later export resends them)
 export function enqueue(L: Live, t: XTurn): void {
+  if (L.halt) return; // nothing goes out this run: the turn stays unmarked for the next export
   L.q.push(t); L.qSpans += t.spans.length;
   while (L.qSpans > MAX_SPANS && L.q.length > 1) {
     const d = L.q.shift(); if (!d) break;
@@ -37,7 +39,7 @@ export function enqueue(L: Live, t: XTurn): void {
   }
 }
 function flush(L: Live, now: number, send: (turns: XTurn[]) => boolean): void {
-  if (!L.q.length || now < L.retryAt) return;
+  if (!L.q.length || now < L.retryAt || L.halt) return;
   L.lastFlush = now;
   L.q = L.q.filter((t: XTurn) => !L.skip(t)); // a retry after a partial failure: what got through is marked now
   if (!L.q.length) { L.qSpans = 0; return; }

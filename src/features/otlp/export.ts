@@ -22,7 +22,7 @@ import { newLive, liveTick, liveStop } from "./live.ts";
 import { type XTurn } from "./types.ts";
 import { newSessB, finish, fxChat } from "./build.ts";
 import { encodeRequest } from "./encode.ts";
-import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl } from "./config.ts";
+import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl, tlsOf, tlsUrlErr } from "./config.ts";
 import { type ExpState, loadState, saveState, lock, unlock, marked, markTurn, markFx } from "./state.ts";
 import { type Native, detectNative, applyPolicy, projectDirs } from "./native.ts";
 import { GZ, sendBatch } from "./send.ts";
@@ -286,6 +286,8 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
   const hx = expandHeaders(c, envMap());
   if (hx.err) { fail("usage", hx.err); return 2; }
   const pe = plainOk(o.url, c, hx.headers.length > 0); if (pe) { fail("usage", pe); return 2; }
+  const tx = tlsOf(c, envMap(), "TRACES"); if (tx.err) { fail("usage", tx.err); return 2; }
+  const te = tlsUrlErr(o.url, tx.tls); if (te) { fail("usage", te); return 2; }
   const held = lock(o.url);
   if (held !== 0) { fail("busy", "another export to " + safeUrl(o.url) + " is running, pid " + String(held)); return 3; }
   try {
@@ -302,9 +304,9 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
     if (gz) { const d = join(otlpDir(), "tmp"); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } if (!gzipProbe(d)) { gz = false; GZ.note = "this build cannot write compressed bodies: sending uncompressed"; err(GZ.note); } }
     const bs = batches(b.turns, o.batch, MAX_BYTES, c);
     const ak = acks(bs);
-    let spans = 0; let reqs = 0; let bad = 0; let rejected = 0; const msgs: string[] = []; const sent = new Set<string>(); const sess = new Set<string>();
+    let spans = 0; let reqs = 0; let bad = 0; let rejected = 0; const msgs: string[] = []; const sent = new Set<string>(); const sess = new Set<string>(); let halt = "";
     for (const x of bs) {
-      const r = sendBatch({ url: o.url, headers: hx.headers, timeoutS: c.timeoutS, gzip: gz && !GZ.off, live: false }, x.json, realSleep);
+      const r = sendBatch({ url: o.url, headers: hx.headers, timeoutS: c.timeoutS, gzip: gz && !GZ.off, live: false, tls: tx.tls }, x.json, realSleep);
       reqs++;
       if (r.gzipRefused) { gz = false; st.gzip = false; st.gzipNote = "refused gzip on " + new Date().toISOString().slice(0, 10); err(safeUrl(o.url) + " refused gzip: sending uncompressed JSON (remembered; --compression gzip tries again)"); }
       const done = ack(ak, x, r.ok);
@@ -312,12 +314,13 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
         spans += x.spans; rejected += r.rejected; if (r.msg) msgs.push(r.msg);
         for (const t of done) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); sent.add(tkey(t)); sess.add(t.path); }
         st.last = Date.now(); saveState(o.url, st); // an interrupted run keeps what got through
-      } else { bad++; msgs.push(r.msg); }
+      } else { bad++; msgs.push(r.msg); if (r.final) { halt = r.msg; break; } } // a TLS failure: the other requests would fail alike
     }
     if (o.compression === "gzip" && !st.gzip && bad === 0 && bs.length) { st.gzip = true; st.gzipNote = ""; }
     saveState(o.url, st);
-    const summary = { endpoint: safeUrl(o.url), spans, turns: sent.size, sessions: sess.size, requests: reqs, failedRequests: bad, rejectedSpans: rejected, skippedMarked: b.marked, skippedNative: b.native, errors: msgs.slice(0, 10) };
+    const summary = { endpoint: safeUrl(o.url), halted: halt || null, spans, turns: sent.size, sessions: sess.size, requests: reqs, failedRequests: bad, rejectedSpans: rejected, skippedMarked: b.marked, skippedNative: b.native, errors: msgs.slice(0, 10) };
     if (o.json) out(JSON.stringify(summary));
+    else if (halt) err(halt + " — nothing more was sent (" + String(spans) + " spans got through); run export again once it is fixed");
     else if (!bs.length) err("nothing to export" + (b.marked ? " (" + String(b.marked) + " turns already sent — --resend sends them again)" : "") + (b.native ? " (" + String(b.native) + " turns left to the harnesses' own export)" : ""));
     else {
       err("exported " + String(spans) + " spans in " + String(sent.size) + " turns from " + String(sess.size) + " sessions (" + String(reqs) + " requests)" + (rejected ? ", " + String(rejected) + " spans rejected by the backend" : ""));
@@ -351,6 +354,8 @@ function liveExport(args: string[]): number {
   if (!curlBin()) { fail("usage", "export needs curl (AGENTGLASS_CURL)"); return 2; }
   const hx = expandHeaders(c, envMap()); if (hx.err) { fail("usage", hx.err); return 2; }
   const pe = plainOk(url, c, hx.headers.length > 0); if (pe) { fail("usage", pe); return 2; }
+  const tx = tlsOf(c, env, "TRACES"); if (tx.err) { fail("usage", tx.err); return 2; }
+  const te = tlsUrlErr(url, tx.tls); if (te) { fail("usage", te); return 2; }
   const held = lock(url); if (held !== 0) { fail("busy", "another export to " + safeUrl(url) + " is running, pid " + String(held)); return 3; }
   const st = loadState(url); if (st.warn) err(st.warn);
   let gz = (comp || c.compression) === "gzip" && (st.gzip || comp === "gzip");
@@ -366,9 +371,11 @@ function liveExport(args: string[]): number {
     fxDelta(turns, st, false);
     const bs = batches(turns, batch, MAX_BYTES, c); const ak = acks(bs);
     for (const x of bs) {
-      const r = sendBatch({ url, headers: hx.headers, timeoutS, gzip: gz && !GZ.off, live: true }, x.json, realSleep);
+      if (L.halt) return false;
+      const r = sendBatch({ url, headers: hx.headers, timeoutS, gzip: gz && !GZ.off, live: true, tls: tx.tls }, x.json, realSleep);
       if (r.gzipRefused) { gz = false; st.gzip = false; st.gzipNote = "refused gzip on " + new Date().toISOString().slice(0, 10); err(safeUrl(url) + " refused gzip: sending uncompressed JSON"); }
       const done = ack(ak, x, r.ok);
+      if (r.final) { L.halt = r.msg; err("otlp: " + r.msg + " — sending stopped for this run; the turns stay unsent and `agentglass export` sends them once it is fixed"); return false; }
       if (!r.ok) { all = false; if (L.fails === 0) err("otlp: " + r.msg + " — retrying with backoff"); continue; }
       if (r.msg) err("otlp: " + r.msg);
       for (const t of done) { const ss = sessions.get(t.path); markTurn(st, t.path, t.h, t.rootId, ss ? epochOf(ss) : "", t.key); fxAccepted(st, t); }
@@ -388,7 +395,7 @@ function liveExport(args: string[]): number {
         for (const n of d.notes) err(n);
       }
       liveTick(L, t, send);
-      if (t - statusAt >= 60000) { statusAt = t; err("otlp: " + String(L.sent) + " spans sent, " + String(L.qSpans) + " queued, last ok " + (L.lastOk ? new Date(L.lastOk).toISOString() : "never")); }
+      if (t - statusAt >= 60000) { statusAt = t; err("otlp: " + (L.halt ? "halted: " + L.halt + "; " : "") + String(L.sent) + " spans sent, " + String(L.qSpans) + " queued, last ok " + (L.lastOk ? new Date(L.lastOk).toISOString() : "never")); }
     },
     stop: (): void => { try { liveStop(L, sendWith(Math.min(5, c.timeoutS)), 5000); saveState(url, st); } finally { unlock(url); } },
   });
