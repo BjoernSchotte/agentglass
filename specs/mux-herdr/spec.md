@@ -1,24 +1,41 @@
-# Live agents in herdr panes — spec
+# herdr, first-class — spec
 
-Status: **draft** (2026-10-06). Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 2 (after 2026.10.4).
-Plan: [plan.md](plan.md).
+Status: **draft** (2026-10-06; scope widened the same day: the herdr plugin is part of this spec, not a follow-up).
+Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 2 (after 2026.10.4). Plan: [plan.md](plan.md).
 
 ## Goal
-Sessions whose agent runs in a [herdr](https://github.com/herdrdev/herdr) pane get the same live actions as sessions in
-tmux panes, through one multiplexer port that a later backend (zellij, wezterm, …) plugs into:
-1. **Send** (`s`): the prompt goes to the agent through `herdr agent prompt`, which refuses while the agent waits at an
-   approval or question dialog.
-2. **Jump** (`R` on a live session, `a` in Processes): `herdr agent focus` moves herdr's attached clients to the pane.
-3. **Approval signal**: herdr's `blocked` state raises the approval alert (◆) for every harness, within one alarm look
-   after it is read, instead of the CPU heuristic's ≥ 20 s.
-4. **Exact links**: herdr's `agent_session` (the agent's own session id or file, reported by herdr's official
-   integrations) links a process to its session where agentglass guesses by cwd today (pi, OpenCode 1.x, Gemini) or
-   links nothing.
-5. **Where it runs**: preview, Processes and `--json` show the pane (`herdr webapp › 2 · w7:p1A`, `mux{…}`); a filter
-   key `mux` selects by multiplexer.
+Two halves, shipped together:
 
-No herdr polling per tick: the pane map is refreshed when agent processes change and every 30 s, statuses are read only
-while an approval can be pending.
+**A. herdr agents are first-class in agentglass** — through one multiplexer port (`src/mux/`, adapters tmux, herdr,
+none) that a later backend (zellij, wezterm, …) plugs into:
+1. **Send** (`s`): `herdr agent prompt`, refused while the agent waits at an approval or question dialog.
+2. **Jump** (`R` on a live session, `a` in Processes): `herdr agent focus` moves herdr's attached clients to the pane.
+3. **Resume** (`R` on an ended session, agentglass running inside herdr): a new herdr tab in the workspace that owns the
+   session's directory, the agent started there with its resume arguments (`herdr agent start`), focused.
+4. **Approval**: herdr's `blocked` state raises the approval alert (◆) for every harness on the first look after it is
+   read, instead of the CPU heuristic's ≥ 20 s.
+5. **Exact links**: herdr's `agent_session` (the agent's own session id or file, reported by herdr's official
+   integrations) links a process to its session where agentglass guesses by cwd today or links nothing.
+6. **herdr state in the row**: a herdr-hosted session's row shows herdr's state (working, blocked, done-unseen), the
+   preview and Processes show the pane (`herdr webapp › 2 · w7:p1A`).
+7. **Grouping by herdr workspace/worktree**: filter key `workspace`, `cost --by workspace`, Stats dimension
+   `workspace`, a palette action "Sessions in this herdr workspace"; ended sessions are attributed to the workspace whose
+   worktree holds their directory.
+8. **Machine contract**: `--json` field `mux`, filter key `mux`, and a versioned **CLI contract** (`contract: 1` in
+   `--version --json`, `docs/cli-contract.md`, a contract test in CI) that the plugin — and any other tool — builds on.
+
+**B. agentglass is first-class inside herdr** — a public plugin repo `BjoernSchotte/agentglass-herdr`
+(`herdr plugin install BjoernSchotte/agentglass-herdr`), POSIX sh, no dependencies beyond herdr and agentglass, using
+only the CLI contract:
+1. a popup with the agentglass TUI; 2. "Open in agentglass" for the focused pane's agent; 3. an `agentglass://` link
+handler; 4. opt-in sidebar tokens `$ag_cost` / `$ag_alert` (fixed width, updated on state change only); 5. a
+`rules.json` notify recipe that forwards only alerts herdr cannot see (stalled, loop, long command, spinning, cost);
+6. README with install and `--redact` screenshots; 7. its own CI (shellcheck, fixture tests against a fake herdr and a
+fake agentglass, a contract check against the newest agentglass release) and tagged releases; 8. a minimum-version
+check: the plugin needs CLI contract ≥ 1 (the first agentglass release that ships A).
+
+No herdr polling per tick: the pane map is refreshed when agent processes change and every 30 s; statuses are read
+while an approval can be pending, and for the row state at most every 5 s while the TUI is focused (30 s unfocused).
 
 ## Why (user value)
 - On this machine all 32 running agents live in herdr panes. For every one of them `s` says "session is live outside
@@ -29,6 +46,10 @@ while an approval can be pending.
 - In the live check (below) the two agents herdr reported `blocked` were Codex sessions that agentglass did not show as
   live at all. herdr's `agent_session` gives the exact pid ↔ session pair.
 - tmux lock-in: send/jump/approval are coded against tmux in four modules. A port makes the next multiplexer one adapter.
+- The user works inside herdr all day: workspaces are their tasks (often one git worktree each). Cost and alerts belong
+  where they look (herdr's sidebar), and the full view should be one key away (a popup), not another terminal window.
+- A plugin built on agentglass internals breaks on every release; a versioned CLI contract lets it (and scripts, CI
+  jobs, other plugins) depend on agentglass safely.
 
 ## Today (current code, with path:line refs)
 - **Send**: `sendPrompt` (`src/actions.ts:86-112`) resolves a live session's tmux target (`tmuxTargetNow`,
@@ -56,6 +77,18 @@ while an approval can be pending.
   (`src/platform/linux.ts:94`); macOS returns nothing (`src/platform/darwin.ts:27`).
 - **`--json`**: `jsonSess` (`src/features/cli.ts:172-183`) has `live`, `pid`, `status`; no multiplexer field.
   `JSON_FIELDS` `cli.ts:61-62`.
+- **Resume of an ended session** (`actions.ts:122-129`): leaves the TUI, runs `<agent> <resume args>` in agentglass's
+  own terminal (`HarnessAdapter.resume`, e.g. `claude.ts:367` `["--resume", id]`), comes back when it exits.
+- **Row state**: `glyphKind`/`statusGlyph` (`src/ui/list.ts:31-38`) — spinner while busy or written < 8 s ago, `●`
+  live idle, `○` recent, `·` old; the 2-column badge slot (`H.rowBadges`, `list.ts:85-88`) shows ⚠/◆
+  (`watchdog.ts:146`).
+- **Grouping**: `--by day|model|harness|project|session` (`src/features/queries.ts:259`); no notion of a multiplexer
+  workspace. Worktrees fold into their repo (repo-view), so herdr worktree workspaces already group under the repo.
+- **Machine interface**: `--json` fields (`cli.ts:61-62`), `--fields`/`--format` (cli-agent-mode), structured
+  `--help --json` with per-command field lists (`src/features/clihelp.ts`), `--version --json`
+  (`src/features/version.ts:53-57`: version, channel, commit, date, platform, installMethod) — **no contract version**;
+  nothing says which fields a script may rely on. `agentglass open <ref> --new-instance` exists
+  (`src/features/palette/open.ts:65,85`).
 - **Tests**: `scripts/check.sh:27-33` runs checks with a temp HOME but passes `HERDR_*` through; inside a herdr pane
   every check inherits `HERDR_SOCKET_PATH` of the user's real server.
 
@@ -74,11 +107,13 @@ while an approval can be pending.
 | `agent prompt` on a pane reported `blocked` | `{"error":{"code":"agent_blocked",…}}` on stderr, exit 1, nothing typed |
 | `agent prompt` with `$HOME`, backticks, quotes, `ü €` | delivered literally, followed by Enter |
 | no server at the socket | exit 1, error code `server_not_running` |
+| Plugin runtime environment (herdr source, `src/app/api/plugins/runtime.rs:40-80`) | `HERDR_SOCKET_PATH`, `HERDR_BIN_PATH`, `HERDR_PLUGIN_ID`, `HERDR_PLUGIN_CONTEXT_JSON`, `HERDR_PLUGIN_EVENT(_JSON)`, `HERDR_PLUGIN_CLICKED_URL`, the focused `HERDR_WORKSPACE_ID`/`TAB_ID`/`PANE_ID`; plugin config and state dirs |
+| Plugin registry location | the isolated server created its `.plugins.lock` under its own `$XDG_CONFIG_HOME/herdr`: plugins are kept per config dir, so the integration test can `herdr plugin link` without touching the user's plugins (confirmed in Task I1, Open question 6) |
 
 Send/focus/blocked were exercised only against an isolated herdr server (own `XDG_CONFIG_HOME`, own socket, a stand-in
 agent process), never against the user's panes.
 
-## Design
+## Design A: agentglass
 
 ### 1. The multiplexer port (`src/mux/`)
 Same shape as the platform port (`src/platform/types.ts` + one adapter per OS) and the harness adapters
@@ -94,7 +129,7 @@ Same shape as the platform port (`src/platform/types.ts` + one adapter per OS) a
   - `MuxLink { pid, key, path }`: an exact pid ↔ session pair the multiplexer knows (`key` = `<harness>:<id>`, or `path`
     for a session reported as a file).
   - `Mux { id, label, present, refresh, paneOf, paneOfSession, links, title, status, send, focus }` (signatures in the
-    plan, Task 1). `present(now)` is cheap (no spawn); `refresh(procs, now, force)` runs from the slow job;
+    plan, Task A1). `present(now)` is cheap (no spawn); `refresh(procs, now, force)` runs from the slow job;
     `title(p)` and `status(p, due, now)` are per-look reads for the watchdog; `send`/`focus` show their own toasts.
 - `src/mux/tmux.ts` — today's tmux code moved behind the port, behavior unchanged (pane map by tty, 30 s / unknown-tty
   refresh, titles once per look, `send-keys -l` + delayed Enter, `switch-client` only inside tmux).
@@ -176,9 +211,13 @@ In `observe` for a session in a herdr pane:
 `HarnessAdapter.approvalTitle`/`hiddenApproval` comments say "its multiplexer pane's title" / "without a multiplexer that
 reports dialogs". tmux keeps its title path unchanged.
 
-**Cost**: one `agent list` ≈ 2.2 ms CPU (agentglass + herdr client + server). Worst case (a session quiet mid-turn for
-< 60 s, every look): 0.15 % of one core; after 60 s: 0.04 %; refresh every 30 s: < 0.01 %. Nothing while every herdr
-session writes its log or is idle. Within the tui-footprint budget (≤ 2 % unfocused, all in).
+**Row-state reads** (11): besides the gated reads, the slow job re-reads statuses (one `agent list` per server) at most
+every 5 s while the TUI is focused and a herdr-hosted live session is in the Sessions list or Processes, every 30 s
+otherwise (the map refresh). A gated read in between counts as one.
+
+**Cost**: one `agent list` ≈ 2.2 ms CPU (agentglass + herdr client + server). Row state while focused: 0.04 % of one
+core; unfocused: < 0.01 %. Worst case on top (a session quiet mid-turn for < 60 s, every look): 0.15 %; after 60 s:
+0.04 %. Within the tui-footprint budget (≤ 2 % unfocused, all in).
 
 ### 6. Send
 `sendPrompt` for a live session: `p = paneNow(s)` (forced refresh of the owning adapter), then `sendTo(p, msg)`.
@@ -205,6 +244,8 @@ session writes its log or is idle. Within the tui-footprint budget (≤ 2 % unfo
   Side effect: herdr marks a `done` agent as seen (a user action; accepted).
 - **tmux**: unchanged (`switch-client` inside tmux, else "not inside tmux — attach with: tmux a -t …").
 - **none**: "already running (pid N)" (`R`), "not in a tmux or herdr pane" (`a`).
+- **agentglass as the plugin's popup** (`HERDR_PLUGIN_ID` set in its own environment): after a successful herdr jump or
+  resume (10) agentglass quits, so the popup closes and the user lands in the pane.
 Labels: footer `a jump` (was "attach tmux"); help `s` "send prompt (live: its tmux or herdr pane; else headless)", `R`
 "resume, or jump to the live agent's pane", Processes `s` "send prompt to the agent's pane", `a` "jump to the agent's
 pane (tmux, herdr)"; palette titles "Send prompt to the agent's pane…" / "Jump to the agent's pane".
@@ -226,7 +267,156 @@ pane (tmux, herdr)"; palette titles "Send prompt to the agent's pane…" / "Jump
 startup toast). Environment: `AGENTGLASS_HERDR` (`off` | path to the binary), `AGENTGLASS_HERDR_SOCKET` (only this
 server). README: a "herdr" section (what works, versions, the opt-out, the duplicate-bell recipe).
 
-### Failure modes
+### 10. Resume inside herdr
+`R` on a session without a live process, while agentglass itself runs in a herdr pane (its own `HERDR_ENV=1` and
+`HERDR_SOCKET_PATH`; the herdr adapter is present) and the harness is one herdr can start (`claude`, `codex`, `gemini`,
+`opencode`, `pi`, `kiro` — `herdr agent start --kind`):
+1. **Workspace**: the workspace whose `worktree.checkout_path` contains the session's real cwd (longest match), else the
+   one whose `worktree.repo_root` is the session's repo top (repo-view `Ident.top`), else a new workspace
+   (`herdr workspace create --cwd <cwd> --label <repo label> --no-focus`).
+2. `herdr tab create --workspace <id> --cwd <cwd> --label <title, ≤ 24 chars; the session id's first 8 chars under
+   --redact> --no-focus` → the new root pane.
+3. `herdr agent start <harness>-<id8> --kind <harness> --pane <pane> -- <HarnessAdapter.resume(s)>`, **spawned** (it
+   waits up to 30 s for the agent to be ready); then `herdr agent focus <pane>`; toast "resumed in herdr: webapp ›
+   <tab>". Failure → the parsed error, the empty tab is closed (`herdr tab close`).
+4. The new process links through `agent_session` (4) or agentglass's own linking on the next pass.
+Outside herdr, or a harness herdr cannot start (fx): today's in-terminal resume. A config switch is not needed: inside
+herdr a new tab is what the user expects; outside nothing changes.
+
+### 11. herdr state in the row
+For a live session in a herdr pane with a fresh status (read within 30 s and not older than the log's last write):
+- `working` → the spinner, even when the log is quiet (herdr sees screen activity: a long tool run, a thinking model);
+- `blocked` → ◆ via the approval alert (5);
+- `done` → herdr's "finished, not seen yet": the badge slot shows a green `✓` until herdr reports `idle` (the user
+  looked at the pane) or the user selects the session in agentglass for > 1 s (agentglass then does **not** tell herdr:
+  marking seen is herdr's business);
+- `idle`/`unknown` → agentglass's own glyph.
+The row key includes the herdr status, so a change redraws the row. Sessions in tmux or none: unchanged.
+
+### 12. Grouping by herdr workspace and worktree
+- **Workspace of a session**: live in a herdr pane → that pane's workspace; ended → the workspace whose
+  `worktree.checkout_path` contains the session's real cwd (longest match; workspaces without a worktree match by
+  their pane cwds is not attempted). From the last workspace list of any present server; none → no workspace.
+- **Filter key `workspace`** (session, text): the workspace label (`workspace is webapp`, `workspace ~ feat-`);
+  under `--redact` matches the real label, shows `…` in chips (like pinned values).
+- **`--by workspace`** for `cost`, `sessions` aggregation and the Stats dimension: key = label, extra field
+  `workspaceId` (rows without a workspace: key `(none)`, `workspaceId` null).
+- **Palette**: "Sessions in this herdr workspace" (session context, live or mapped) pins `workspace is <label>`.
+- **Repos tab**: unchanged — herdr worktree workspaces are worktrees of their repo already.
+
+### 13. The CLI contract (what the plugin and any script may rely on)
+- `agentglass --version --json` gains `"contract": 1`. The number is an integer; **additive changes** (a new field, a
+  new command, a new enum value, a new flag) keep it; **removing or renaming** a field/command/flag, changing a field's
+  type or meaning, or changing an exit code bumps it. A bump keeps the previous contract's behavior for at least one
+  release where possible and is listed in CHANGELOG under "Contract".
+- `docs/cli-contract.md` (new, in the agentglass repo) lists contract 1 exactly:
+  - `--version --json`: `version`, `contract`;
+  - `--json [--live] [--all-projects] [--limit N] [--filter …] --fields <f> --format json|jsonl|csv`: fields `id`,
+    `harness`, `title`, `cwd`, `live`, `pid`, `status`, `costUsd`, `attention`, `stuck`, `alerts`, `mux`
+    (`mux_kind`, `mux_pane`, `mux_workspace`, `mux_tab`, `mux_status` flattened in csv);
+  - `session <ref>` with the same fields; exit 3 no session, 4 ambiguous (cli-agent-mode);
+  - `cost --since today|7d|30d --by workspace|project|harness --format json|csv --fields key,workspaceId,costUsd`;
+  - `open <ref|agentglass://…> [--new-instance]`; exit 0 opened, 4 not found;
+  - `rules.json` `notify.command`: the alert JSON on stdin (`rule`, `severity`, `state`, `session`, `harness`,
+    `message` …, as `--watch` alert lines) — fields listed;
+  - environment: `AGENTGLASS_REDACT`, `AGENTGLASS_AGENT=0`, `AGENTGLASS_HERDR`.
+- `scripts/contract.test.sh` (agentglass CI) runs every listed command against a fixture HOME and asserts each field
+  exists with its type, and that `--help --json` lists each field for its command. A change that breaks it fails CI
+  until the contract number and the doc move.
+- The plugin requires `contract >= 1` (checked once per agentglass binary path + mtime, cached in its state dir); a
+  missing `contract` means an older agentglass → the plugin says "agentglass with CLI contract 1 needed (≥ <first
+  release with it>): `agentglass update` or `brew upgrade agentglass`".
+
+## Part B: the plugin repo `BjoernSchotte/agentglass-herdr`
+Public, Apache-2.0, GitHub topic `herdr-plugin` (herdr's marketplace). herdr ≥ 0.7.5 (startup hooks, sidebar tokens),
+Linux + macOS. POSIX sh only (`dash`-clean, shellcheck-clean): no Node, no jq, no build step — `herdr plugin install`
+clones and registers it. It calls agentglass only through the CLI contract (13), herdr only through its documented CLI.
+
+### B1. Layout
+```
+herdr-plugin.toml          manifest (id "agentglass", version = the release tag without "v")
+bin/ag-env.sh              shared: find agentglass + herdr, contract check, lock, csv helpers (sourced)
+bin/ag-pane.sh             pane entrypoints: tui | open | link
+bin/ag-action.sh           actions: open-here, open-link, workspace-cost, tokens-on, tokens-off
+bin/ag-tokens.sh           tokens on | off | run
+bin/ag-event.sh            event + startup hook: ag-tokens.sh run (when enabled)
+bin/ag-alert.sh            the notify recipe (rules.json notify.command)
+test/fake-herdr.sh, test/fake-agentglass.sh, test/run.sh   fixtures and the test runner
+.github/workflows/ci.yml, release.yml
+README.md, CHANGELOG.md, LICENSE, docs/screenshots/*.png
+```
+
+### B2. Manifest
+- `[[panes]] id = "tui"`, `placement = "popup"`, `width = "90%"`, `height = "90%"`, command
+  `["/bin/sh", "bin/ag-pane.sh", "tui"]`; `id = "open"` (same, mode `open`) and `id = "link"` (mode `link`).
+- `[[actions]]`: `open-here` ("Open in agentglass", contexts `pane`), `workspace-cost` ("agentglass: cost of this
+  workspace", contexts `workspace`), `tui` ("agentglass", `global`) → `bin/ag-action.sh <id>`; `tokens-on` /
+  `tokens-off` ("agentglass: sidebar tokens on/off", `global`) → `bin/ag-tokens.sh on|off`.
+- `[[link_handlers]] id = "agentglass-link"`, `pattern = "^agentglass://open/"`, `action = "open-link"`.
+- `[[events]]` `on = "pane.agent_status_changed"` and `on = "pane.agent_detected"` →
+  `["/bin/sh", "bin/ag-event.sh"]`; `[[startup]]` → `["/bin/sh", "bin/ag-event.sh", "startup"]`.
+- README suggests keys (`[[keys.command]] key = "prefix+g" type = "plugin_action" command = "agentglass.tui"` and
+  `prefix+G` → `agentglass.open-here`); the manifest binds none (no key collisions in users' configs).
+
+### B3. Behavior
+- **Finding binaries** (`ag-env.sh`): `AGENTGLASS_BIN` from the plugin config file (`$HERDR_PLUGIN_CONFIG_DIR/config`,
+  `KEY=value` lines), else `agentglass` on `PATH`, else `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`,
+  `/home/linuxbrew/.linuxbrew/bin` (the server's `PATH` may lack them). herdr: `HERDR_BIN_PATH`.
+- **Contract check**: `agentglass --version --json` → `"contract":N` (sed); `N < 1` or missing → popups show the
+  upgrade message (13) and wait for a key; hooks exit 0 silently after writing it once to the state dir log. Cached
+  per binary path + mtime in `$HERDR_PLUGIN_STATE_DIR/contract`.
+- **Popup `tui`**: `exec agentglass` with `AGENTGLASS_AGENT=0` (a popup is a human terminal, not an agent shell).
+- **Open here** (`open-here` action → pane `open`): the action writes `$HERDR_PANE_ID` to
+  `$HERDR_PLUGIN_STATE_DIR/open-target` and runs `herdr plugin pane open --plugin agentglass --entrypoint open`; the
+  pane reads and deletes the target, finds the session with `agentglass --json --live --all-projects --fields
+  id,harness,mux_pane --format csv` (row with `mux_pane` = target), then `exec agentglass open <harness>:<id>
+  --new-instance`. No row (no linked session) → `exec agentglass` with a one-line note. `--new-instance`: a TUI
+  running elsewhere must not take the link — the popup is where the user looks.
+- **Link handler**: `open-link` writes `$HERDR_PLUGIN_CLICKED_URL` (validated: `^agentglass://open/[A-Za-z0-9._:%/#=&?-]+$`,
+  else ignored) to `link-target`, opens pane `link` → `exec agentglass open "<url>" --new-instance`.
+- **Workspace cost** (`workspace-cost`): `agentglass cost --since today --by workspace --format csv --fields
+  workspaceId,costUsd` → the row for `$HERDR_WORKSPACE_ID` → `herdr notification show "agentglass" --body "<label>:
+  $X today"`; plus 7 days with `--since 7d`.
+- **Sidebar tokens** (off until `tokens-on`; the flag is a file in the state dir):
+  - On each event/startup: if a run is going (lock dir `$HERDR_PLUGIN_STATE_DIR/run.lock`, `mkdir`-atomic), touch
+    `dirty` and exit; else run once, and again while `dirty` was touched meanwhile (≤ 3 rounds). One run =
+    `agentglass --json --live --all-projects --fields mux_kind,mux_pane,mux_workspace,costUsd,stuck --format csv`
+    (≈ 0.5 s) → for each `herdr` row: `herdr pane report-metadata <pane> --source plugin:agentglass --token
+    ag_cost=<v> --token ag_alert=<v> --seq <epoch ms>`; workspace token `ag_cost` = sum per workspace
+    (`herdr workspace report-metadata`). Values are reported **only when changed** (last values in the state dir).
+  - **Fixed width**: `ag_cost` = `$` + 6 chars right-aligned (`$  0.42`, `$ 12.40`, `$ 123.5`, `$  1.2k`, unpriced
+    `$     ?`); `ag_alert` = 10
+    chars: `⚠ stalled `, `⚠ loop    `, `⚠ long-cmd`, `⚠ spinning`, `⚠ cost    `, or 10 spaces when none (a constant
+    width: rows never change width, so herdr never re-layouts).
+  - **Only numbers and rule ids** go to herdr — never titles, prompts, paths, commands. With `AGENTGLASS_REDACT` set in
+    the plugin config, `ag_cost` is not reported either.
+  - `tokens-off` clears both tokens on every pane/workspace it set (`--clear-token`) and removes the flag.
+  - README: the flicker note, the `ui.sidebar.agents.rows` snippet (`[["state_icon","agent","$ag_cost"],["$ag_alert"]]`)
+    and the advice to pin `ui.sidebar_min_width = ui.sidebar_max_width`.
+- **Notify recipe** (`ag-alert.sh`, set by the user as `rules.json` `notify.command` with the full path the README
+  prints via `herdr plugin config-dir agentglass`): reads the alert JSON on stdin; ignores rules `waiting` and
+  `approval` (herdr rings for those) and states other than `fire`/`escalate`; maps `session` to a pane with one
+  `agentglass --json --live --all-projects --fields id,harness,mux_pane --format csv`; reports `ag_alert` (same
+  fixed-width value) with `--ttl-ms 600000`; `severity = critical` → `herdr notification show "agentglass" --body
+  "<rule> · <harness>" --sound request`. The notify command's environment is stripped by agentglass: the script finds
+  herdr by absolute path and the server by `HERDR_SOCKET_PATH` from its own config file (the README's setup writes
+  it), else the default socket. No title, message or project text is forwarded (they may name customers).
+
+### B4. Tests, CI, releases
+- `test/run.sh`: every entrypoint against `test/fake-herdr.sh` (records argv, answers from fixture JSON) and
+  `test/fake-agentglass.sh` (answers `--version --json`, `--json … --format csv`, `cost …`, records `open` argv):
+  contract < 1 → message; open-here finds the row; link validation; tokens: fixed widths, only-on-change, lock + dirty
+  coalescing (two events during a run → exactly one extra run), tokens-off clears; ag-alert filters waiting/approval,
+  forwards stalled/loop/cost, critical → notification. Runs with `dash` and `bash`.
+- CI (`ci.yml`, ubuntu + macos): shellcheck (`-s sh`), `test/run.sh`, manifest lint (TOML keys, `version` = latest
+  CHANGELOG entry), **contract job**: install the newest agentglass release (its `install.sh`), run
+  `test/contract.sh` — `contract >= 1` and every field the plugin uses appears in `agentglass --help --json` for its
+  command. Target ≤ 2 min.
+- Releases (`release.yml`): tag `vX.Y.Z` → checks that the manifest version matches → GitHub release with the
+  CHANGELOG section. `herdr plugin install BjoernSchotte/agentglass-herdr` installs the default branch; the README
+  shows `--ref v0.1.0` for pinning. v0.1.0 ships after the agentglass release that carries contract 1.
+
+## Failure modes
 - herdr absent / binary missing / no socket: no spawn; everything as today.
 - Server stopped or restarting (live handoff): calls fail → that server skipped for 60 s; panes keep their last map for
   display, actions force a refresh first and then report "herdr server not running".
@@ -240,30 +430,45 @@ server). README: a "herdr" section (what works, versions, the opt-out, the dupli
   "herdr: unexpected output from `agent list`".
 - `herdr agent prompt` hangs: killed after 10 s, err "herdr send timed out".
 - Remote herdr (`--machine`, `--remote`): not handled; those agents run on another host and agentglass does not see them.
+- Resume in herdr: `agent start` times out (30 s) or the harness is missing on the server's `PATH` → the error toast,
+  the empty tab is closed; nothing is left running.
+- A worktree workspace removed later: its ended sessions lose the workspace attribution (`(none)`); the repo grouping
+  still holds them.
+- Plugin: agentglass missing or contract < 1 → popups show the upgrade line, hooks do nothing; herdr < 0.7.5 → herdr
+  refuses the manifest (`min_herdr_version`). A token run that fails leaves the old values (no flapping). A crashed run
+  leaves `run.lock`: a lock older than 120 s is taken over.
 
-### Privacy
+## Privacy
 - The prompt text goes into `herdr agent prompt`'s argv (visible to the same user's `ps` for ~0.3 s), as it goes into
   `tmux send-keys`' argv today. It is the user's own text for their own agent; nothing else agentglass knows is sent.
 - Process environments: only the values of `HERDR_SOCKET_PATH` and `HERDR_PANE_ID` are kept; no other variable is read
   into a kept structure, logged, cached or exported.
-- Nothing is written to herdr in this phase (no metadata, no notifications). `--redact` hides workspace/tab labels (8).
+- agentglass itself writes nothing to herdr's metadata; it creates tabs/workspaces only on a user's `R` (10). `--redact`
+  hides workspace/tab labels (8) and uses the session id as the new tab's label (10).
+- The plugin sends herdr only numbers and rule ids (tokens) and rule + harness names (notifications); no title, prompt,
+  path, project or command. With `AGENTGLASS_REDACT` in its config it sends no cost either and runs agentglass with
+  `AGENTGLASS_REDACT=1`. README screenshots are taken with `--redact`.
+- Link handler URLs are validated against a strict pattern before they reach `agentglass open`.
 - Child processes get `HERDR_SOCKET_PATH` set and inherit nothing else new.
 
 ## Interactions with other specs
 - **tui-footprint**: the slow-job and watchdog cadences it set are the only places herdr is called; the cost is in 5.
-  `scripts/footprint.sh` gains no herdr dependency; Task 8 measures with an isolated server.
+  `scripts/footprint.sh` gains no herdr dependency; the integration task measures with an isolated server.
 - **macos-footprint**: replaces `ps`/`lsof` on macOS; this spec uses only `OS.ttyDevice` (tmux) and `OS.envOf`
   (empty on macOS, so herdr's pid ↔ pane link there always comes from `pane process-info`). No overlap in files.
 - **adaptive-refresh**: statuses ride `H.onWatch` (1.5 s while agents are live); unfocused the procs pass halves
   discovery, the herdr refresh follows the slow job.
-- **rules-config / filter-language**: `mux` is a session attribute (`register` + `extend`, `src/features/query/`);
-  rules' `where` scopes can use it.
-- **cli-agent-mode**: `mux` joins `JSON_FIELDS` (stable contract, additive).
-- **command-palette**: entries renamed (7); `agentglass://open/<session>` is the deep link a Phase 2 herdr link handler
+- **rules-config / filter-language**: `mux` and `workspace` are session attributes (`register` + `extend`,
+  `src/features/query/`); rules' `where` scopes can use them; `workspace` joins the `--by` dimensions.
+- **cli-agent-mode**: `mux` joins `JSON_FIELDS`; the CLI contract (13) names which of its commands, fields and exit
+  codes are stable, and its contract test guards them.
+- **command-palette**: entries renamed (7); `agentglass://open/<session>` is the deep link the plugin's link handler
   opens.
 - **redact**: labels hidden (8).
-- Independent bug (separate small PR, not this spec): `agentglass open claude:<id>` reports "ambiguous" when the same
-  session file exists under two Claude project dirs; this spec's join picks the newest copy and does not depend on it.
+- **sessref (bug fixed here)**: `agentglass open claude:<id>` / `session claude:<id>` report "ambiguous" (exit 4) when the
+  same session file exists under two Claude project dirs (a resumed session copied into a second worktree). The
+  plugin's "Open in agentglass" passes exactly such full refs, so this spec fixes it: a full `<harness>:<id>` with
+  several copies resolves to the copy with the newest mtime (the one the agent writes); a prefix stays ambiguous.
 
 ## Testing
 - Pure checks (`src/mux/herdr-parse.check.ts`): `agent list` / `workspace list` / `tab list` / `process-info` / error
@@ -282,44 +487,31 @@ server). README: a "herdr" section (what works, versions, the opt-out, the dupli
   registry link is not overridden.
 - `scripts/check.sh` runs every check and test with `HERDR_*` unset and `AGENTGLASS_HERDR=off`; herdr tests set their
   own fake. No check ever reaches the user's herdr.
+- Checks for 10–13: resume-in-herdr argv sequence (workspace match by checkout path, then repo root, then create;
+  tab label under `--redact`; `agent start` args = the harness's resume args; failure closes the tab); row glyph per
+  herdr status incl. staleness and `done` → `✓`; `workspace` of live and ended sessions (longest checkout-path match),
+  filter key and `--by workspace` rows with `workspaceId`; `--version --json` has `contract: 1`; a full
+  `<harness>:<id>` with two copies resolves to the newest.
+- `scripts/contract.test.sh` (agentglass CI): every command and field of `docs/cli-contract.md` against a fixture HOME.
 - End to end (`scripts/mux-herdr.test.sh`, skipped when `herdr` is not installed): an isolated herdr server (own
-  `XDG_CONFIG_HOME`, own socket, `AGENTGLASS_HERDR_SOCKET` pins it), a stand-in agent binary named `claude` (a scriptc
-  program that appends stdin lines to a file), a fake Claude session linked through herdr `agent_session`; asserts
-  `--json --live` `mux`, TUI `s` delivers the line, `blocked` refuses with the toast, `R` focuses (herdr
-  `focused_pane_id`), and the server is stopped by pid at the end.
+  `XDG_CONFIG_HOME`, own socket, `AGENTGLASS_HERDR_SOCKET` pins it), a stand-in agent (a copy of `dash` named
+  `claude`, reading lines into a file), a fake Claude session linked through herdr `agent_session`; asserts
+  `--json --live` `mux`, TUI `s` delivers the line, `blocked` refuses with the toast and shows ◆, `R` focuses (herdr
+  `focused_pane_id`), `R` on an ended session opens a tab running the stand-in with `--resume <id>`, and the server is
+  stopped by pid at the end.
+- Plugin: `test/run.sh` (B4) in its own CI; the integration task links the plugin into the isolated server
+  (`herdr plugin link`, the isolated config dir) and drives popup, open-here, link, tokens and the alert recipe live.
 - Footprint: TUI with 32 isolated herdr panes (stand-in agents) for 5 min unfocused, idle: added CPU ≤ 0.1 % vs herdr
-  off; with one pane quiet mid-turn: ≤ 0.3 %.
+  off; focused with herdr sessions shown: ≤ 0.15 %; with one pane quiet mid-turn: ≤ 0.3 %. Plugin tokens on: one
+  agentglass run per status change, never two at once.
 
 ## Out of scope
-- Writing anything to herdr (metadata tokens, notifications): Phase 2.
+- agentglass writing herdr metadata itself (the plugin does it, opt-in).
+- A herdr plugin marketplace listing beyond the GitHub topic; Windows support in the plugin.
 - Remote herdr machines (`--machine`, `--remote`), herdr on Windows.
 - herdr as a harness (it holds no transcripts).
 - herdr's terminal title as an approval source (its `blocked` state supersedes it).
 - zellij/wezterm adapters (the port is shaped for them; no code).
-
-## Phase 2 (follow-up, separate repo `agentglass-herdr`; not in the plan)
-A herdr plugin (herdr ≥ 0.7.5, Linux + macOS, no daemon), installable with `herdr plugin install
-BjoernSchotte/agentglass-herdr`, marketplace topic `herdr-plugin`:
-- **Popup**: `[[panes]] id = "agentglass" placement = "popup" width = "90%"` runs the TUI; suggested binding
-  `prefix+g`. A `launch.sh` resolves `agentglass` (the server's `PATH` lacks Homebrew/nvm dirs) and passes
-  `AGENTGLASS_REDACT` through.
-- **"Open in agentglass"** action (pane context): reads the focused agent's `agent_session` from
-  `HERDR_PLUGIN_CONTEXT_JSON`, opens the popup with `agentglass open <harness>:<id>`.
-- **Link handler** for `^agentglass://open/` → the popup with `agentglass open <url>` (links agents print, commits,
-  OTLP backends become Ctrl-clickable in herdr).
-- **Sidebar tokens, opt-in (off by default)**: `$ag_cost` (session cost) and `$ag_alert` (severity + rule id) set with
-  `herdr pane report-metadata --source plugin:agentglass`, only on `pane.agent_status_changed` (debounced, one
-  `agentglass` run at a time through a lock in `HERDR_PLUGIN_STATE_DIR`), **fixed width** (`$` + 6 chars, alert
-  `⚠ stalled` padded to 10) so rows never change width. The README states the flicker risk (dynamic tokens re-layout
-  herdr's panes on focus changes) and recommends `ui.sidebar_min_width = ui.sidebar_max_width`. Token values are only
-  numbers, severities and rule ids — never titles, prompts, paths or commands — so screen shares leak nothing even
-  without `--redact`; with `AGENTGLASS_REDACT` set the plugin sends no cost either.
-- **Notify recipe** (in the plugin README, also usable alone): `rules.json` `notify.command` → a script that maps the
-  alert's session to a pane (`herdr agent list`, `agent_session`) and calls `herdr pane report-metadata` /
-  `herdr notification show` — only for rules herdr cannot see (`stalled`, `loop`, `spinning`, `long-cmd`, cost/budget),
-  never `waiting`/`approval` (herdr rings for those). The notify command's environment is stripped: the script names
-  the server with `--session` or `HERDR_SOCKET_PATH`. The alert JSON passes through agentglass's redaction when
-  `--redact` is on.
 
 ## Decisions (2026-10-06)
 Each: question · options · decision · why · cost if wrong.
@@ -388,17 +580,84 @@ Each: question · options · decision · why · cost if wrong.
     `scripts/check.sh`. **Decision: strip and set off; herdr tests opt in with a fake or an isolated server.** Why:
     developers run checks inside herdr panes; a temp HOME does not hide `HERDR_SOCKET_PATH` or the user's agents'
     environments. Cost if wrong: none.
-17. **Phase 2 tokens.** Options: on by default; opt-in; none. **Decision: opt-in, fixed width, on state change only,
-    numbers and rule ids only.** Why: the user's own herdr config had to drop dynamic tokens after they made herdr
-    re-layout panes on every focus change; free text in a sidebar leaks on screen shares. Cost if wrong: users who want
-    them flip one plugin setting.
+17. **Sidebar tokens.** Options: on by default; opt-in; none. **Decision: opt-in (`tokens-on` action), fixed width,
+    reported only when a value changed, numbers and rule ids only.** Why: the user's own herdr config had to drop
+    dynamic tokens after they made herdr re-layout panes on every focus change; constant-width values cannot change a
+    row's width; free text in a sidebar leaks on screen shares. Cost if wrong: users who want them run one action.
+18. **Scope: plugin in this spec, not a follow-up.** Options: agentglass side first, plugin later; both now.
+    **Decision: both, one plan, one integration task.** Why: the user asked for herdr support that is first-class in
+    both directions; the plugin is small and only needs the contract, so most of it runs in parallel. Cost if wrong:
+    plugin v0.1.0 waits for the agentglass release (its contract job), nothing else.
+19. **Plugin language.** Options: Node/TypeScript; a scriptc binary per platform; POSIX sh. **Decision: POSIX sh, no
+    jq.** Why: herdr installs plugins by `git clone` + optional build; sh needs no toolchain, no build, works on Linux
+    and macOS, and the plugin is glue (call agentglass, call herdr). JSON from herdr is avoided: agentglass gives csv
+    (`--format csv`), herdr ids come from env vars; the one JSON read (`--version --json`'s `contract`) is a fixed key.
+    Cost if wrong: if the glue grows, a rewrite in another language — the contract keeps that independent.
+20. **What the plugin may call.** Options: agentglass internals (files under `~/.agentglass`); any CLI output; a
+    versioned contract. **Decision: only the CLI contract (13), checked at runtime (`contract >= 1`) and in the plugin's
+    CI against the newest release.** Why: cache files and TUI behavior change every release; a contract is the
+    promise that does not. Cost if wrong: one more doc + test to maintain in agentglass (small; it also serves scripts).
+21. **Contract versioning.** Options: tie to the agentglass version; semver string; one integer bumped only on
+    breaking changes. **Decision: one integer, additive changes keep it.** Why: CalVer releases say nothing about
+    compatibility; an integer is trivial to compare in sh. Cost if wrong: a consumer needing a newly added field checks
+    the version too (the plugin's README says which release).
+22. **How "Open in agentglass" finds the session.** Options: a new `agentglass open --herdr-pane <id>`; the plugin
+    resolves via `--json --live … mux_pane`. **Decision: the plugin resolves via the contract's `--json` fields.** Why:
+    no herdr-specific CLI surface in agentglass; the same field serves scripts. Cost if wrong: ~0.5 s per open (one
+    `--json --live` run) — acceptable for a popup.
+23. **Popup and a running TUI.** Options: hand the link to the running TUI (single-instance default); always a new
+    instance. **Decision: `--new-instance` in plugin panes.** Why: the user looks at the popup; a hand-off would open
+    the session in a TUI in another window and leave an empty popup. Cost if wrong: two TUIs briefly (the popup one
+    ends when closed).
+24. **After a jump from the popup.** Options: stay open; quit. **Decision: quit after a successful herdr jump/resume
+    when running as a plugin pane (`HERDR_PLUGIN_ID` set).** Why: the jump's purpose is to land in the pane; a popup
+    on top would hide it. Cost if wrong: one key to reopen the popup.
+25. **Resume of an ended session inside herdr.** Options: today's in-terminal resume (it would run inside agentglass's
+    own pane or popup); a new tab in the right workspace. **Decision: a new tab in the workspace owning the session's
+    directory, `herdr agent start`, focused.** Why: in herdr, agents live in their own tabs; resuming inside a popup
+    would trap the agent in a temporary pane. Cost if wrong: a tab the user did not want — closed with one key.
+26. **herdr state in the row.** Options: a new column; reuse the status glyph and the badge slot. **Decision: reuse —
+    herdr `working` drives the spinner, `blocked` the ◆, `done` a green `✓` in the badge slot.** Why: no new column at
+    80 columns; the glyphs already mean busy/attention; `done`-unseen is herdr's most useful extra ("finished while you
+    looked elsewhere"). Cost if wrong: `✓` competes with ⚠/◆ in the slot — those win (the slot shows one mark).
+27. **Row-state freshness.** Options: 30 s (map refresh); every look (1.5 s); 5 s while focused and visible.
+    **Decision: 5 s focused + visible, 30 s otherwise.** Why: a stale spinner misleads; 5 s costs 0.04 %; unfocused
+    nobody looks. Cost if wrong: a state change shows up to 5 s late.
+28. **Workspace of ended sessions.** Options: live sessions only; attribute by worktree checkout path; persist a
+    history of pane ↔ session. **Decision: checkout path, from the current workspace list.** Why: herdr worktree
+    workspaces are tasks with their own directory — the path is exact; no new cache. Cost if wrong: sessions of removed
+    worktree workspaces fall back to `(none)` (the repo grouping still has them).
+29. **The `open` ambiguity bug.** Options: separate PR; fix here. **Decision: fix here (newest copy wins for a full
+    `<harness>:<id>`).** Why: the plugin's open passes full refs; on this machine one live Claude session already hits
+    it. Cost if wrong: none — a full id names one session; the copies are the same session.
+30. **Plugin keybindings.** Options: bind `prefix+g` in the manifest; document only. **Decision: document only.** Why:
+    a manifest binding can collide with the user's config (theirs is managed by configuration management). Cost if
+    wrong: one config line to add (README gives it).
+31. **Alert forwarding (notify recipe).** Options: forward all agentglass alerts; only those herdr cannot see.
+    **Decision: never `waiting`/`approval`; `fire`/`escalate` only; critical → herdr notification, all → `$ag_alert`.**
+    Why: herdr already rings for done/blocked; duplicates teach users to ignore both. Cost if wrong: a user wanting
+    both edits one line in the script's filter.
 
 ## Open questions (to verify during implementation)
 1. Why were the two `blocked` Codex agents not live in agentglass? Expected: Codex's open-rollout link missed them
-   (app-server / `--no-daemon` layout). Task 0 checks read-only with `agentglass --json --live` and `ls -l
-   /proc/<pid>/fd`; Task 6's herdr link must make them live either way.
+   (app-server / `--no-daemon` layout). Task A0 checks read-only with `agentglass --json --live` and `ls -l
+   /proc/<pid>/fd`; Task A6's herdr link must make them live either way.
 2. `process-info` foreground processes for node-based agents (Gemini, pi, OpenCode): is the agent's own pid among
-   them, named `node`/`node-MainThread`? Task 0 reads it for one running pane (read-only); the pid choice (3b) falls back
+   them, named `node`/`node-MainThread`? Task A0 reads it for one running pane (read-only); the pid choice (3b) falls back
    to "the first foreground pid agentglass knows as a harness root" if names do not match.
 3. macOS: `pane process-info` reports foreground pids there too (herdr's own platform code) — verified by the fake
-   herdr in CI and once on a Mac in Task 8 if one is available; else noted in the PR.
+   herdr in CI and once on a Mac in Task I1 if one is available; else noted in the PR.
+4. A plugin pane opened by `herdr plugin pane open` from an action: does it receive the action's context
+   (`HERDR_PANE_ID` of the focused agent)? The design does not depend on it (state files); Task I1 confirms the popup
+   flow end to end.
+5. A plugin popup when agentglass focuses another pane: does herdr hide the popup by itself? If yes, Decision 24's
+   quit is still right (the TUI should not linger hidden); Task I1 records what happens.
+6. The isolated server's plugin registry: `herdr plugin link` with `XDG_CONFIG_HOME` pointing at the isolated config
+   dir must not appear in the user's `herdr plugin list`. Task I1 Step 1 checks `herdr plugin list` (read-only, user's
+   server) before and after.
+7. `herdr agent start --kind claude` readiness: does herdr detect a started agent by process name or by its screen
+   manifest? With a real agent it is ready; the e2e stand-in may time out. Task A10 records it; the design closes the
+   tab on failure either way.
+8. `herdr tab create` JSON: the path of the new root pane id (`result.root_pane.pane_id` as for `workspace create`, or
+   under `tab`). Task A0 Step 3 records it.
+
