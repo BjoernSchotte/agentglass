@@ -55,6 +55,7 @@ eq "pty: valid JSON" "$(printf '%s' "$out" | jq -r '.name')" agentglass
 [ "$(printf '%s' "$out" | wc -c)" -le 1024 ] || { echo "FAIL pty: compact help over 1 KB"; fail=1; }
 case "$out" in *'"options"'*|*"$(printf '\033')"*) echo "FAIL pty: option tables or escapes in the compact help"; fail=1;; esac
 eq "pipe: compact help" "$(agent < /dev/null | jq -r '.agentMode.harness')" claude
+eq "compact help: fleet discoverable" "$(printf '%s' "$out" | jq -r '[.commands[].cmd | select(. == "fleet")] | length')" 1
 
 # update never asks inside an agent: a downgrade without --yes exits 2 with one JSON error line
 printf '[{"tag_name":"v2000.1.1","prerelease":false,"draft":false,"assets":[{"name":"agentglass-x.tar.gz"},{"name":"SHA256SUMS"},{"name":"build-metadata.json"}]}]' > "$t/rels.json"

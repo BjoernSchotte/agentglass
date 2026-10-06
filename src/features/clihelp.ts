@@ -99,17 +99,18 @@ export function helpOf(cmd: string, args: string[], text: string): string {
 export function wantsHelp(args: string[]): boolean { return args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0; }
 // TUI-only, maintenance and version commands: --help lists them
 const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults", "prices set", "prices alias", "prices unset",
-  "--no-fleet", "fleet", "fleet cost", "fleet status", "fleet pull", "fleet serve", "fleet authorize"]; // fleet: --help lists them (the compact help stays ≤ 1 KB)
+  "--no-fleet", "fleet cost", "fleet status", "fleet pull", "fleet serve", "fleet authorize"]; // fleet: one entry, fleet --help lists the rest
 // the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word
 function brief(s: string): string {
   const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); if (t.length <= 36) return t;
   const cut = t.slice(0, 36); const sp = cut.lastIndexOf(" ");
   return (sp > 16 ? cut.slice(0, sp) : cut.slice(0, 35)).replace(/[,:/ ]+$/, "") + "…";
 }
-// bare agentglass inside an agent: what exists and three examples, no option tables (target ≤ 1 KB: it costs the agent tokens)
+// bare agentglass inside an agent: what exists and three examples, no option tables (target ≤ 1 KB: it costs the agent
+// tokens; the version is left to --version)
 export function compactHelp(agent: Obj): string {
   const cs: Obj[] = [];
   for (const sub of [true, false]) // subcommands (the queries) first, then the flag commands
     for (const c of REG) if (c.group === "cmd" && NOT_COMPACT.indexOf(c.cmd) < 0 && c.cmd.startsWith("-") !== sub) cs.push({ cmd: c.cmd, summary: brief(c.summary) });
-  return JSON.stringify({ name: "agentglass", version: BUILD.version, agentMode: agent, commands: cs, examples: EXAMPLES.slice(0, 3), more: "agentglass --help" });
+  return JSON.stringify({ name: "agentglass", agentMode: agent, commands: cs, examples: EXAMPLES.slice(0, 3), more: "agentglass --help" });
 }
