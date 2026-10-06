@@ -15,8 +15,9 @@ import type { Rows } from "../usage/rows.ts";
 import { type ModeSum, newSum, addDay } from "../usage/costs.ts";
 import type { Bill } from "../usage/billing.ts";
 import { modeOf } from "../usage/bill-live.ts";
-import { type Compiled, EMPTY, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
-import { contentOk, timeStep } from "../query/ui.ts";
+import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
+import { contentOk, timeStep, rowsLater, rowsDeferred, rowsFill } from "../query/ui.ts";
+import { parse } from "../query/parse.ts";
 import { identOf } from "../query/project.ts";
 import { type GitInfo, allInfo } from "../vcs/attrib.ts";
 import { realCwd, realMeta } from "../../hooks.ts";
@@ -94,20 +95,20 @@ export function allDays(): string[] {
 
 // a filter with call clauses: per (session, day) the matching rows' count, errors and tools; only those days count
 interface RowDay { n: number; err: number; names: Map<string, Cnt> }
-function rowDays(f: Compiled, days: string[]): Map<string, RowDay> {
+function rowDays(f: Compiled, days: string[], later: Sess[] | null): Map<string, RowDay> {
   const m = new Map<string, RowDay>();
   eachCall(f, days, (s: Sess, rw: Rows, ri: number) => {
     const k = s.path + "\t" + localOf(rw.t[ri]).day;
     let r = m.get(k); if (!r) { r = { n: 0, err: 0, names: new Map<string, Cnt>() }; m.set(k, r); }
     r.n++; const e = rw.err[ri] === 1 ? 1 : 0; r.err += e;
     const t = cntOf(r.names, nameOf(DICT.tool, rw.tool[ri])); t.n++; t.err += e;
-  });
+  }, later);
   return m;
 }
 // the session passes the filter's session clauses and its full-text clauses (ok = contentOk(f); EMPTY passes everything)
 function sessOk(f: Compiled, ok: (path: string) => boolean, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && ok(s.path)); }
 
-interface Hit { key: string; at: number; rows: RepoAgg[] }
+interface Hit { key: string; at: number; rows: RepoAgg[]; later: Sess[] /* deferred rows (ui.ts rowsLater) */ }
 const cache = new Map<string, Hit>();
 // per (days, canonical filter, ledger version, identity version), 5 s (an age clause: its time step)
 export function repoAgg(days: string[], f0: Compiled | null): RepoAgg[] { return repoAggIn(days, f0, new Set<string>(), ""); }
@@ -117,10 +118,15 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
   const ck = days.join(",") + "|" + f.key + "|" + tag;
   const key = ck + "|" + String(L.ver) + "|" + String(P.ver);
   const hit = cache.get(ck);
-  if (hit && hit.key === key && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) return hit.rows; // an age clause: its own step
+  if (hit && hit.key === key && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) { if (!tag) rowsDeferred("Repos", ck, hit.later); return hit.rows; } // an age clause: its own step
   const by = new Map<string, RepoAgg>();
   const acts = new Map<string, number[][]>(); // "<repo key>\t<day>" → the sessions' intervals
-  const rd = f.needsCalls ? rowDays(f, days) : new Map<string, RowDay>();
+  // in the TUI unread rows are deferred (rowsLater: "filtering n/m"); only sessions with a matching row are looked at then
+  // (a model clause would read rows in sessOk); the CLI's agent scope (tag) reads at once
+  const later = f.needsCalls && !tag ? rowsLater(f) : null;
+  const rd = f.needsCalls ? rowDays(f, days, later) : new Map<string, RowDay>();
+  if (!tag) rowsDeferred("Repos", ck, later);
+  const hasRows = new Set<string>(); for (const k of rd.keys()) hasRows.add(k.slice(0, k.indexOf("\t")));
   const reals = new Map<string, string>();
   const gi = allInfo(); const dset = new Set<string>(days); const rootN = new Map<string, number>(); // root path → ✓ commits of it + its subagents
   const pcOf = (x: Sess): PCommits => periodCommits(gi.get(x.path) ?? null, dset);
@@ -129,9 +135,9 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
     let n = pcOf(root).n; for (const k of root.subs) n += pcOf(k).n;
     rootN.set(root.path, n); return n;
   };
-  const cp = contentOk(f);
+  const cp = contentOk(f, later ? "defer" : "");
   for (const s of sessions.values()) {
-    const a = ledger.get(s.path); if (!a || (tag && !allow.has(s.path)) || !sessOk(f, cp, s)) continue;
+    const a = ledger.get(s.path); if (!a || (tag && !allow.has(s.path)) || (f.needsCalls && !hasRows.has(s.path)) || !sessOk(f, cp, s)) continue;
     const id = identOf(s); if (!id) continue; // unresolved: the tab says "resolving N sessions…"
     let r = by.get(id.key);
     if (!r) { r = newRepo(id.key, labelOf(id), id.kind, days); r.remote = id.remote; r.via = id.via; by.set(id.key, r); }
@@ -176,7 +182,10 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
     rows.push(r);
   }
   if (cache.size > 32) cache.clear();
-  cache.set(ck, { key, at: Date.now(), rows });
+  cache.set(ck, { key, at: Date.now(), rows, later: later ?? [] });
   return rows;
 }
+// the Repos tab's fill progress of a filter's aggregate over days (the tab draws "filtering n/m" from it)
+export function repoFill(days: string[], f: Compiled): { left: number; total: number } { return rowsFill("Repos", days.join(",") + "|" + f.key + "|"); }
+export function repoFillFor(days: string[], expr: string): { left: number; total: number } { return repoFill(days, compile(parse(expr).cs, "stats").f ?? EMPTY); } // checks
 function mtimeOf(p: string): number { const s = sessions.get(p); return s ? s.last || s.mtime : 0; }
