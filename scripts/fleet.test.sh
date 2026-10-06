@@ -123,7 +123,7 @@ echo "$*" >> "$FAKE_HOMES/remote-words.log"
 exec "$FAKE_SSH" "$@"
 SH
 chmod +x "$t/ssh-log"; export FAKE_SSH="$t/ssh"
-runl() { AGENTGLASS_SSH="$t/ssh-log" run "$@"; }
+runl() ( AGENTGLASS_SSH="$t/ssh-log"; export AGENTGLASS_SSH; run "$@" ) # a subshell: an assignment before a function call is not portable
 rm -rf "$t/spool"; cfg '{"fleet":{"hosts":[{"name":"h2","ssh":"h2"},{"name":"h3","ssh":"h3"}]}}'
 c=$(runl fleet cost --json --refresh)
 eq "exact" "$(echo "$c" | jq '.exact')" true
