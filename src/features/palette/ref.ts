@@ -2,7 +2,7 @@
 // A ref selects among already-scanned sessions only: no component is ever treated as a path.
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
-import { findSession } from "../../model/sessref.ts";
+import { findSession, distinct } from "../../model/sessref.ts";
 // the agent's own sessions (as `agentglass session` takes them): resolved where the command runs, never by a running TUI
 export const SELF = ["current", "last", "parent"];
 import { sessions, parentOf } from "../../model/sessions.ts";
@@ -216,8 +216,9 @@ export function resolve(r: Ref): Target {
   let f = findSession(r.harness ? r.harness + ":" + r.sess : r.sess, (x: Sess): boolean => true);
   if (r.harness && f.code === 3) { // <harness>:<prefix> (findSession takes exact ids there): the id prefix within that harness
     const ms: Sess[] = []; for (const s of sessions.values()) if (s.h === r.harness && s.id.startsWith(r.sess)) ms.push(s);
-    if (ms.length === 1) f = { s: ms[0], code: 0, cands: [], err: "", msg: "", hint: "" };
-    else if (ms.length > 1) return miss(4, "session reference " + r.harness + ":" + r.sess + " is ambiguous (" + String(ms.length) + " sessions)", ms.sort((a, b) => b.mtime - a.mtime));
+    const ds = distinct(ms); // twins of one session are one: its owning copy
+    if (ds.length === 1) f = { s: ds[0], code: 0, cands: [], err: "", msg: "", hint: "" };
+    else if (ds.length > 1) return miss(4, "session reference " + r.harness + ":" + r.sess + " is ambiguous (" + String(ds.length) + " sessions)", ds);
   }
   if (f.code === 4) return miss(4, f.msg, f.cands);
   const s = f.s;
