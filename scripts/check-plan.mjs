@@ -23,6 +23,7 @@ const main = bytesOf("src/main.ts");
 function weight(job) {
   if (job === "bin") return main;
   if (job === "release") return main * 2.5; // -O2 takes ~2.5x the -O0 build
+  if (job.startsWith("cc:")) return main / 50; // one C file, syntax only
   const f = job.slice(job.indexOf(":") + 1);
   if (job.startsWith("check:")) return bytesOf(f) * (/^\/\/ check: timing/m.test(readFileSync(f, "utf8")) ? 2 : 1); // -O2
   const src = readFileSync(f, "utf8");

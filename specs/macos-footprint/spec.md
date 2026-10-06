@@ -1,6 +1,6 @@
 # macOS footprint — spec
 
-Status: **draft** (2026-10-06). Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 2 (after 2026.10.4). Builds on
+Status: **implemented** (2026-10-06, PR #68; [results](results.md)). Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 2 (after 2026.10.4). Builds on
 [tui-footprint](../tui-footprint/spec.md) (released in 2026.10.5, [results](../tui-footprint/results.md)).
 
 ## Goal

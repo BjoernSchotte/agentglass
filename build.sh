@@ -6,4 +6,7 @@ cd "$(dirname "$0")"
 sh scripts/build-info.sh
 # SCRIPTC_FLAGS: extra flags, e.g. --backend c where scriptc ships no LLVM helper (macOS x64)
 # AGENTGLASS_SRC: build another source tree (see scripts/build-info.sh)
-scriptc build ${SCRIPTC_FLAGS:-} "${AGENTGLASS_SRC:-src}/main.ts" -o "${AGENTGLASS_OUT:-agentglass}"
+# macOS: the libproc bindings (platform/darwin/ffi.json: processes without ps/lsof); a tree without them builds as before
+ffi=""; m="${AGENTGLASS_SRC:-src}/platform/darwin/ffi.json"
+if [ "$(uname -s)" = Darwin ] && [ -f "$m" ]; then ffi="--ffi $m"; fi
+scriptc build ${SCRIPTC_FLAGS:-} $ffi "${AGENTGLASS_SRC:-src}/main.ts" -o "${AGENTGLASS_OUT:-agentglass}"
