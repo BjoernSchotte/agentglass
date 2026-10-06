@@ -99,8 +99,9 @@ function foreignRun(k: string, now: number, limitMs: number): number {
 export interface SshFeed extends HostFeed { key: string; cp: string }
 // a host this viewer does not pull (disabled, another transport): a feed that never starts
 export function idleFeed(kind: string): HostFeed { const st = newFeedState(); return { kind, start: (t: number): boolean => false, poll: (t: number): FeedState => st, stop: (): void => {} }; }
-// one host's feed; spawn = detachedPid in production, a stub in checks
-export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => number, spawn: (cmd: string, args: string[]) => number): SshFeed {
+// one host's feed; spawn = detachedPid in production, a stub in checks; lines = how much of a new report one poll parses
+// (the TUI: 256 lines, a frame's worth; 0 = all of it: a CLI run reads a report whole)
+export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => number, spawn: (cmd: string, args: string[]) => number, lines: number): SshFeed {
   const k = keyOf(h.name, redact);
   const st: FeedState = newFeedState();
   const run = { pid: 0, at: 0, foreign: 0 };
@@ -141,7 +142,8 @@ export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => num
         if (sp && sp.rc === 0) { rd = newReader(k); cached = false; } else if (sp) setErr(statusOf(sp.rc, sp.err, h, f.timeoutS));
       }
       if (rd) {
-        const r = readStep(rd, 256);
+        let r = readStep(rd, lines > 0 ? lines : 1000000);
+        while (lines <= 0 && r === undefined) r = readStep(rd, 1000000);
         if (r !== undefined) {
           const okAt = rd.at; const perr = rd.p.err; const fromCache = cached; rd = null; cached = false;
           if (r) { st.report = r; st.okAt = okAt; if (!fromCache || !st.code) setErr({ code: "ok", msg: "ok" }); }

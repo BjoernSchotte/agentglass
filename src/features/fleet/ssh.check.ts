@@ -45,7 +45,7 @@ process.env["AGENTGLASS_SSH"] = script("ssh-stub", "exit 0");
 const f: FleetCfg = { hosts: [h], localName: "local", refreshS: 60, days: 7, timeoutS: 10, warns: [] };
 const calls: string[][] = [];
 let t = 1000000;
-const stub = sshFeed(h, f, false, (): number => t, (cmd: string, args: string[]): number => { calls.push([cmd].concat(args)); return 999999; });
+const stub = sshFeed(h, f, false, (): number => t, (cmd: string, args: string[]): number => { calls.push([cmd].concat(args)); return 999999; }, 256);
 ok("start", stub.start(t), "false");
 ok("second start while running", !stub.start(t), "true");
 const c0 = calls[0] ?? [];
@@ -57,7 +57,7 @@ ok("spool dir 0700", existsSync(dir), "missing");
 FEEDTEST.timeoutMs = 300;
 process.env["AGENTGLASS_SSH"] = script("ssh-slow", "sleep 30");
 const hs: HostCfg = { name: "slow", ssh: "slow", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" };
-const slow = sshFeed(hs, f, false, (): number => Date.now(), detachedPid);
+const slow = sshFeed(hs, f, false, (): number => Date.now(), detachedPid, 256);
 ok("slow start", slow.start(Date.now()), "false");
 const pid = Number((readFileSync(join(dir, "slow.pid"), "utf8").split(" ")[0]) ?? "");
 execFileSync("sleep", ["0.5"]);
@@ -74,7 +74,7 @@ writeFileSync(join(HOME, "report.jsonl"), reportLines(rep).join("\n") + "\n");
 FEEDTEST.timeoutMs = 20000;
 process.env["AGENTGLASS_SSH"] = script("ssh-cat", "cat " + JSON.stringify(join(HOME, "report.jsonl")));
 const hc: HostCfg = { name: "cat", ssh: "cat", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" };
-const cf = sshFeed(hc, f, false, (): number => Date.now(), detachedPid);
+const cf = sshFeed(hc, f, false, (): number => Date.now(), detachedPid, 256);
 ok("cat start", cf.start(Date.now()), "false");
 let got: FeedState | null = null; let polls = 0; const t0 = Date.now();
 while (Date.now() - t0 < 10000) {
@@ -93,12 +93,12 @@ let cut: FeedState | null = null; const t1 = Date.now();
 while (Date.now() - t1 < 10000) { const s = cf.poll(Date.now()); if (!s.busy) { cut = s; break; } execFileSync("sleep", ["0.05"]); }
 ok("cut keeps the report", cut !== null && cut.code === "cut" && cut.report !== null && cut.report.sessions.length === 900, cut ? cut.code + " " + cut.err : "none");
 // a fresh feed on the same spool loads the cached report and keeps the last run's status
-const again = sshFeed(hc, f, false, (): number => Date.now(), detachedPid);
+const again = sshFeed(hc, f, false, (): number => Date.now(), detachedPid, 256);
 let ag: FeedState = again.poll(Date.now()); for (let i = 0; i < 10 && !ag.report; i++) ag = again.poll(Date.now());
 ok("cached report at start", ag.report !== null && ag.report.sessions.length === 900 && ag.code === "cut", ag.code);
 // exit codes from the fake ssh
 process.env["AGENTGLASS_SSH"] = script("ssh-255", "echo 'ssh: connect to host gone port 22: Connection refused' >&2; exit 255");
-const gone = sshFeed({ name: "gone", ssh: "gone", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, f, false, (): number => Date.now(), detachedPid);
+const gone = sshFeed({ name: "gone", ssh: "gone", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, f, false, (): number => Date.now(), detachedPid, 256);
 gone.start(Date.now()); let gs: FeedState = gone.poll(Date.now()); const t2 = Date.now();
 while (gs.busy && Date.now() - t2 < 10000) { execFileSync("sleep", ["0.05"]); gs = gone.poll(Date.now()); }
 ok("exit 255", gs.code === "ssh" && gs.err.indexOf("Connection refused") >= 0 && gs.report === null, gs.code + " " + gs.err);

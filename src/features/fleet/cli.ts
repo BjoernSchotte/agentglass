@@ -45,9 +45,9 @@ const STRICT_EXIT = 5;
 
 // ── the hosts of this run: feeds, cached reports, due pulls ──
 export function redactOf(h: HostCfg): boolean { return REDACT || h.redact; } // a viewer under --redact pulls and reads only redacted reports
-export function makeFeeds(c: FleetCfg, spawn: (cmd: string, args: string[]) => number): HostFeed[] {
+export function makeFeeds(c: FleetCfg, spawn: (cmd: string, args: string[]) => number, lines: number): HostFeed[] {
   const fs: HostFeed[] = [];
-  for (const h of c.hosts) fs.push(h.enabled && h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn) : idleFeed(h.kind));
+  for (const h of c.hosts) fs.push(h.enabled && h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines) : idleFeed(h.kind));
   return fs;
 }
 function sleep(s: string): void { try { execFileSync("sleep", [s]); } catch (e) { /* interrupted */ } }
@@ -101,7 +101,7 @@ function setup(needSsh: boolean): FleetCfg {
   if (needSsh && !sshBin()) cliError("usage", "fleet needs ssh (AGENTGLASS_SSH)", "install OpenSSH's client, or point AGENTGLASS_SSH at it", 2);
   const names: string[] = []; for (const h of c.hosts) names.push(h.name);
   forget(names); // a host removed from the config: its spool files go
-  setFleet(c, hostId(), makeFeeds(c, detachedPid));
+  setFleet(c, hostId(), makeFeeds(c, detachedPid, 0)); // a CLI run reads each report whole
   return c;
 }
 function failedLines(fs: Failed[]): void {

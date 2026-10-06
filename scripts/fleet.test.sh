@@ -31,7 +31,11 @@ case "$dest" in
   nodns) echo "ssh: Could not resolve hostname nodns: Name or service not known" >&2; exit 255 ;;
   noauth) echo "me@noauth: Permission denied (publickey)." >&2; exit 255 ;;
   noag) echo "sh: 1: agentglass: not found" >&2; exit 127 ;;
-  old) echo "agentglass needs an interactive terminal" >&2; exit 1 ;; # an agentglass without fleet (measured: 2026.10.5)
+  old) echo "agentglass needs an interactive terminal" >&2; exit 1 ;;
+  big) printf '{"hello":{"format":"agentglass-fleet/v1","version":"x","hostId":"9999999999999999","hostName":"big","os":"linux","tzOffsetMin":0,"redact":false,"days":7,"now":1}}\n{"cost":null}\n{"allowance":null}\n'
+       pad=$(printf '%2000s' x | tr ' ' p) # real rows run to tens of KB (git, alerts): many 512 KB windows
+       i=0; while [ $i -lt 1000 ]; do printf '{"s":{"id":"big%05d","harness":"claude","title":"t","pad":"%s","updated":"2026-10-01T00:00:00.000Z","live":false}}\n' $i "$pad"; i=$((i + 1)); done
+       printf '{"end":{"sessions":1000}}\n'; exit 0 ;; # an agentglass without fleet (measured: 2026.10.5)
   cut) HOME="$FAKE_HOMES/h2" eval "$*" | sed '$d'; exit 0 ;;
 esac
 HOME="$FAKE_HOMES/$dest" eval "$*"
@@ -71,6 +75,10 @@ for want in "✗ ssh: Could not resolve hostname nodns" "✗ me@noauth: Permissi
   "✗ agentglass not found on noag: set fleet.hosts[].agentglass" "✗ agentglass on old is older than fleet: update it there"; do
   grep -qF "$want" "$t/st" || { echo "FAIL status: $want"; cat "$t/st"; fail=1; }
 done
+# a report longer than the TUI's per-tick window (256 lines): the CLI reads it whole, at once and from the cache
+cfg '{"fleet":{"hosts":[{"name":"big","ssh":"big"}]}}'
+eq "big report: rows" "$(run fleet --json --refresh --filter 'host is big' | jq length)" 1000
+eq "big report: status from the cache" "$(run fleet status --json | jq -r '.hosts[0].code + " " + (.hosts[0].sessions | tostring)')" "ok 1000"
 # open <ref>@<host>: the ssh command that opens it there; @ this machine's name: a local ref; an unknown host: not found
 cfg '{"fleet":{"hosts":[{"name":"h2","ssh":"me@h2","agentglass":"~/.local/bin/agentglass"}]}}'
 eq "open @host" "$(run open claude:abcdef12@h2)" "ssh -t me@h2 ~/.local/bin/agentglass open claude:abcdef12"
