@@ -24,7 +24,7 @@ export function hubFeed(h: HostCfg, reserved: string[]): HostFeed {
     stop: (): void => { src.stop(); } };
 }
 function hostFeed(hh: HubHost): HostFeed { return { kind: "otlp", start: (now: number): boolean => false, poll: (now: number): FeedState => hh.state, stop: (): void => {} }; }
-// read the sources (drain: until no backlog, a CLI run), add hosts seen for the first time, apply changed reports
+// read the sources (drain: until no backlog, a CLI run), add hosts seen for the first time; true = something changed
 export function syncHubs(now: number, drain: boolean): boolean {
   let changed = false; const budget = { bytes: TICK_BYTES, lines: TICK_LINES };
   const sources: { cfg: HostCfg; src: HostSource }[] = [];
@@ -36,8 +36,9 @@ export function syncHubs(now: number, drain: boolean): boolean {
       if (!drain || !x.src.busy()) break;
     }
   }
-  for (const rh of FLEET.hosts) { const hh = OF.get(rh.cfg.name); if (hh && rh.cfg.kind === "otlp") { rh.st = hh.state; if (hh.state.report && hh.state.report !== rh.report) { rh.report = hh.state.report; rh.okAt = hh.state.okAt; changed = true; } } else if (SRC.has(rh.cfg.name)) rh.st = rh.feed.poll(now); }
-  if (changed) reapply();
+  // a CLI run applies the reports here; in the TUI fleet's tick applies them (its alert toasts and notifications)
+  for (const rh of FLEET.hosts) { const hh = OF.get(rh.cfg.name); if (hh && rh.cfg.kind === "otlp") { rh.st = hh.state; if (drain && hh.state.report && hh.state.report !== rh.report) { rh.report = hh.state.report; rh.okAt = hh.state.okAt; } } else if (SRC.has(rh.cfg.name)) rh.st = rh.feed.poll(now); }
+  if (changed && drain) reapply();
   return changed;
 }
 function upsert(src: HostCfg, hh: HubHost): void {

@@ -69,7 +69,6 @@ export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = [])
         h.state.report = rep; h.state.okAt = at; h.state.tryAt = now; h.state.err = ""; h.state.code = "";
         changed.push(h);
       }
-      for (const h of states.values()) h.state.busy = src.backlog; // the indexing gauge while a backlog is read
       return changed;
     },
     busy(): boolean { return src.backlog; },

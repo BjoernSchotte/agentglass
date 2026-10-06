@@ -3,7 +3,7 @@
 import { hubSource } from "../../src/features/hub/feed.ts";
 const dir = process.argv[2] ?? "";
 const src = hubSource("hub", { dir, names: new Map<string, string>(), trust: "", maxAgeDays: 3650, includeNative: false });
-for (let i = 0; i < 100; i++) { src.poll(Date.now(), { bytes: 2097152, lines: 2000 }); const hs = src.hosts(); if (hs.length && hs[0] && !hs[0].state.busy) break; }
+for (let i = 0; i < 100000; i++) { src.poll(Date.now(), { bytes: 2097152, lines: 2000 }); if (!src.busy()) break; }
 for (const h of src.hosts()) {
   const r = h.state.report; if (!r) continue;
   const ss: string[] = [];

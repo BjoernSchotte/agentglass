@@ -38,7 +38,7 @@ let lines = ""; for (let i = 0; i < 10000; i++) lines += SAMPLE.split("4e517d07a
 mk(join(bd, "spans.jsonl"), lines);
 const s3 = hubSource("bl", { dir: bd, names: new Map<string, string>(), trust: "", maxAgeDays: 3650, includeNative: false });
 let polls = 0; let busySeen = false;
-for (; polls < 200; polls++) { s3.poll(Date.now(), { bytes: 2 * 1048576, lines: 2000 }); const hs = s3.hosts(); if (hs.length && hs[0] && hs[0].state.busy) busySeen = true; if (hs.length && hs[0] && !hs[0].state.busy) break; }
+for (; polls < 200; polls++) { s3.poll(Date.now(), { bytes: 2 * 1048576, lines: 2000 }); if (s3.busy()) busySeen = true; else break; }
 ok("10,000 lines over ≥ 5 polls, busy meanwhile", polls >= 4 && busySeen, String(polls + 1) + " busy " + String(busySeen));
 if (bad) console.log(String(bad) + " failed"); else console.log("hub feed: all checks passed");
 if (bad) process.exit(1);

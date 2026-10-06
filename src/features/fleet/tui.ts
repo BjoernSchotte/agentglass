@@ -71,8 +71,8 @@ function tick(): void {
   const c = FLEET.cfg; if (!T.on || !c) return;
   const now = Date.now(); FLEET.intervalMs = intervalMs(c, AWAY.on);
   let fresh = false; let running = 0; const toasts: string[] = [];
-  for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || rh.cfg.kind !== "ssh") continue;
+  for (const rh of FLEET.hosts) { // ssh hosts and the hosts of hub sources (otlp-hub: syncHubs adds them; no pulls)
+    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "otlp")) continue;
     const st = rh.feed.poll(now); rh.st = st; const n = rh.cfg.name;
     if ((st.code === "dir" || st.code === "nossh") && !T.seeded.has(st.code)) { T.seeded.add(st.code); say("warn", "fleet: " + st.err); } // no pulls at all: say why once
     if (st.busy) { running++; T.busy.set(n, true); continue; }
