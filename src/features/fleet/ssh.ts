@@ -2,15 +2,16 @@
 // shared connection; the tick only stats the .rc file and reads the report a window of lines at a time
 // SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
-import { openSync, writeSync, closeSync, unlinkSync, renameSync, chmodSync } from "node:fs";
+import { openSync, writeSync, closeSync, unlinkSync, renameSync, chmodSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { sha256Hex } from "../../util/sha256.ts";
 import { readText } from "../../util/fs.ts";
 import { OS } from "../../platform/index.ts";
 import { RUN_DIR, secureDir, myUid } from "../palette/rundir.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
-import { type HostFeed, type FeedState, newFeedState } from "./model.ts";
-import { type Reader, ensureDir, fleetDir, keyOf, spoolPath, spoolOf, mtimeOf, newReader, readStep } from "./store.ts";
+import { type HostFeed, type HostReport, type FeedState, newFeedState } from "./model.ts";
+import { type Reader, type SnapReader, ensureDir, fleetDir, keyOf, spoolPath, spoolOf, mtimeOf, newReader, readStep, newSnapReader, readSnapStep, kindOf } from "./store.ts";
+import { type Snap, snapLines, applySnap, fullOf } from "./snap.ts";
 
 // the probe result is cached per configured command (a changed $AGENTGLASS_SSH is probed again)
 let binFor = "\u0000"; let bin = "";
@@ -49,6 +50,14 @@ export function sshOpts(cp: string): string[] {
 // options again after the destination unless "--" ended them: nothing after it is ever an option
 export function sshArgs(h: HostCfg, days: number, redact: boolean, cp: string): string[] {
   const a = sshOpts(cp).concat(["--", h.ssh, q(h.agentglass), q("fleet"), q("pull"), q("--days"), q(String(days))]);
+  if (redact) a.push(q("--redact"));
+  return a;
+}
+// a snapshot request (spec 12): this viewer's id and the generation it applied last ("" = none yet: a full one)
+export function snapArgs(h: HostCfg, days: number, redact: boolean, cp: string, peer: string, ack: string): string[] {
+  const a = sshOpts(cp).concat(["--", h.ssh, q(h.agentglass), q("fleet"), q("snapshot"), q("--peer"), q(peer)]);
+  if (ack) { a.push(q("--ack")); a.push(q(ack)); }
+  a.push(q("--days")); a.push(q(String(days)));
   if (redact) a.push(q("--redact"));
   return a;
 }
@@ -96,28 +105,65 @@ function foreignRun(k: string, now: number, limitMs: number): number {
   const pid = Number(t[0] ?? ""); const at = Number(t[1] ?? "");
   return pid > 0 && at > 0 && now - at < limitMs && alive(pid) ? at : 0;
 }
-export interface SshFeed extends HostFeed { key: string; cp: string }
+export interface SshFeed extends HostFeed { key: string; cp: string; mode(): string }
 // a host this viewer does not pull (disabled, another transport): a feed that never starts
 export function idleFeed(kind: string): HostFeed { const st = newFeedState(); return { kind, start: (t: number): boolean => false, poll: (t: number): FeedState => st, stop: (): void => {} }; }
+// the exact state of a snapshot host on the viewer (spec 12, T12): k.snap = one full snapshot (the state at its gen),
+// k.j = the deltas applied since, appended in order. A delta is acknowledged by its gen only once it is in the journal:
+// a crash before that re-asks from the older gen; a delta whose base is not the state's gen never applies (no double
+// rows). The journal folds into k.snap when it passes half of it
+export const JOURNAL_MIN = 1048576;
+export interface SnapState { rep: HostReport | null; gen: string }
+export function saveFull(k: string, rep: HostReport, gen: string): boolean {
+  try {
+    const tmp = spoolPath(k, "snap.tmp"); const fd = openSync(tmp, "w"); chmodSync(tmp, 0o600);
+    for (const l of snapLines(fullOf(rep, gen))) writeSync(fd, l + "\n");
+    closeSync(fd); renameSync(tmp, spoolPath(k, "snap"));
+    try { unlinkSync(spoolPath(k, "j")); } catch (e) { /* none */ }
+    return true;
+  } catch (e) { return false; }
+}
+// a finished snapshot read from the spool: applied when full or on the state's gen; then made durable (the spool file
+// becomes k.snap when full, else it is appended to the journal). false = not applied (another base: ask for a full one)
+export function applyDurable(k: string, ss: SnapState, x: Snap, text: string): boolean {
+  if (!x.full && x.base !== ss.gen) return false;
+  ss.rep = applySnap(ss.rep, x); ss.gen = x.gen;
+  try {
+    if (x.full) { writeFileSync(spoolPath(k, "snap.tmp"), text, { mode: 0o600 }); renameSync(spoolPath(k, "snap.tmp"), spoolPath(k, "snap")); try { unlinkSync(spoolPath(k, "j")); } catch (e) { /* none */ } }
+    else {
+      appendFileSync(spoolPath(k, "j"), text); chmodSync(spoolPath(k, "j"), 0o600);
+      const js = sizeOf(spoolPath(k, "j")); if (js > Math.max(JOURNAL_MIN, sizeOf(spoolPath(k, "snap")) / 2) && ss.rep) saveFull(k, ss.rep, ss.gen);
+    }
+  } catch (e) { ss.gen = ""; } // not durable: the next request asks for a full snapshot
+  return true;
+}
+function sizeOf(p: string): number { try { return statSync(p).size; } catch (e) { return 0; } }
 // one host's feed; spawn = detachedPid in production, a stub in checks; lines = how much of a new report one poll parses
-// (the TUI: 256 lines, a frame's worth; 0 = all of it: a CLI run reads a report whole)
-export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => number, spawn: (cmd: string, args: string[]) => number, lines: number): SshFeed {
+// (the TUI: 256 lines, a frame's worth; 0 = all of it: a CLI run reads a report whole). peer: this machine's host id
+// (snapshot hosts keep this viewer's generations under it)
+export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => number, spawn: (cmd: string, args: string[]) => number, lines: number, peer = ""): SshFeed {
   const k = keyOf(h.name, redact);
   const st: FeedState = newFeedState();
   const run = { pid: 0, at: 0, foreign: 0 };
   let rd: Reader | null = null; let cached = false; let rcAt = 0; let loaded = false;
+  let mode = h.snapshot && /^[0-9a-f]{16}$/.test(peer) ? "snapshot" : "pull";
+  const ss: SnapState = { rep: null, gen: "" };
+  let sr: SnapReader | null = null; let srFile = ""; let boot: string[] = []; // the state's files still to load (k.snap, k.j)
   const limit = (): number => FEEDTEST.timeoutMs > 0 ? FEEDTEST.timeoutMs : f.timeoutS * 1000;
   const setErr = (s: { code: string; msg: string }): void => { st.code = s.code; st.err = s.code === "ok" ? "" : s.msg; };
+  const step = (): number => lines > 0 ? lines : 1000000;
   const feed: SshFeed = {
-    kind: "ssh", key: k, cp: hostControlPath(h),
+    kind: "ssh", key: k, cp: hostControlPath(h), mode: (): string => mode,
     start(t: number): boolean {
       if (run.pid || run.foreign) return false;
+      if (boot.length || (sr && srFile !== "run")) return false; // the state is still loading: its gen is the ack
       const why = ensureDir(); if (why) { st.code = "dir"; st.err = why; st.tryAt = t; return false; }
       const fa = foreignRun(k, t, limit() + 30000); if (fa) { run.foreign = fa; st.busy = true; return false; }
       const b = sshBin(); if (!b) { st.code = "nossh"; st.err = "fleet needs ssh (AGENTGLASS_SSH)"; st.tryAt = t; return false; }
       try { unlinkSync(spoolPath(k, "rc")); } catch (e) { /* none */ }
       rcAt = 0;
-      const pid = spawn("sh", ["-c", SNIPPET, "sh", fleetDir(), k, b].concat(sshArgs(h, f.days, redact, feed.cp)));
+      const args = mode === "snapshot" ? snapArgs(h, f.days, redact, feed.cp, peer, ss.gen) : sshArgs(h, f.days, redact, feed.cp);
+      const pid = spawn("sh", ["-c", SNIPPET, "sh", fleetDir(), k, b].concat(args));
       st.tryAt = t;
       if (pid <= 0) { st.code = "other"; st.err = "could not start sh"; return false; }
       run.pid = pid; run.at = t; st.busy = true;
@@ -125,7 +171,11 @@ export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => num
       return true;
     },
     poll(t: number): FeedState {
-      if (!loaded) { loaded = true; const sp = spoolOf(k); if (sp) { rcAt = sp.rcAt; if (sp.rc !== 0) setErr(statusOf(sp.rc, sp.err, h, f.timeoutS)); } if (mtimeOf(spoolPath(k, "jsonl"))) { rd = newReader(k); cached = true; } } // the cached report first (its status stays the last run's)
+      if (!loaded) { // the cached state first (its status stays the last run's): a snapshot host's k.snap + k.j, else the last pull report
+        loaded = true; const sp = spoolOf(k); if (sp) { rcAt = sp.rcAt; if (sp.rc !== 0) setErr(statusOf(sp.rc, sp.err, h, f.timeoutS)); }
+        if (mode === "snapshot" && mtimeOf(spoolPath(k, "snap"))) boot = [spoolPath(k, "snap"), spoolPath(k, "j")];
+        else if (kindOf(spoolPath(k, "jsonl")) === "pull") { rd = newReader(k); cached = true; }
+      }
       if (run.pid && t - run.at > limit()) {
         try { process.kill(-run.pid, "SIGTERM"); } catch (e) { try { process.kill(run.pid, "SIGTERM"); } catch (e2) { /* gone */ } } // its group: sh and ssh together
         run.pid = 0; st.busy = false; setErr(statusOf(RC_TIMEOUT, "", h, f.timeoutS));
@@ -133,16 +183,43 @@ export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => num
         writeFileAtomic(spoolPath(k, "rc"), String(RC_TIMEOUT) + "\n"); rcAt = mtimeOf(spoolPath(k, "rc")); // fleet status reads it later
       }
       if (run.foreign && t - run.foreign > limit() + 30000) { run.foreign = 0; st.busy = false; }
-      const at = mtimeOf(spoolPath(k, "rc"));
+      const at = boot.length ? 0 : mtimeOf(spoolPath(k, "rc"));
       if (at && at !== rcAt) {
         rcAt = at;
         const sp = spoolOf(k);
         if (run.pid) { try { unlinkSync(spoolPath(k, "pid")); } catch (e) { /* gone */ } }
         run.pid = 0; run.foreign = 0; st.busy = false;
-        if (sp && sp.rc === 0) { rd = newReader(k); cached = false; } else if (sp) setErr(statusOf(sp.rc, sp.err, h, f.timeoutS));
+        if (sp && sp.rc === 0) {
+          const kd = kindOf(spoolPath(k, "jsonl"));
+          if (kd === "snap") { sr = newSnapReader(spoolPath(k, "jsonl")); srFile = "run"; rd = null; }
+          else { rd = newReader(k); cached = false; sr = null; }
+        } else if (sp) {
+          const s = statusOf(sp.rc, sp.err, h, f.timeoutS);
+          // an agentglass without fleet snapshot (or a serve that allows only pull): the pull for the rest of this run
+          if (mode === "snapshot" && (s.code === "old" || (s.code === "refused" && /only fleet pull and --version/.test(sp.err)))) { mode = "pull"; setErr({ code: "old", msg: "agentglass on " + h.name + " has no fleet snapshot: update it there for an exact merge (pulling meanwhile)" }); st.tryAt = 0; }
+          else setErr(s);
+        }
+      }
+      // the state's files at start, then a run's snapshot: one snapshot per step, a window of lines each
+      if (!sr && boot.length) { const p = boot.shift() ?? ""; sr = newSnapReader(p); srFile = p.endsWith(".snap") ? "snap" : "j"; }
+      if (sr) {
+        const r = readSnapStep(sr, step());
+        if (r) {
+          if (srFile === "run") {
+            const text = readText(sr.path, 0, sr.off);
+            if (applyDurable(k, ss, r, text)) { st.report = ss.rep; st.okAt = sr.at; setErr({ code: "ok", msg: "ok" }); }
+            else { ss.gen = ""; setErr({ code: "cut", msg: "snapshot on another generation: asking for a full one" }); }
+            sr = null;
+          } else if (srFile === "snap") { ss.rep = applySnap(null, r); ss.gen = r.gen; st.report = ss.rep; st.okAt = sr.at; }
+          else if (!r.full && r.base === ss.gen) { ss.rep = applySnap(ss.rep, r); ss.gen = r.gen; st.report = ss.rep; st.okAt = mtimeOf(spoolPath(k, "j")); }
+        } else if (r === null) {
+          if (srFile === "run" && sr.p.err && sr.p.err !== "") { const e = sr.p.err; setErr(e.startsWith("newer format") ? parseStatus(e, h) : { code: "cut", msg: "incomplete snapshot (connection cut)" }); }
+          sr = null;
+        }
+        if (lines <= 0 && (sr || boot.length)) return feed.poll(t); // a CLI run reads it whole
       }
       if (rd) {
-        let r = readStep(rd, lines > 0 ? lines : 1000000);
+        let r = readStep(rd, step());
         while (lines <= 0 && r === undefined) r = readStep(rd, 1000000);
         if (r !== undefined) {
           const okAt = rd.at; const perr = rd.p.err; const fromCache = cached; rd = null; cached = false;

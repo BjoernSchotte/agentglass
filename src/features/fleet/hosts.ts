@@ -18,10 +18,11 @@ import { modeOf } from "../usage/bill-live.ts";
 import { ownKeys, rowsFor } from "../usage/msgrows.ts";
 import { type LocalLog, type FleetHost, type Exact, type Shadow, exactFleet, modeOfShadow } from "./merge.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
-import type { HostFeed, HostReport, FeedState, OwnRow } from "./model.ts";
+import type { HostFeed, HostReport, FeedState, OwnRow, LiveRow } from "./model.ts";
 
 // applied: the report rows were last built from (a round that changes nothing else keeps them)
-export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null; applied: HostReport | null }
+// beatAt: the live stream's last beat (viewer clock, 0 = no stream), live: its newest state per session key (spec 16)
+export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null; applied: HostReport | null; beatAt: number; live: Map<string, LiveRow> }
 // localId: this machine's hostId(); intervalMs: the effective refresh interval (stretched while the TUI is unfocused)
 export const FLEET = { hosts: [] as RemoteHost[], cfg: null as FleetCfg | null, localId: "", intervalMs: 60000 };
 const OBJ = new Map<string, Obj>(); // remote row path → its --json object (preview, fleet --json)
@@ -235,6 +236,6 @@ REMOTE_IDENT.of = (s: Sess): Ident | null => {
 export function setFleet(c: FleetCfg, localId: string, feeds: HostFeed[]): void {
   FLEET.cfg = c; FLEET.localId = localId; FLEET.intervalMs = c.refreshS * 1000; HOSTQ.local = c.localName;
   FLEET.hosts = [];
-  for (let i = 0; i < c.hosts.length && i < feeds.length; i++) { const h = c.hosts[i]; const fd = feeds[i]; if (h && fd) FLEET.hosts.push({ cfg: h, feed: fd, report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: null, applied: null }); }
+  for (let i = 0; i < c.hosts.length && i < feeds.length; i++) { const h = c.hosts[i]; const fd = feeds[i]; if (h && fd) FLEET.hosts.push({ cfg: h, feed: fd, report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: null, applied: null, beatAt: 0, live: new Map<string, LiveRow>() }); }
   RG.gen++;
 }

@@ -32,6 +32,7 @@ import { sshFeed, idleFeed, sshBin, hostControlPath } from "./ssh.ts";
 import { forget } from "./store.ts";
 import { pullCli, pullSessions } from "./pull.ts";
 import { snapshotCli } from "./snapshot.ts";
+import { pricesSig } from "../usage/pricing.ts";
 import { serveCli, authorizeCli } from "./serve.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
@@ -48,7 +49,8 @@ const STRICT_EXIT = 5;
 export function redactOf(h: HostCfg): boolean { return REDACT || h.redact; } // a viewer under --redact pulls and reads only redacted reports
 export function makeFeeds(c: FleetCfg, spawn: (cmd: string, args: string[]) => number, lines: number): HostFeed[] {
   const fs: HostFeed[] = [];
-  for (const h of c.hosts) fs.push(h.enabled && h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines) : idleFeed(h.kind));
+  const me = hostId();
+  for (const h of c.hosts) fs.push(h.enabled && h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines, me) : idleFeed(h.kind));
   return fs;
 }
 function sleep(s: string): void { try { execFileSync("sleep", [s]); } catch (e) { /* interrupted */ } }
@@ -203,7 +205,7 @@ function cost(args: string[]): void {
 }
 
 // ── fleet status ──
-export interface HostStatus { name: string; kind: string; target: string; enabled: boolean; okAgeSec: number; err: string; code: string; version: string; hostId: string; redact: boolean; tzOffsetMin: number; sessions: number; live: number; overlap: number; sharing: string; dupOf: string; skewSec: number; os: string }
+export interface HostStatus { name: string; kind: string; target: string; enabled: boolean; okAgeSec: number; err: string; code: string; version: string; hostId: string; redact: boolean; tzOffsetMin: number; sessions: number; live: number; overlap: number; sharing: string; dupOf: string; skewSec: number; os: string; exact: boolean; priceSig: string; liveAgeSec: number }
 function cpOf(rh: RemoteHost): string { return rh.cfg.kind === "ssh" && rh.cfg.enabled ? hostControlPath(rh.cfg) : ""; }
 export function hostStatus(rh: RemoteHost, now: number, ovKeys: Set<string>): HostStatus {
   const r = rh.report; const st: FeedState | null = rh.st;
@@ -212,7 +214,8 @@ export function hostStatus(rh: RemoteHost, now: number, ovKeys: Set<string>): Ho
     err: st ? st.err : "", code: !rh.cfg.enabled ? "disabled" : rh.dupOf ? "duplicate" : st && st.code ? st.code : r ? "ok" : "none", version: r ? r.hello.version : "", hostId: r ? r.hello.hostId : "",
     redact: r ? r.hello.redact : redactOf(rh.cfg), tzOffsetMin: r ? r.hello.tzOffsetMin : 0, sessions: rh.rows.length, live, overlap: ov,
     sharing: rh.cfg.kind !== "ssh" || !rh.cfg.enabled ? "" : cpOf(rh) ? "on" : "off: the run directory path is too long or not owner-only", dupOf: rh.dupOf,
-    skewSec: r ? Math.round((r.hello.now - rh.okAt) / 1000) : 0, os: r ? r.hello.os : "" };
+    skewSec: r ? Math.round((r.hello.now - rh.okAt) / 1000) : 0, os: r ? r.hello.os : "", exact: !!r && r.exact, priceSig: r ? r.hello.priceSig : "",
+    liveAgeSec: rh.beatAt > 0 ? Math.round((now - rh.beatAt) / 1000) : -1 };
 }
 function tz(min: number): string { const a = Math.abs(min); return "UTC" + (min < 0 ? "−" : "+") + String(Math.floor(a / 60)) + (a % 60 ? ":" + String(a % 60).padStart(2, "0") : ""); }
 function problem(x: HostStatus): boolean { return x.code !== "ok" && x.code !== "disabled"; }
@@ -222,7 +225,10 @@ function statusText(x: HostStatus, c: FleetCfg, localTz: number): string[] {
   else if (problem(x)) o.push("  ✗ " + (x.err || (x.code === "none" ? "no report yet: agentglass fleet --refresh pulls now" : x.code)));
   if (x.okAgeSec >= 0) o.push("  last report " + ago(Date.now() - x.okAgeSec * 1000) + " ago · " + String(x.sessions) + " sessions, " + String(x.live) + " live" + (x.overlap ? ", " + String(x.overlap) + " also on another host (≈)" : "") +
     (x.okAgeSec * 1000 > 2 * c.refreshS * 1000 + c.timeoutS * 1000 ? " · stale" : ""));
-  if (x.version) o.push("  agentglass " + x.version + " · " + x.os + " · " + tz(x.tzOffsetMin) + (x.tzOffsetMin !== localTz ? " (here " + tz(localTz) + ": its days differ)" : "") + (x.redact ? " · redacted" : "") + " · host id " + x.hostId);
+  if (x.version) o.push("  agentglass " + x.version + " · " + x.os + " · " + tz(x.tzOffsetMin) + (x.tzOffsetMin !== localTz ? " (here " + tz(localTz) + (x.exact ? ": re-bucketed into this machine's days)" : ": its days differ)") : "") + (x.redact ? " · redacted" : "") + " · host id " + x.hostId);
+  if (x.okAgeSec >= 0 && x.enabled) o.push(x.exact ? "  exact: yes (snapshots; message copies on several hosts count once" + (c.reprice ? ", priced with this machine's table)" : ")") + (!c.reprice && x.priceSig !== pricesSig() ? " · prices differ" : "")
+    : "  exact: no" + (x.kind === "ssh" ? " (update agentglass on " + x.name + " for an exact merge, or it has snapshot: false)" : "") + (x.priceSig !== pricesSig() ? " · prices differ" : ""));
+  if (x.liveAgeSec >= 0) o.push("  live stream: " + (x.liveAgeSec <= 90 ? "on (last beat " + String(x.liveAgeSec) + " s ago)" : "stale (last beat " + ago(Date.now() - x.liveAgeSec * 1000) + " ago)"));
   if (Math.abs(x.skewSec) > 120) o.push("  clock skew " + String(x.skewSec) + " s (ages use this machine's clock)");
   if (x.sharing && x.sharing !== "on") o.push("  connection sharing " + x.sharing);
   return o;
@@ -245,7 +251,7 @@ function status(args: string[]): void {
   if (asJson) {
     const o: Obj[] = [];
     for (const x of xs) o.push({ name: x.name, kind: x.kind, target: x.target, enabled: x.enabled, okAgeSec: x.okAgeSec >= 0 ? x.okAgeSec : null, code: x.code, err: x.err, version: x.version, hostId: x.hostId, redact: x.redact,
-      tzOffsetMin: x.tzOffsetMin, os: x.os, sessions: x.sessions, live: x.live, overlap: x.overlap, sharing: x.sharing, dupOf: x.dupOf || null, skewSec: x.skewSec });
+      tzOffsetMin: x.tzOffsetMin, os: x.os, sessions: x.sessions, live: x.live, overlap: x.overlap, sharing: x.sharing, dupOf: x.dupOf || null, skewSec: x.skewSec, exact: x.exact, liveAgeSec: x.liveAgeSec >= 0 ? x.liveAgeSec : null });
     out(JSON.stringify(close ? { localName: c.localName, hostId: hostId(), hosts: o, closed } : { localName: c.localName, hostId: hostId(), hosts: o }));
     process.exit(0);
   }
