@@ -9,7 +9,7 @@ import { FORMAT, type HostReport, newFeedState, noOwned } from "./model.ts";
 import { sessRowOf } from "./report.ts";
 import type { FleetCfg } from "./config.ts";
 import { FLEET, setFleet, hostByName } from "./hosts.ts";
-import { headerSeg, newAlerts, intervalMs, backoffMs, nextDue, sshHint, hostTag } from "./tui.ts";
+import { headerSeg, newAlerts, intervalMs, backoffMs, nextDue, sshHint, hostTag, HUB_OPEN } from "./tui.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -50,5 +50,10 @@ ok("backoff", backoffMs(1) === 30000 && backoffMs(2) === 60000 && backoffMs(6) =
 ok("due after ok", nextDue(1000, true, 0, 60000) === 61000, String(nextDue(1000, true, 0, 60000)));
 ok("due after failure", nextDue(1000, false, 2, 60000) === 61000 && nextDue(1000, false, 1, 60000) === 31000, String(nextDue(1000, false, 1, 60000)));
 ok("fleet hosts set", FLEET.hosts.length === 1, String(FLEET.hosts.length));
+// a hub host (otlp-hub) pushes its export: no ssh command is offered for its rows
+FLEET.hosts.push({ cfg: { name: "lap", ssh: "", agentglass: "", redact: false, enabled: true, kind: "otlp", path: "/h" }, feed: { kind: "otlp", start: (t: number): boolean => false, poll: (t: number) => newFeedState(), stop: (): void => {} }, report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: newFeedState(), applied: null });
+const hr = newSess("pi", "01a1", "@lap/pi:01a1", false); hr.host = "lap";
+ok("hub host: no ssh hint", sshHint(hr) === HUB_OPEN, sshHint(hr));
+ok("hub host: the guard's toast offers no ssh", remoteOnly(hr, "the transcript") && S.toast.indexOf("ssh") < 0 && S.toast.indexOf("pushes to the hub") >= 0, S.toast);
 console.log(bad ? String(bad) + " failed" : "fleet tui: all checks passed");
 if (bad) process.exit(1);
