@@ -4,6 +4,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
 import { display } from "../../hooks.ts";
+import { parse as parseJson } from "../../util/json.ts";
+import { loadHead, titleOf } from "../../model/sessions.ts";
+import { identSync } from "../query/project.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
 import { type Acc, type Booking, newAcc, setBookTap } from "../usage/record.ts";
 import { setCallTap, program, norm, mcpServer } from "../usage/calls.ts";
@@ -55,11 +58,15 @@ function cut(s: string, n: number): string { return s.length > n ? s.slice(0, n)
 const CMAX = 65536; // content kept per field while building (the encoder truncates to otlp.contentMax)
 
 // ── turns ──
+// the session title as the list shows it (faked under --redact), "" before there is one
+function titleNow(s: Sess): string { if (!s.headDone) loadHead(s); const t = titleOf(s); return t === "(no prompt yet)" ? "" : cut(t, 256); }
+// the project identity key (repo-view; --json repo.key unredacted: the encoder hashes it under --redact), "" = none
+function repoKeyOf(s: Sess): string { const id = identSync(s); return id && id.kind !== "none" ? id.key : ""; }
 function startTurn(b: SessB, e: Ev, t: number): XTurn {
   const k = e.ts ? e.ts + "#" + String(b.tsN.get(e.ts) ?? 0) : "i" + String(b.cur.n);
   if (e.ts) b.tsN.set(e.ts, (b.tsN.get(e.ts) ?? 0) + 1);
   const r = b.root;
-  const tr: XTurn = { h: r.h, rootId: r.id, path: r.path, key: k, index: b.cur.n, traceId: traceId(b.R, k), t0: t, t1: t, closed: false, closedBy: "", compacted: false, ver: b.ver, cwd: r.cwd, branch: r.branch, remote: r.remote, spans: [], fx: [], fxOn: false };
+  const tr: XTurn = { h: r.h, rootId: r.id, path: r.path, key: k, index: b.cur.n, traceId: traceId(b.R, k), t0: t, t1: t, closed: false, closedBy: "", compacted: false, ver: b.ver, cwd: r.cwd, branch: r.branch, remote: r.remote, spans: [], fx: [], fxOn: false, title: titleNow(r), repoKey: repoKeyOf(r) };
   const root = newSpan("invoke_agent", "invoke_agent " + agentName(r.h), rootSpanId(b.R, k), "", t, r.id);
   tr.spans.push(root);
   const sd = b.side; sd.chats = new Map<string, XSpan>(); sd.lastChat = null; sd.outBuf = "";
@@ -97,6 +104,14 @@ function errType(text: string, err: boolean): string {
   if (/^\[(cancel|aborted)|^\[Request interrupted/i.test(t)) return "cancelled";
   if (/^\[timeout/i.test(t)) return "timeout";
   return err ? "tool_error" : "";
+}
+// a file call's path argument (otlp-complete 3.5): the input's path field, else the shown argument of a tool that takes
+// one path (edit/write, read/view/ls); a search pattern is no path. Under --redact both are the fake event's
+const PATH_KEYS = ["file_path", "path", "notebook_path", "filePath", "absolute_path", "dir_path", "target_file"];
+function targetOf(name: string, arg: string, full: string): string {
+  const o = full.startsWith("{") ? parseJson(full) : null;
+  if (o) for (const k of PATH_KEYS) { const v = o[k]; if (typeof v === "string" && v) return cut(v as string, 1024); }
+  return catOf(name) === 1 || /read|view|cat|^ls|list/i.test(name) ? cut(arg, 1024) : "";
 }
 function mcpTool(name: string): string { const sv = mcpServer(name); return sv ? name.slice(5 + sv.length + 2) : name; }
 
@@ -162,7 +177,9 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
     sp.agent = par.agent; sp.tool = name; sp.callId = e.id; sp.open = true;
     sp.mcp = mcpServer(name);
     const arg = toolArg(e);
-    if (catOf(name) === 0 && arg) { sp.prog = program(norm(arg)); sp.name = "execute_tool " + name + " " + sp.prog; }
+    const cat = catOf(name);
+    if (cat === 0 && arg) { const n0 = norm(arg); sp.prog = program(n0); sp.name = "execute_tool " + name + " " + sp.prog; sp.cmd = cut(n0, 200); }
+    if (cat === 1 || cat === 2) sp.target = targetOf(name, arg, e.full);
     if (name === "Skill" || name === "activate_skill") { const m = /"(?:skill|name)":"([^"]+)"/.exec(e.full); sp.skill = m ? m[1] ?? "" : arg; }
     if (o.content) sp.args = cut(e.full || arg, CMAX);
     if (sd.lineTurn !== tr.key || sd.lineAt < 0) { sd.lineTurn = tr.key; sd.lineAt = tr.spans.length; }
@@ -203,6 +220,7 @@ function request(b: SessB, sd: Side, tr: XTurn, q: Req | null, bs: Booking[], rs
   const hit = sd.chats.get(q.key);
   if (hit) { // a streamed message's later lines: extend
     hit.t1 = Math.max(hit.t1, t); for (const x of bs) book(b, hit, x); hit.rs = hit.rs + rs;
+    if (q.reqId) hit.reqId = q.reqId; // the last one seen for the request
     if (o.content && sd.outBuf) { hit.output = cut(hit.output ? hit.output + "\n" + sd.outBuf : sd.outBuf, CMAX); sd.outBuf = ""; }
     sd.mark = Math.max(sd.mark, t);
     return;
@@ -220,6 +238,7 @@ function request(b: SessB, sd: Side, tr: XTurn, q: Req | null, bs: Booking[], rs
     c.respModel = q.respModel; c.err = q.err;
     c.provider = q.provider || providerOf("", c.model); c.provId = q.logged;
     if (q.providerId) c.respId = q.key;
+    c.reqId = q.reqId;
     if (i === its - 1) { c.rs = c.rs + rs; if (o.content) c.output = sd.outBuf; }
     c.name = c.model ? "chat " + c.model : "chat";
     sd.chats.set(key, c); sd.lastChat = c;
@@ -235,7 +254,7 @@ function chatFor(b: SessB, sd: Side, tr: XTurn, par: XSpan, key: string, t0: num
   return add(tr, c);
 }
 function book(b: SessB, c: XSpan, x: Booking): void {
-  c.nIn = c.nIn + x.nIn; c.nOut = c.nOut + x.nOut; c.cr = c.cr + x.cr; c.cw = c.cw + x.cw; c.cost = c.cost + x.cost; c.unk = c.unk + x.unk;
+  c.nIn = c.nIn + x.nIn; c.nOut = c.nOut + x.nOut; c.cr = c.cr + x.cr; c.cw = c.cw + x.cw; c.cw1 = c.cw1 + x.w1; c.cost = c.cost + x.cost; c.unk = c.unk + x.unk;
   if (x.exact) c.exact = true;
   c.costSrc = !c.costSrc || c.costSrc === x.src ? x.src : "mixed"; if (x.est) c.costEst = true;
   c.hasUsage = true;

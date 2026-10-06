@@ -25,6 +25,7 @@ if (!child) {
     const t = "/tmp/agentglass-golden-" + String(process.pid) + "-" + h;
     mkdirSync(t + "/home", { recursive: true });
     execFileSync("cp", ["-R", "testdata/otlp/fixtures/" + h + "/.", t + "/home/"]);
+    mkdirSync(t + "/home/.agentglass", { recursive: true }); writeFileSync(t + "/home/.agentglass/host-id", "00112233445566ff\n"); // a fixed host.id
     const env: Record<string, string> = { HOME: t + "/home", PATH: process.env["PATH"] ?? "", AGENTGLASS_GOLDEN_CHILD: h, TZ: "UTC", AGENTGLASS_NOTIFY: "0", AGENTGLASS_OFFLINE: "1", AGENTGLASS_CACHE_DIR: t + "/cache", AGENTGLASS_OTLP_DIR: t + "/otlp", AGENTGLASS_GOLDEN: process.env["AGENTGLASS_GOLDEN"] ?? "", XDG_STATE_HOME: t + "/state" };
     if (h === "opencode") { const db = t + "/opencode.db"; execFileSync("sqlite3", [db], { input: readFileSync("testdata/otlp/fixtures/opencode/opencode.sql", "utf8") }); env["OPENCODE_DB"] = db; }
     execFileSync("sh", ["-c", "find \"$1\" -type f -exec touch -t 202609011100 {} +", "sh", t + "/home"]);

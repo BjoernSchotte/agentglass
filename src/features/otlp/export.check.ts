@@ -42,11 +42,14 @@ eq("no endpoint", opts([]).indexOf("no endpoint") >= 0 ? "err" : "ok", "err");
 eq("dry run needs no endpoint", opts(["--dry-run"]), "");
 eq("batch 0", opts(["--otlp", "http://localhost:4318", "--batch", "0"]).indexOf("--batch") >= 0 ? "err" : "ok", "err");
 eq("unknown option", opts(["--otlp", "http://x", "--frobnicate"]).indexOf("unknown option --frobnicate") >= 0 ? "err" : "ok", "err");
+eq("detail meta", parseExport(["export", "--dry-run", "--detail", "meta"], C, NOW, env).o.detail, "meta");
+eq("detail default from config", parseExport(["export", "--dry-run"], cfgFrom({ detail: "meta" }), NOW, env).o.detail + parseExport(["export", "--dry-run"], C, NOW, env).o.detail, "metanone");
+eq("detail bad", opts(["--dry-run", "--detail", "full"]), "--detail takes none or meta");
 eq("default endpoint path", parseExport(["export", "--otlp", "http://localhost:4318"], C, NOW, env).o.url, "http://localhost:4318/v1/traces");
 
 // batching: whole turns; an oversized turn alone; a body over 4 MB split into requests of the same turn
 function turnOf(key: string, n: number, pad: number): XTurn {
-  const t: XTurn = { h: "claude", rootId: "s", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx: [], fxOn: false };
+  const t: XTurn = { h: "claude", rootId: "s", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx: [], fxOn: false, title: "", repoKey: "" };
   for (let i = 0; i < n; i++) { const s = newSpan(i ? "execute_tool" : "invoke_agent", "x", "aaaaaaaaaaaa" + String(1000 + i), i ? "aaaaaaaaaaaa1000" : "", 1, "s"); s.tool = "Bash"; s.agent = "a".repeat(pad); t.spans.push(s); }
   return t;
 }
@@ -67,7 +70,7 @@ eq("5 MB turn split", String(huge.length >= 2) + " " + String(huge.every((b) => 
 // totals the endpoint already accepted; older turns of the same send carry none (a failed request loses nothing)
 {
   const fxTurn = (key: string, t0: number, fx: number[]): XTurn => {
-    const t: XTurn = { h: "fx", rootId: "fx-1", path: "/f/events.jsonl", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0, t1: t0 + 1, closed: true, closedBy: "quiet", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx, fxOn: false };
+    const t: XTurn = { h: "fx", rootId: "fx-1", path: "/f/events.jsonl", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0, t1: t0 + 1, closed: true, closedBy: "quiet", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx, fxOn: false, title: "", repoKey: "" };
     const r = newSpan("invoke_agent", "invoke_agent fx", "a" + key.padStart(15, "0"), "", t0, "fx-1");
     const c = newSpan("chat", "chat m", "c" + key.padStart(15, "0"), r.spanId, t0, "fx-1");
     c.nIn = fx[0] ?? 0; c.nOut = fx[1] ?? 0; c.cr = fx[2] ?? 0; c.cw = fx[3] ?? 0; c.cost = fx[4] ?? 0; c.unk = fx[5] ?? 0; c.hasUsage = true; c.total = true; // as advance() leaves it

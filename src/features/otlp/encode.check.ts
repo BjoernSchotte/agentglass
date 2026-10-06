@@ -11,12 +11,16 @@ import { REDACT } from "../redact-on.ts";
 import { type XTurn, type XSpan, newSpan } from "./types.ts";
 import { cfgFrom } from "./config.ts";
 import { encodeRequest, nanos, vcsOf } from "./encode.ts";
+import { HOSTID } from "../../util/hostid.ts";
+import { scrubText } from "../redact.ts";
 
+// a fixed host id for every resource (otlp-complete 3.1)
+mkdirSync(HOME + "/.agentglass", { recursive: true }); writeFileSync(HOME + "/.agentglass/hid", "00112233445566ff\n"); HOSTID.idFile = HOME + "/.agentglass/hid";
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + got + " want " + want); } }
 const T0 = 1767225600123;
 function turn(h: string, key: string): XTurn {
-  const t: XTurn = { h, rootId: "s1", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: T0, t1: T0 + 5000, closed: true, closedBy: "next", compacted: false, ver: "2.1.90", cwd: "/w/app", branch: "main", remote: "", spans: [], fx: [], fxOn: false };
+  const t: XTurn = { h, rootId: "s1", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: T0, t1: T0 + 5000, closed: true, closedBy: "next", compacted: false, ver: "2.1.90", cwd: "/w/app", branch: "main", remote: "", spans: [], fx: [], fxOn: false, title: "", repoKey: "" };
   const r = newSpan("invoke_agent", "invoke_agent Claude Code", "aaaaaaaaaaaaaaaa", "", T0, "s1"); r.t1 = T0 + 5000; r.model = "claude-sonnet-4-5"; r.models = ["claude-opus-4-5", "claude-sonnet-4-5"]; r.input = "fix the build"; r.output = "done";
   const c = newSpan("chat", "chat claude-sonnet-4-5", "bbbbbbbbbbbbbbbb", r.spanId, T0 + 10, "s1"); c.t1 = T0 + 900; c.model = "claude-sonnet-4-5"; c.provider = "anthropic"; c.respId = "msg_a";
   c.nIn = 10; c.nOut = 5; c.cr = 100; c.cw = 5; c.rs = 0; c.cost = 0.01; c.hasUsage = true; c.bill = "plan"; c.costSrc = "built-in"; c.output = "x".repeat(40);
@@ -123,5 +127,47 @@ if (REDACT) {
   eq("redact: learned name scrubbed", String(js.indexOf("zzsecretprojzz") >= 0), "false");
   eq("redact: no vcs", String(js.indexOf("\"vcs.") >= 0), "false");
 }
+// ── otlp-complete 3: host.id, titles, request id, repo key, 1-hour cache writes, meta call details ──
+{
+  const resOf = (o: Obj, k: string): string => { const out: string[] = []; for (const r of arr(o["resourceSpans"])) out.push(attrs(obj((obj(r) ?? {})["resource"]) ?? {}).get(k) ?? "-"); return out.join(" "); };
+  eq("host.id on every resource", resOf(req([turn("claude", "a#0"), turn("codex", "b#0")], {}), "host.id"), "stringValue:\"00112233445566ff\" stringValue:\"00112233445566ff\"");
+  eq("host.id droppable", resOf(req([turn("claude", "a#0")], { attributes: { drop: ["host.id"] } }), "host.id"), "-");
+  eq("agentglass.redact only under --redact", resOf(req([turn("claude", "a#0")], {}), "agentglass.redact"), REDACT ? "boolValue:true" : "-");
+  const tt = turn("claude", "k#0"); tt.title = "fix login bug"; tt.repoKey = "git:github.com/acme/app";
+  tt.spans[1].reqId = "req_011"; tt.spans[1].cw1 = 3;
+  tt.spans[4].cmd = "git push origin main"; // the Bash span
+  const rd = newSpan("execute_tool", "execute_tool Read", "ffffffffffffffff", tt.spans[0].spanId, T0 + 1400, "s1"); rd.t1 = T0 + 1450; rd.tool = "Read"; rd.target = "/w/app/src/a.ts";
+  const gr = newSpan("execute_tool", "execute_tool Grep", "1111111111111111", tt.spans[0].spanId, T0 + 1500, "s1"); gr.t1 = T0 + 1550; gr.tool = "Grep"; gr.target = "/elsewhere/b.ts";
+  const mx = newSpan("execute_tool", "execute_tool mcp__x__y", "2222222222222222", tt.spans[0].spanId, T0 + 1600, "s1"); mx.t1 = T0 + 1650; mx.tool = "mcp__x__y"; mx.mcp = "x"; mx.cmd = "should not go"; mx.target = "/w/app/nope";
+  tt.spans.push(rd); tt.spans.push(gr); tt.spans.push(mx);
+  const d0 = spans(req([tt], {}));
+  const root0 = attrs(d0[0] ?? {});
+  eq("no title by default", String(root0.has("agentglass.session.title")), REDACT ? "true" : "false");
+  const d1 = spans(req([tt], { titles: true }));
+  eq("title with otlp.titles", attrs(d1[0] ?? {}).get("agentglass.session.title") ?? "-", "stringValue:" + JSON.stringify(scrubText("fix login bug")));
+  eq("title only on the root", String(d1.slice(1).some((x: Obj) => attrs(x).has("agentglass.session.title"))), "false");
+  const long = turn("claude", "k#0"); long.title = "t".repeat(400);
+  eq("title cut to 256", String((attrs(spans(req([long], { titles: true }))[0] ?? {}).get("agentglass.session.title") ?? "").length), String(256 + "stringValue:\"\"".length));
+  const hashed = "stringValue:\"" + "x" + "\"";
+  const rk = d0.map((x: Obj) => attrs(x).get("agentglass.repo.key") ?? "-");
+  eq("repo key on every span", String(rk.every((v: string) => v === rk[0] && v !== "-")), "true");
+  eq("repo key value", REDACT ? String(/^stringValue:"[0-9a-f]{16}"$/.test(rk[0] ?? "")) : rk[0] ?? "", REDACT ? "true" : "stringValue:\"git:github.com/acme/app\"");
+  eq("repo key absent without identity", String(spans(req([turn("claude", "k#0")], {})).some((x: Obj) => attrs(x).has("agentglass.repo.key"))), "false");
+  eq("repo key right after the vcs attributes", String(keys(d0[0] ?? {}).indexOf("process.working_directory,agentglass.repo.key") >= 0 || keys(d0[0] ?? {}).indexOf("vcs.ref.head.type,agentglass.repo.key") >= 0), "true");
+  const ch1 = attrs(d0[1] ?? {});
+  eq("request id on the chat span", ch1.get("agentglass.request.id") ?? "-", "stringValue:\"req_011\"");
+  eq("1-hour cache writes", ch1.get("agentglass.usage.cache_write_1h.input_tokens") ?? "-", "intValue:\"3\"");
+  eq("no 1-hour attribute at 0", String(attrs(spans(req([turn("claude", "k#0")], {}))[1] ?? {}).has("agentglass.usage.cache_write_1h.input_tokens")), "false");
+  eq("detail none: no command or target", String(d0.some((x: Obj) => attrs(x).has("agentglass.tool.command") || attrs(x).has("agentglass.tool.target"))), "false");
+  const dm = spans(req([tt], { detail: "meta" }));
+  eq("meta: shell command", attrs(dm[4] ?? {}).get("agentglass.tool.command") ?? "-", "stringValue:" + JSON.stringify(scrubText("git push origin main")));
+  eq("meta: target relative to the cwd", attrs(dm[5] ?? {}).get("agentglass.tool.target") ?? "-", "stringValue:" + JSON.stringify(scrubText("src/a.ts")));
+  eq("meta: target outside the cwd as is", attrs(dm[6] ?? {}).get("agentglass.tool.target") ?? "-", "stringValue:" + JSON.stringify(scrubText("/elsewhere/b.ts")));
+  eq("meta: nothing on other tools", String(attrs(dm[7] ?? {}).has("agentglass.tool.command") || attrs(dm[7] ?? {}).has("agentglass.tool.target")), "false");
+  eq("meta: no target on shell, no command on files", String(attrs(dm[4] ?? {}).has("agentglass.tool.target") || attrs(dm[5] ?? {}).has("agentglass.tool.command")), "false");
+  eq("content implies meta", attrs(spans(req([tt], { content: true }))[4] ?? {}).get("agentglass.tool.command") ?? "-", "stringValue:" + JSON.stringify(scrubText("git push origin main")));
+  if (hashed === "") bad++;
+}
+
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("otlp encode: all checks passed");

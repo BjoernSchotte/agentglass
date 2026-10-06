@@ -6,6 +6,7 @@ import { type Sess, newSess } from "../../model/types.ts";
 import { harnessOf, sourceOf } from "../../harness/index.ts";
 import { opencode } from "../../harness/opencode.ts";
 import { newAcc } from "../usage/record.ts";
+import { REDACT } from "../redact-on.ts";
 import { type XTurn, type XSpan } from "./types.ts";
 import { type BuildOpts, newSessB, advance, finish, hostSpan } from "./build.ts";
 
@@ -188,6 +189,28 @@ const ft = finish(newSessB(FS, []), O);
 eq("fx", ft.map((t: XTurn) => tree(t) + " " + String((t.t1 - t.t0) / 1000)).join(" ; "), "invoke_agent fx<-1, chat fx-large<0 est, execute_tool shell wc<0 est 30 ; invoke_agent fx<-1, chat fx-large<0 est, execute_tool shell wc<0 !tool_error est 12");
 if (ft.length === 2) eq("fx cumulative totals on the newest turn (the exporter sends their growth)", ft[0].fx.join("/") + " | " + ft[1].fx.join("/"), " | 3000/" + String(ft[1].spans[1].nOut) + "/" + String(ft[1].spans[1].cr) + "/" + String(ft[1].spans[1].cw) + "/" + String(ft[1].spans[1].cost) + "/" + String(ft[1].spans[1].unk));
 if (ft.length === 2) eq("fx totals", String(ft[0].spans[1].total) + " " + String(ft[1].spans[1].total) + " " + String(ft[1].spans[1].nIn) + " " + String(ft[1].spans[1].hasUsage) + " " + String(ft[0].spans[1].hasUsage) + " " + String(ft[1].spans[0].hasUsage || ft[1].spans[0].total), "false true 3000 true false false");
+
+// ── otlp-complete 3: request id, 1-hour cache writes, call details, title and project key on the turn ──
+{
+  const rp = tmp + "/req.jsonl"; const cwd = tmp + "/proj";
+  mkdirSync(cwd + "/src", { recursive: true });
+  const L = (o: string): string => o + "\n";
+  writeFileSync(rp,
+    L("{\"type\":\"user\",\"sessionId\":\"rq\",\"cwd\":\"" + cwd + "\",\"timestamp\":\"2026-09-01T10:00:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"fix login bug\"}}") +
+    L("{\"type\":\"assistant\",\"sessionId\":\"rq\",\"cwd\":\"" + cwd + "\",\"requestId\":\"req_A\",\"timestamp\":\"2026-09-01T10:00:02.000Z\",\"message\":{\"id\":\"m1\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"on it\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"cache_creation_input_tokens\":700,\"cache_creation\":{\"ephemeral_5m_input_tokens\":200,\"ephemeral_1h_input_tokens\":500}}}}") +
+    L("{\"type\":\"assistant\",\"sessionId\":\"rq\",\"cwd\":\"" + cwd + "\",\"requestId\":\"req_A\",\"timestamp\":\"2026-09-01T10:00:03.000Z\",\"message\":{\"id\":\"m1\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tb\",\"name\":\"Bash\",\"input\":{\"command\":\"git push origin main\"}},{\"type\":\"tool_use\",\"id\":\"tr\",\"name\":\"Read\",\"input\":{\"file_path\":\"" + cwd + "/src/a.ts\"}}],\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"cache_creation_input_tokens\":700,\"cache_creation\":{\"ephemeral_5m_input_tokens\":200,\"ephemeral_1h_input_tokens\":500}}}}") +
+    L("{\"type\":\"user\",\"sessionId\":\"rq\",\"cwd\":\"" + cwd + "\",\"timestamp\":\"2026-09-01T10:00:04.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tb\",\"content\":\"ok\"},{\"type\":\"tool_result\",\"tool_use_id\":\"tr\",\"content\":\"x\"}]}}") +
+    L("{\"type\":\"assistant\",\"sessionId\":\"rq\",\"cwd\":\"" + cwd + "\",\"timestamp\":\"2026-09-01T10:00:05.000Z\",\"message\":{\"id\":\"m2\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}"));
+  const rs = sess("claude", "rq", rp, ""); rs.cwd = cwd;
+  const rt = finish(newSessB(rs, []), O);
+  const chats = rt.length ? rt[0].spans.filter((x: XSpan) => x.op === "chat") : [];
+  eq("request id: the line's requestId, none without", chats.map((x: XSpan) => x.reqId || "-").join(","), "req_A,-");
+  eq("1-hour cache writes", chats.map((x: XSpan) => String(x.cw) + "/" + String(x.cw1)).join(","), "700/500,0/0");
+  const tools = rt.length ? rt[0].spans.filter((x: XSpan) => x.op === "execute_tool") : [];
+  eq("call details kept for the encoder", tools.map((x: XSpan) => x.tool + "=" + (x.cmd || "-") + "|" + (x.target ? x.target.slice(cwd.length) : "-")).join(","), REDACT ? tools.map((x: XSpan) => x.tool + "=" + (x.cmd || "-") + "|" + (x.target ? x.target.slice(cwd.length) : "-")).join(",") : "Bash=git push origin main|-,Read=-|/src/a.ts");
+  eq("turn title", rt.length ? String(rt[0].title !== "" && rt[0].title.length <= 256) + (REDACT ? "" : " " + rt[0].title) : "", REDACT ? "true" : "true fix login bug");
+  eq("turn repo key", rt.length ? rt[0].repoKey : "", "path:" + cwd);
+}
 
 rmSync(tmp, { recursive: true, force: true });
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }

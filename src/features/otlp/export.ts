@@ -30,6 +30,7 @@ import { GZ, sendBatch } from "./send.ts";
 export interface ExOpts {
   url: string; since: number; until: number; harness: string; ids: string[]; filter: string; subagents: boolean;
   native: string; status: boolean; content: boolean; resend: boolean; dry: boolean; batch: number; compression: string; json: boolean;
+  detail: string; // call details: none | meta (otlp-complete 3.5)
 }
 const MAX_BYTES = 4194304; // one request body at most (spec 5.1)
 const QUIET_MS = 600000; // one-shot: a turn without a close marker counts as finished after 10 quiet minutes
@@ -76,7 +77,8 @@ setOptions("export", [
   opt("--session", "<id>", "only this session (repeatable)", "", []),
   opt("--filter", "'<session clauses>'", "only the matching sessions (repeatable, ANDed)", "", []),
   opt("--no-subagents", "", "leave subagent sessions out", "", []),
-  opt("--content", "", "also send prompts, outputs and tool I/O, each cut to otlp.contentMax", "off", []),
+  opt("--content", "", "also send prompts, outputs and tool I/O, each cut to otlp.contentMax (implies --detail meta)", "off", []),
+  opt("--detail", "none|meta", "call details on tool spans: meta adds the normalized shell command and the file path (scrubbed)", "otlp.detail, none", ["none", "meta"]),
   opt("--resend", "", "send again what the endpoint already accepted (same ids)", "", []),
   opt("--dry-run", "", "print the OTLP/JSON requests, send nothing", "", []),
   opt("--batch", "N", "spans per request, 1–100000 (at most 4 MB)", "otlp.batch, 512", []),
@@ -86,7 +88,7 @@ setOptions("export", [
   opt("--json", "", "the summary as JSON on stdout", "", []),
 ]);
 export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<string, string>): { o: ExOpts; err: string } {
-  const o: ExOpts = { url: "", since: now - 7 * 86400000, until: 0, harness: "", ids: [], filter: "", subagents: true, native: c.native, status: false, content: c.content, resend: false, dry: false, batch: c.batch, compression: "", json: false };
+  const o: ExOpts = { url: "", since: now - 7 * 86400000, until: 0, harness: "", ids: [], filter: "", subagents: true, native: c.native, status: false, content: c.content, resend: false, dry: false, batch: c.batch, compression: "", json: false, detail: c.detail };
   let flag = "";
   const val = (i: number, name: string): string => { const v = args[i + 1]; if (v === undefined || v.startsWith("--")) throw new Error(name + " needs a value"); return v; };
   try {
@@ -107,6 +109,7 @@ export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<st
       else if (a === "--batch") { const n = Number(val(i, a)); i++; if (!(Number.isInteger(n) && n >= 1 && n <= 100000)) throw new Error("--batch needs a whole number of spans, 1–100000"); o.batch = n; }
       else if (a === "--compression") { o.compression = val(i, a); i++; if (o.compression !== "gzip" && o.compression !== "none") throw new Error("--compression takes gzip or none"); }
       else if (a === "--json") o.json = true;
+      else if (a === "--detail") { o.detail = val(i, a); i++; if (o.detail !== "none" && o.detail !== "meta") throw new Error("--detail takes none or meta"); }
       else if (a === "--redact" || a === "--agent" || a === "--no-agent" || a === "--all-projects" || a === "--project-only") { /* read at startup (redact-on.ts, agentenv.ts) */ }
       else throw new Error("unknown option " + a + " (agentglass export --help lists the options)");
     }
@@ -123,7 +126,7 @@ export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<st
 // body alone exceeds maxBytes (its requests share the turn: it is marked when all of them got through)
 export interface Batch { turns: XTurn[]; json: string; spans: number }
 function part(t: XTurn, from: number, to: number): XTurn {
-  return { h: t.h, rootId: t.rootId, path: t.path, key: t.key, index: t.index, traceId: t.traceId, t0: t.t0, t1: t.t1, closed: t.closed, closedBy: t.closedBy, compacted: t.compacted, ver: t.ver, cwd: t.cwd, branch: t.branch, remote: t.remote, spans: t.spans.slice(from, to), fx: t.fx, fxOn: t.fxOn };
+  return { h: t.h, rootId: t.rootId, path: t.path, key: t.key, index: t.index, traceId: t.traceId, t0: t.t0, t1: t.t1, closed: t.closed, closedBy: t.closedBy, compacted: t.compacted, ver: t.ver, cwd: t.cwd, branch: t.branch, remote: t.remote, spans: t.spans.slice(from, to), fx: t.fx, fxOn: t.fxOn, title: t.title, repoKey: t.repoKey };
 }
 export function batches(turns: XTurn[], max: number, maxBytes: number, c: OtlpCfg): Batch[] {
   const out: Batch[] = []; let cur: XTurn[] = []; let n = 0; let bytes = 0;
@@ -249,7 +252,7 @@ export function dryRun(o: ExOpts, c: OtlpCfg, now: number): string[] {
   const st = o.url ? loadState(o.url) : null;
   const b = build(o, st, new Map<string, number>(), now);
   fxDelta(b.turns, st, o.resend);
-  c.content = o.content;
+  c.content = o.content; c.detail = o.detail;
   return batches(b.turns, o.batch, MAX_BYTES, c).map((x: Batch) => x.json);
 }
 function status(o: ExOpts, c: OtlpCfg): number {
@@ -278,7 +281,7 @@ function status(o: ExOpts, c: OtlpCfg): number {
 // exit 0 = everything sent (or nothing to send), 1 = some requests failed (the rest is marked), 2 = usage, 3 = locked
 export function runExport(o: ExOpts, c: OtlpCfg): number {
   const now = Date.now();
-  c.content = o.content; // the flag adds to the config
+  c.content = o.content; c.detail = o.detail; // the flags add to the config
   for (const w of c.warns) err(w);
   if (o.status) return status(o, c);
   if (o.dry) { for (const l of dryRun(o, c, now)) out(l); return 0; }
@@ -340,6 +343,7 @@ function liveExport(args: string[]): number {
     if (a === "--otlp") { flag = v; i++; }
     else if (a === "--since") { const t = timeArg(v, now); if (isNaN(t)) { fail("usage", "--since takes 30m, 24h, 7d, YYYY-MM-DD or all (got " + v + ")"); return 2; } since = t; i++; }
     else if (a === "--content") c.content = true;
+    else if (a === "--detail") { c.detail = v; i++; if (v !== "none" && v !== "meta") { fail("usage", "--detail takes none or meta"); return 2; } }
     else if (a === "--no-subagents") subagents = false;
     else if (a === "--native") { native = v; i++; if (["warn", "skip", "include"].indexOf(native) < 0) { fail("usage", "--native takes warn, skip or include"); return 2; } }
     else if (a === "--compression") { comp = v; i++; if (comp !== "gzip" && comp !== "none") { fail("usage", "--compression takes gzip or none"); return 2; } }
