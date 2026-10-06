@@ -5,6 +5,7 @@ import { type Obj, obj } from "../util/json.ts";
 import { width, cw, cpOf, clean } from "../util/text.ts";
 import { agentHost, cliError } from "./agentenv.ts";
 import { link, hyperOn, sessUrl } from "../util/hyper.ts";
+import { argVal } from "../util/argv.ts";
 
 export const FORMATS = ["json", "jsonl", "csv", "table"];
 
@@ -196,8 +197,8 @@ export function fmtArgs(args: string[]): Fmt {
   const f: Fmt = { fmt: "", fields: [] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--format") { f.fmt = args[i + 1] ?? ""; i++; if (FORMATS.indexOf(f.fmt) < 0) cliError("usage", "--format must be one of " + FORMATS.join(", "), "", 2); }
-    else if (a === "--fields") { f.fields = (args[i + 1] ?? "").split(",").map((x: string) => x.trim()).filter((x: string) => x !== ""); i++; if (!f.fields.length) cliError("usage", "--fields needs a comma-separated list of field names", "", 2); }
+    if (a === "--format") { f.fmt = argVal(args, i) ?? ""; i++; if (FORMATS.indexOf(f.fmt) < 0) cliError("usage", "--format must be one of " + FORMATS.join(", "), "", 2); }
+    else if (a === "--fields") { f.fields = (argVal(args, i) ?? "").split(",").map((x: string) => x.trim()).filter((x: string) => x !== ""); i++; if (!f.fields.length) cliError("usage", "--fields needs a comma-separated list of field names", "", 2); }
   }
   return f;
 }

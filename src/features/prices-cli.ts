@@ -19,6 +19,7 @@ import { type Price, type Resolved, PRICES_FILE, resolve, readUserFile, communit
 import { type PRow, type SessAcc, priceRows, reportedNote, rates, srcLabel, srcFit } from "./usage/pricerows.ts";
 import { reloadPrices } from "./usage/repricer.ts";
 import { type PriceIn, parsePriceLine, entryOf, storedKey, setUserEntry, userEntry } from "./usage/userprices.ts";
+import { argVal } from "../util/argv.ts";
 
 const LIST_OPTS = setOptions("prices", [
   opt("--json", "", "{file, community, models[{model, source, via, estimated, price, tokens, unpricedTokens, costUsd, reportedCostUsd, note, providers[]}]}", "", []),
@@ -76,8 +77,8 @@ function list(args: string[]): void {
   let since = ""; let sinceMs = 0;
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--since") { const v = args[++i] ?? ""; const ms = parseSince(v, Date.now()); if (!v || ms < 0) usage("--since must be today, <n>d or YYYY-MM-DD", "agentglass prices --since 7d"); since = dayKey(new Date(ms)); sinceMs = ms; }
-    else if (a === "--format") i++;
+    if (a === "--since") { const v = argVal(args, i++) ?? ""; const ms = parseSince(v, Date.now()); if (!v || ms < 0) usage("--since must be today, <n>d or YYYY-MM-DD", "agentglass prices --since 7d"); since = dayKey(new Date(ms)); sinceMs = ms; }
+    else if (a === "--format") i++; // fmtArgs checks its value
     else if (["--json", "--unpriced", "--agent", "--no-agent", "--redact", "--all-projects", "--project-only"].indexOf(a) < 0) usage((a.startsWith("-") ? "unknown option " : "unknown subcommand ") + a, "agentglass prices --help");
   }
   S.cli = true;
@@ -163,7 +164,7 @@ function positional(args: string[], n: number, valued: string[], flags: string[]
   const pos: string[] = [];
   for (let i = 2; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (valued.indexOf(a) >= 0) { if (i + 1 >= args.length) usage(a + " needs a value", "agentglass prices " + sub + " --help"); i++; continue; }
+    if (valued.indexOf(a) >= 0) { if (argVal(args, i) === null) usage(a + " needs a value", "agentglass prices " + sub + " --help"); i++; continue; }
     if (a === "--format") { i++; continue; }
     if (a.startsWith("--")) { if (flags.indexOf(a) < 0 && ["--agent", "--no-agent", "--redact"].indexOf(a) < 0) usage("unknown option " + a, "agentglass prices " + sub + " --help"); continue; }
     pos.push(a);
@@ -171,7 +172,7 @@ function positional(args: string[], n: number, valued: string[], flags: string[]
   if (pos.length !== n) usage(n === 1 ? "prices " + sub + " needs one model" : "prices alias needs <model> <target>", "agentglass prices --help");
   return pos;
 }
-function val(args: string[], f: string): string { const i = args.indexOf(f); return i >= 0 ? args[i + 1] ?? "" : ""; }
+function val(args: string[], f: string): string { const i = args.indexOf(f); return i >= 0 ? argVal(args, i) ?? "" : ""; }
 function setCmd(args: string[]): void {
   const V = ["--in", "--out", "--cache-read", "--cache-write", "--cache-write-1h"];
   const model = positional(args, 1, V, ["--json"], "set")[0] ?? "";

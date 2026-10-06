@@ -30,6 +30,7 @@ import type { OwnRow, SessRow } from "./model.ts";
 import { type Snap, newSnap, snapLines, dayRows } from "./snap.ts";
 import { fleetDir } from "./store.ts";
 import { DAY_MS } from "./pull.ts";
+import { argVal } from "../../util/argv.ts";
 
 export interface Gen { gen: string; sig: Map<string, string> } // key → signature ("s:<key>" a session, "o:<key>" its owned rows)
 export interface PeerState { acked: Gen | null; pending: Gen | null }
@@ -223,9 +224,9 @@ export function snapshotCli(args: string[]): void {
   const usage = "agentglass fleet snapshot [--peer <16 hex>] [--ack <16 hex>] [--full] [--days N] [--redact]";
   for (let i = 2; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--days") { const v = args[i + 1] ?? ""; i++; days = /^\d+$/.test(v) ? Number(v) : 0; if (days < 1 || days > 90) cliError("usage", "--days needs a whole number 1–90", usage, 2); }
-    else if (a === "--peer") { peer = args[i + 1] ?? ""; i++; if (!PEER_RE.test(peer)) cliError("usage", "--peer needs 16 hex digits (the viewer's host id)", usage, 2); }
-    else if (a === "--ack") { ack = args[i + 1] ?? ""; i++; if (!/^[0-9a-f]{16}$/.test(ack)) cliError("usage", "--ack needs a generation (16 hex digits)", usage, 2); }
+    if (a === "--days") { const v = argVal(args, i) ?? ""; i++; days = /^\d+$/.test(v) ? Number(v) : 0; if (days < 1 || days > 90) cliError("usage", "--days needs a whole number 1–90", usage, 2); }
+    else if (a === "--peer") { peer = argVal(args, i) ?? ""; i++; if (!PEER_RE.test(peer)) cliError("usage", "--peer needs 16 hex digits (the viewer's host id)", usage, 2); }
+    else if (a === "--ack") { ack = argVal(args, i) ?? ""; i++; if (!/^[0-9a-f]{16}$/.test(ack)) cliError("usage", "--ack needs a generation (16 hex digits)", usage, 2); }
     else if (a === "--full") full = true;
     else if (a === "--redact" || a === "--agent" || a === "--no-agent") continue;
     else cliError("usage", "unknown option " + a + " for fleet snapshot", usage, 2);

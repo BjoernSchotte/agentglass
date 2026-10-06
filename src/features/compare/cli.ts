@@ -28,6 +28,7 @@ import { projectClause } from "../query/project.ts";
 import { type Scope, agentHost, agentScope, visible, cliError } from "../agentenv.ts";
 import { type Group, type Side, type Cmp, groupOfSession, groupOfExpr, groupClauses, compareGroups } from "./metrics.ts";
 import { toolRows, cntRows, fileLists } from "./sections.ts";
+import { argVal } from "../../util/argv.ts";
 
 export const COMPARE_OPTS: OptRec[] = setOptions("compare", [
   opt("--a", "'<expr>'", "group A: any filter expression, e.g. 'model ~ opus' (vs --b 'model ~ sonnet')", "", []),
@@ -60,7 +61,7 @@ function parseArgs(args: string[]): Opts {
   if (wantsHelp(args)) { out(helpOf("compare", args, COMPARE_HELP)); process.exit(0); }
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
-    const val = (): string => { if (i + 1 >= args.length) fail(a + " needs a value (see agentglass compare --help)"); i++; return args[i] ?? ""; };
+    const val = (): string => { if (argVal(args, i) === null) fail(a + " needs a value (see agentglass compare --help)"); i++; return args[i] ?? ""; };
     if (a === "--json") o.json = true;
     else if (a === "--no-subagents") o.subs = false;
     else if (a === "--a") { o.a = val(); o.hasA = true; }

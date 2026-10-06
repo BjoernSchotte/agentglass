@@ -14,6 +14,7 @@ import { hostId } from "../../util/hostid.ts";
 import { REDACT } from "../redact-on.ts";
 import { type Snap, snapLines } from "./snap.ts";
 import { type PeerState, buildSnap, loadPeer, savePeer } from "./snapshot.ts";
+import { argVal } from "../../util/argv.ts";
 
 export const DROP_RE = /^([0-9a-f]{16})\.(base|delta-(\d{1,9}))-([0-9a-f]{16})\.snap\.gz$/;
 export interface DropFile { name: string; id: string; base: boolean; n: number; gen: string; at: number; size: number }
@@ -82,8 +83,8 @@ export function dropCli(args: string[]): void {
   let dir = ""; let every = 0; let days = 7;
   for (let i = 2; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--every") { every = parseDur(args[i + 1] ?? ""); i++; if (!(every >= 60000 && every <= DAY)) cliError("usage", "--every needs a duration 1m–24h", usage, 2); }
-    else if (a === "--days") { const v = args[i + 1] ?? ""; i++; days = /^\d+$/.test(v) ? Number(v) : 0; if (days < 1 || days > 90) cliError("usage", "--days needs a whole number 1–90", usage, 2); }
+    if (a === "--every") { every = parseDur(argVal(args, i) ?? ""); i++; if (!(every >= 60000 && every <= DAY)) cliError("usage", "--every needs a duration 1m–24h", usage, 2); }
+    else if (a === "--days") { const v = argVal(args, i) ?? ""; i++; days = /^\d+$/.test(v) ? Number(v) : 0; if (days < 1 || days > 90) cliError("usage", "--days needs a whole number 1–90", usage, 2); }
     else if (a === "--redact" || a === "--agent" || a === "--no-agent") continue;
     else if (!a.startsWith("-") && !dir) dir = a;
     else cliError("usage", "unknown option " + a + " for fleet drop", usage, 2);

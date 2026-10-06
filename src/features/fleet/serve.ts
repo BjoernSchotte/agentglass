@@ -6,6 +6,7 @@ import { writeSync } from "node:fs";
 import { readWhole } from "../../util/fs.ts";
 import { REDACT } from "../redact-on.ts";
 import { cliError } from "../agentenv.ts";
+import { argVal } from "../../util/argv.ts";
 
 // SSH_ORIGINAL_COMMAND → words, as POSIX sh splits plain words (no expansion of any kind): whitespace separates;
 // '…' is literal; "…" takes \" and \\ (a backslash before anything else stays); a backslash outside quotes escapes the
@@ -104,7 +105,7 @@ export function authorizeCli(args: string[]): void {
   let file = ""; let from = ""; let redact = false;
   for (let i = 2; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--from") { from = args[i + 1] ?? ""; i++; if (!from) cliError("usage", "--from needs an address or CIDR range", "e.g. --from 100.64.0.0/10", 2); }
+    if (a === "--from") { from = argVal(args, i) ?? ""; i++; if (!from) cliError("usage", "--from needs an address or CIDR range", "e.g. --from 100.64.0.0/10", 2); }
     else if (a === "--redact") redact = true;
     else if (!a.startsWith("-") && !file) file = a;
     else cliError("usage", "unknown option " + a + " for fleet authorize", "agentglass fleet authorize <key.pub> [--from <cidr>] [--redact]", 2);

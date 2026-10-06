@@ -17,9 +17,10 @@ import { parse as parseQuery, print as printQuery } from "../query/parse.ts";
 import type { Clause } from "../query/types.ts";
 import { type Compiled, compile, sessMatches } from "../query/eval.ts";
 import { judgeable, needsLedgerOf, needsHeadOf, fixedOf } from "../query/cli.ts";
-import { discover, opts as watchOpts, watch } from "../cli.ts";
+import { discover, opts as watchOpts, watch, strictArgs } from "../cli.ts";
+import { argVal } from "../../util/argv.ts";
 import { agentScope, visible, errLine } from "../agentenv.ts";
-import { opt, setOptions } from "../clihelp.ts";
+import { type OptRec, opt, setOptions } from "../clihelp.ts";
 import { newLive, liveTick, liveStop } from "./live.ts";
 import { type XLog, type AlertT, encodeLogs } from "./logs.ts";
 import { type XTurn } from "./types.ts";
@@ -81,7 +82,7 @@ export function urlErr(url: string): string {
   return /^https?:\/\/[^/\s]/i.test(url) && !/[\s\u0000-\u001f\u007f]/.test(url) ? "" : "--otlp needs an http(s) URL (got " + safeUrl(url).replace(/[\u0000-\u001f\u007f]/g, "?") + ")";
 }
 // export's options: the JSON help lists them, `export --help` prints them (cli.ts, from the record)
-setOptions("export", [
+const EXPORT_OPTS: OptRec[] = setOptions("export", [
   opt("--otlp", "<url>", "the OTLP/HTTP endpoint (else otlp.endpoint, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_ENDPOINT)", "", []),
   opt("--since", "30m|24h|7d|YYYY-MM-DD|all", "send what happened from then on", "7d", []),
   opt("--until", "30m|24h|7d|YYYY-MM-DD", "and up to then", "", []),
@@ -99,14 +100,16 @@ setOptions("export", [
   opt("--status", "", "the last export to the endpoint, gzip support, the harnesses' own telemetry", "", []),
   opt("--json", "", "the summary as JSON on stdout", "", []),
 ]);
+// the export options --watch --otlp reads on top of --watch's own
+const LIVE_OPTS: OptRec[] = EXPORT_OPTS.filter((o: OptRec) => ["--since", "--content", "--detail", "--no-subagents", "--native", "--compression", "--batch"].indexOf(o.flag) >= 0);
 export function parseExport(args: string[], c: OtlpCfg, now: number, env: Map<string, string>): { o: ExOpts; err: string } {
   const o: ExOpts = { url: "", since: now - 7 * 86400000, until: 0, harness: "", ids: [], filter: "", subagents: true, native: c.native, status: false, content: c.content, resend: false, dry: false, batch: c.batch, compression: "", json: false, detail: c.detail };
   let flag = "";
-  const val = (i: number, name: string): string => { const v = args[i + 1]; if (v === undefined || v.startsWith("--")) throw new Error(name + " needs a value"); return v; };
+  const val = (i: number, name: string): string => { const v = argVal(args, i); if (v === null) throw new Error(name + " needs a value"); return String(v); };
   try {
     for (let i = 1; i < args.length; i++) {
       const a = args[i] ?? "";
-      if (a === "--otlp") { flag = val(i, a); i++; }
+      if (a === "--otlp") { const v = argVal(args, i); if (v !== null) { flag = String(v); i++; } } // bare: the endpoint from the config
       else if (a === "--since" || a === "--until") { const v = val(i, a); i++; const t = timeArg(v, now); if (isNaN(t)) throw new Error(a + " takes 30m, 24h, 7d, YYYY-MM-DD or all (got " + v + ")"); if (a === "--since") o.since = t; else o.until = t; }
       else if (a === "--harness") { o.harness = val(i, a); i++; if (!isHarness(o.harness)) throw new Error("--harness must be one of " + harnessIds().join(", ")); }
       else if (a === "--session") { o.ids.push(val(i, a)); i++; }
@@ -390,9 +393,10 @@ function liveExport(args: string[]): number {
   const c = loadCfg(); const env = envMap(); const now = Date.now();
   for (const w of c.warns) err(w);
   let flag = ""; let since = now; let subagents = true; let native = c.native; let noLogs = false; let comp = ""; let batch = c.batch; let filter = ""; let harness = ""; let pinned = false;
+  strictArgs(args, "--watch", LIVE_OPTS);
   for (let i = 0; i < args.length; i++) {
-    const a = args[i] ?? ""; const v = args[i + 1] ?? "";
-    if (a === "--otlp") { if (args[i + 1] !== undefined && !v.startsWith("--")) { flag = v; i++; } } // bare: the endpoint comes from the config, the next flag is not its URL
+    const a = args[i] ?? ""; const v = argVal(args, i) ?? ""; // strictArgs: every value flag has its value
+    if (a === "--otlp") { if (v) { flag = v; i++; } } // bare: the endpoint comes from the config
     else if (a === "--since") { const t = timeArg(v, now); if (isNaN(t)) { fail("usage", "--since takes 30m, 24h, 7d, YYYY-MM-DD or all (got " + v + ")"); return 2; } since = t; i++; }
     else if (a === "--content") c.content = true;
     else if (a === "--detail") { c.detail = v; i++; if (v !== "none" && v !== "meta") { fail("usage", "--detail takes none or meta"); return 2; } }

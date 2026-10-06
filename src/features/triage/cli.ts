@@ -23,6 +23,7 @@ import { cliFilter } from "../query/cli.ts";
 import type { Weight } from "../query/agg.ts";
 import { type TRow, rank, fmtLift, fmtPct, chiStr } from "./score.ts";
 import { type Run, type Result, type Base, PRESETS, newRun, runTriage, triageCfg, periodLabel, guardText, shown } from "./run.ts";
+import { argVal } from "../../util/argv.ts";
 
 const NAMES = ["errors", "slow", "long", "expensive", "failing", "period"]; // --preset words, PRESETS 1..6
 export const TRIAGE_OPTS: OptRec[] = setOptions("triage", [
@@ -62,7 +63,7 @@ export function parseArgs(args: string[]): CliOpts {
   let select = ""; let hasSelect = false; let preset = ""; const filters: string[] = []; let baseline = ""; let entity = ""; let days = 7; let weight = ""; let limit = 20; let json = false;
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? ""; const v = args[i + 1] ?? "";
-    const val = (): string => { if (i + 1 >= args.length) fail(a + " needs a value (see agentglass triage --help)"); i++; return v; };
+    const val = (): string => { if (argVal(args, i) === null) fail(a + " needs a value (see agentglass triage --help)"); i++; return v; };
     if (a === "--json") json = true;
     else if (a === "--select") { select = val(); hasSelect = true; }
     else if (a === "--preset") preset = oneOf(val(), "--preset", NAMES);

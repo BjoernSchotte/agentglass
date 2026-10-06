@@ -27,6 +27,7 @@ import { indexing, liveBehind } from "./features/usage/ledger.ts";
 import { replaying } from "./features/replay.ts";
 import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
 import { compactHelp } from "./features/clihelp.ts";
+import { splitEq, badArg } from "./util/argv.ts";
 import { debugExtras } from "./util/selfmem.ts";
 import { WAKE_ALL } from "./util/fs.ts";
 import { gitGen, gitTouches } from "./features/vcs/attrib.ts";
@@ -230,15 +231,16 @@ function main(): void {
   // flags of every command (read from process.argv where they act): handlers never see them, so they find their command at
   // args[0] (agentglass --no-agent cost) and no command rejects them as unknown (triage --redact)
   const GLOBAL = ["--agent", "--no-agent", "--redact"];
-  const args = process.argv.slice(2).filter((a: string) => GLOBAL.indexOf(a) < 0);
+  const args = splitEq(process.argv.slice(2)).filter((a: string) => GLOBAL.indexOf(a) < 0); // --flag=value as --flag value
   agentHost(); // decided before any handler can warn (warnings are JSON lines inside an agent)
   for (const f of H.cli) if (f(args)) return;
+  // no handler took it: a word here is a typo, not a request for the TUI; a flag the TUI does not take is an error too
+  const c = args[0] ?? "";
+  if (c && !c.startsWith("-")) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
+  const bad = badArg(args, ["--theme"], ["--no-fleet"], []);
+  if (bad) cliError("usage", bad, "agentglass --help lists the commands and options", 2);
   // inside a coding agent the TUI would hang its tool call (PTY shells pass the TTY check): what exists, as compact JSON
-  if (agentHost().on) {
-    const c = args[0] ?? ""; // no handler took it: a word here is a typo, not a request for the TUI
-    if (c && !c.startsWith("-")) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
-    writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0);
-  }
+  if (agentHost().on) { writeSync(1, compactHelp(hostObj(false)) + "\n"); process.exit(0); }
   tui();
 }
 let started = false;

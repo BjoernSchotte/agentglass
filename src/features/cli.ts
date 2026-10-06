@@ -20,6 +20,7 @@ import { type SkillUse, skillUsesOf } from "./usage/record.ts";
 import { estTopOf } from "./usage/costs.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
+import { argVal, badArg } from "../util/argv.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 import { identSync } from "./query/project.ts";
 import { gitJson, gitCli, peers } from "./vcs/json.ts";
@@ -162,14 +163,14 @@ export function opts(args: string[]): Opts {
     else if (a === "--subagents") o.subs = true;
     else if (a === "--from-start") o.fromStart = true;
     else if (a === "--until-idle") o.idle = true;
-    else if (a === "--for") { o.forMs = parseDur(args[i + 1] ?? ""); i++; if (!(o.forMs > 0)) fail("--for needs a duration like 30s, 5m or 1h"); }
-    else if (a === "--harness") { o.harness = args[i + 1] ?? ""; i++; if (!isHarness(o.harness)) fail("--harness must be one of " + harnessIds().join(", ")); }
-    else if (a === "--limit") { o.limit = Number(args[i + 1] ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
-    else if (a === "--filter") { if (i + 1 >= args.length) fail("--filter needs an expression, e.g. --filter 'harness is codex'"); o.filters.push(args[i + 1] ?? ""); i++; }
+    else if (a === "--for") { o.forMs = parseDur(argVal(args, i) ?? ""); i++; if (!(o.forMs > 0)) fail("--for needs a duration like 30s, 5m or 1h"); }
+    else if (a === "--harness") { o.harness = argVal(args, i) ?? ""; i++; if (!isHarness(o.harness)) fail("--harness must be one of " + harnessIds().join(", ")); }
+    else if (a === "--limit") { o.limit = Number(argVal(args, i) ?? ""); i++; if (!(o.limit > 0)) fail("--limit needs a positive number"); }
+    else if (a === "--filter") { const v = argVal(args, i); if (v === null) fail("--filter needs an expression, e.g. --filter 'harness is codex'"); o.filters.push(String(v)); i++; }
     else if (a === "--pinned") o.pinned = true;
     else if (a === "--no-alerts") o.alerts = false;
     else if (a === "--notify") o.notify = true;
-    else if (a === "--days") { const v = args[i + 1] ?? ""; o.days = /^\d+$/.test(v) ? Number(v) : -1; i++; if (o.days < 0) fail("--days needs a number ≥ 0 (0 = all history), e.g. --days 30"); if (args.indexOf("--repos") < 0) fail("--days applies to --repos only: agentglass --json --repos --days " + v); }
+    else if (a === "--days") { const v = argVal(args, i) ?? ""; o.days = /^\d+$/.test(v) ? Number(v) : -1; i++; if (o.days < 0) fail("--days needs a number ≥ 0 (0 = all history), e.g. --days 30"); if (args.indexOf("--repos") < 0) fail("--days applies to --repos only: agentglass --json --repos --days " + v); }
     else if (a === "--jsonl") o.jsonl = true;
   }
   // a session clause resolves its value against the sessions (query/session.ts): they are discovered first, else every
@@ -391,11 +392,20 @@ function help(args: string[]): void {
   if (!r) cliError("usage", "unknown command " + c, "agentglass --help lists the commands", 2);
   out(cmdText(r));
 }
+// --json / --watch take only their options (and --watch --otlp the export options it reads, extra): anything else exits 2,
+// never ignored — a misspelled or swallowed --filter would show or send every session
+export function strictArgs(args: string[], c: string, extra: OptRec[]): void {
+  const vals: string[] = []; const bools: string[] = [c];
+  const r = cmdOf(c); const os = (r ? r.options : []).concat(extra);
+  for (const o of os) { if (o.arg) vals.push(o.flag); else bools.push(o.flag); }
+  const m = badArg(args, vals, bools, ["--otlp"]); // a bare --otlp: the endpoint from the config
+  if (m) cliError("usage", m, "agentglass " + c + " --help lists its options", 2);
+}
 H.cli.push((args: string[]): boolean => {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { help(args); return true; }
-  if (args.indexOf("--version") >= 0) { out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
+  if (args.indexOf("--version") >= 0) { const m = badArg(args, [], ["--version", "--json"], []); if (m) fail(m); out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
   if (args.indexOf("--json") >= 0) { // no toast line: warnings go to stderr
-    S.cli = true;
+    S.cli = true; strictArgs(args, "--json", []);
     if (args.indexOf("--related") >= 0) { relatedCli(args, agentScope(args)); return true; }
     const o = opts(args); const cf = o.cf;
     gitCli(o.git); if (o.git && args.indexOf("--repos") >= 0) fail("--git applies to session lists: agentglass --json --git");
@@ -405,6 +415,6 @@ H.cli.push((args: string[]): boolean => {
   if (args.indexOf("--repos") >= 0) fail("--repos needs --json: agentglass --json --repos");
   if (args.indexOf("--git") >= 0) fail("--git needs --json: agentglass --json --git");
   if (args.indexOf("--related") >= 0) fail("--related needs --json: agentglass --json --related <session>");
-  if (args.indexOf("--watch") >= 0) { S.cli = true; watch(opts(args), null); return true; }
+  if (args.indexOf("--watch") >= 0) { S.cli = true; strictArgs(args, "--watch", []); watch(opts(args), null); return true; }
   return false;
 });
