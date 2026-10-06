@@ -8,7 +8,10 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # minor and patch bumps travel together; a major bump (new runtime, artifact or cache format) gets its own PR,
+      # because release.yml runs only on a tag and a PR's CI does not exercise it
       actions:
         patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: ci
