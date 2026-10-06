@@ -6,7 +6,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //   field numbers: opentelemetry-proto v1 (common, resource, trace, logs; collector/{trace,logs}/v1)
 
-interface Rd { b: Uint8Array; p: number; err: string; lo: number; hi: number; depth: number; n: number; cap: number }
+// n/cap: spans or log records; nodes/nmax: JSON objects and arrays produced; out/omax: string and id characters produced.
+// The two output budgets bound what a small request can expand to: 2-byte empty attributes become 21-byte JSON objects
+// (a 58 KB gzip body decoded to 660 MB of JSON and 18 GB of RSS before they existed)
+interface Rd { b: Uint8Array; p: number; err: string; lo: number; hi: number; depth: number; n: number; cap: number; nodes: number; nmax: number; out: number; omax: number }
 export const PB_MAX_DEPTH = 16; // AnyValue nesting (arrays in kvlists in arrays …)
 export const PB_MAX_STR = 16 * 1024 * 1024;
 const W32 = 4294967296;
@@ -15,6 +18,11 @@ const HEX = "0123456789abcdef";
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 function fail(r: Rd, m: string): void { if (!r.err) r.err = m + " at byte " + String(r.p); r.p = r.b.length; }
+// k more JSON objects/arrays; false (and fail) past the budget
+function node(r: Rd, k: number): boolean { r.nodes += k; if (r.nodes > r.nmax) { fail(r, "more than " + String(r.nmax) + " values"); return false; } return true; }
+// produced text (strings, ids) against its budget
+function grew(r: Rd, s: string): string { r.out += s.length; if (r.out > r.omax) { fail(r, "more than " + String(r.omax) + " bytes of decoded text"); return ""; } return s; }
+function js(r: Rd, s: string): string { return grew(r, JSON.stringify(s)); }
 // one varint into r.lo / r.hi (two 32-bit words, as unsigned numbers)
 function vint(r: Rd): void {
   let lo = 0; let hi = 0;
@@ -72,7 +80,7 @@ function strAt(r: Rd, end: number): string {
   if (e - r.p > PB_MAX_STR) { fail(r, "string over 16 MB"); return ""; }
   const s = new TextDecoder("utf-8").decode(r.b.subarray(r.p, e)); r.p = e; return s;
 }
-function bytesHex(r: Rd, end: number): string { const e = lenEnd(r, end); if (e < 0) return ""; const s = hexOf(r.b, r.p, e); r.p = e; return s; }
+function bytesHex(r: Rd, end: number): string { const e = lenEnd(r, end); if (e < 0) return ""; const s = grew(r, hexOf(r.b, r.p, e)); r.p = e; return s; }
 function skip(r: Rd, wt: number, end: number): void {
   if (wt === 0) { vint(r); return; }
   if (wt === 1) { if (end - r.p < 8) fail(r, "truncated fixed64"); else r.p += 8; return; }
@@ -94,16 +102,17 @@ function dbl(v: number): string { return v !== v ? "\"NaN\"" : v === Infinity ? 
 function anyValue(r: Rd, end: number): string {
   r.depth += 1;
   if (r.depth > PB_MAX_DEPTH) { fail(r, "values nested deeper than " + String(PB_MAX_DEPTH)); return "{}"; }
+  if (!node(r, 1)) return "{}";
   let out = "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
-    if (f === 1 && wt === 2) out = "{\"stringValue\":" + JSON.stringify(strAt(r, end)) + "}";
+    if (f === 1 && wt === 2) out = "{\"stringValue\":" + js(r, strAt(r, end)) + "}";
     else if (f === 2 && wt === 0) { vint(r); out = "{\"boolValue\":" + (r.lo !== 0 || r.hi !== 0 ? "true" : "false") + "}"; }
     else if (f === 3 && wt === 0) { vint(r); out = "{\"intValue\":\"" + i64dec(r.lo, r.hi) + "\"}"; }
     else if (f === 4 && wt === 1) out = "{\"doubleValue\":" + dbl(f64(r, end)) + "}";
-    else if (f === 5 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) out = "{\"arrayValue\":{\"values\":[" + values(r, e).join(",") + "]}}"; }
-    else if (f === 6 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) out = "{\"kvlistValue\":{\"values\":[" + kvs(r, e, 1).join(",") + "]}}"; }
-    else if (f === 7 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) { out = "{\"bytesValue\":\"" + b64(r.b, r.p, e) + "\"}"; r.p = e; } }
+    else if (f === 5 && wt === 2) { const e = lenEnd(r, end); if (e >= 0 && node(r, 2)) out = "{\"arrayValue\":{\"values\":[" + values(r, e).join(",") + "]}}"; }
+    else if (f === 6 && wt === 2) { const e = lenEnd(r, end); if (e >= 0 && node(r, 2)) out = "{\"kvlistValue\":{\"values\":[" + kvs(r, e, 1).join(",") + "]}}"; }
+    else if (f === 7 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) { out = "{\"bytesValue\":\"" + grew(r, b64(r.b, r.p, e)) + "\"}"; r.p = e; } }
     else skip(r, wt, end);
   }
   r.depth--;
@@ -121,13 +130,14 @@ function values(r: Rd, end: number): string[] {
 }
 function keyValue(r: Rd, end: number): string {
   let k = ""; let v = "{}";
+  if (!node(r, 2)) return "{}"; // the KeyValue and its value object (an empty value is still "{}")
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 2) k = strAt(r, end);
     else if (f === 2 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) { v = anyValue(r, e); r.p = e; } }
     else skip(r, wt, end);
   }
-  return "{\"key\":" + JSON.stringify(k) + ",\"value\":" + v + "}";
+  return "{\"key\":" + js(r, k) + ",\"value\":" + v + "}";
 }
 // the repeated KeyValue at field number fld of the message in [r.p, end); other fields are skipped
 function kvs(r: Rd, end: number, fld: number): string[] {
@@ -141,7 +151,7 @@ function kvs(r: Rd, end: number, fld: number): string[] {
 }
 // Resource {1 attributes, 2 dropped_attributes_count}
 function resource(r: Rd, end: number): string {
-  const a: string[] = []; let dropped = 0;
+  const a: string[] = []; let dropped = 0; if (!node(r, 2)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) { a.push(keyValue(r, e)); r.p = e; } }
@@ -152,7 +162,7 @@ function resource(r: Rd, end: number): string {
 }
 // InstrumentationScope {1 name, 2 version, 3 attributes, 4 dropped_attributes_count}
 function scope(r: Rd, end: number): string {
-  let name = ""; let ver = ""; const a: string[] = []; let dropped = 0;
+  let name = ""; let ver = ""; const a: string[] = []; let dropped = 0; if (!node(r, 2)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 2) name = strAt(r, end);
@@ -161,13 +171,13 @@ function scope(r: Rd, end: number): string {
     else if (f === 4 && wt === 0) { vint(r); dropped = r.lo; }
     else skip(r, wt, end);
   }
-  let s = "{\"name\":" + JSON.stringify(name) + (ver ? ",\"version\":" + JSON.stringify(ver) : "");
+  let s = "{\"name\":" + js(r, name) + (ver ? ",\"version\":" + js(r, ver) : "");
   if (a.length) s += ",\"attributes\":[" + a.join(",") + "]";
   return s + (dropped ? ",\"droppedAttributesCount\":" + String(dropped) : "") + "}";
 }
 // Span.Event {1 time_unix_nano, 2 name, 3 attributes, 4 dropped_attributes_count}
 function event(r: Rd, end: number): string {
-  let ts = "0"; let name = ""; const a: string[] = []; let dropped = 0;
+  let ts = "0"; let name = ""; const a: string[] = []; let dropped = 0; if (!node(r, 2)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 1) ts = u64At(r, end);
@@ -176,24 +186,24 @@ function event(r: Rd, end: number): string {
     else if (f === 4 && wt === 0) { vint(r); dropped = r.lo; }
     else skip(r, wt, end);
   }
-  return "{\"timeUnixNano\":\"" + ts + "\",\"name\":" + JSON.stringify(name) + ",\"attributes\":[" + a.join(",") + "]" + (dropped ? ",\"droppedAttributesCount\":" + String(dropped) : "") + "}";
+  return "{\"timeUnixNano\":\"" + ts + "\",\"name\":" + js(r, name) + ",\"attributes\":[" + a.join(",") + "]" + (dropped ? ",\"droppedAttributesCount\":" + String(dropped) : "") + "}";
 }
 // Status {2 message, 3 code}
 function status(r: Rd, end: number): string {
-  let msg = ""; let code = 0;
+  let msg = ""; let code = 0; if (!node(r, 1)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 2 && wt === 2) msg = strAt(r, end);
     else if (f === 3 && wt === 0) { vint(r); code = r.lo; }
     else skip(r, wt, end);
   }
-  return "{" + (code ? "\"code\":" + String(code) : "") + (msg ? (code ? "," : "") + "\"message\":" + JSON.stringify(msg) : "") + "}";
+  return "{" + (code ? "\"code\":" + String(code) : "") + (msg ? (code ? "," : "") + "\"message\":" + js(r, msg) : "") + "}";
 }
 // Span {1 trace_id, 2 span_id, 3 trace_state, 4 parent_span_id, 16 flags, 5 name, 6 kind, 7 start, 8 end, 9 attributes,
 // 10 dropped_attributes_count, 11 events, 12 dropped_events_count, 13 links (skipped), 14 dropped_links_count, 15 status}
 function span(r: Rd, end: number): string {
   let tid = ""; let sid = ""; let tstate = ""; let pid = ""; let flags = 0; let name = ""; let kind = 0; let t0 = "0"; let t1 = "0";
-  const a: string[] = []; let da = 0; const ev: string[] = []; let de = 0; let dl = 0; let st = "";
+  const a: string[] = []; let da = 0; const ev: string[] = []; let de = 0; let dl = 0; let st = ""; if (!node(r, 3)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 2) tid = bytesHex(r, end);
@@ -214,10 +224,10 @@ function span(r: Rd, end: number): string {
     else skip(r, wt, end);
   }
   let s = "{\"traceId\":\"" + tid + "\",\"spanId\":\"" + sid + "\"";
-  if (tstate) s += ",\"traceState\":" + JSON.stringify(tstate);
+  if (tstate) s += ",\"traceState\":" + js(r, tstate);
   if (pid) s += ",\"parentSpanId\":\"" + pid + "\"";
   if (flags) s += ",\"flags\":" + String(flags);
-  s += ",\"name\":" + JSON.stringify(name) + (kind ? ",\"kind\":" + String(kind) : "");
+  s += ",\"name\":" + js(r, name) + (kind ? ",\"kind\":" + String(kind) : "");
   s += ",\"startTimeUnixNano\":\"" + t0 + "\",\"endTimeUnixNano\":\"" + t1 + "\",\"attributes\":[" + a.join(",") + "]";
   if (da) s += ",\"droppedAttributesCount\":" + String(da);
   if (ev.length) s += ",\"events\":[" + ev.join(",") + "]";
@@ -229,7 +239,7 @@ function span(r: Rd, end: number): string {
 // LogRecord {1 time, 11 observed, 2 severity_number, 3 severity_text, 12 event_name, 5 body, 6 attributes,
 // 7 dropped_attributes_count, 8 flags, 9 trace_id, 10 span_id}
 function logRecord(r: Rd, end: number): string {
-  let ts = ""; let obs = ""; let sev = 0; let sevT = ""; let ev = ""; let body = ""; const a: string[] = []; let da = 0; let flags = 0; let tid = ""; let sid = "";
+  let ts = ""; let obs = ""; let sev = 0; let sevT = ""; let ev = ""; let body = ""; const a: string[] = []; let da = 0; let flags = 0; let tid = ""; let sid = ""; if (!node(r, 2)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 1) ts = u64At(r, end);
@@ -249,8 +259,8 @@ function logRecord(r: Rd, end: number): string {
   if (ts) p.push("\"timeUnixNano\":\"" + ts + "\"");
   if (obs) p.push("\"observedTimeUnixNano\":\"" + obs + "\"");
   if (sev) p.push("\"severityNumber\":" + String(sev));
-  if (sevT) p.push("\"severityText\":" + JSON.stringify(sevT));
-  if (ev) p.push("\"eventName\":" + JSON.stringify(ev));
+  if (sevT) p.push("\"severityText\":" + js(r, sevT));
+  if (ev) p.push("\"eventName\":" + js(r, ev));
   if (body) p.push("\"body\":" + body);
   p.push("\"attributes\":[" + a.join(",") + "]");
   if (da) p.push("\"droppedAttributesCount\":" + String(da));
@@ -261,7 +271,7 @@ function logRecord(r: Rd, end: number): string {
 }
 // Scope{Spans|Logs} {1 scope, 2 spans | log_records, 3 schema_url}
 function scoped(r: Rd, end: number, logs: boolean): string {
-  let sc = ""; const items: string[] = []; let url = "";
+  let sc = ""; const items: string[] = []; let url = ""; if (!node(r, 2)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) { sc = scope(r, e); r.p = e; } }
@@ -274,11 +284,11 @@ function scoped(r: Rd, end: number, logs: boolean): string {
     else if (f === 3 && wt === 2) url = strAt(r, end);
     else skip(r, wt, end);
   }
-  return "{" + (sc ? "\"scope\":" + sc + "," : "") + "\"" + (logs ? "logRecords" : "spans") + "\":[" + items.join(",") + "]" + (url ? ",\"schemaUrl\":" + JSON.stringify(url) : "") + "}";
+  return "{" + (sc ? "\"scope\":" + sc + "," : "") + "\"" + (logs ? "logRecords" : "spans") + "\":[" + items.join(",") + "]" + (url ? ",\"schemaUrl\":" + js(r, url) : "") + "}";
 }
 // Resource{Spans|Logs} {1 resource, 2 scope_spans | scope_logs, 3 schema_url}
 function resourced(r: Rd, end: number, logs: boolean): string {
-  let res = ""; const sc: string[] = []; let url = "";
+  let res = ""; const sc: string[] = []; let url = ""; if (!node(r, 2)) return "{}";
   while (r.p < end && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
     if (f === 1 && wt === 2) { const e = lenEnd(r, end); if (e >= 0) { res = resource(r, e); r.p = e; } }
@@ -286,10 +296,10 @@ function resourced(r: Rd, end: number, logs: boolean): string {
     else if (f === 3 && wt === 2) url = strAt(r, end);
     else skip(r, wt, end);
   }
-  return "{\"resource\":" + (res || "{\"attributes\":[]}") + ",\"" + (logs ? "scopeLogs" : "scopeSpans") + "\":[" + sc.join(",") + "]" + (url ? ",\"schemaUrl\":" + JSON.stringify(url) : "") + "}";
+  return "{\"resource\":" + (res || "{\"attributes\":[]}") + ",\"" + (logs ? "scopeLogs" : "scopeSpans") + "\":[" + sc.join(",") + "]" + (url ? ",\"schemaUrl\":" + js(r, url) : "") + "}";
 }
-function request(b: Uint8Array, cap: number, logs: boolean): { json: string; n: number; err: string } {
-  const r: Rd = { b, p: 0, err: "", lo: 0, hi: 0, depth: 0, n: 0, cap };
+function request(b: Uint8Array, cap: number, logs: boolean, nmax: number, omax: number): { json: string; n: number; err: string } {
+  const r: Rd = { b, p: 0, err: "", lo: 0, hi: 0, depth: 0, n: 0, cap, nodes: 0, nmax, out: 0, omax };
   const rs: string[] = [];
   while (r.p < b.length && !r.err) {
     const t = tag(r); const f = Math.floor(t / 8); const wt = t % 8;
@@ -299,8 +309,10 @@ function request(b: Uint8Array, cap: number, logs: boolean): { json: string; n: 
   if (r.err) return { json: "", n: r.n, err: r.err };
   return { json: "{\"" + (logs ? "resourceLogs" : "resourceSpans") + "\":[" + rs.join(",") + "]}", n: r.n, err: "" };
 }
-export function decodeTraces(b: Uint8Array, cap: number = 20000): { json: string; spans: number; err: string } { const o = request(b, cap, false); return { json: o.json, spans: o.n, err: o.err }; }
-export function decodeLogs(b: Uint8Array, cap: number = 20000): { json: string; records: number; err: string } { const o = request(b, cap, true); return { json: o.json, records: o.n, err: o.err }; }
+// cap: spans / log records; nodes: JSON objects and arrays (nodeCap); text: decoded string and id characters
+export function nodeCap(records: number): number { return records * 100 + 10000; }
+export function decodeTraces(b: Uint8Array, cap: number = 20000, nodes: number = nodeCap(cap), text: number = 67108864): { json: string; spans: number; err: string } { const o = request(b, cap, false, nodes, text); return { json: o.json, spans: o.n, err: o.err }; }
+export function decodeLogs(b: Uint8Array, cap: number = 20000, nodes: number = nodeCap(cap), text: number = 67108864): { json: string; records: number; err: string } { const o = request(b, cap, true, nodes, text); return { json: o.json, records: o.n, err: o.err }; }
 // the empty Export…ServiceResponse in protobuf is zero bytes; a partial success is field 1 {1 rejected (int64), 2 message}
 export function partialPb(rejected: number, msg: string): Uint8Array {
   const m = new TextEncoder().encode(msg);

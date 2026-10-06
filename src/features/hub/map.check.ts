@@ -117,5 +117,8 @@ ok("resolved alert gone", r !== null && r.live !== null && (r.live[0]?.alerts.le
 // malformed lines are ignored
 a = newAgg(); ingestLine(a, "{x", null); ingestLine(a, "[]", null); ingestLine(a, "{\"resourceSpans\":[{\"resource\":3}]}", null);
 ok("garbage ignored", a.hosts.size === 0, String(a.hosts.size));
+// a line whose parse tree would not fit (a hostile Collector file: 7 MB of "{},") is skipped and counted, not parsed
+a = newAgg(); ingestLine(a, "{\"resourceSpans\":[{\"resource\":{\"attributes\":[" + "{},".repeat(2100000) + "{}]}}]}", null);
+ok("oversized line skipped", a.oversized === 1 && a.hosts.size === 0, String(a.oversized));
 if (bad) console.log(String(bad) + " failed"); else console.log("hub map: all checks passed");
 if (bad) process.exit(1);

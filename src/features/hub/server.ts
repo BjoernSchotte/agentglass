@@ -7,29 +7,30 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type Obj, obj, arr, str } from "../../util/json.ts";
+import { type Obj, obj, arr, str, jsonNodes } from "../../util/json.ts";
 import { gunzipCapped, gzipIsize } from "../../util/inflate.ts";
 import { createOwn, readOwn, myUid } from "../palette/rundir.ts";
 import { OS } from "../../platform/index.ts";
 import type { RecvCfg } from "./config.ts";
 import { type Tok, type TokStore, tokStore, reloadTokens, checkToken, pinToken, pinnable, tokensFile, dirProblem, live } from "./tokens.ts";
-import { decodeTraces, decodeLogs, partialPb } from "./otlppb.ts";
+import { decodeTraces, decodeLogs, partialPb, nodeCap } from "./otlppb.ts";
 import { scrubResource, scrubNeeded } from "./scrub.ts";
 import { hostDir, appendReq, enforce, compressClosed, writePrivate, utcDay } from "./store.ts";
 
 const MB = 1048576;
-export const MAX_CONNS = 64; export const HEADER_MS = 10000; export const BODY_MS = 60000;
+export const MAX_CONNS = 64; export const HEADER_MS = 10000; export const BODY_MS = 60000; export const LINGER_MS = 5000;
+export const TOKEN_INFLIGHT = 8; // request bodies one token may stream at once: a token cannot hold every connection slot
 export interface HostStat { requests: number; records: number; bytes: number; last: number; rej: Map<string, number>; scrubbed: number; metrics: number; pin: string; skewMs: number; beatAt: number }
 interface Win { t: number[]; b: number[] } // one token name's last minute: request times, decoded bytes (sliding window)
 interface Conn { s: Socket; t: ReturnType<typeof setTimeout> | null }
 export interface Rt {
   cfg: RecvCfg; toks: TokStore; hosts: Map<string, HostStat>; unauth: Map<string, number>; rate: Map<string, Win>;
   full: boolean; used: number; todayB: number; day: string; enforcedAt: number; started: number; port: number; tlsNote: string; tlsExpires: number;
-  conns: Conn[]; inflight: number; closing: boolean; clock: () => number;
+  conns: Conn[]; inflight: number; busy: Map<string, number>; closing: boolean; clock: () => number;
 }
 export function newRt(cfg: RecvCfg): Rt {
   return { cfg, toks: tokStore(tokensFile(cfg.dir)), hosts: new Map<string, HostStat>(), unauth: new Map<string, number>(), rate: new Map<string, Win>(),
-    full: false, used: 0, todayB: 0, day: "", enforcedAt: 0, started: Date.now(), port: 0, tlsNote: "", tlsExpires: 0, conns: [], inflight: 0, closing: false, clock: (): number => Date.now() };
+    full: false, used: 0, todayB: 0, day: "", enforcedAt: 0, started: Date.now(), port: 0, tlsNote: "", tlsExpires: 0, conns: [], inflight: 0, busy: new Map<string, number>(), closing: false, clock: (): number => Date.now() };
 }
 function bump(m: Map<string, number>, k: string): void { m.set(k, (m.get(k) ?? 0) + 1); }
 export function hostStat(rt: Rt, name: string): HostStat {
@@ -113,10 +114,14 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
   const rej = (code: number, why: string, msg: string, extra: string[][]): void => { bump(hs.rej, why); fail(res, code, pb, msg, extra); };
   let root: Obj | null = null; let total = 0; let text = "";
   if (pb) {
-    const d = logs ? decodeLogs(body, rt.cfg.maxRecords) : decodeTraces(body, rt.cfg.maxRecords);
+    const d = logs ? decodeLogs(body, rt.cfg.maxRecords, nodeCap(rt.cfg.maxRecords), rt.cfg.maxDecodedMB * MB) : decodeTraces(body, rt.cfg.maxRecords, nodeCap(rt.cfg.maxRecords), rt.cfg.maxDecodedMB * MB);
     if (d.err) { if (d.err.indexOf("more than") >= 0) rej(413, "records", d.err, []); else rej(400, "undecodable", "protobuf: " + d.err, []); return; }
     text = d.json;
-  } else text = new TextDecoder("utf-8").decode(body);
+  } else {
+    text = new TextDecoder("utf-8").decode(body);
+    const cap = nodeCap(rt.cfg.maxRecords); // the parse tree's size is bounded before it is built
+    if (jsonNodes(text, cap) > cap) { rej(413, "values", "more than " + String(cap) + " JSON objects and arrays in one request", []); return; }
+  }
   try { root = obj(JSON.parse(text)); } catch (e) { root = null; }
   const key = logs ? "resourceLogs" : "resourceSpans";
   if (!root || !Array.isArray(root[key])) { rej(400, "undecodable", "the body is not an OTLP " + (logs ? "ExportLogsServiceRequest" : "ExportTraceServiceRequest"), []); return; }
@@ -135,7 +140,9 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
     if (hid && !pin) {
       const e = pinToken(rt.toks.file, tok.hash, hid);
       if (e) { rej(503, "write", "cannot record the host pin: " + e, [["Retry-After", "60"]]); return; }
-      pin = hid; tok.pin = hid; reloadTokens(rt.toks, now, true);
+      reloadTokens(rt.toks, now, true); // the pin as the file has it now (another of the host's tokens may have pinned first)
+      const cur = rt.toks.toks.find((t: Tok) => t.hash === tok.hash);
+      pin = cur && cur.pin ? cur.pin : hid; tok.pin = pin;
     }
     if (hid && hid !== pin) { refused += recordsOf(o, logs); if (!refusedIds) refusedIds = hid; continue; }
     const rs1 = scrub ? scrubResource(o, logs, sc) : { rs: o, n: 0 };
@@ -146,8 +153,9 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
   hs.pin = pin;
   const why = "host.id " + refusedIds + " does not belong to token \"" + tok.name + "\" (pinned to " + pin + "; on a reinstalled machine: agentglass receive token add " + tok.name + " --repin)";
   if (!kept.length && refused) { bump(hs.rej, "host-id"); hs.requests++; fail(res, 403, pb, why, []); return; }
-  root[key] = kept;
-  const ls = !scrub && !refused && text.length <= LINE_SPLIT && text.indexOf("\n") < 0 ? [text] : splitLines(root, key, logs);
+  const only = Object.keys(root).length === 1; // stored as it came only when the root holds nothing but its signal
+  const clean: Obj = {}; clean[key] = kept;
+  const ls = !scrub && !refused && only && text.length <= LINE_SPLIT && text.indexOf("\n") < 0 ? [text] : splitLines(clean, key, logs);
   const d1 = hostDir(rt.cfg.dir, tok.name, pin, now);
   let e = d1; let n = 0;
   for (const line of ls) { if (e) break; e = appendReq(rt.cfg.dir, tok.name, logs ? "logs" : "traces", line, now); if (!e) n += line.length + 1; }
@@ -198,7 +206,11 @@ const PATHS = ["/v1/traces", "/v1/logs", "/v1/metrics"];
 export function handler(rt: Rt): (req: IncomingMessage, res: ServerResponse) => void {
   return (req: IncomingMessage, res: ServerResponse): void => {
     const now = rt.clock();
-    for (const c of rt.conns) if (c.s === req.socket && c.t) { clearTimeout(c.t); c.t = null; } // headers arrived in time
+    const sock = req.socket;
+    for (const c of rt.conns) if (c.s === sock && c.t) { clearTimeout(c.t); c.t = null; } // headers arrived in time
+    // one request per connection: closed once the response is out (the runtime keeps it open despite Connection: close,
+    // so an idle client would hold its slot for good); destroyed when the peer does not close its side either
+    res.on("finish", () => { sock.end(); const t = setTimeout(() => { sock.destroy(); }, LINGER_MS); sock.on("close", () => { clearTimeout(t); }); });
     const url = String(req.url ?? ""); const q = url.indexOf("?"); const path = q >= 0 ? url.slice(0, q) : url;
     const method = String(req.method ?? "");
     const ctype = header(req, "content-type").split(";")[0]?.trim().toLowerCase() ?? "";
@@ -225,12 +237,14 @@ export function handler(rt: Rt): (req: IncomingMessage, res: ServerResponse) => 
     const maxBody = rt.cfg.maxBodyMB * MB;
     const cl = header(req, "content-length");
     if (cl && (!/^\d{1,15}$/.test(cl) || Number(cl) > maxBody)) { rej(413, "size", "body over " + String(rt.cfg.maxBodyMB) + " MB", []); return; }
+    const nb = rt.busy.get(tok.name) ?? 0;
+    if (nb >= TOKEN_INFLIGHT) { rej(429, "rate", "more than " + String(TOKEN_INFLIGHT) + " requests in flight for " + tok.name, [["Retry-After", "1"]]); return; }
     w.t.push(now); w.b.push(0);
     if (header(req, "expect").toLowerCase() === "100-continue") res.writeContinue();
     // the body under a running cap and a timeout
     const parts: Uint8Array[] = []; let got = 0; let done = false;
-    rt.inflight++;
-    const finish = (): void => { if (!done) { done = true; rt.inflight--; clearTimeout(timer); } };
+    rt.inflight++; rt.busy.set(tok.name, nb + 1);
+    const finish = (): void => { if (!done) { done = true; rt.inflight--; rt.busy.set(tok.name, Math.max(0, (rt.busy.get(tok.name) ?? 1) - 1)); clearTimeout(timer); } };
     const timer = setTimeout(() => { if (done) return; finish(); rej(408, "timeout", "request body not complete within " + String(BODY_MS / 1000) + " s", []); req.destroy(); }, BODY_MS);
     req.on("data", (c: Uint8Array) => {
       if (done) return;
@@ -239,6 +253,7 @@ export function handler(rt: Rt): (req: IncomingMessage, res: ServerResponse) => 
       parts.push(c);
     });
     req.on("error", () => { finish(); });
+    sock.on("close", () => { finish(); }); // a client gone mid-body frees its token's slot at once (not at the body timeout)
     req.on("end", () => {
       if (done) return;
       finish();

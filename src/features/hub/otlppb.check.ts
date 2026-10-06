@@ -105,6 +105,18 @@ let deep: number[] = anyS("x"); for (let i = 0; i < 40; i++) { const a: number[]
 const dsp: number[] = []; ld(dsp, 9, kv("deep", deep)); const dsc: number[] = []; ld(dsc, 2, dsp); const drs: number[] = []; ld(drs, 2, dsc); const dreq: number[] = []; ld(dreq, 1, drs);
 ok("nesting cap → err", decodeTraces(new Uint8Array(dreq)).err.indexOf("nested") >= 0, decodeTraces(new Uint8Array(dreq)).err);
 ok("record cap → err", decodeTraces(traces(3, false), 2).err.indexOf("more than 2 spans") >= 0 && decodeTraces(traces(2, false), 2).err === "", decodeTraces(traces(3, false), 2).err);
+// output budgets: tiny encodings that expand (2-byte empty attributes → 21-byte objects; control characters → \u00xx)
+function amp(n: number, bytesPer: number[]): Uint8Array { const sp: number[] = []; for (let i = 0; i < n; i++) for (const x of bytesPer) sp.push(x); const ss: number[] = []; ld(ss, 2, sp); const rs: number[] = []; ld(rs, 2, ss); const o: number[] = []; ld(o, 1, rs); return new Uint8Array(o); }
+const ea = decodeTraces(amp(1100000, [0x4a, 0x00]));
+ok("empty attributes past the value budget → err", ea.err.indexOf("more than") >= 0 && ea.err.indexOf("values") >= 0, ea.err || String(ea.json.length));
+const ev0 = decodeTraces(amp(1100000, [0x5a, 0x00]));
+ok("empty events past the value budget → err", ev0.err.indexOf("values") >= 0, ev0.err || String(ev0.json.length));
+const ctl: number[] = []; for (let i = 0; i < 300000; i++) ctl.push(1); const nm: number[] = []; ld(nm, 5, ctl);
+const ce = decodeTraces(amp(1, nm), 20000, 1000000, 1000000);
+ok("control characters past the text budget → err", ce.err.indexOf("decoded text") >= 0, ce.err || String(ce.json.length));
+ok("within both budgets → ok", decodeTraces(amp(1000, [0x4a, 0x00])).err === "" && decodeTraces(amp(1, nm)).err === "", decodeTraces(amp(1000, [0x4a, 0x00])).err);
+ok("a varint over 10 bytes → err", decodeTraces(new Uint8Array([10, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01])).err.indexOf("varint") >= 0, "accepted");
+ok("a negative (64-bit) length → err", decodeTraces(new Uint8Array([10, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00])).err.indexOf("length") >= 0, "accepted");
 ok("partial success response", partialPb(3, "x").join(",") === "10,5,8,3,18,1,120", partialPb(3, "x").join(","));
 
 // fuzz: random bytes and mutations of valid requests never throw; always err or valid JSON

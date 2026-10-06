@@ -10,7 +10,7 @@ import { readWhole } from "../../util/fs.ts";
 import { type FeedState, newFeedState } from "../fleet/model.ts";
 import type { HubSrcCfg } from "./config.ts";
 import { type Source, newSource, readStep, trustOf, saveState, loadState, TICK_BYTES, TICK_LINES } from "./read.ts";
-import { type Agg, type Label, type HostExtra, newAgg, ingestLine, reportsOf, prune, extraOf, restoreHost } from "./map.ts";
+import { type Agg, type Label, type HostExtra, newAgg, ingestLine, reportsOf, prune, extraOf, restoreHost, LINE_NODES } from "./map.ts";
 import { type Obj, obj, arr, str } from "../../util/json.ts";
 import { newSnap, feedSnap, applySnap, snapLines, fullOf } from "../fleet/snap.ts";
 import { randomBytes, hex } from "../../util/rand.ts";
@@ -117,6 +117,7 @@ export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = [])
       for (const p of src.skipped.keys()) o.push(name + ": skipped " + p + " — " + (src.skipped.get(p) ?? ""));
       if (skipped) o.push(name + ": " + String(skipped) + " line(s) outside a host directory ignored (a receive directory keeps one directory per host)");
       if (agg.refused) o.push(name + ": " + String(agg.refused) + " resource(s) dropped: host.id changed under one agentglass.auth.subject");
+      if (agg.oversized) o.push(name + ": " + String(agg.oversized) + " line(s) skipped: more than " + String(LINE_NODES) + " JSON values in one line");
       return o;
     },
     stop(): void { if (dirty) save(Date.now()); },

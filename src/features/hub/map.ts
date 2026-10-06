@@ -3,7 +3,7 @@
 // for the exact merge, live state and alerts from the logs stream. Only mapped fields are kept: user.email and the like
 // cannot reach a report. Native Claude Code api_request records count only when no agentglass span has their request id.
 // SPDX-License-Identifier: Apache-2.0
-import { type Obj, obj, arr, str } from "../../util/json.ts";
+import { type Obj, obj, arr, str, jsonNodes } from "../../util/json.ts";
 import { localDay } from "../../util/text.ts";
 import { type Hello, type SessRow, type DayRow, type OwnRow, type LiveRow, type HostReport, type Owned, FORMAT } from "../fleet/model.ts";
 import { msgHash } from "../usage/msgrows.ts";
@@ -26,8 +26,8 @@ export interface HostAgg {
   sess: Map<string, SessAgg>; seen: Map<string, number>; newest: number; beat: number; reqIds: Set<string>; respIds: Set<string>;
   native: Obj[]; dropped: number; changed: boolean;
 }
-export interface Agg { hosts: Map<string, HostAgg>; subjects: Map<string, string>; refused: number }
-export function newAgg(): Agg { return { hosts: new Map<string, HostAgg>(), subjects: new Map<string, string>(), refused: 0 }; }
+export interface Agg { hosts: Map<string, HostAgg>; subjects: Map<string, string>; refused: number; oversized: number }
+export function newAgg(): Agg { return { hosts: new Map<string, HostAgg>(), subjects: new Map<string, string>(), refused: 0, oversized: 0 }; }
 export interface Label { name: string; hostId: string } // the authenticated directory label (trust "label")
 
 interface Attrs { s: Map<string, string>; n: Map<string, number>; b: Map<string, boolean> } // an attribute list by value kind
@@ -202,8 +202,10 @@ function logs(a: Agg, rs: Obj, label: Label | null): void {
   }
 }
 // one stored line (an ExportTraceServiceRequest or ExportLogsServiceRequest); malformed lines are ignored
+export const LINE_NODES = 2010000; // JSON objects and arrays in one line (receive's cap at its default record limit)
 export function ingestLine(a: Agg, line: string, label: Label | null): void {
   if (line.length < 2 || line.charCodeAt(0) !== 123) return;
+  if (jsonNodes(line, LINE_NODES) > LINE_NODES) { a.oversized++; return; } // a hostile file line: its parse tree would not fit
   let root: Obj | null = null; try { root = obj(JSON.parse(line)); } catch (e) { return; }
   if (!root) return;
   for (const r of arr(root["resourceSpans"])) { const o = obj(r); if (o) spans(a, o, label); }

@@ -1,6 +1,6 @@
 // agentglass — self-check for the receive server's pure parts: stored-line splitting: scriptc build src/features/hub/server.check.ts -o sv && ./sv
 // SPDX-License-Identifier: Apache-2.0
-import { type Obj, obj, arr } from "../../util/json.ts";
+import { type Obj, obj, arr, jsonNodes } from "../../util/json.ts";
 import { splitLines, LINE_SPLIT } from "./server.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -27,5 +27,10 @@ ok("each line ≤ 8 MB with resource and scope", okLines, "bad line");
 ok("every span once", spans === 20000 && ids.size === 20000, String(spans));
 const logs = obj(JSON.parse("{\"resourceLogs\":[{\"resource\":{\"attributes\":[]},\"scopeLogs\":[{\"logRecords\":[{\"body\":{\"stringValue\":\"x\"}}]}]}]}")) ?? {};
 ok("logs: as is", splitLines(logs, "resourceLogs", true)[0] === JSON.stringify(logs), "changed");
+// the parse-tree guard: objects and arrays counted, braces inside strings (escaped quotes too) not
+ok("nodes: plain", jsonNodes("{\"a\":[1,{\"b\":[]}]}", 100) === 4, String(jsonNodes("{\"a\":[1,{\"b\":[]}]}", 100)));
+ok("nodes: braces in strings", jsonNodes("{\"a\":\"{[{[\\\"{[\",\"b\":\"\\\\\"}", 100) === 1, String(jsonNodes("{\"a\":\"{[{[\\\"{[\",\"b\":\"\\\\\"}", 100)));
+ok("nodes: stops past max", jsonNodes("[" + "{},".repeat(1000) + "{}]", 10) === 11, String(jsonNodes("[" + "{},".repeat(1000) + "{}]", 10)));
+ok("nodes: unterminated string", jsonNodes("{\"a\":\"{{{", 100) === 1, "miscounted");
 if (bad) console.log(String(bad) + " failed"); else console.log("hub server: all checks passed");
 if (bad) process.exit(1);

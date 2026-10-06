@@ -126,6 +126,34 @@ eq "content" "$(post /v1/traces "$tsc" application/json "$t/content.json")" 200
 eq "no address on disk" "$(cat "$hub"/*/*.jsonl | grep -c '@example.com' || true)" 0
 eq "no content on disk" "$(cat "$hub"/*/*.jsonl | grep -c 'SECRET-\|secret code' || true)" 0
 grep -q 'agentglass.session.title' "$hub/sc/traces-$today.jsonl" || { echo "FAIL the scrubbed title is gone"; fail=1; }
+# … wherever a sender puts them: span links, members OTLP does not define, logs smuggled into a traces request
+python3 - "$t" <<'PY'
+import sys
+t = sys.argv[1]
+kv = lambda k, v: '{"key":"%s","value":{"stringValue":"%s"}}' % (k, v)
+sp = '{"traceId":"%032x","spanId":"%016x","name":"chat","links":[{"spanId":"%016x","attributes":[%s,%s]}],"extra":{"x":[%s]}}' % (2, 2, 3, kv("gen_ai.input.messages", "SECRET-LINK"), kv("user.email", "l@example.com"), kv("prompt", "SECRET-EXTRA"))
+smug = '"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"SECRET-SMUGGLED"}}]}]}]'
+open(t + "/odd.json", "w").write('{"resourceSpans":[{"resource":{"attributes":[]},"scopeSpans":[{"spans":[%s]}]}],%s}' % (sp, smug))
+PY
+eq "odd places" "$(post /v1/traces "$tsc" application/json "$t/odd.json")" 200
+eq "nothing from odd places on disk" "$(cat "$hub"/*/*.jsonl | grep -c 'SECRET-\|l@example.com' || true)" 0
+
+# expansion bombs (authenticated): tiny gzip bodies whose parse tree or decoded JSON would take gigabytes → 413, RSS flat
+python3 - "$t" <<'PY'
+import gzip, sys
+t = sys.argv[1]
+def vi(n):
+    o = b""
+    while n >= 128: o += bytes([(n & 127) | 128]); n >>= 7
+    return o + bytes([n])
+ld = lambda f, b: vi(f << 3 | 2) + vi(len(b)) + b
+open(t + "/amp.pb.gz", "wb").write(gzip.compress(ld(1, ld(2, ld(2, b"\x4a\x00" * 3000000))), 9))   # 3 M empty attributes
+open(t + "/amp.json.gz", "wb").write(gzip.compress(b'{"resourceSpans":[{"resource":{"attributes":[' + b"{}," * 3000000 + b'{}]}}]}', 9))
+PY
+eq "protobuf expansion bomb" "$(post /v1/traces "$tok" application/x-protobuf "$t/amp.pb.gz" -H 'Content-Encoding: gzip')" 413
+eq "JSON node bomb" "$(post /v1/traces "$tok" application/json "$t/amp.json.gz" -H 'Content-Encoding: gzip')" 413
+rss=$(ps -o rss= -p $srv | tr -d ' ')
+[ "$rss" -lt 204800 ] || { echo "FAIL RSS after the expansion bombs: ${rss} KB"; fail=1; }
 
 # Expect: 100-continue with a 4 MB body: no stall
 python3 -c "
@@ -167,6 +195,30 @@ d = idle[0].recv(10); dt = time.time() - t0
 if d != b"" or dt > 12: print("FAIL slow headers kept: %r after %.1f s" % (d, dt)); sys.exit(1)
 for x in idle: x.close()
 PY
+# a connection is closed once its response is out: idle clients (no token needed for /healthz or a 401) cannot hold
+# the 64 slots; one token streams at most 8 bodies at once
+python3 - "$port" "$tpb" <<'PY' || fail=1
+import socket, sys, time
+port = int(sys.argv[1]); tok = sys.argv[2]
+s = socket.create_connection(("127.0.0.1", port)); s.settimeout(8)
+s.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+d = b""; t0 = time.time()
+try:
+    while True:
+        x = s.recv(1000)
+        if not x: break
+        d += x
+except socket.timeout: print("FAIL connection kept open after the response"); sys.exit(1)
+if not d.startswith(b"HTTP/1.1 200"): print("FAIL healthz: %r" % d[:40]); sys.exit(1)
+slow = []
+for i in range(9):
+    c = socket.create_connection(("127.0.0.1", port)); c.settimeout(5)
+    c.sendall(("POST /v1/traces HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Type: application/json\r\nContent-Length: 50\r\n\r\n{" % tok).encode())
+    slow.append(c); time.sleep(0.05)
+r = slow[8].recv(100)
+if not r.startswith(b"HTTP/1.1 429"): print("FAIL 9th body of one token: %r" % r[:40]); sys.exit(1)
+for c in slow: c.close()
+PY
 sleep 0.3
 eq "serves after the floods" "$(curl -s "http://127.0.0.1:$port/healthz")" ok
 
@@ -176,7 +228,7 @@ ag receive status --json > "$t/st.json"
 python3 -c "
 import json; s=json.load(open('$t/st.json'))
 assert s['running'] is True, s
-h=s['hosts']['sc']; assert h['requests']==1 and h['scrubbed']>=3, h
+h=s['hosts']['sc']; assert h['requests']==2 and h['scrubbed']>=3, h
 assert s['hosts']['ci']['rejected'].get('host-id')==2, s['hosts']['ci']
 assert s['hosts']['pb']['hostId']=='0011223344556677', s['hosts']['pb']
 assert s['refused'].get('no-token',0)>=1 and s['refused'].get('connections',0)>=1, s['refused']
