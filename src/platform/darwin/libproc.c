@@ -29,24 +29,45 @@ int ag_pids(uint8_t *buf, size_t n) {
   return c < 0 ? -1 : c;
 }
 
+// rusage times are mach absolute-time units: 125/3 ns on arm64, 1 ns on Intel. An Intel build under Rosetta reads its
+// own timebase as 1/1, while the kernel counts the host's ticks: the kernel's tick rate (hw.tbfrequency) decides there
+static double ms_per_tick(void) {
+  static double k = 0;
+  if (k > 0) return k;
+  mach_timebase_info_data_t tb;
+  k = mach_timebase_info(&tb) == KERN_SUCCESS && tb.denom ? (double)tb.numer / tb.denom / 1e6 : 1e-6;
+  int tr = 0; size_t l = sizeof tr; int64_t hz = 0; size_t hl = sizeof hz;
+  if (sysctlbyname("sysctl.proc_translated", &tr, &l, NULL, 0) == 0 && tr == 1 &&
+      sysctlbyname("hw.tbfrequency", &hz, &hl, NULL, 0) == 0 && hl == sizeof hz && hz > 0) k = 1e3 / (double)hz;
+  return k;
+}
+
+// a tty's name as ps prints it (ttys003), cached by device number: devname() may walk /dev, and a tracked agent's
+// stat is read every pass. A device number always names the same node, so the cache never goes stale
+static const char *tty_name(dev_t d) {
+  static struct { dev_t d; char name[32]; } c[64]; static unsigned k = 0;
+  for (unsigned i = 0; i < k && i < 64; i++) if (c[i].d == d) return c[i].name;
+  const char *s = devname(d, S_IFCHR);
+  if (!s || !*s) return "??";
+  unsigned i = k++ % 64; // full: the oldest goes
+  c[i].d = d; snprintf(c[i].name, sizeof c[i].name, "%s", s);
+  return c[i].name;
+}
+
 // "ppid uid zombie startMs cpuMs rss tty\tcomm": identity from sysctl(KERN_PROC_PID), which answers for every uid (as
-// ps reads it); cpu and resident bytes from proc_pid_rusage, which another user's process refuses (cpu -1, rss 0).
-// rusage times are mach absolute-time units on arm64 (timebase 125/3), nanoseconds on Intel (1/1)
+// ps reads it); cpu and resident bytes from proc_pid_rusage, which another user's process refuses (cpu -1, rss 0)
 int ag_stat(int pid, uint8_t *buf, size_t n) {
-  static mach_timebase_info_data_t tb;
   struct kinfo_proc kp; size_t len = sizeof kp;
   int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
   if (sysctl(mib, 4, &kp, &len, NULL, 0) < 0) return gone_or_unreadable();
   if (len < sizeof kp || kp.kp_proc.p_pid != pid) return 0; // no such pid: an empty answer
-  if (!tb.denom && mach_timebase_info(&tb) != KERN_SUCCESS) { tb.numer = 1; tb.denom = 1; }
   long long cpu = -1, rss = 0;
   struct rusage_info_v2 ri;
   if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&ri) == 0) {
-    cpu = (long long)((double)(ri.ri_user_time + ri.ri_system_time) * tb.numer / tb.denom / 1e6);
+    cpu = (long long)((double)(ri.ri_user_time + ri.ri_system_time) * ms_per_tick());
     rss = (long long)ri.ri_resident_size;
   }
-  const char *tty = "??"; // no controlling terminal, as ps prints it
-  if (kp.kp_eproc.e_tdev != NODEV) { const char *d = devname(kp.kp_eproc.e_tdev, S_IFCHR); if (d && *d) tty = d; }
+  const char *tty = kp.kp_eproc.e_tdev == NODEV ? "??" : tty_name(kp.kp_eproc.e_tdev); // ?? = none, as ps prints it
   char comm[MAXCOMLEN + 1]; size_t k = 0;
   for (; k < MAXCOMLEN && kp.kp_proc.p_comm[k]; k++) { char ch = kp.kp_proc.p_comm[k]; comm[k] = ch == '\t' || ch == '\n' ? ' ' : ch; }
   comm[k] = 0;
