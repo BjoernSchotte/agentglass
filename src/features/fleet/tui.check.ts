@@ -5,7 +5,7 @@ import { newSess } from "../../model/types.ts";
 import { S } from "../../state.ts";
 import { remoteOnly } from "../../model/remote.ts";
 import { vwidth } from "../../util/text.ts";
-import { FORMAT, type HostReport, newFeedState } from "./model.ts";
+import { FORMAT, type HostReport, newFeedState, noOwned } from "./model.ts";
 import { sessRowOf } from "./report.ts";
 import type { FleetCfg } from "./config.ts";
 import { FLEET, setFleet, hostByName } from "./hosts.ts";
@@ -33,7 +33,7 @@ ok("header no ssh", plain(headerSeg(2, [], 120, true)) === " · hosts: no ssh", 
 ok("header fits", vwidth(headerSeg(3, marks, 18, false)) <= 18, String(vwidth(headerSeg(3, marks, 18, false))));
 // alerts: a transition toasts once; the first report only seeds
 const rep = (alerts: unknown[]): HostReport => ({ hello: { format: FORMAT, version: "x", hostId: "1", hostName: "h", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 1, priceSig: "" },
-  sessions: [sessRowOf({ id: "a", harness: "claude", title: "fix login", alerts })], cost: null, allowance: null, live: null, exact: false });
+  sessions: [sessRowOf({ id: "a", harness: "claude", title: "fix login", alerts })], cost: null, allowance: null, live: null, exact: false, owned: noOwned() });
 const ws = hostByName("ws"); if (!ws) throw new Error("ws");
 const a1 = { rule: "stuck", severity: "warning", since: "2026-10-06T10:00:00.000Z", message: "no output for 10 min" };
 ok("first report seeds", newAlerts(ws, rep([a1]), true).length === 0, "toasted");

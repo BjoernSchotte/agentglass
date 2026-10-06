@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
 import { detachedPid } from "../../platform/posix.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
-import { FORMAT, type HostReport, type FeedState } from "./model.ts";
+import { FORMAT, type HostReport, type FeedState, noOwned } from "./model.ts";
 import { reportLines, sessRowOf } from "./report.ts";
 import { q, controlPath, sshArgs, statusOf, SNIPPET, FEEDTEST, sshFeed } from "./ssh.ts";
 
@@ -68,7 +68,7 @@ let left = ""; try { left = execFileSync("ps", ["-o", "pid=,stat=", "-g", String
 ok("group killed", left.split("\n").every((l: string) => l.trim() === "" || /Z/.test(l)), left); // Z: exited, reaped once the event loop runs (this check blocks it)
 
 // a fake ssh that prints a 900-session report: read within a few polls at 256 lines each
-const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: Date.now(), priceSig: "" }, sessions: [], cost: { today: {} }, allowance: null, live: null, exact: false };
+const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: Date.now(), priceSig: "" }, sessions: [], cost: { today: {} }, allowance: null, live: null, exact: false, owned: noOwned() };
 for (let i = 0; i < 900; i++) rep.sessions.push(sessRowOf({ id: "s" + String(i), harness: "claude", title: "t" + String(i) }));
 writeFileSync(join(HOME, "report.jsonl"), reportLines(rep).join("\n") + "\n");
 FEEDTEST.timeoutMs = 20000;

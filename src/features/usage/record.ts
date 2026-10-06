@@ -315,13 +315,13 @@ export function usageExact(a: Acc, d: Day, model: string, nIn: number, nOut: num
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   addCost(a, d, usd, prov, model);
-  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, w1, cost: usd, unk: 0, exact: true, prov, src: "harness", est: false });
+  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, w1, cost: usd, unk: 0, exact: true, prov, src: "harness", est: false, day: tsDay, hr: tsHour });
 }
 export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, prov = ""): void {
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   const usd = tableTok(a, d, model, prov, nIn, nOut, nCr, w5, w1);
-  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, w1, cost: usd >= 0 ? usd : 0, unk: usd >= 0 ? 0 : nIn + nOut + nCr + w5 + w1, exact: false, prov, src: tkSrc, est: tkSrc === "alias" });
+  const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, w1, cost: usd >= 0 ? usd : 0, unk: usd >= 0 ? 0 : nIn + nOut + nCr + w5 + w1, exact: false, prov, src: tkSrc, est: tkSrc === "alias", day: tsDay, hr: tsHour });
 }
 // ── table-priced tokens: priced through the resolver now, kept per (hour, provider, model) row so a price change can
 // re-price them (reprice) without reading a log again ──
@@ -395,7 +395,8 @@ export function reasoning(a: Acc, d: Day, n: number): void { if (n > 0) a.rs = a
 // one booking as tokens()/usageExact() made it (Claude fallback iterations: one per attempt), for the OTLP exporter's
 // per-request spans; prov = honest-costs' provider key ("" = the session's single provider); src = the price source
 // (pricing.ts PSrc, "harness" for a reported cost, "unpriced"), est = priced through an alias. null outside the exporter.
-export interface Booking { model: string; nIn: number; nOut: number; cr: number; cw: number; w1: number; cost: number; unk: number; exact: boolean; prov: string; src: string; est: boolean }
+// day/hr: the local day and hour it was booked into (the fleet's per-message rows, msgrows.ts)
+export interface Booking { model: string; nIn: number; nOut: number; cr: number; cw: number; w1: number; cost: number; unk: number; exact: boolean; prov: string; src: string; est: boolean; day: string; hr: number }
 let bookTap: ((b: Booking) => void) | null = null;
 export function setBookTap(f: ((b: Booking) => void) | null): void { bookTap = f; }
 
