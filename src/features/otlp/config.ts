@@ -1,8 +1,10 @@
 // agentglass — the "otlp" section of ~/.agentglass/config.json, endpoint and header resolution (spec 7)
 // SPDX-License-Identifier: Apache-2.0
 //   {"otlp": {"endpoint", "headers": {"K": "V ${env:NAME}"}, "headersFile", "content", "contentMax", "inputTokens",
-//             "hostName", "attributes": {"extra", "rename", "drop"}, "batch", "timeoutSeconds", "insecure", "compression", "native"}}
+//             "hostName", "attributes": {"extra", "rename", "drop"}, "batch", "timeoutSeconds", "insecure", "compression", "native",
+//             "tls": {"ca", "cert", "key"}, "logs", "logsEndpoint", "titles", "detail"}}
 import { execFileSync } from "node:child_process";
+import { statSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { HOME, readText } from "../../util/fs.ts";
@@ -12,6 +14,8 @@ import { type Attr, attrS, attrD, attrI, attrB } from "./types.ts";
 export interface OtlpCfg {
   endpoint: string; headers: string[][]; headersFile: string; content: boolean; contentMax: number; inputTokens: string; hostName: boolean;
   extra: Attr[]; rename: Map<string, string>; drop: Set<string>; batch: number; timeoutS: number; insecure: boolean; compression: string; native: string;
+  tls: string[]; // [ca, cert, key] as configured ("" = unset; ~ not expanded yet: tlsOf)
+  logs: boolean; logsEndpoint: string; titles: boolean; detail: string; // logs stream (live), its endpoint, session titles, call details none|meta
   warns: string[]; // one line per problem: a malformed section, a value of the wrong type
 }
 function bool(o: Obj, k: string, d: boolean, w: string[]): boolean { const v = o[k]; if (v === undefined) return d; if (typeof v === "boolean") return v as boolean; w.push("otlp." + k + " must be true or false"); return d; }
@@ -26,6 +30,7 @@ function oneOf(o: Obj, k: string, vals: string[], w: string[]): string {
   if (typeof v === "string" && vals.indexOf(v as string) >= 0) return v as string;
   w.push("otlp." + k + " must be one of " + vals.join(", ")); return d;
 }
+const TLS_KEYS = ["ca", "cert", "key"];
 // the section as given (any shape): defaults for what is missing or wrong, one warning each
 export function cfgFrom(raw: unknown): OtlpCfg {
   const w: string[] = [];
@@ -49,11 +54,16 @@ export function cfgFrom(raw: unknown): OtlpCfg {
   const rename = new Map<string, string>(); const rn = obj(at["rename"]);
   if (rn) for (const k of Object.keys(rn)) { const v = str(rn[k]); if (v) rename.set(k, v); }
   const drop = new Set<string>(); for (const v of arr(at["drop"])) { const k = str(v); if (k) drop.add(k); }
+  const tls = ["", "", ""]; const to = obj(s["tls"]);
+  if (to) TLS_KEYS.forEach((k: string, i: number) => { const v = to[k]; if (typeof v === "string") tls[i] = v as string; else if (v !== undefined) w.push("otlp.tls." + k + " must be a file path"); });
+  else if (s["tls"] !== undefined) w.push("otlp.tls must be an object: {\"ca\", \"cert\", \"key\"}");
+  const le = s["logsEndpoint"]; if (le !== undefined && typeof le !== "string") w.push("otlp.logsEndpoint must be a URL");
   return {
     endpoint: str(s["endpoint"]), headers, headersFile: str(s["headersFile"]), content: bool(s, "content", false, w), contentMax: int(s, "contentMax", 256, 1048576, 16384, w),
     inputTokens: oneOf(s, "inputTokens", ["inclusive", "provider"], w), hostName: bool(s, "hostName", false, w),
     extra, rename, drop, batch: int(s, "batch", 1, 100000, 512, w), timeoutS: int(s, "timeoutSeconds", 1, 600, 10, w), insecure: bool(s, "insecure", false, w),
-    compression: oneOf(s, "compression", ["gzip", "none"], w), native: oneOf(s, "native", ["warn", "skip", "include"], w), warns: w,
+    compression: oneOf(s, "compression", ["gzip", "none"], w), native: oneOf(s, "native", ["warn", "skip", "include"], w),
+    tls, logs: bool(s, "logs", true, w), logsEndpoint: str(le), titles: bool(s, "titles", false, w), detail: oneOf(s, "detail", ["none", "meta"], w), warns: w,
   };
 }
 export function loadCfg(): OtlpCfg { return cfgFrom(rawSection("otlp")); }
@@ -102,13 +112,13 @@ function broken(hs: string[][]): string {
   return "";
 }
 // the headers to send: config headers (${env:NAME} expanded now), the private headers file, else the OTEL_* variables
-export function expandHeaders(c: OtlpCfg, env: Map<string, string>): { headers: string[][]; err: string } {
-  const r = expandRaw(c, env);
+export function expandHeaders(c: OtlpCfg, env: Map<string, string>, signal = "TRACES"): { headers: string[][]; err: string } {
+  const r = expandRaw(c, env, signal);
   if (r.err) return r;
   const b = broken(r.headers);
   return b ? { headers: [], err: b } : r;
 }
-function expandRaw(c: OtlpCfg, env: Map<string, string>): { headers: string[][]; err: string } {
+function expandRaw(c: OtlpCfg, env: Map<string, string>, signal: string): { headers: string[][]; err: string } {
   const out: string[][] = [];
   for (const h of c.headers) {
     let v = h[1] ?? "";
@@ -126,6 +136,56 @@ function expandRaw(c: OtlpCfg, env: Map<string, string>): { headers: string[][];
     if (uid !== myUid() || lastTwo(mode) !== "00") return { headers: [], err: "otlp.headersFile " + p + " must be yours and private: chmod 600 " + p };
     for (const l of readText(p, 0, 65536).split("\n")) { const t = l.trim(); const i = t.indexOf(":"); if (!t || t.startsWith("#") || i <= 0) continue; out.push([t.slice(0, i).trim(), t.slice(i + 1).trim()]); }
   }
-  if (!out.length) { const e = env.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") ?? env.get("OTEL_EXPORTER_OTLP_HEADERS") ?? ""; if (e) return { headers: kvList(e), err: "" }; }
+  if (!out.length) { const e = env.get("OTEL_EXPORTER_OTLP_" + signal + "_HEADERS") ?? env.get("OTEL_EXPORTER_OTLP_HEADERS") ?? ""; if (e) return { headers: kvList(e), err: "" }; }
   return { headers: out, err: "" };
 }
+
+// ── client TLS (otlp-complete 1.1–1.2) ──
+const TLS_VARS = ["CERTIFICATE", "CLIENT_CERTIFICATE", "CLIENT_KEY"];
+// a readable regular file ("" = fine); opened, never read: curl reads the contents
+function fileErr(p: string): string {
+  try { if (!statSync(p).isFile()) return "is not a regular file"; } catch (e) { return "does not exist"; }
+  try { closeSync(openSync(p, "r")); } catch (e) { return "cannot be read"; }
+  return "";
+}
+// [ca, cert, key] for a signal ("TRACES" | "LOGS"): config, else OTEL_EXPORTER_OTLP_<SIGNAL>_<VAR>, else OTEL_EXPORTER_OTLP_<VAR>;
+// ~ expanded; every set path a readable file, the key private (like headersFile), cert and key only together
+export function tlsOf(c: OtlpCfg, env: Map<string, string>, signal: string): { tls: string[]; err: string } {
+  const tls = ["", "", ""]; const from = ["", "", ""];
+  for (let i = 0; i < 3; i++) {
+    const v = c.tls[i] ?? ""; const k = TLS_KEYS[i] ?? ""; const x = TLS_VARS[i] ?? "";
+    if (v) { tls[i] = tilde(v); from[i] = "otlp.tls." + k; continue; }
+    const sv = "OTEL_EXPORTER_OTLP_" + signal + "_" + x; const gv = "OTEL_EXPORTER_OTLP_" + x;
+    const se = (env.get(sv) ?? "").trim(); const ge = (env.get(gv) ?? "").trim();
+    if (se) { tls[i] = tilde(se); from[i] = sv; } else if (ge) { tls[i] = tilde(ge); from[i] = gv; }
+  }
+  const none = { tls: ["", "", ""], err: "" };
+  for (let i = 0; i < 3; i++) {
+    const p = tls[i] ?? ""; if (!p) continue;
+    if (/[\r\n]/.test(p)) return { tls: none.tls, err: (from[i] ?? "") + " contains a line break — remove it" };
+    const fe = fileErr(p); if (fe) return { tls: none.tls, err: (from[i] ?? "") + " " + p + " " + fe };
+  }
+  const cert = tls[1] ?? ""; const key = tls[2] ?? "";
+  if (cert && !key) return { tls: none.tls, err: (from[1] ?? "") + " is set without a key: set otlp.tls.key too (mutual TLS needs both)" };
+  if (key && !cert) return { tls: none.tls, err: (from[2] ?? "") + " is set without a certificate: set otlp.tls.cert too (mutual TLS needs both)" };
+  if (key) {
+    const om = ownerMode(key); const sp = om.indexOf(" ");
+    if (!om || om.slice(0, sp) !== myUid() || lastTwo(om.slice(sp + 1)) !== "00") return { tls: none.tls, err: (from[2] ?? "") + " " + key + " must be yours and private: chmod 600 " + key };
+  }
+  return { tls, err: "" };
+}
+export function tlsUrlErr(url: string, tls: string[]): string { return tls.some((p: string) => p !== "") && /^http:/i.test(url) ? "otlp.tls needs an https endpoint (got " + safeUrl(url) + ")" : ""; }
+
+// ── the logs endpoint (otlp-complete 2.2) ──
+// fromFlagOrCfg = the traces URL came from --otlp or otlp.endpoint (else from the environment)
+export function logsUrlOf(tracesUrl: string, fromFlagOrCfg: boolean, c: OtlpCfg, env: Map<string, string>): { url: string; why: string } {
+  if (!c.logs) return { url: "", why: "" };
+  if (c.logsEndpoint) return { url: c.logsEndpoint.trim(), why: "" };
+  const le = (env.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") ?? "").trim();
+  if (!fromFlagOrCfg && le) return { url: le, why: "" };
+  const m = /^([^?#]*)\/v1\/traces([?#].*)?$/.exec(tracesUrl.trim());
+  if (m) return { url: (m[1] ?? "") + "/v1/logs" + (m[2] ?? ""), why: "" };
+  return { url: "", why: "logs off: set otlp.logsEndpoint for " + safeUrl(tracesUrl) };
+}
+// the headers for the logs signal: as expandHeaders, with OTEL_EXPORTER_OTLP_LOGS_HEADERS instead of the traces variable
+export function logHeaders(c: OtlpCfg, env: Map<string, string>): { headers: string[][]; err: string } { return expandHeaders(c, env, "LOGS"); }
