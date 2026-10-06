@@ -1,0 +1,96 @@
+name: footprint macOS
+# TUI CPU and memory on macOS, before vs after, with fake agents on a fixture HOME (specs/macos-footprint): one macos-14
+# runner, by hand (gh workflow run footprint-macos.yml -f before=<ref> -f after=<ref>), and on PRs that change the
+# measurement tooling itself (before = the PR's base, after = its head). Never on ordinary PRs: macOS runners are scarce.
+on:
+  workflow_dispatch:
+    inputs:
+      before: { description: "baseline ref", default: main, type: string }
+      after: { description: "ref to compare (empty: the dispatched one)", default: "", type: string }
+      window: { description: "measured seconds per run", default: "60", type: string }
+  pull_request:
+    paths:
+      - scripts/footprint.sh
+      - scripts/fake-agent.c
+      - scripts/fixture-agents.sh
+      - scripts/fixture-agents.test.sh
+      - .github/workflows/footprint-macos.yml
+permissions: { contents: read }
+concurrency: { group: footprint-macos, cancel-in-progress: false }
+jobs:
+  footprint:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.before }}
+      AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.after || github.sha }}
+      WINDOW: ${{ inputs.window || '60' }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: scriptc
+        uses: ./.github/actions/scriptc
+        with: { lane: footprint }
+      - name: tmux (V4 times it)
+        run: |
+          t0=$(date +%s); HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tmux; t1=$(date +%s)
+          echo "brew install tmux: $((t1 - t0)) s" | tee -a "$RUNNER_TEMP/notes"
+      - name: ps -S counts waited-for children (V1)
+        run: |
+          c=$(sh -c 'perl -e "1 while 1" & p=$!; sleep 1; kill $p; wait $p; ps -S -o time= -p $$')
+          echo "V1: ps -S -o time= after a 1 s busy child: $c" | tee -a "$RUNNER_TEMP/notes"
+          echo "$c" | awk '{ n = split($1, a, ":"); exit !(a[n] + (n > 1 ? a[n - 1] * 60 : 0) >= 0.8) }'
+      - name: build before and after
+        run: |
+          for n in before after; do
+            ref=$BEFORE; [ $n = before ] || ref=$AFTER
+            git worktree add --detach "$RUNNER_TEMP/wt-$n" "$ref"
+            echo "$n: $ref = $(git -C "$RUNNER_TEMP/wt-$n" rev-parse --short HEAD)" | tee -a "$RUNNER_TEMP/notes"
+            AGENTGLASS_SRC="$RUNNER_TEMP/wt-$n/src" AGENTGLASS_OUT="$RUNNER_TEMP/ag-$n" sh build.sh
+          done
+      - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
+      - name: fixture agents
+        run: |
+          echo "processes before: $(ps -ax | wc -l | tr -d ' ')" | tee -a "$RUNNER_TEMP/notes"
+          sh scripts/fixture-agents.sh start "$RUNNER_TEMP/fx" --agents 12 --history 300 --background 300
+          echo "processes with the fixture: $(ps -ax | wc -l | tr -d ' ')" | tee -a "$RUNNER_TEMP/notes"
+      - name: measure
+        run: |
+          fx="$RUNNER_TEMP/fx/home"
+          for n in before after; do # a warm cache per binary
+            mkdir -p "$RUNNER_TEMP/cache-$n"
+            HOME="$fx" AGENTGLASS_AGENT=0 AGENTGLASS_CACHE_DIR="$RUNNER_TEMP/cache-$n" AGENTGLASS_CONFIG="$RUNNER_TEMP/none.json" \
+              AGENTGLASS_RULES="$RUNNER_TEMP/none.json" AGENTGLASS_PRICES="$RUNNER_TEMP/none.json" AGENTGLASS_RUN_DIR="$RUNNER_TEMP/run-$n" \
+              "$RUNNER_TEMP/ag-$n" --json > /dev/null
+          done
+          for run in before:focused after:focused before:away after:away; do
+            n=${run%%:*}; a=""; [ "${run#*:}" = focused ] || a=--away
+            sh scripts/footprint.sh --bin "$RUNNER_TEMP/ag-$n" --warm "$RUNNER_TEMP/cache-$n" --home "$fx" --warmup 20 \
+              --window "$WINDOW" --scratch "$RUNNER_TEMP/fp-$n" --debug $a > "$RUNNER_TEMP/out-$n-${run#*:}"
+            cat "$RUNNER_TEMP/out-$n-${run#*:}"
+          done
+      - name: stop fixture agents
+        if: always()
+        run: sh scripts/fixture-agents.sh stop "$RUNNER_TEMP/fx"
+      - name: summary
+        if: always()
+        run: |
+          o="$RUNNER_TEMP/footprint-macos.md"
+          { echo "## footprint macOS (macos-14, window $WINDOW s, warm-up 20 s)"; echo
+            echo "| metric | before focused | after focused | before away | after away |"; echo "|---|---|---|---|---|"
+            for m in first_frame_ms rss_mb_5s rss_mb_30s rss_mb_end cpu_self_pct cpu_children_pct cpu_total_pct; do
+              row="| $m"
+              for r in before-focused after-focused before-away after-away; do
+                row="$row | $(awk -v m="$m" '$1 == m { print $2 }' "$RUNNER_TEMP/out-$r" 2> /dev/null)"
+              done
+              echo "$row |"
+            done
+            echo; echo '```'; cat "$RUNNER_TEMP/notes" 2> /dev/null
+            for r in before-focused after-focused before-away after-away; do echo "$r $(grep '^debug ' "$RUNNER_TEMP/out-$r" 2> /dev/null)"; done
+            echo '```'; } > "$o"
+          cat "$o" >> "$GITHUB_STEP_SUMMARY"; cat "$o"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: footprint-macos, path: "${{ runner.temp }}/footprint-macos.md", if-no-files-found: ignore }
