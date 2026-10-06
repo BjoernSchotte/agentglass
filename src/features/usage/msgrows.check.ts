@@ -7,7 +7,8 @@ import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { ledger, complete } from "./ledger.ts";
 import { forget } from "./owners.ts";
-import { msgHash, rowsFor, readRows, rowsFile, ownKeys } from "./msgrows.ts";
+import { msgHash, rowsFor, rowsBy, readRows, rowsFile, ownKeys, ownHashes, ownIdsBy } from "./msgrows.ts";
+import { newAcc } from "./record.ts";
 import type { OwnRow } from "../fleet/model.ts";
 import "../../harness/index.ts";
 
@@ -75,6 +76,35 @@ ok("corrupt → rebuilt", !!r1 && r1.ok && r1.rebuilt && readRows(L1, 0).ok, r1 
 // no message id ever reaches the sidecar
 const raw = readFileSync(rowsFile(L1), "utf8") + readFileSync(rowsFile(L2), "utf8");
 ok("no raw ids in the rows file", raw.indexOf("m1\t") < 0 && raw.indexOf("req_") < 0, raw.slice(0, 200));
+
+// in time slices (the TUI's merge): a log over several 1 MB chunks read again from the start, one chunk a call, gives the
+// rows a read at once gives; so does hashing a stored owned-id text, 256 ids a call
+const big: string[] = []; for (let i = 0; i < 10000; i++) big.push(asst("b" + String(i), "2026-09-0" + String(1 + (i % 5)) + "T1" + String(i % 10) + ":00:00.000Z", i % 3 ? "claude-sonnet-4-5" : "claude-opus-4-1", i, 2 * i, 10, 1));
+const LB = join(dir, "s-big.jsonl"); const LC = join(dir, "s-big2.jsonl"); writeFileSync(LB, big.join("\n") + "\n"); writeFileSync(LC, big.join("\n").split("\"b").join("\"c") + "\n");
+ok("big log spans chunks", statSync(LB).size > 2 * 1048576, String(statSync(LB).size));
+const sb = sess(LB); complete(sb); const ab = ledger.get(LB);
+if (ab) {
+  let calls = 1; let rb = rowsBy(LB, "claude", ab, 0); while (!rb) { calls++; rb = rowsBy(LB, "claude", ab, 0); }
+  const sc = sess(LC); complete(sc); const ac = ledger.get(LC); const rc = ac ? rowsFor(LC, "claude", ac) : null;
+  ok("sliced rebuild: several calls", calls >= 3, String(calls));
+  ok("sliced rebuild: ok, every row", rb.ok && rb.rebuilt && rb.rows.length === 10000 && !!rc && rc.rows.length === rb.rows.length, String(rb.rows.length));
+  ok("sliced rebuild = at once (sums)", !!rc && JSON.stringify(sums(rb.rows)) === JSON.stringify(sums(rc.rows)), JSON.stringify(sums(rb.rows)));
+  ok("sliced rebuild wrote the sidecar", readRows(LB, 0).n === 10000 && (rowsFor(LB, "claude", ab).rebuilt === false), String(readRows(LB, 0).n));
+} else ok("big log indexed", false, "no entry");
+const at = newAcc(); const ids: string[] = []; let prev = 0;
+for (let i = 0; i < 1000; i++) { const k = 1000 + i * 7; ids.push((i % 50 === 7 ? "u:" : "msg_") + String(i) + "," + String(k - prev)); prev = k; }
+at.mv = ids.join(" ");
+const seen = new Map<string, number>(); const idOf = (h: string): number => { const v = seen.get(h); if (v !== undefined) return v; seen.set(h, seen.size); return seen.size - 1; };
+let hc = 1; let hb = ownIdsBy("/x/sliced.jsonl", at, 0, idOf); while (!hb) { hc++; hb = ownIdsBy("/x/sliced.jsonl", at, 0, idOf); }
+const ho = ownHashes("/x/whole.jsonl", at); const hoIds: number[] = []; for (const h of ho.hs) hoIds.push(idOf(h));
+ok("sliced hashing: several calls, the same hashes (as ids) and keys", hc >= 3 && JSON.stringify(hb.hs) === JSON.stringify(hoIds) && JSON.stringify(hb.ks) === JSON.stringify(ho.ks) && ho.hs.length === 980 && seen.size === 980, String(hc) + " " + String(ho.hs.length));
+ok("sliced hashing: cached after", ownIdsBy("/x/sliced.jsonl", at, 0, idOf) === hb, "");
+const ad = newAcc(); for (let i = 0; i < 1000; i++) ad.mo.set((i % 50 === 7 ? "u:" : "msg_") + String(i), 1000 + i * 7);
+let dc = 1; let db = ownIdsBy("/x/decoded.jsonl", ad, 0, idOf); while (!db) { dc++; db = ownIdsBy("/x/decoded.jsonl", ad, 0, idOf); }
+ok("sliced hashing of a decoded entry: several calls, the text's ids and keys", dc >= 3 && JSON.stringify(db.hs) === JSON.stringify(hoIds) && JSON.stringify(db.ks) === JSON.stringify(ho.ks), String(dc));
+const am = newAcc(); am.mo.set("msg_a", 5); am.mo.set("u:p", 6); const im = ownIdsBy("/x/map.jsonl", am, 0, idOf); am.mo.set("msg_b", 9);
+const im2 = ownIdsBy("/x/map.jsonl", am, 0, idOf);
+ok("ids of a decoded entry, then its growth only", !!im && im === im2 && im.hs.length === 2 && JSON.stringify(im.ks) === "[5,9]" && (im.hs[1] ?? -1) === idOf(msgHash("msg_b")), JSON.stringify(im2));
 
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("msgrows: all checks passed");

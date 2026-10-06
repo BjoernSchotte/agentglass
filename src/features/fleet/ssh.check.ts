@@ -62,7 +62,7 @@ ok("slow start", slow.start(Date.now()), "false");
 const pid = Number((readFileSync(join(dir, "slow.pid"), "utf8").split(" ")[0]) ?? "");
 execFileSync("sleep", ["0.5"]);
 const s1: FeedState = slow.poll(Date.now());
-ok("timeout status", s1.code === "timeout" && !s1.busy, JSON.stringify(s1));
+ok("timeout status", s1.code === "timeout" && !s1.busy, s1.code + " " + String(s1.busy));
 execFileSync("sleep", ["0.3"]);
 let left = ""; try { left = execFileSync("ps", ["-o", "pid=,stat=", "-g", String(pid)], { encoding: "utf8" }).trim(); } catch (e) { left = ""; }
 ok("group killed", left.split("\n").every((l: string) => l.trim() === "" || /Z/.test(l)), left); // Z: exited, reaped once the event loop runs (this check blocks it)

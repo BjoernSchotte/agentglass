@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { type Acc, peekHeavy, mkey } from "../usage/record.ts";
-import { type DayRow, type Hello, type HostReport, type OwnRow, type Owned, type SessRow, ownSess } from "./model.ts";
+import { type DayRow, type Hello, type HostReport, type Owned, type SessRow, ownSess } from "./model.ts";
 import { helloOf } from "./report.ts";
+import { type OwnChunk, NO_ROWS, newChunk, joinChunks, hashId, hashHex, wordId, word } from "./ownc.ts";
 
 export const SNAP = "agentglass-snapshot/v1";
-export interface OwnLine { key: string; reset: boolean; rows: OwnRow[] }
+export interface OwnLine { key: string; reset: boolean; rows: OwnChunk } // rows in columns (ownc.ts chunkOf)
 // head: the hello fields; gen: this snapshot's generation; base: the one it is relative to ("" = full)
 export interface Snap { head: Obj; gen: string; base: string; full: boolean; sess: SessRow[]; own: OwnLine[]; gone: string[]; cost: Obj | null; allowance: Obj | null; done: boolean; err: string }
 export function newSnap(): Snap { return { head: {}, gen: "", base: "", full: false, sess: [], own: [], gone: [], cost: null, allowance: null, done: false, err: "" }; }
@@ -18,18 +19,22 @@ function rows2(v: unknown): string[][] { const o: string[][] = []; for (const x 
 
 // ── rows on the wire: an own row is an array [h, key, d, hr, m, prov, in, out, cr, w5, w1, usd, priced] (ownership-only:
 // [h, key]); a day is an object with the DayRow fields ──
-export function ownOut(r: OwnRow): unknown[] {
-  if (!r.n.length) return [r.h, r.key];
-  const o: unknown[] = [r.h, r.key, r.d, r.hr, r.m, r.prov]; for (const x of r.n) o.push(x); return o;
+export function ownOut(c: OwnChunk, i: number): unknown[] {
+  const h = hashHex(c.h[i] ?? -1); const k = c.k[i] ?? 0; const u = Number(c.u[i] ?? -1);
+  if (u < 0) return [h, k];
+  const o: unknown[] = [h, k, word(c.d[u] ?? 0), c.hr[u] ?? 0, word(c.m[u] ?? 0), word(c.p[u] ?? 0)]; for (let q = 0; q < 7; q++) o.push(c.v[u * 7 + q] ?? 0); return o;
 }
-export function ownIn(v: unknown): OwnRow | null {
-  const a = arr(v); if (a.length !== 2 && a.length !== 13) return null;
+// a wire row straight into row i of c, usage into slot u (no row object: a full snapshot carries 200 k of them); false = not a row
+function ownInto(c: OwnChunk, i: number, u: number, v: unknown): boolean {
+  const a = arr(v); if (a.length !== 2 && a.length !== 13) return false;
   const h = a[0]; const key = a[1];
-  if (typeof h !== "string" || typeof key !== "number" || !/^[0-9a-f]{16}$/.test(h as string)) return null;
-  if (a.length === 2) return { h: h as string, key: key as number, d: "", hr: 0, m: "", prov: "", n: [] };
-  const n: number[] = []; for (let i = 6; i < 13; i++) { const x = a[i]; if (typeof x !== "number") return null; n.push(x as number); }
-  const hr = num(a[3]); if (!(hr >= 0 && hr < 24)) return null;
-  return { h: h as string, key: key as number, d: str(a[2]), hr, m: str(a[4]), prov: str(a[5]), n };
+  if (typeof h !== "string" || typeof key !== "number" || !/^[0-9a-f]{16}$/.test(h as string)) return false;
+  c.h[i] = hashId(h as string); c.k[i] = key as number;
+  if (a.length === 2) { c.u[i] = -1; return true; }
+  for (let q = 0; q < 7; q++) { const x = a[q + 6]; if (typeof x !== "number") return false; c.v[u * 7 + q] = x as number; }
+  const hr = num(a[3]); if (!(hr >= 0 && hr < 24)) return false;
+  c.u[i] = u; c.d[u] = wordId(str(a[2])); c.hr[u] = hr; c.m[u] = wordId(str(a[4])); c.p[u] = wordId(str(a[5]));
+  return true;
 }
 function dayOut(d: DayRow): Obj { return { d: d.d, tp: d.tp, hx: d.hx, unk: d.unk, um: d.um, uc: d.uc, tools: d.tools, turns: d.turns, calls: d.calls, errors: d.errors }; }
 function dayIn(o: Obj): DayRow { return { d: str(o["d"]), tp: rows2(o["tp"]), hx: rows2(o["hx"]), unk: num(o["unk"]), um: rows2(o["um"]), uc: num(o["uc"]), tools: num(o["tools"]), turns: num(o["turns"]), calls: num(o["calls"]), errors: num(o["errors"]) }; }
@@ -45,7 +50,7 @@ export function snapLines(x: Snap): string[] {
   head["format"] = SNAP; head["gen"] = x.gen; head["base"] = x.base; head["full"] = x.full;
   const out: string[] = [JSON.stringify({ snap: head })];
   for (const s of x.sess) out.push(JSON.stringify({ sess: sessOut(s) }));
-  for (const o of x.own) { const rs: unknown[] = []; for (const r of o.rows) rs.push(ownOut(r)); const ln: Obj = { key: o.key, reset: o.reset, rows: rs }; out.push(JSON.stringify({ own: ln })); }
+  for (const o of x.own) { const rs: unknown[] = []; for (let i = 0; i < o.rows.n; i++) rs.push(ownOut(o.rows, i)); const ln: Obj = { key: o.key, reset: o.reset, rows: rs }; out.push(JSON.stringify({ own: ln })); }
   if (x.gone.length) out.push(JSON.stringify({ gone: x.gone }));
   out.push(JSON.stringify({ cost: x.cost })); out.push(JSON.stringify({ allowance: x.allowance }));
   out.push(JSON.stringify({ end: { gen: x.gen, sessions: x.sess.length, own: x.own.length } }));
@@ -73,8 +78,9 @@ export function feedSnap(p: Snap, lines: string[]): void {
     const s = obj(o["sess"]); if (s) { const r = sessIn(s); if (r) p.sess.push(r); else p.err = "bad session line"; continue; }
     const w = obj(o["own"]);
     if (w) {
-      const rows: OwnRow[] = [];
-      for (const x of arr(w["rows"])) { const r = ownIn(x); if (!r) { p.err = "bad own row"; return; } rows.push(r); }
+      const xs = arr(w["rows"]); let nu = 0; for (const x of xs) if (arr(x).length === 13) nu++;
+      const rows = xs.length ? newChunk(xs.length, nu) : NO_ROWS; let u = 0;
+      for (let i = 0; i < xs.length; i++) { if (!ownInto(rows, i, u, xs[i])) { p.err = "bad own row"; return; } if ((rows.u[i] ?? -1) >= 0) u++; }
       p.own.push({ key: str(w["key"]), reset: w["reset"] === true, rows }); continue;
     }
     if (o["gone"] !== undefined) { for (const k of strs(o["gone"])) p.gone.push(k); continue; }
@@ -93,7 +99,7 @@ export function helloOfSnap(x: Snap): Hello { return helloOf(x.head); }
 export function applySnap(cur: HostReport | null, x: Snap): HostReport {
   // a delta that changed no session keeps the sessions and owned rows as they were (the merge keys its cache on them)
   if (cur && !x.full && !x.sess.length && !x.own.length && !x.gone.length) return { hello: helloOf(x.head), sessions: cur.sessions, cost: x.cost, allowance: x.allowance, live: cur.live, exact: true, owned: cur.owned };
-  const own = new Map<string, OwnRow[]>();
+  const own = new Map<string, OwnChunk[]>();
   const keep = new Map<string, SessRow>(); const order: string[] = [];
   if (!x.full && cur) {
     for (const o of cur.owned) own.set(o.key, o.rows);
@@ -103,12 +109,12 @@ export function applySnap(cur: HostReport | null, x: Snap): HostReport {
   for (const s of x.sess) { if (!keep.has(s.key)) order.push(s.key); keep.set(s.key, s); }
   for (const o of x.own) {
     const old = own.get(o.key);
-    if (o.reset && !o.rows.length) own.delete(o.key); // the key owns nothing any more
-    else own.set(o.key, o.reset || !old ? o.rows : old.concat(o.rows));
+    if (o.reset && !o.rows.n) own.delete(o.key); // the key owns nothing any more
+    else if (o.rows.n || o.reset || !old) own.set(o.key, o.reset || !old ? [o.rows] : old.concat([o.rows]));
   }
   // a session whose row and own rows the delta left alone stays the same object (its rows are not gathered again)
   const moved = new Set<string>(); for (const o of x.own) moved.add(ownSess(o.key)); for (const sr of x.sess) moved.add(sr.key);
-  const bySess = new Map<string, OwnRow[]>();
+  const bySess = new Map<string, OwnChunk[]>();
   for (const [k, v] of own) { const sk = ownSess(k); if (!x.full && cur && !moved.has(sk)) continue; const o = bySess.get(sk); bySess.set(sk, o ? o.concat(v) : v); }
   const sessions: SessRow[] = [];
   for (const k of order) {
@@ -123,7 +129,7 @@ export function applySnap(cur: HostReport | null, x: Snap): HostReport {
 // the report as one full snapshot (the viewer's persisted state, the drop writer's base)
 export function fullOf(r: HostReport, gen: string): Snap {
   const own: OwnLine[] = [];
-  for (const o of r.owned) own.push({ key: o.key, reset: true, rows: o.rows });
+  for (const o of r.owned) own.push({ key: o.key, reset: true, rows: joinChunks(o.rows) });
   const head: Obj = { version: r.hello.version, hostId: r.hello.hostId, hostName: r.hello.hostName, os: r.hello.os, tzOffsetMin: r.hello.tzOffsetMin, redact: r.hello.redact, days: r.hello.days, now: r.hello.now, priceSig: r.hello.priceSig };
   const sess: SessRow[] = []; for (const s of r.sessions) sess.push({ s: s.s, key: s.key, days: s.days, own: null, prov: s.prov });
   return { head, gen, base: "", full: true, sess, own, gone: [], cost: r.cost, allowance: r.allowance, done: true, err: "" };

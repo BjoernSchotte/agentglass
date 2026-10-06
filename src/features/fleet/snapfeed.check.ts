@@ -11,6 +11,7 @@ import { detachedPid } from "../../platform/posix.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
 import type { FeedState, HostReport, OwnRow, SessRow } from "./model.ts";
 import { type Snap, snapLines, applySnap } from "./snap.ts";
+import { chunkOf, lenOf } from "./ownc.ts";
 import { type SshFeed, sshFeed, snapArgs, FEEDTEST } from "./ssh.ts";
 import { reportLines, sessRowOf } from "./report.ts";
 import { FORMAT, noOwned } from "./model.ts";
@@ -39,8 +40,8 @@ const HEAD = { version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "li
 function sr(key: string, cost: number): SessRow { return { s: { harness: "claude", id: key.slice(7), updated: new Date().toISOString(), costUsd: cost }, key, days: [], own: null, prov: [] }; }
 function row(h16: string): OwnRow { return { h: h16, key: 2, d: "2026-10-01", hr: 1, m: "claude-sonnet-4-5", prov: "", n: [1, 1, 1, 1, 1, 0.1, 1] }; }
 const G1 = "1111111111111111"; const G2 = "2222222222222222"; const G3 = "3333333333333333";
-const full: Snap = { head: HEAD, gen: G1, base: "", full: true, sess: [sr("claude:a", 1), sr("claude:b", 2)], own: [{ key: "claude:a", reset: true, rows: [row("00000000000000a1")] }], gone: [], cost: null, allowance: null, done: true, err: "" };
-const d2: Snap = { head: HEAD, gen: G2, base: G1, full: false, sess: [sr("claude:a", 5)], own: [{ key: "claude:a", reset: false, rows: [row("00000000000000a2")] }], gone: ["claude:b"], cost: null, allowance: null, done: true, err: "" };
+const full: Snap = { head: HEAD, gen: G1, base: "", full: true, sess: [sr("claude:a", 1), sr("claude:b", 2)], own: [{ key: "claude:a", reset: true, rows: chunkOf([row("00000000000000a1")]) }], gone: [], cost: null, allowance: null, done: true, err: "" };
+const d2: Snap = { head: HEAD, gen: G2, base: G1, full: false, sess: [sr("claude:a", 5)], own: [{ key: "claude:a", reset: false, rows: chunkOf([row("00000000000000a2")]) }], gone: ["claude:b"], cost: null, allowance: null, done: true, err: "" };
 const d3: Snap = { head: HEAD, gen: G3, base: G2, full: false, sess: [sr("claude:c", 7)], own: [], gone: [], cost: null, allowance: null, done: true, err: "" };
 function serve(lines: string[], rc: number, err: string): void { writeFileSync(OUT, lines.length ? lines.join("\n") + "\n" : ""); writeFileSync(RC, String(rc)); writeFileSync(ERR, err); }
 function run(fd: SshFeed): FeedState {
@@ -52,7 +53,7 @@ function run(fd: SshFeed): FeedState {
 function lastWords(): string { const l = readFileSync(LOG, "utf8").trim().split("\n"); return l[l.length - 1] ?? ""; }
 function norm(r: HostReport | null): string {
   if (!r) return "null";
-  const o: string[] = []; for (const s of r.sessions) o.push(s.key + "=" + JSON.stringify(s.s["costUsd"] ?? null) + "/" + String((s.own ?? []).length));
+  const o: string[] = []; for (const s of r.sessions) o.push(s.key + "=" + JSON.stringify(s.s["costUsd"] ?? null) + "/" + String(lenOf(s.own ?? [])));
   return o.join(",");
 }
 

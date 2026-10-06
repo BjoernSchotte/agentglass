@@ -84,7 +84,8 @@ export function readRows(path: string, from: number): { rows: OwnRow[]; n: numbe
 // one message into the same day, hour, model and provider are one row). The chunking and the >1 MB line skip are the
 // ledger's (ledger.ts step): the scratch sees exactly the lines the ledger booked
 const CHUNK = 1048576;
-function scan(path: string, h: string, a: Acc, st: St, to: number, out: OwnRow[]): void {
+// until: stop after the chunk that passes this clock time (st.off says how far it got: a later call continues there)
+function scan(path: string, h: string, a: Acc, st: St, to: number, out: OwnRow[], until = Infinity): void {
   const s = newAcc(); s.p = path; s.ro = true; s.sub = a.sub; s.mc = a.mc; s.ep = st.ep; s.off = st.off; s.ids = st.ids; s.model = st.model; s.x = st.x;
   const owned = mine(a); const ad = harnessOf(h);
   let bs: Booking[] = [];
@@ -119,6 +120,7 @@ function scan(path: string, h: string, a: Acc, st: St, to: number, out: OwnRow[]
       flushSpans(s);
       skip = false;
       s.off += z + 1;
+      if (Date.now() >= until) break;
     }
   } finally { setBookTap(null); }
   st.off = s.off; st.model = s.model; st.x = s.x; st.ids = s.ids;
@@ -127,11 +129,19 @@ function ensure(): boolean { try { mkdirSync(rowsDir(), { recursive: true, mode:
 function writeAtomic(p: string, t: string): void { const tmp = p + "." + String(process.pid) + ".tmp"; writeFileSync(tmp, t, { mode: 0o600 }); renameSync(tmp, p); }
 
 export interface Rows { rows: OwnRow[]; ok: boolean; rebuilt: boolean }
+// a rebuild in slices (rowsBy): the read state and the rows so far, per log; a new ledger entry starts it over
+const RB = new Map<string, { a: Acc; st: St; rows: OwnRow[] }>();
 // the owned-message rows of one Claude log as its ledger entry `a` has booked it (h = the harness, "claude"); brings the
 // sidecar up to date first (continues or starts over). ok = false: the rows still do not add up to the entry (a log the
 // ledger read differently, e.g. a line it skipped as too long that grew): the caller treats the session as inexact
-export function rowsFor(path: string, h: string, a: Acc): Rows {
+export function rowsFor(path: string, h: string, a: Acc): Rows { return rowsBy(path, h, a, Infinity) ?? { rows: [], ok: false, rebuilt: true }; }
+// rowsFor in time slices (the TUI's merge): a log read again from the start stops after the chunk that passes `until` and
+// returns null; the next call goes on from there (a 1 MB chunk at most past the clock). A cached or grown sidecar: at once
+export function rowsBy(path: string, h: string, a: Acc, until: number): Rows | null {
   const want = sumOf(a);
+  const rb = RB.get(path);
+  if (rb && rb.a === a && rb.st.ep === a.ep && rb.st.off <= a.off) return rebuild(path, h, a, rb.st, rb.rows, want, until);
+  RB.delete(path);
   let st = stIn(readAll(stFile(path)));
   if (st && st.ep === a.ep && st.off === a.off && same(st.sum, want)) {
     const r = readRows(path, 0);
@@ -148,9 +158,14 @@ export function rowsFor(path: string, h: string, a: Acc): Rows {
       }
     }
   }
-  st = newSt(a.ep); const rows: OwnRow[] = []; scan(path, h, a, st, a.off, rows);
+  return rebuild(path, h, a, newSt(a.ep), [], want, until);
+}
+function rebuild(path: string, h: string, a: Acc, st: St, rows: OwnRow[], want: number[], until: number): Rows | null {
+  const off0 = st.off; scan(path, h, a, st, a.off, rows, until);
+  if (st.off < a.off && st.off > off0) { RB.set(path, { a, st, rows }); return null; } // no progress (the log shrank, a torn end): as far as it goes
+  RB.delete(path);
   st.rows = rows.length;
-  if (canWrite) {
+  if (ensure()) {
     try { const t: string[] = []; for (const r of rows) t.push(rowLine(r) + "\n"); writeAtomic(rowsFile(path), t.join("")); writeAtomic(idsFile(path), idsOut(st)); writeAtomic(stFile(path), stOut(st)); } catch (e) { /* rebuilt next time */ }
   }
   return { rows, ok: same(st.sum, want), rebuilt: true };
@@ -161,7 +176,8 @@ export function rowsFor(path: string, h: string, a: Acc): Rows {
 // costs a few hundred ms once)
 export interface Hashes { hs: string[]; ks: number[] }
 const HC = new Map<string, { a: Acc; t: boolean; len: number; n: number; x: Hashes }>();
-function owned(a: Acc, from: number, x: Hashes): number {
+type Push = (h: string, k: number) => void;
+function owned(a: Acc, from: number, push: Push): number {
   let n = 0;
   if (a.mv) { // "<id>,<key delta> …" (owners.ts moOut)
     let prev = 0;
@@ -169,24 +185,63 @@ function owned(a: Acc, from: number, x: Hashes): number {
       const i = e.indexOf(","); if (i <= 0) continue;
       const t = prev + Number(e.slice(i + 1)); if (!(t >= 0)) continue; prev = t;
       if (n++ < from) continue;
-      const id = e.slice(0, i); if (!id.startsWith("u:")) { x.hs.push(msgHash(id)); x.ks.push(t); }
+      const id = e.slice(0, i); if (!id.startsWith("u:")) push(msgHash(id), t);
     }
     return n;
   }
-  for (const [id, key] of a.mo) { if (n++ < from) continue; if (!id.startsWith("u:")) { x.hs.push(msgHash(id)); x.ks.push(key); } }
+  for (const [id, key] of a.mo) { if (n++ < from) continue; if (!id.startsWith("u:")) push(msgHash(id), key); }
   return n;
 }
 export function ownHashes(path: string, a: Acc): Hashes {
   const hit = HC.get(path);
   if (hit && hit.a === a) {
+    const x = hit.x; const push = (h: string, k: number): void => { x.hs.push(h); x.ks.push(k); };
     if (a.mv) { if (hit.t && hit.len === a.mv.length) return hit.x; }
     else if (a.mo.size === hit.n) return hit.x;
-    else if (a.mo.size > hit.n) { hit.n = owned(a, hit.n, hit.x); hit.t = false; hit.len = a.mo.size; return hit.x; } // grown: its new ids only
+    else if (a.mo.size > hit.n) { hit.n = owned(a, hit.n, push); hit.t = false; hit.len = a.mo.size; return hit.x; } // grown: its new ids only
   }
-  const x: Hashes = { hs: [], ks: [] }; const n = owned(a, 0, x);
+  const x: Hashes = { hs: [], ks: [] }; const n = owned(a, 0, (h: string, k: number): void => { x.hs.push(h); x.ks.push(k); });
   HC.set(path, { a, t: !!a.mv, len: a.mv ? a.mv.length : a.mo.size, n, x }); // n: entries read (the text's are the Map's, in order)
   return x;
 }
+// the viewer's merge (fleet follow-ups): the same, each hash as an id (`id`: ownc.ts hashId; no hash string is kept: 200 k
+// of them were ~15 MB), and in time slices: a log whose stored text is hashed from the start stops at `until` and returns
+// null; the next call goes on (the text split once, kept until done). A cached or grown entry: at once
+export interface Ids { hs: number[]; ks: number[] }
+const IC = new Map<string, { a: Acc; t: boolean; len: number; n: number; x: Ids }>();
+const IP = new Map<string, { a: Acc; t: boolean; len: number; es: string[]; i: number; prev: number; n: number; x: Ids }>(); // t: the stored text (else the decoded Map)
+export function ownIdsBy(path: string, a: Acc, until: number, id: (h: string) => number): Ids | null {
+  const hit = IC.get(path);
+  if (hit && hit.a === a) {
+    const x = hit.x; const push = (h: string, k: number): void => { x.hs.push(id(h)); x.ks.push(k); };
+    if (a.mv) { if (hit.t && hit.len === a.mv.length) return x; }
+    else if (a.mo.size === hit.n) return x;
+    else if (a.mo.size > hit.n) { hit.n = owned(a, hit.n, push); hit.t = false; hit.len = a.mo.size; return x; } // grown: its new ids only
+  }
+  const t = !!a.mv; const len = t ? a.mv.length : a.mo.size;
+  let p = IP.get(path);
+  if (!p || p.a !== a || p.t !== t || p.len !== len) { p = { a, t, len, es: t ? a.mv.split(" ") : [], i: 0, prev: 0, n: 0, x: { hs: [], ks: [] } }; IP.set(path, p); }
+  const i0 = p.i;
+  if (t) {
+    for (; p.i < p.es.length; p.i++) {
+      if (p.i > i0 && (p.i & 255) === 0 && Date.now() >= until) return null; // after some progress
+      const e = p.es[p.i] ?? ""; const i = e.indexOf(","); if (i <= 0) continue; // as owned() reads the text
+      const k = p.prev + Number(e.slice(i + 1)); if (!(k >= 0)) continue; p.prev = k; p.n++;
+      const m = e.slice(0, i); if (!m.startsWith("u:")) { p.x.hs.push(id(msgHash(m))); p.x.ks.push(k); }
+    }
+  } else { // a decoded entry (a live log): the Map in its order, the entries done so far skipped
+    let i = 0;
+    for (const [m, k] of a.mo) {
+      if (i++ < p.i) continue;
+      if (p.i > i0 && (p.i & 255) === 0 && Date.now() >= until) return null;
+      p.i++; p.n++; if (!m.startsWith("u:")) { p.x.hs.push(id(msgHash(m))); p.x.ks.push(k); }
+    }
+  }
+  IP.delete(path); IC.set(path, { a, t, len, n: p.n, x: p.x });
+  return p.x;
+}
+// a log gone from the ledger: its ids go too
+export function forgetIds(keep: (path: string) => boolean): void { for (const k of [...IC.keys()]) if (!keep(k)) IC.delete(k); for (const k of [...IP.keys()]) if (!keep(k)) IP.delete(k); }
 // the same as ownership-only rows (the snapshot's own lines of sessions outside the window)
 export function ownKeys(path: string, a: Acc): OwnRow[] {
   const x = ownHashes(path, a); const rows: OwnRow[] = [];

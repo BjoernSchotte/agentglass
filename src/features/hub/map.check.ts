@@ -5,6 +5,8 @@ import { obj, arr } from "../../util/json.ts";
 import { newAgg, ingestLine, reportsOf, prune, msgHash, restoreHost, extraOf } from "./map.ts";
 import type { HostReport } from "../fleet/model.ts";
 import { exactFleet } from "../fleet/merge.ts";
+import { rowsOfChunks, lenOf } from "../fleet/ownc.ts";
+import { snapLines, fullOf } from "../fleet/snap.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const SAMPLE = readFileSync("testdata/hub/collector-sample.jsonl", "utf8").trim(); // the exporter's own output for the claude fixture
@@ -34,12 +36,12 @@ ok("tools, subagents, model", s["tools"] === 4 && s["subagents"] === 1 && s["mod
 ok("cwd, branch, repo key", s["cwd"] === "/home/u/proj" && s["branch"] === "main" && obj(s["repo"]) !== null, JSON.stringify([s["cwd"], s["branch"], s["repo"]]));
 ok("field order = the --json contract", Object.keys(s).join(",").startsWith("id,harness,title,cwd,branch,remote,model,path,updated,bytes,live,pid"), Object.keys(s).join(","));
 ok("not reconstructable: null/0", s["path"] === null && s["pid"] === 0 && s["bytes"] === 0 && s["git"] === null && s["linesAdded"] === 0, JSON.stringify([s["path"], s["pid"]]));
-const own = s0 && s0.own ? s0.own : [];
+const own = s0 && s0.own ? rowsOfChunks(s0.own) : [];
 let nb = 0; let bIn = 0; let hrOk = true;
 for (const o of own) { if (o.h === msgHash("msg_b")) { nb++; bIn += o.n[0] ?? 0; } if (o.hr !== new Date(o.key / 2).getHours()) hrOk = false; }
 ok("own rows: one per booking (a fallback message has two)", own.length === 6 && nb === 2 && bIn === 12, String(own.length) + " " + String(nb));
 ok("own rows carry the local hour of their key", hrOk, JSON.stringify(own));
-ok("owned = the session's own rows", r !== null && r.owned.length === 1 && r.owned[0]?.rows.length === 6 && r.owned[0]?.key === s0?.key, String(r?.owned.length));
+ok("owned = the session's own rows", r !== null && r.owned.length === 1 && lenOf(r.owned[0]?.rows ?? []) === 6 && r.owned[0]?.key === s0?.key, String(r?.owned.length));
 ok("msgHash = fleet 13.1", msgHash("msg_a").length === 16 && /^[0-9a-f]+$/.test(msgHash("msg_a")), msgHash("msg_a"));
 const days = s0 && s0.days ? s0.days : [];
 let calls = 0; let usd = 0; let width = 0;
@@ -50,7 +52,7 @@ ok("exact (agentglass scope)", r !== null && r.exact && r.hello.version !== "", 
 ingestLine(a, SAMPLE, null);
 r = rep(reportsOf(a, t0, true, 3650), "00112233445566ff");
 const rs0 = r ? r.sessions[0] : null;
-ok("resend: same totals", rs0 !== null && near(num(rs0.s["costUsd"]), 0.00122) && (rs0.own ?? []).length === 6, String(rs0?.s["costUsd"]));
+ok("resend: same totals", rs0 !== null && near(num(rs0.s["costUsd"]), 0.00122) && lenOf(rs0.own ?? []) === 6, String(rs0?.s["costUsd"]));
 // the exact merge (fleet 13): host B holds copies of A's Claude messages (same response ids, later keys) → counted once
 function hostRep(line: string, key: string): HostReport { const g = newAgg(); ingestLine(g, line, null); const m = reportsOf(g, t0, true, 3650); const x = m.get(key); if (!x) throw new Error("no report " + key); return x; }
 const repA = hostRep(SAMPLE, "00112233445566ff");
@@ -94,7 +96,8 @@ let nat: { usd: number; hx: number; tp: number } = { usd: -1, hx: -1, tp: -1 };
 for (const x of r ? r.sessions : []) if (x.key === "claude:native-only") { const d0 = x.days ? x.days[0] : null; nat = { usd: num(x.s["costUsd"]), hx: d0 ? d0.hx.length : -1, tp: d0 ? d0.tp.length : -1 }; }
 ok("unmatched native: harness-priced (hx)", near(nat.usd, 0.75) && nat.hx === 1 && nat.tp === 0, JSON.stringify(nat));
 ok("a host with native usage is not exact", r !== null && !r.exact, String(r?.exact));
-ok("no address or account id anywhere in the reports", JSON.stringify(r).indexOf("@") < 0 && JSON.stringify(r).indexOf("acct-1") < 0, "leaked");
+const wire = r ? snapLines(fullOf(r, "0000000000000000")).join("\n") : ""; // the report as it is stored and sent
+ok("no address or account id anywhere in the reports", wire.length > 0 && wire.indexOf("@") < 0 && wire.indexOf("acct-1") < 0, "leaked");
 const r2 = rep(reportsOf(a, t0, true, 3650), "cccccccccccccccc");
 let again = -1; for (const x of r2 ? r2.sessions : []) if (x.key === "claude:native-only") again = num(x.s["costUsd"]);
 ok("reports do not accumulate native usage", near(again, 0.75), String(again));

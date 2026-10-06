@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, chmodSync, readFileSync, appendFileSync } fro
 import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
 import { type HubHost, hubSource, sanitizeName } from "./feed.ts";
+import { lenOf } from "../fleet/ownc.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const SAMPLE = readFileSync("testdata/hub/collector-sample.jsonl", "utf8").trim();
@@ -43,7 +44,7 @@ ok("10,000 lines over ≥ 5 polls, busy meanwhile", polls >= 4 && busySeen, Stri
 // persistence: a restart resumes from the state file (reports, span ids) without re-reading
 process.env["AGENTGLASS_FLEET_DIR"] = join(HOME, "fleetstate");
 function costOf(h: HubHost | undefined): string { if (!h || !h.state.report) return "none"; const ss = h.state.report.sessions; if (!ss.length) return "empty"; const x = ss[0]; return x ? JSON.stringify(x.s["costUsd"]) : "empty"; }
-function ownedOf(h: HubHost | undefined): number { if (!h || !h.state.report) return -1; const o = h.state.report.owned; const x = o.length ? o[0] : undefined; return x ? x.rows.length : 0; }
+function ownedOf(h: HubHost | undefined): number { if (!h || !h.state.report) return -1; const o = h.state.report.owned; const x = o.length ? o[0] : undefined; return x ? lenOf(x.rows) : 0; }
 const pd = join(HOME, "persist"); mkdirSync(pd, { recursive: true }); mk(join(pd, "spans.jsonl"), SAMPLE + "\n");
 const p1 = hubSource("pst", { dir: pd, names: new Map<string, string>(), trust: "", maxAgeDays: 3650, includeNative: false });
 const r1 = p1.poll(Date.now(), big)[0];

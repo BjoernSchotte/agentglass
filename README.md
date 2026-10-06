@@ -327,9 +327,13 @@ builds with `git pull && ./build.sh`.
   except `RELEASE_MAINTAINERS` / `RELEASE_MAINTAINER_NAMES` and bots), looked up with `gh`;
   offline (`RELEASE_OFFLINE=1`) or without `gh` they fall back to git author names.
 - Dev releases run on their own (`dev-release.yml`, 02:43 UTC) or via *Run workflow*.
-- Secret `HOMEBREW_TAP_TOKEN`: a fine-grained PAT with **Actions: write** on
-  `BjoernSchotte/homebrew-tap` (formula updates) and **Contents: write** on this repo (the Release
-  cut workflow pushes the tag with it, because a `GITHUB_TOKEN` push would not start `release.yml`).
+- Secret `HOMEBREW_TAP_TOKEN`: a fine-grained PAT with **Contents: write** and **Actions: write** on
+  `BjoernSchotte/homebrew-tap` and **Contents: write** on this repo (the Release cut workflow pushes the
+  tag with it, because a `GITHUB_TOKEN` push would not start `release.yml`). The release renders the stable
+  formula itself (`scripts/formula.sh`), proves it with `brew audit --strict`, `install` and `test`
+  (`scripts/formula-proof.sh`; the `formula` workflow runs the same on PRs) and commits it to the tap.
+  Without Contents access there it falls back to the tap's `update-formula.yml` (versions and checksums
+  only) and warns.
 - All tests: `sh scripts/check.sh`.
 
 </details>
@@ -868,7 +872,12 @@ the viewer prices the whole fleet; `"reprice": false` keeps each host's figure) 
 own time zone, so "today" and the month mean one thing. Tool calls and turns of a copied history still count in each
 session that holds it. The first snapshot of a busy host is a few MB (it carries every owned message once); after
 that each refresh sends only what changed since the generation the viewer acknowledged — a lost answer is repaired by
-the next request. `fleet cost --json` says `exact: true` and how many copies it `removed`.
+the next request. `fleet cost --json` says `exact: true` and how many copies it `removed`. The TUI matches the
+messages in the background (at most 50 ms a tick): until the first match is done the header and the Stats fleet line
+say `merging 34%` and count each exact host's own cost figures, marked `≈`. Two hosts that mirror a 200 k-message
+history take about 25 s there, the very first time longer (the viewer builds its per-message rows once); a copy of a
+local message on a host takes it out of this machine's figures only on the days the hosts' snapshots carry (this
+month and the last 16 days).
 
 A host on an older agentglass (or `"snapshot": false`) is pulled as before: each host prices with its own table and
 days, the same session read on two such hosts is counted on both (`≈`, `overlap` in `fleet cost`), and `fleet status`
@@ -1137,10 +1146,10 @@ agentglass --watch --otlp         # the rest, live (heartbeat, session state, al
   needs `--listen-public` **and** TLS; plain HTTP on a public address is refused.
 - **Built-in HTTPS:** `agentglass receive --tls-cert server.crt --tls-key server.key` runs `agentglass-receive-tls`
   (in the same release archive, installed next to `agentglass`; a separate binary because HTTPS needs scriptc's C
-  backend; `install.sh` and `agentglass update` install it, Homebrew does not yet). Both binaries must be of one
-  release. Certificate and key are re-read within 5 s when the files change; a key that does not belong to the
-  certificate is refused (at start: exit 2; on reload: the last good pair keeps serving); `receive status` shows the
-  expiry. No client certificates: for mutual TLS use a Collector (below).
+  backend; `install.sh`, `agentglass update` and the stable Homebrew formula install it; the `agentglass-dev` formula
+  does not yet). Both binaries must be of one release. Certificate and key are re-read within 5 s when the files
+  change; a key that does not belong to the certificate is refused (at start: exit 2; on reload: the last good pair
+  keeps serving); `receive status` shows the expiry. No client certificates: for mutual TLS use a Collector (below).
 - **Behind a reverse proxy:** terminate TLS there and proxy HTTP/1.1 to `127.0.0.1:4318` with a body limit of 8 MB;
   agentglass ignores `X-Forwarded-For`.
 - **Limits:** 8 MB per request on the wire, 64 MB decompressed (a gzip bomb stops at the cap, whatever its trailer

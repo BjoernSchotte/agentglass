@@ -23,12 +23,13 @@ import { peers } from "../vcs/json.ts";
 import { allowanceInfo, codexWins, modeOf } from "../usage/bill-live.ts";
 import { pricesSig, resolve, cost } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
-import { type Acc, lastDays } from "../usage/record.ts";
-import { monthStart } from "../usage/costs.ts";
+import type { Acc } from "../usage/record.ts";
 import { rowsFor, ownKeys } from "../usage/msgrows.ts";
 import type { OwnRow, SessRow } from "./model.ts";
 import { type Snap, newSnap, snapLines, dayRows } from "./snap.ts";
+import { NO_ROWS, chunkOf } from "./ownc.ts";
 import { fleetDir } from "./store.ts";
+import { costDays } from "./merge.ts";
 import { DAY_MS } from "./pull.ts";
 import { argVal } from "../../util/argv.ts";
 
@@ -80,15 +81,7 @@ export function savePeer(peer: string, st: PeerState, next: Gen): void {
 }
 
 // ── what goes out ──
-// the days a viewer's cost figures need (this month, the last 15 days for the projection) plus a day on each side for
-// the time-zone shift; sessions with usage in them travel with their day rows, the list shows those of `days`
-export function costDays(now: number): Set<string> {
-  const o = new Set<string>(); for (const k of monthStart(now)) o.add(k); for (const k of lastDays(16)) o.add(k);
-  const t = new Date(now + DAY_MS); o.add(t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"));
-  const ks = [...o].sort(); const f = ks[0] ?? ""; const p = new Date(Date.parse(f + "T12:00:00") - DAY_MS);
-  o.add(p.getFullYear() + "-" + String(p.getMonth() + 1).padStart(2, "0") + "-" + String(p.getDate()).padStart(2, "0"));
-  return o;
-}
+// the cost days (merge.ts costDays): sessions with usage in them travel with their day rows, the list shows those of `days`
 function oldest(days: Set<string>): number { const ks = [...days].sort(); return Date.parse((ks[0] ?? "") + "T00:00:00") || 0; }
 function tree(s: Sess, out: Sess[]): void { out.push(s); for (const c of s.subs) tree(c, out); }
 function accsOf(ss: Sess[]): Acc[] { const o: Acc[] = []; for (const s of ss) { const a = ledger.get(s.path); if (a) o.push(a); } return o; }
@@ -157,8 +150,8 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
     const old = b.get("o:" + key);
     if (old === sg) return;
     const on = old !== undefined ? sigN(old) : -1;
-    if (old !== undefined && on >= 0 && on < rows.length && rowSig(rows, on) === old) x.own.push({ key, reset: false, rows: rows.slice(on) });
-    else x.own.push({ key, reset: true, rows });
+    if (old !== undefined && on >= 0 && on < rows.length && rowSig(rows, on) === old) x.own.push({ key, reset: false, rows: chunkOf(rows.slice(on)) });
+    else x.own.push({ key, reset: true, rows: chunkOf(rows) });
   };
   const cdl = [...cd].sort(); const cdSig = (cdl[0] ?? "") + "-" + (cdl[cdl.length - 1] ?? ""); const ps = pricesSig();
   for (const s of win) {
@@ -189,7 +182,7 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
       if (old !== undefined && b.get("c:" + lk) === cheap) { next.sig.set("o:" + lk, old); continue; } // untouched since base: no rows read
       const o = ownOfLog(c.path, a, cd); if (!o.ok) inexact++;
       if (o.rows.length) send(lk, o.rows);
-      else { next.sig.set("o:" + lk, NONE); if (old !== undefined && old !== NONE) x.own.push({ key: lk, reset: true, rows: [] }); } // owns nothing (all copies): remembered, not re-read
+      else { next.sig.set("o:" + lk, NONE); if (old !== undefined && old !== NONE) x.own.push({ key: lk, reset: true, rows: NO_ROWS }); } // owns nothing (all copies): remembered, not re-read
     }
   }
   for (const s of rest) {
@@ -208,7 +201,7 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
   for (const k of b.keys()) {
     if (next.sig.has(k) || k.startsWith("c:") || k.startsWith("q:")) continue;
     if (k.startsWith("s:")) x.gone.push(k.slice(2));
-    else if (k.startsWith("o:") && b.get(k) !== NONE) x.own.push({ key: k.slice(2), reset: true, rows: [] });
+    else if (k.startsWith("o:") && b.get(k) !== NONE) x.own.push({ key: k.slice(2), reset: true, rows: NO_ROWS });
   }
   x.head = { version: BUILD.version, hostId: hostId(), hostName: REDACT ? "" : hostName(), os: process.platform, tzOffsetMin: -new Date(now).getTimezoneOffset(), redact: REDACT, days, now, priceSig: pricesSig() };
   x.gen = next.gen; x.base = base ? base.gen : ""; x.full = !base;

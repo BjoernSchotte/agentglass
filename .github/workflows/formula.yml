@@ -1,0 +1,26 @@
+name: formula
+# the stable Homebrew formula as release.yml's tap job renders and proves it (scripts/formula.sh, scripts/formula-proof.sh),
+# against the last release's assets, for PRs that touch it: the tap job only runs on a tag, so a release must not be
+# the first place it fails
+on:
+  pull_request:
+    paths: ["scripts/formula.sh", "scripts/formula-proof.sh", "scripts/verify-release-assets.sh", ".github/workflows/release.yml", ".github/workflows/formula.yml"]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency: { group: "formula-${{ github.ref }}", cancel-in-progress: true }
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - name: render the formula from the last release's assets
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          TAG=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          mkdir -p assets && gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D assets && sh scripts/verify-release-assets.sh assets
+          sh scripts/formula.sh assets "${TAG#v}" > agentglass.rb
+          echo "$TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: brew audit, install, test
+        run: sh scripts/formula-proof.sh agentglass.rb

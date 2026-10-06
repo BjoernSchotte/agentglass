@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, arr, str, jsonNodes } from "../../util/json.ts";
 import { localDay } from "../../util/text.ts";
+import { chunkOf, rowsOfChunks } from "../fleet/ownc.ts";
 import { type Hello, type SessRow, type DayRow, type OwnRow, type LiveRow, type HostReport, type Owned, FORMAT } from "../fleet/model.ts";
 import { msgHash } from "../usage/msgrows.ts";
 import { JSON_FIELDS } from "../cli.ts";
@@ -292,14 +293,15 @@ export function reportsOf(a: Agg, now: number, all: boolean, maxAgeDays: number)
     for (const x of all2) {
       const own: OwnRow[] = []; for (const o of x.own.values()) own.push({ h: o.h, key: o.key, d: o.d, hr: o.hr, m: o.m, prov: o.prov, n: o.n.slice() });
       if (x.updated && x.updated < cut) { // outside the window: ownership only (who owns a copy is decided over all history)
-        if (own.length) owned.push({ key: x.key, rows: own.map((o: OwnRow) => ({ h: o.h, key: o.key, d: o.d, hr: o.hr, m: o.m, prov: o.prov, n: [] })) });
+        if (own.length) owned.push({ key: x.key, rows: [chunkOf(own.map((o: OwnRow) => ({ h: o.h, key: o.key, d: o.d, hr: o.hr, m: o.m, prov: o.prov, n: [] })))] });
         continue;
       }
-      if (x.h === "claude") owned.push({ key: x.key, rows: own });
+      const oc = x.h === "claude" ? [chunkOf(own)] : null;
+      if (oc) owned.push({ key: x.key, rows: oc });
       let lv = x.live;
       if (lv && !fresh) lv = { key: lv.key, at: lv.at, live: false, busy: false, attention: lv.attention, approval: false, stuck: lv.stuck, alerts: [] };
       const prov: string[][] = []; for (const p of x.prov.keys()) prov.push([p, x.prov.get(p) ?? "unknown"]);
-      rows.push({ s: jsonOf(x, lv), key: x.key, days: dayRows(x), own: x.h === "claude" ? own : null, prov });
+      rows.push({ s: jsonOf(x, lv), key: x.key, days: dayRows(x), own: oc, prov });
       if (lv) { const al: Obj[] = []; for (const v of x.alerts.values()) al.push(v); lives.push({ key: lv.key, at: lv.at, live: lv.live, busy: lv.busy, attention: lv.attention, approval: lv.approval, stuck: lv.stuck, alerts: al }); }
     }
     rows.sort((p, q) => str(q.s["updated"]) < str(p.s["updated"]) ? -1 : 1);
@@ -325,7 +327,7 @@ export function restoreHost(a: Agg, key: string, r: HostReport, x: HostExtra): v
   for (const p of x.seen) h.seen.set(p[0] ?? "", Number(p[1] ?? "0"));
   for (const q of x.req) h.reqIds.add(q);
   for (const o of x.native) h.native.push(o);
-  const om = new Map<string, OwnRow[]>(); for (const o of r.owned) om.set(o.key, o.rows);
+  const om = new Map<string, OwnRow[]>(); for (const o of r.owned) om.set(o.key, rowsOfChunks(o.rows));
   for (const sr of r.sessions) {
     const o = sr.s; const bill = obj(o["billing"]) ?? {};
     if (str(bill["source"]) === "otlp-native") continue; // rebuilt from h.native at report time
@@ -358,7 +360,7 @@ export function restoreHost(a: Agg, key: string, r: HostReport, x: HostExtra): v
     if (h.sess.has(ow.key)) continue;
     const i = ow.key.indexOf(":"); if (i <= 0) continue;
     const ss = sessAgg(h, ow.key.slice(0, i), ow.key.slice(i + 1)); ss.updated = 1;
-    let j = 0; for (const row of ow.rows) ss.own.set("restored:" + String(j++), row);
+    let j = 0; for (const row of rowsOfChunks(ow.rows)) ss.own.set("restored:" + String(j++), row);
   }
   h.changed = true;
 }
