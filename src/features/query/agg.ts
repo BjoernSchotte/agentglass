@@ -4,7 +4,7 @@
 // buckets cannot answer (model × status, …), reads the call rows (within retention). Callers do not choose.
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger, callsOf } from "../usage/ledger.ts";
+import { ledger, callsOf, copyKey } from "../usage/ledger.ts";
 import { type Day, L, heavy } from "../usage/record.ts";
 import { type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
@@ -26,7 +26,7 @@ export interface Totals {
   tools: number; errors: number; add: number; del: number;
   dn: number; ms: number; max: number; hist: number[];                  // merged durations of all tools
   perTool: Map<string, ToolT>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; // prog/cmds keyed "<tool>\t<x>", files by path
-  models: Set<string>; paths: Set<string> /* matching session paths */; pdays: Map<string, string[]> /* path → the day keys it contributed */; first: number; last: number /* min Acc.t0, max last activity */;
+  models: Set<string>; paths: Set<string> /* matching session paths */; skeys: Set<string> /* their sessions (copyKey: copies count once) */; pdays: Map<string, string[]> /* path → the day keys it contributed */; first: number; last: number /* min Acc.t0, max last activity */;
   callScoped: boolean;   // f had call clauses: cost/tokens are "in session-days with matching calls", tools/errors/durations from matching rows only
   path: "rows" | "buckets";
 }
@@ -120,6 +120,7 @@ export function aggregateWhere(f: Compiled, days: string[], dims: string[], weig
 export interface AggJob {
   k: string /* cache key, "" = not cached */; f: Compiled; entity: "session" | "call"; days: string[]; dset: Set<string>; dims: string[]; weight: Weight;
   keep: ((s: Sess, r: Rows, i: number) => boolean) | null; rows: boolean; cut: number; sl: boolean[] /* dims answered per session */; ss: Sess[]; i: number; out: Dist[]; done: boolean;
+  once: Set<string> /* session entity: twins already counted (sessInto) */;
 }
 export function aggJob(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight, keep: ((s: Sess, r: Rows, i: number) => boolean) | null): AggJob {
   fresh();
@@ -127,7 +128,7 @@ export function aggJob(f: Compiled, entity: "session" | "call", days: string[], 
   let rows = f.needsCalls || keep !== null; if (entity === "call") for (const d of dims) if (ROW_DIMS.indexOf(d) >= 0) rows = true;
   const sl: boolean[] = []; for (const d of dims) sl.push(CALL_LEVEL.indexOf(d) < 0);
   const ss: Sess[] = []; if (!hit) for (const s of sessions.values()) ss.push(s);
-  return { k, f, entity, days, dset: new Set<string>(days), dims, weight, keep, rows, cut: callCutoff(), sl, ss, i: 0, out: hit ?? newDists(dims, rows ? "rows" : "buckets"), done: !!hit };
+  return { k, f, entity, days, dset: new Set<string>(days), dims, weight, keep, rows, cut: callCutoff(), sl, ss, i: 0, out: hit ?? newDists(dims, rows ? "rows" : "buckets"), done: !!hit, once: new Set<string>() };
 }
 // sessions until the clock reaches `until` (Infinity = to the end); true when done (j.out is then complete and cached)
 export function aggStep(j: AggJob, until: number): boolean {
@@ -164,11 +165,19 @@ function bucketSess(j: AggJob, s: Sess): void {
     if (weight === "cost") { if (unpricedDay(d)) unp = true; w += d.cost; } else if (weight === "tokens") w += dayTok(d);
   }
   if (!any) return;
-  if (weight === "count") w = 1;
-  for (const ds of j.out) {
-    const vs = ds.dim === "tool" ? tools : ds.dim === "program" ? progs : ds.dim === "ext" ? exts : ds.dim === "day" ? dks : sessDim(ds.dim, s);
-    ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
-    for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += err; }
+  const vss: string[][] = [];
+  for (const ds of j.out) vss.push(ds.dim === "tool" ? tools : ds.dim === "program" ? progs : ds.dim === "ext" ? exts : ds.dim === "day" ? dks : sessDim(ds.dim, s));
+  sessInto(j, s, vss, w, err, unp);
+}
+// one session's values (per distribution) into the job's distributions. Its copies (twins, ledger.ts copyKey) are one
+// session: counted once in a total and once per value; what each copy books (cost, tokens, durations, errors) adds up
+function sessInto(j: AggJob, s: Sess, vss: string[][], w: number, err: number, unp: boolean): void {
+  const ck = s.twins > 0 ? copyKey(s) : ""; const cnt = j.weight === "count";
+  const first = (k: string): boolean => { if (!ck) return true; const x = k + "\u0000" + ck; if (j.once.has(x)) return false; j.once.add(x); return true; };
+  for (let i = 0; i < j.out.length; i++) {
+    const ds = j.out[i]; const one = first(String(i));
+    if (one) ds.total++; ds.wTotal += cnt ? (one ? 1 : 0) : w; if (unp && first(String(i) + "\u0000?")) ds.unpriced++;
+    for (const v of vss[i] ?? []) { const b = bin(ds, v); const n1 = first(String(i) + "\u0000=" + v); if (n1) b.n++; b.w += cnt ? (n1 ? 1 : 0) : w; b.err += err; }
   }
 }
 // one tool's day counter into a call-entity distribution
@@ -236,12 +245,9 @@ function rowsSess(j: AggJob, s: Sess): void {
   let w = 1; let unp = false;
   if (weight === "cost" || weight === "tokens") { w = 0; if (a) for (const dk of dks) { const d = a.days.get(dk); if (!d) continue; if (weight === "cost") { w += d.cost; if (unpricedDay(d)) unp = true; } else w += dayTok(d); } }
   else if (weight === "duration") w = dur;
-  for (let i = 0; i < j.out.length; i++) {
-    const ds = j.out[i]; const dim = dims[i] ?? "";
-    const vs = dim === "hour" || dim === "weekday" ? sessDim(dim, s) : (vals[i] ?? []);
-    ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
-    for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += err; }
-  }
+  const vss: string[][] = [];
+  for (let i = 0; i < j.out.length; i++) { const dim = dims[i] ?? ""; vss.push(dim === "hour" || dim === "weekday" ? sessDim(dim, s) : (vals[i] ?? [])); }
+  sessInto(j, s, vss, w, err, unp);
 }
 
 // "rest" baselines: a − b per value (never below 0; values reaching 0 are dropped)
@@ -266,7 +272,7 @@ export function minus(a: Dist[], b: Dist[]): Dist[] {
 export function emptyTotals(): Totals { return newTotals("buckets", false); }
 function newTotals(path: "rows" | "buckets", scoped: boolean): Totals {
   return { sessions: 0, subs: 0, subsCost: 0, subsUnk: 0, cost: 0, unk: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, tools: 0, errors: 0, add: 0, del: 0, dn: 0, ms: 0, max: 0, hist: zeros(HB),
-    perTool: new Map<string, ToolT>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), models: new Set<string>(), paths: new Set<string>(), pdays: new Map<string, string[]>(), first: 0, last: 0, callScoped: scoped, path };
+    perTool: new Map<string, ToolT>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), models: new Set<string>(), paths: new Set<string>(), skeys: new Set<string>(), pdays: new Map<string, string[]>(), first: 0, last: 0, callScoped: scoped, path };
 }
 function addCnt(m: Map<string, Cnt>, k: string, c: Cnt): void { let x = m.get(k); if (!x) { x = newCnt(); m.set(k, x); } x.n = x.n + c.n; x.err = x.err + c.err; x.add = x.add + c.add; x.del = x.del + c.del; }
 function bump(m: Map<string, Cnt>, k: string, err: boolean): void { let x = m.get(k); if (!x) { x = newCnt(); m.set(k, x); } x.n = x.n + 1; if (err) x.err = x.err + 1; }
@@ -281,7 +287,7 @@ function dayMoney(t: Totals, s: Sess, dk: string, d: Day, models: boolean): void
 function sessSeen(t: Totals, s: Sess): void {
   if (t.paths.has(s.path)) return;
   t.paths.add(s.path);
-  if (s.parent) t.subs++; else t.sessions++;
+  const k = copyKey(s); if (!t.skeys.has(k)) { t.skeys.add(k); if (s.parent) t.subs++; else t.sessions++; } // twins are one session
   const a = ledger.get(s.path); const t0 = a ? a.t0 : 0;
   if (t0 > 0 && (t.first === 0 || t0 < t.first)) t.first = t0;
   const last = Math.max(s.last, s.mtime); if (last > t.last) t.last = last;

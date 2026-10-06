@@ -8,14 +8,16 @@ import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf, windo
 import { type Obj, base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
+import { parse } from "./query/parse.ts";
+import type { Clause } from "./query/types.ts";
 import { BUILD } from "../build-info.ts";
 import { versionInfo } from "./version.ts";
 import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { paneOfPid } from "../mux/index.ts";
-import { accOf } from "./usage/ledger.ts";
-import { type SkillUse, skillUses } from "./usage/record.ts";
-import { estOf } from "./usage/costs.ts";
+import { accsOf } from "./usage/ledger.ts";
+import { type SkillUse, skillUsesOf } from "./usage/record.ts";
+import { estTopOf } from "./usage/costs.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
@@ -61,7 +63,7 @@ const EVENT_OPT = opt("--event", "<id>", "--related: anchor on this tool call id
 const AT_OPT = opt("--at", "<iso>", "--related: anchor on the first event at/after this time", "", []);
 const MINUTES_OPT = opt("--minutes", "N", "--related: window ±N minutes, 1–240 (default related.minutes, 10)", "10", []);
 const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
-export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "mux", "parent", "kind", "subagents",
+export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "mux", "parent", "kind", "subagents", "twins",
   "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git"];
 function cmd(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
 function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.arg ? " " + o.arg : ""), summary: o.summary, options: [], fields: [], group: "opt" }; }
@@ -99,7 +101,7 @@ function usage(): string {
   (kind = prompt|write|shell|read|agent|web|mcp|alert|commit; session null = a reflog commit no session observed;
   conflict = {kind: conflict|overlap|clobber, with: [session ids]} or null; config related.minutes, related.conflictMinutes)
 
---json fields: id harness title cwd branch remote model path updated bytes live pid status mux{kind,pane,workspace,tab,status} parent kind subagents
+--json fields: id harness title cwd branch remote model path updated bytes live pid status mux{kind,pane,workspace,tab,status} parent kind subagents twins
   activity tokens{in,out,cacheRead,cacheWrite} costUsd costEstimatedUsd billing{mode,plan,source} unpricedTokens unpricedCredits
   tools linesAdded linesRemoved attention stuck skills[{name,source,n}] repo{key,label,kind,worktree,top,remote}
   alerts[{rule,severity,value,unit,threshold,since,message,labels,acked}] (live sessions; durations s, ratios 0–1, USD)
@@ -110,7 +112,9 @@ function usage(): string {
   (mux = the live agent's tmux or herdr pane, null = no live process or in neither; workspace/tab = herdr labels, null under
   --redact; status = herdr's idle|working|blocked|done|unknown; csv/--fields: mux_kind mux_pane mux_workspace mux_tab mux_status)
   (costUsd = API list price, null when only unpriced usage exists; costEstimatedUsd = its share priced through a
-  prices.json alias (an estimate); billing.mode = api|plan|metered|gateway|unknown,
+  prices.json alias (an estimate); twins = other rows of this session (Claude: one session under several project dirs,
+  a resume elsewhere copies its log): they carry the same tokens and cost, each message once — count one row per
+  harness:id, or sum agentglass cost; at most one of them is live; billing.mode = api|plan|metered|gateway|unknown,
   source = session|process|config — config = assumed from the current config files;
   skills source = command: a slash command / $mention, model: the agent chose it;
   repo = the project: worktrees and clones of one remote share key, kind = git|gitdir|path|none, null = no cwd known)
@@ -168,6 +172,9 @@ export function opts(args: string[]): Opts {
     else if (a === "--days") { const v = args[i + 1] ?? ""; o.days = /^\d+$/.test(v) ? Number(v) : -1; i++; if (o.days < 0) fail("--days needs a number ≥ 0 (0 = all history), e.g. --days 30"); if (args.indexOf("--repos") < 0) fail("--days applies to --repos only: agentglass --json --repos --days " + v); }
     else if (a === "--jsonl") o.jsonl = true;
   }
+  // a session clause resolves its value against the sessions (query/session.ts): they are discovered first, else every
+  // reference is "no such session"
+  if (o.filters.some((e: string) => parse(e).cs.some((c: Clause) => c.key === "session")) || (o.pinned && S.pins.some((c: Clause) => c.key === "session"))) discover();
   o.cf = cliFilter(o.filters, o.harness, o.live, o.pinned, args.indexOf("--watch") >= 0);
   return o;
 }
@@ -180,11 +187,11 @@ export function jsonSess(s: Sess): Obj {
   return {
     id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: display("path", s.path, s),
     updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status, mux: muxJson(s),
-    parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, activity: activity(s),
+    parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, twins: s.twins, activity: activity(s),
     tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
-    costUsd: s.cost < 0 ? null : s.cost, costEstimatedUsd: Math.round(estOf(accOf(s)) * 1e6) / 1e6, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
+    costUsd: s.cost < 0 ? null : s.cost, costEstimatedUsd: Math.round(estTopOf(accsOf(s)).usd * 1e6) / 1e6, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
     unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUses(accOf(s), null), repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
+    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUsesOf(accsOf(s), null), repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
   };
 }
 // mux: the live agent's multiplexer pane (a subagent: its parent's); labels are user text, hidden under --redact

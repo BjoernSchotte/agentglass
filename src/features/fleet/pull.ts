@@ -7,6 +7,7 @@ import { S } from "../../state.ts";
 import { cliError } from "../agentenv.ts";
 import { sessions, loadHead, loadTail } from "../../model/sessions.ts";
 import type { Sess } from "../../model/types.ts";
+import { distinct } from "../../model/sessref.ts";
 import { BUILD } from "../../build-info.ts";
 import { hostId, hostName } from "../../util/hostid.ts";
 import { REDACT } from "../redact-on.ts";
@@ -20,12 +21,12 @@ import { type HostReport, FORMAT, noOwned } from "./model.ts";
 import { sessRowOf, reportLines } from "./report.ts";
 
 export const DAY_MS = 86400000;
-// the top-level sessions updated within days, or live, newest first
+// the top-level sessions updated within days, or live, newest first; twins (one session under two project dirs) once, as
+// the copy that stands for them (sessref.ts owns: the live one): the viewer keys rows by host, harness and id
 export function pullSessions(days: number, now: number): Sess[] {
   const from = now - days * DAY_MS; const out: Sess[] = [];
   for (const s of sessions.values()) if (s.depth === 0 && !s.parent && (s.mtime >= from || livePid(s) > 0)) out.push(s);
-  out.sort((a: Sess, b: Sess) => b.mtime - a.mtime);
-  return out;
+  return distinct(out);
 }
 // the whole report; discover() first (a CLI run: scan, processes, view)
 export function pullReport(days: number, now: number): HostReport {

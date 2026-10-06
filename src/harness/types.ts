@@ -24,7 +24,7 @@ export interface SessionSource {
 // directory layout ("" otherwise, meta() may still set s.parent), archived = shown dimmed
 export type AddFn = (path: string, id: string, parent: string, archived: boolean) => void;
 // a live-session registry entry: the harness itself says which pid runs which session
-export interface Live { id: string; pid: number; status: string; name: string }
+export interface Live { id: string; pid: number; status: string; name: string; cwd: string } // cwd: the process's, "" = unknown
 
 export interface HarnessAdapter {
   // ── identity & look ──

@@ -57,6 +57,7 @@ inside an agent shell.
 | `pid` | number | the agent's process id, 0 when not live |
 | `status` | string | how the process was linked or what the agent's registry says (e.g. `open`, `busy`, `idle`); `""` when not live — free text, do not switch on it |
 | `costUsd` | number\|null | API-equivalent cost in USD; null = not priced |
+| `twins` | number | other rows that are this same session (Claude: one session under several project dirs); 0 = none |
 | `attention` | bool | an alert at the degraded level is active and not acknowledged (approval, turn finished, …) |
 | `stuck` | string\|null | the first active critical alert's reason: `loop`, `long cmd`, `stalled`, `spinning`, or a user rule's id; null = none |
 | `alerts` | array | the active alerts: objects with at least `rule` (string), `severity` (`degraded` or `critical`), `message` (string), `acked` (bool) |
@@ -66,6 +67,10 @@ inside an agent shell.
 | `mux.workspace` | string\|null | herdr workspace label; null for tmux, unknown, or under `AGENTGLASS_REDACT` |
 | `mux.tab` | string\|null | herdr tab label; null for tmux, unknown, or under `AGENTGLASS_REDACT` |
 | `mux.status` | string\|null | herdr's agent state `idle`, `working`, `blocked`, `done`, `unknown`; null for tmux |
+
+A session can show as several rows (`twins` > 0, same `harness` and `id`): each carries the session's figures
+(`costUsd`, tokens), each message counted once across them, and at most one is `live`. Count one row per
+`harness:id` when you sum rows, or use `agentglass cost`.
 
 In `--format csv`, objects are flattened with `_`: `mux_kind`, `mux_pane`, `mux_workspace`, `mux_tab`, `mux_status`
 (empty cells for null). These names are accepted by `--fields` too. csv cells follow RFC 4180 (a cell containing `,`,

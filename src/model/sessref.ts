@@ -13,13 +13,14 @@ export const MIN_PREFIX = 6;
 function found(s: Sess): Found { return { s, code: 0, cands: [], err: "", msg: "", hint: "" }; }
 function none(code: number, msg: string, hint: string): Found { return { s: null, code, cands: [], err: code === 2 ? "usage" : "not_found", msg, hint }; }
 // copies of one session (same harness and id: a Claude session under two project dirs, a project moved or copied with its
-// ~/.claude dir): the owning copy — the one at home (owners.ts OWN.home, the rule that books their shared messages), then
-// the newest
+// ~/.claude dir) stand for it as: the live copy (the one its process writes, procs.ts), then the one at home (owners.ts
+// OWN.home, the rule that books their shared messages), then the newest. Every copy shows the session's figures (ledger.ts)
 export function owns(a: Sess, b: Sess): boolean {
+  if ((a.pid > 0) !== (b.pid > 0)) return a.pid > 0;
   const ha = OWN.home(a.path); if (ha !== OWN.home(b.path)) return ha;
   return a.mtime > b.mtime || (a.mtime === b.mtime && a.path < b.path);
 }
-// one per session (the owning copy of twins), newest first
+// one per session (the copy that stands for twins), newest first
 export function distinct(ms: Sess[]): Sess[] {
   const by = new Map<string, Sess>();
   for (const s of ms) { const k = s.h + ":" + s.id; const o = by.get(k); if (!o || owns(s, o)) by.set(k, s); }

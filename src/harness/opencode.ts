@@ -432,8 +432,8 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
   daemonUp = up && harnessOfPid(pid) === "opencode";
   notDaemon = up && !daemonUp ? pid : 0;
   if (!daemonUp) return [];
-  const out: Live[] = [{ id: "", pid, status: "", name: "" }]; // the daemon itself, so the cwd link never takes it for a TUI
-  for (const r of rows.values()) if (running(r) && !r.v1) out.push({ id: r.id, pid, status: "busy", name: "" });
+  const out: Live[] = [{ id: "", pid, status: "", name: "", cwd: "" }]; // the daemon itself, so the cwd link never takes it for a TUI
+  for (const r of rows.values()) if (running(r) && !r.v1) out.push({ id: r.id, pid, status: "busy", name: "", cwd: "" });
   return out;
 }
 function likeEsc(t: string): string { return t.split("\\").join("\\\\").split("%").join("\\%").split("_").join("\\_"); }

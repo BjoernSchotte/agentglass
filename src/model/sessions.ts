@@ -237,10 +237,22 @@ export function isOpen(s: Sess): boolean {
 function matchesAll(ps: ((s: Sess) => boolean)[], s: Sess): boolean { for (const f of ps) if (!f(s)) return false; return true; }
 // root sessions by harness:id, rebuilt when the session set changed (SG.gen, size) or a hit is no longer a root (a head read
 // set its parent): parentOf was a scan of every session, per subagent and per caller (git attribution: per pass)
-const ROOTS = { gen: -1, n: -1, m: new Map<string, Sess>() };
+// A session with copies (Claude: one session under two project dirs) has a root per copy: a subagent's is the one whose
+// directory holds its log (each copy keeps its own subagents dir), else the first
+const ROOTS = { gen: -1, n: -1, m: new Map<string, Sess>(), more: new Map<string, Sess[]>() };
 function indexRoots(): void {
-  ROOTS.gen = SG.gen; ROOTS.n = sessions.size; ROOTS.m.clear();
-  for (const p of sessions.values()) if (!p.parent) { const k = p.h + ":" + p.id; if (!ROOTS.m.has(k)) ROOTS.m.set(k, p); } // the first wins, as the scan did
+  ROOTS.gen = SG.gen; ROOTS.n = sessions.size; ROOTS.m.clear(); ROOTS.more.clear();
+  for (const p of sessions.values()) {
+    if (p.parent) continue;
+    const k = p.h + ":" + p.id; const f = ROOTS.m.get(k);
+    if (!f) { ROOTS.m.set(k, p); continue; } // the first wins, as the scan did
+    const v = ROOTS.more.get(k); if (v) v.push(p); else ROOTS.more.set(k, [f, p]);
+  }
+}
+function nearest(s: Sess, ps: Sess[]): Sess | null {
+  let best: Sess | null = ps.length ? ps[0] : null; let n = -1;
+  for (const p of ps) { const d = p.path.slice(0, p.path.lastIndexOf("/") + 1); if (d.length > n && s.path.startsWith(d)) { best = p; n = d.length; } }
+  return best;
 }
 export function parentOf(s: Sess): Sess | null {
   if (!s.parent) return null;
@@ -248,6 +260,7 @@ export function parentOf(s: Sess): Sess | null {
   const k = s.h + ":" + s.parent;
   let p = ROOTS.m.get(k);
   if (p && (p.parent || sessions.get(p.path) !== p)) { indexRoots(); p = ROOTS.m.get(k); }
+  const more = ROOTS.more.get(k); if (more) return nearest(s, more);
   return p ?? null;
 }
 // everything buildView reads, as one cheap pass of number adds: the session set, each session's mtime, pid and parent,
@@ -273,11 +286,10 @@ export function buildView(): void {
   const ps = activePreds(); const rem = remoteRows();
   const sig = sigOf(ps, rem); if (sig === lastSig && S.view === lastView) return; // nothing it reads changed: S.view stays the same array
   const filtering = ps.length > 0; const matches = (s: Sess): boolean => matchesAll(ps, s);
-  const roots = new Map<string, Sess>();
-  for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; if (!s.parent) roots.set(s.h + ":" + s.id, s); }
+  for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; }
   for (const s of sessions.values()) {
     if (!s.parent) continue;
-    const p = roots.get(s.h + ":" + s.parent);
+    const p = parentOf(s);
     if (!p) continue; // orphan subagent: listed as its own root
     p.subs.push(s); s.depth = 1;
     if (s.mtime > p.last) p.last = s.mtime;
