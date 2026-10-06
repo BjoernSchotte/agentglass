@@ -5,7 +5,7 @@ import { newSess } from "../../model/types.ts";
 import { S } from "../../state.ts";
 import { remoteOnly } from "../../model/remote.ts";
 import { vwidth } from "../../util/text.ts";
-import { FORMAT, type HostReport, newFeedState } from "./model.ts";
+import { FORMAT, type HostReport, newFeedState, noOwned } from "./model.ts";
 import { sessRowOf } from "./report.ts";
 import type { FleetCfg } from "./config.ts";
 import { FLEET, setFleet, hostByName } from "./hosts.ts";
@@ -17,7 +17,7 @@ const plain = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 ok("guard: null", !remoteOnly(null, "x"), "true");
 const loc = newSess("claude", "l1", "/tmp/keepme.jsonl", false);
 ok("guard: local", !remoteOnly(loc, "x"), "true");
-const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "me@ws", agentglass: "~/.local/bin/agentglass", redact: false, enabled: true, kind: "ssh", path: "" }], localName: "local", refreshS: 60, days: 7, timeoutS: 90, warns: [] };
+const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "me@ws", agentglass: "~/.local/bin/agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }], localName: "local", refreshS: 60, days: 7, timeoutS: 90, reprice: true, warns: [] };
 setFleet(cfg, "ffffffffffffffff", [{ kind: "ssh", start: (t: number): boolean => false, poll: (t: number) => newFeedState(), stop: (): void => {} }]);
 const r = newSess("claude", "5f1e", "@ws/claude:5f1e", false); r.host = "ws";
 ok("ssh hint", sshHint(r) === "ssh -t me@ws ~/.local/bin/agentglass open claude:5f1e", sshHint(r));
@@ -33,7 +33,7 @@ ok("header no ssh", plain(headerSeg(2, [], 120, true)) === " · hosts: no ssh", 
 ok("header fits", vwidth(headerSeg(3, marks, 18, false)) <= 18, String(vwidth(headerSeg(3, marks, 18, false))));
 // alerts: a transition toasts once; the first report only seeds
 const rep = (alerts: unknown[]): HostReport => ({ hello: { format: FORMAT, version: "x", hostId: "1", hostName: "h", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 1, priceSig: "" },
-  sessions: [sessRowOf({ id: "a", harness: "claude", title: "fix login", alerts })], cost: null, allowance: null, live: null, exact: false });
+  sessions: [sessRowOf({ id: "a", harness: "claude", title: "fix login", alerts })], cost: null, allowance: null, live: null, exact: false, owned: noOwned() });
 const ws = hostByName("ws"); if (!ws) throw new Error("ws");
 const a1 = { rule: "stuck", severity: "warning", since: "2026-10-06T10:00:00.000Z", message: "no output for 10 min" };
 ok("first report seeds", newAlerts(ws, rep([a1]), true).length === 0, "toasted");
@@ -45,7 +45,7 @@ ok("then quiet", newAlerts(ws, rep([a2]), false).length === 0, "again");
 ok("acked: quiet", newAlerts(ws, rep([{ rule: "cost", severity: "warning", since: "x", message: "m", acked: true }]), false).length === 0, "toasted");
 // cadence
 ok("interval", intervalMs(cfg, false) === 60000 && intervalMs(cfg, true) === 300000, String(intervalMs(cfg, true)));
-ok("interval long refresh stays", intervalMs({ hosts: [], localName: "l", refreshS: 600, days: 7, timeoutS: 90, warns: [] }, true) === 600000, "x");
+ok("interval long refresh stays", intervalMs({ hosts: [], localName: "l", refreshS: 600, days: 7, timeoutS: 90, reprice: true, warns: [] }, true) === 600000, "x");
 ok("backoff", backoffMs(1) === 30000 && backoffMs(2) === 60000 && backoffMs(6) === 900000 && backoffMs(9) === 900000 && backoffMs(0) === 0, [backoffMs(1), backoffMs(2), backoffMs(6), backoffMs(9)].join(","));
 ok("due after ok", nextDue(1000, true, 0, 60000) === 61000, String(nextDue(1000, true, 0, 60000)));
 ok("due after failure", nextDue(1000, false, 2, 60000) === 61000 && nextDue(1000, false, 1, 60000) === 31000, String(nextDue(1000, false, 1, 60000)));

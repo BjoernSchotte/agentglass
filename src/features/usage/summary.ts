@@ -141,11 +141,22 @@ export const SUMMARY_TEST = { inc: (on: boolean): void => { INC.on = on; nows.cl
 export function costNow(harness: string): CostNow {
   const hit = nows.get(harness);
   if (hit && fresh(hit.ver, hit.at)) return hit.c;
-  const now = Date.now(); const hour = new Date(now).getHours(); const left = daysLeftInMonth(now);
+  const now = Date.now(); const p = parts(harness, now);
+  const c = costFrom(p.today, p.week, p.month, p.rows, now);
+  nows.set(harness, { ver: L.ver, at: now, c });
+  return c;
+}
+// the sums and the per-mode series of the last 15 days (the TUI's incremental day aggregates when harness is "")
+interface Parts { today: ModeSum; week: ModeSum; month: ModeSum; rows: DayCost[][] }
+function parts(harness: string, now: number): Parts {
   const d15 = lastDays(15); const mk = monthStart(now); const inc = (INC.on || TERM.tui) && harness === ""; // the TUI (term.ts); a one-shot run sums once anyway
   if (inc) { const win = mk.slice(); for (const k of d15) if (win.indexOf(k) < 0) win.push(k); incSync(win, now); }
-  const month = inc ? incSum(mk) : sumDays(mk, harness);
-  const rows = inc ? incRows(d15) : dayCosts(d15, harness);
+  return { today: inc ? incSum([todayKey()]) : sumDays([todayKey()], harness), week: inc ? incSum(lastDays(7)) : sumDays(lastDays(7), harness),
+    month: inc ? incSum(mk) : sumDays(mk, harness), rows: inc ? incRows(d15) : dayCosts(d15, harness) };
+}
+// the figures of one set of sums and per-mode day series (the last 15 days): projections and the budget state
+function costFrom(today: ModeSum, week: ModeSum, month: ModeSum, rows: DayCost[][], now: number): CostNow {
+  const hour = new Date(now).getHours(); const left = daysLeftInMonth(now);
   const projByMode: Proj[] = [];
   for (let i = 0; i < MODES.length; i++) projByMode.push(project(rows[i] ?? [], month.by[i] ?? 0, hour, left));
   const counted = (i: number): boolean => budget.counts.indexOf(MODES[i] ?? "unknown") >= 0;
@@ -155,10 +166,42 @@ export function costNow(harness: string): CostNow {
   const projCounted = project(sumRows(rows, counted), mtdCounted, hour, left);
   const bs = budgetState(budget, month, projByMode.map((p: Proj) => p.month));
   bs.projected = projCounted.month; bs.state = stateOf(budget, bs.used, bs.projected);
-  const c: CostNow = { today: inc ? incSum([todayKey()]) : sumDays([todayKey()], harness), week: inc ? incSum(lastDays(7)) : sumDays(lastDays(7), harness), month, projByMode,
-    proj: project(sumRows(rows, (i: number) => true), mtdAll, hour, left), projCounted, budget, bs };
-  nows.set(harness, { ver: L.ver, at: now, c });
-  return c;
+  return { today, week, month, projByMode, proj: project(sumRows(rows, (i: number) => true), mtdAll, hour, left), projCounted, budget, bs };
+}
+// ── entries outside the ledger (the fleet's shadow and correction entries, fleet/merge.ts): how their providers bill ──
+export interface Ent { a: Acc; mode: (prov: string) => Bill }
+export function sumDaysOf(es: Ent[], days: string[]): ModeSum {
+  const m = newSum();
+  for (const e of es) for (const k of days) { const d = e.a.days.get(k); if (d) addDay(m, d, e.mode); }
+  return m;
+}
+export function dayCostsOf(es: Ent[], days: string[]): DayCost[][] {
+  const out: DayCost[][] = [];
+  for (let i = 0; i < MODES.length; i++) { const r: DayCost[] = []; for (const k of days) r.push({ key: k, cost: 0, hc: zeros24() }); out.push(r); }
+  for (const e of es) for (let j = 0; j < days.length; j++) {
+    const d = e.a.days.get(days[j] ?? ""); if (!d || d.cost === 0) continue;
+    for (const [p, c] of d.cp) {
+      const row = out[MODES.indexOf(e.mode(p))]; const dc = row ? row[j] : undefined; if (!dc) continue;
+      dc.cost += c; const f = c / d.cost;
+      for (let h = 0; h < 24; h++) dc.hc[h] = (dc.hc[h] ?? 0) + (d.hc[h] ?? 0) * f;
+    }
+  }
+  return out;
+}
+function plus(a: ModeSum, b: ModeSum): ModeSum { const m = newSum(); addSum(m, a); addSum(m, b); return m; }
+// the given entries' period sums and last-15-days series (what costWith adds to this machine's), for one day: a caller
+// whose entries did not change keeps it (key: the day it was made on)
+export interface Extra { day: string; today: ModeSum; week: ModeSum; month: ModeSum; rows: DayCost[][] }
+export function extraOf(es: Ent[]): Extra {
+  const now = Date.now(); const td = todayKey();
+  return { day: td, today: sumDaysOf(es, [td]), week: sumDaysOf(es, lastDays(7)), month: sumDaysOf(es, monthStart(now)), rows: dayCostsOf(es, lastDays(15)) };
+}
+// this machine's figures plus the given entries (the fleet's exact merge): the same sums, series and projections
+export function costWith(es: Ent[]): CostNow { return costWithX(extraOf(es)); }
+export function costWithX(x: Extra): CostNow {
+  const now = Date.now(); const p = parts("", now); const rows = p.rows; // fresh series: added into in place
+  for (let i = 0; i < rows.length; i++) { const r = rows[i]; const e = x.rows[i]; if (!r || !e) continue; for (let j = 0; j < r.length; j++) { const a = r[j]; const b = e[j]; if (!a || !b) continue; a.cost += b.cost; for (let h = 0; h < 24; h++) a.hc[h] = (a.hc[h] ?? 0) + (b.hc[h] ?? 0); } }
+  return costFrom(plus(p.today, x.today), plus(p.week, x.week), plus(p.month, x.month), rows, now);
 }
 // the over-budget toast + desktop notification, at most once per calendar day
 export function budgetSend(msg: string): void {
@@ -176,15 +219,19 @@ H.onTick.push(() => {
 
 // the price rows of the given days over every session (Stats subtitle counts, the price panel), harness "" = all;
 // cached per ledger version and price table (≤ 5 s like the sums)
-const prs = new Map<string, { ver: number; at: number; pg: number; rows: PRow[] }>();
+// entries beyond this machine's sessions (the fleet's exact merge: other hosts' sessions, repriced here, and the local
+// copies they own; fleet spec 14: a remote model without a price shows and is priced in the panel like a local one);
+// gen moves when they change
+export const PRICE_EXTRA = { accs: (): SessAcc[] => [], gen: (): number => 0 };
+const prs = new Map<string, { ver: number; at: number; pg: number; xg: number; rows: PRow[] }>();
 export function pricedRows(days: string[], harness: string): PRow[] {
   const key = harness + "|" + days.join(",");
-  const hit = prs.get(key);
-  if (hit && hit.pg === PGEN.n && fresh(hit.ver, hit.at)) return hit.rows;
-  const list: SessAcc[] = [];
+  const hit = prs.get(key); const xg = harness ? 0 : PRICE_EXTRA.gen();
+  if (hit && hit.pg === PGEN.n && hit.xg === xg && fresh(hit.ver, hit.at)) return hit.rows;
+  const list: SessAcc[] = harness ? [] : PRICE_EXTRA.accs();
   for (const s of sessions.values()) { if (harness && s.h !== harness) continue; const a = ledger.get(s.path); if (a) list.push({ a, h: s.h }); }
   const rows = priceRows(list, days);
-  prs.set(key, { ver: L.ver, at: Date.now(), pg: PGEN.n, rows });
+  prs.set(key, { ver: L.ver, at: Date.now(), pg: PGEN.n, xg, rows });
   return rows;
 }
 // models with usage in the period per non-default source: "2 user · 1 alias · 1 gw" ("" = none)

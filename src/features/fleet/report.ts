@@ -2,7 +2,7 @@
 // incrementally so the TUI can take a big report a window of lines per tick
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, parse } from "../../util/json.ts";
-import type { Hello, HostReport, SessRow } from "./model.ts";
+import { type Hello, type HostReport, type SessRow, noOwned } from "./model.ts";
 
 export interface Parse { hello: Hello | null; cost: Obj | null; allowance: Obj | null; sessions: SessRow[]; done: boolean; err: string }
 export function newParse(): Parse { return { hello: null, cost: null, allowance: null, sessions: [], done: false, err: "" }; }
@@ -42,7 +42,7 @@ export function feedLines(p: Parse, lines: string[]): void {
 export function toReport(p: Parse): HostReport | null {
   const h = p.hello;
   if (!p.done || p.err || !h) return null;
-  return { hello: h, sessions: p.sessions, cost: p.cost, allowance: p.allowance, live: null, exact: false };
+  return { hello: h, sessions: p.sessions, cost: p.cost, allowance: p.allowance, live: null, exact: false, owned: noOwned() };
 }
 // a whole text at once (CLI, checks); null with the reason
 export function parseReport(text: string): { r: HostReport | null; err: string } {
