@@ -845,7 +845,11 @@ agentglass fleet --json | jq '.[] | select(.live) | {host, title, attention}'   
 agentglass fleet cost --json | jq '{total: .total.today.byMode, overlap, approx}'
 agentglass fleet status          # per host: last report, error, version, host id, time zone; the first thing to run
 agentglass fleet status --close  # end the shared ssh connections
+agentglass open claude:5f1e…@ws  # a host's session: prints ssh -t me@workstation agentglass open claude:5f1e… (run it)
 ```
+
+The `ssh -t … agentglass open …` command needs a login that may run agentglass interactively: the restricted viewer key
+above refuses it (exit 126), so it is meant for your usual key or login.
 
 **Limits of this version.** Each host prices with its own table and counts days in its own time zone (`fleet status`
 names a zone that differs). The same session read on two hosts (a shared directory, a copied history) is counted on

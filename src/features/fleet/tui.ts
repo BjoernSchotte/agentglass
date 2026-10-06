@@ -65,7 +65,7 @@ function init(): void {
   if (!sshBin()) { T.nossh = true; say("warn", "fleet needs ssh (AGENTGLASS_SSH): hosts are not pulled"); }
   const names: string[] = []; for (const h of c.hosts) names.push(h.name);
   forget(names);
-  setFleet(c, hostId(), makeFeeds(c, detachedPid));
+  setFleet(c, hostId(), makeFeeds(c, detachedPid, 256)); // ≤ 256 parsed lines per host and tick
 }
 function tick(): void {
   const c = FLEET.cfg; if (!T.on || !c) return;
@@ -203,6 +203,7 @@ H.remoteCard.push((s: Sess, w: number): string[] => {
   const fresh = FRESH.ok(s.host); const out: string[] = [];
   const h: HostCfg | null = c ? hostNamed(c, s.host) : null;
   out.push(k("host") + fg(C.accent) + s.host + RST + fg(C.dim) + (h ? " · ssh " + h.ssh : "") + " · report " + (rh ? ago(rh.okAt) + " ago" : "—") + (fresh ? "" : " · stale") + RST);
+  out.push(k("open") + fg(C.text) + sshHint(s) + RST + fg(C.dim) + "  (the transcript is on " + s.host + ")" + RST); // one line, second: a short preview still shows it
   const state = !fresh ? "unknown (stale report)" : s.rlive ? (s.status === "busy" ? "running · busy" : "running") : "not running";
   out.push(k("process") + (fresh && s.rlive ? fg(C.green) : fg(C.dim)) + state + RST);
   const ov = FN.ov.has(s.h + ":" + s.id);
@@ -212,8 +213,6 @@ H.remoteCard.push((s: Sess, w: number): string[] => {
   if (ov) out.push(k("") + fg(C.yellow) + "≈ this session is also on another host: its cost may count twice" + RST);
   if (fresh && o) for (const a of arr(o["alerts"])) { const x = obj(a); if (x) out.push(k("alert") + (str(x["severity"]) === "critical" ? fg(C.red) : fg(C.yellow)) + clean(str(x["message"])) + RST); }
   if (fresh && s.stuck) out.push(k("stuck") + fg(C.red) + clean(s.stuck) + RST);
-  out.push(k("open") + fg(C.dim) + "the transcript is on " + s.host + ":" + RST);
-  out.push(k("") + fg(C.text) + sshHint(s) + RST);
   return out.map((l: string) => fitStyled(l, w));
 });
 
