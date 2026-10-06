@@ -2,6 +2,7 @@
 // hub) delivers HostReports; the TUI, the filter, the merge and the CLI read only reports
 // SPDX-License-Identifier: Apache-2.0
 import type { Obj } from "../../util/json.ts";
+import type { SState } from "../../model/state.ts";
 
 export const FORMAT = "agentglass-fleet/v1";
 export interface Hello { format: string; version: string; hostId: string; hostName: string; os: string; tzOffsetMin: number; redact: boolean; days: number; now: number; priceSig: string }
@@ -14,7 +15,9 @@ export interface SessRow {
   own: OwnRow[] | null;  // Claude messages this session owns on its host (Part B, OTLP hub); null = unknown
   prov: string[][];      // [provider, billing mode] for multi-provider harnesses (pi, OpenCode); [] = the session's mode
 }
-export interface LiveRow { key: string; at: number; live: boolean; busy: boolean; attention: boolean; approval: boolean; stuck: string; alerts: Obj[] }
+// one session's live state: the SState sessState() computes on its host (model/state.ts, also the OTLP logs stream's
+// session.state records), keyed and timed
+export interface LiveRow extends SState { key: string; at: number; alerts: Obj[] }
 export interface HostReport {
   hello: Hello;              // who produced it, when (source clock), under which privacy mode, which price table
   sessions: SessRow[];       // top-level sessions, updated within hello.days or live
