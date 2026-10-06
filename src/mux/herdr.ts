@@ -92,9 +92,12 @@ function call(sock: string, args: string[]): Res {
   try { return { ok: true, out: execFileSync(b, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 4000, env: childEnv(sock) }), err: "" }; }
   catch (e) { return { ok: false, out: "", err: e instanceof Error ? e.message : String(e) }; }
 }
-// a fresh file for a spawned herdr's stderr (read on exit, then deleted)
+// a fresh file for a spawned herdr's stderr (read on exit, then deleted). Files of runs that outlived their agentglass
+// (it quit while a send or start ran: the child is detached and finishes) are removed after a minute
 function errFile(what: string): string {
   const dir = join(HOME, ".agentglass", "tmp"); try { mkdirSync(dir, { recursive: true }); } catch (e) { /* exists */ }
+  const old = Date.now() - 60000;
+  for (const n of listDir(dir)) if (n.startsWith("herdr-") && n.endsWith(".err")) { const f = join(dir, n); try { if (statSync(f).mtimeMs < old) unlinkSync(f); } catch (e) { /* gone */ } }
   HS.sendNo++;
   return join(dir, "herdr-" + what + "-" + String(process.pid) + "-" + String(HS.sendNo) + ".err");
 }
@@ -201,7 +204,11 @@ export const herdr: Mux = {
     const s = srvOf(p.server); const b = bin();
     // the server's version, read again when its socket changed (a restarted server)
     let mt = 0; try { mt = statSync(p.server).mtimeMs; } catch (e) { mt = 0; }
-    if (s.verAt !== mt || !s.ver) { const r = call(p.server, ["status", "server"]); s.ver = r.ok ? parseVersion(r.out) : ""; s.verAt = mt; }
+    if (s.verAt !== mt || !s.ver) {
+      const r = call(p.server, ["status", "server"]);
+      if (!r.ok) { const o = errOutcome(parseError(r.err), "herdr: cannot read the server's version — nothing sent", REDACT); say(o.kind, o.text); return; }
+      s.ver = parseVersion(r.out); s.verAt = mt;
+    }
     if (!versionAtLeast(s.ver, MIN_SEND)) { say("warn", "herdr " + (s.ver || "of unknown version") + " is too old to send safely (needs ≥ " + MIN_SEND + ")"); return; }
     if (HS.sending.has(p.term)) { say("warn", "still sending…"); return; }
     const where = place(p);
@@ -213,10 +220,11 @@ export const herdr: Mux = {
       if (done) return; done = true; HS.sending.delete(p.term);
       const err = readText(ef, 0, 4096); try { unlinkSync(ef); } catch (e) { /* gone */ }
       if (timedOut) { say("err", "herdr send timed out"); return; }
-      const o = sendOutcome(code, err, where); say(o.kind, o.text);
+      const o = sendOutcome(code, err, where, REDACT); say(o.kind, o.text);
     };
     try {
-      const ch = spawn(b, ["agent", "prompt", p.id, msg], { stdio: ["ignore", "ignore", fd], env: childEnv(p.server) });
+      // detached: a prompt on its way is delivered even when agentglass quits (or its popup closes) meanwhile
+      const ch = spawn(b, ["agent", "prompt", p.id, msg], { stdio: ["ignore", "ignore", fd], env: childEnv(p.server), detached: true });
       closeSync(fd);
       const k = setTimeout(() => { if (!done) { ch.kill("SIGKILL"); end(-1, true); } }, 10000); // herdr itself takes ≈ 0.3 s
       ch.on("exit", (c: number | null) => { clearTimeout(k); end(c === null ? -1 : c, false); });
@@ -226,7 +234,7 @@ export const herdr: Mux = {
   focus: (p: MuxPane): void => {
     const r = call(p.server, ["agent", "focus", p.id]);
     if (r.ok) { MUX_EVENTS.jumped = true; say("ok", "focused in herdr: " + place(p)); return; }
-    const o = errOutcome(parseError(r.err), "herdr focus failed"); say(o.kind, o.text);
+    const o = errOutcome(parseError(r.err), "herdr focus failed", REDACT); say(o.kind, o.text);
   },
   // resume inside herdr (agentglass runs in a herdr pane): a new tab in the workspace owning the directory (else a new
   // workspace), the agent started there with its resume arguments, then focused; a failed start closes the tab
@@ -243,12 +251,12 @@ export const herdr: Mux = {
     if (wid) {
       wsLabel = s.ws.get(wid) ?? "";
       const r = call(own, ["tab", "create", "--workspace", wid, "--cwd", cwd, "--label", label, "--no-focus"]);
-      if (!r.ok) { const o = errOutcome(parseError(r.err), "herdr: could not create a tab"); say(o.kind, o.text); return true; }
+      if (!r.ok) { const o = errOutcome(parseError(r.err), "herdr: could not create a tab", REDACT); say(o.kind, o.text); return true; }
       const c = parseCreated(r.out); pane = c.pane; tab = c.tab;
-    } else { // a new workspace: its first tab takes the agent
-      const parts = (top || cwd).split("/"); wsLabel = parts[parts.length - 1] || "agent";
+    } else { // a new workspace: its first tab takes the agent; named after the repo (the tab's label under --redact)
+      const parts = (top || cwd).split("/"); wsLabel = REDACT ? label : parts[parts.length - 1] || "agent";
       const r = call(own, ["workspace", "create", "--cwd", cwd, "--label", wsLabel, "--no-focus"]);
-      if (!r.ok) { const o = errOutcome(parseError(r.err), "herdr: could not create a workspace"); say(o.kind, o.text); return true; }
+      if (!r.ok) { const o = errOutcome(parseError(r.err), "herdr: could not create a workspace", REDACT); say(o.kind, o.text); return true; }
       const c = parseCreated(r.out); pane = c.pane; tab = c.tab;
     }
     if (!pane) { say("err", "herdr: no pane in the reply"); return true; }
@@ -265,11 +273,11 @@ export const herdr: Mux = {
         call(own, ["agent", "focus", pane]); HS.dirty = true; MUX_EVENTS.jumped = true;
         say("ok", "resumed in herdr: " + where); return;
       }
-      const o = errOutcome(parseError(err), h + " did not start in herdr (exit " + String(code) + ")"); say(o.kind, o.text);
+      const o = errOutcome(parseError(err), h + " did not start in herdr (exit " + String(code) + ")", REDACT); say(o.kind, o.text);
       if (tab) call(own, ["tab", "close", tab]);
     };
     try {
-      const ch = spawn(bin(), ["agent", "start", name, "--kind", h, "--pane", pane, "--"].concat(args), { stdio: ["ignore", "ignore", fd], env: childEnv(own) });
+      const ch = spawn(bin(), ["agent", "start", name, "--kind", h, "--pane", pane, "--"].concat(args), { stdio: ["ignore", "ignore", fd], env: childEnv(own), detached: true });
       closeSync(fd);
       const k = setTimeout(() => { if (!done) { ch.kill("SIGKILL"); end(-1); } }, 40000); // herdr waits ≤ 30 s for readiness
       ch.on("exit", (c: number | null) => { clearTimeout(k); end(c === null ? -1 : c); });

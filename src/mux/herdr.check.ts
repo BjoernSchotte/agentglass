@@ -96,6 +96,12 @@ w("status.txt", "status: running\nversion: 0.8.1\n");
 if (mv) herdr.send(mv, "hello");
 ok("too old: warn", S.toastKind === "warn" && S.toast.indexOf("too old") >= 0, S.toast);
 ok("too old: nothing sent", count("agent prompt") === 0, "");
+// the version cannot be read (a server going down): the reason, nothing sent — not "too old"
+w("fail-status", '{"error":{"code":"server_not_running","message":"no server"}}\n'); herdrReset(); herdr.refresh(ps, now, true, known);
+const mv2 = herdr.paneOf(21); if (mv2) herdr.send(mv2, "hello");
+ok("version unreadable: server down", S.toastKind === "err" && S.toast === "herdr server not running", S.toast);
+ok("version unreadable: nothing sent", count("agent prompt") === 0, "");
+unlinkSync(dir + "/fail-status");
 herdrReset(); herdr.refresh(ps, now, true, known);
 w("status.txt", "status: running\nversion: 0.9.1\n");
 const pp = herdr.paneOf(21);
@@ -134,12 +140,14 @@ steps.push(() => {
 });
 steps.push(() => {
   ok("start failed: tab closed", count("tab close w2:t4") === 1, calls().join(" / "));
-  ok("start failed: error toast", S.toastKind === "err" && S.toast.indexOf("did not become ready") >= 0, S.toast);
+  // checks run under --redact: herdr's message (it may name paths) gives way to its code
+  ok("start failed: error toast", S.toastKind === "err" && S.toast === "herdr: agent_start_timeout", S.toast);
   // no workspace for the directory, no repo match → a new workspace
   unlinkSync(dir + "/fail-agent-start");
   w("workspace-create.json", '{"result":{"root_pane":{"pane_id":"w5:p1","tab_id":"w5:t1"},"tab":{"tab_id":"w5:t1"},"workspace":{"workspace_id":"w5","label":"other"},"type":"workspace_created"}}');
   herdr.start("codex", "C1", ["resume", "C1"], "/other/proj", "/other/proj", "t");
-  ok("start: new workspace", count("workspace create --cwd /other/proj --label proj --no-focus") === 1 && count("tab create --workspace w5") === 0, calls().join(" / "));
+  // (labelled like its tab under --redact: the repo's name is user text)
+  ok("start: new workspace", count("workspace create --cwd /other/proj --label t --no-focus") === 1 && count("tab create --workspace w5") === 0, calls().join(" / "));
 });
 steps.push(() => {
   ok("start: in the new workspace's pane", count("agent start codex-C1 --kind codex --pane w5:p1 -- resume C1") === 1, "");

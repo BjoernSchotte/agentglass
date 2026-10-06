@@ -111,12 +111,14 @@ const SEND_ERR: string[][] = [
   ["server_not_running", "err", "herdr server not running"],
 ];
 // `herdr agent prompt`'s exit and stderr → the toast
-export function sendOutcome(exit: number, errText: string, place: string): Outcome {
+export function sendOutcome(exit: number, errText: string, place: string, redact: boolean = false): Outcome {
   if (exit === 0) return { kind: "ok", text: "sent to herdr " + place };
-  return errOutcome(parseError(errText), "send failed (exit " + String(exit) + ")");
+  return errOutcome(parseError(errText), "send failed (exit " + String(exit) + ")", redact);
 }
-export function errOutcome(e: HErr, fallback: string): Outcome {
+// herdr's message can name paths and labels (user text): only its code under --redact
+export function errOutcome(e: HErr, fallback: string, redact: boolean = false): Outcome {
   for (const r of SEND_ERR) if (r[0] === e.code) return { kind: r[1] ?? "err", text: r[2] ?? "" };
+  if (redact) return { kind: "err", text: e.code ? "herdr: " + Array.from(e.code).slice(0, 40).join("") : fallback };
   return { kind: "err", text: e.message ? "herdr: " + Array.from(e.message).slice(0, 100).join("") : fallback };
 }
 // a process environment block: only HERDR_SOCKET_PATH and HERDR_PANE_ID are decoded and kept, the rest is never read
