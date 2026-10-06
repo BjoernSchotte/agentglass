@@ -13,7 +13,7 @@ jobs:
     permissions: { contents: read, actions: read }
     outputs: { go: "${{ steps.d.outputs.go }}", sha: "${{ steps.d.outputs.sha }}", tag: "${{ steps.d.outputs.tag }}", version: "${{ steps.d.outputs.version }}" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { ref: main, fetch-depth: 0 }
       - id: d
         env: { GH_TOKEN: "${{ github.token }}", SRC: "${{ inputs.source_sha }}", FORCE: "${{ inputs.force }}", RUN: "${{ github.run_number }}", ATTEMPT: "${{ github.run_attempt }}" }
@@ -40,12 +40,12 @@ jobs:
     outputs: { meta: "${{ steps.h.outputs.meta }}", sums: "${{ steps.h.outputs.sums }}" }
     env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ needs.decide.outputs.tag }}", VERSION: "${{ needs.decide.outputs.version }}", SHA: "${{ needs.decide.outputs.sha }}" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { ref: "${{ needs.decide.outputs.sha }}", fetch-depth: 0 }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { pattern: "agentglass-*", path: out, merge-multiple: true }
       - run: sh scripts/release-assets.sh out dev "$TAG" "$VERSION" "$SHA" && sh scripts/verify-release-assets.sh out
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with: { subject-path: "out/agentglass-*.tar.gz" }
       - name: draft, upload, verify, publish as prerelease
         run: |
@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions: { contents: write }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           pinned=$(sh scripts/dev-pinned.sh)   # aborts retention when the Homebrew pointer cannot be read

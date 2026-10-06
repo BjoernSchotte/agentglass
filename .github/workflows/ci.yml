@@ -27,7 +27,7 @@ jobs:
           - { os: macos-14, shard: 2, shards: 3 }
           - { os: macos-14, shard: 3, shards: 3 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
       - id: scriptc
         uses: ./.github/actions/scriptc
@@ -35,7 +35,7 @@ jobs:
       - run: sh scripts/check.sh
         env: { CHECK_SHARD: "${{ matrix.shard }}/${{ matrix.shards }}", CHECK_RELEASE_OUT: agentglass, SCRIPTC_CACHE_MAX_MB: "4096" }
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
   # the macOS x64 release is built with scriptc's C backend (no LLVM helper there): build it here too, so a construct
   # only that backend rejects fails the PR, not the release (2026.10.3: a Record<string, RegExp> lookup)
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: scriptc
         uses: ./.github/actions/scriptc
         with: { lane: "cbackend" }
@@ -53,7 +53,7 @@ jobs:
       # agentglass-receive-tls is C-backend only (https.createServer): built and smoke-tested over TLS here on every PR
       - run: sh scripts/build-tls.sh
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
   # one status for the whole run: green only when every shard on both OSes and the C-backend build passed
   ci:

@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs: { tag: "${{ steps.m.outputs.tag }}", version: "${{ steps.m.outputs.version }}", sha: "${{ steps.m.outputs.sha }}" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
       - id: m
         env: { TAG: "${{ github.event.inputs.tag || github.ref_name }}" }
@@ -30,13 +30,13 @@ jobs:
     permissions: { contents: write, id-token: write, attestations: write }
     env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ needs.meta.outputs.tag }}", VERSION: "${{ needs.meta.outputs.version }}", SHA: "${{ needs.meta.outputs.sha }}" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { ref: "${{ needs.meta.outputs.sha }}", fetch-depth: 0 }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { pattern: "agentglass-*", path: out, merge-multiple: true }
       - name: checksums + metadata
         run: sh scripts/release-assets.sh out stable "$TAG" "$VERSION" "$SHA" && sh scripts/verify-release-assets.sh out
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with: { subject-path: "out/agentglass-*.tar.gz" }
       - name: upload into the draft, publish when every asset is there (a published release is never touched)
         run: |
