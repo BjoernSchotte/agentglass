@@ -1,12 +1,12 @@
 // agentglass — self-check for the fleet report line format: scriptc build src/features/fleet/report.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
-import { FORMAT, type HostReport } from "./model.ts";
+import { FORMAT, type HostReport, noOwned } from "./model.ts";
 import { newParse, feedLines, toReport, reportLines, parseReport, sessRowOf } from "./report.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const hello = { format: FORMAT, version: "2026.10.6", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 120, redact: false, days: 7, now: 1791000000000, priceSig: "" };
-const r: HostReport = { hello, sessions: [sessRowOf({ id: "a", harness: "claude" }), sessRowOf({ id: "b", harness: "codex" })], cost: { today: { byMode: { api: 1 } } }, allowance: { claude: null, codex: null }, live: null, exact: false };
+const r: HostReport = { hello, sessions: [sessRowOf({ id: "a", harness: "claude" }), sessRowOf({ id: "b", harness: "codex" })], cost: { today: { byMode: { api: 1 } } }, allowance: { claude: null, codex: null }, live: null, exact: false, owned: noOwned() };
 const ls = reportLines(r);
 ok("line order", ls.length === 6 && ls[0]?.startsWith("{\"hello\"") === true && ls[1]?.startsWith("{\"cost\"") === true && ls[2]?.startsWith("{\"allowance\"") === true && ls[5]?.startsWith("{\"end\"") === true, ls.join("\n"));
 const p = newParse(); feedLines(p, ls.slice(0, 1));

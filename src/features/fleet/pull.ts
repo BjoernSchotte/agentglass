@@ -16,7 +16,7 @@ import { livePid } from "../query/eval.ts";
 import { peers } from "../vcs/json.ts";
 import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { pricesSig } from "../usage/pricing.ts";
-import { type HostReport, FORMAT } from "./model.ts";
+import { type HostReport, FORMAT, noOwned } from "./model.ts";
 import { sessRowOf, reportLines } from "./report.ts";
 
 export const DAY_MS = 86400000;
@@ -38,7 +38,7 @@ export function pullReport(days: number, now: number): HostReport {
   return {
     hello: { format: FORMAT, version: BUILD.version, hostId: hostId(), hostName: REDACT ? "" : hostName(), os: process.platform, tzOffsetMin: -new Date(now).getTimezoneOffset(),
       redact: REDACT, days, now, priceSig: pricesSig() },
-    sessions: rows, cost, allowance: { claude: allowanceInfo(now), codex: codexWins() }, live: null, exact: false,
+    sessions: rows, cost, allowance: { claude: allowanceInfo(now), codex: codexWins() }, live: null, exact: false, owned: noOwned(),
   };
 }
 
