@@ -29,7 +29,7 @@ const top = tree.pid ?? 0;
 sleepMs(300);
 if (mac) ok("native libproc on macOS", nativeProcs(), "ps fallback (built without --ffi?)");
 // ps before and after the scan: only pids whose ps row did not change in between are compared (a busy host execs and
-// grows processes all the time)
+// grows processes all the time); a command line ps cut at a column limit (≥ 200 characters) need only be a prefix
 const t0 = Date.now(); const ps0 = byPid(psProcs());
 let rows: ProcRow[] = [];
 if (mac) rows = nativeProcs() ? scanSource(libprocSource(), Date.now(), new Set<number>(), true, (c: string): boolean => true) : [];
@@ -53,7 +53,7 @@ for (const [pid, a] of ps0) {
   const what = "pid " + String(pid) + " (" + a.args.slice(0, 60) + ")";
   if (s.ppid !== a.ppid) { off++; console.log("FAIL " + what + " ppid: scan " + String(s.ppid) + " ps " + String(a.ppid)); }
   if (s.tty !== a.tty) { off++; console.log("FAIL " + what + " tty: scan " + s.tty + " ps " + a.tty); }
-  if (s.args !== a.args) { off++; console.log("FAIL " + what + " args: scan " + JSON.stringify(s.args) + " ps " + JSON.stringify(a.args)); }
+  if (s.args !== a.args && !(a.args.length >= 200 && s.args.startsWith(a.args))) { off++; console.log("FAIL " + what + " args: scan " + JSON.stringify(s.args) + " ps " + JSON.stringify(a.args)); }
   const psStart = t0 - etimeSec(a.etime) * 1000; // etime: whole seconds, rounded down
   if (Math.abs(s.start - psStart) > 1500) { off++; console.log("FAIL " + what + " start: scan " + String(s.start) + " ps ~" + String(psStart)); }
   const lo = Math.min(a.rss, b.rss); const hi = Math.max(a.rss, b.rss);

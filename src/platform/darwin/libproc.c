@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <libproc.h>
 #include <limits.h>
+#include <mach/kern_return.h>
 #include <mach/mach_time.h>
 #include <stdint.h>
 #include <stdio.h>
