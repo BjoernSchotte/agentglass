@@ -76,8 +76,8 @@ eq "--json filter" "$(run --json --all-projects --filter "id is $A" --fields id 
 # session <ref>: the same fields; a full ref with two copies → the newest copy; exit codes 3, 4, 2
 run session "claude:$A" --fields "$FL" --format json > "$t/s.json"
 eq "session types" "$(types "$t/s.json" "$SF")" ok
-# sessref: eq "session full ref with copies" "$(run session "claude:$B" --fields cwd --format csv | tail -n +2)" "$p2"
-# sessref: eq "session full id with copies" "$(run session "$B" --fields cwd --format csv | tail -n +2)" "$p2"
+eq "session full ref with copies" "$(run session "claude:$B" --fields cwd --format csv | tail -n +2)" "$p2"
+eq "session full id with copies" "$(run session "$B" --fields cwd --format csv | tail -n +2)" "$p2"
 eq "session help" "$(helped session "$FL")" ok
 set +e
 run session zzzzzzzz > /dev/null 2>&1; eq "session not found" $? 3
@@ -100,7 +100,7 @@ eq "cost help workspaceId" "$(helped cost workspaceId)" ok
 set +e
 run open "claude:$A" --new-instance > /dev/null 2>&1; eq "open exit" $? 0
 run open "agentglass://open/claude/$A" --new-instance > /dev/null 2>&1; eq "open url exit" $? 0
-# sessref: run open "claude:$B" > /dev/null 2>&1; eq "open full ref with copies" $? 0
+run open "claude:$B" > /dev/null 2>&1; eq "open full ref with copies" $? 0
 run open zzzzzzzz --new-instance > /dev/null 2>&1; eq "open not found" $? 3
 run open abcdef0 > /dev/null 2>&1; eq "open ambiguous" $? 4
 run open "agentglass://nope" > /dev/null 2>&1; eq "open malformed" $? 2
