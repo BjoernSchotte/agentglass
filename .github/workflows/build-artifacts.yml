@@ -25,9 +25,9 @@ jobs:
     steps:
       - if: matrix.container != ''
         run: apt-get update -qq && apt-get install -y -qq clang git curl xz-utils ca-certificates binutils openssl
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: 24 }
       - run: npm i -g scriptc@0.1.7
       - run: ./build.sh
@@ -47,5 +47,5 @@ jobs:
           if [ "${{ steps.tls.outcome }}" = success ]; then echo "${{ matrix.target }}: agentglass-receive-tls built (C backend) and smoke-tested" >> "$GITHUB_STEP_SUMMARY"
           else rm -f agentglass-receive-tls; echo "::warning::${{ matrix.target }} ships without agentglass-receive-tls (C-backend build or TLS smoke test failed)"; echo "${{ matrix.target }}: agentglass-receive-tls SKIPPED — see the tls step" >> "$GITHUB_STEP_SUMMARY"; fi
       - run: sh scripts/package.sh ${{ matrix.target }} "${{ inputs.version }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: { name: "agentglass-${{ matrix.target }}", path: "dist/agentglass-${{ matrix.target }}.tar.gz", retention-days: 7, if-no-files-found: error }
