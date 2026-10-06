@@ -72,4 +72,15 @@ run cost | grep "^today" | grep -q "≈\$3.02" || { echo "FAIL alias: no ≈ on 
 eq "alias: by model" "$(run cost --by model --json | jq -r '.rows[] | select(.key=="gpt-x-unknown") | .priceSource + " " + (.estimated|tostring)')" "alias true"
 rm -f "$t/home/.agentglass/prices.json"
 eq "alias gone: unpriced again" "$(run --json | jq -r '.[0].unpricedTokens')" 5000
+# fleet pull: the same objects as cost --json and --json, one JSON line each, in order
+p=$(run fleet pull --days 7)
+eq "pull: hello first" "$(echo "$p" | head -1 | jq -r '.hello.format')" agentglass-fleet/v1
+eq "pull: cost = cost --json" "$(echo "$p" | jq -c 'select(.cost)|.cost')" "$(run cost --json | jq -c .)"
+eq "pull: sessions = --json" "$(echo "$p" | jq -c 'select(.s)|.s|{id,costUsd,tokens,billing,title}')" "$(run --json | jq -c '.[]|{id,costUsd,tokens,billing,title}')"
+eq "pull: end" "$(echo "$p" | tail -1 | jq -r '.end.sessions')" 1
+eq "pull: redacted" "$(run fleet pull --redact | grep -c '/w/app' || true)" 0
+eq "pull: redacted flag in hello" "$(run fleet pull --redact | head -1 | jq -r '.hello.redact')" true
+set +e; run fleet pull --days 0 > /dev/null 2>&1; rc=$?; run fleet pull --nope > /dev/null 2>&1; rc2=$?; set -e
+eq "pull: --days 0" "$rc" 2
+eq "pull: bad flag" "$rc2" 2
 [ $fail = 0 ] && echo "cost cli: all checks passed"; exit $fail
