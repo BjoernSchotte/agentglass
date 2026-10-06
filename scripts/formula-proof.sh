@@ -1,0 +1,30 @@
+#!/bin/sh
+# prove a rendered stable formula before it ships (release.yml's tap job; formula.yml runs it on PRs against the last
+# release): sh scripts/formula-proof.sh <agentglass.rb>
+# It goes into a local clone of the real tap, so its conflict with agentglass-dev resolves, then: brew audit --strict,
+# install, test, and agentglass-receive-tls --version when the formula installed it. Leaves nothing installed.
+# `--except=version`: the url interpolates #{version} (the tap's update-formula.yml, the fallback, only swaps the version
+# line and the checksums), which strict audit calls redundant; every other check stays on.
+set -e
+rb="$1"; [ -f "$rb" ] || { echo "usage: sh scripts/formula-proof.sh <agentglass.rb>" >&2; exit 2; }
+rb=$(cd "$(dirname "$rb")" && pwd)/$(basename "$rb")
+brew=$(command -v brew || echo /home/linuxbrew/.linuxbrew/bin/brew)
+[ -x "$brew" ] || { echo "formula-proof.sh: no brew" >&2; exit 1; }
+eval "$("$brew" shellenv)"
+# runner images ship an older Homebrew (without `brew trust`, 2026-10); update once, then never in the middle
+brew update --quiet
+export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
+tap=bjoernschotte/tap
+brew tap "$tap"
+# current Homebrew loads formulae from third-party taps only once trusted
+if brew commands | grep -qx trust; then brew trust --tap "$tap"; fi
+f="$(brew --repository "$tap")/Formula/agentglass.rb"
+cleanup() { brew uninstall --force agentglass > /dev/null 2>&1 || true; git -C "$(dirname "$f")" checkout -q -- agentglass.rb 2> /dev/null || true; }
+trap cleanup EXIT
+cp "$rb" "$f"
+brew audit --strict --except=version --formula "$tap/agentglass"
+brew install --formula "$tap/agentglass"
+brew test "$tap/agentglass"
+"$(brew --prefix)/bin/agentglass" --version
+if [ -x "$(brew --prefix)/bin/agentglass-receive-tls" ]; then "$(brew --prefix)/bin/agentglass-receive-tls" --version; fi
+echo "formula-proof: audit, install and test passed"

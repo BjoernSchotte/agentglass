@@ -58,7 +58,9 @@ class Agentglass < Formula
 
   test do
     assert_match version.to_s, shell_output("#{bin}/agentglass --version")
-    assert_match version.to_s, shell_output("#{bin}/agentglass-receive-tls --version") if (bin/"agentglass-receive-tls").exist?
+    if (bin/"agentglass-receive-tls").exist?
+      assert_match version.to_s, shell_output("#{bin}/agentglass-receive-tls --version")
+    end
   end
 end
 RUBY

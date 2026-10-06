@@ -57,18 +57,8 @@ jobs:
         run: |
           mkdir -p assets && gh release download "$TAG" -D assets && sh scripts/verify-release-assets.sh assets
           sh scripts/formula.sh assets "$VERSION" > agentglass.rb
-      - name: brew audit, install, test
-        run: |
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          git config --global user.name "agentglass release"; git config --global user.email "agentglass-ci@example.invalid"
-          brew tap-new agentglass-proof/tap
-          brew trust agentglass-proof/tap   # current Homebrew refuses formulae from untrusted taps
-          cp agentglass.rb "$(brew --repository agentglass-proof/tap)/Formula/agentglass.rb"
-          brew audit --strict --formula agentglass-proof/tap/agentglass
-          brew install --formula agentglass-proof/tap/agentglass
-          brew test agentglass-proof/tap/agentglass
-          if tar -tzf assets/agentglass-linux-x64.tar.gz | grep -qx agentglass-receive-tls; then "$(brew --prefix)/bin/agentglass-receive-tls" --version; fi
-          brew uninstall --force agentglass && brew untap agentglass-proof/tap
+      - name: brew audit, install, test (formula.yml runs the same proof on PRs)
+        run: sh scripts/formula-proof.sh agentglass.rb
       - name: commit it to the tap
         env: { GH_TOKEN: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
         run: |
