@@ -5,7 +5,8 @@ import { clean, fit, fitStyled, fillTo, bytes, home } from "../util/text.ts";
 import { S } from "../state.ts";
 import { display, boxChips } from "../hooks.ts";
 import { titleOf } from "../model/sessions.ts";
-import { procs, procView, allProcs, hist, procAt, procSess, tmuxTarget } from "../model/procs.ts";
+import { procs, procView, allProcs, hist, procAt, procSess } from "../model/procs.ts";
+import { paneOfPid, paneTextIn } from "../mux/index.ts";
 import { C, CSI, RST, fg, bg, heat } from "./theme.ts";
 import { put, box, badge, BADGE_W, braille, gauge } from "./screen.ts";
 
@@ -53,8 +54,8 @@ export function renderProcs(): void {
     for (let i = 0; i < gh; i++) lines.push(fg(heat(1 - i / gh)) + gl[i] + RST);
     lines.push(fg(C.dim) + fit("cpu (" + (hh.length * 1.5).toFixed(0) + "s)  peak " + peak.toFixed(0) + "%", gw) + RST);
     lines.push(fg(C.dim) + "mem " + RST + gauge(p.trss / TOTALMEM, gw - 11) + fg(C.sub) + " " + fit((p.trss / TOTALMEM * 100).toFixed(1) + "%", 6) + RST);
-    const tt = tmuxTarget(p.pid);
-    lines.push(fg(C.dim) + "tty " + RST + fg(C.sub) + fit(p.tty + (tt ? "  tmux " + tt : ""), gw - 4) + RST);
+    const tt = paneTextIn(paneOfPid(p.pid), gw - 6 - Array.from(p.tty).length);
+    lines.push(fg(C.dim) + "tty " + RST + fg(C.sub) + fit(p.tty + (tt ? "  " + tt : ""), gw - 4) + RST);
   }
   // tree to the right
   const tree: string[] = [];

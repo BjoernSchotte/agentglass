@@ -6,7 +6,7 @@ import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current } from "../model/sessions.ts";
-import { tmuxTarget } from "../model/procs.ts";
+import { paneOfPid, paneText, paneTextIn } from "../mux/index.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, badge, BADGE_W, spin } from "./screen.ts";
 import { evLines } from "./transcript.ts";
@@ -73,7 +73,7 @@ export function listSig(clock: boolean = true): string {
     if (s.headDone) loadTail(s); // as the frame reads it (a head is read by the frame itself)
     const e = s.evs.length ? s.evs[s.evs.length - 1] : null;
     o.push(s.path + "|" + bytes(s.size) + "|" + (s.headDone ? "h" : "") + s.cwd + "|" + s.branch + "|" + s.remote + "|" + s.model + "|" + agoK(s.mtime) + "|" + String(s.pid) + s.status + s.name + "|" +
-      (s.pid ? tmuxTarget(s.pid) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
+      (s.pid ? paneText(paneOfPid(s.pid)) : "") + "|" + (s.parent ? titleOf(parentOf(s) ?? s) : "") + "|" + String(s.evs.length) + (e ? e.kind + e.ts + String(e.text.length) : "") + "|" + usageKey(s));
     // the preview lists the 6 most active subagents (renderSessions' order); the usage sums all of them
     let u = 0; for (const c of s.subs) u += c.cost + c.inTok + c.outTok + c.cacheRTok + c.cacheWTok + c.tools + c.linesAdd + c.linesDel + c.unkTok;
     o.push(String(s.subs.length) + ":" + String(u));
@@ -151,7 +151,7 @@ export function renderSessions(): void {
     if (s.remote) { const r = scrubRemote(s.remote); if (r) kv("remote", remoteLabel(r), C.green); }
     if (s.model) kv("model", s.model, C.cyan);
     kv("updated", ago(s.mtime) + " ago · " + localDay(new Date(s.mtime).toISOString()) + " " + localHM(new Date(s.mtime).toISOString()), C.sub); // both local: a UTC day next to a local clock was off by one around midnight
-    if (s.pid) { const t = tmuxTarget(s.pid); kv("process", "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : "") + (t ? " · tmux " + t : ""), C.green); }
+    if (s.pid) { const pre = "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : ""); const t = paneTextIn(paneOfPid(s.pid), iw2 - 9 - Array.from(pre).length - 3); kv("process", pre + (t ? " · " + t : ""), C.green); }
     else kv("process", s.archived ? "archived" : "not running", C.dim);
     if (s.depth === 1 || s.parent) { const par = parentOf(s); kv("subagent", s.kind + (s.name ? " · " + s.name : "") + (par ? "  ↰ " + titleOf(par) : ""), C.cyan); }
     for (const f of H.previewSections) for (const l of f(s, iw2)) lines.push(fitStyled(l, iw2));
