@@ -257,8 +257,12 @@ function linkSessions(): void {
 // checks: link with these agent roots (their cwds) as the process pass would
 export function linkForCheck(roots: Proc[]): void { procs = roots; linkSessions(); }
 export function linkSigForCheck(): string { return linkSig(); }
+export function openForCheck(path: string, pid: number): void { if (pid) filePid.set(path, pid); else filePid.delete(path); }
+// a pid the registry or an open transcript already gives another session keeps that link: a disagreement is not acted on
+// (herdr may still report the session a TUI had before /new or /clear)
 function linkMux(): Set<number> {
   const pids = new Set<number>(); const ls = muxLinks(); if (!ls.length) return pids;
+  const owned = new Map<number, string>(); for (const s of sessions.values()) if (s.pid) owned.set(s.pid, s.path);
   const byKey = new Map<string, Sess>(); // a resumed session copied into a second project dir: the copy written last
   for (const s of sessions.values()) { if (s.parent) continue; const k = s.h + ":" + s.id; const o = byKey.get(k); if (!o || s.mtime > o.mtime) byKey.set(k, s); }
   for (const l of ls) {
@@ -266,7 +270,8 @@ function linkMux(): Set<number> {
     const s = l.key ? byKey.get(l.key) : sessions.get(l.path);
     const r = rootOf(l.pid); const pid = r ? r.pid : l.pid;
     pids.add(pid);
-    if (s && !s.pid) linkOne(s, pid, "open", "");
+    const o = owned.get(pid);
+    if (s && !s.pid && (o === undefined || o === s.path)) { linkOne(s, pid, "open", ""); owned.set(pid, s.path); }
   }
   return pids;
 }

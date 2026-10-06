@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
 import { setMuxes, muxReset } from "./index.ts";
-import { applyRows, linkForCheck, linkSigForCheck, allProcs } from "../model/procs.ts";
+import { applyRows, linkForCheck, linkSigForCheck, openForCheck, allProcs } from "../model/procs.ts";
 import { newSess, type Proc, type Sess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
 
@@ -31,6 +31,7 @@ applyRows([
   { pid: 42, ppid: 1, cpu: 0, rss: 0, etime: "05:00", tty: "", args: "node /x/pi.js", start: now - 300000 },
   { pid: 61, ppid: 1, cpu: 0, rss: 0, etime: "05:00", tty: "", args: "codex", start: now - 300000 },
   { pid: 71, ppid: 1, cpu: 0, rss: 0, etime: "05:00", tty: "", args: "codex", start: now - 300000 },
+  { pid: 81, ppid: 1, cpu: 0, rss: 0, etime: "05:00", tty: "", args: "codex", start: now - 300000 },
 ], now);
 const roots: Proc[] = []; for (const p of allProcs.values()) { if (p.h === "pi") p.cwd = "/w"; roots.push(p); }
 function sess(h: string, id: string, mtime: number, cwd: string): Sess { const s = newSess(h, id, "/s/" + h + "/" + id, false); s.mtime = mtime; s.cwd = cwd; s.headDone = true; sessions.set(s.path, s); return s; }
@@ -53,5 +54,17 @@ ok("a pid tmux claims is not herdr's", D.pid === 0, String(D.pid));
 const C2 = newSess("codex", "C", "/s/codex2/C", false); C2.mtime = now; C2.cwd = "/c"; C2.headDone = true; sessions.set(C2.path, C2);
 linkForCheck(roots);
 ok("copies: the newest", C2.pid === 61 && C.pid === 0, "C2 " + String(C2.pid) + " C " + String(C.pid));
+// an open transcript already links the pid (exact): herdr naming another session for it (the one before /new) is not
+// acted on — neither session loses or gains a link from it
+const E = sess("codex", "E", now - 1000, "/e"); const F = sess("codex", "F", now - 90000, "/e");
+openForCheck(E.path, 81);
+LINKS = [{ pid: 81, key: "codex:F", path: "" }];
+linkForCheck(roots);
+ok("an open-transcript link is not overridden", E.pid === 81 && F.pid === 0, "E " + String(E.pid) + " F " + String(F.pid));
+// herdr agreeing with it changes nothing either
+LINKS = [{ pid: 81, key: "codex:E", path: "" }];
+linkForCheck(roots);
+ok("an agreeing herdr link", E.pid === 81 && F.pid === 0, "E " + String(E.pid) + " F " + String(F.pid));
+openForCheck(E.path, 0);
 console.log(bad ? bad + " failed" : "mux links: all checks passed");
 if (bad) process.exit(1);
