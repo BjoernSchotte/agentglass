@@ -50,8 +50,11 @@ export function installMethod(execPath: string, channel: string, installJson: st
   if (o && o["method"] === "script" && samePath(execPath, o["path"])) return "script";
   return channel === "local" ? "source" : "unknown";
 }
+// the CLI contract (docs/cli-contract.md): bumped only when a listed command, field, flag or exit code is removed,
+// renamed or changes type or meaning; additions keep it
+export const CONTRACT = 1;
 export function versionInfo(): Obj {
   const ij = readText(join(HOME, ".agentglass", "install.json"), 0, 65536);
   return { version: BUILD.version, channel: BUILD.channel, commit: BUILD.commit, date: BUILD.date, platform: BUILD.platform,
-    installMethod: installMethod(process.execPath, BUILD.channel, ij) };
+    installMethod: installMethod(process.execPath, BUILD.channel, ij), contract: CONTRACT };
 }
