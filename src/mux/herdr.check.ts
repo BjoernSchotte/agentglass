@@ -6,6 +6,9 @@ import type { MuxProc } from "./types.ts";
 import { herdr, herdrReset, herdrWorkspaces } from "./herdr.ts";
 import { MUX_EVENTS } from "./events.ts";
 import { S } from "../state.ts";
+import { join } from "node:path";
+import { HOME, listDir } from "../util/fs.ts";
+import { RUN_DIR } from "../features/palette/rundir.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -114,6 +117,8 @@ steps.push(() => {
   const pr = existsSync(dir + "/prompts.log") ? readFileSync(dir + "/prompts.log", "utf8") : "";
   ok("sent", pr === "hello $HOME\n" && S.toastKind === "ok" && S.toast === "sent to herdr w8:p3", pr + " / " + S.toast); // --redact (check.sh): pane id only
   ok("send argv", count("agent prompt w8:p3 hello $HOME") === 1, calls().join(" / "));
+  // herdr's stderr goes to a private dir in the run dir (AGENTGLASS_RUN_DIR isolates test runs), read and removed on exit
+  ok("send: stderr file in the run dir, removed", existsSync(join(RUN_DIR, "herdr")) && listDir(join(RUN_DIR, "herdr")).length === 0 && !existsSync(join(HOME, ".agentglass", "tmp")), listDir(join(RUN_DIR, "herdr")).join(","));
   w("fail-prompt", '{"error":{"code":"agent_blocked","message":"agent w8:p3 is blocked"},"id":"cli:agent:prompt"}\n');
   if (pp) herdr.send(pp, "refused");
 });

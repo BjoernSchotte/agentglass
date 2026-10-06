@@ -13,6 +13,7 @@ import { say } from "../state.ts";
 import { REDACT } from "../features/redact-on.ts";
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
 import { MUX_EVENTS } from "./events.ts";
+import { RUN_DIR } from "../features/palette/rundir.ts";
 import { type HWs, parseAgents, parseLabels, parseWorkspaces, parseProcInfo, parseVersion, parseCreated, parseError, versionAtLeast,
   sessRef, choosePid, placeLabel, sendOutcome, errOutcome, envHerdr, workspaceFor, workspaceByPanes, START_KINDS } from "./herdr-parse.ts";
 
@@ -95,7 +96,7 @@ function call(sock: string, args: string[]): Res {
 // a fresh file for a spawned herdr's stderr (read on exit, then deleted). Files of runs that outlived their agentglass
 // (it quit while a send or start ran: the child is detached and finishes) are removed after a minute
 function errFile(what: string): string {
-  const dir = join(HOME, ".agentglass", "tmp"); try { mkdirSync(dir, { recursive: true }); } catch (e) { /* exists */ }
+  const dir = join(RUN_DIR, "herdr"); try { mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ } // private, and AGENTGLASS_RUN_DIR keeps test runs out of ~/.agentglass
   const old = Date.now() - 60000;
   for (const n of listDir(dir)) if (n.startsWith("herdr-") && n.endsWith(".err")) { const f = join(dir, n); try { if (statSync(f).mtimeMs < old) unlinkSync(f); } catch (e) { /* gone */ } }
   HS.sendNo++;
