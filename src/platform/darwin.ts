@@ -35,14 +35,15 @@ function listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean, di
   return discover ? scanSource(LIBPROC, now, tracked, full, wantArgs) : knownSource(LIBPROC, now, tracked);
 }
 function realpath(p: string): string { try { return realpathSync(p); } catch (e) { return p; } }
-// the kernel's vnode paths, real paths as lsof printed them (/private/var/…)
+// the kernel's vnode paths, real paths as lsof printed them (/private/var/…); an open file is resolved only when wanted
+// (a node agent holds dozens of module files open, and a realpath costs a stat per path component)
 function procFiles(pids: number[], fdPids: Set<number>, want: (path: string) => boolean): { cwd: Map<number, string>; open: Map<string, number> } {
   if (!nativeProcs()) return lsofFiles(pids, want);
   const cwd = new Map<number, string>(); const open = new Map<string, number>();
   for (const pid of pids) {
     const c = lpCwd(pid); if (c) cwd.set(pid, realpath(c));
     if (!fdPids.has(pid)) continue;
-    for (const f of lpFiles(pid)) { const n = realpath(f); if (want(n)) open.set(n, pid); }
+    for (const f of lpFiles(pid)) if (want(f)) { const n = realpath(f); if (want(n)) open.set(n, pid); }
   }
   return { cwd, open };
 }
