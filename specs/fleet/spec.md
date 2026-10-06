@@ -1,19 +1,25 @@
-# Fleet: several machines in one view (SSH pull MVP) — spec
+# Fleet: several machines in one view (SSH pull, snapshots, exact merge) — spec
 
-Status: **draft** (2026-10-06). Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 2 (after 2026.10.4). Companion spec:
-[otlp-complete](../otlp-complete/spec.md) (export completeness; shares the host identity of section 3).
+Status: **draft** (2026-10-06). Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 2 (after 2026.10.4). Two parts:
+**Part A** (sections 2–11) is the SSH pull MVP; **Part B** (sections 12–17) makes it exact: incremental snapshots,
+cross-host message ownership, local re-pricing, `dir` hosts and a live stream. Companion specs:
+[otlp-complete](../otlp-complete/spec.md) (export completeness; shares the host identity of section 3) and
+[otlp-hub](../otlp-hub/spec.md) (Collector file reader and `agentglass receive`; a third feed of the model in
+section 1, which is defined here once and referenced by both).
 
 ## Goal
 `agentglass fleet` and the TUI show the sessions, cost and live state of several machines in one place:
 1. Hosts are listed in `~/.agentglass/config.json` (`fleet.hosts`). The viewer pulls each host's own figures over
-   SSH. No server, no daemon, no listener, no transcript leaves its host.
+   SSH, or reads snapshots a host drops into a synced directory. No transcript leaves its host.
 2. Every remote session row carries its host: a badge in the list, a `host` attribute in the filter language and a
    `host` field in `--json`. Session keys are host-qualified.
-3. Each host's numbers are the numbers that host shows for itself. Where hosts may overlap, the figure says so (`≈`).
+3. Each host's numbers are the numbers that host shows for itself; with Part B the fleet totals are **exact**: a
+   Claude message copied to several hosts is counted once, and one price table prices the whole fleet.
 4. A host that cannot be reached shows its last result with its age. Nothing blocks the TUI.
 5. `agentglass fleet status` says, per host, what works and what does not.
-6. One remote-host model (`HostFeed` → `HostReport`, section 1) that later transports (an OTLP file hub, a built-in
-   receiver, a snapshot drop) plug into without touching the TUI or the CLI.
+6. Remote alarms and approval waits appear within seconds (`fleet watch`, Part B).
+7. One remote-host model (`HostFeed` → `HostReport`, section 1) that every transport — SSH pull, SSH snapshot, `dir`
+   drop, and the OTLP hub of [otlp-hub](../otlp-hub/spec.md) — delivers into, without touching the TUI or the CLI.
 
 ## Why (user value)
 - People run agents on a laptop, a workstation and a few VMs or containers. An agent that waits for approval on the
@@ -80,39 +86,58 @@ week of sessions on a busy host is under 100 KB on the wire with SSH compression
 
 ## Design
 
-### 1. The remote-host model: `HostFeed` → `HostReport`
+### 1. The remote-host model: `HostFeed` → `HostReport` (shared by fleet and otlp-hub)
 Every transport delivers the same thing: a **`HostReport`**, one host's state at one moment. The TUI, the filter
-language and the CLI read only reports; they never know how a report travelled.
+language, the merge and the CLI read only reports; they never know how a report travelled. This section is the one
+definition; [otlp-hub](../otlp-hub/spec.md) refers to it.
 
 ```ts
 // src/features/fleet/model.ts
-export interface Hello { format: string; version: string; hostId: string; hostName: string; os: string; tzOffsetMin: number; redact: boolean; days: number; now: number }
-export interface HostReport {
-  hello: Hello;          // who produced it, when (source clock), under which privacy mode
-  sessions: Obj[];       // jsonSess objects (the `--json` contract), top-level only, updated within hello.days or live
-  cost: Obj | null;      // the `cost --json` object of that host, unchanged
-  allowance: Obj | null; // {claude: {account, fetchedAt, h5, d7} | null, codex: {at, wins} | null} (7.4)
+export interface Hello { format: string; version: string; hostId: string; hostName: string; os: string; tzOffsetMin: number; redact: boolean; days: number; now: number; priceSig: string }
+export interface OwnRow { h: string; key: number; d: string; m: string; prov: string; n: number[] } // one owned Claude message: hashed id, order key, local day, model, provider, [in, out, cacheRead, write5m, write1h, usd, tablePriced 0|1]
+export interface DayRow { d: string; tp: string[][]; hx: number[][]; unk: number; um: string[][]; uc: number; tools: number; turns: number; calls: number; errors: number } // 13.2
+export interface SessRow {
+  s: Obj;                // the jsonSess object (the `--json` contract)
+  key: string;           // host-local stable key: "<harness>:<id>"
+  days: DayRow[] | null; // per-day usage (Part B feeds); null = only the totals in `s` (Part A pull)
+  own: OwnRow[] | null;  // Claude messages this session owns on its host (Part B, OTLP hub); null = unknown
+  prov: string[][];      // [provider, billing mode] for multi-provider harnesses (pi, OpenCode); [] = the session's mode
 }
+export interface HostReport {
+  hello: Hello;              // who produced it, when (source clock), under which privacy mode, which price table
+  sessions: SessRow[];       // top-level sessions, updated within hello.days or live
+  cost: Obj | null;          // the host's own `cost --json` object (shown as is when the report has no days)
+  allowance: Obj | null;     // {claude: {account, fetchedAt, h5, d7} | null, codex: {at, wins} | null} (7.4)
+  live: LiveRow[] | null;    // newest live state per session from a stream (16, otlp-hub), fresher than `s`
+  exact: boolean;            // every session carries days and own: the merge can be exact (13)
+}
+export interface LiveRow { key: string; at: number; live: boolean; busy: boolean; attention: boolean; approval: boolean; stuck: string; alerts: Obj[] }
 export interface FeedState { report: HostReport | null; okAt: number; tryAt: number; err: string; code: string; busy: boolean } // viewer clock
 export interface HostFeed {
-  kind: string;                    // "ssh" (this spec); later "otlp" (OTLP file hub), "dir" (snapshot drop)
+  kind: string;                    // "ssh" (pull or snapshot), "dir" (snapshot drop), "otlp" (otlp-hub)
   start(now: number): boolean;     // begin one refresh in the background; false = one is already running
   poll(now: number): FeedState;    // cheap: stats a file or two, parses only what changed, never blocks
   stop(): void;                    // kill what start() spawned (on quit)
 }
 ```
 
-- `src/features/fleet/hosts.ts` keeps one `RemoteHost {cfg, feed, state, rows: Sess[]}` per configured host and turns a
-  new report into rows (section 7). It is the only module that knows hosts exist.
-- `HostFeed.kind = "ssh"` is the only feed this spec builds (section 5). The later phases add feeds, nothing else:
-  - **OTLP file hub** (`kind: "otlp"`, config `{"name": "ci", "otlp": "<dir>"}`): tails OTLP/JSON files written by an
-    OTel Collector's file exporter, maps spans to `sessions`/`cost` and the logs stream of
-    [otlp-complete](../otlp-complete/spec.md) to `live`/`attention`/alerts, and dedups by
-    `(gen_ai.provider.name, gen_ai.response.id)`.
-  - **Built-in receiver** (`agentglass receive`): writes the same files the hub feed reads; no new feed.
-  - **Snapshot drop** (`kind: "dir"`): reads a versioned snapshot file a host wrote into a synced directory.
-- A report's `sessions` are always the `--json` object shape. A feed that rebuilds sessions from other data (OTLP)
+- `src/features/fleet/hosts.ts` keeps one `RemoteHost {cfg, feeds, state, rows: Sess[]}` per host and turns new
+  reports into rows (section 7) and into the exact merge (section 13). It is the only module that knows hosts exist.
+- Feeds and what they fill:
+
+| Feed | `kind` | Spec | `days` | `own` | `live` | `exact` |
+|---|---|---|---|---|---|---|
+| SSH pull (`fleet pull`) | `ssh` | Part A, 4–5 | — | — | — | no |
+| SSH snapshot (`fleet snapshot`) | `ssh` | Part B, 12 | yes | yes | from `fleet watch` (16) | yes |
+| Snapshot drop | `dir` | Part B, 15 | yes | yes | — (the drop's own state, minutes old) | yes |
+| OTLP hub (Collector files, `agentglass receive`) | `otlp` | otlp-hub | from spans | from Claude `gen_ai.response.id` | from the logs stream | yes for hosts exporting with otlp-complete |
+
+- A report's `SessRow.s` is always the `--json` object shape. A feed that rebuilds sessions from other data (OTLP)
   produces that shape too, so the `--json` field list is the one contract every transport meets.
+- One host may arrive through several feeds (an SSH host that also exports to the hub). Section 17 merges them by
+  `host.id`.
+
+## Part A — the SSH pull MVP
 
 ### 2. Hosts (`~/.agentglass/config.json`, section `fleet`)
 ```json
@@ -136,9 +161,15 @@ export interface HostFeed {
 - `enabled` (default `true`): `false` keeps the entry without pulling.
 - `localName` (default `local`): the name of this machine in badges, filters and `--json`.
 - `refreshSeconds` 15–3600 (default 60), `days` 1–90 (default 7), `timeoutSeconds` 10–600 (default 90).
-- An entry with another transport key (`otlp`, `dir`) or without `ssh` is kept and shown in `fleet status` as
-  "transport `otlp` needs a newer agentglass" (forward compatibility, section 1). Other invalid values are skipped
-  with one startup toast per entry (the `otlp` section's rule: `src/features/otlp/config.ts:30-58`).
+- Exactly one transport key per entry: `ssh` (this spec, Part A/B), `dir` (a snapshot drop directory, section 15),
+  or `otlp` (a hub directory, [otlp-hub](../otlp-hub/spec.md)). An entry with none, or several, is skipped with a
+  toast. `{"name": "nas", "dir": "~/Sync/agentglass/nas"}`; `{"name": "hub", "otlp": "~/.agentglass/hub"}` is a hub
+  *source*: every host found in it becomes a fleet host (otlp-hub section 2).
+- `snapshot` (ssh hosts, default `true`): use `fleet snapshot` (Part B) and fall back to `fleet pull` when the host's
+  agentglass is older; `false` forces the pull. `watch` (ssh hosts, default `true`): run the live stream (16).
+- `reprice` (fleet-wide, default `true`): price every host's table-priced usage with this machine's price table (14).
+- Other invalid values are skipped with one startup toast per entry (the `otlp` section's rule:
+  `src/features/otlp/config.ts:30-58`).
 - At most 32 hosts; more are ignored with one toast.
 
 ### 3. Host identity (`src/util/hostid.ts`, shared with otlp-complete)
@@ -191,8 +222,10 @@ restrict,command="/home/me/.local/bin/agentglass fleet serve" ssh-ed25519 AAAA�
   backslashes as POSIX `sh` does for plain words; any of `` ` $ ; | & < > ( ) `` or a newline outside quotes →
   refused), and allows exactly:
   - `<anything ending in agentglass> fleet pull [--days N] [--redact]`
+  - `<…agentglass> fleet snapshot [--peer <16 hex>] [--ack <16 hex>] [--full] [--days N] [--redact]` (Part B, 12)
+  - `<…agentglass> fleet watch [--redact]` (Part B, 16)
   - `<…agentglass> --version [--json]`
-  Everything else exits 126 with `agentglass fleet serve: only "fleet pull" and "--version" are allowed`.
+  Everything else exits 126 with `agentglass fleet serve: only fleet pull/snapshot/watch and --version are allowed`.
 - The allowed command runs as a child: `execFileSync(process.execPath, ["fleet", "pull", …], {stdio: "inherit"})`,
   with `AGENTGLASS_REDACT=1` in its environment when the request has `--redact` (the flag is process-wide, fixed at
   start: `redact-on.ts:5`).
@@ -287,30 +320,28 @@ key from the file (one `ssh-…`/`ecdsa-…`/`sk-…` line, at most 16 KB, valid
 - Session refs: `<harness>:<id>@<host>` (`agentglass fleet --json` rows, `fleet open`). Without `@host` a ref
   resolves locally first (unchanged behavior for every existing command).
 
-#### 7.2 Cross-host overlap (what the MVP does honestly)
-- The same `(harness, id)` reported by two hosts (a synced `~/.claude`, a session directory copied to another
-  machine) is the same session read twice. Both rows stay, each with an `≈` marker after the cost, and the fleet
-  total carries `≈` and "N sessions seen on 2+ hosts may be counted twice" (Stats line, `fleet status`,
-  `fleet cost --json` `overlap`).
-- Not detectable in the MVP: a Claude session whose earlier messages were copied into a **new** session id on another
-  machine (resume of a copied file). Counting such messages once needs per-message ownership across hosts: the
-  OTLP hub feed dedups by `gen_ai.response.id`; the snapshot feed would carry hashed message ids. Documented under
-  "Out of scope".
+#### 7.2 Cross-host overlap
+- Hosts whose reports are `exact` (snapshot, `dir`, hub) merge exactly by message ownership (section 13): no `≈`.
+- For a host on the Part A pull (an older agentglass there, or `snapshot: false`), the merge cannot see messages. The
+  same `(harness, id)` reported by such a host and another host is the same session read twice: both rows stay, each
+  with an `≈` after the cost, and the fleet total carries `≈` and "N sessions seen on 2+ hosts may be counted twice"
+  (Stats line, `fleet status`, `fleet cost --json` `overlap`). A Claude history copied under a **new** session id is
+  invisible to this rule; `fleet status` says "update agentglass on <host> for an exact merge".
 - Within one host nothing changes: each host's own agentglass already counts a copied Claude message once
-  (`src/features/usage/owners.ts`).
+  (`src/features/usage/owners.ts`); section 13 extends that rule across hosts.
 
 #### 7.3 Cost and budget
-- **Fleet cost** = the local `costNow("")` plus, per host with a report, its `cost` object read into `ModeSum`s
-  (`today`, `week`, `month`, `month.projected.byMode`) and summed with `addSum`.
-- Each host prices with its own price table and its own day boundaries (its time zone). `fleet status` shows
-  "prices differ" when a host's version differs and "UTC+2 vs UTC−5" when `tzOffsetMin` differs. Re-pricing
-  remote tokens locally needs per-model day buckets the report does not carry (snapshot phase).
+- **Part A (pull reports)**: fleet cost = the local `costNow("")` plus each host's `cost` object read into
+  `ModeSum`s (`today`, `week`, `month`, `month.projected.byMode`), summed with `addSum`. Each host prices with its own
+  table and day boundaries; `fleet status` shows "prices differ" / "UTC+2 vs UTC−5".
+- **Part B (exact reports)**: fleet cost is computed by the viewer from the merged day buckets (13.4) re-priced with
+  its own table (14), in the viewer's time zone, through the same `sumDays`/projection code the local Stats use. The
+  hosts' `cost` objects are then only shown in `fleet status` for comparison.
 - **Budget**: the local `budget` config applies to the fleet when at least one host is configured: the state is
-  `budgetState(budget, fleetMonth, fleetProjByMode)` (`costs.ts:159`). `approx` is also true when a stale host or
-  an overlap contributes. Hosts' own budgets are ignored by the viewer (one account, one budget).
-- **Projection**: the sum of the hosts' projections (each host projects from its own history; the sum of means is
-  the mean of the sum when the windows agree). A host without enough history contributes its month-to-date only;
-  the fleet projection is then marked `≈`.
+  `budgetState(budget, fleetMonth, fleetProjByMode)` (`costs.ts:159`). `approx` is true only when a Part A host or a
+  stale host contributes. Hosts' own budgets are ignored by the viewer (one account, one budget).
+- **Projection**: Part B — the local projection functions (`projectToday`, `projectMonth`, `costs.ts:101-112`) over
+  the merged hourly profile; Part A — the sum of the hosts' projections, `≈` when a host lacks history.
 
 #### 7.4 Allowance (Claude 5 h / 7 d, Codex rate limits)
 - `fleet pull` adds `allowance`:
@@ -392,6 +423,146 @@ key from the file (one `ssh-…`/`ecdsa-…`/`sk-…` line, at most 16 KB, valid
 - **At rest on the viewer.** Reports under `~/.agentglass/fleet` (0700/0600). `fleet status` shows their age;
   removing a host from the config deletes its files on the next start.
 
+## Part B — exactness: snapshots, ownership, re-pricing, `dir` hosts, live stream
+
+Part A shows each host's own figures. Part B makes the fleet figures exact and live:
+- a versioned, incremental snapshot replaces the pull wherever the host's agentglass has it;
+- hashed Claude message ids let the viewer count a message copied to several hosts once;
+- the viewer prices all usage with one table;
+- hosts that cannot be reached drop snapshots into a synced directory;
+- a long-lived `fleet watch` stream carries state and alarms within seconds.
+
+Measured inputs: this machine holds **235,188 distinct Claude message ids** in **423,243 occurrences** (`rg` over
+`~/.claude/projects`, 0.2 s): copies across files are common even on one machine, so they will be common across
+machines that share or copy histories.
+
+### 12. Snapshot format `agentglass-snapshot/v1`
+1. **Command:** `agentglass fleet snapshot [--peer <id>] [--ack <gen>] [--full] [--days N] [--redact]`, allowed by
+   `fleet serve` (4.2) like `fleet pull`. Output: JSON lines (gzip-compressed by ssh `Compression=yes` on the wire):
+   1. `{"snap": {format: "agentglass-snapshot/v1", gen, base, full, …Hello}}` — `gen`: this snapshot's generation
+      (random 16 hex digits); `base`: the generation it is relative to (`""` = full).
+   2. `{"sess": SessRow}` for every session that changed since `base` (a whole replacement of that session: `s`,
+      `days`, `prov`), and for every session when `full`.
+   3. `{"own": {key, reset, rows: OwnRow[]}}` for every session whose owned messages grew (rows appended since
+      `base`) or changed (`reset: true`, all rows).
+   4. `{"gone": [key, …]}` sessions present at `base` that no longer exist or fell out of the window.
+   5. `{"cost": …}`, `{"allowance": …}` as in `fleet pull`.
+   6. `{"end": {gen, sessions, own}}` — counts of the lines above; a snapshot without a matching `end` is ignored.
+2. **Days.** `DayRow` (section 1) per local day of the window, from the session's `Acc`:
+   - `tp`: the table-priced rows of `Day.tp` (`src/features/usage/record.ts:17`) as
+     `[hour, provider, model, in, out, cacheRead, write5m, write1h, usd]` — what re-pricing needs (14);
+   - `hx`: harness-priced cost per provider (`[provider, usd]`: pi/OpenCode/fx reported costs, Kiro credits with a
+     rate) — kept as sent;
+   - `unk`, `um` (unpriced tokens per model), `uc` (credits), `tools`, `turns`, calls and errors of that day.
+3. **Generations and acknowledgements (no lost deltas).** The host keeps, per peer, a small state file
+   `~/.agentglass/fleet-peers/<peer>.json` (0600): the last two generations it produced — `acked` and `pending` —
+   each with a per-session signature (`size:mtime:ownN:ownSig`). A request names the generation the viewer fully
+   applied (`--ack`):
+   - `ack == pending.gen` → pending becomes acked; the new snapshot is relative to it;
+   - `ack == acked.gen` → the last one was lost; the new snapshot is relative to acked again;
+   - anything else, no state, or `--full` → a full snapshot.
+   The viewer acknowledges only after it applied the `end` line. `--peer` is the viewer's `hostId()`; the host keeps
+   at most 16 peers (oldest dropped: that viewer gets a full snapshot next time).
+4. **Size.** A full snapshot of a busy host is dominated by the own rows (13.1): ~235 k rows × ~60 bytes ≈ 14 MB of
+   JSON, about 5 MB with SSH compression, once. Deltas carry only new messages and changed sessions: a minute of a busy
+   host is a few KB.
+5. **Fallback.** A host without `fleet snapshot` (exit 2 "unknown command") is pulled with `fleet pull` (Part A) and
+   marked "update for an exact merge" in `fleet status`.
+
+### 13. Message ownership across hosts (exact merge)
+1. **Per-message rows on the source.** The ledger keeps owned message ids per Claude log (`Acc.mo`, id → order key,
+   `src/features/usage/owners.ts:31-45`) but not their usage. A sidecar keeps it:
+   `~/.agentglass/cache/msgrows/<sha256(path)[0:16]>.tsv`, one line per owned message
+   (`h key day hour model provider in out cacheRead write5m write1h usd priced`), appended by a booking tap
+   (`setBookTap`, `record.ts:400`) when the Claude adapter books a message, rewritten when `OWN.restart` re-reads a log
+   (`ledger.ts:78`). `h` = the first 16 hex digits of SHA-256 of `"agentglass/msg/v1|" + message id`. A log without a
+   sidecar (first snapshot after upgrading) is re-read once with the tap on, inside the snapshot run (bounded like a
+   cold index).
+2. **The rule.** Over all hosts' own rows (local included, from the local sidecars), a message `h` belongs to the
+   occurrence with the smallest order key (the copy's timestamp × 2 + copied flag, the `owners.ts` key); ties go to
+   the smaller `hostId`, then the smaller session key. Within one host nothing changes (the host already decided).
+3. **Applying it.** For each occurrence that is not the owner, the viewer subtracts that row's tokens and cost from
+   the session's shadow day bucket (13.4): from `tp[hour, provider, model]` when `priced`, else from `unk`/`um`.
+   The subtracted amount is exactly what the host booked for that message, so the result equals a single machine
+   reading every copy.
+4. **Shadow ledger.** For every exact remote session the viewer builds an `Acc` from its `DayRow`s ("shadow
+   entry", never persisted in the local ledger file, never in `sessions`). Fleet cost, projection, budget, Stats'
+   fleet line and `fleet cost` sum local and shadow entries through the existing `addDay`/`sumDays` code.
+5. **What stays approximate.** Tool calls, turns and lines of a copied history count in each session that holds
+   them (per-session figures are per file, as on one host). Tokens, cost and models are exact. A Part A host in the
+   fleet keeps the `≈` of 7.2.
+6. **Collisions.** 64-bit hashes: for 1 M distinct messages the chance of any collision is about 3 × 10⁻⁸. A
+   collision would hide one message's usage; accepted.
+7. **The OTLP hub feeds the same index:** it hashes `gen_ai.response.id` of Claude `chat` spans with the same prefix
+   and builds own rows from the spans' usage ([otlp-hub](../otlp-hub/spec.md) section 7), so a session that one
+   host exports and another host's snapshot also holds is still counted once.
+
+### 14. Local re-pricing
+- `fleet.reprice: true` (default): the viewer re-prices every shadow entry's table-priced rows with its own price
+  table through `reprice(a)` (`record.ts:382`), as it re-prices local history today (`repricer.ts`). One table
+  prices the fleet; a price set on the viewer (`agentglass prices set`) applies to every host.
+- Harness-priced cost (`hx`) and Kiro credits keep the host's figure (they are the harness's own numbers).
+- Unpriced remote models appear in the viewer's unpriced list and in `$` (model-prices) like local ones; pricing
+  them there prices them for the whole fleet.
+- `reprice: false` keeps each host's `usd`; `fleet status` then shows "prices differ" when `priceSig` differs.
+- **Time zones.** Day rows are re-bucketed into the viewer's zone by shifting `(day, hour)` by the difference of the
+  offsets (whole hours; a half-hour zone rounds toward the host's hour, documented). The viewer's "today" is then the
+  same for every host.
+
+### 15. `dir` hosts: snapshots through a synced directory
+For machines the viewer cannot reach (a laptop behind NAT, a machine that is often asleep):
+1. **Writer on the host:** `agentglass fleet drop <dir> [--every 5m] [--redact]`. Without `--every` it writes once
+   (for cron or a systemd/launchd timer); with it, it loops. It is its own peer (`--peer drop`) and acknowledges a
+   generation itself after the file is complete.
+2. **Layout** in `<dir>` (any sync tool: rsync, Syncthing, a network share):
+   - `<hostId>.base-<gen>.snap.gz` — a full snapshot (written at start, daily, and when the deltas since the base
+     exceed half its size);
+   - `<hostId>.delta-<n>-<gen>.snap.gz` — a snapshot relative to the previous file's generation, `n` counting up;
+   - each file written as `.tmp` and renamed when complete (sync tools copy only finished files or rename their own
+     temporaries);
+   - the writer deletes deltas older than the newest base and bases older than the previous one, after 24 hours.
+3. **Reader on the viewer** (`kind: "dir"`): applies the newest base and then the contiguous chain of deltas whose
+   `base` matches; a gap (a delta not synced yet) waits; a chain that never closes within an hour → falls back to
+   the newest base and says so in `fleet status`. Files are opened only if owned by the user and not group- or
+   world-writable (a shared folder can be written by others). Decompression: `zlib.gunzipSync` (verified in a
+   scriptc 0.1.7 native build on this machine: a 171 KB gzip body to 4.0 MB in 5–9 ms).
+4. **Freshness:** a drop is fresh while its newest file is at most `2 × every + 10 min` old. Live state from a
+   drop is never shown as running (it is minutes old); alarms from it are not toasted.
+5. **Privacy:** a drop directory is synced to other machines and possibly to a sync provider: `fleet drop` warns
+   when `--redact` is off and the directory is not under the user's home, and the README recommends `--redact` for
+   drops through third-party sync.
+
+### 16. Live stream: `fleet watch`
+1. **Remote command:** `agentglass fleet watch [--redact]` (allowed by `fleet serve`). It runs the `--watch` poll
+   loop's state and rules parts only (no event content) and prints JSON lines:
+   - `{"hello": …}` once;
+   - `{"live": LiveRow}` when a top-level session's `live`, `busy`, `attention`, `approval` or `stuck` changes,
+     once for every live session at start, and every 300 s while live;
+   - `{"alert": {key, rule, severity, state, value, threshold, labels, message}}` per rules transition;
+   - `{"turn": {key, done: true, at}}` when a turn closes (the viewer then pulls a snapshot early: costs move);
+   - `{"beat": now}` every 30 s.
+   The state rule (`live`, `busy`, `attention`, `approval`, `stuck`) is one function, `sessState(s)` in
+   `src/model/state.ts`, shared with otlp-complete's `session.state` records; whichever plan lands first creates it.
+2. **Viewer:** per host with `watch: true` and an exact-capable agentglass, one detached
+   `ssh … fleet watch >> <fleet dir>/<k>.watch.jsonl` (over the shared connection). The tick tails the file with a
+   byte cursor (≤ 256 lines per tick). Restarted with backoff (5 s doubling to 5 min) when it ends; killed on quit;
+   when the file passes 16 MB the viewer restarts the stream into a fresh file.
+3. **Effect:** a host is live-fresh while its last `beat` is ≤ 90 s old. `LiveRow`s override the snapshot's `live`,
+   `attention` and `stuck` for that session; the list's running glyph, attention badge and sort follow within about
+   a second plus the round trip. Remote `critical` alert transitions also go through the local desktop notification
+   path (`OS.notify`, with `AGENTGLASS_NOTIFY=0` respected); all transitions toast. A `turn` line schedules the next
+   snapshot within 5 s (at most one per 10 s per host).
+4. **Cost:** one long-lived ssh channel and one remote agentglass process per host; the remote process does what a
+   headless `--watch` does (Task budget: ≤ 1 % of one core on the host).
+
+### 17. One host through several feeds
+- A host is its `hostId`. When two feeds deliver reports for the same id (an SSH host that also exports to the OTLP
+  hub; a laptop with both a `dir` drop and SSH when at home), `hosts.ts` keeps one `RemoteHost` and per field takes:
+  sessions, days and own rows from the freshest **exact** report (snapshot or `dir` over hub when equally fresh,
+  since the snapshot carries the host's own ownership decisions and billing modes); live state from the freshest
+  live source (`fleet watch`, the hub's logs stream).
+- Rows are never duplicated by a second feed of the same host; `fleet status` lists the feeds per host.
+
 ## Failure modes
 - ssh missing → `fleet` exits 2 "fleet needs ssh (AGENTGLASS_SSH)"; the TUI shows the header segment `hosts: no ssh`
   once.
@@ -404,18 +575,35 @@ key from the file (one `ssh-…`/`ecdsa-…`/`sk-…` line, at most 16 KB, valid
 - Two viewers pull the same host → each has its own spool; they may share the SSH master (same `ControlPath` in the
   same run dir only).
 - A remote session id appears that is also a local id (same session read on both machines through a shared
-  directory) → overlap rule 7.2 applies to `local` too.
+  directory) → exact hosts: the ownership rule (13) counts each message once; Part A hosts: overlap rule 7.2.
+- A snapshot is lost in transit → the next request acknowledges the older generation and gets a delta from it (12.3).
+- The peer state on the host is deleted or the host restored from a backup → the `ack` no longer matches → full
+  snapshot.
+- A `dir` chain has a gap (sync lag) → the reader waits on the last complete generation; after an hour it rebuilds
+  from the newest base (15.3).
+- `fleet watch` dies or the link drops → backoff restart; the host's live state turns stale after 90 s without a
+  `beat`, rows stop showing as running.
+- The msgrows sidecar is missing or corrupt for a log → the snapshot re-reads that log once with the tap on; a line
+  that does not parse → that log's rows are rebuilt.
 
 ## Privacy
 - Nothing leaves a host unless the user configured it on the viewer and the host's SSH accepts the key.
 - The report holds metadata and titles; `redact` removes titles and identity at the source.
 - No account e-mail, name or organisation is read; the Claude account key is a salted hash of a uuid (7.4).
-- The viewer never sends local data to a host: the remote command carries only `--days N` and `--redact`.
+- The viewer never sends local data to a host: the remote command carries only `--days N`, `--redact`, and for
+  snapshots its own `hostId` and the acknowledged generation.
+- Message ids leave a host only hashed (salted with a fixed prefix); per-message rows carry counts and cost, no
+  content.
+- `dir` drops can pass through third-party sync: `fleet drop` warns without `--redact` outside the home directory.
 
 ## Interactions with other specs
-- **otlp-complete**: owns the OTLP side of the same fleet: `host.id` on every exported resource uses `hostId()` from
-  section 3, so an OTLP hub feed (later) and the SSH feed name a host the same way. Whichever of the two plans lands
-  first creates `src/util/hostid.ts` with the interface of section 3.
+- **otlp-complete**: `host.id` on every exported resource uses `hostId()` from section 3, so the OTLP hub and the
+  SSH feeds name a host the same way. Whichever plan lands first creates `src/util/hostid.ts` (section 3) and
+  `src/model/state.ts` (`sessState`, 16.1).
+- **otlp-hub**: a third feed (`kind: "otlp"`) of the model in section 1; it builds `SessRow`s with days and own rows
+  from spans, `LiveRow`s from otlp-complete's logs stream, and joins the exact merge of section 13 through the same
+  hashed message ids. Feed precedence per host: section 17. Fleet Part B and otlp-hub can be built in parallel; both
+  need Part A's `model.ts`/`hosts.ts` (fleet T2, T6).
 - **otlp-export**: unchanged. Its deterministic ids carry no host, so the same copied session exported from two
   hosts lands on the same trace ids; the hub feed relies on that.
 - **filter-language**: a new session attribute `host` (9); the attribute catalogue and `eval.ts` gain one entry each.
@@ -426,6 +614,7 @@ key from the file (one `ssh-…`/`ecdsa-…`/`sk-…` line, at most 16 KB, valid
 - **adaptive-refresh**: the unfocused/idle signal stretches the pull interval (5.5).
 - **honest-costs**: billing modes, `budgetState`, `addSum`, the allowance guard are reused unchanged; the budget
   applies to the fleet sum (7.3).
+- **model-prices**: `reprice(a)` and `Day.tp` re-price shadow entries (14); unpriced remote models show in `$`.
 - **rules-config**: remote alerts are the host's own rule results (the remote `rules.json`); the viewer does not
   re-evaluate them.
 - **tui-footprint / macos-footprint**: the tick does at most a `stat` per host and ≤ 256 parsed lines per tick; no
@@ -453,17 +642,29 @@ key from the file (one `ssh-…`/`ecdsa-…`/`sk-…` line, at most 16 KB, valid
 - `query`: `host is local`, `host is ws`, a call clause excludes remote rows.
 - TUI (tmux, isolated env): rows with badges at 80/120/200 columns, header segment states, Enter on a remote row
   toasts and does not touch a file, palette refresh, `?` section; one TUI at a time, killed after.
+- Part B:
+  - `fleet/snapshot.check.ts`: generations and acks (pending acked, lost snapshot → delta from acked, unknown ack →
+    full), `gone` lines, `end` counts, 16-peer cap, window, `--redact`.
+  - `usage/msgrows.check.ts`: the booking tap writes one row per owned Claude message; `OWN.restart` rewrites; rows
+    sum to the session's Claude tokens and cost exactly; a missing sidecar is rebuilt.
+  - `fleet/merge.check.ts`: two hosts with a copied history (same ids, different session ids) → fleet tokens and cost
+    equal one machine reading both files (computed with the local ledger on a fixture home holding both copies);
+    owner by key, ties by host id; a Part A host keeps `≈`; local re-pricing changes the fleet cost after
+    `prices set`; time-zone shift of day/hour.
+  - `fleet/dir.check.ts`: base + delta chain, a gap waits, a stale chain falls back to the base, foreign-owned or
+    group-writable files refused, pruning by the writer.
+  - `fleet/watch.check.ts`: `LiveRow` changes, 300 s repeat, beats, alert lines; viewer tail with restarts and the
+    16 MB rotation; staleness after 90 s; `critical` → `OS.notify` stub once.
+  - `scripts/fleet.test.sh` extension: fake ssh hosts with copied Claude histories: `fleet cost --json` `approx`
+    false and totals equal the single-home ledger; `fleet watch` through the fake ssh delivers a state change in ≤ 3 s.
 - Manual: real `ssh localhost` with a forced-command key in a test `authorized_keys` of a throwaway user or
   container (never the user's own `~/.ssh`), ControlMaster reuse timing.
 
 ## Out of scope
-- Exact cross-host message dedup (resumed copies under new ids), local re-pricing of remote usage, remote day
-  buckets, `cost --by host` rows, Stats charts per host — the snapshot or OTLP feeds.
-- Live streaming of remote events (`--watch` over SSH), remote desktop notifications.
-- Opening a remote transcript inside the TUI.
-- The OTLP hub feed, `agentglass receive`, snapshot drops (ROADMAP "Later").
-- Windows hosts; hosts without agentglass.
-- Pushing from hosts to the viewer.
+- Exact tool-call and turn counts across copied histories (13.5); `cost --by host` rows and per-host Stats charts.
+- Remote event content in the live stream (prompts, tool arguments) and opening a remote transcript in the TUI.
+- The OTLP hub and `agentglass receive` — [otlp-hub](../otlp-hub/spec.md).
+- Windows hosts; hosts without agentglass (they can still export to the hub).
 
 ## Decisions
 Each: question · options · decision · why · cost if wrong.
@@ -475,8 +676,8 @@ Each: question · options · decision · why · cost if wrong.
    - Why: one process loads the ledger once (two commands would index twice: 0.67 s + 1.0 s warm, 19 s + 42 s cold
      measured); the objects stay the documented `--json` contract, so nothing new has to be specified per field;
      lines let the TUI parse a big report across ticks; a `hello` line carries host id, format version and time
-     zone, which neither command has today. (c) is two to three weeks and only pays for exact overlap and
-     re-pricing.
+     zone, which neither command has today. (c) is Part B (`fleet snapshot`, Decision 17); the pull stays as the
+     first deliverable and as the fallback for hosts with an older agentglass.
    - Cost if wrong: hosts need an agentglass with `fleet pull`; an older host is reported as "update it there" in
      one status line.
 2. **Where remote sessions appear.**
@@ -506,14 +707,14 @@ Each: question · options · decision · why · cost if wrong.
      regardless of the viewer (`fleet serve --redact`).
    - Cost if wrong: a user who adds a shared or customer machine sees real titles from it until they set `redact`;
      the README's host section says so first.
-5. **Cross-host overlap in the MVP.**
-   - Options: (a) ignore; (b) mark the same `(harness, id)` on 2+ hosts with `≈` and say how many; (c) exact
-     message-level dedup now.
-   - **Decision: (b).**
-   - Why: (a) silently double-counts synced directories; (c) needs message ids from every host (snapshot or OTLP
-     feed). (b) is cheap, honest, and the case it misses (a copied history resumed under a new id) is documented.
-   - Cost if wrong: a fleet total can be too high by the copied part of resumed sessions; the README says how to see
-     it exactly later (OTLP hub).
+5. **Cross-host overlap.**
+   - Options: (a) ignore; (b) `≈` marks on the same `(harness, id)` on 2+ hosts; (c) exact message-level merge.
+   - **Decision: (c) for every host that delivers exact reports (Part B snapshots, `dir` drops, the OTLP hub); (b)
+     only for Part A pull hosts** (an older agentglass on the host, or `snapshot: false`).
+   - Why: the user asked for exact numbers, and copies are frequent: 235,188 distinct Claude messages appear 423,243
+     times on this one machine. (b) remains the honest answer where a host cannot send message ids.
+   - Cost if wrong: Part B's sidecar and own rows (13.1, 12.4); a host left on an old agentglass shows `≈` and a
+     status hint to update.
 6. **Fleet allowance gauge: sum or newest?**
    - Options: (a) sum the hosts' percentages; (b) per account, the window with the newest `fetchedAt`.
    - **Decision: (b).**
@@ -533,7 +734,7 @@ Each: question · options · decision · why · cost if wrong.
    - Options: 15 s, 60 s, 300 s, adaptive.
    - **Decision: 60 s (`refreshSeconds`), 300 s while the TUI is unfocused or idle, a palette action for now.**
    - Why: one pull costs the host about a second of CPU (measured warm), so 60 s is about 1.7 % of one core on the
-     host; alarms then arrive within a minute. Faster needs the live stream (later).
+     host; alarms then arrive within a minute on Part A; `fleet watch` (Part B) brings them to seconds.
    - Cost if wrong: remote alerts up to a minute late; configurable down to 15 s.
 9. **ControlPath** (technical).
    - Options: `%C` (40 hex), `%h-%p-%r`, a literal short hash.
@@ -565,10 +766,12 @@ Each: question · options · decision · why · cost if wrong.
     - Cost if wrong: one extra step for the user (copy the command).
 13. **Remote alarms.**
     - Options: (a) toast per new transition; (b) toast and desktop notification; (c) nothing.
-    - **Decision: (a).**
-    - Why: the TUI is where people look; desktop notifications for a minute-old event would arrive after the moment
-      for approvals, and the notify path belongs to the local rules engine. Live notifications come with the stream.
-    - Cost if wrong: a user away from the TUI misses a remote alarm; the header still shows it on return.
+    - **Decision: Part A (pull, up to a minute old): (a). With `fleet watch` (Part B, seconds old): (b) for
+      `critical` transitions, (a) for the rest.**
+    - Why: a desktop notification is worth it only while the moment (an approval wait, a stuck agent) is still on;
+      the stream makes remote alarms as timely as local ones, so they use the same notify path and the same
+      `AGENTGLASS_NOTIFY=0` switch.
+    - Cost if wrong: one more notification source; `AGENTGLASS_NOTIFY=0` or `watch: false` per host silences it.
 14. **Exit code for partial results.**
     - Options: (a) 0 always, warnings on stderr; (b) non-zero whenever a host fails; (c) (a) plus `--strict`.
     - **Decision: (c), `--strict` → 5** (codes 2–4 are taken: usage, budget/lock, ambiguous/unpriced).
@@ -580,21 +783,78 @@ Each: question · options · decision · why · cost if wrong.
     - **Decision: (a)**, `HostFeed` → `HostReport` (section 1).
     - Why: the `--json` shape is already the public contract and the thing an OTLP mapper or a snapshot reader can
       target; `Sess` is internal and changes with every spec; one model per transport would triple the TUI work.
-    - Cost if wrong: a later feed that knows more (per-call rows, day buckets) needs an optional field on
-      `HostReport`, not a new model.
-16. **ROADMAP: the built-in OTLP receiver (phase 4).**
-    - Options: (a) keep "a local OTLP receiver" under "Explicitly not planned"; (b) move it to "Later, decision
-      pending" with the criteria that would decide it; (c) plan it now.
+      The exact-merge data (`days`, `own`, `live`) are optional fields on the same report, so Part A, Part B and the
+      OTLP hub share one model, one merge and one TUI path; otlp-hub references this section instead of defining its
+      own.
+    - Cost if wrong: a feed that knows more later (per-call rows) adds another optional field, not a new model.
+16. **ROADMAP: the built-in OTLP receiver.**
+    - Options: (a) keep "a local OTLP receiver" under "Explicitly not planned"; (b) "Later, decision pending";
+      (c) plan it now, in [otlp-hub](../otlp-hub/spec.md).
+    - **Decision: (c).** The user decided (2026-10-06): world-class log collection and distribution, and agentglass
+      should dogfood its own OTLP export end to end.
+    - Why: the old entry's own trigger is met: hosts the viewer cannot reach over SSH (laptops behind NAT, CI runners,
+      short-lived VMs) hold data on no disk the viewer can read. scriptc 0.1.7 can listen on TCP: a native test build
+      here received gzip OTLP/JSON over `http.createServer` with a bearer check (4 MB decoded in 5–9 ms, 27 MB RSS);
+      HTTPS works only through the C backend and client certificates are not supported, so mTLS stays on the
+      Collector path (otlp-hub decides the details). A receiver turns agentglass's own export into a complete
+      collection path without a third-party service.
+    - Cost if wrong: a network listener to maintain and secure; otlp-hub keeps it loopback-only by default with a
+      token per host, so the exposed surface is opt-in.
+17. **Snapshot deltas without lost updates** (technical).
+    - Options: (a) time cursor (`--since <ms>`); (b) the viewer stores per-session state and sends it; (c) the host
+      keeps per-peer `acked`/`pending` generations and the viewer acknowledges.
+    - **Decision: (c).**
+    - Why: (a) misses copies with old timestamps and rows appended to old sessions; (b) would put a large state into
+      the ssh command line; (c) is small on the host (two signatures per session per peer), stateless on the wire,
+      and a lost snapshot is repaired by the next request.
+    - Cost if wrong: a few KB of state per peer on each host; 16 peers at most.
+18. **Where per-message usage comes from.**
+    - Options: (a) store per-message usage in the ledger cache (`VERSION` bump, every user pays); (b) a sidecar per
+      Claude log written by the booking tap, used only by fleet; (c) ask the losing host to re-read without the
+      shared ids (a round trip).
     - **Decision: (b).**
-    - Why: the "not planned" entry said to revisit when a needed signal is missing from on-disk transcripts. Hosts
-      the viewer cannot reach over SSH (laptops behind NAT, CI runners, ephemeral VMs) are that case: their data is
-      not on any disk the viewer can read. scriptc 0.1.7 can listen on TCP (HTTP; HTTPS only through the C backend;
-      no client certificates), so it is feasible, but an OTel Collector with a file exporter (phase 3) covers the
-      same hosts without a listener in agentglass. Decide after phase 3 ships, on three questions: do users run a
-      Collector at all; does the release toolchain build the TLS server for every target; does a bearer token per
-      host plus a tailnet suffice as authentication.
-    - Cost if wrong: (b) costs nothing until decided; deciding too early would ship a network listener the product
-      has avoided so far.
+    - Why: (c) does not work for `dir` hosts or offline hosts, and the answer arrives late; (a) grows every user's
+      ledger and forces a re-index; (b) costs only on machines that serve or view a fleet, ~9 MB per 235 k messages,
+      and can be rebuilt from the transcripts at any time.
+    - Cost if wrong: a one-time re-read of Claude logs on a host's first snapshot (cold-index time, 19–42 s here).
+19. **Message-id hash length.**
+    - Options: 32, 64, 128 bits.
+    - **Decision: 64 bits (16 hex digits), salted with `agentglass/msg/v1|`.**
+    - Why: ~3 × 10⁻⁸ chance of any collision among 1 M messages; 128 bits doubles the dominant part of a full
+      snapshot for no practical gain.
+    - Cost if wrong: one hidden message's usage in a fleet of millions of messages.
+20. **Prices across hosts.**
+    - Options: (a) each host's own figure; (b) the viewer's table for table-priced usage (default), harness-priced
+      cost as sent.
+    - **Decision: (b)**, `fleet.reprice: false` for (a).
+    - Why: one budget and one projection need one price table; prices set on the viewer then apply everywhere; the
+      harness's own reported costs are facts, not table lookups.
+    - Cost if wrong: a host with a deliberately different price table is overridden unless `reprice: false`.
+21. **Time zones.**
+    - Options: (a) each host's local days; (b) re-bucket into the viewer's zone by hour.
+    - **Decision: (b).**
+    - Why: "today" and the budget month must mean one thing; `tp` rows carry the hour, so the shift is exact for
+      whole-hour zones.
+    - Cost if wrong: half-hour zones are off by 30 minutes at day edges.
+22. **`dir` drop layout.**
+    - Options: (a) one full snapshot file overwritten each time; (b) base + numbered deltas, renamed when complete.
+    - **Decision: (b).**
+    - Why: a full snapshot of a busy host is ~5 MB compressed; rewriting it every 5 minutes is 1.4 GB a day through
+      the sync tool. Deltas keep it to KB; renames keep half-written files out of the reader.
+    - Cost if wrong: a reader must handle gaps (15.3).
+23. **Live stream format.**
+    - Options: (a) the full `--watch` JSONL (events with content); (b) state, alerts, turn ends and beats only.
+    - **Decision: (b).**
+    - Why: the viewer needs "what is running, what needs me"; event content would move prompts and tool output
+      between machines, which the fleet avoids by design.
+    - Cost if wrong: no remote event tail in the TUI; the transcript stays one ssh command away.
+24. **One host through several feeds.**
+    - Options: (a) separate rows per feed; (b) merge by `hostId`, exact reports first, live state from the freshest
+      live source.
+    - **Decision: (b).**
+    - Why: a host that is both SSH-reachable and exporting to the hub must not appear twice; the snapshot carries the
+      host's own ownership and billing decisions, the hub may carry fresher liveness.
+    - Cost if wrong: a field taken from the less fresh feed for up to one refresh.
 
 ## Open questions (technical verification during implementation)
 1. Does scriptc 0.1.7 lower `process.kill(-pid, sig)` (process group)? If not, kill `sh` by pid and rely on ssh's
@@ -605,3 +865,9 @@ Each: question · options · decision · why · cost if wrong.
    `account` is `""` and all hosts count as one account (the documented default).
 4. macOS `ioreg` output format for `IOPlatformUUID` on macos-14 runners (the macOS CI job checks it).
 5. Native-build speed of parsing a 900-line report at 256 lines per tick (budget: ≤ 5 ms per tick on the perf host).
+6. Book tap coverage: does every Claude booking path (streamed lines, fallback iterations, subagent logs) pass
+   through `setBookTap` with the message id at hand? If not, the msgrows tap goes into the Claude adapter's
+   `claim()` call site (`claude.ts:254`).
+7. Remote `fleet watch` CPU on the perf host (budget ≤ 1 % of a core) with 900 sessions in the window.
+8. `zlib.gunzipSync` output-size limit (`maxOutputLength`) lowering in scriptc for `dir` files (a decompression
+   bomb in a shared folder); fallback: check the gzip ISIZE trailer and refuse > 256 MB before decompressing.

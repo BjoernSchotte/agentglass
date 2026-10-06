@@ -1,8 +1,10 @@
-# Fleet (SSH pull MVP) Implementation Plan
+# Fleet Implementation Plan (Part A: SSH pull MVP · Part B: snapshots, exact merge, `dir` hosts, live stream)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `agentglass fleet` and the TUI show sessions, cost and live state of several machines, pulled over SSH from each host's own agentglass (`fleet pull`), with host-qualified rows, a `host` filter attribute, a host badge, staleness, cached reports for offline hosts, `fleet status`, and a forced-command recipe that limits the viewer's key to read-only output.
+**Goal (Part A, Tasks 0–9):** `agentglass fleet` and the TUI show sessions, cost and live state of several machines, pulled over SSH from each host's own agentglass (`fleet pull`), with host-qualified rows, a `host` filter attribute, a host badge, staleness, cached reports for offline hosts, `fleet status`, and a forced-command recipe that limits the viewer's key to read-only output.
+
+**Goal (Part B, Tasks 10–16):** exact fleet figures: incremental `agentglass-snapshot/v1` with per-peer acknowledged generations, hashed Claude message-id ownership across hosts (the `≈` marks disappear for exact hosts), local re-pricing and time-zone re-bucketing through shadow ledger entries, `dir` hosts (snapshot drops through rsync/Syncthing), and the live `fleet watch` stream spooled and tailed.
 
 **Architecture:** A remote host is a `HostFeed` that delivers `HostReport`s (`src/features/fleet/model.ts`). The only feed built here is SSH (`ssh.ts`): a detached `sh` snippet runs `ssh … agentglass fleet pull` into a spool file under `~/.agentglass/fleet/`, the tick only stats the `.rc` file and parses the report in line windows. `hosts.ts` turns reports into read-only `Sess` rows (`host` set, `pid` 0, never in the `sessions` map) that `buildView` appends; costs sum through the existing `ModeSum`/`budgetState`. The remote side (`pull.ts`, `serve.ts`, `authorize.ts`) reuses `jsonSess` and the `cost --json` object unchanged.
 
@@ -34,7 +36,13 @@
 | 1 | T1 host id · T2 config + model + report parser | **parallel** | T0 |
 | 2 | T3 `fleet pull` · T5 SSH feed + store · T6 merge into the model | **parallel** | T1, T2 (T3 needs both; T5, T6 need T2) |
 | 3 | T4 `fleet serve` + `authorize` · T7 CLI · T8 TUI | **parallel** | T4: T3 · T7: T3, T5, T6 · T8: T5, T6 |
-| 4 | T9 end-to-end test, README, help | alone | all |
+| 4 | T9 end-to-end test, README, help | alone | T1–T8 |
+| 5 | T10 msgrows sidecar + snapshot codec | alone (may start any time after T2: it touches only `usage/` and a new codec file) | T2 |
+| 6 | T11 `fleet snapshot` writer · T12 snapshot feed (viewer) · T13 exact merge + re-pricing · T15 `fleet watch` | **parallel** | T11: T3, T4, T10 · T12: T5, T10 · T13: T6, T10 · T15: T4, T5, T8 |
+| 7 | T14 `dir` drops (writer + reader) | alone | T11, T12 |
+| 8 | T16 Part B end-to-end test, README | alone | T10–T15 |
+
+Cross-spec order: [otlp-hub](../otlp-hub/plan.md) needs this plan's T2 and T6 (model, hosts) to start, and T13 (the exact merge index) for its own-row task; otherwise Part B and otlp-hub run in parallel. `src/model/state.ts` (`sessState`) is created by T15 or by [otlp-complete](../otlp-complete/plan.md) T4, whichever lands first.
 
 Files are split so that no two tasks of one wave edit the same file, except `src/main.ts` imports (one line each; merge by keeping both).
 
@@ -46,6 +54,8 @@ Files are split so that no two tasks of one wave edit the same file, except `src
 4. **Never blocking the tick.** `poll()` = one `stat` per host plus ≤ 256 parsed lines; no `execFileSync` on the TUI tick (T5 check counts calls through a stub; T8 measures the tick).
 5. **Honest totals.** Overlap `(harness, id)` on 2+ hosts → `≈` and `overlap` count; stale hosts → `≈`; allowance takes the newest `fetchedAt` per account and never sums (T6 check).
 6. **Kill safety.** Timeout kills only our own spawned pids/process groups (T5 check with a fake ssh that sleeps).
+7. **Exactness (Part B).** A fixture with one Claude history copied to two hosts under different session ids: fleet tokens and cost must equal the local ledger reading both copies on one home (T13, T16). No `≈` on exact hosts.
+8. **No lost deltas (Part B).** Drop a snapshot between host and viewer: the next request must repair it (T11 check); a `dir` gap waits instead of double-applying (T14).
 
 ---
 
@@ -128,7 +138,7 @@ if (bad) process.exit(1);
   - Name `^[a-z0-9][a-z0-9-]{0,15}$`, unique, ≠ `localName`; ssh `^[A-Za-z0-9._%+@:\[\]-]{1,255}$` and not `^-`; agentglass `^(~/)?[A-Za-z0-9._/+-]{1,255}$`; ranges refresh 15–3600 (60), days 1–90 (7), timeout 10–600 (90); `localName` same pattern as names (default `local`); ≤ 32 hosts.
   - An entry with `otlp` or `dir` and no `ssh` → kept with `kind` `"otlp"`/`"dir"`, `enabled: false`, warning `fleet host <name>: transport otlp needs a newer agentglass`.
 - `model.ts`: `Hello`, `HostReport`, `FeedState`, `HostFeed` exactly as spec section 1; `export const FORMAT = "agentglass-fleet/v1"`.
-- `report.ts`: `export interface Parse { hello: Hello | null; cost: Obj | null; allowance: Obj | null; sessions: Obj[]; done: boolean; err: string }`; `export function newParse(): Parse`; `export function feedLines(p: Parse, lines: string[]): void` (incremental: `{"hello"}` must come first, else `err = "not a fleet report"`; `{"end": {sessions: n}}` sets `done` when `n === sessions.length`, else `err = "incomplete report"`; a format major other than `v1` → `err = "newer format " + format`; unknown line keys ignored); `export function toReport(p: Parse): HostReport | null` (null unless `done && !err`); `export function reportLines(r: HostReport): string[]` (inverse, used by `fleet pull` and by checks).
+- `report.ts`: `export interface Parse { hello: Hello | null; cost: Obj | null; allowance: Obj | null; sessions: SessRow[]; done: boolean; err: string }` (each `{"s": o}` line becomes `{s: o, key: o.harness + ":" + o.id, days: null, own: null, prov: []}`; `toReport` sets `live: null`, `exact: false`); `export function newParse(): Parse`; `export function feedLines(p: Parse, lines: string[]): void` (incremental: `{"hello"}` must come first, else `err = "not a fleet report"`; `{"end": {sessions: n}}` sets `done` when `n === sessions.length`, else `err = "incomplete report"`; a format major other than `v1` → `err = "newer format " + format`; unknown line keys ignored); `export function toReport(p: Parse): HostReport | null` (null unless `done && !err`); `export function reportLines(r: HostReport): string[]` (inverse, used by `fleet pull` and by checks).
 
 - [ ] **Step 1: Failing check** `src/features/fleet/config.check.ts` — cases: a valid two-host config → 2 hosts, defaults applied; `{"name":"Ws"}` → skipped (uppercase) with a warning naming it; `"ssh": "-oProxyCommand=evil"` → skipped, warning contains `must not start with -`; `"ssh": "a b"` → skipped; duplicate name → second skipped; name `local` → skipped; `"agentglass": "~/bin/ag;rm"` → skipped; `refreshSeconds: 5` → 60 with a warning; `{"name":"ci","otlp":"/x"}` → kept, `kind "otlp"`, `enabled false`, warning `needs a newer agentglass`; 33 hosts → 32 + one warning; `fleet: 3` → defaults + warning `fleet in ~/.agentglass/config.json must be an object`. Same `ok()` style as Task 1; last line `fleet config: all checks passed`.
 - [ ] **Step 2: Failing check** `src/features/fleet/report.check.ts`: build a `HostReport` literal (hello with `FORMAT`, cost `{today:{byMode:{api:1}}}`, two sessions `{id:"a",harness:"claude"}`, `{id:"b",harness:"codex"}`), `reportLines` → feed in two chunks (1 line, rest) → `toReport` deep-equals the input (compare `JSON.stringify`); without the `end` line → `toReport` null and `done` false; `end` with `sessions: 3` → `err` `incomplete report`; first line not hello → `not a fleet report`; hello format `agentglass-fleet/v2` → `newer format agentglass-fleet/v2`; a line `{"x":1}` between sessions is ignored. Last line `fleet report: all checks passed`.
@@ -309,3 +319,137 @@ HOME="$FAKE_HOMES/$dest" AGENTGLASS_CACHE_DIR="$FAKE_HOMES/$dest/cache" eval "$*
 - [ ] **Step 3: README** "Several machines (fleet)": what moves and what stays (spec 11), the config block (spec 2), the forced-command recipe with `fleet authorize` and `restrict` + `from=` (spec 4.2), `redact` per host first, the overlap `≈` limit, timezone and price notes, Tailscale SSH works unchanged, `fleet status` as the first troubleshooting step, the exit codes.
 - [ ] **Step 4: Manual SSH run** (no change to `~/.ssh`): `AGENTGLASS_SSH=$S/ssh-wrap` where `ssh-wrap` = `exec ssh -o UserKnownHostsFile=$S/known_hosts -o StrictHostKeyChecking=accept-new "$@"`, viewer config with `{"name":"lo","ssh":"localhost","agentglass":"<abs path of the build>"}`: `fleet status` → `ok`; second `fleet --refresh` time − first ≈ the remote `fleet pull` time (sharing on); `fleet status --close` ends the master. Note timings in the PR.
 - [ ] **Step 5: Commit** `test(fleet): end-to-end fleet test with a fake ssh; docs(readme): several machines`.
+
+---
+
+## Part B — exactness
+
+### Task 10: Per-message rows sidecar and the snapshot codec — wave 5
+
+**Files:** Create `src/features/usage/msgrows.ts`, `src/features/usage/msgrows.check.ts`, `src/features/fleet/snap.ts`, `src/features/fleet/snap.check.ts`; Modify `src/features/usage/record.ts:398-400` (Booking gains `id: string`, `iso: string`, `hour: number`), the Claude booking call site (`src/harness/claude.ts:252-256`: pass the message id and timestamp to the tap), `src/features/usage/ledger.ts:78` (`OWN.restart` also calls `msgrowsReset(path)`).
+
+**Interfaces — Produces:**
+- `msgrows.ts`:
+  - `export function msgHash(id: string): string` — `sha256Hex("agentglass/msg/v1|" + id).slice(0, 16)`.
+  - `export function rowsDir(): string` — `join(cacheDir(), "msgrows")` (0700).
+  - `export function rowsFile(path: string): string` — `join(rowsDir(), sha256Hex(path).slice(0, 16) + ".tsv")`.
+  - `export interface MsgRow { h: string; key: number; d: string; hr: number; m: string; prov: string; n: number[] }` (`n` = `[in, out, cacheRead, write5m, write1h, usd, priced]`).
+  - `export function tapOn(path: string): void` / `tapOff(): void` — while on, every Claude booking with an id appends one TSV line (`h key d hr m prov in out cr w5 w1 usd priced`) to the buffer of that path; `flushRows()` appends buffers to the files (called by the ledger's save path and by the snapshot writer).
+  - `export function msgrowsReset(path: string): void` — truncate the file before `OWN.restart` re-reads.
+  - `export function readRows(path: string, from: number): { rows: MsgRow[]; n: number; ok: boolean }` — rows from index `from`; `ok = false` when the file is missing or a line does not parse (caller re-reads the log with the tap on).
+  - Only owned messages produce rows: the tap is called after `claim()` succeeded (`claude.ts:254`); a message that later moves to another file is removed by that file's `OWN.restart` reset + re-read.
+- `snap.ts` (pure codec, used by writer, readers and checks):
+  - `export const SNAP = "agentglass-snapshot/v1"`.
+  - `export interface Snap { head: Obj; gen: string; base: string; full: boolean; sess: SessRow[]; own: { key: string; reset: boolean; rows: OwnRow[] }[]; gone: string[]; cost: Obj | null; allowance: Obj | null; done: boolean; err: string }`.
+  - `export function snapLines(x: Snap): string[]`, `export function newSnapParse(): Snap`, `export function feedSnap(p: Snap, lines: string[]): void` (order and `end` counts per spec 12.1; a format major ≠ v1 → `err`).
+  - `export function applySnap(cur: HostReport | null, own: Map<string, OwnRow[]>, x: Snap): HostReport` — `full` → replace; else apply `sess` replacements, `own` appends/resets, `gone` removals; sets `exact = true`.
+  - `export function dayRows(a: Acc, days: string[]): DayRow[]` — from `Day.tp/hx(cp minus table-priced)/unk/um/uc/tools/turns` (spec 12.2).
+
+- [ ] **Step 1: Failing check** `msgrows.check.ts`: a fixture HOME with one Claude log of 3 messages (2 models) + a copy of message 2 in a second log (later timestamp); `ledger` indexing with the tap on → log 1 has 3 rows, log 2 has 0 (message 2 owned by log 1); rows' `n` summed equal `accOf(log1)` tokens and cost; then make log 2's copy earlier (rewrite its timestamp) and re-index → log 1 has 2 rows after its `OWN.restart`, log 2 has 1; `msgHash("msg_x")` 16 hex and stable; a corrupt line → `readRows(...).ok === false`. Last line `msgrows: all checks passed`.
+- [ ] **Step 2: Failing check** `snap.check.ts`: round trip `snapLines` → `feedSnap` (chunked) → deep-equal; missing `end` → not done; `applySnap` full then a delta with one replaced session, one own append, one gone → expected report; an own `reset` replaces rows. Last line `fleet snap: all checks passed`.
+- [ ] **Step 3: Run** both → FAIL; implement (Task 0 open question 6: if the Booking path lacks the id, add the tap call next to `claim()` in `claude.ts` instead and note it); run → pass.
+- [ ] **Step 4: Size check** on the dev box (isolated cache): index Claude history with the tap on, `du -sh $S/cache/msgrows` and `wc -l` total. Expected ≈ the distinct message count (235 k at spec time) and ≤ 15 MB. Record in the PR.
+- [ ] **Step 5: Run** `sh scripts/check.sh` → all `ok`; `--json --limit 400` before/after: tokens and cost field-identical (the tap does not change booking).
+- [ ] **Step 6: Commit** `feat(usage): per-message rows sidecar for owned Claude messages; snapshot codec`.
+
+---
+
+### Task 11: `fleet snapshot` writer with per-peer generations — wave 6, parallel with T12, T13, T15
+
+**Files:** Create `src/features/fleet/snapshot.ts`, `src/features/fleet/snapshot.check.ts`; Modify `src/features/fleet/serve.ts` (`allowed()` accepts `fleet snapshot` with `--peer`/`--ack` 16 hex, `--full`, `--days`, `--redact`, and `fleet watch [--redact]`), `src/features/fleet/serve.check.ts`, `src/main.ts`.
+
+**Interfaces — Produces:**
+- `export interface PeerState { acked: Gen | null; pending: Gen | null }`, `export interface Gen { gen: string; sig: Map<string, string> /* key → size:mtime:ownN:ownSig */ }`.
+- `export function peerFile(peer: string): string` — `~/.agentglass/fleet-peers/<peer>.json` (dir 0700, file 0600; peer must match `^[0-9a-f]{16}$|^drop$`).
+- `export function baseFor(st: PeerState, ack: string, full: boolean): Gen | null` — spec 12.3.
+- `export function buildSnap(days: number, base: Gen | null, now: number): { snap: Snap; next: Gen }` — candidates as `pullReport` (Task 3); a session goes out when its signature differs from `base`; own rows from `readRows(path, base ownN)` (re-read with the tap when `!ok`); `gone` = base keys not in the window; `gen` = 16 hex from `/dev/urandom` (read 8 bytes) — no `Math.random` for ids.
+- `export function savePeer(peer: string, st: PeerState, next: Gen): void` — `pending = next` (atomic write; at most 16 peer files, the oldest by mtime deleted).
+- CLI `fleet snapshot …` prints `snapLines` (EPIPE → exit 0) and saves the peer state only after the `end` line was written (a failed write leaves the state as it was).
+
+- [ ] **Step 1: Failing check** `snapshot.check.ts` (fixture HOME, 3 sessions): first call (`ack ""`) → full, 3 sess, own rows for the Claude ones; second call with `ack = first.gen` → `base = first.gen`, 0 sess (nothing changed); append a line to one log → third call with `ack = second.gen` → 1 sess, its new own row only (state now: acked = second, pending = third); a fourth call again with `ack = second.gen` (the third was lost) → a delta relative to `second`: the same 1 sess and own row as the third; `ack = "ffffffffffffffff"` → full; a deleted log → `gone` holds its key; 17 peers → 16 files. Last line `fleet snapshot: all checks passed`.
+- [ ] **Step 2: Failing cases** in `serve.check.ts`: `agentglass fleet snapshot --peer 00112233445566ff --ack 0011223344556677 --days 7` allowed; `--peer x` refused; `agentglass fleet watch --redact` allowed; `agentglass fleet drop /tmp` refused (drops run locally, never through serve).
+- [ ] **Step 3: Run** → FAIL; implement; run → pass. `sh scripts/check.sh` → all `ok`.
+- [ ] **Step 4: Commit** `feat(fleet): fleet snapshot — incremental snapshots with per-peer acknowledged generations`.
+
+---
+
+### Task 12: Snapshot feed on the viewer — wave 6, parallel with T11, T13, T15
+
+**Files:** Modify `src/features/fleet/ssh.ts` (snapshot mode, `--peer`/`--ack`, fallback to pull), `src/features/fleet/store.ts` (current report + own rows per host persisted as a full snapshot file `k.snap` after each applied delta; `k.ack` = last applied generation), `src/features/fleet/ssh.check.ts`, `src/features/fleet/store.check.ts`.
+
+**Interfaces — Produces:**
+- `sshArgs(h, days, redact, cp, mode: "pull" | "snapshot", ack: string)` — snapshot: remote words `fleet snapshot --peer <hostId()> --ack <ack> --days N [--redact]`.
+- The feed applies a finished snapshot with `applySnap`, writes `k.snap` (the merged state, `snapLines` of a full snapshot, 0600, atomic) and then `k.ack`; on start it loads `k.snap` as the current report and `k.ack` as the next request's ack.
+- Fallback: a snapshot run that ends with code `old` (Task 5 `statusOf`) → this host uses `pull` for the rest of the process; `fleet status` shows `exact: no (update agentglass on <host>)`.
+- A snapshot carries `own` rows in the report's `SessRow.own`; `report.exact = true`.
+
+- [ ] **Step 1: Failing cases**: argv for snapshot mode (expected array written out); a fake-ssh process test that serves two consecutive snapshot outputs (full, then delta) → the feed's report equals `applySnap(applySnap(null, full), delta)`, `k.ack` holds the delta's gen; a cut delta (no `end`) → report unchanged, `k.ack` unchanged, next request acks the previous gen; `old` → pull mode.
+- [ ] **Step 2: Run** → FAIL; implement; run → pass; `sh scripts/check.sh` → all `ok`.
+- [ ] **Step 3: Commit** `feat(fleet): snapshot feed — acknowledged deltas, persisted state, pull fallback`.
+
+---
+
+### Task 13: Exact merge, shadow ledger, re-pricing, time zones — wave 6, parallel with T11, T12, T15
+
+**Files:** Create `src/features/fleet/merge.ts`, `src/features/fleet/merge.check.ts`; Modify `src/features/fleet/hosts.ts` (`fleetCost` from shadow entries when all contributing reports are exact; overlap `≈` only for non-exact hosts), `src/features/usage/summary.ts` (export a `sumDaysOf(accs: Acc[], days, harness)` variant of `sumDays`, `summary.ts:23`, that takes the entries instead of the ledger).
+
+**Interfaces — Produces:**
+- `export interface Occ { host: string; hostId: string; key: string; row: OwnRow }`.
+- `export function ownerIndex(occs: Occ[]): Map<string, Occ>` — per `h` the occurrence with the smallest `row.key`, ties by `hostId`, then `key` (spec 13.2).
+- `export function shadowOf(r: SessRow, shiftMin: number): Acc` — `newAcc()` filled from `DayRow`s: `tp` rows re-keyed `(day, hour)` shifted by `shiftMin` (whole hours, `Math.round(shiftMin / 60)`), `hx` into `cp`/cost, `unk`/`um`/`uc`, `tools`/`turns`; `bill`/`plan` from `r.s.billing`; `cp` provider modes from `r.prov`.
+- `export function subtract(a: Acc, row: OwnRow, shiftMin: number): void` — removes one message's tokens and cost from the matching `tp` key (priced) or `unk`/`um` (unpriced), and from the day/acc totals; never below 0.
+- `export function exactFleet(local: { path: string; rows: MsgRow[] }[], hosts: { name: string; hostId: string; r: HostReport; shiftMin: number }[], reprice: boolean): { accs: Acc[]; removed: number }` — builds shadows, runs `ownerIndex` over local rows (from `readRows` of local Claude logs) and remote own rows, subtracts every non-owner remote occurrence from its shadow and every non-owner local occurrence into a local correction entry (a negative-only shadow for that local session, so the local ledger stays untouched), re-prices shadows with `reprice(a)` (`record.ts:382`) when `reprice`.
+- `hosts.ts`: `fleetCost` uses `sumDaysOf(localAccs ++ accs, …)` and the projection helpers when every fresh contributing report is exact; else Part A's sum with `approx`.
+
+- [ ] **Step 1: Failing check** `merge.check.ts`: fixture A (host `ws`) with Claude session `s1` holding messages m1–m3; fixture B (host `vm1`) with `s9` holding copies of m2–m3 (later keys) + m4; local with none. Expected after `exactFleet`: total tokens = m1+m2+m3+m4 (computed by indexing one fixture HOME that holds both logs with the real ledger: the ground truth), cost likewise; `removed === 2`; swap keys (B earlier) → the A shadow loses m2–m3 instead, totals unchanged; tie → smaller hostId wins; local holding a copy of m1 with an earlier key → local keeps it, A's shadow loses it; `reprice` with a user price for the model changes the total cost by the expected amount; `shiftMin = 120` moves a 23:30 row into the next day. Last line `fleet merge: all checks passed`.
+- [ ] **Step 2: Run** → FAIL; implement; run → pass; `sh scripts/check.sh` → all `ok`.
+- [ ] **Step 3: TUI/CLI effect**: `fleet cost --json` `approx` false and `overlap` 0 for exact hosts (Task 7's envelope gains `exact: true`); the Stats fleet line drops `≈` for them (Task 8's renderer reads `FleetCost.approx`).
+- [ ] **Step 4: Commit** `feat(fleet): exact cross-host merge by hashed message ownership; fleet re-pricing and time zones`.
+
+---
+
+### Task 14: `dir` drops — wave 7
+
+**Files:** Create `src/features/fleet/drop.ts`, `src/features/fleet/dirfeed.ts`, `src/features/fleet/drop.check.ts`; Modify `src/features/fleet/hosts.ts` (construct a `dirFeed` for `kind: "dir"` entries), `src/features/fleet/config.ts` (`dir` path validation: `~/` or absolute, ≤ 1024 chars).
+
+**Interfaces — Produces:**
+- `drop.ts`: CLI `fleet drop <dir> [--every <dur>] [--redact]` (`--every` 1m–24h): writes per spec 15.2 with `buildSnap(days, base, now)` and peer `drop`, gzip via `gzip()` (`src/util/gzip.ts:75`) + `writeBin`, `.tmp` then `renameSync`; base when no base exists, at the first run of a day, or when the deltas since the base exceed half its size; pruning after 24 h. Warns once when `--redact` is off and `<dir>` is outside `HOME`.
+- `dirfeed.ts`: `export function dirFeed(h: HostCfg, f: FleetCfg): HostFeed` — `poll()` lists `<dir>` (`listDirCached`, 5 s), refuses files not owned by the user or group/world-writable (`OS.fileInfo`), reads the newest base + contiguous deltas (gunzip with `zlib.gunzipSync`; refuse > 256 MB by the ISIZE trailer, spec open question 8), applies with `applySnap`; a gap → keep the last complete state; no progress for an hour → rebuild from the newest base and set `err = "chain incomplete: rebuilt from the base of <time>"`; at most one file decompressed per tick.
+
+- [ ] **Step 1: Failing check** `drop.check.ts`: writer into a temp dir three times with a changing fixture → 1 base + 2 deltas, names per pattern, all 0600; reader → report equals the writer's state; delete delta 1 → reader stays at the base state; a group-writable file → refused with a status; a file owned by root (skip when not root-capable: assert via a stubbed `OS.fileInfo`) → refused; pruning after a faked 25 h. Last line `fleet drop: all checks passed`.
+- [ ] **Step 2: Run** → FAIL; implement; run → pass; `sh scripts/check.sh` → all `ok`.
+- [ ] **Step 3: Commit** `feat(fleet): dir hosts — snapshot drops (base + deltas) for synced folders`.
+
+---
+
+### Task 15: `fleet watch` — wave 6, parallel with T11, T12, T13
+
+**Files:** Create `src/features/fleet/watch.ts`, `src/features/fleet/watchfeed.ts`, `src/features/fleet/watch.check.ts`; Create or reuse `src/model/state.ts` (`sessState(s): { live; busy; attention; approval; stuck }` — if otlp-complete T4 created it, import it); Modify `src/features/cli.ts:241-333` (`watch()` gains a state-only mode: no event polling, rules on, a `Sink` that receives transitions — if otlp-complete T4 already added `Sink.alert`, reuse it), `src/features/fleet/tui.ts` (live rows override, notify), `src/main.ts`.
+
+**Interfaces — Produces:**
+- Remote: CLI `fleet watch [--redact]` → JSON lines per spec 16.1 (`hello`, `live`, `alert`, `turn`, `beat`), EPIPE → exit 0.
+- Viewer: `export function watchFeed(h: HostCfg, cp: string): { start(now): void; poll(now): LiveRow[]; beatAt: number; stop(): void }` — detached `sh -c 'd=$1; k=$2; shift 2; exec "$@" >> "$d/$k.watch.jsonl" 2>> "$d/$k.watch.err"' sh <dir> <k> <ssh> <args… fleet watch>`; tail with a byte cursor (`readLines`, ≤ 256 lines per poll); restart with backoff 5 s → 5 min when the pid is gone; at 16 MB kill and restart into a truncated file; `stop()` kills our pid.
+- `hosts.ts`: `LiveRow`s set `rlive`, `attention`, `stuck` on the host's rows; host live-fresh while `now − beatAt ≤ 90 s`; `turn` lines schedule the host's next snapshot in 5 s (≥ 10 s apart).
+- `tui.ts`: alert lines toast; `critical` fire/escalate → `OS.notify` (respects `AGENTGLASS_NOTIFY=0`), once per `host|key|rule|since`.
+
+- [ ] **Step 1: Failing check** `watch.check.ts`: the remote side with stub sessions and a fake clock: start → one `live` per live session; a busy→idle change → one `live`; 300 s → repeat; `beat` every 30 s; a stub rule transition → one `alert`. Viewer side: a file fed by the test → `poll()` returns the rows; a 16 MB file → restart requested; `beatAt` older than 90 s → rows not live; a `critical` alert calls the notify stub once, a repeat does not.
+- [ ] **Step 2: Run** → FAIL; implement; run → pass.
+- [ ] **Step 3: Cost** (open question 7): isolated `fleet watch` on the dev box for 10 min → `ps -o time=` ≤ 6 s; record.
+- [ ] **Step 4: Run** `sh scripts/check.sh` → all `ok`.
+- [ ] **Step 5: Commit** `feat(fleet): fleet watch — live state and alarms from remote hosts within seconds`.
+
+---
+
+### Task 16: Part B end-to-end, README — wave 8
+
+**Files:** Modify `scripts/fleet.test.sh`, `README.md` ("Several machines (fleet)": exact merge, re-pricing, `dir` drops with a cron/systemd timer example, `fleet watch`), `CHANGELOG.md`.
+
+- [ ] **Step 1: Extend `scripts/fleet.test.sh`**: hosts `h2`, `h3` serve `fleet snapshot` through the fake ssh; `h3` holds a copy of `h2`'s Claude history under a new session id (rewrite `sessionId` in the copied lines, keep message ids):
+  - `fleet cost --json`: `.approx == false`, `.overlap == 0`, `.total.today` tokens equal to `cost --json` of a home that holds both logs (ground truth);
+  - a second `fleet --refresh` sends a delta: the fake ssh logs the remote words; the second request carries `--ack <first gen>`;
+  - a host forced to `snapshot: false` → `approx: true` again;
+  - `fleet drop $t/drop` on `h2` + a `dir` entry in the viewer config → the same sessions as over ssh;
+  - `fleet watch` through the fake ssh: make a fixture session "live" (a fake pid file as the existing live tests do, see `scripts/agent-mode.test.sh`) → the viewer's `fleet status --json` shows it live within 3 s.
+- [ ] **Step 2: Run** `sh scripts/fleet.test.sh` and `sh scripts/check.sh` → no FAIL, all `ok`.
+- [ ] **Step 3: README + CHANGELOG**; manual: `fleet snapshot` over real `ssh localhost` (Task 9 Step 4 wrapper), first full and second delta sizes recorded in the PR.
+- [ ] **Step 4: Commit** `test(fleet): exact merge, deltas, dir drops and the live stream end to end; docs(readme): fleet Part B`.

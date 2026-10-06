@@ -94,6 +94,9 @@ each host:
    `cert = "…"`, `key = "…"` lines to the curl config on stdin. Paths never appear in argv. No passphrase support:
    a passphrase would be a secret in the config line; an encrypted key fails with curl exit 58 and the message
    `the client key is encrypted or does not match the certificate: agentglass needs an unencrypted key file (chmod 600)`.
+   The config also gets `header = "Expect:"` (empty): curl otherwise sends `Expect: 100-continue` for bodies over
+   1 MB and waits up to 1 s for an interim answer (measured against a receiver that does not send one,
+   [otlp-hub](../otlp-hub/spec.md) Today).
 4. **TLS errors are not retried.** A send fails without retry, with a specific message, when curl exits 58, 59, 60,
    66, 77, 80, 83, 90 or 91, or when it exits 35 or 56 and its stderr contains one of `certificate required`,
    `unknown ca`, `bad certificate`, `certificate unknown`, `certificate expired`, `certificate revoked`,
@@ -175,12 +178,17 @@ each host:
    - nothing for other tools.
    Under `--redact` the exporter already reads the fake events, so both values are fake. `--content` implies
    `meta`.
-6. **No `agentglass.turn.kind`.** Only human prompts open a turn (Today), so every exported turn is human; the
+6. **`agentglass.usage.cache_write_1h.input_tokens`** on Claude `chat` spans: the part of
+   `gen_ai.usage.cache_write.input_tokens` written with the 1-hour TTL (Anthropic prices it differently), only when
+   > 0. A receiver needs it to re-price Anthropic usage with its own table ([otlp-hub](../otlp-hub/spec.md) 4).
+7. **`agentglass.redact`** (bool, resource) = `true` when the export runs under `--redact`, so a receiver knows titles,
+   paths and commands are fakes.
+8. **No `agentglass.turn.kind`.** Only human prompts open a turn (Today), so every exported turn is human; the
    attribute would carry one value. Notifications and peer messages stay `meta` events inside a turn.
 
 ### 4. The receiver contract (what a reader does with the export)
-This section is the interface for any receiver that rebuilds agentglass's view (the planned OTLP hub feed of the
-fleet spec, or a user's own Collector pipeline). agentglass documents it in the README; it does not implement a
+This section is the interface for any receiver that rebuilds agentglass's view ([otlp-hub](../otlp-hub/spec.md),
+or a user's own Collector pipeline). agentglass documents it in the README; it does not implement a
 receiver here.
 
 1. **Host.** A host is its resource `host.id`. A receiver that authenticates senders (a client certificate or a
@@ -213,7 +221,7 @@ receiver here.
 7. **Personal identifiers.** agentglass sends no `user.*` attribute (unchanged). Claude Code's own telemetry sends
    `user.email`, `user.account_uuid` and `organization.id` by default when the user is logged in. A receiver drops
    `user.email` before storing anything (README: one OTel Collector `attributes` processor action
-   `{key: user.email, action: delete}`); the planned hub feed drops it on read and never stores it.
+   `{key: user.email, action: delete}`); otlp-hub drops it at ingest and never stores it.
    `agentglass export --status` adds, when Claude Code's own telemetry is detected on:
    `claude: its own telemetry sends user.email by default — drop it at your collector (README "OTLP: several hosts")`.
 
@@ -273,8 +281,11 @@ receiver here.
   - Native telemetry (3b): the policy is unchanged; `--status` gains the `user.email` note; the join rules of 4.6
     replace the "may appear twice" advice in the README with a rule.
   - Out of scope there, now in scope: OTLP logs (live only). Metrics and gRPC stay out.
-- **fleet**: `hostId()` (`src/util/hostid.ts`) is created by whichever plan lands first, with the interface of the
-  fleet spec section 3. The fleet's later OTLP hub feed implements section 4 of this spec.
+- **fleet**: `hostId()` (`src/util/hostid.ts`) and `sessState()` (`src/model/state.ts`, the state rule of the
+  `session.state` records, shared with `fleet watch`) are created by whichever plan lands first.
+- **otlp-hub**: the receiver side of this spec: it reads the logs stream (section 2) for liveness and alarms, the new
+  attributes (section 3) for titles, repo keys, re-pricing and native joins, and implements the receiver contract
+  (section 4) for Collector files and `agentglass receive`. otlp-hub's reader task needs this plan's Task 4.
 - **rules-config**: alert transitions come from the same engine; `severityOf` names (`degraded`, `critical`) map to
   log severities.
 - **repo-view**: `repo.key` comes from its project identity (`keyShown`).
@@ -311,7 +322,7 @@ receiver here.
   is dropped by the recipe.
 
 ## Out of scope
-- A receiver in agentglass (fleet spec: Later, decision pending), reading OTLP back (the hub feed, Later).
+- The receiver and the reader themselves ([otlp-hub](../otlp-hub/spec.md)).
 - OTLP metrics, gRPC, protobuf.
 - Key passphrases, PKCS#12 bundles, OS keychains.
 - Logs for one-shot export or history; per-event log records (every tool call as a log).
