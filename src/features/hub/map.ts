@@ -4,23 +4,21 @@
 // cannot reach a report. Native Claude Code api_request records count only when no agentglass span has their request id.
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, arr, str } from "../../util/json.ts";
-import { sha256Hex } from "../../util/sha256.ts";
 import { localDay } from "../../util/text.ts";
-import { type Hello, type SessRow, type DayRow, type OwnRow, type LiveRow, type HostReport, FORMAT } from "../fleet/model.ts";
+import { type Hello, type SessRow, type DayRow, type OwnRow, type LiveRow, type HostReport, type Owned, FORMAT } from "../fleet/model.ts";
+import { msgHash } from "../usage/msgrows.ts";
 import { JSON_FIELDS } from "../cli.ts";
 
 // service.name → harness id (the exporter's table, src/features/otlp/types.ts, inverted)
 const HARNESS = new Map<string, string>([["claude-code", "claude"], ["codex", "codex"], ["gemini-cli", "gemini"], ["pi", "pi"], ["opencode", "opencode"], ["kiro-cli", "kiro"], ["fx", "fx"]]);
 const SEEN_MS = 48 * 3600000; const STALE_MS = 90000; const NATIVE_MAX = 20000;
-// fleet spec 13.1: the first 16 hex digits of SHA-256 of "agentglass/msg/v1|" + message id
-export function msgHash(id: string): string { return sha256Hex("agentglass/msg/v1|" + id).slice(0, 16); }
+export { msgHash };
 
-interface DayAgg { tp: Map<string, number[]>; hx: Map<number, number>; unk: number; um: Map<string, number>; tools: number; turns: number; calls: number; errors: number }
-interface OwnAgg { key: number; d: string; m: string; prov: string; n: number[] } // n: in, out, cacheRead, write5m, write1h, usd, priced
+interface DayAgg { tp: Map<string, number[]>; tu: Map<string, number[]>; hx: Map<string, number>; unk: number; um: Map<string, number>; tools: number; turns: number; calls: number; errors: number }
 export interface SessAgg {
   key: string; h: string; id: string; title: string; cwd: string; branch: string; remote: string; repoKey: string; repoName: string;
   model: string; modelAt: number; updated: number; tin: number; tout: number; tcr: number; tcw: number; cost: number; priced: boolean; unk: number;
-  modes: Map<string, number>; tools: number; errors: number; subs: number; days: Map<string, DayAgg>; own: Map<string, OwnAgg>; prov: Map<string, string>;
+  modes: Map<string, number>; tools: number; errors: number; subs: number; days: Map<string, DayAgg>; own: Map<string, OwnRow>; prov: Map<string, string>; // own: per chat span id (a message may have several bookings)
   live: LiveRow | null; alerts: Map<string, Obj>;
 }
 export interface HostAgg {
@@ -62,12 +60,12 @@ function hostAgg(a: Agg, name: string, hostId: string): HostAgg {
 function sessAgg(h: HostAgg, harness: string, id: string): SessAgg {
   const key = harness + ":" + id;
   let x = h.sess.get(key);
-  if (!x) { x = { key, h: harness, id, title: "", cwd: "", branch: "", remote: "", repoKey: "", repoName: "", model: "", modelAt: 0, updated: 0, tin: 0, tout: 0, tcr: 0, tcw: 0, cost: 0, priced: false, unk: 0, modes: new Map<string, number>(), tools: 0, errors: 0, subs: 0, days: new Map<string, DayAgg>(), own: new Map<string, OwnAgg>(), prov: new Map<string, string>(), live: null, alerts: new Map<string, Obj>() }; h.sess.set(key, x); }
+  if (!x) { x = { key, h: harness, id, title: "", cwd: "", branch: "", remote: "", repoKey: "", repoName: "", model: "", modelAt: 0, updated: 0, tin: 0, tout: 0, tcr: 0, tcw: 0, cost: 0, priced: false, unk: 0, modes: new Map<string, number>(), tools: 0, errors: 0, subs: 0, days: new Map<string, DayAgg>(), own: new Map<string, OwnRow>(), prov: new Map<string, string>(), live: null, alerts: new Map<string, Obj>() }; h.sess.set(key, x); }
   return x;
 }
 function dayAgg(x: SessAgg, d: string): DayAgg {
   let g = x.days.get(d);
-  if (!g) { g = { tp: new Map<string, number[]>(), hx: new Map<number, number>(), unk: 0, um: new Map<string, number>(), tools: 0, turns: 0, calls: 0, errors: 0 }; x.days.set(d, g); }
+  if (!g) { g = { tp: new Map<string, number[]>(), tu: new Map<string, number[]>(), hx: new Map<string, number>(), unk: 0, um: new Map<string, number>(), tools: 0, turns: 0, calls: 0, errors: 0 }; x.days.set(d, g); }
   return g;
 }
 function where(x: SessAgg, m: Attrs): void {
@@ -88,7 +86,7 @@ function hostOfResource(a: Agg, rm: Attrs, label: Label | null): { name: string;
 }
 
 // one chat span's usage into its session (spec 4 table)
-function chat(h: HostAgg, x: SessAgg, m: Attrs, end: number, inclusive: boolean): void {
+function chat(h: HostAgg, x: SessAgg, m: Attrs, end: number, inclusive: boolean, sid: string): void {
   const model = s(m, "gen_ai.request.model");
   if (model && end >= x.modelAt) { x.model = model; x.modelAt = end; }
   const cr = n(m, "gen_ai.usage.cache_read.input_tokens"); const cw = n(m, "gen_ai.usage.cache_write.input_tokens");
@@ -102,27 +100,24 @@ function chat(h: HostAgg, x: SessAgg, m: Attrs, end: number, inclusive: boolean)
   const unpriced = !hasCost || src === "unpriced";
   const d = dayAgg(x, localDay(new Date(end).toISOString())); const hr = hourOf(end);
   d.calls++;
-  if (unpriced) { const t = inX + out + cr + cw; x.unk += t; d.unk += t; d.um.set(model, (d.um.get(model) ?? 0) + t); }
+  // table-priced and unpriced bookings go to tp (unpriced: usd -1), so the exact merge can take a losing copy out of
+  // them (fleet 13.3); harness-priced or mixed: hx, kept at the sent cost
+  const tk = String(hr) + "\u0000" + prov + "\u0000" + model;
+  const book = (mp: Map<string, number[]>, v: number): void => { const r = mp.get(tk) ?? [0, 0, 0, 0, 0, 0]; r[0] = (r[0] ?? 0) + inX; r[1] = (r[1] ?? 0) + out; r[2] = (r[2] ?? 0) + cr; r[3] = (r[3] ?? 0) + (cw - w1); r[4] = (r[4] ?? 0) + w1; r[5] = (r[5] ?? 0) + v; mp.set(tk, r); };
+  if (unpriced) { const t = inX + out + cr + cw; x.unk += t; book(d.tu, 0); }
   else {
     x.cost += usd; x.priced = true; x.modes.set(mode, (x.modes.get(mode) ?? 0) + usd);
-    // table-priced: what re-pricing needs (fleet 14); harness-priced or mixed: kept at the sent cost
-    if (src === "harness" || src === "mixed") d.hx.set(hr, (d.hx.get(hr) ?? 0) + usd);
-    else {
-      const k = String(hr) + "\u0000" + prov + "\u0000" + model;
-      const r = d.tp.get(k) ?? [0, 0, 0, 0, 0, 0];
-      r[0] = (r[0] ?? 0) + inX; r[1] = (r[1] ?? 0) + out; r[2] = (r[2] ?? 0) + cr; r[3] = (r[3] ?? 0) + (cw - w1); r[4] = (r[4] ?? 0) + w1; r[5] = (r[5] ?? 0) + usd;
-      d.tp.set(k, r);
-    }
+    if (src === "harness" || src === "mixed") { const hk = String(hr) + "\u0000" + prov; d.hx.set(hk, (d.hx.get(hk) ?? 0) + usd); }
+    else book(d.tp, usd);
   }
   if (s(m, "agentglass.provider.id")) x.prov.set(s(m, "agentglass.provider.id"), mode);
-  // a Claude message this session holds (fleet 13.1): one own row per response id, the earliest end as its order key
+  // a Claude message this session holds (fleet 13.1): one own row per booking (span), key = span end ms × 2; n is
+  // exactly what went into tp above (harness-priced spans carry no tp row: ownership only)
   const rid = s(m, "gen_ai.response.id");
   if (rid && x.h === "claude") {
     h.respIds.add(rid);
-    const hh = msgHash(rid); const o = x.own.get(hh);
-    const add = [inX, out, cr, cw - w1, w1, unpriced ? 0 : usd];
-    if (!o) x.own.set(hh, { key: end * 2, d: localDay(new Date(end).toISOString()), m: model, prov, n: add.concat([unpriced ? 0 : 1]) });
-    else { for (let i = 0; i < 6; i++) o.n[i] = (o.n[i] ?? 0) + (add[i] ?? 0); if (end * 2 < o.key) o.key = end * 2; }
+    const inTp = unpriced || !(src === "harness" || src === "mixed");
+    x.own.set(sid, { h: msgHash(rid), key: end * 2, d: localDay(new Date(end).toISOString()), hr, m: model, prov, n: inTp ? [inX, out, cr, cw - w1, w1, unpriced ? 0 : usd, unpriced ? 0 : 1] : [] });
   }
   const req = s(m, "agentglass.request.id"); if (req) h.reqIds.add(req);
 }
@@ -158,7 +153,7 @@ function spans(a: Agg, rs: Obj, label: Label | null): void {
       const op = s(m, "gen_ai.operation.name");
       const d = dayAgg(x, localDay(new Date(end).toISOString()));
       if (s(m, "error.type")) { x.errors++; d.errors++; }
-      if (op === "chat") chat(h, x, m, end, inclusive);
+      if (op === "chat") chat(h, x, m, end, inclusive, sid || String(end) + ":" + String(x.own.size));
       else if (op === "execute_tool") { x.tools++; d.tools++; }
       else if (op === "invoke_agent") { if (sp["parentSpanId"]) x.subs++; else d.turns++; }
     }
@@ -227,10 +222,16 @@ function dayRows(x: SessAgg): DayRow[] {
   for (const d of days) {
     const g = x.days.get(d); if (!g) continue;
     const tp: string[][] = [];
-    for (const k of g.tp.keys()) { const p = k.split("\u0000"); const r = g.tp.get(k) ?? []; tp.push([p[0] ?? "0", p[1] ?? "", p[2] ?? ""].concat(r.map((v: number) => String(v)))); }
-    const hx: number[][] = []; for (const hr of g.hx.keys()) hx.push([hr, g.hx.get(hr) ?? 0]);
-    const um: string[][] = []; for (const mo of g.um.keys()) um.push([mo, String(g.um.get(mo) ?? 0)]);
-    out.push({ d, tp, hx, unk: g.unk, um, uc: 0, tools: g.tools, turns: g.turns, calls: g.calls, errors: g.errors });
+    const row = (k: string, r: number[], usd: string): string[] => { const p = k.split("\u0000"); const o = [p[0] ?? "0", p[1] ?? "", p[2] ?? ""]; for (let i = 0; i < 5; i++) o.push(String(r[i] ?? 0)); o.push(usd); return o; };
+    for (const k of g.tp.keys()) { const r = g.tp.get(k) ?? []; tp.push(row(k, r, String(r[5] ?? 0))); }
+    const um = new Map<string, number>(); for (const mo of g.um.keys()) um.set(mo, g.um.get(mo) ?? 0);
+    for (const k of g.tu.keys()) { // unpriced: its own tp row (usd -1), or unpriced tokens when the key also has priced usage
+      const r = g.tu.get(k) ?? []; if (!g.tp.has(k)) { tp.push(row(k, r, "-1")); continue; }
+      const mo = k.split("\u0000")[2] ?? ""; um.set(mo, (um.get(mo) ?? 0) + (r[0] ?? 0) + (r[1] ?? 0) + (r[2] ?? 0) + (r[3] ?? 0) + (r[4] ?? 0));
+    }
+    const hx: string[][] = []; for (const k of g.hx.keys()) { const p = k.split("\u0000"); hx.push([p[0] ?? "0", p[1] ?? "", String(g.hx.get(k) ?? 0)]); }
+    const umr: string[][] = []; for (const mo of um.keys()) umr.push([mo, String(um.get(mo) ?? 0)]);
+    out.push({ d, tp, hx, unk: g.unk, um: umr, uc: 0, tools: g.tools, turns: g.turns, calls: g.calls, errors: g.errors });
   }
   return out;
 }
@@ -272,25 +273,29 @@ export function reportsOf(a: Agg, now: number, all: boolean, maxAgeDays: number)
       const v = (f: string): number => typeof o[f] === "number" ? o[f] as number : 0;
       x.tin += v("in"); x.tout += v("out"); x.tcr += v("cr"); x.tcw += v("cw"); x.cost += v("usd"); x.priced = true;
       x.modes.set("unknown", (x.modes.get("unknown") ?? 0) + v("usd"));
-      const d = dayAgg(x, localDay(new Date(t).toISOString())); const hr = hourOf(t); d.hx.set(hr, (d.hx.get(hr) ?? 0) + v("usd")); d.calls++;
+      const d = dayAgg(x, localDay(new Date(t).toISOString())); const hk = String(hourOf(t)) + "\u0000anthropic"; d.hx.set(hk, (d.hx.get(hk) ?? 0) + v("usd")); d.calls++;
       if (t > x.updated) x.updated = t;
       if (str(o["model"]) && t >= x.modelAt) { x.model = str(o["model"]); x.modelAt = t; }
     }
-    const rows: SessRow[] = []; const lives: LiveRow[] = [];
+    const rows: SessRow[] = []; const lives: LiveRow[] = []; const owned: Owned[] = [];
     const cut = now - maxAgeDays * 86400000;
     const all2: SessAgg[] = []; for (const x of h.sess.values()) all2.push(x); for (const x of natives.values()) all2.push(x);
     for (const x of all2) {
-      if (x.updated && x.updated < cut) continue;
+      const own: OwnRow[] = []; for (const o of x.own.values()) own.push({ h: o.h, key: o.key, d: o.d, hr: o.hr, m: o.m, prov: o.prov, n: o.n.slice() });
+      if (x.updated && x.updated < cut) { // outside the window: ownership only (who owns a copy is decided over all history)
+        if (own.length) owned.push({ key: x.key, rows: own.map((o: OwnRow) => ({ h: o.h, key: o.key, d: o.d, hr: o.hr, m: o.m, prov: o.prov, n: [] })) });
+        continue;
+      }
+      if (x.h === "claude") owned.push({ key: x.key, rows: own });
       let lv = x.live;
       if (lv && !fresh) lv = { key: lv.key, at: lv.at, live: false, busy: false, attention: lv.attention, approval: false, stuck: lv.stuck, alerts: [] };
-      const own: OwnRow[] = []; for (const hh of x.own.keys()) { const o = x.own.get(hh); if (o) own.push({ h: hh, key: o.key, d: o.d, m: o.m, prov: o.prov, n: o.n.slice() }); }
       const prov: string[][] = []; for (const p of x.prov.keys()) prov.push([p, x.prov.get(p) ?? "unknown"]);
       rows.push({ s: jsonOf(x, lv), key: x.key, days: dayRows(x), own: x.h === "claude" ? own : null, prov });
       if (lv) { const al: Obj[] = []; for (const v of x.alerts.values()) al.push(v); lives.push({ key: lv.key, at: lv.at, live: lv.live, busy: lv.busy, attention: lv.attention, approval: lv.approval, stuck: lv.stuck, alerts: al }); }
     }
     rows.sort((p, q) => str(q.s["updated"]) < str(p.s["updated"]) ? -1 : 1);
     const hello: Hello = { format: FORMAT, version: h.version, hostId: h.hostId, hostName: h.hostName, os: h.os, tzOffsetMin: tz, redact: h.redact, days: maxAgeDays, now: Math.max(h.newest, h.beat), priceSig: "" };
-    out.set(h.name, { hello, sessions: rows, cost: null, allowance: null, live: lives, exact: h.exact && natives.size === 0 });
+    out.set(h.name, { hello, sessions: rows, cost: null, allowance: null, live: lives, exact: h.exact && natives.size === 0, owned });
   }
   return out;
 }

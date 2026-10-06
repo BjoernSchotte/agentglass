@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { obj, arr } from "../../util/json.ts";
 import { newAgg, ingestLine, reportsOf, prune, msgHash } from "./map.ts";
 import type { HostReport } from "../fleet/model.ts";
+import { exactFleet } from "../fleet/merge.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const SAMPLE = readFileSync("testdata/hub/collector-sample.jsonl", "utf8").trim(); // the exporter's own output for the claude fixture
@@ -34,10 +35,11 @@ ok("cwd, branch, repo key", s["cwd"] === "/home/u/proj" && s["branch"] === "main
 ok("field order = the --json contract", Object.keys(s).join(",").startsWith("id,harness,title,cwd,branch,remote,model,path,updated,bytes,live,pid"), Object.keys(s).join(","));
 ok("not reconstructable: null/0", s["path"] === null && s["pid"] === 0 && s["bytes"] === 0 && s["git"] === null && s["linesAdded"] === 0, JSON.stringify([s["path"], s["pid"]]));
 const own = s0 && s0.own ? s0.own : [];
-let hasB = false; let ob12 = false;
-for (const o of own) if (o.h === msgHash("msg_b")) { hasB = true; ob12 = o.n[0] === 12 && o.n[1] === 30 && o.key === 1788256806500 * 2; }
-ok("own rows: one per Claude response id", own.length === 5 && hasB, String(own.length));
-ok("own row of a fallback message sums both attempts, earliest key", ob12, JSON.stringify(own));
+let nb = 0; let bIn = 0; let hrOk = true;
+for (const o of own) { if (o.h === msgHash("msg_b")) { nb++; bIn += o.n[0] ?? 0; } if (o.hr !== new Date(o.key / 2).getHours()) hrOk = false; }
+ok("own rows: one per booking (a fallback message has two)", own.length === 6 && nb === 2 && bIn === 12, String(own.length) + " " + String(nb));
+ok("own rows carry the local hour of their key", hrOk, JSON.stringify(own));
+ok("owned = the session's own rows", r !== null && r.owned.length === 1 && r.owned[0]?.rows.length === 6 && r.owned[0]?.key === s0?.key, String(r?.owned.length));
 ok("msgHash = fleet 13.1", msgHash("msg_a").length === 16 && /^[0-9a-f]+$/.test(msgHash("msg_a")), msgHash("msg_a"));
 const days = s0 && s0.days ? s0.days : [];
 let calls = 0; let usd = 0; let width = 0;
@@ -48,7 +50,20 @@ ok("exact (agentglass scope)", r !== null && r.exact && r.hello.version !== "", 
 ingestLine(a, SAMPLE, null);
 r = rep(reportsOf(a, t0, true, 3650), "00112233445566ff");
 const rs0 = r ? r.sessions[0] : null;
-ok("resend: same totals", rs0 !== null && near(num(rs0.s["costUsd"]), 0.00122) && (rs0.own ?? []).length === 5, String(rs0?.s["costUsd"]));
+ok("resend: same totals", rs0 !== null && near(num(rs0.s["costUsd"]), 0.00122) && (rs0.own ?? []).length === 6, String(rs0?.s["costUsd"]));
+// the exact merge (fleet 13): host B holds copies of A's Claude messages (same response ids, later keys) → counted once
+function hostRep(line: string, key: string): HostReport { const g = newAgg(); ingestLine(g, line, null); const m = reportsOf(g, t0, true, 3650); const x = m.get(key); if (!x) throw new Error("no report " + key); return x; }
+const repA = hostRep(SAMPLE, "00112233445566ff");
+let copy = SAMPLE.split("00112233445566ff").join("eeeeeeeeeeeeeeee").split("11111111-1111-4111-8111-111111111111").join("22222222-2222-4222-8222-222222222222");
+for (let i = 0; i < 10; i++) copy = copy.split("88256" + String(i)).join("88257" + String(i)); // every time 10 s later: B's copies are newer
+copy = copy.split("\"spanId\":\"").join("\"spanId\":\"b");
+const repB = hostRep(copy, "eeeeeeeeeeeeeeee");
+const ex = exactFleet([], "ffffffffffffffff", [{ name: "a", hostId: "00112233445566ff", r: repA, shiftMin: 0 }, { name: "b", hostId: "eeeeeeeeeeeeeeee", r: repB, shiftMin: 0 }], false, (p: string) => null);
+let xc = 0; let xin = 0; for (const sh of ex.accs) { xc += sh.a.cost; xin += sh.a.inTok; }
+ok("exact merge: a copied history counts once", near(xc, 0.00122) && xin === 70 && ex.removed === 5, String(xc) + " in " + String(xin) + " removed " + String(ex.removed));
+const ex2 = exactFleet([], "ffffffffffffffff", [{ name: "a", hostId: "00112233445566ff", r: repA, shiftMin: 0 }], false, (p: string) => null);
+let xc2 = 0; for (const sh of ex2.accs) xc2 += sh.a.cost;
+ok("exact merge: one host alone = its own totals", near(xc2, 0.00122) && ex2.removed === 0, String(xc2));
 ok("unchanged host: no report", reportsOf(a, t0, false, 3650).size === 0, "reported");
 prune(a);
 // a receive directory: the label names the host
