@@ -64,6 +64,9 @@ err "unknown option --bogus" export --dry-run --bogus
 err "unknown option --bogus" update status --bogus
 err "unknown option --bogus" open --bogus
 err "unknown option --bogus" rules check --bogus
+err "unknown option --bogus" receive --bogus
+err "--listen needs a value" receive --listen --listen-public
+err "--expires needs a value" receive token add ws --expires --json
 
 # 2. no value flag swallows --filter, before or after it: either a usage error naming that flag, or the filter applies
 # "<command…>|<value flags>"

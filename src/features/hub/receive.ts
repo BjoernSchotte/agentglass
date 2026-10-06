@@ -13,6 +13,7 @@ import { agentHost, errLine } from "../agentenv.ts";
 import { type RecvCfg, loadRecv, listenOk, splitListen, expandHome } from "./config.ts";
 import { type Tok, addToken, rotateToken, revokeToken, readTokens, tokensFile, live } from "./tokens.ts";
 import { newRt, handler, onConnection, boot, started, onSignals, releaseRecvLock } from "./server.ts";
+import { argVal } from "../../util/argv.ts";
 
 const TLS_BIN = "agentglass-receive-tls";
 function out(s: string): void { try { writeSync(1, s + "\n"); } catch (e) { /* stdout closed */ } }
@@ -28,7 +29,7 @@ function flags(args: string[], withVal: string[], bare: string[]): { v: Map<stri
   const v = new Map<string, string>(); const pos: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (withVal.indexOf(a) >= 0) { const x = args[i + 1]; if (x === undefined || x.startsWith("--")) return { v, pos, err: a + " needs a value" }; v.set(a, x); i++; continue; }
+    if (withVal.indexOf(a) >= 0) { const x = argVal(args, i); if (x === null) return { v, pos, err: a + " needs a value" }; v.set(a, String(x)); i++; continue; }
     if (bare.indexOf(a) >= 0) { v.set(a, "1"); continue; }
     if (a.startsWith("-")) return { v, pos, err: "unknown option " + a };
     pos.push(a);
