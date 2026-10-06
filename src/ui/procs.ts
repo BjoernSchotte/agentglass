@@ -65,7 +65,7 @@ export function renderProcs(): void {
     const walk = (pid: number, depth: number): void => {
       for (const q of allProcs.values()) {
         if (q.ppid !== pid) continue;
-        tree.push(fg(C.line) + "  ".repeat(depth) + "└─ " + fg(C.sub) + fit(String(q.pid), 7) + fg(heat(q.cpu / 100)) + fit(q.cpu.toFixed(1) + "%", 7) + fg(C.dim) + fit(bytes(q.rss), 7) + fg(q.h ? C.claude : C.text) + clean(display("args", q.args, null)) + RST);
+        tree.push(fg(C.line) + "  ".repeat(depth) + "└─ " + fg(C.sub) + fit(String(q.pid), 8) + fg(heat(q.cpu / 100)) + fit(q.cpu.toFixed(1) + "%", 7) + fg(C.dim) + fit(bytes(q.rss), 7) + fg(q.h ? C.claude : C.text) + clean(display("args", q.args, null)) + RST);
         if (depth < 6) walk(q.pid, depth + 1);
       }
     };
