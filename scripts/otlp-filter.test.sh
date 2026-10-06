@@ -134,5 +134,18 @@ rc=0; env_ag --watch --otlp "$url" --pinned --for 1s > "$t/out" 2> "$t/err" || r
 [ $rc = 2 ] || { echo "FAIL --pinned with a call pin: exit $rc, want 2"; fail=1; }
 has "--pinned with a call pin: the fix" "unpin it" "$t/err"
 rm -f "$H/.agentglass/config.json"
+
+# 5. the endpoint from the config: a bare --otlp takes no flag as its URL (--otlp --filter … dropped the filter and
+# exported every live session), wherever the filter stands
+printf '{"otlp":{"endpoint":"%s"}}\n' "$url" > "$H/.agentglass/config.json"
+for order in otlp-first otlp-last; do
+  setup
+  if [ $order = otlp-first ]; then env_ag --watch --otlp --filter "cwd ~ /w/in-" --since all --for 7s > "$t/out" 2> "$t/err" & ag=$!
+  else env_ag --watch --filter "cwd ~ /w/in-" --since all --for 7s --otlp > "$t/out" 2> "$t/err" & ag=$!; fi
+  sleep 3; grow; wait $ag || true; ag=""; stop_agents
+  has "config endpoint [$order]: spans of the inside session" '"sin"' "$t/v1_traces.jsonl"
+  outside "config endpoint [$order]"; before "config endpoint [$order]"
+done
+rm -f "$H/.agentglass/config.json"
 [ $fail = 0 ] && echo "otlp filter: ok"
 exit $fail

@@ -392,7 +392,7 @@ function liveExport(args: string[]): number {
   let flag = ""; let since = now; let subagents = true; let native = c.native; let noLogs = false; let comp = ""; let batch = c.batch; let filter = ""; let harness = ""; let pinned = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? ""; const v = args[i + 1] ?? "";
-    if (a === "--otlp") { flag = v; i++; }
+    if (a === "--otlp") { if (args[i + 1] !== undefined && !v.startsWith("--")) { flag = v; i++; } } // bare: the endpoint comes from the config, the next flag is not its URL
     else if (a === "--since") { const t = timeArg(v, now); if (isNaN(t)) { fail("usage", "--since takes 30m, 24h, 7d, YYYY-MM-DD or all (got " + v + ")"); return 2; } since = t; i++; }
     else if (a === "--content") c.content = true;
     else if (a === "--detail") { c.detail = v; i++; if (v !== "none" && v !== "meta") { fail("usage", "--detail takes none or meta"); return 2; } }
@@ -413,7 +413,7 @@ function liveExport(args: string[]): number {
     filter = filter ? filter + " and " + pf : pf;
   }
   const sf = sessFilter(filter); if (sf.err) { fail("usage", sf.err); return 2; }
-  const url = endpointOf(flag.startsWith("--") ? "" : flag, c, env);
+  const url = endpointOf(flag, c, env);
   if (!url) { fail("usage", "--otlp needs a URL"); return 2; }
   const ue = urlErr(url); if (ue) { fail("usage", ue); return 2; }
   if (!curlBin()) { fail("usage", "export needs curl (AGENTGLASS_CURL)"); return 2; }
@@ -423,7 +423,7 @@ function liveExport(args: string[]): number {
   if (tx.note) err("otlp: " + tx.note);
   // the logs stream (otlp-complete 2.2): derived endpoint, its own headers and TLS variables, same checks as spans
   if (noLogs) c.logs = false;
-  const lu = logsUrlOf(url, !!(flag && !flag.startsWith("--")) || !!c.endpoint, c, env);
+  const lu = logsUrlOf(url, !!flag || !!c.endpoint, c, env);
   let lhx: { headers: string[][]; err: string } = { headers: [], err: "" }; let ltx: { tls: string[]; err: string; note: string } = { tls: ["", "", ""], err: "", note: "" };
   if (lu.url) {
     const le = urlErr(lu.url); if (le) { fail("usage", "otlp.logsEndpoint: " + le.replace(/^--otlp /, "")); return 2; }

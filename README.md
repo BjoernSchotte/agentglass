@@ -944,6 +944,12 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
 > the export at all; `export --filter` with a negated clause took sessions whose log was not read yet. If you used a
 > filter or pins to keep projects out of a backend, search it for those projects' sessions and delete that data, or
 > rotate the backend's storage.
+>
+> **Privacy note, 2026.10.7 and earlier.** `--watch --otlp` without a URL (the endpoint from the config or
+> `OTEL_EXPORTER_OTLP_ENDPOINT`) took the next argument as its URL: with `--otlp --filter '…'` the filter was dropped
+> and every session with a running agent sent its `agentglass.session.state` and `agentglass.turn.open` records (cwd,
+> branch, git remote, `agentglass.repo.key`), and its finished turns, to the backend. `--otlp <url> --filter '…'`,
+> or `--filter` before `--otlp`, was not affected. Check and clean the backend as above.
 - **No duplicates:** span and trace ids are deterministic (SHA-256 of the session and turn, scheme `v1`), and a state
   file per endpoint (`~/.agentglass/otlp/`, mode 0600; `AGENTGLASS_OTLP_DIR` moves it) marks every turn the backend
   accepted. `--resend` sends again with the same ids: Jaeger keeps one copy; Grafana Tempo was seen storing both
