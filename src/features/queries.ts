@@ -23,7 +23,8 @@ import { type Src, buildGraph, summary } from "./callgraph/model.ts";
 import { loopRuns } from "./detect.ts";
 import { scrubText } from "./redact.ts";
 import { REDACT } from "./redact-on.ts";
-import { jsonSess, discover, JSON_FIELDS } from "./cli.ts";
+import { workspaceOf } from "../mux/rowstate.ts";
+import { jsonSess, discover, JSON_FIELDS, MUX_FLAT } from "./cli.ts";
 import { peers } from "./vcs/json.ts";
 import { type CmdRec, type OptRec, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
@@ -256,7 +257,7 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
 }
 
 // ── cost rows ────────────────────────────────────────────────────────────────
-export const BY = ["day", "model", "harness", "project", "session"];
+export const BY = ["day", "model", "harness", "project", "session", "workspace"];
 // Rows by key (cost desc; days in date order) + a final "total" row, summed from the ledger's day buckets (per model Day.mt /
 // Day.um) of the days the filter keeps — the filter language's semantics: a day counts when it passes the day clauses
 // and, with call clauses, holds a matching call row (totals() of the shared aggregation counts the same days);
@@ -272,6 +273,8 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
     let w = who.get(k); if (!w) { w = []; who.set(k, w); } if (w.indexOf(s.path) < 0) w.push(s.path);
   };
   const f = cf.f; const from = midnightOf(sinceKey);
+  const wsId = new Map<string, string>(); // --by workspace: key → herdr workspace id ("" = none)
+  const wsKey = (s: Sess): string => { const w = workspaceOf(s); const k = !w.id ? "(none)" : REDACT ? w.id : w.label || w.id; wsId.set(k, w.id); return k; }; // labels are user text: ids under --redact
   const cands: Sess[] = []; const kept: SessAcc[] = []; // by model: the kept days, for each model's price source
   
   for (const s of sessions.values()) {
@@ -296,7 +299,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
         const ms = new Set<string>();
         for (const [m, r] of d.mt) { ms.add(m); add(m, s, [r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0, d.um.get(m) ?? 0]); }
         for (const [m, n] of d.um) if (!ms.has(m)) add(m, s, [0, 0, 0, 0, 0, n]);
-      } else add(by === "day" ? k : by === "session" ? s.h + ":" + s.id : sessDim(by, s)[0] || "(unknown)", s, v);
+      } else add(by === "day" ? k : by === "session" ? s.h + ":" + s.id : by === "workspace" ? wsKey(s) : sessDim(by, s)[0] || "(unknown)", s, v);
     }
     if (used) { all.push(s.path); if (by === "model") kept.push({ a: ka, h: s.h }); }
   }
@@ -304,6 +307,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
   const row = (k: string, r: number[], n: number): Obj => {
     const c = r[4] ?? 0; const unk = r[5] ?? 0;
     const o: Obj = { key: k, in: r[0] ?? 0, out: r[1] ?? 0, cacheRead: r[2] ?? 0, cacheWrite: r[3] ?? 0, costUsd: c === 0 && unk > 0 ? null : r6(c), unpricedTokens: unk, sessions: n };
+    if (by === "workspace") { const id = k === "total" ? "" : wsId.get(k) ?? ""; o["workspaceId"] = id ? id : null; }
     if (by === "model") { const pr = srcs.get(k); o["priceSource"] = pr ? pr.src : k === "total" ? null : "unpriced"; o["estimated"] = k === "total" ? [...srcs.values()].some((x: PRow) => x.est > 0) : !!pr && pr.est > 0; }
     return o;
   };
@@ -361,7 +365,8 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
   return s;
 }
 export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
-export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]); // --by model: where each model's price comes from, alias-priced (≈)
+export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]);
+export const WS_FIELDS = COST_FIELDS.concat(["workspaceId"]); // --by workspace: the herdr workspace id (null for (none) and total) // --by model: where each model's price comes from, alias-priced (≈)
 function envelope(rows: Obj[], source: string, sc: Scope): string { return JSON.stringify({ rows, source, scope: sc.name }); }
 // json → the {rows, source, scope} envelope (compact inside an agent and in pipes); other formats → bare rows
 // rc: the exit code when stdout cannot be written (the caller's own, e.g. cost --check's 3)
@@ -382,7 +387,7 @@ function session(args: string[]): void {
   const sc = agentScope(args);
   discover();
   const s = resolveOrFail(o.ref || (agentHost().on ? "current" : "last"), o.root, sc);
-  out(formatRows([sessionObj(s)], o.f, true, [], SESSION_FIELDS, false));
+  out(formatRows([sessionObj(s)], o.f, true, [], SESSION_FIELDS.concat(MUX_FLAT), false));
 }
 function list(args: string[]): void {
   const o = qopts("sessions", args, ["--since", "--cwd", "--limit", "--live", "--subagents", "--harness", "--filter", "--pinned"], false);
@@ -402,7 +407,7 @@ function list(args: string[]): void {
   const sel = o.limit > 0 ? ss.slice(0, o.limit) : ss;
   for (const s of sel) { loadHead(s); loadTail(s, true); complete(s); peers(s); } // all indexed first: the git attribution is built once (cli.ts snapshot)
   for (const s of sel) { const r = jsonSess(s); r["costUsd"] = s.cost < 0 ? null : r6(s.cost); r["project"] = repoShown(s); rows.push(r); }
-  out(formatRows(rows, o.f, false, LIST_COLS, SESS_FIELDS, false));
+  out(formatRows(rows, o.f, false, LIST_COLS, SESS_FIELDS.concat(MUX_FLAT), false));
 }
 function errors(args: string[]): void {
   const o = qopts("errors", args, ["--since", "--limit", "--harness", "--filter", "--pinned"], true);

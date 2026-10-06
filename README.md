@@ -54,9 +54,10 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
 - **btop for agents.** A process view shows every running harness with its process tree, CPU
   braille graphs and memory. You also see what it's executing *right now* (that `pnpm test`, that
   runaway `find`), and you can SIGTERM or SIGKILL it with a confirm.
-- **Talk back.** Press `s` to send a prompt. If the agent lives in tmux it's typed into its pane,
-  otherwise agentglass resumes the session headless (`claude -p --resume`, `codex exec resume`,
-  `fx ask --resume-id`, `pi -p --session`, `opencode run -s`). Press `R` to jump back into a session interactively.
+- **Talk back.** Press `s` to send a prompt. If the agent lives in a tmux or [herdr](#herdr) pane it's typed into that
+  pane, otherwise agentglass resumes the session headless (`claude -p --resume`, `codex exec resume`,
+  `fx ask --resume-id`, `pi -p --session`, `opencode run -s`). Press `R` to jump to a live agent's pane, or to resume an
+  ended session interactively (inside herdr: in a new herdr tab of the workspace that owns its directory).
 - **Search everything.** `/` filters by title, path, id, branch or harness. `F` runs a ripgrep
   full-text search across every transcript you've ever had.
 - **Replay any session as a time-lapse.** Press `P` in a transcript and watch the agent's run play
@@ -88,6 +89,8 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
   while one runs. So that the bell, notification, notify command and
   `--watch` line carry the guess, a finished Gemini turn outside tmux alerts once that quiet window is decided (up to
   3 s later). In tmux the title alone decides.
+- **First-class in herdr.** Agents in [herdr](#herdr) panes get send, jump, resume in a new tab, the approval `◆` from
+  herdr's own `blocked` state, exact process ↔ session links, herdr's state in the row and grouping by herdr workspace.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,
@@ -343,7 +346,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `p` `P` | pin the filter (every tab, remembered) · edit the pins |
 | `␣` | fold / unfold subagents |
 | `n` `u` | next subagent · up to parent |
-| `s` `R` | send a prompt · resume interactively |
+| `s` `R` | send a prompt · resume, or jump to the live agent's pane (tmux, herdr) |
 | `x` `X` | SIGTERM / SIGKILL the agent |
 | `1`–`9` `e` | open a referenced file in `$PAGER` / `$EDITOR` |
 | `P` (transcript) | replay the open transcript |
@@ -448,7 +451,8 @@ harness is pi, day >= -7d               duration > 30s                       con
   weekdays `mo`…`su`; `unknown` finds unpriced cost and untimed calls (`cost is unknown`). Paths take `*` globs.
 - Keys (`--help` and `?` list them): session `harness repo cwd branch model title id agent subagent live archived
   state cost tokens tokens.in/out/cache_read/cache_write tools errors error_rate lines lines.added/removed age text
-  content worktree project.kind session` (`session is claude:3f2a9c`: a run and its subagents), day `day weekday
+  content worktree project.kind session mux workspace` (`session is claude:3f2a9c`: a run and its subagents; `mux is
+  herdr`: the live agent's multiplexer, tmux | herdr | none; `workspace is webapp`: its herdr workspace), day `day weekday
   day.cost day.tokens day.tools`, call `tool server program command file ext status duration out hour`, `event`
   (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
   "has a day matching all of them". `model` of a call is the model of the message that issued it (Codex: per turn;
@@ -626,7 +630,7 @@ A rule with a built-in `id` changes only the fields it names: `{"id":"approval",
 | metric | unit | value (no value when …) | params |
 |---|---|---|---|
 | `turn_done` | duration | since a turn finished, seen in this run (busy, or no finished turn seen) | |
-| `approval_wait` | duration | age of an open tool call while the process tree is quiet (idle, < `samples` CPU samples, a subagent active, CPU ≥ `cpu_below`, a tool command started within `grace`). Gemini's approval title in tmux raises the degraded level at once; Gemini outside tmux, a reply without text or calls (only thoughts, or still empty) counts as a likely approval dialog (log-silent seconds, the CPU average taken over all of them, hint `likely`) | `cpu_below` 2, `samples` 7, `grace` 5 |
+| `approval_wait` | duration | age of an open tool call while the process tree is quiet (idle, < `samples` CPU samples, a subagent active, CPU ≥ `cpu_below`, a tool command started within `grace`). Gemini's approval title in tmux and herdr's `blocked` state (any harness) raise the degraded level at once; Gemini outside tmux, a reply without text or calls (only thoughts, or still empty) counts as a likely approval dialog (log-silent seconds, the CPU average taken over all of them, hint `likely`) | `cpu_below` 2, `samples` 7, `grace` 5 |
 | `repeat_run` | count | identical consecutive tool calls at the end; with call keys in `where`, the repeated call must match them | |
 | `command_age` | duration | age of the oldest tool shell command (no call pending) | |
 | `stalled` | duration | log silence while busy (fewer samples, CPU avg ≥ `cpu_below`, a tool command running) | `cpu_below` 1, `samples` 7 |
@@ -758,7 +762,13 @@ agentglass --theme list                                             # themes; --
 agentglass --redact                                                 # privacy mode for streams and screenshots
 agentglass sessions --since 7d --format table                       # json | jsonl | csv | table, for every list
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
+agentglass --json --live --fields id,mux_kind,mux_pane,mux_status --format csv  # the pane of every live agent
+agentglass cost --since 7d --by workspace --format csv --fields key,workspaceId,costUsd  # cost per herdr workspace
 ```
+
+Scripts, CI jobs and plugins should depend only on the **CLI contract** — the commands, fields and exit codes listed in
+[docs/cli-contract.md](docs/cli-contract.md), versioned by `contract` in `agentglass --version --json` (an integer; it
+moves only when something listed is removed or changes meaning).
 
 ### Exit codes
 
@@ -855,6 +865,44 @@ orders columns, nested ones by their flattened name (`tokens_in`, `git_commits`)
 keeps its type (`git_commits` stays an array of objects, only csv/table join lists); an unknown name exits 2 and lists
 the valid ones. On a terminal the default is `table`, in a pipe
 `json` (`--json` stays JSON).
+
+## herdr
+
+[herdr](https://herdr.dev) is a terminal multiplexer for coding agents. agentglass finds it on its
+own (the `herdr` binary, `HERDR_BIN_PATH`, and the API sockets of the default server, named sessions and every agent's
+environment) and spawns nothing when it is absent. For agents in herdr panes:
+
+- **Send** (`s`): `herdr agent prompt` types the text into the agent's pane (needs herdr ≥ 0.8.2, which refuses while the
+  agent waits at a dialog: answer it there, `R` jumps to it).
+- **Jump** (`R` on a live session, `a` in Processes): `herdr agent focus` moves herdr's clients to the pane.
+- **Resume** (`R` on an ended session while agentglass runs inside herdr): a new tab in the workspace whose worktree
+  holds the session's directory (else its repo's workspace, else a new workspace), the agent started there with its
+  resume arguments and focused. Outside herdr `R` resumes in agentglass's own terminal as before.
+- **Approval**: herdr's `blocked` state raises `◆` at once (`approval dialog open (herdr)`), for every harness, instead
+  of the CPU heuristic's 20 s; herdr's other states end Gemini's guess. It is read only while a dialog can be open (the
+  log quiet mid-turn), at most once per server per look.
+- **Exact links**: the session id herdr's integrations report (`herdr integration install claude|codex|…`) links the
+  agent process to its session, also where agentglass would guess by directory or link nothing.
+- **In the row**: herdr's `working` keeps the spinner turning while the log is quiet (a long tool run, a thinking
+  model); `done` (finished, not seen yet) shows a green `✓` until herdr reports otherwise or you select the session
+  here. States are read every 5 s while agentglass is focused and shows a herdr agent, every 30 s otherwise.
+- **Where**: the preview and Processes show the pane (`herdr webapp › 2 · w7:p1A`; only the pane id under `--redact`),
+  `--json` has `mux` (`{"kind":"herdr","pane":"w7:p1A","workspace":"webapp","tab":"2","status":"idle"}`), filter keys
+  `mux` and `workspace`, `cost --by workspace`, and the palette's "Sessions in this herdr workspace". An ended session
+  belongs to the workspace whose worktree holds its directory.
+- tmux inside a herdr pane: tmux owns the agent (the innermost multiplexer wins).
+
+herdr rings its own bell for blocked and finished agents. To keep only herdr's, scope agentglass's two built-ins in
+`~/.agentglass/rules.json`:
+
+```json
+{"rules": [{"id": "approval", "where": "mux is_not herdr"}, {"id": "waiting", "where": "mux is_not herdr"}]}
+```
+
+Off switch: `"mux": {"herdr": "off"}` in `~/.agentglass/config.json` (default `"auto"`) or `AGENTGLASS_HERDR=off`;
+`AGENTGLASS_HERDR=/path/to/herdr` picks the binary, `AGENTGLASS_HERDR_SOCKET=/path/herdr.sock` limits agentglass to that
+one server. The [agentglass-herdr](https://github.com/BjoernSchotte/agentglass-herdr) plugin brings agentglass into
+herdr (a popup, "open in agentglass", cost and alert tokens in the sidebar).
 
 ## Inside coding agents
 

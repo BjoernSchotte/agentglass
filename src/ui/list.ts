@@ -7,6 +7,7 @@ import { S } from "../state.ts";
 import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current } from "../model/sessions.ts";
 import { paneOfPid, paneText, paneTextIn } from "../mux/index.ts";
+import { herdrRow } from "../mux/rowstate.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, badge, BADGE_W, spin } from "./screen.ts";
 import { evLines } from "./transcript.ts";
@@ -28,9 +29,10 @@ export function actLines(s: Sess, w: number): string[] {
   return ACT.lines;
 }
 
-// the status glyph's kind: b busy (spinner), l live idle ●, r recent ○, o old ·
-function glyphKind(s: Sess): string {
-  if (s.pid) return working(s) || Date.now() - s.mtime < 8000 ? "b" : "l";
+// the status glyph's kind: b busy (spinner; also while herdr sees the agent working with its log quiet: a long tool run,
+// a thinking model), l live idle ●, r recent ○, o old ·
+export function glyphKind(s: Sess): string {
+  if (s.pid) return working(s) || Date.now() - s.mtime < 8000 || herdrRow(s) === "working" ? "b" : "l";
   return Date.now() - s.mtime < 120000 ? "r" : "o";
 }
 function statusGlyph(s: Sess): string {
@@ -44,7 +46,7 @@ function rowKey(s: Sess, sub: boolean, last: boolean): string {
   const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + agoK(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + agoK(s.last) + "|" + s.cwd + "|" +
     (s.subs.length ? (isOpen(s) ? "v" : ">") + String(activeSubs(s)) + "/" + String(s.subs.length) : ""));
   let b = ""; for (const f of H.rowBadges) b += f(s);
-  return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b;
+  return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b + "|" + herdrRow(s);
 }
 function usageKey(s: Sess): string {
   return String(s.inTok) + "," + String(s.outTok) + "," + String(s.cacheRTok) + "," + String(s.cacheWTok) + "," + String(s.cost) + "," + String(s.unkTok) + "," + String(s.unkCr) + "," +

@@ -60,7 +60,7 @@ eq "version help" "$(helped --version version,contract)" ok
 
 # --json: the fields, typed (json and jsonl), csv headers incl. the flattened mux columns, the help list
 SF="id:string,harness:string,title:string,cwd:string,live:bool,pid:number,status:string,costUsd:number|null,attention:bool,stuck:string|null,alerts:array"
-# A7: SF="$SF,mux:object|null"
+SF="$SF,mux:object|null"
 FL=$(printf %s "$SF" | sed 's/:[a-z|]*//g')
 run --json --all-projects --limit 5 --fields "$FL" --format json > "$t/j.json"
 eq "--json types" "$(types "$t/j.json" "$SF")" ok
@@ -68,9 +68,9 @@ run --json --all-projects --limit 5 --fields "$FL" --format jsonl | head -1 > "$
 eq "--json jsonl types" "$(types "$t/j1.json" "$SF")" ok
 eq "--json live" "$(run --json --live --all-projects --fields id --format json)" "[]"
 eq "--json help" "$(helped --json "$FL")" ok
-# A7: MF=id,harness,mux_kind,mux_pane,mux_workspace,mux_tab,mux_status
-# A7: eq "--json csv header" "$(run --json --all-projects --limit 1 --fields "$MF" --format csv | head -1)" "$MF"
-# A7: eq "--json csv live header" "$(run --json --live --all-projects --fields "$MF" --format csv | head -1)" "$MF"
+MF=id,harness,mux_kind,mux_pane,mux_workspace,mux_tab,mux_status
+eq "--json csv header" "$(run --json --all-projects --limit 1 --fields "$MF" --format csv | head -1)" "$MF"
+eq "--json csv live header" "$(run --json --live --all-projects --fields "$MF" --format csv | head -1)" "$MF"
 eq "--json filter" "$(run --json --all-projects --filter "id is $A" --fields id --format csv | tail -n +2)" "$A"
 
 # session <ref>: the same fields; a full ref with two copies → the newest copy; exit codes 3, 4, 2
@@ -91,10 +91,10 @@ for by in project harness; do
   eq "cost --by $by types" "$(types "$t/c.json" key:string,costUsd:number)" ok
 done
 for since in 7d 30d; do eq "cost --since $since" "$(run cost --since $since --by harness --format csv --fields key | tail -n +2 | tr '\n' ' ')" "claude total "; done
-# A9: run cost --since today --by workspace --format json --fields key,workspaceId,costUsd > "$t/c.json"
-# A9: eq "cost --by workspace types" "$(types "$t/c.json" key:string,workspaceId:string\|null,costUsd:number)" ok
+run cost --since today --by workspace --format json --fields key,workspaceId,costUsd > "$t/c.json"
+eq "cost --by workspace types" "$(types "$t/c.json" key:string,workspaceId:string\|null,costUsd:number)" ok
 eq "cost help" "$(helped cost key,costUsd)" ok
-# A9: eq "cost help workspaceId" "$(helped cost workspaceId)" ok
+eq "cost help workspaceId" "$(helped cost workspaceId)" ok
 
 # open: in a pipe it prints the resolution; exit codes 0, 3, 4, 2
 set +e
