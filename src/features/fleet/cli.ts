@@ -86,7 +86,7 @@ export function pullAll(f: FleetCfg, force: boolean, now: number): { ok: string[
     if (queue.length || running.length) sleep("0.1");
   }
   for (const rh of running) { rh.feed.stop(); rh.st = settle(rh.feed); }
-  for (const rh of FLEET.hosts) if (rh.st && rh.st.report) { rh.report = rh.st.report; rh.okAt = rh.st.okAt; }
+  for (const rh of FLEET.hosts) if (rh.st && rh.st.report) { rh.mine = rh.st.report; rh.mineAt = rh.st.okAt; }
   reapply();
   const ok: string[] = []; const failed: Failed[] = [];
   for (const rh of FLEET.hosts) {
@@ -209,22 +209,27 @@ function cost(args: string[]): void {
 }
 
 // ── fleet status ──
-export interface HostStatus { name: string; kind: string; target: string; enabled: boolean; okAgeSec: number; err: string; code: string; version: string; hostId: string; redact: boolean; tzOffsetMin: number; sessions: number; live: number; overlap: number; sharing: string; dupOf: string; skewSec: number; os: string; exact: boolean; priceSig: string; liveAgeSec: number }
+export interface HostStatus { name: string; kind: string; target: string; enabled: boolean; okAgeSec: number; err: string; code: string; version: string; hostId: string; redact: boolean; tzOffsetMin: number; sessions: number; live: number; overlap: number; sharing: string; dupOf: string; skewSec: number; os: string; exact: boolean; priceSig: string; liveAgeSec: number;
+  feedOf: string; feeds: string[]; via: string } // spec 17: feedOf = the entry this one's host shows under; feeds = this entry's host's other feeds; via = the feed whose report its rows show ("" = its own)
 function cpOf(rh: RemoteHost): string { return rh.cfg.kind === "ssh" && rh.cfg.enabled ? hostControlPath(rh.cfg) : ""; }
+// the other entries that reach rh's host (spec 17), config order
+function feedsOf(rh: RemoteHost): string[] { const o: string[] = []; if (rh.dupOf) return o; for (const x of FLEET.hosts) if (x.merged && x.dupOf === rh.cfg.name) o.push(x.cfg.name); return o; }
 export function hostStatus(rh: RemoteHost, now: number, ovKeys: Set<string>): HostStatus {
   const r = rh.report; const st: FeedState | null = rh.st;
   let live = 0; let ov = 0; for (const s of rh.rows) { if (s.rlive) live++; if (ovKeys.has(s.h + ":" + s.id)) ov++; }
   return { name: rh.cfg.name, kind: rh.cfg.kind, target: rh.cfg.kind === "ssh" ? rh.cfg.ssh : rh.cfg.path, enabled: rh.cfg.enabled, okAgeSec: r ? Math.round((now - rh.okAt) / 1000) : -1,
-    err: st ? st.err : "", code: !rh.cfg.enabled ? "disabled" : rh.dupOf ? "duplicate" : st && st.code ? st.code : r ? "ok" : "none", version: r ? r.hello.version : "", hostId: r ? r.hello.hostId : "",
+    err: st ? st.err : "", code: !rh.cfg.enabled ? "disabled" : rh.dupOf && !rh.merged ? "duplicate" : st && st.code ? st.code : r ? "ok" : "none", version: r ? r.hello.version : "", hostId: r ? r.hello.hostId : "",
     redact: r ? r.hello.redact : redactOf(rh.cfg), tzOffsetMin: r ? r.hello.tzOffsetMin : 0, sessions: rh.rows.length, live, overlap: ov,
-    sharing: rh.cfg.kind !== "ssh" || !rh.cfg.enabled ? "" : cpOf(rh) ? "on" : "off: the run directory path is too long or not owner-only", dupOf: rh.dupOf,
+    sharing: rh.cfg.kind !== "ssh" || !rh.cfg.enabled ? "" : cpOf(rh) ? "on" : "off: the run directory path is too long or not owner-only", dupOf: rh.merged ? "" : rh.dupOf,
     skewSec: r ? Math.round((r.hello.now - rh.okAt) / 1000) : 0, os: r ? r.hello.os : "", exact: !!r && r.exact, priceSig: r ? r.hello.priceSig : "",
-    liveAgeSec: rh.beatAt > 0 ? Math.round((now - rh.beatAt) / 1000) : -1 };
+    liveAgeSec: rh.beatAt > 0 ? Math.round((now - rh.beatAt) / 1000) : -1, feedOf: rh.merged ? rh.dupOf : "", feeds: feedsOf(rh), via: rh.dupOf ? "" : rh.via };
 }
 function tz(min: number): string { const a = Math.abs(min); return "UTC" + (min < 0 ? "−" : "+") + String(Math.floor(a / 60)) + (a % 60 ? ":" + String(a % 60).padStart(2, "0") : ""); }
 function problem(x: HostStatus): boolean { return x.code !== "ok" && x.code !== "disabled"; }
 function statusText(x: HostStatus, c: FleetCfg, localTz: number): string[] {
   const o = [x.name + "  " + x.kind + " " + x.target + (x.enabled ? "" : "  (disabled)")];
+  if (x.feedOf) o.push("  another feed of " + x.feedOf + " (the same host id " + x.hostId + "): its sessions show under " + x.feedOf);
+  if (x.feeds.length) o.push("  feeds: " + [x.name].concat(x.feeds).join(" · ") + " (one host: its rows come from " + (x.via || x.name) + ", the best report)");
   if (x.dupOf) o.push("  ✗ the same machine as " + x.dupOf + " (host id " + x.hostId + "): not merged — give one of them its own ~/.agentglass/host-id");
   else if (problem(x)) o.push("  ✗ " + (x.err || (x.code === "none" ? "no report yet: agentglass fleet --refresh pulls now" : x.code)));
   else if (x.err) o.push("  note: " + x.err);
@@ -243,7 +248,7 @@ function status(args: string[]): void {
   for (let i = 2; i < args.length; i++) { const a = args[i] ?? ""; if (a === "--close") close = true; else if (a === "--refresh") refresh = true; else if (a === "--format") i++; else if (a !== "--json") cliError("usage", "unknown option " + a + " for fleet status", "agentglass fleet status [--json] [--close] [--refresh]", 2); }
   const c = setup(false);
   if (refresh && sshBin()) pullAll(c, true, Date.now());
-  else { loadCached(); for (const rh of FLEET.hosts) if (rh.st && rh.st.report) { rh.report = rh.st.report; rh.okAt = rh.st.okAt; } reapply(); }
+  else { loadCached(); for (const rh of FLEET.hosts) if (rh.st && rh.st.report) { rh.mine = rh.st.report; rh.mineAt = rh.st.okAt; } reapply(); }
   const now = Date.now();
   const loc: Sess[] = []; if (merged().length) { discover(); for (const s of sessions.values()) if (!s.parent) loc.push(s); }
   const ov = overlap(loc, merged());
@@ -256,7 +261,8 @@ function status(args: string[]): void {
   if (asJson) {
     const o: Obj[] = [];
     for (const x of xs) o.push({ name: x.name, kind: x.kind, target: x.target, enabled: x.enabled, okAgeSec: x.okAgeSec >= 0 ? x.okAgeSec : null, code: x.code, err: x.err, version: x.version, hostId: x.hostId, redact: x.redact,
-      tzOffsetMin: x.tzOffsetMin, os: x.os, sessions: x.sessions, live: x.live, overlap: x.overlap, sharing: x.sharing, dupOf: x.dupOf || null, skewSec: x.skewSec, exact: x.exact, liveAgeSec: x.liveAgeSec >= 0 ? x.liveAgeSec : null });
+      tzOffsetMin: x.tzOffsetMin, os: x.os, sessions: x.sessions, live: x.live, overlap: x.overlap, sharing: x.sharing, dupOf: x.dupOf || null, skewSec: x.skewSec, exact: x.exact, liveAgeSec: x.liveAgeSec >= 0 ? x.liveAgeSec : null,
+      feedOf: x.feedOf || null, feeds: x.feeds, via: x.via || null });
     out(JSON.stringify(close ? { localName: c.localName, hostId: hostId(), hosts: o, closed } : { localName: c.localName, hostId: hostId(), hosts: o }));
     process.exit(0);
   }

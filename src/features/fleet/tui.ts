@@ -24,7 +24,7 @@ import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
 import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed, openCmd } from "./config.ts";
 import type { HostReport } from "./model.ts";
-import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh } from "./hosts.ts";
+import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher } from "./hosts.ts";
 import { sshBin, hostControlPath } from "./ssh.ts";
 import { forget, keyOf } from "./store.ts";
 import { makeFeeds, hostStatus, statusLines, redactOf, MAX_PARALLEL } from "./cli.ts";
@@ -42,19 +42,21 @@ export function backoffMs(n: number): number { return n <= 0 ? 0 : BACKOFF_MS[Ma
 export function nextDue(doneAt: number, ok: boolean, fails: number, interval: number): number { return doneAt + (ok ? interval : backoffMs(fails)); }
 
 // ── alerts: a transition seen in a new report toasts once (host|session|rule|severity|since) ──
+// (keyed by the host id when the report has one: two feeds of one host toast its alarm once)
 export function alertKeys(host: string, r: HostReport): { key: string; msg: string }[] {
-  const out: { key: string; msg: string }[] = [];
+  const out: { key: string; msg: string }[] = []; const hk = r.hello.hostId || host;
   for (const row of r.sessions) for (const a of arr(row.s["alerts"])) {
     const o = obj(a); if (!o || o["acked"] === true) continue;
-    out.push({ key: host + "|" + row.key + "|" + str(o["rule"]) + "|" + str(o["severity"]) + "|" + str(o["since"]), msg: host + " · " + str(row.s["title"]) + ": " + str(o["message"]) });
+    out.push({ key: hk + "|" + row.key + "|" + str(o["rule"]) + "|" + str(o["severity"]) + "|" + str(o["since"]), msg: host + " · " + str(row.s["title"]) + ": " + str(o["message"]) });
   }
   return out;
 }
 // the toasts of a new report: alerts not seen before (the first report of a host only seeds: old alarms stay quiet)
+// (another feed of a host toasts under the host's entry and shares its seen set)
 export function newAlerts(rh: RemoteHost, r: HostReport, seed: boolean): string[] {
-  const msgs: string[] = [];
-  for (const k of alertKeys(rh.cfg.name, r)) { if (rh.alertsSeen.has(k.key)) continue; rh.alertsSeen.add(k.key); if (!seed) msgs.push(k.msg); }
-  if (rh.alertsSeen.size > 5000) rh.alertsSeen.clear();
+  const msgs: string[] = []; const p = primaryOf(rh); const seen = p.alertsSeen;
+  for (const k of alertKeys(p.cfg.name, r)) { if (seen.has(k.key)) continue; seen.add(k.key); if (!seed) msgs.push(k.msg); }
+  if (seen.size > 5000) seen.clear();
   return msgs;
 }
 
@@ -84,14 +86,14 @@ function tick(): void {
       const ok = st.code === "ok"; const f = ok ? 0 : (T.fails.get(n) ?? 0) + 1; T.fails.set(n, f);
       T.due.set(n, nextDue(now, ok, f, FLEET.intervalMs));
     }
-    if (st.report && st.report !== rh.report) {
+    if (st.report && st.report !== rh.mine) {
       const seed = !T.seeded.has(n); T.seeded.add(n);
       for (const m of newAlerts(rh, st.report, seed || rh.cfg.kind === "dir" || !freshAt(st.okAt, now, c, FLEET.intervalMs))) toasts.push(m); // a stale report (the cache at start) and a drop (minutes old) only seed
-      rh.report = st.report; rh.okAt = st.okAt; fresh = true;
+      rh.mine = st.report; rh.mineAt = st.okAt; fresh = true;
       if (!T.due.has(n)) T.due.set(n, st.okAt + FLEET.intervalMs); // a cached report: the next pull when it would be due
     }
   }
-  if (fresh) { reapply(); for (const rh of FLEET.hosts) if (rh.dupOf && !T.seeded.has("dup:" + rh.cfg.name)) { T.seeded.add("dup:" + rh.cfg.name); say("warn", "fleet host " + rh.cfg.name + " is the same machine as " + rh.dupOf + ": not merged (agentglass fleet status)"); } }
+  if (fresh) { reapply(); for (const rh of FLEET.hosts) if (rh.dupOf && !rh.merged && !T.seeded.has("dup:" + rh.cfg.name)) { T.seeded.add("dup:" + rh.cfg.name); say("warn", "fleet host " + rh.cfg.name + " is the same machine as " + rh.dupOf + ": not merged (agentglass fleet status)"); } }
   if (syncFresh(now) || fresh) { T.gen++; S.dirty = true; }
   for (const m of toasts.slice(-3)) say("warn", m); // a burst after a long gap: the last ones
   if (T.nossh) return;
@@ -123,19 +125,20 @@ function titleOf(rh: RemoteHost, key: string): string { for (const s of rh.rows)
 function streams(now: number): boolean {
   let moved = false;
   for (const rh of FLEET.hosts) {
-    const c = rh.cfg; const r = rh.report;
-    if (!c.enabled || c.kind !== "ssh" || !c.watch || !r || !r.exact || rh.dupOf) { const w = WF.get(c.name); if (w) { w.stop(); WF.delete(c.name); } continue; }
+    const c = rh.cfg;
+    if (!watcher(rh)) { const w = WF.get(c.name); if (w) { w.stop(); WF.delete(c.name); rh.beatAt = 0; } continue; } // one stream per host: its first exact ssh feed
+    const p = primaryOf(rh);
     let w = WF.get(c.name);
     if (!w) { w = watchFeed(c, keyOf(c.name, redactOf(c)), redactOf(c), hostControlPath(c), detachedPid); WF.set(c.name, w); }
     if (!w.running()) w.start(now);
     const ev: WatchEv = w.poll(now); const was = liveFresh(rh, now); rh.beatAt = w.beatAt();
     for (const l of ev.rows) rh.live.set(l.key, l);
     if (rh.live.size > 5000) rh.live.clear();
-    if (ev.rows.length || was !== liveFresh(rh, now)) { if (overlay(rh, now)) moved = true; }
+    if (ev.rows.length || was !== liveFresh(rh, now)) { if (overlay(p, now)) moved = true; } // the host's rows (another feed's entry may show them)
     for (const a of ev.alerts) {
-      const o = alertOut(c.name, titleOf(rh, str(a["key"])), a, NOTIFIED);
+      const o = alertOut(p.cfg.name, titleOf(p, str(a["key"])), a, NOTIFIED);
       say(o.notify ? "err" : "warn", o.msg);
-      if (o.notify && process.env["AGENTGLASS_NOTIFY"] !== "0") OS.notify("agentglass", c.name + " · " + str(a["rule"]), o.msg);
+      if (o.notify && process.env["AGENTGLASS_NOTIFY"] !== "0") OS.notify("agentglass", p.cfg.name + " · " + str(a["rule"]), o.msg);
     }
     if (ev.turns.length && !T.busy.get(c.name)) { const lt = TURN_AT.get(c.name) ?? 0; const d = turnDue(T.due.get(c.name) ?? now + FLEET.intervalMs, now, lt); T.due.set(c.name, d); TURN_AT.set(c.name, d); }
   }
@@ -304,5 +307,6 @@ H.helpSections.push({ name: "fleet", ctx: "sessions", keys: [
   ["", "exact hosts (snapshots): a message copied to several hosts counts once, priced with this machine's table and days"],
   ["", "live stream (fleet watch): remote running / waiting within seconds; critical remote alerts reach the desktop"],
   ["", "dir hosts: snapshots a host drops into a synced folder (agentglass fleet drop); never shown as running"],
+  ["", "one machine under several entries (ssh and a drop, the hub): one host, its rows once, under the first entry"],
   ["", "--no-fleet / AGENTGLASS_FLEET=0: this run without hosts · agentglass fleet status in a shell"]] });
 export const FLEET_TUI_TEST = { T, tick, init };

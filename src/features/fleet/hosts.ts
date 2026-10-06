@@ -20,9 +20,14 @@ import { type LocalLog, type FleetHost, type Exact, type Shadow, exactFleet, mod
 import type { HostCfg, FleetCfg } from "./config.ts";
 import type { HostFeed, HostReport, FeedState, OwnRow, LiveRow } from "./model.ts";
 
+// mine/mineAt: the newest report of this entry's own feed; report/okAt: the report its rows show — its own, or another
+// feed's of the same host (spec 17: via = that entry's name, vkind its transport; "" = its own)
+// dupOf: the entry whose rows show this host instead ("local": this machine, never merged); merged: dupOf is another
+// feed of the same host (its report competes for that entry's rows) rather than a conflict
 // applied: the report rows were last built from (a round that changes nothing else keeps them)
 // beatAt: the live stream's last beat (viewer clock, 0 = no stream), live: its newest state per session key (spec 16)
-export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null; applied: HostReport | null; beatAt: number; live: Map<string, LiveRow> }
+export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null; applied: HostReport | null; beatAt: number; live: Map<string, LiveRow>;
+  mine: HostReport | null; mineAt: number; via: string; vkind: string; merged: boolean }
 // localId: this machine's hostId(); intervalMs: the effective refresh interval (stretched while the TUI is unfocused)
 export const FLEET = { hosts: [] as RemoteHost[], cfg: null as FleetCfg | null, localId: "", intervalMs: 60000 };
 const OBJ = new Map<string, Obj>(); // remote row path → its --json object (preview, fleet --json)
@@ -65,11 +70,24 @@ export const DIR_EVERY_DEFAULT = 900000;
 export const LIVE_FRESH_MS = 90000;
 export function liveFresh(rh: RemoteHost, now: number): boolean { return rh.beatAt > 0 && now - rh.beatAt <= LIVE_FRESH_MS; }
 // the stream's newest states onto the host's rows (after every report and every stream poll); false = nothing moved
+// the entry whose rows show rh's host (rh itself unless it is another feed of an earlier entry)
+export function primaryOf(rh: RemoteHost): RemoteHost { return rh.merged ? hostByName(rh.dupOf) ?? rh : rh; }
+// the feeds of rh's host whose stream beat last (spec 17: live state from the freshest live source)
+export function liveSrc(rh: RemoteHost): RemoteHost { let b = rh; for (const x of FLEET.hosts) if (x.merged && x.dupOf === rh.cfg.name && x.beatAt > b.beatAt) b = x; return b; }
+// this entry runs its host's live stream: an exact ssh feed with watch on, the first such feed of its host (one stream
+// per machine however many feeds reach it)
+function canWatch(rh: RemoteHost): boolean { const c = rh.cfg; const r = rh.mine; return c.enabled && c.kind === "ssh" && c.watch && !!r && r.exact && !(rh.dupOf && !rh.merged); }
+export function watcher(rh: RemoteHost): boolean {
+  if (!canWatch(rh)) return false;
+  const p = primaryOf(rh);
+  for (const x of FLEET.hosts) { if (x === rh) return true; if ((x === p || (x.merged && x.dupOf === p.cfg.name)) && canWatch(x)) return false; }
+  return true;
+}
 export function overlay(rh: RemoteHost, now: number): boolean {
-  const on = liveFresh(rh, now); if (!rh.live.size && !on) return false;
+  const src = liveSrc(rh); const on = liveFresh(src, now); if (!src.live.size && !on) return false;
   let moved = false;
   for (const s of rh.rows) {
-    const l = on ? rh.live.get(s.h + ":" + s.id) ?? null : null; // the stream names every live session: one it does not name is not live
+    const l = on ? src.live.get(s.h + ":" + s.id) ?? null : null; // the stream names every live session: one it does not name is not live
     const o = OBJ.get(s.path);
     const live = l ? l.live : on ? false : rh.fresh && !!o && o["live"] === true;
     const att = l ? l.attention || l.approval : rh.fresh && !!o && o["attention"] === true;
@@ -79,38 +97,62 @@ export function overlay(rh: RemoteHost, now: number): boolean {
   if (moved) RG.gen++;
   return moved;
 }
-// a new report for rh; ids = hostId → the name that holds it (this machine first, then earlier hosts): a report from this
-// machine or from a host listed twice is not merged
-export function applyReport(rh: RemoteHost, r: HostReport, at: number, ids: Map<string, string>): void {
-  rh.report = r; rh.okAt = at;
+// rh shows report r (its own, or src's: another feed of its host); dup: the entry that shows it instead
+function show(rh: RemoteHost, r: HostReport, at: number, src: RemoteHost, dup: string, merged: boolean): void {
+  rh.report = r; rh.okAt = at; rh.via = src === rh ? "" : src.cfg.name; rh.vkind = src.cfg.kind; rh.merged = merged;
   const c = FLEET.cfg; if (c) rh.fresh = freshOf(rh, Date.now(), c, FLEET.intervalMs);
-  const prev = ids.get(r.hello.hostId);
-  const dup = r.hello.hostId && prev !== undefined && prev !== rh.cfg.name ? prev : "";
-  if (!dup && r.hello.hostId) ids.set(r.hello.hostId, rh.cfg.name);
   if (rh.applied === r && rh.dupOf === dup) return; // the same rows as last round
   for (const s of rh.rows) OBJ.delete(s.path);
   rh.dupOf = dup; rh.applied = r;
   if (dup) rh.rows = [];
-  else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh, rh.cfg.kind !== "dir"); overlay(rh, Date.now()); }
+  else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh, rh.vkind !== "dir"); overlay(rh, Date.now()); }
   RG.gen++;
 }
+// which feed of one host its rows come from (spec 17): an exact report over an inexact one, a fresh over a stale one,
+// a snapshot or drop over the hub, then the newest; ties keep config order
+function better(x: RemoteHost, b: RemoteHost, now: number, f: FleetCfg): boolean {
+  const rx = x.mine; const rb = b.mine; if (!rx || !rb) return !!rx;
+  if (rx.exact !== rb.exact) return rx.exact;
+  const fx = freshKind(x.cfg.kind, x.cfg.name, x.mineAt, now, f, FLEET.intervalMs); const fb = freshKind(b.cfg.kind, b.cfg.name, b.mineAt, now, f, FLEET.intervalMs);
+  if (fx !== fb) return fx;
+  const hx = x.cfg.kind === "otlp"; const hb = b.cfg.kind === "otlp"; if (hx !== hb) return !hx;
+  return x.mineAt > b.mineAt;
+}
+// a new report from rh's own feed (ids: kept for callers; the grouping is redone over every entry)
+export function applyReport(rh: RemoteHost, r: HostReport, at: number, ids: Map<string, string>): void { rh.mine = r; rh.mineAt = at; reapply(); }
 // the duplicate map of a round: this machine, then every host in config order
 export function idMap(): Map<string, string> {
   const m = new Map<string, string>(); const c = FLEET.cfg;
   if (FLEET.localId) m.set(FLEET.localId, c ? c.localName : "local");
   return m;
 }
-// all reports again in config order (a report that arrives late must not steal an earlier host's id)
+// every entry's newest report again, grouped by host id in config order (a report that arrives late must not steal an
+// earlier entry's host): the first entry of a host shows the best of its feeds' reports (spec 17), the others show
+// nothing; a report with this machine's id is never merged
 export function reapply(): void {
-  const ids = idMap();
-  for (const rh of FLEET.hosts) if (rh.report) applyReport(rh, rh.report, rh.okAt, ids);
+  const c = FLEET.cfg; if (!c) return;
+  const now = Date.now(); const first = new Map<string, RemoteHost>(); const best = new Map<string, RemoteHost>();
+  for (const rh of FLEET.hosts) {
+    const r = rh.mine; if (!r) continue;
+    const id = r.hello.hostId;
+    if (id && id === FLEET.localId) { show(rh, r, rh.mineAt, rh, c.localName, false); continue; }
+    const p = id ? first.get(id) : undefined;
+    if (!p) { if (id) { first.set(id, rh); best.set(id, rh); } else show(rh, r, rh.mineAt, rh, "", false); continue; }
+    show(rh, r, rh.mineAt, rh, p.cfg.name, true);
+    const b = best.get(id); if (b && better(rh, b, now, c)) best.set(id, rh);
+  }
+  for (const [id, p] of first) { const b = best.get(id) ?? p; const r = b.mine; if (r) show(p, r, b.mineAt, b, "", false); }
 }
 // fresh while its age ≤ 2 × interval + timeout (interval: the effective one, stretched while unfocused)
 // a dir host: while its newest applied file is at most 2 × the writer's cadence + 10 min old (spec 15.4)
+// (rh's report may be another feed's of its host: that feed's transport and cadence count)
 export function freshOf(rh: RemoteHost, now: number, f: FleetCfg, intervalMs: number): boolean {
   if (rh.report === null) return false;
-  if (rh.cfg.kind === "dir") { const e = DIR_EVERY.get(rh.cfg.name) || DIR_EVERY_DEFAULT; return now - rh.okAt <= 2 * e + 600000; }
-  return freshAt(rh.okAt, now, f, intervalMs);
+  return freshKind(rh.vkind || rh.cfg.kind, rh.via || rh.cfg.name, rh.okAt, now, f, intervalMs);
+}
+function freshKind(kind: string, name: string, at: number, now: number, f: FleetCfg, intervalMs: number): boolean {
+  if (kind === "dir") { const e = DIR_EVERY.get(name) || DIR_EVERY_DEFAULT; return now - at <= 2 * e + 600000; }
+  return freshAt(at, now, f, intervalMs);
 }
 export function freshAt(okAt: number, now: number, f: FleetCfg, intervalMs: number): boolean { return now - okAt <= 2 * intervalMs + f.timeoutS * 1000; }
 // recomputes every host's freshness; true = one changed (rows re-marked, the view's signature moved)
@@ -119,7 +161,7 @@ export function syncFresh(now: number): boolean {
   let moved = false;
   for (const rh of FLEET.hosts) {
     const fr = freshOf(rh, now, f, FLEET.intervalMs);
-    if (fr !== rh.fresh) { rh.fresh = fr; markFresh(rh.rows, fr, rh.cfg.kind !== "dir"); moved = true; }
+    if (fr !== rh.fresh) { rh.fresh = fr; markFresh(rh.rows, fr, (rh.vkind || rh.cfg.kind) !== "dir"); moved = true; }
     if (overlay(rh, now)) moved = true; // a stream that stopped beating: its states fall back to the report's
   }
   if (moved) RG.gen++;
@@ -256,16 +298,19 @@ H.remoteRows.push((): Sess[] => {
   for (const rh of merged()) o = o.concat(rh.rows);
   return o;
 });
-FRESH.ok = (host: string): boolean => { const rh = hostByName(host); return rh !== null && (rh.fresh || liveFresh(rh, Date.now())); };
+FRESH.ok = (host: string): boolean => { const rh = hostByName(host); return rh !== null && (rh.fresh || liveFresh(liveSrc(rh), Date.now())); };
 HOST_ENUM.values = (): string[] => { const c = FLEET.cfg; const o = [c ? c.localName : "local"]; if (c) for (const h of c.hosts) o.push(h.name); return o; };
 REMOTE_IDENT.of = (s: Sess): Ident | null => {
   const o = OBJ.get(s.path); const r = o ? obj(o["repo"]) : null; if (!r) return null;
   return { key: str(r["key"]), label: str(r["label"]), kind: str(r["kind"]), top: str(r["top"]), common: "", gitdir: "", worktree: str(r["worktree"]), remote: str(r["remote"]), via: "remote", gone: false, unread: false };
 };
+export function newRemote(h: HostCfg, fd: HostFeed): RemoteHost {
+  return { cfg: h, feed: fd, report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: null, applied: null, beatAt: 0, live: new Map<string, LiveRow>(), mine: null, mineAt: 0, via: "", vkind: "", merged: false };
+}
 // the configured hosts (feeds made by the caller: the TUI and the CLI spawn differently)
 export function setFleet(c: FleetCfg, localId: string, feeds: HostFeed[]): void {
   FLEET.cfg = c; FLEET.localId = localId; FLEET.intervalMs = c.refreshS * 1000; HOSTQ.local = c.localName;
   FLEET.hosts = [];
-  for (let i = 0; i < c.hosts.length && i < feeds.length; i++) { const h = c.hosts[i]; const fd = feeds[i]; if (h && fd) FLEET.hosts.push({ cfg: h, feed: fd, report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: null, applied: null, beatAt: 0, live: new Map<string, LiveRow>() }); }
+  for (let i = 0; i < c.hosts.length && i < feeds.length; i++) { const h = c.hosts[i]; const fd = feeds[i]; if (h && fd) FLEET.hosts.push(newRemote(h, fd)); }
   RG.gen++;
 }

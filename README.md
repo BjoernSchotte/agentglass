@@ -894,6 +894,13 @@ files owned by you that no group or other user can write. A drop is minutes old:
 and its alerts do not toast. **Use `--redact`** for a folder that a third-party service syncs; `fleet drop` warns when
 an unredacted drop goes outside your home directory.
 
+**One machine, several entries.** Entries whose reports carry the same host id (`~/.agentglass/host-id`, or the
+machine id) are one host: a laptop reachable over ssh at home that also drops into a folder, an ssh host that also
+exports to a hub. Its sessions show once, under the first entry, from the best report at hand: an exact one over a
+plain one, a fresh one over a stale one, a snapshot or drop over the hub, then the newest. Live state comes from
+whichever of them streams (one `fleet watch` per machine). `fleet status` lists the entries per host. Only this machine
+listed as a host is refused (its rows would double the local ones).
+
 ## Send to an OTLP backend
 
 agentglass sends your sessions to any OpenTelemetry backend that takes OTLP/HTTP (Jaeger, Grafana Tempo, SigNoz,

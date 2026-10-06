@@ -153,6 +153,15 @@ eq "dir host: rows" "$(run fleet --json | jq -r '[.[] | select(.host=="nas") | .
 eq "dir host: exact" "$(run fleet status --json | jq -r '.hosts[0].exact')" true
 cfg '{"fleet":{"hosts":[{"name":"h2","ssh":"h2"}]}}'
 eq "ssh host: the same rows" "$(run fleet --json --refresh | jq -r '[.[] | select(.host=="h2") | .id] | sort | join(",")')" "w1"
+one=$(run fleet cost --json | jq -c '.total')
+# one host through two feeds (spec 17): ssh and its drops merge by host id, its rows once, under its first entry
+cfg '{"fleet":{"hosts":[{"name":"h2","ssh":"h2"},{"name":"nas","dir":"'"$t/sync"'"}]}}'
+eq "two feeds: rows once" "$(run fleet --json --refresh | jq -r '[.[] | select(.host != "local") | .host + ":" + .id] | join(",")')" "h2:w1"
+eq "two feeds: counted once" "$(run fleet cost --json | jq -c '.total')" "$one"
+s=$(run fleet status --json)
+eq "two feeds: the drop is a feed of h2" "$(echo "$s" | jq -r '.hosts[] | select(.name=="nas") | .feedOf + " " + (.dupOf | tostring) + " " + .code')" "h2 null ok"
+eq "two feeds: h2 lists them" "$(echo "$s" | jq -r '.hosts[] | select(.name=="h2") | .feeds | join(",")')" "nas"
+run fleet status | grep -q "another feed of h2" || { echo "FAIL status text: another feed"; run fleet status; fail=1; }
 # fleet watch through the fake ssh: a live session on h2 shows within 3 s, as state only
 mkdir -p "$t/h2/.claude/sessions"; sleep 60 & agent=$!
 printf '{"pid":%s,"sessionId":"w1","status":"busy"}\n' "$agent" > "$t/h2/.claude/sessions/$agent.json"

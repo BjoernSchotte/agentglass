@@ -12,7 +12,7 @@ import type { HostCfg } from "./config.ts";
 import type { LiveRow } from "./model.ts";
 import { type WState, newWState, watchLines, alertLine, BEAT_MS, REPEAT_MS } from "./watch.ts";
 import { type WatchEv, watchFeed, feedWatch, watchArgs, WATCH_MAX, WATCH_SNIPPET } from "./watchfeed.ts";
-import { type RemoteHost, overlay, liveFresh, LIVE_FRESH_MS } from "./hosts.ts";
+import { type RemoteHost, overlay, liveFresh, LIVE_FRESH_MS, newRemote } from "./hosts.ts";
 import { alertOut, turnDue } from "./tui.ts";
 import { spoolPath } from "./store.ts";
 import { idleFeed } from "./ssh.ts";
@@ -95,7 +95,7 @@ try { process.kill(sp, "SIGKILL"); } catch (e) { /* gone */ }
 
 // ── the host's rows: the stream's states while it beats, the report's after 90 s without a beat ──
 const s = newSess("claude", "a", "@ws/claude:a", false); s.host = "ws"; s.rlive = false;
-const rh: RemoteHost = { cfg: h, feed: idleFeed("ssh"), report: null, rows: [s], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: null, applied: null, beatAt: 0, live: new Map<string, LiveRow>() };
+const rh: RemoteHost = newRemote(h, idleFeed("ssh")); rh.rows = [s];
 const n0 = Date.now(); rh.beatAt = n0;
 rh.live.set("claude:a", { key: "claude:a", at: n0, live: true, busy: true, attention: true, approval: false, stuck: "", alerts: [] });
 ok("overlay: live and attention from the stream", overlay(rh, n0) && s.rlive && s.attention && liveFresh(rh, n0), String(s.rlive));
