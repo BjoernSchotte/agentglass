@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { width, vwidth, fitStyled } from "../../util/text.ts";
 import { S, say } from "../../state.ts";
-import { H, tabAt, display } from "../../hooks.ts";
+import { H, tabAt, display, remoteRows } from "../../hooks.ts";
 import type { Proc, Sess } from "../../model/types.ts";
 import { newSess } from "../../model/types.ts";
 import { sessions, buildView, loadHead, SG } from "../../model/sessions.ts";
@@ -422,7 +422,16 @@ H.keys.push((mode: string, k: string): boolean => {
 });
 
 // ── hooks into the list and the process table ──
-H.listFilter.push(() => { const f = tabFilter("Sessions", "list"); if (f === EMPTY) { fillStop(); return null; } const m = matchingPaths(f, "list"); return (s: Sess): boolean => m.has(s.path); });
+// fleet: a remote row is matched on its own (session clauses; it has no calls, days or content here) — once per filter a
+// toast says so when such a clause hides the remote rows
+const RT = { told: "" };
+function remoteMatch(f: Compiled, s: Sess): boolean { return !f.content.length && matchSession(f, s, null); }
+H.listFilter.push(() => {
+  const f = tabFilter("Sessions", "list"); if (f === EMPTY) { fillStop(); return null; }
+  const m = matchingPaths(f, "list");
+  if ((f.call.length || f.day.length || f.rowx.length || f.content.length) && RT.told !== f.key && remoteRows().length) { RT.told = f.key; say("info", "remote rows have no calls/days: this filter hides them"); }
+  return (s: Sess): boolean => s.host ? remoteMatch(f, s) : m.has(s.path);
+});
 H.procFilter.push((p: Proc): boolean => {
   if (!S.pins.length) return true;
   const f = compiledOf(S.pins, "procs"); if (f === EMPTY) return true;

@@ -374,6 +374,7 @@ export function rowsPending(f: Compiled, s: Sess): boolean {
 export function matchSession(f: Compiled, s: Sess, days: string[] | null): boolean {
   if (!all1(f.sess, s)) return false;
   if (!f.call.length && !f.day.length) return true;
+  if (s.host) return false; // a remote row (fleet): its calls and days are not here (and it never gets a ledger entry)
   const a = accOf(s); const any = days === null; const ds = new Set<string>(days ?? []);
   if (f.call.length) {
     const cut = callCutoff(); if (!rowsMayMatch(a.days, cut, ds, any)) return false;

@@ -182,6 +182,7 @@ eq("no day left", String(beyondRetention([], [], "2025-01-01", cut)), "false");
   eq("host is nope: an error listing the hosts", pe ? pe.msg : "", "host is one of local, ws, vm1 — got \"nope\"");
   eq("tool is Bash never matches a remote row", String(M("tool is Bash", r)), "false");
   eq("day clause never matches a remote row", String(M("day >= -3d", r)), "false");
+  eq("no ledger entry for a remote row", String(ledger.has(r.path)), "false");
   HOST_ENUM.values = (): string[] => ["local"];
 }
 console.log(bad ? bad + " failed" : "filter eval: all checks passed");

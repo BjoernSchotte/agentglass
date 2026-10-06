@@ -24,7 +24,7 @@ import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
 import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed } from "./config.ts";
 import type { HostReport } from "./model.ts";
-import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, rowObj, hostByName } from "./hosts.ts";
+import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName } from "./hosts.ts";
 import { sshBin } from "./ssh.ts";
 import { forget } from "./store.ts";
 import { makeFeeds, hostStatus, statusLines, MAX_PARALLEL } from "./cli.ts";
@@ -74,6 +74,7 @@ function tick(): void {
   for (const rh of FLEET.hosts) {
     if (!rh.cfg.enabled || rh.cfg.kind !== "ssh") continue;
     const st = rh.feed.poll(now); rh.st = st; const n = rh.cfg.name;
+    if ((st.code === "dir" || st.code === "nossh") && !T.seeded.has(st.code)) { T.seeded.add(st.code); say("warn", "fleet: " + st.err); } // no pulls at all: say why once
     if (st.busy) { running++; T.busy.set(n, true); continue; }
     if (T.busy.get(n)) { // a pull finished: the next one is due an interval later, or after the backoff
       T.busy.set(n, false);
@@ -82,7 +83,7 @@ function tick(): void {
     }
     if (st.report && st.report !== rh.report) {
       const seed = !T.seeded.has(n); T.seeded.add(n);
-      for (const m of newAlerts(rh, st.report, seed || !freshOf({ cfg: rh.cfg, feed: rh.feed, report: st.report, rows: [], okAt: st.okAt, dupOf: "", alertsSeen: rh.alertsSeen, fresh: false, st: null }, now, c, FLEET.intervalMs))) toasts.push(m);
+      for (const m of newAlerts(rh, st.report, seed || !freshAt(st.okAt, now, c, FLEET.intervalMs))) toasts.push(m); // a stale report (the cache at start) only seeds
       rh.report = st.report; rh.okAt = st.okAt; fresh = true;
       if (!T.due.has(n)) T.due.set(n, st.okAt + FLEET.intervalMs); // a cached report: the next pull when it would be due
     }

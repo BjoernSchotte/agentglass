@@ -15,7 +15,8 @@ import { type CostNow, budget } from "../usage/summary.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
 import type { HostFeed, HostReport, FeedState } from "./model.ts";
 
-export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null }
+// applied: the report rows were last built from (a round that changes nothing else keeps them)
+export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null; applied: HostReport | null }
 // localId: this machine's hostId(); intervalMs: the effective refresh interval (stretched while the TUI is unfocused)
 export const FLEET = { hosts: [] as RemoteHost[], cfg: null as FleetCfg | null, localId: "", intervalMs: 60000 };
 const OBJ = new Map<string, Obj>(); // remote row path → its --json object (preview, fleet --json)
@@ -53,10 +54,14 @@ function markFresh(rows: Sess[], fresh: boolean): void {
 export function applyReport(rh: RemoteHost, r: HostReport, at: number, ids: Map<string, string>): void {
   rh.report = r; rh.okAt = at;
   const c = FLEET.cfg; if (c) rh.fresh = freshOf(rh, Date.now(), c, FLEET.intervalMs);
-  for (const s of rh.rows) OBJ.delete(s.path);
   const prev = ids.get(r.hello.hostId);
-  if (r.hello.hostId && prev !== undefined && prev !== rh.cfg.name) { rh.dupOf = prev; rh.rows = []; }
-  else { rh.dupOf = ""; if (r.hello.hostId) ids.set(r.hello.hostId, rh.cfg.name); rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh); }
+  const dup = r.hello.hostId && prev !== undefined && prev !== rh.cfg.name ? prev : "";
+  if (!dup && r.hello.hostId) ids.set(r.hello.hostId, rh.cfg.name);
+  if (rh.applied === r && rh.dupOf === dup) return; // the same rows as last round
+  for (const s of rh.rows) OBJ.delete(s.path);
+  rh.dupOf = dup; rh.applied = r;
+  if (dup) rh.rows = [];
+  else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh); }
   RG.gen++;
 }
 // the duplicate map of a round: this machine, then every host in config order
@@ -71,9 +76,8 @@ export function reapply(): void {
   for (const rh of FLEET.hosts) if (rh.report) applyReport(rh, rh.report, rh.okAt, ids);
 }
 // fresh while its age ≤ 2 × interval + timeout (interval: the effective one, stretched while unfocused)
-export function freshOf(rh: RemoteHost, now: number, f: FleetCfg, intervalMs: number): boolean {
-  return rh.report !== null && now - rh.okAt <= 2 * intervalMs + f.timeoutS * 1000;
-}
+export function freshOf(rh: RemoteHost, now: number, f: FleetCfg, intervalMs: number): boolean { return rh.report !== null && freshAt(rh.okAt, now, f, intervalMs); }
+export function freshAt(okAt: number, now: number, f: FleetCfg, intervalMs: number): boolean { return now - okAt <= 2 * intervalMs + f.timeoutS * 1000; }
 // recomputes every host's freshness; true = one changed (rows re-marked, the view's signature moved)
 export function syncFresh(now: number): boolean {
   const f = FLEET.cfg; if (!f) return false;
@@ -86,8 +90,9 @@ export function syncFresh(now: number): boolean {
   return moved;
 }
 export function hostByName(name: string): RemoteHost | null { for (const rh of FLEET.hosts) if (rh.cfg.name === name) return rh; return null; }
-// the hosts whose rows count: enabled, a report, not a duplicate
-export function merged(): RemoteHost[] { const o: RemoteHost[] = []; for (const rh of FLEET.hosts) if (rh.cfg.enabled && rh.report && !rh.dupOf) o.push(rh); return o; }
+// the hosts whose rows count: enabled, a report under 7 days old (older ones: fleet status only), not a duplicate
+export const SHOWN_MS = 7 * 86400000;
+export function merged(): RemoteHost[] { const o: RemoteHost[] = []; const now = Date.now(); for (const rh of FLEET.hosts) if (rh.cfg.enabled && rh.report && !rh.dupOf && now - rh.okAt <= SHOWN_MS) o.push(rh); return o; }
 // "harness:id" keys present on 2+ hosts (this machine counts as one): the same session read twice (spec 7.2)
 export function overlap(local: Sess[], hosts: RemoteHost[]): Set<string> {
   const seen = new Map<string, number>();
@@ -168,7 +173,7 @@ export function fleetAllowance(local: Obj | null, hosts: RemoteHost[]): Obj | nu
 // ── registration: rows, freshness, the host filter key, remote projects ──
 H.remoteRows.push((): Sess[] => {
   let o: Sess[] = [];
-  for (const rh of FLEET.hosts) if (rh.cfg.enabled && !rh.dupOf) o = o.concat(rh.rows);
+  for (const rh of merged()) o = o.concat(rh.rows);
   return o;
 });
 FRESH.ok = (host: string): boolean => { const rh = hostByName(host); return rh !== null && rh.fresh; };
@@ -181,6 +186,6 @@ REMOTE_IDENT.of = (s: Sess): Ident | null => {
 export function setFleet(c: FleetCfg, localId: string, feeds: HostFeed[]): void {
   FLEET.cfg = c; FLEET.localId = localId; FLEET.intervalMs = c.refreshS * 1000; HOSTQ.local = c.localName;
   FLEET.hosts = [];
-  for (let i = 0; i < c.hosts.length && i < feeds.length; i++) { const h = c.hosts[i]; const fd = feeds[i]; if (h && fd) FLEET.hosts.push({ cfg: h, feed: fd, report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: null }); }
+  for (let i = 0; i < c.hosts.length && i < feeds.length; i++) { const h = c.hosts[i]; const fd = feeds[i]; if (h && fd) FLEET.hosts.push({ cfg: h, feed: fd, report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: null, applied: null }); }
   RG.gen++;
 }
