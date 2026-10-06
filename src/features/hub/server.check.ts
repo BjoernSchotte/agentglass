@@ -12,7 +12,7 @@ function req(n: number): Obj {
 }
 const small = splitLines(req(10), "resourceSpans", false);
 ok("small: one line", small.length === 1, String(small.length));
-const big = splitLines(req(10000), "resourceSpans", false); // ~10 MB
+const big = splitLines(req(20000), "resourceSpans", false); // ~20 MB
 ok("big: several lines", big.length >= 3, String(big.length));
 let spans = 0; let okLines = true; const ids = new Set<string>();
 for (const l of big) {
@@ -23,8 +23,8 @@ for (const l of big) {
   if (!sc || JSON.stringify(sc["scope"]).indexOf("agentglass") < 0) { okLines = false; console.log("scope " + l.slice(0, 300)); }
   for (const sp of arr(sc?.["spans"])) { spans++; ids.add(String(obj(sp)?.["spanId"])); }
 }
-ok("each line ≤ 4 MB with resource and scope", okLines, "bad line");
-ok("every span once", spans === 10000 && ids.size === 10000, String(spans));
+ok("each line ≤ 8 MB with resource and scope", okLines, "bad line");
+ok("every span once", spans === 20000 && ids.size === 20000, String(spans));
 const logs = obj(JSON.parse("{\"resourceLogs\":[{\"resource\":{\"attributes\":[]},\"scopeLogs\":[{\"logRecords\":[{\"body\":{\"stringValue\":\"x\"}}]}]}]}")) ?? {};
 ok("logs: as is", splitLines(logs, "resourceLogs", true)[0] === JSON.stringify(logs), "changed");
 if (bad) console.log(String(bad) + " failed"); else console.log("hub server: all checks passed");

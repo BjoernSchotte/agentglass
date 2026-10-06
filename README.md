@@ -1073,7 +1073,7 @@ agentglass --watch --otlp         # the rest, live (heartbeat, session state, al
   claims), 20,000 spans or log records per request, 120 requests and 128 MB per token per minute (`429` with
   `Retry-After`), 64 connections, 10 s for the headers, 60 s for the body. `Expect: 100-continue` is answered at once.
 - **Storage:** `~/.agentglass/hub/<host>/traces-YYYYMMDD.jsonl` and `logs-…` (UTC days, one request per line, larger
-  requests split into lines of at most 4 MB), directories `0700`, files `0600`. Closed days are gzipped an hour after
+  requests split into lines of at most 8 MB), directories `0700`, files `0600`. Closed days are gzipped an hour after
   midnight UTC. `receive.maxDiskMB` (2048) and `receive.retentionDays` (30): older files go first, then the oldest
   closed days of any host; today's files are never deleted. When today's files alone exceed the budget, ingest
   answers `503` (exporters retry; agentglass's own resends from its transcripts) and `receive status` says so.

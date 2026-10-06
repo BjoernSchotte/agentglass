@@ -35,6 +35,26 @@ function attrs(list: unknown, c: ScrubCfg, cnt: Cnt): unknown[] {
   }
   return out;
 }
+// false when the request text names no key the scrub acts on: it is stored as it came (rebuilding a large request
+// costs more than everything else at ingest). One pass over the "key" members (whitespace around ":" allowed); a \u
+// escape anywhere, or a backslash in a key, could spell a key another way: then always scrub
+const WS = " \t\r\n";
+export function scrubNeeded(text: string, c: ScrubCfg): boolean {
+  if (text.indexOf("\\u") >= 0) return true;
+  if (!c.keepContent && text.indexOf("\"message\"") >= 0) return true; // a span status message (or a value spelled so: the slow path)
+  const keys = new Set<string>(ALWAYS.concat(FREE, c.drop, c.keepContent ? [] : CONTENT_KEYS));
+  let i = text.indexOf("\"key\"");
+  while (i >= 0) {
+    let j = i + 5;
+    while (j < text.length && WS.indexOf(text[j] ?? "") >= 0) j++;
+    if (text[j] === ":") {
+      j++; while (j < text.length && WS.indexOf(text[j] ?? "") >= 0) j++;
+      if (text[j] === "\"") { const e = text.indexOf("\"", j + 1); if (e < 0) return true; const name = text.slice(j + 1, e); if (keys.has(name) || name.indexOf("\\") >= 0) return true; j = e + 1; }
+    }
+    i = text.indexOf("\"key\"", j);
+  }
+  return false;
+}
 // parsed JSON has value semantics in scriptc: a changed child is assigned back into its parent at every level
 function own(o: Obj, c: ScrubCfg, cnt: Cnt): Obj { if (o["attributes"] !== undefined) o["attributes"] = attrs(o["attributes"], c, cnt); return o; }
 // one ResourceSpans / ResourceLogs, scrubbed (a new value); n = content items removed

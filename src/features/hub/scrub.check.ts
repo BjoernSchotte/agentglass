@@ -1,6 +1,6 @@
 // agentglass — self-check for the hub's ingest scrub: scriptc build src/features/hub/scrub.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
-import { scrubRequest } from "./scrub.ts";
+import { scrubRequest, scrubNeeded } from "./scrub.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const kv = (k: string, v: string): string => "{\"key\":" + JSON.stringify(k) + ",\"value\":{\"stringValue\":" + JSON.stringify(v) + "}}";
@@ -27,5 +27,12 @@ const lg = "{\"resourceLogs\":[{\"resource\":{\"attributes\":[]},\"scopeLogs\":[
 const l = scrubRequest(lg, false, []);
 ok("log body scrubbed, email attribute gone", l.json.indexOf("@example") < 0 && l.json.indexOf("logged in") >= 0 && l.json.indexOf("claude_code.api_request") >= 0 && l.dropped === 1, l.json);
 ok("not JSON", scrubRequest("{x", false, []).err !== "" && scrubRequest("[1]", false, []).err !== "", "accepted");
+// the fast path: only requests that name no scrubbed key skip the rebuild; an escape that could spell one never does
+const cfg = { keepContent: false, drop: ["process.working_directory"] };
+ok("needed: email, content, status message, free text, drop list", scrubNeeded(req, cfg) && scrubNeeded("{\"key\":\"process.working_directory\"}", cfg) && scrubNeeded("{\"status\":{\"code\":2,\"message\":\"x\"}}", cfg), "not needed");
+ok("needed: spaced and nested keys", scrubNeeded("{\"key\" :  \"user.email\"}", cfg) && scrubNeeded("{\"attributes\":[{\"key\":\"a\"},{\"key\":\n\"gen_ai.tool.call.result\"}]}", cfg), "missed");
+ok("needed: a backslash in a key", scrubNeeded("{\"key\":\"user\\/email\"}", cfg), "missed");
+ok("not needed: a plain span", !scrubNeeded("{\"resourceSpans\":[{\"resource\":{\"attributes\":[" + kv("host.id", "0011223344556677") + "]}}]}", cfg), "needed");
+ok("an escaped key is scrubbed", scrubNeeded("{\"key\":\"user\\u002eemail\"}", cfg) && scrubRequest("{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"user\\u002eemail\",\"value\":{\"stringValue\":\"me@example.com\"}}]}}]}", false, []).json.indexOf("example") < 0, "bypassed");
 if (bad) console.log(String(bad) + " failed"); else console.log("hub scrub: all checks passed");
 if (bad) process.exit(1);

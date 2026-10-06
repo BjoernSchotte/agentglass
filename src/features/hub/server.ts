@@ -14,7 +14,7 @@ import { OS } from "../../platform/index.ts";
 import type { RecvCfg } from "./config.ts";
 import { type Tok, type TokStore, tokStore, reloadTokens, checkToken, pinToken, tokensFile, dirProblem, live } from "./tokens.ts";
 import { decodeTraces, decodeLogs, partialPb } from "./otlppb.ts";
-import { scrubResource } from "./scrub.ts";
+import { scrubResource, scrubNeeded } from "./scrub.ts";
 import { hostDir, appendReq, enforce, compressClosed, writePrivate, utcDay } from "./store.ts";
 
 const MB = 1048576;
@@ -111,14 +111,13 @@ function beatMs(rs: Obj): number {
 function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boolean, body: Uint8Array, now: number): void {
   const hs = hostStat(rt, tok.name); const logs = signal === "logs";
   const rej = (code: number, why: string, msg: string, extra: string[][]): void => { bump(hs.rej, why); fail(res, code, pb, msg, extra); };
-  let root: Obj | null = null; let total = 0;
+  let root: Obj | null = null; let total = 0; let text = "";
   if (pb) {
     const d = logs ? decodeLogs(body, rt.cfg.maxRecords) : decodeTraces(body, rt.cfg.maxRecords);
     if (d.err) { if (d.err.indexOf("more than") >= 0) rej(413, "records", d.err, []); else rej(400, "undecodable", "protobuf: " + d.err, []); return; }
-    try { root = obj(JSON.parse(d.json)); } catch (e) { root = null; }
-  } else {
-    try { root = obj(JSON.parse(new TextDecoder("utf-8").decode(body))); } catch (e) { root = null; }
-  }
+    text = d.json;
+  } else text = new TextDecoder("utf-8").decode(body);
+  try { root = obj(JSON.parse(text)); } catch (e) { root = null; }
   const key = logs ? "resourceLogs" : "resourceSpans";
   if (!root || !Array.isArray(root[key])) { rej(400, "undecodable", "the body is not an OTLP " + (logs ? "ExportLogsServiceRequest" : "ExportTraceServiceRequest"), []); return; }
   const rss = arr(root[key]);
@@ -127,6 +126,8 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
   // pinning (spec 9.3): the first host.id under a token pins it; others are refused per resource
   let pin = tok.pin; let refused = 0; let refusedIds = ""; let scrubbed = 0; let beat = 0;
   const kept: unknown[] = [];
+  const sc = { keepContent: rt.cfg.keepContent, drop: rt.cfg.drop };
+  const scrub = logs || scrubNeeded(text, sc); // nothing to scrub (the default span export): stored as it came; logs bodies are always masked
   for (const r of rss) {
     const o = obj(r); if (!o) continue;
     const hid = resHostId(o);
@@ -136,16 +137,16 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
       pin = hid; tok.pin = hid; reloadTokens(rt.toks, now, true);
     }
     if (hid && hid !== pin) { refused += recordsOf(o, logs); if (!refusedIds) refusedIds = hid; continue; }
-    const s = scrubResource(o, logs, { keepContent: rt.cfg.keepContent, drop: rt.cfg.drop });
-    scrubbed += s.n;
-    if (logs) { const b = beatMs(s.rs); if (b > beat) beat = b; }
-    kept.push(s.rs);
+    const rs1 = scrub ? scrubResource(o, logs, sc) : { rs: o, n: 0 };
+    scrubbed += rs1.n;
+    if (logs) { const b = beatMs(rs1.rs); if (b > beat) beat = b; }
+    kept.push(rs1.rs);
   }
   hs.pin = pin;
   const why = "host.id " + refusedIds + " does not belong to token \"" + tok.name + "\" (pinned to " + pin + "; on a reinstalled machine: agentglass receive token add " + tok.name + " --repin)";
   if (!kept.length && refused) { bump(hs.rej, "host-id"); hs.requests++; fail(res, 403, pb, why, []); return; }
   root[key] = kept;
-  const ls = splitLines(root, key, logs);
+  const ls = !scrub && !refused && text.length <= LINE_SPLIT && text.indexOf("\n") < 0 ? [text] : splitLines(root, key, logs);
   const d1 = hostDir(rt.cfg.dir, tok.name, pin, now);
   let e = d1; let n = 0;
   for (const line of ls) { if (e) break; e = appendReq(rt.cfg.dir, tok.name, logs ? "logs" : "traces", line, now); if (!e) n += line.length + 1; }
@@ -164,31 +165,29 @@ function ingest(rt: Rt, res: ServerResponse, tok: Tok, signal: string, pb: boole
   else send(res, 200, false, "{}", null, []);
 }
 
-// one request → stored lines of at most LINE_SPLIT bytes each (a 64 MB request would exceed the reader's line cap):
+// one request → stored lines of at most LINE_SPLIT characters each (a 64 MB request would exceed the reader's line cap):
 // split by resource, then by scope, then by chunks of records; each line stays a valid Export…ServiceRequest
-export const LINE_SPLIT = 4 * MB;
+export const LINE_SPLIT = 8 * MB; // half the reader's line cap
 export function splitLines(root: Obj, key: string, logs: boolean): string[] {
   const whole = JSON.stringify(root); if (whole.length <= LINE_SPLIT) return [whole];
   const sk = logs ? "scopeLogs" : "scopeSpans"; const ik = logs ? "logRecords" : "spans";
+  const parts = Math.ceil(whole.length / LINE_SPLIT) + 1; // chunks by record count: one stringify per chunk
   const out: string[] = [];
-  const wrap = (rs: Obj, sc: Obj, items: string[]): string => {
-    const r: Obj = {}; for (const k of Object.keys(rs)) if (k !== sk) r[k] = rs[k];
-    const s: Obj = {}; for (const k of Object.keys(sc)) if (k !== ik) s[k] = sc[k];
-    const sj = JSON.stringify(s); const rj = JSON.stringify(r);
-    const scope = sj.slice(0, sj.length - 1) + (sj.length > 2 ? "," : "") + "\"" + ik + "\":[" + items.join(",") + "]}";
-    return "{\"" + key + "\":[" + rj.slice(0, rj.length - 1) + (rj.length > 2 ? "," : "") + "\"" + sk + "\":[" + scope + "]}]}";
+  const emit = (rs: Obj, sc: Obj, items: unknown[]): void => {
+    const s2: Obj = {}; for (const k of Object.keys(sc)) s2[k] = k === ik ? items : sc[k];
+    const r2: Obj = {}; for (const k of Object.keys(rs)) r2[k] = k === sk ? [s2] : rs[k];
+    const w: Obj = {}; w[key] = [r2];
+    const line = JSON.stringify(w);
+    if (line.length > LINE_SPLIT && items.length > 1) { const h = Math.ceil(items.length / 2); emit(rs, sc, items.slice(0, h)); emit(rs, sc, items.slice(h)); return; } // skewed sizes: halve again
+    out.push(line);
   };
   for (const r of arr(root[key])) {
     const rs = obj(r); if (!rs) continue;
     for (const x of arr(rs[sk])) {
       const sc = obj(x); if (!sc) continue;
-      let chunk: string[] = []; let size = 0; const room = LINE_SPLIT - wrap(rs, sc, []).length; // the envelope counts too
-      for (const it of arr(sc[ik])) {
-        const j = JSON.stringify(it);
-        if (chunk.length && size + j.length > room) { out.push(wrap(rs, sc, chunk)); chunk = []; size = 0; }
-        chunk.push(j); size += j.length + 1;
-      }
-      if (chunk.length) out.push(wrap(rs, sc, chunk));
+      const items = arr(sc[ik]); if (!items.length) { emit(rs, sc, []); continue; }
+      const per = Math.max(1, Math.ceil(items.length / parts));
+      for (let i = 0; i < items.length; i += per) emit(rs, sc, items.slice(i, i + per));
     }
   }
   return out.length ? out : [whole];
