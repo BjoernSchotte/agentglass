@@ -26,8 +26,8 @@ function rep(hostId: string, sess: { id: string; live: boolean }[], today: numbe
     allowance: al ? { claude: { account: al.account, fetchedAt: al.fetchedAt, h5: { pct: al.pct, reset: now + 3600000 }, d7: null }, codex: null } : null, live: null, exact: false, owned: noOwned() };
 }
 const nofeed: HostFeed = { kind: "ssh", start: (t: number): boolean => false, poll: (t: number) => newFeedState(), stop: (): void => {} };
-const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, { name: "vm1", ssh: "vm1", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }],
-  localName: "local", refreshS: 60, days: 7, timeoutS: 90, warns: [] };
+const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }, { name: "vm1", ssh: "vm1", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }],
+  localName: "local", refreshS: 60, days: 7, timeoutS: 90, reprice: true, warns: [] };
 setFleet(cfg, "ffffffffffffffff", [nofeed, nofeed]);
 const r1 = rep("1111111111111111", [{ id: "a", live: true }, { id: "nul", live: false }], 2, true, { account: "acc", fetchedAt: 10, pct: 40 });
 const rows = rowsOf("ws", r1, now);

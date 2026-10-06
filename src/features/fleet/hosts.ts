@@ -3,17 +3,22 @@
 // SPDX-License-Identifier: Apache-2.0
 import { H } from "../../hooks.ts";
 import { type Sess, newSess } from "../../model/types.ts";
-import { FRESH, RG } from "../../model/sessions.ts";
+import { FRESH, RG, sessions } from "../../model/sessions.ts";
 import { type Obj, obj, str } from "../../util/json.ts";
 import type { Ident } from "../../model/project.ts";
 import { REMOTE_IDENT } from "../query/project.ts";
 import { HOSTQ } from "../query/eval.ts";
 import { HOST_ENUM } from "../query/attrs.ts";
-import { MODES } from "../usage/billing.ts";
-import { type ModeSum, type BState, newSum, addSum, budgetState } from "../usage/costs.ts";
-import { type CostNow, budget } from "../usage/summary.ts";
+import { type Bill, MODES } from "../usage/billing.ts";
+import { type ModeSum, type BState, newSum, addSum, budgetState, monthStart } from "../usage/costs.ts";
+import { type CostNow, type Ent, budget, costWith, sumDaysOf } from "../usage/summary.ts";
+import { ledger } from "../usage/ledger.ts";
+import { L, todayKey, lastDays } from "../usage/record.ts";
+import { modeOf } from "../usage/bill-live.ts";
+import { ownKeys, rowsFor } from "../usage/msgrows.ts";
+import { type LocalLog, type FleetHost, type Exact, type Shadow, exactFleet, modeOfShadow } from "./merge.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
-import type { HostFeed, HostReport, FeedState } from "./model.ts";
+import type { HostFeed, HostReport, FeedState, OwnRow } from "./model.ts";
 
 // applied: the report rows were last built from (a round that changes nothing else keeps them)
 export interface RemoteHost { cfg: HostCfg; feed: HostFeed; report: HostReport | null; rows: Sess[]; okAt: number; dupOf: string; alertsSeen: Set<string>; fresh: boolean; st: FeedState | null; applied: HostReport | null }
@@ -27,9 +32,11 @@ export function remotePath(host: string, harness: string, id: string): string { 
 // a report's sessions as rows (spec 7.1): pid 0, path "@host/harness:id" (never a file), head and tail done
 export function rowsOf(h: string, r: HostReport, at: number): Sess[] {
   const out: Sess[] = [];
+  const from = r.hello.now - Math.max(1, r.hello.days) * 86400000; // a snapshot carries the cost window's sessions: the list shows `days`
   for (const row of r.sessions) {
     const o = row.s; const harness = str(o["harness"]); const id = str(o["id"]);
     if (!harness || !id) continue;
+    if (r.exact && o["live"] !== true && Date.parse(str(o["updated"])) < from) continue;
     const s = newSess(harness, id, remotePath(h, harness, id), false);
     s.host = h; s.rat = at; s.rlive = o["live"] === true; s.headDone = true; s.tailSize = 0;
     s.title = str(o["title"]) || "(no prompt yet)"; s.cwd = str(o["cwd"]); s.branch = str(o["branch"]); s.remote = str(o["remote"]); s.model = str(o["model"]);
@@ -93,13 +100,14 @@ export function hostByName(name: string): RemoteHost | null { for (const rh of F
 // the hosts whose rows count: enabled, a report under 7 days old (older ones: fleet status only), not a duplicate
 export const SHOWN_MS = 7 * 86400000;
 export function merged(): RemoteHost[] { const o: RemoteHost[] = []; const now = Date.now(); for (const rh of FLEET.hosts) if (rh.cfg.enabled && rh.report && !rh.dupOf && now - rh.okAt <= SHOWN_MS) o.push(rh); return o; }
-// "harness:id" keys present on 2+ hosts (this machine counts as one): the same session read twice (spec 7.2)
+// "harness:id" keys present on 2+ hosts (this machine counts as one) where one of them is a Part A host: the same session
+// read twice, which only the exact merge (exact reports, this machine) can tell apart (spec 7.2)
 export function overlap(local: Sess[], hosts: RemoteHost[]): Set<string> {
-  const seen = new Map<string, number>();
-  const add = (k: string, set: Set<string>): void => { if (!set.has(k)) { set.add(k); seen.set(k, (seen.get(k) ?? 0) + 1); } };
-  const l = new Set<string>(); for (const s of local) if (!s.parent) add(s.h + ":" + s.id, l);
-  for (const rh of hosts) { const m = new Set<string>(); for (const s of rh.rows) add(s.h + ":" + s.id, m); }
-  const out = new Set<string>(); for (const [k, n] of seen) if (n >= 2) out.add(k);
+  const seen = new Map<string, number>(); const loose = new Set<string>();
+  const add = (k: string, set: Set<string>, exact: boolean): void => { if (!set.has(k)) { set.add(k); seen.set(k, (seen.get(k) ?? 0) + 1); if (!exact) loose.add(k); } };
+  const l = new Set<string>(); for (const s of local) if (!s.parent) add(s.h + ":" + s.id, l, true);
+  for (const rh of hosts) { const m = new Set<string>(); const ex = !!rh.report && rh.report.exact; for (const s of rh.rows) add(s.h + ":" + s.id, m, ex); }
+  const out = new Set<string>(); for (const [k, n] of seen) if (n >= 2 && loose.has(k)) out.add(k);
   return out;
 }
 
@@ -125,17 +133,58 @@ export function sumOf(cost: Obj | null): HostSum {
 export interface HostCost { name: string; today: number; week: number; month: number; age: number; stale: boolean; local: boolean }
 // approx: some figure is an estimate (a stale host, a session on 2+ hosts, a host without a projection); marked: the
 // period figures themselves are (stale or overlap: the header's and the Stats line's ≈)
-export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; marked: boolean; perHost: HostCost[] }
+// exact: the exact merge priced it (some host delivered exact reports); removed: copies taken out across hosts
+export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; marked: boolean; perHost: HostCost[]; exact: boolean; removed: number }
 function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; return t; }
-// this machine's figures plus each merged host's own (Part A: each prices with its own table and day boundaries)
-export function fleetCost(localNow: CostNow, hosts: RemoteHost[], now: number, f: FleetCfg, ov: number): FleetCost {
+// ── the exact merge (spec 13): local Claude logs and every exact report, cached until a report or the ledger moves ──
+const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null };
+function localLogs(): LocalLog[] {
+  const out: LocalLog[] = [];
+  for (const s of sessions.values()) {
+    if (s.h !== "claude") continue;
+    const a = ledger.get(s.path); if (!a) continue;
+    let top = s; for (let g = 0; top.parent && g < 8; g++) { const p = sessions.get(top.parent); if (!p) break; top = p; }
+    out.push({ path: s.path, skey: top.h + ":" + top.id, keys: ownKeys(s.path, a), bill: modeOf(s, "") });
+  }
+  return out;
+}
+function localRows(path: string): OwnRow[] | null { const a = ledger.get(path); if (!a) return null; const r = rowsFor(path, "claude", a); return r.ok ? r.rows : null; }
+function localShift(hostTz: number): number { return -new Date().getTimezoneOffset() - hostTz; }
+// maxAgeMs: how long a result may be reused while only the local ledger moved (the TUI: 30 s; a CLI run: always fresh)
+export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: number): Exact {
+  const now = Date.now(); const fh: FleetHost[] = []; const sig: string[] = [reprice ? "r" : "n"];
+  for (const rh of hosts) { const r = rh.report; if (!r || !r.exact) continue; fh.push({ name: rh.cfg.name, hostId: r.hello.hostId, r, shiftMin: localShift(r.hello.tzOffsetMin) }); sig.push(rh.cfg.name + "@" + String(rh.okAt) + "#" + String(r.hello.now)); }
+  const sg = sig.join("|"); const hit = EX.x;
+  if (hit && sg === EX.sig && (EX.ver === L.ver || now - EX.at < maxAgeMs)) return hit;
+  const x = exactFleet(localLogs(), FLEET.localId, fh, reprice, localRows);
+  EX.at = now; EX.ver = L.ver; EX.sig = sg; EX.x = x;
+  return x;
+}
+export function entOf(x: Shadow): Ent { return { a: x.a, mode: (p: string): Bill => modeOfShadow(x, p) }; }
+function sumHost(es: Ent[], days: string[]): number { return tot(sumDaysOf(es, days)); }
+// this machine's figures plus each merged host's: exact reports through the merge (one table, this machine's days), Part A
+// reports as their own cost objects (each host's table and day boundaries)
+export function fleetCost(localNow0: CostNow, hosts: RemoteHost[], now: number, f: FleetCfg, ov: number, maxAgeMs = 0): FleetCost {
+  let exactN = 0; for (const rh of hosts) if (rh.report && rh.report.exact) exactN++;
+  const x = exactN ? exactMerge(hosts, f.reprice, maxAgeMs) : null;
+  const ents: Ent[] = []; if (x) for (const s of x.accs) ents.push(entOf(s));
+  const localNow = x ? costWith(ents) : localNow0;
   const today = newSum(); const week = newSum(); const month = newSum(); const proj: number[] = [];
   addSum(today, localNow.today); addSum(week, localNow.week); addSum(month, localNow.month);
-  let approx = ov > 0; let marked = ov > 0;
+  let approx = ov > 0 || (!!x && x.inexact.length > 0); let marked = approx;
   for (let i = 0; i < MODES.length; i++) { const p = localNow.projByMode[i]; const v = p ? p.month : -1; proj.push(v >= 0 ? v : localNow.month.by[i] ?? 0); if (v < 0 && (localNow.month.by[i] ?? 0) > 0) approx = true; }
-  const per: HostCost[] = [{ name: f.localName, today: tot(localNow.today), week: tot(localNow.week), month: tot(localNow.month), age: 0, stale: false, local: true }];
+  const td = [todayKey()]; const wk = lastDays(7); const mk = monthStart(now);
+  const by = (host: string): Ent[] => { const o: Ent[] = []; if (x) for (const s of x.accs) if (s.host === host) o.push(entOf(s)); return o; };
+  const lc = by("");
+  const per: HostCost[] = [{ name: f.localName, today: tot(localNow0.today) + sumHost(lc, td), week: tot(localNow0.week) + sumHost(lc, wk), month: tot(localNow0.month) + sumHost(lc, mk), age: 0, stale: false, local: true }];
   for (const rh of hosts) {
     const r = rh.report; if (!r) continue;
+    if (r.exact && x) {
+      const stale = !freshOf(rh, now, f, FLEET.intervalMs); if (stale) { approx = true; marked = true; }
+      const es = by(rh.cfg.name);
+      per.push({ name: rh.cfg.name, today: sumHost(es, td), week: sumHost(es, wk), month: sumHost(es, mk), age: now - rh.okAt, stale, local: false });
+      continue;
+    }
     const hs = sumOf(r.cost);
     addSum(today, hs.today); addSum(week, hs.week); addSum(month, hs.month);
     for (let i = 0; i < MODES.length; i++) { const v = hs.proj[i] ?? -1; proj[i] = (proj[i] ?? 0) + (v >= 0 ? v : hs.month.by[i] ?? 0); if (v < 0 && (hs.month.by[i] ?? 0) > 0) approx = true; }
@@ -144,7 +193,7 @@ export function fleetCost(localNow: CostNow, hosts: RemoteHost[], now: number, f
     if (stale) marked = true;
     per.push({ name: rh.cfg.name, today: tot(hs.today), week: tot(hs.week), month: tot(hs.month), age: now - rh.okAt, stale, local: false });
   }
-  return { today, week, month, projByMode: proj, approx, marked, perHost: per };
+  return { today, week, month, projByMode: proj, approx, marked, perHost: per, exact: !!x, removed: x ? x.removed + x.corrected : 0 };
 }
 // the local budget over the fleet (one account, one budget; the hosts' own budgets are ignored)
 export function fleetBudget(fc: FleetCost): BState {

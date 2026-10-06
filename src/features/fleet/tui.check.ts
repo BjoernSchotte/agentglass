@@ -17,7 +17,7 @@ const plain = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 ok("guard: null", !remoteOnly(null, "x"), "true");
 const loc = newSess("claude", "l1", "/tmp/keepme.jsonl", false);
 ok("guard: local", !remoteOnly(loc, "x"), "true");
-const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "me@ws", agentglass: "~/.local/bin/agentglass", redact: false, enabled: true, kind: "ssh", path: "" }], localName: "local", refreshS: 60, days: 7, timeoutS: 90, warns: [] };
+const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "me@ws", agentglass: "~/.local/bin/agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }], localName: "local", refreshS: 60, days: 7, timeoutS: 90, reprice: true, warns: [] };
 setFleet(cfg, "ffffffffffffffff", [{ kind: "ssh", start: (t: number): boolean => false, poll: (t: number) => newFeedState(), stop: (): void => {} }]);
 const r = newSess("claude", "5f1e", "@ws/claude:5f1e", false); r.host = "ws";
 ok("ssh hint", sshHint(r) === "ssh -t me@ws ~/.local/bin/agentglass open claude:5f1e", sshHint(r));
@@ -45,7 +45,7 @@ ok("then quiet", newAlerts(ws, rep([a2]), false).length === 0, "again");
 ok("acked: quiet", newAlerts(ws, rep([{ rule: "cost", severity: "warning", since: "x", message: "m", acked: true }]), false).length === 0, "toasted");
 // cadence
 ok("interval", intervalMs(cfg, false) === 60000 && intervalMs(cfg, true) === 300000, String(intervalMs(cfg, true)));
-ok("interval long refresh stays", intervalMs({ hosts: [], localName: "l", refreshS: 600, days: 7, timeoutS: 90, warns: [] }, true) === 600000, "x");
+ok("interval long refresh stays", intervalMs({ hosts: [], localName: "l", refreshS: 600, days: 7, timeoutS: 90, reprice: true, warns: [] }, true) === 600000, "x");
 ok("backoff", backoffMs(1) === 30000 && backoffMs(2) === 60000 && backoffMs(6) === 900000 && backoffMs(9) === 900000 && backoffMs(0) === 0, [backoffMs(1), backoffMs(2), backoffMs(6), backoffMs(9)].join(","));
 ok("due after ok", nextDue(1000, true, 0, 60000) === 61000, String(nextDue(1000, true, 0, 60000)));
 ok("due after failure", nextDue(1000, false, 2, 60000) === 61000 && nextDue(1000, false, 1, 60000) === 31000, String(nextDue(1000, false, 1, 60000)));

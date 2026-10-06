@@ -116,7 +116,7 @@ H.rowPrefix.push(hostTag);
 REMOTE.hint = (s: Sess): string => sshHint(s);
 export function sshHint(s: Sess): string {
   const h = FLEET.cfg ? hostNamed(FLEET.cfg, s.host) : null;
-  return openCmd(h ?? { name: s.host, ssh: s.host, agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, s.h + ":" + s.id);
+  return openCmd(h ?? { name: s.host, ssh: s.host, agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }, s.h + ":" + s.id);
 }
 
 // ── fleet figures for the header and Stats (cached per rows generation and 5 s) ──
@@ -126,7 +126,7 @@ function fleetNow(cn: CostNow): FleetNow {
   const now = Date.now(); const c = FLEET.cfg;
   if (!c || (FN.gen === T.gen && FN.cn === cn && now - FN.at < 5000)) return FN;
   const hs = merged(); const loc: Sess[] = []; for (const s of sessions.values()) if (!s.parent) loc.push(s);
-  const ov = overlap(loc, hs); const fc = fleetCost(cn, hs, now, c, ov.size); const bs = fleetBudget(fc);
+  const ov = overlap(loc, hs); const fc = fleetCost(cn, hs, now, c, ov.size, 30000); const bs = fleetBudget(fc);
   FN.at = now; FN.gen = T.gen; FN.cn = cn; FN.ov = ov; FN.approx = fc.approx;
   FN.hdr = { today: fc.today, state: bs.state, approx: fc.marked };
   FN.per = fc.perHost.map((p) => ({ name: p.name, usd: p.today, wk: p.week, stale: p.stale, age: p.age, local: p.local }));

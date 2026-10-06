@@ -33,6 +33,13 @@ ok("range ends", ok2.refreshS === 15 && ok2.days === 90 && ok2.timeoutS === 600 
 const ot = fleetFrom({ hosts: [{ name: "ci", otlp: "/x" }] });
 ok("otlp kept", ot.hosts.length === 1 && (ot.hosts[0]?.kind ?? "") === "otlp" && !(ot.hosts[0]?.enabled ?? true) && has(ot.warns, "needs a newer agentglass"), JSON.stringify(ot));
 ok("otlp only: fleet off", !fleetOn(ot), "on");
+const dr = fleetFrom({ hosts: [{ name: "nas", dir: "~/Sync/agentglass/nas" }, { name: "rel", dir: "relative/x" }, { name: "abs", dir: "/srv/drop", enabled: false }], reprice: false });
+ok("dir host enabled", dr.hosts.length === 2 && (dr.hosts[0]?.kind ?? "") === "dir" && (dr.hosts[0]?.enabled ?? false) && (dr.hosts[0]?.path ?? "") === "~/Sync/agentglass/nas", JSON.stringify(dr.hosts));
+ok("dir: relative path refused", has(dr.warns, "dir must be an absolute path"), dr.warns.join("|"));
+ok("dir only: fleet on", fleetOn(dr), "off");
+ok("reprice false", !dr.reprice && fleetFrom({}).reprice, String(dr.reprice));
+const sn = fleetFrom({ hosts: [{ name: "ws", ssh: "ws", snapshot: false, watch: "no" }] });
+ok("snapshot false, watch invalid → default", !(sn.hosts[0]?.snapshot ?? true) && (sn.hosts[0]?.watch ?? false) && has(sn.warns, "watch must be true or false"), JSON.stringify(sn));
 ok("two transports", fleetFrom({ hosts: [{ name: "ws", ssh: "a", dir: "/x" }] }).hosts.length === 0, "kept");
 ok("no transport", fleetFrom({ hosts: [{ name: "ws" }] }).hosts.length === 0, "kept");
 const many: unknown[] = []; for (let i = 0; i < 33; i++) many.push({ name: "h" + String(i), ssh: "h" + String(i) });
@@ -47,6 +54,6 @@ ok("no section", fleetFrom(undefined).warns.length === 0 && !fleetOn(fleetFrom(u
 const SH = (r: string): string => { const x = splitHostRef(r); return x.ref + " | " + x.host; };
 for (const [r, want] of [["claude:abc123@ws", "claude:abc123 | ws"], ["claude:abc123@ws#call=c1", "claude:abc123#call=c1 | ws"], ["claude:abc123#call=c1@ws", "claude:abc123#call=c1 | ws"],
   ["abc123", "abc123 | "], ["agentglass://open/claude/abc@x", "agentglass://open/claude/abc@x | "], ["abc123@", "abc123 | "]]) ok("split " + r, SH(r) === want, SH(r));
-ok("open command", openCmd({ name: "ws", ssh: "me@ws", agentglass: "~/bin/agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, "claude:abc") === "ssh -t me@ws ~/bin/agentglass open claude:abc", "cmd");
+ok("open command", openCmd({ name: "ws", ssh: "me@ws", agentglass: "~/bin/agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }, "claude:abc") === "ssh -t me@ws ~/bin/agentglass open claude:abc", "cmd");
 console.log(bad ? String(bad) + " failed" : "fleet config: all checks passed");
 if (bad) process.exit(1);

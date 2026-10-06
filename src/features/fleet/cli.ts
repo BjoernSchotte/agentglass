@@ -185,7 +185,7 @@ function cost(args: string[]): void {
   if (asJson) {
     const hosts: Obj[] = [{ name: c.localName, ok: true, stale: false, ageSec: 0, cost: json(local) }];
     for (const rh of hs) hosts.push({ name: rh.cfg.name, ok: r.ok.indexOf(rh.cfg.name) >= 0, stale: !freshOf(rh, now, c, c.refreshS * 1000), ageSec: Math.round((now - rh.okAt) / 1000), cost: rh.report ? rh.report.cost : null });
-    out(JSON.stringify({ hosts, total: totalJson(fc, bs), overlap: ov, approx: fc.approx }));
+    out(JSON.stringify({ hosts, total: totalJson(fc, bs), overlap: ov, approx: fc.approx, exact: fc.exact, removed: fc.removed }));
     process.exit(code);
   }
   const L = 16; const W = 12;
@@ -193,7 +193,8 @@ function cost(args: string[]): void {
   for (const p of fc.perHost) out(p.name.padEnd(L) + pad(usd(p.today, false), W) + pad(usd(p.week, false), W) + pad(usd(p.month, false), W) + pad(p.local ? "here" : ago(now - p.age) + " ago" + (p.stale ? " ≈" : ""), W));
   out("fleet".padEnd(L) + pad(usd(tot(fc.today), fc.approx), W) + pad(usd(tot(fc.week), fc.approx), W) + pad(usd(tot(fc.month), fc.approx), W));
   if (ov > 0) out(String(ov) + " session" + (ov === 1 ? "" : "s") + " seen on 2+ hosts may be counted twice (≈)");
-  out("(list prices by each host's own table and day boundaries; agentglass cost on a host splits them by billing mode)");
+  if (fc.exact) out("(exact merge: " + String(fc.removed) + " message copies on 2+ hosts counted once; " + (c.reprice ? "priced with this machine's table" : "each host's own prices") + ", this machine's days)");
+  else out("(list prices by each host's own table and day boundaries; agentglass cost on a host splits them by billing mode)");
   if (budget.usd > 0) out("budget: $" + grp(budget.usd) + "/month (fleet, counts " + budget.counts.join(", ") + "): " + bs.state + " · used " + usd(bs.used, bs.approx) +
     (bs.projected >= 0 ? " · projected " + usd(bs.projected, bs.approx) : ""));
   else out("budget: none — set budget.monthlyUsd in " + CONFIG_FILE + " (it applies to the fleet)");
@@ -289,7 +290,7 @@ const STRICT = opt("--strict", "", "exit 5 when a host could not be pulled or it
 addCmd(rec("fleet", "agentglass fleet [--json] [--filter …] [--refresh] [--strict]", "every host's sessions (fleet.hosts in ~/.agentglass/config.json, pulled over ssh) and this machine's,\nnewest first, with a host column (--json: host and stale fields; --strict: exit 5 when a host failed)",
   [opt("--json", "", "the rows as JSON", "", []), FILTER_OPT, FORMAT_OPT, FIELDS_OPT, REFRESH, STRICT], FLEET_FIELDS), FIRST);
 addCmd(rec("fleet cost", "agentglass fleet cost [--json] [--check]", "costs per host and over the fleet (today / 7 days / month, projection, the budget over the fleet);\n≈ when a host is stale or a session is on 2+ hosts (--refresh, --strict; --check: exit 3 over budget)",
-  [opt("--json", "", "{hosts, total (the cost --json shape), overlap, approx}", "", []), REFRESH, STRICT, opt("--check", "", "exit 3 when the fleet is over budget", "", [])], []), FIRST);
+  [opt("--json", "", "{hosts, total (the cost --json shape), overlap, approx, exact, removed}", "", []), REFRESH, STRICT, opt("--check", "", "exit 3 when the fleet is over budget", "", [])], []), FIRST);
 addCmd(rec("fleet status", "agentglass fleet status [--json] [--close]", "per host: what works and what does not (last report, error, version, host id, time zone, connection sharing)",
   [opt("--json", "", "one object per host", "", []), opt("--close", "", "end the shared ssh connections (ControlMaster)", "", []), opt("--refresh", "", "pull every host first", "", [])], []), FIRST);
 addCmd(rec("fleet pull", "agentglass fleet pull [--days N] [--redact]", "this host's report for a fleet viewer (JSON lines: hello, cost, allowance, sessions, end);\nwhat the viewer runs over ssh",

@@ -1,16 +1,22 @@
 // agentglass — the "fleet" section of ~/.agentglass/config.json (fleet spec section 2): the hosts and the cadence
 // SPDX-License-Identifier: Apache-2.0
-//   {"fleet": {"hosts": [{"name", "ssh" | "dir" | "otlp", "agentglass", "redact", "enabled"}], "localName", "refreshSeconds", "days", "timeoutSeconds"}}
+//   {"fleet": {"hosts": [{"name", "ssh" | "dir" | "otlp", "agentglass", "redact", "enabled", "snapshot", "watch"}], "localName", "refreshSeconds",
+//    "days", "timeoutSeconds", "reprice"}}
 import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { rawSection } from "../../util/config.ts";
 
-// kind: "ssh" (pulled here), "dir" / "otlp" (later transports: kept, disabled), "" never stored
-export interface HostCfg { name: string; ssh: string; agentglass: string; redact: boolean; enabled: boolean; kind: string; path: string }
-export interface FleetCfg { hosts: HostCfg[]; localName: string; refreshS: number; days: number; timeoutS: number; warns: string[] }
+// kind: "ssh" (pulled here), "dir" (a snapshot drop directory, spec 15), "otlp" (a later transport: kept, disabled), ""
+// never stored; snapshot: ssh hosts answer `fleet snapshot` (exact, Part B) and fall back to `fleet pull`; watch: the
+// live stream (`fleet watch`, spec 16)
+export interface HostCfg { name: string; ssh: string; agentglass: string; redact: boolean; enabled: boolean; kind: string; path: string; snapshot: boolean; watch: boolean }
+// reprice: every host's table-priced usage priced with this machine's table (spec 14)
+export interface FleetCfg { hosts: HostCfg[]; localName: string; refreshS: number; days: number; timeoutS: number; reprice: boolean; warns: string[] }
 export const NAME_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 // an ssh destination: an alias or [user@]host[:port-less]; never an option (a leading "-" would be one)
 const SSH_RE = /^[A-Za-z0-9._%+@:\[\]-]{1,255}$/;
 const BIN_RE = /^(~\/)?[A-Za-z0-9._\/+-]{1,255}$/;
+// a drop directory: absolute or under ~/, no control characters
+const DIR_RE = /^(~\/|\/)[^\u0000-\u001f\u007f]{0,1022}$/;
 export const MAX_HOSTS = 32;
 const TRANSPORTS = ["ssh", "dir", "otlp"];
 
@@ -37,20 +43,27 @@ function hostOf(v: unknown, i: number, localName: string, seen: Set<string>, w: 
   if (ts.length !== 1) { w.push(who + ": needs exactly one of ssh, dir, otlp" + (ts.length ? " (has " + ts.join(", ") + ")" : "") + " — skipped"); return null; }
   const kind = ts[0] ?? "";
   const redact = bool(o, "redact", false, who, w); const enabled = bool(o, "enabled", true, who, w);
+  if (kind === "dir") {
+    const p = str(o["dir"]);
+    if (!DIR_RE.test(p)) { w.push(who + ": dir must be an absolute path or start with ~/ (at most 1024 characters) — skipped"); return null; }
+    seen.add(name);
+    return { name, ssh: "", agentglass: "", redact, enabled, kind, path: p, snapshot: true, watch: false };
+  }
   if (kind !== "ssh") {
     const p = str(o[kind]);
     if (!p) { w.push(who + ": " + kind + " must be a directory path — skipped"); return null; }
     w.push(who + ": transport " + kind + " needs a newer agentglass — kept, not pulled");
     seen.add(name);
-    return { name, ssh: "", agentglass: "", redact, enabled: false, kind, path: p };
+    return { name, ssh: "", agentglass: "", redact, enabled: false, kind, path: p, snapshot: false, watch: false };
   }
   const ssh = str(o["ssh"]);
   if (ssh.startsWith("-")) { w.push(who + ": ssh must not start with - (it would be an ssh option) — skipped"); return null; }
   if (!SSH_RE.test(ssh)) { w.push(who + ": ssh must be an alias or [user@]host (letters, digits, . _ % + @ : [ ] -) — skipped"); return null; }
   const bin = o["agentglass"] === undefined ? "agentglass" : str(o["agentglass"]);
   if (!BIN_RE.test(bin)) { w.push(who + ": agentglass must be a path of letters, digits, . _ / + - (optionally starting with ~/) — skipped"); return null; }
+  const snapshot = bool(o, "snapshot", true, who, w); const watch = bool(o, "watch", true, who, w);
   seen.add(name);
-  return { name, ssh, agentglass: bin, redact, enabled, kind, path: "" };
+  return { name, ssh, agentglass: bin, redact, enabled, kind, path: "", snapshot, watch };
 }
 // the section as given (any shape): valid hosts, defaults for what is missing or wrong, one warning per problem
 export function fleetFrom(raw: unknown): FleetCfg {
@@ -69,17 +82,18 @@ export function fleetFrom(raw: unknown): FleetCfg {
     if (hosts.length >= MAX_HOSTS) { w.push("fleet.hosts: at most " + String(MAX_HOSTS) + " hosts — the rest are ignored"); break; }
     hosts.push(h);
   }
-  return { hosts, localName, refreshS: int(s, "refreshSeconds", 15, 3600, 60, w), days: int(s, "days", 1, 90, 7, w), timeoutS: int(s, "timeoutSeconds", 10, 600, 90, w), warns: w };
+  return { hosts, localName, refreshS: int(s, "refreshSeconds", 15, 3600, 60, w), days: int(s, "days", 1, 90, 7, w), timeoutS: int(s, "timeoutSeconds", 10, 600, 90, w),
+    reprice: bool(s, "reprice", true, "fleet", w), warns: w };
 }
 let loaded: FleetCfg | null = null;
 export function loadFleet(): FleetCfg { if (!loaded) loaded = fleetFrom(rawSection("fleet")); return loaded; }
 export const FLEET_TEST = { set: (c: FleetCfg | null): void => { loaded = c; } };
 // this run skips the fleet: --no-fleet or AGENTGLASS_FLEET=0
 export function fleetOff(): boolean { return process.argv.indexOf("--no-fleet") >= 0 || process.env["AGENTGLASS_FLEET"] === "0"; }
-// an enabled ssh host exists and this run does not skip the fleet
+// an enabled ssh or dir host exists and this run does not skip the fleet
 export function fleetOn(c: FleetCfg): boolean {
   if (fleetOff()) return false;
-  for (const h of c.hosts) if (h.enabled && h.kind === "ssh") return true;
+  for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "dir")) return true;
   return false;
 }
 export function hostNamed(c: FleetCfg, name: string): HostCfg | null { for (const h of c.hosts) if (h.name === name) return h; return null; }
