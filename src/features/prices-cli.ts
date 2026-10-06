@@ -16,7 +16,7 @@ import { dayKey } from "./usage/record.ts";
 import { ledger, accOf } from "./usage/ledger.ts";
 import { kfmt } from "./usage/costs.ts";
 import { type Price, type Resolved, PRICES_FILE, resolve, readUserFile, communitySource, communityFetched } from "./usage/pricing.ts";
-import { type PRow, type SessAcc, priceRows, reportedNote, rates, srcLabel } from "./usage/pricerows.ts";
+import { type PRow, type SessAcc, priceRows, reportedNote, rates, srcLabel, srcFit } from "./usage/pricerows.ts";
 import { reloadPrices } from "./usage/repricer.ts";
 import { type PriceIn, parsePriceLine, entryOf, storedKey, setUserEntry, userEntry } from "./usage/userprices.ts";
 
@@ -106,7 +106,7 @@ function list(args: string[]): void {
   out("MODEL".padEnd(MW) + "  " + "SOURCE".padEnd(SW) + pad("$IN", 8) + pad("$OUT", 8) + pad("TOKENS", 9) + pad("COST", 12));
   for (const r of rows) {
     const rt = r.p ? rates(r.p) : [];
-    out(cut(r.model, MW).padEnd(MW) + "  " + cut(srcLabel(r), SW).padEnd(SW) + pad(r.p ? (rt[0] ?? 0).toFixed(2) : "—", 8) + pad(r.p ? (rt[1] ?? 0).toFixed(2) : "—", 8) +
+    out(cut(r.model, MW).padEnd(MW) + "  " + srcFit(r, SW).padEnd(SW) + pad(r.p ? (rt[0] ?? 0).toFixed(2) : "—", 8) + pad(r.p ? (rt[1] ?? 0).toFixed(2) : "—", 8) +
       pad(kfmt(r.tok), 9) + pad(money(r), 12));
     const n = reportedNote(r); if (n) out("  " + n);
   }
