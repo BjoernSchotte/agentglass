@@ -18,7 +18,7 @@ import { renderDetail } from "./ui/detail.ts";
 import { renderHelp } from "./ui/help.ts";
 import { tokens, keyName, onInput, onMouse } from "./input.ts";
 import { enter, quit, termSize, focusOf } from "./term.ts";
-import { type Job, DBG, fastDraw, newSched, levelOf, hotWhy, due, runJob, sleepFor, forceMs, debugLine, refreshMode } from "./sched.ts";
+import { type Job, AWAY, DBG, fastDraw, newSched, levelOf, hotWhy, due, runJob, sleepFor, forceMs, debugLine, refreshMode } from "./sched.ts";
 import { str } from "./util/json.ts";
 import { bytes } from "./util/text.ts";
 import { section, configProblem } from "./util/config.ts";
@@ -65,6 +65,8 @@ import "./features/redact.ts";
 import "./features/prices.ts";
 import "./features/update.ts";
 import "./features/otlp/export.ts";
+import "./features/fleet/cli.ts";
+import "./features/fleet/tui.ts";
 
 function render(): void {
   S.dirty = false; S.animating = false; headDirty = false; // spin() sets animating again while something on screen turns
@@ -134,7 +136,7 @@ let why = "";
 function relevel(now: number): void {
   sc.fastMs = replaying() ? 50 : 150; // a replay steps at 50 ms; the marquee moves every 150 ms (ticker.ts)
   const a = { now, input: act.input, focusOut: act.focusOut, replay: replaying(), grow: act.grow, indexing: indexing() || backlog(), live: live() };
-  sc.lv = levelOf(a); sc.burst = a.indexing; if (DBG.on) why = sc.lv !== "hot" ? "" : hotWhy(a) + (a.indexing ? " " + bytes(L.total - L.done) + " left" : "");
+  sc.lv = levelOf(a); sc.burst = a.indexing; AWAY.on = sc.unf || sc.lv === "idle" || sc.lv === "away"; if (DBG.on) why = sc.lv !== "hot" ? "" : hotWhy(a) + (a.indexing ? " " + bytes(L.total - L.done) + " left" : "");
 }
 function sizeJob(): void { if (termSize()) render(); } // a resize repaints at once, outside the render cap
 function scanSum(): string { let n = 0; let z = 0; for (const s of sessions.values()) { n++; z += s.size; } return n + ":" + z; }

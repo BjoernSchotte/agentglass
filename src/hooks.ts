@@ -61,6 +61,8 @@ export const H = {
   boxChips: [] as ((where: string, w: number) => string)[], // styled filter chips for a built-in box title ("sessions" | "processes"), w = room
   emptyText: [] as ((where: string) => string)[], // the line an empty built-in list shows instead of the stock one ("" = stock)
   backlog: [] as (() => boolean)[], // true = a feature has background work its onTick slices through (filter head reads): tick at the indexing burst cadence
+  remoteRows: [] as (() => Sess[])[], // fleet: read-only rows of other hosts (s.host set), appended to the top-level list by buildView
+  remoteCard: [] as ((s: Sess, w: number) => string[])[], // the preview of a remote row, instead of previewSections (nothing local to read)
 };
 export function startTui(): void { for (const f of H.tui) f(); }
 export function backlog(): boolean { for (const f of H.backlog) if (f()) return true; return false; }
@@ -69,8 +71,10 @@ export function emptyText(where: string): string { for (const f of H.emptyText) 
 
 export const BADGE_SLOT = 2;
 export function rowPrefix(s: Sess): string { let o = ""; for (const f of H.rowPrefix) o += f(s); return o; }
-export function enrich(s: Sess): void { for (const f of H.enrich) f(s); }
-export function complete(s: Sess): void { for (const f of H.complete) f(s); }
+// a remote row (fleet) has nothing on this machine to enrich or index
+export function enrich(s: Sess): void { if (s.host) return; for (const f of H.enrich) f(s); }
+export function complete(s: Sess): void { if (s.host) return; for (const f of H.complete) f(s); }
+export function remoteRows(): Sess[] { if (!H.remoteRows.length) return []; let o: Sess[] = []; for (const f of H.remoteRows) o = o.concat(f()); return o; }
 // bounds-checked: in scriptc an out-of-range object read traps
 export function tabAt(i: number): Tab | null { return i >= 0 && i < H.tabs.length ? H.tabs[i] : null; }
 export function viewOf(name: string): View | null { for (const v of H.views) if (v.name === name) return v; return null; }

@@ -1,19 +1,20 @@
 #!/bin/sh
 # TUI footprint of one agentglass binary on this host's real transcripts: first frame, RSS, CPU (self + children).
 #   sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>]
-#                           [--config <config.json>] [--home <dir>] [--debug] [--away]
+#                           [--config <config.json>] [--home <dir>] [--env K=V]… [--debug] [--away]
 # Prints: first_frame_ms, rss_mb_5s, rss_mb_30s, rss_mb_end, cpu_self_pct, cpu_children_pct, cpu_total_pct (one per line,
 # CPU in % of one core over the window after the warm-up). Runs the TUI niced in a detached 160x45 tmux pane with every
 # AGENTGLASS_* path in the scratch dir and AGENTGLASS_AGENT=0; --warm copies the cache first (the original is never
 # written); --config copies a config.json in (e.g. a pinned filter); --debug sets AGENTGLASS_DEBUG_REFRESH=1 and prints
 # the pane's last row (the debug footer) as `debug <text>`; --away reports a focus-out to the TUI after its first frame
-# (the terminal's focus event: nobody looks); --home runs it on a fixture HOME (scripts/fixture-agents.sh). Linux (/proc)
+# (the terminal's focus event: nobody looks); --home runs it on a fixture HOME (scripts/fixture-agents.sh); --env adds a
+# variable to the TUI's environment (tmux does not pass the caller's, e.g. AGENTGLASS_SSH for fleet hosts). Linux (/proc)
 # and macOS (proc_pid_rusage through scripts/proc-cpu.c: self plus its waited-for children). Kills only its own tmux session.
 set -e
 export LC_ALL=C # decimal points in awk/sleep whatever the locale
 os=$(uname -s); [ "$os" = Linux ] || [ "$os" = Darwin ] || { echo "footprint.sh: Linux or macOS only"; exit 2; }
-usage() { echo "usage: sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>] [--config <file>] [--home <dir>] [--debug] [--away]" >&2; exit 2; }
-bin=""; mode=""; warm=""; warmup=30; window=120; scratch=""; config=""; home=""; debug=0; away=0
+usage() { echo "usage: sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>] [--config <file>] [--home <dir>] [--env K=V]… [--debug] [--away]" >&2; exit 2; }
+bin=""; mode=""; warm=""; warmup=30; window=120; scratch=""; config=""; home=""; debug=0; away=0; extra=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) bin=$2; shift ;;
@@ -24,6 +25,7 @@ while [ $# -gt 0 ]; do
     --scratch) scratch=$2; shift ;;
     --config) config=$2; shift ;;
     --home) home=$2; shift ;;
+    --env) case "$2" in [A-Z]*=*) extra="$extra '$2'" ;; *) usage ;; esac; shift ;;
     --debug) debug=1 ;;
     --away) away=1 ;;
     *) usage ;;
@@ -36,7 +38,7 @@ command -v tmux > /dev/null || { echo "footprint.sh: needs tmux" >&2; exit 2; }
 bin=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 own=0; if [ -z "$scratch" ]; then scratch=$(mktemp -d); own=1; fi
 mkdir -p "$scratch"; scratch=$(cd "$scratch" && pwd)
-rm -rf "$scratch/cache" "$scratch/run" "$scratch/otlp" "$scratch/config.json"; mkdir -p "$scratch/cache"
+rm -rf "$scratch/cache" "$scratch/run" "$scratch/otlp" "$scratch/fleet" "$scratch/config.json"; mkdir -p "$scratch/cache"
 [ "$mode" = cold ] || cp -R "$warm/." "$scratch/cache/"
 [ -z "$config" ] || cp "$config" "$scratch/config.json"
 ses="agfp-$$"
@@ -65,7 +67,7 @@ t0=$(ms)
 pid=$(tmux new-session -d -P -F '#{pane_pid}' -s "$ses" -x 160 -y 45 \
   "exec env AGENTGLASS_CACHE_DIR='$scratch/cache' AGENTGLASS_CONFIG='$scratch/config.json' AGENTGLASS_RULES='$scratch/rules.json' \
    AGENTGLASS_RUN_DIR='$scratch/run' AGENTGLASS_PALETTE_FILE='$scratch/palette.json' AGENTGLASS_THEME_FILE='$scratch/theme' \
-   AGENTGLASS_OTLP_DIR='$scratch/otlp' AGENTGLASS_PRICES='$scratch/prices.json' AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 $hm $dbg nice -n 10 '$bin'")
+   AGENTGLASS_OTLP_DIR='$scratch/otlp' AGENTGLASS_PRICES='$scratch/prices.json' AGENTGLASS_FLEET_DIR='$scratch/fleet' AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 $hm $extra $dbg nice -n 10 '$bin'")
 
 first=-1
 while [ $(($(ms) - t0)) -lt 60000 ]; do

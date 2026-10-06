@@ -787,7 +787,75 @@ One table for every command (`agentglass --help` prints it, the JSON help carrie
 | 4 | ambiguous reference (an id prefix that matches several sessions; the candidates go to stderr) |
 
 Command-specific on top: `cost --check` exits 3 when the month is over budget, `rules check` 1 on warnings and 2 on
-errors, `export` 1 when some requests failed and 3 when another export to the same endpoint is running.
+errors, `export` 1 when some requests failed and 3 when another export to the same endpoint is running, `fleet` and
+`fleet cost` 5 with `--strict` when a host failed or is stale, `fleet serve` 126 for a refused request.
+
+## Several machines (fleet)
+
+Agents run on a laptop, a workstation and a few VMs. `agentglass` on the laptop can show them all in one list: each
+host's own agentglass answers over SSH with its sessions, cost and live state. No transcript leaves its host.
+
+```json
+{"fleet": {
+  "hosts": [
+    {"name": "ws",  "ssh": "me@workstation"},
+    {"name": "vm1", "ssh": "vm1", "agentglass": "~/.local/bin/agentglass", "redact": true},
+    {"name": "old", "ssh": "old-laptop", "enabled": false}
+  ],
+  "localName": "local", "refreshSeconds": 60, "days": 7, "timeoutSeconds": 90
+}}
+```
+
+In `~/.agentglass/config.json`. A host entry is the opt-in: without one nothing connects anywhere.
+
+- **`redact` first.** A shared or customer machine: set `"redact": true`. The host then sends fake titles, projects
+  and paths (`--redact` at the source); the viewer cannot undo it. A viewer started with `--redact` pulls every host
+  redacted and keeps those reports in separate cache files.
+- **`ssh`** is what `ssh` gets as its destination: an alias from `~/.ssh/config` or `[user@]host`. Keys, ProxyJump and
+  Tailscale SSH work unchanged; agentglass never asks for a password (`BatchMode`), so use a key without a passphrase
+  prompt or ssh-agent. One shared connection per host (ControlMaster, 10 minutes) makes a refresh cost about a second of
+  the remote agentglass.
+- **`agentglass`**: the binary on the host (default: `agentglass` on its `PATH`; `~/` is the host's home).
+- **What moves**: the `--json` session fields (titles, cwd, branch, git remote without credentials, model, counts, cost,
+  alerts) and the `cost --json` figures. No prompts beyond the title, no tool arguments or output, no file contents.
+- **What stays**: the reports are cached in `~/.agentglass/fleet` (0700) so an offline host shows its last report with
+  its age. A host removed from the config loses its cache files on the next run.
+
+**A key that can only read** (recommended): make a key for the viewer, copy its `.pub` to each host and run there
+
+```sh
+agentglass fleet authorize ~/agentglass-viewer.pub --from 100.64.0.0/10   # prints the line; append it yourself
+# restrict,from="100.64.0.0/10",command="/home/me/.local/bin/agentglass fleet serve" ssh-ed25519 AAAA… agentglass-viewer@laptop
+```
+
+`restrict` turns off the shell, PTY, port, agent and X11 forwarding; `fleet serve` runs only `fleet pull` and
+`--version` from the requested command and refuses everything else (exit 126). `--redact` there makes the host
+answer redacted whatever the viewer asks. agentglass never edits `authorized_keys` or `~/.ssh`.
+
+**In the TUI** remote rows carry a host tag (`ws`), sort with the local ones (live first) and filter with
+`host is ws`, `host is local`, `host is_one_of ws,vm1`. The header shows `· 3 hosts` and what is wrong (`vm1 stale
+2h`, `vm1 ✗`); the cost widget and the budget are the fleet's; Stats has a `fleet` line per host. A stale report
+(older than 2 × refreshSeconds + timeoutSeconds) is dimmed with its age (`2h?`) and counts as not running. Enter on a
+remote row shows the `ssh … agentglass open …` command: transcripts, kill, send and compare need the host. While the
+terminal is unfocused or idle, hosts are pulled every 5 minutes at most. `--no-fleet` (or `AGENTGLASS_FLEET=0`) skips
+the hosts for one run; the palette has *Fleet: refresh hosts now* and *Fleet: status*.
+
+```sh
+agentglass fleet --json | jq '.[] | select(.live) | {host, title, attention}'   # every host's sessions
+agentglass fleet cost --json | jq '{total: .total.today.byMode, overlap, approx}'
+agentglass fleet status          # per host: last report, error, version, host id, time zone; the first thing to run
+agentglass fleet status --close  # end the shared ssh connections
+agentglass open claude:5f1e…@ws  # a host's session: prints ssh -t me@workstation agentglass open claude:5f1e… (run it)
+```
+
+The `ssh -t … agentglass open …` command needs a login that may run agentglass interactively: the restricted viewer key
+above refuses it (exit 126), so it is meant for your usual key or login.
+
+**Limits of this version.** Each host prices with its own table and counts days in its own time zone (`fleet status`
+names a zone that differs). The same session read on two hosts (a shared directory, a copied history) is counted on
+both: its cost and the totals show `≈` and `fleet cost` reports it as `overlap`. A copied Claude history under a new
+session id is not detected. `fleet` and `fleet cost` exit 5 with `--strict` when a host could not be pulled or is
+stale; without it they print what they have and name the failed hosts on stderr.
 
 ## Send to an OTLP backend
 

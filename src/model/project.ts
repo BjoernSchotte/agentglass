@@ -239,7 +239,7 @@ export function resolveTick(maxMs: number, maxN: number, now: () => number, git:
 // label → distinct keys, rebuilt per P.ver: two keys with one label both get the host prefix
 let lblVer = -1; const lblKey = new Map<string, string>(); const lblMany = new Map<string, boolean>();
 export function labelOf(id: Ident): string {
-  if (id.kind !== "git") return id.label;
+  if (id.kind !== "git" || id.via === "remote") return id.label; // a remote host's label is already its own disambiguated one
   if (lblVer !== P.ver) {
     lblKey.clear(); lblMany.clear(); lblVer = P.ver;
     for (const e of cwds.values()) {

@@ -15,7 +15,7 @@ export function cw(c: number): number {
   return 1;
 }
 export function width(s: string): number { let w = 0; for (const ch of s) w += cw(cpOf(ch)); return w; }
-export function clean(s: string): string { return s.replace(/\t/g, "  ").replace(/[\u0000-\u001f\u007f]/g, " "); }
+export function clean(s: string): string { return s.replace(/\t/g, "  ").replace(/[\u0000-\u001f\u007f-\u009f]/g, " "); } // C1 too: \u009b is a CSI on some terminals
 // truncate to w columns (with …) and pad with spaces to exactly w
 export function fit(s: string, w: number): string {
   if (w <= 0) return "";

@@ -111,7 +111,7 @@ export interface HostReport {
   live: LiveRow[] | null;    // newest live state per session from a stream (16, otlp-hub), fresher than `s`
   exact: boolean;            // every session carries days and own: the merge can be exact (13)
 }
-export interface LiveRow { key: string; at: number; live: boolean; busy: boolean; attention: boolean; approval: boolean; stuck: string; alerts: Obj[] }
+export interface LiveRow extends SState { key: string; at: number; alerts: Obj[] } // SState: src/model/state.ts (sessState, 16.1)
 export interface FeedState { report: HostReport | null; okAt: number; tryAt: number; err: string; code: string; busy: boolean } // viewer clock
 export interface HostFeed {
   kind: string;                    // "ssh" (pull or snapshot), "dir" (snapshot drop), "otlp" (otlp-hub)

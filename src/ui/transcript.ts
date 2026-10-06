@@ -3,6 +3,7 @@
 import { width, clean, fit, wrap, fitStyled, fillTo, localHM, bytes, home, numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S, say, type TV } from "../state.ts";
+import { remoteOnly } from "../model/remote.ts";
 import { enrich } from "../hooks.ts";
 import { parseEvents, sourceOf, window, epochOf } from "../harness/index.ts";
 import { titleOf, parentOf, subActive, activeSubs, restat } from "../model/sessions.ts";
@@ -100,7 +101,7 @@ export function moveCur(t: TV, d: number, vh: number): void {
   else if (e0 > t.scroll + vh) t.scroll = Math.min(s0, e0 - vh);
   if (d > 0 && t.cur === n - 1) t.follow = true;
 }
-export function openTranscript(s: Sess): void { openTranscriptAt(s, -1); }
+export function openTranscript(s: Sess): void { if (remoteOnly(s, "the transcript")) return; openTranscriptAt(s, -1); }
 // cursor ≥ 0 (a link to an event older than the tail): read from just before it, then skip to the tail; G/follow still
 // go to the live end
 export function openTranscriptAt(s: Sess, cursor: number): TV {

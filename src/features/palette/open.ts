@@ -64,6 +64,9 @@ export function failTarget(t: Target): never {
   cliError("not_found", t.msg || "no such session", "agentglass sessions lists them", 3);
 }
 const FLAGS = ["--print", "--print-url", "--new-instance"];
+// <ref>@<host> (fleet, features/fleet/cli.ts): true = handled (it printed how to open it there); it may rewrite o.ref
+// (@ this machine's own name: a local ref)
+export const REMOTE_OPEN = { run: (o: OpenArgs): boolean => false };
 export interface OpenArgs { ref: string; print: boolean; printUrl: boolean; newInstance: boolean }
 // the open command's own flags; anything else is a usage error (exit 2)
 export function openArgs(args: string[]): OpenArgs {
@@ -80,7 +83,7 @@ export function openArgs(args: string[]): OpenArgs {
   return o;
 }
 
-addCmd({ cmd: "open", usage: "agentglass open <ref>", summary: "start the TUI on a session and event (a running agentglass shows it instead)\n(<ref> = current | last | parent | <id> | <id prefix ≥ 6> | <harness>:<id> [#call=<id> | #ts=<iso> | #turn=<start ts>[~k] | #turn=<n> | #span=<span id>] | agentglass://open/[<harness>/]<id>[#…] | <OTLP trace id>[/<span id>])", options: [
+addCmd({ cmd: "open", usage: "agentglass open <ref>", summary: "start the TUI on a session and event (a running agentglass shows it instead)\n(<ref> = current | last | parent | <id> | <id prefix ≥ 6> | <harness>:<id> [#call=<id> | #ts=<iso> | #turn=<start ts>[~k] | #turn=<n> | #span=<span id>] | agentglass://open/[<harness>/]<id>[#…] | <OTLP trace id>[/<span id>];\n<ref>@<host>: a fleet host's session — prints the ssh command that opens it there)", options: [
   opt("--print", "", "print the resolution as JSON instead of opening it (also in pipes and inside an agent)", "", []),
   opt("--print-url", "", "print the canonical agentglass:// link", "", []),
   opt("--new-instance", "", "always start a new TUI, never hand the link to a running one", "", []),
@@ -92,6 +95,7 @@ H.cli.unshift((args: string[]): boolean => {
   if ((args[0] ?? "") !== "open" || args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) return false;
   if (args.indexOf("--install-handler") >= 0 || args.indexOf("--uninstall-handler") >= 0) { handler(args.indexOf("--install-handler") >= 0); return true; }
   const o = openArgs(args);
+  if (REMOTE_OPEN.run(o)) return true;
   const r = parseRef(o.ref);
   if (!r.ok) cliError("usage", r.err, "agentglass open --help shows the link forms", 2); // nothing contacted, nothing scanned
   if (!r.harness && !r.trace && SELF.indexOf(r.sess) >= 0) { // current | last | parent: this process's view, then a plain link

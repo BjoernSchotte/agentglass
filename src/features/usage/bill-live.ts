@@ -10,7 +10,8 @@ import type { Obj } from "../../util/json.ts";
 import { OS } from "../../platform/index.ts";
 import { sessions, SG } from "../../model/sessions.ts";
 import { ledger } from "./ledger.ts";
-import { type Acc, stamp, startOfDay } from "./record.ts";
+import { type Acc, L, stamp, startOfDay } from "./record.ts";
+import { sha256Hex } from "../../util/sha256.ts";
 import { type Bill, type Det, type Evid, asBill, newEvid, rule, provMode, configEv, configFiles, envSummary, type Allow, allowanceOf, claudeJson } from "./billing.ts";
 
 const RECHECK_MS = 60000;
@@ -75,6 +76,22 @@ export function allowance(): Allow | null {
   const now = Date.now();
   if (now - alAt >= RECHECK_MS) { alAt = now; const c = claudeJson(CJ).usage; alObj = null; if (c) { const o: Obj = {}; o["cachedUsageUtilization"] = c; alObj = o; } }
   return alObj ? allowanceOf(alObj, now) : null; // a rejected shape just hides the gauge (no debug log exists to note it in)
+}
+// the fleet report's allowance (fleet spec 7.4): the Claude windows with the account they belong to (a salted hash of
+// the block's accountUuid, never an e-mail or name) and when they were fetched; null = no usable block
+export function allowanceInfo(now: number): Obj | null {
+  const c = claudeJson(CJ).usage; if (!c) return null;
+  const o: Obj = {}; o["cachedUsageUtilization"] = c;
+  const al = allowanceOf(o, now); if (!al) return null;
+  const u = typeof c["accountUuid"] === "string" ? c["accountUuid"] as string : "";
+  return { account: u ? sha256Hex("agentglass/account/v1|" + u).slice(0, 12) : "", fetchedAt: c["fetchedAtMs"],
+    h5: al.h5 ? { pct: al.h5.pct, reset: al.h5.reset } : null, d7: al.d7 ? { pct: al.d7.pct, reset: al.d7.reset } : null };
+}
+// the newest Codex rate-limit windows this host indexed (L.rl), with their event time; null = none
+export function codexWins(): Obj | null {
+  if (!L.rl.length || L.rlAt <= 0) return null;
+  const ws: Obj[] = []; for (const w of L.rl) ws.push({ pct: w.pct, min: w.min, reset: w.reset });
+  return { at: L.rlAt, wins: ws };
 }
 function label(s: Sess): void { BL.labels++; const b = sessionBill(s); s.bill = b.bill; s.plan = b.plan; s.billSrc = b.src; }
 // the tick's labels, per session only when an input of sessionBill moved: the session object, its pid, its ledger entry (another object

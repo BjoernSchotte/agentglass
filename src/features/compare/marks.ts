@@ -5,6 +5,7 @@
 // On the Stats tab C compares the period with the one before it.
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
+import { remoteOnly } from "../../model/remote.ts";
 import { H, tabAt } from "../../hooks.ts";
 import { sessions, titleOf, current, buildView } from "../../model/sessions.ts";
 import { clean } from "../../util/text.ts";
@@ -85,7 +86,7 @@ H.rowPrefix.push((s: Sess): string => s.path === M.a ? fg(C.accent) + CSI + "1m"
 H.onTick.push(prune);
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list") return false;
-  if (S.tab === 0 && k === "m") { const s = current(); if (s) say("info", toggleMark(s)); return true; }
+  if (S.tab === 0 && k === "m") { const s = current(); if (s && !remoteOnly(s, "compare")) say("info", toggleMark(s)); return true; }
   if (S.tab === 0 && k === "C") {
     const p = pickPair();
     if (typeof p === "string") say("info", p); else openCompare(p.A, p.B, "Sessions", p.note);

@@ -9,13 +9,13 @@ import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { ledger, accOf, pending } from "./ledger.ts";
-import { type Day, L, todayKey, lastDays, startOfDay, skillUses, newDay, heavy } from "./record.ts";
+import { type Day, type RlWin, L, todayKey, lastDays, startOfDay, skillUses, newDay, heavy } from "./record.ts";
 import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
 import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText, estTop } from "./costs.ts";
-import { type Bill, type GW, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
+import { type Bill, type GW, type Allow, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
-import { costNow, budget, sourceCounts } from "./summary.ts";
+import { type CostNow, costNow, budget, sourceCounts } from "./summary.ts";
 import { PP, renderPanel, panelKey, setStatsGo } from "./pricepanel.ts";
 import "./progress.ts"; // the header indexing gauge (registers itself)
 import { REDACT } from "../redact-on.ts";
@@ -186,6 +186,10 @@ function allApi(): boolean {
   }
   return true;
 }
+// fleet (features/fleet/tui.ts): the Stats line under the summary ("" = none: no hosts), the header's fleet figures and
+// the allowance gauges across hosts (null = this machine's own)
+export interface FleetHdr { today: ModeSum; state: string; approx: boolean }
+export const FLEET_HOOK = { line: (w: number, week: boolean): string => "", header: (cn: CostNow): FleetHdr | null => null, claude: (): Allow | null => null, codex: (): RlWin[] | null => null };
 function projLine(): string { const c = costNow(""); const p = budget.usd > 0 ? c.projCounted : c.proj; return projText(p.today, p.month, budget, c.bs, allApi()); }
 function linesStr(add: number, del: number): string { return fg(C.green) + "+" + grp(add) + RST + " " + fg(C.red) + "−" + grp(del) + RST; }
 
@@ -197,7 +201,8 @@ function renderStats(): void {
   // summary; the subtitle carries the filter chips
   const fl = rowsFill("Stats", g.key); // a call filter's rows still being read: the numbers grow to their final values
   const ch = f === EMPTY ? "" : chips("Stats", "stats", Math.max(10, W - 30 - vwidth(fillChip(fl)))) + fillChip(fl);
-  box(0, 1, W, 5, "usage", ch ? ch + fg(C.dim) + " · " + (week ? "last 7 days" : "today") + RST : week ? "last 7 days" : "today", true);
+  const flt = f === EMPTY ? FLEET_HOOK.line(W - 4, week) : ""; const fy = flt ? 1 : 0; // the fleet line: the summary box grows by one row
+  box(0, 1, W, 5 + fy, "usage", ch ? ch + fg(C.dim) + " · " + (week ? "last 7 days" : "today") + RST : week ? "last 7 days" : "today", true);
   const chip = (on: boolean, k: string, label: string): string => (on ? bg(C.accent) + fg("20;20;24") + CSI + "1m" : bg(C.sel) + fg(C.sub)) + " " + k + " " + label + " " + RST;
   const frac = g.total > 0 ? g.done / g.total : 1;
   const idx = frac < 0.999 ? fg(C.yellow) + spin() + " indexing " + RST + gauge(frac, 12) + fg(C.text) + " " + Math.floor(frac * 100) + "%" + RST
@@ -223,12 +228,13 @@ function renderStats(): void {
   // the projection is about all spend: under a filter the line shows the busiest matching session instead
   const cc = g.scoped ? callsChip(f, days) : "";
   const l3 = f !== EMPTY ? busiest + (cc ? dot + cc : "") : wide ? (b ? busiest + dot : "") + pjs : pjs;
-  for (const [i, l] of [l1, l2, l3].entries()) put(1, 2 + i, " " + fitStyled(l, W - 4) + fillTo(fitStyled(l, W - 4), W - 4) + " ");
+  const ls = flt ? [l1, l2, l3, flt] : [l1, l2, l3];
+  for (const [i, l] of ls.entries()) put(1, 2 + i, " " + fitStyled(l, W - 4) + fillTo(fitStyled(l, W - 4), W - 4) + " ");
   const pm = periodMessage(f, days);
   if (pm) { // the period and the day clauses do not intersect: say so instead of empty tables
-    box(0, 6, W, Math.max(3, Ht - 7), "filter", "", false);
-    put(2, 7, fg(C.yellow) + fit(pm + " — d / w switch the period, / edits the filter", W - 4) + RST);
-    for (let y = 8; y < Ht - 2; y++) put(1, y, " ".repeat(W - 2));
+    box(0, 6 + fy, W, Math.max(3, Ht - 7 - fy), "filter", "", false);
+    put(2, 7 + fy, fg(C.yellow) + fit(pm + " — d / w switch the period, / edits the filter", W - 4) + RST);
+    for (let y = 8 + fy; y < Ht - 2; y++) put(1, y, " ".repeat(W - 2));
     return;
   }
   // per-harness table
@@ -242,12 +248,12 @@ function renderStats(): void {
   const shareW = Math.max(0, W - 4 - used - lw - 2);
   const nh = HARNESSES.length;
   let up = unpricedLine(t.ms, 2); if (width(up) > W - 14) up = unpricedLine(t.ms, 1); // narrow: the top model and "+N models"
-  box(0, 6, W, nh + (up ? 6 : 5), "by harness", "", false);
+  box(0, 6 + fy, W, nh + (up ? 6 : 5), "by harness", "", false);
   const hdr = ["harness", "sessions", tight ? "tools" : "tool calls", "in", "out", "cache r", "cache w", "cost"];
   let hl = fg(C.dim);
   for (let i = 0; i < hdr.length; i++) hl += i === 0 ? fit(hdr[i] ?? "", numAt(cols, i, 0)) : rj(hdr[i] ?? "", numAt(cols, i, 0));
   hl += (lw ? rj("lines ±", lw) : "") + (shareW >= 6 ? "  " + fit(shareW >= 19 ? "share of tool calls" : shareW >= 14 ? "share of calls" : "share", shareW) : "") + RST;
-  put(1, 7, " " + fitStyled(hl, W - 4) + " ");
+  put(1, 7 + fy, " " + fitStyled(hl, W - 4) + " ");
   const row = (x: HA, y: number, label: string): void => {
     const lead = label ? fg(C.text) + CSI + "1m" + fit(label, 10) + RST : badge(x.h);
     const quiet = x.tools === 0 && x.inTok + x.outTok + x.cr === 0;
@@ -260,15 +266,15 @@ function renderStats(): void {
     if (shareW >= 6 && !label) s += "  " + gauge(t.tools ? x.tools / t.tools : 0, shareW - 5) + fg(C.sub) + rj(t.tools ? Math.round((x.tools / t.tools) * 100) + "%" : "", 5) + RST;
     put(1, y, " " + fitStyled(s, W - 4) + fillTo(fitStyled(s, W - 4), W - 4) + " ");
   };
-  for (let i = 0; i < nh; i++) row(i < g.rows.length ? g.rows[i] : ha(""), 8 + i, "");
-  put(1, 8 + nh, " " + fg(C.line) + "─".repeat(W - 4) + RST + " ");
-  row(t, 9 + nh, "Σ total");
+  for (let i = 0; i < nh; i++) row(i < g.rows.length ? g.rows[i] : ha(""), 8 + fy + i, "");
+  put(1, 8 + fy + nh, " " + fg(C.line) + "─".repeat(W - 4) + RST + " ");
+  row(t, 9 + fy + nh, "Σ total");
   if (up) {
     const hint = fg(C.dim) + " · $ set prices" + RST; // the price panel; narrow: fewer models before the hint is cut
     if (width(up) + 15 > W - 14) { const u1 = unpricedLine(t.ms, 1); if (width(u1) < width(up)) up = u1; }
-    const ul = fg(C.dim) + fit("unpriced", 10) + RST + fg(C.sub) + up + RST + hint; put(1, 10 + nh, " " + fitStyled(ul, W - 4) + fillTo(fitStyled(ul, W - 4), W - 4) + " "); }
+    const ul = fg(C.dim) + fit("unpriced", 10) + RST + fg(C.sub) + up + RST + hint; put(1, 10 + fy + nh, " " + fitStyled(ul, W - 4) + fillTo(fitStyled(ul, W - 4), W - 4) + " "); }
   // bottom: top tools | activity
-  const y0 = 11 + nh + (up ? 1 : 0); const bh = Ht - 1 - y0;
+  const y0 = 11 + fy + nh + (up ? 1 : 0); const bh = Ht - 1 - y0;
   if (PP.open) { if (bh >= 4) renderPanel(0, y0, W, bh, days); else put(2, Ht - 2, fg(C.yellow) + fit("price panel: the terminal is too short — enlarge it or $ to close", W - 4) + RST); return; }
   if (bh < 5) return;
   const lw2 = Math.max(34, Math.floor(W * 0.42)); const rw = W - lw2;
@@ -740,13 +746,14 @@ export function allowGauge(tag: string, ws: GW[], w: number): string {
 }
 H.headerWidgets.push((w: number): string => {
   if (w < 14) return "";
-  const cn = costNow(""); const st = cn.bs.state;
+  const cn = costNow(""); const fh = FLEET_HOOK.header(cn); // fleet: today and the budget state over every host
+  const st = fh ? fh.state : cn.bs.state; const td = fh ? fh.today : cn.today; const ap = (x: string): string => fh && fh.approx && x.startsWith("$") ? "≈" + x : x;
   const col = st === "over" ? fg(C.red) + CSI + "1m" : st === "watch" ? fg(C.yellow) + CSI + "1m" : fg(C.yellow);
-  let fig = split(cn.today, w < 40);
-  if (width(fig) + 6 > w) fig = split(cn.today, true); // a mixed split that does not fit shrinks to the ≈ total
+  let fig = ap(split(td, w < 40));
+  if (width(fig) + 6 > w) fig = ap(split(td, true)); // a mixed split that does not fit shrinks to the ≈ total
   let s = col + fig + RST + fg(C.dim) + " today" + RST; let n = width(fig) + 6;
-  const cx = allowGauge("cx", gaugeWins(L.rl, Date.now()), w - n); s += cx; n += vwidth(cx); // Codex rate limits
-  const al = allowance(); // Claude plan allowance
+  const cx = allowGauge("cx", gaugeWins(FLEET_HOOK.codex() ?? L.rl, Date.now()), w - n); s += cx; n += vwidth(cx); // Codex rate limits (fleet: the newest across hosts)
+  const al = FLEET_HOOK.claude() ?? allowance(); // Claude plan allowance (fleet: per account the newest fetch)
   if (al) { const cc = allowGauge("cc", claudeWins(al), w - n); s += cc; n += vwidth(cc); }
   return n <= w ? s : "";
 });

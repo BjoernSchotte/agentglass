@@ -52,7 +52,8 @@ function fail(msg: string): never { cliError("usage", msg, "", 2); }
 function byMode(m: ModeSum): Obj { const o: Obj = {}; for (let i = 0; i < MODES.length; i++) o[MODES[i] ?? ""] = round(m.by[i] ?? 0); return o; }
 function unpriced(m: ModeSum): Obj { const bm: Obj = {}; for (const [k, n] of m.um) bm[k] = n; return { tokens: m.unk, byModel: bm, credits: m.uc }; }
 function round(c: number): number { return Math.round(c * 1e6) / 1e6; }
-function json(c: CostNow): Obj {
+// the `cost --json` object (fleet pull prints exactly this)
+export function json(c: CostNow): Obj {
   const pb: Obj = {}; for (let i = 0; i < MODES.length; i++) { const p = c.projByMode[i]; pb[MODES[i] ?? ""] = p && p.month >= 0 ? round(p.month) : null; }
   const b = c.budget;
   return {
@@ -93,7 +94,7 @@ function text(c: CostNow): void {
 }
 
 // every session that can hold a day of this month or of the 14-day projection window, indexed to its end
-function summary(harness: string): CostNow {
+export function summary(harness: string): CostNow {
   const from = Math.min(startOfDay() - (monthStart(Date.now()).length - 1) * 86400000, startOfDay() - 15 * 86400000) - 3600000;
   for (const s of sessions.values()) if (s.mtime >= from && (!harness || s.h === harness)) { loadHead(s); complete(s); }
   return costNow(harness);
