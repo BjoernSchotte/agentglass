@@ -4,7 +4,7 @@
 // buckets cannot answer (model × status, …), reads the call rows (within retention). Callers do not choose.
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger, callsOf } from "../usage/ledger.ts";
+import { ledger, callsOf, copyKey } from "../usage/ledger.ts";
 import { type Day, L, heavy } from "../usage/record.ts";
 import { type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
@@ -26,7 +26,7 @@ export interface Totals {
   tools: number; errors: number; add: number; del: number;
   dn: number; ms: number; max: number; hist: number[];                  // merged durations of all tools
   perTool: Map<string, ToolT>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; // prog/cmds keyed "<tool>\t<x>", files by path
-  models: Set<string>; paths: Set<string> /* matching session paths */; pdays: Map<string, string[]> /* path → the day keys it contributed */; first: number; last: number /* min Acc.t0, max last activity */;
+  models: Set<string>; paths: Set<string> /* matching session paths */; skeys: Set<string> /* their sessions (copyKey: copies count once) */; pdays: Map<string, string[]> /* path → the day keys it contributed */; first: number; last: number /* min Acc.t0, max last activity */;
   callScoped: boolean;   // f had call clauses: cost/tokens are "in session-days with matching calls", tools/errors/durations from matching rows only
   path: "rows" | "buckets";
 }
@@ -266,7 +266,7 @@ export function minus(a: Dist[], b: Dist[]): Dist[] {
 export function emptyTotals(): Totals { return newTotals("buckets", false); }
 function newTotals(path: "rows" | "buckets", scoped: boolean): Totals {
   return { sessions: 0, subs: 0, subsCost: 0, subsUnk: 0, cost: 0, unk: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, tools: 0, errors: 0, add: 0, del: 0, dn: 0, ms: 0, max: 0, hist: zeros(HB),
-    perTool: new Map<string, ToolT>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), models: new Set<string>(), paths: new Set<string>(), pdays: new Map<string, string[]>(), first: 0, last: 0, callScoped: scoped, path };
+    perTool: new Map<string, ToolT>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), models: new Set<string>(), paths: new Set<string>(), skeys: new Set<string>(), pdays: new Map<string, string[]>(), first: 0, last: 0, callScoped: scoped, path };
 }
 function addCnt(m: Map<string, Cnt>, k: string, c: Cnt): void { let x = m.get(k); if (!x) { x = newCnt(); m.set(k, x); } x.n = x.n + c.n; x.err = x.err + c.err; x.add = x.add + c.add; x.del = x.del + c.del; }
 function bump(m: Map<string, Cnt>, k: string, err: boolean): void { let x = m.get(k); if (!x) { x = newCnt(); m.set(k, x); } x.n = x.n + 1; if (err) x.err = x.err + 1; }
@@ -281,7 +281,7 @@ function dayMoney(t: Totals, s: Sess, dk: string, d: Day, models: boolean): void
 function sessSeen(t: Totals, s: Sess): void {
   if (t.paths.has(s.path)) return;
   t.paths.add(s.path);
-  if (s.parent) t.subs++; else t.sessions++;
+  const k = copyKey(s); if (!t.skeys.has(k)) { t.skeys.add(k); if (s.parent) t.subs++; else t.sessions++; } // twins are one session
   const a = ledger.get(s.path); const t0 = a ? a.t0 : 0;
   if (t0 > 0 && (t.first === 0 || t0 < t.first)) t.first = t0;
   const last = Math.max(s.last, s.mtime); if (last > t.last) t.last = last;

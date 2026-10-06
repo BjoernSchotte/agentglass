@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { writeFileSync, appendFileSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { type Sess, newSess } from "../../model/types.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, parentOf } from "../../model/sessions.ts";
 import { type Acc, dayKey } from "./record.ts";
 import { ledger, accOf, complete } from "./ledger.ts";
 import { accOut, accIn } from "./codec.ts";
@@ -11,6 +11,10 @@ import { forget, OWN } from "./owners.ts";
 import { parse } from "../../util/json.ts";
 import { newSessB, finish } from "../otlp/build.ts";
 import "../../harness/index.ts";
+import { costRows, sessionObj } from "../queries.ts";
+import { cliFilter } from "../query/cli.ts";
+import { scopeOf } from "../agentenv.ts";
+import { str, obj, arr } from "../../util/json.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -46,6 +50,9 @@ function show(s: Sess): string { const a = ledger.get(s.path); return a ? "cr " 
 function turns(a: Acc): number { let n = 0; for (const d of a.days.values()) n += d.turns; return n; }
 function dayCr(s: Sess, iso: string): number { const a = ledger.get(s.path); const d = a ? a.days.get(dayKey(new Date(iso))) : undefined; return d ? d.cr : 0; }
 function all(order: Sess[]): void { for (const s of order) complete(s); }
+// what a session shows (its Sess fields): cache reads, output, other copies
+function fig(s: Sess): string { return "cr " + String(s.cacheRTok) + " out " + String(s.outTok) + " twins " + String(s.twins); }
+function R1x(): string { const p = dir + "/p1/one.jsonl"; put(p, [asstReq("req_one", D1, 5)]); return p; }
 
 // ── fork copy: the fork file repeats the original's history (same ids, same timestamps), then goes on ──
 const ORIG = dir + "/p1/a-orig.jsonl"; const FORK = dir + "/p1/b-fork.jsonl";
@@ -101,7 +108,30 @@ for (const first of ["away", "home"]) {
   all(first === "away" ? [a, as, h, hs] : [h, hs, a, as]);
   eq("twins (" + first + " first): the home dir owns the shared history", show(h) + " | " + show(a), "cr 30 out 2 tools 0 turns 1 | cr 40 out 1 tools 0 turns 1");
   eq("twins (" + first + " first): a subagent too", String(cr(hs)) + "/" + String(cr(as)), "5/0");
+  // what each copy shows is the session's: the sum of what its copies book (each message once), on every copy
+  eq("twins (" + first + " first): every copy shows the session's figures", fig(h) + " | " + fig(a), "cr 70 out 3 twins 1 | cr 70 out 3 twins 1");
+  eq("twins (" + first + " first): a subagent's copies too", fig(hs) + " | " + fig(as), "cr 5 out 1 twins 1 | cr 5 out 1 twins 1");
+  eq("twins (" + first + " first): the booked figures stay exact", String(cr(h) + cr(a)), "70");
+  eq("twins (" + first + " first): each copy's subagent belongs to that copy", String(parentOf(hs) === h) + "/" + String(parentOf(as) === a), "true/true");
 }
+// the live copy grows: both copies follow; a copy that is gone leaves the other with what it books itself
+{
+  const h = sessions.get(HOME); const a = sessions.get(AWAY);
+  if (h && a) {
+    appendFileSync(AWAY, asst("h4", D2b, 100, 1, "") + "\n"); sess(AWAY, ""); complete(a);
+    eq("twins: a copy that grows moves both", fig(h) + " | " + fig(a), "cr 170 out 4 twins 1 | cr 170 out 4 twins 1");
+    // cost by session: one row, one session (its copies are one), the booked figures once
+    const rs = costRows("2026-09-01", "session", scopeOf(true, ["--all-projects"], "", dir), cliFilter([], "claude", false, false, false));
+    // session <ref>: the session's models over both copies; its subagents: this copy's own, once
+    const so = sessionObj(a); const m0 = obj(arr(so["models"])[0]);
+    eq("twins: session models over the copies", (m0 ? String(m0["cacheRead"]) : "-") + " subagents " + String(arr(so["subagents"]).length) + " twins " + String(so["twins"]), "175 subagents 1 twins 1"); // with its subagent's 5
+    eq("twins: cost --by session", rs.map((r) => str(r["key"]) + " " + String(r["cacheRead"]) + " " + String(r["sessions"])).join(" | "), "claude:T 170 1 | claude:agent-t1 5 1 | total 175 2");
+    sessions.delete(HOME); complete(a);
+    eq("twins: the other copy gone", fig(a), "cr 170 out 4 twins 0");
+  } else eq("twins: sessions kept", "missing", "present");
+}
+// a session with one copy keeps its own figures
+reset(); { const x = sess(R1x(), ""); complete(x); eq("one copy: no twins", fig(x), "cr 5 out 1 twins 0"); }
 
 // a head without a cwd yet (a new log, queued prompts first) decides nothing for good: the cwd that follows does
 {

@@ -162,7 +162,7 @@ export function wakeScan(roots: Proc[], now: number): void {
 let lastLink = "";
 function linkSig(): string {
   const o: string[] = [String(SG.gen), String(sessions.size)];
-  for (const [k, l] of registry) o.push(k + "=" + String(l.pid) + l.status + l.name);
+  for (const [k, l] of registry) o.push(k + "=" + String(l.pid) + l.status + l.name + "@" + l.cwd);
   for (const p of allProcs.values()) if (p.h) o.push(String(p.pid) + ":" + String(p.ppid) + p.h + p.cwd);
   for (const [f, pid] of filePid) if (allProcs.has(pid)) o.push(f);
   let mt = 0; for (const ad of HARNESSES) if (ad.liveCwd) for (const s of sessions.values()) if (s.h === ad.id) mt += s.mtime;
@@ -220,11 +220,31 @@ export function linkOne(s: Sess, pid: number, status: string, name: string): boo
   linked.set(s.path, { raw: name, out: s.name });
   return true;
 }
+// the one copy a registry entry links when its session id has several (Claude: one session under two project dirs): the
+// one its process writes — in the project dir of the process's cwd (HarnessAdapter.wakeDir) — else the newest. One live
+// row per process: a pane's cost and a workspace's sum count it once. "<harness>:<id>" → path, only keys with copies
+function regCopies(): Map<string, string> {
+  const by = new Map<string, Sess[]>();
+  for (const s of sessions.values()) { if (s.parent) continue; const k = s.h + ":" + s.id; if (!registry.has(k)) continue; const v = by.get(k); if (v) v.push(s); else by.set(k, [s]); }
+  const out = new Map<string, string>();
+  for (const [k, ss] of by) {
+    if (ss.length < 2) continue;
+    const l = registry.get(k); let d = "";
+    const h = k.slice(0, k.indexOf(":"));
+    if (l && l.cwd) for (const ad of HARNESSES) { const f = ad.wakeDir; if (ad.id === h && f) d = f(l.cwd); }
+    let pick: Sess | null = null;
+    if (d) for (const s of ss) if (s.path.slice(0, s.path.lastIndexOf("/")) === d) pick = s;
+    if (!pick) for (const s of ss) if (!pick || s.mtime > pick.mtime) pick = s;
+    if (pick) out.set(k, pick.path);
+  }
+  return out;
+}
 function linkSessions(): void {
+  const cp = regCopies();
   for (const s of sessions.values()) {
     let pid = 0; let status = ""; let name = "";
-    const l = registry.get(s.h + ":" + s.id);
-    if (l) { pid = l.pid; status = l.status; name = l.name; }
+    const k = s.h + ":" + s.id; const l = registry.get(k); const c = cp.get(k);
+    if (l && (c === undefined || c === s.path)) { pid = l.pid; status = l.status; name = l.name; }
     else { const fp = filePid.get(s.path); if (fp && allProcs.has(fp)) { const r = rootOf(fp); pid = r ? r.pid : fp; status = "open"; } }
     linkOne(s, pid, status, name);
   }
@@ -258,6 +278,7 @@ function linkSessions(): void {
 export function linkForCheck(roots: Proc[]): void { procs = roots; linkSessions(); }
 export function linkSigForCheck(): string { return linkSig(); }
 export function openForCheck(path: string, pid: number): void { if (pid) filePid.set(path, pid); else filePid.delete(path); }
+export function liveForCheck(key: string, l: Live | null): void { if (l) registry.set(key, l); else registry.delete(key); }
 // a pid the registry or an open transcript already gives another session keeps that link: a disagreement is not acted on
 // (herdr may still report the session a TUI had before /new or /clear)
 function linkMux(): Set<number> {

@@ -187,7 +187,7 @@ ok("the daemon runs the suspended session", live.some((l: Live) => l.id === P2 &
 const dw = daemonWarn(ME, "OpenCode", "opencode service stop", live);
 ok("kill guard: the daemon pid is refused with a hint", dw.indexOf("runs 1 session") >= 0 && dw.indexOf("opencode service stop") >= 0, dw);
 ok("kill guard: other pids pass", daemonWarn(ME + 1, "OpenCode", "opencode service stop", live) === "" && daemonWarn(ME, "OpenCode", "x", []) === "", "");
-ok("kill guard: an idle daemon is refused too", daemonWarn(ME, "OpenCode", "opencode service stop", [{ id: "", pid: ME, status: "", name: "" }]).indexOf("runs 0 sessions") >= 0, "");
+ok("kill guard: an idle daemon is refused too", daemonWarn(ME, "OpenCode", "opencode service stop", [{ id: "", pid: ME, status: "", name: "", cwd: "" }]).indexOf("runs 0 sessions") >= 0, "");
 ok("the adapter names how to stop its daemon", (opencode.daemon ?? "") === "opencode service stop", opencode.daemon ?? "-");
 ok("dead daemon: nothing live", reg((pid: number) => pid < 0, isOC).length === 0, "");
 // service.json names a pid that is alive but no OpenCode process (recycled): no daemon, the row is read as idle

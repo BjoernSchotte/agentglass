@@ -5,9 +5,9 @@ import { writeSync } from "node:fs";
 import { type Obj, base } from "../util/json.ts";
 import { H, complete, display, realCwd, screenOut } from "../hooks.ts";
 import { S } from "../state.ts";
-import { sessions, loadHead, loadTail, subActive } from "../model/sessions.ts";
+import { sessions, loadHead, loadTail, subActive, parentOf } from "../model/sessions.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
-import { accOf, rowsOf, callsOf } from "./usage/ledger.ts";
+import { accOf, rowsOf, callsOf, copyKey, copiesOf } from "./usage/ledger.ts";
 import { type Acc, modelUses, isoMs, dayKey, heavy, newAcc } from "./usage/record.ts";
 import { type PRow, type SessAcc, priceRows } from "./usage/pricerows.ts";
 import { ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
@@ -120,25 +120,30 @@ function resultTexts(evs: Ev[]): Map<string, string> { const m = new Map<string,
 
 // one session in full: the --json fields plus turns, timing, models, tools, errors, files, repeats, subagents, cost basis;
 // models/tools/errors/files/repeats cover the session and its subagents (complete() reads only these)
+// A session with copies (twins, ledger.ts copiesOf): models, tools, errors and files are over every copy and their
+// subagents (each message is booked by one of them), as its figures are; turns, timing and repeats are this copy's log's
 export function sessionObj(s: Sess): Obj {
-  const fam = [s].concat(kidsOf(s));
-  for (const x of fam) { loadHead(x); loadTail(x); complete(x); }
+  const fam = [s]; for (const k of kidsOf(s)) if (parentOf(k) === s) fam.push(k); // this copy's subagents (twins: each has its own)
+  const agg: Sess[] = []; const seen = new Set<string>();
+  for (const c of copiesOf(s)) for (const x of [c].concat(kidsOf(c))) if (!seen.has(x.path)) { seen.add(x.path); agg.push(x); }
+  for (const x of fam) { loadHead(x); loadTail(x); }
+  for (const x of agg) complete(x);
   const evs: Ev[][] = []; const srcs: Src[] = [];
   for (let i = 0; i < fam.length; i++) { const x = fam[i]; const e = allEvents(x); evs.push(e); srcs.push({ evs: e, live: i === 0 ? x.pid > 0 : subActive(x), kind: x.kind, spawn: i === 0 ? "" : spawnOf(x) }); }
   const sm = summary(buildGraph(srcs, Date.now()));
   const o = jsonSess(s); o["costUsd"] = s.cost < 0 ? null : r6(s.cost);
   o["turns"] = sm.turns; o["wallMs"] = Math.round(sm.wall); o["activeMs"] = Math.round(sm.active);
-  o["models"] = modelRows(fam, null);
-  o["tools"] = toolRows(fam, 15);
+  o["models"] = modelRows(agg, null);
+  o["tools"] = toolRows(agg, 15);
   const texts = new Map<string, string>();
   for (const e of evs) for (const [k, v] of resultTexts(e)) texts.set(k, v);
   let er: ErrRec[] = [];
-  for (const x of fam) er = er.concat(errRecs(x, accOf(x)));
+  for (const x of agg) er = er.concat(errRecs(x, accOf(x)));
   er.sort((x, y) => recMs(y.r) - recMs(x.r));
   const errs: Obj[] = [];
   for (const e of er.slice(0, 10)) { const t = e.r.id ? texts.get(e.r.id) : undefined; errs.push({ ts: e.r.ts || null, tool: display("tool", e.tool, e.s), arg: argOf(e.tool, e.r.arg, e.s), text: t === undefined ? null : errText(t), session: e.s.id }); }
   o["errors"] = errs;
-  o["files"] = fileRows(fam, 15);
+  o["files"] = fileRows(agg, 15);
   const reps: Obj[] = [];
   for (let i = 0; i < fam.length; i++) for (const r of loopRuns(evs[i] ?? [], 3)) reps.push({ tool: display("tool", r.tool, fam[i]), arg: argOf(r.tool, r.arg, fam[i]), n: r.n, ts: r.ts || null, session: fam[i].id });
   o["repeats"] = reps;
@@ -264,13 +269,13 @@ export const BY = ["day", "model", "harness", "project", "session", "workspace"]
 // keys from the shared dimensions (project = the repo's name); costUsd null for all-unpriced rows
 export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter): Obj[] {
   const acc = new Map<string, number[]>(); // key → [in, out, cacheRead, cacheWrite, cost, unpriced]
-  const who = new Map<string, string[]>(); // key → session paths
-  const tot = [0, 0, 0, 0, 0, 0]; const all: string[] = [];
+  const who = new Map<string, number>(); const seen = new Set<string>(); // key → sessions (copyKey: a session's copies count once)
+  const tot = [0, 0, 0, 0, 0, 0]; const all = new Set<string>();
   const sum = (r: number[], v: number[]): void => { for (let i = 0; i < 6; i++) r[i] = (r[i] ?? 0) + (v[i] ?? 0); };
   const add = (k: string, s: Sess, v: number[]): void => {
     let r = acc.get(k); if (!r) { r = [0, 0, 0, 0, 0, 0]; acc.set(k, r); }
     sum(r, v);
-    let w = who.get(k); if (!w) { w = []; who.set(k, w); } if (w.indexOf(s.path) < 0) w.push(s.path);
+    const ks = k + "\u0000" + copyKey(s); if (!seen.has(ks)) { seen.add(ks); who.set(k, (who.get(k) ?? 0) + 1); }
   };
   const f = cf.f; const from = midnightOf(sinceKey);
   const wsId = new Map<string, string>(); // --by workspace: key → herdr workspace id ("" = none)
@@ -301,7 +306,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
         for (const [m, n] of d.um) if (!ms.has(m)) add(m, s, [0, 0, 0, 0, 0, n]);
       } else add(by === "day" ? k : by === "session" ? s.h + ":" + s.id : by === "workspace" ? wsKey(s) : sessDim(by, s)[0] || "(unknown)", s, v);
     }
-    if (used) { all.push(s.path); if (by === "model") kept.push({ a: ka, h: s.h }); }
+    if (used) { all.add(copyKey(s)); if (by === "model") kept.push({ a: ka, h: s.h }); }
   }
   const srcs = new Map<string, PRow>(); if (by === "model") for (const pr of priceRows(kept, null)) srcs.set(pr.model, pr);
   const row = (k: string, r: number[], n: number): Obj => {
@@ -315,8 +320,8 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
   const cost = (k: string): number => { const r = acc.get(k) ?? []; return r[4] ?? 0; };
   if (by === "day") ks.sort(); else ks.sort((x, y) => cost(y) - cost(x) || (x < y ? -1 : x > y ? 1 : 0));
   const out: Obj[] = [];
-  for (const k of ks) out.push(row(k, acc.get(k) ?? [], (who.get(k) ?? []).length));
-  out.push(row("total", tot, all.length));
+  for (const k of ks) out.push(row(k, acc.get(k) ?? [], who.get(k) ?? 0));
+  out.push(row("total", tot, all.size));
   return out;
 }
 

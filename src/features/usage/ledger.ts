@@ -113,11 +113,49 @@ function step(s: Sess, a: Acc): number {
   a.off += z + 1;
   return z + 1;
 }
-export function applyAcc(s: Sess, a: Acc): void { // the ledger's totals onto the session (fixtures use the real code)
-  s.inTok = a.inTok; s.outTok = a.outTok; s.cacheRTok = a.cr; s.cacheWTok = a.cw;
-  s.unkTok = a.unk; s.unkCr = a.uc;
-  s.cost = (a.unk > 0 || a.uc > 0) && a.cost === 0 ? -1 : a.cost;
-  s.tools = a.tools; s.linesAdd = a.add; s.linesDel = a.del;
+// copies of one session: logs of one harness with the same session id (and parent) under different paths — Claude's
+// twins, one session under two project dirs. Only where messages have one owner across files (HarnessAdapter.carriers,
+// owners.ts): each copy books what no other copy owns, so their sum is the session's, each message once
+const TW = { sig: -1, m: new Map<string, string[]>() }; // key → the paths, keys with ≥ 2 copies only
+export function copyKey(s: Sess): string { return s.h + "\t" + s.parent + "\t" + s.id; } // one key for all copies of a session
+function twinMap(): Map<string, string[]> {
+  const g = SG.gen * 1048576 + sessions.size; if (g === TW.sig) return TW.m;
+  const all = new Map<string, string[]>();
+  for (const [p, s] of sessions) { if (!harnessOf(s.h).carriers) continue; const k = copyKey(s); const v = all.get(k); if (v) v.push(p); else all.set(k, [p]); }
+  const m = new Map<string, string[]>(); for (const [k, v] of all) if (v.length > 1) m.set(k, v);
+  TW.sig = g; TW.m = m; return m;
+}
+// how many other copies a session has (no allocation: every tick's visit asks)
+function twinsOf(s: Sess): number { const ps = twinMap().get(copyKey(s)); return ps && ps.indexOf(s.path) >= 0 ? ps.length - 1 : 0; }
+// this session and its other copies (itself alone when it has none)
+export function copiesOf(s: Sess): Sess[] {
+  const ps = twinMap().get(copyKey(s)); if (!ps || ps.indexOf(s.path) < 0) return [s];
+  const out = [s]; for (const p of ps) { const c = sessions.get(p); if (c && c !== s) out.push(c); }
+  return out;
+}
+// the ledger entries of a session's copies, its own first: per-session views that read days (models, skills, today, the
+// alias share) read them all, as the figures do
+export function accsOf(s: Sess): Acc[] {
+  const out = [accOf(s)];
+  for (const c of copiesOf(s)) if (c !== s) { const b = ledger.get(c.path); if (b) out.push(b); }
+  return out;
+}
+// the ledger's totals onto the session (fixtures use the real code); a session with copies: their sum onto every copy, so
+// the copy a process writes shows the session's cost, not the share it books (the shared history is booked at home).
+// Sums over sessions read the ledger's day buckets (each message once), never these figures
+export function applyAcc(s: Sess, a: Acc): void {
+  const cs = copiesOf(s);
+  let inT = a.inTok; let outT = a.outTok; let cr = a.cr; let cw = a.cw; let unk = a.unk; let uc = a.uc; let cost = a.cost; let tools = a.tools; let add = a.add; let del = a.del;
+  for (let i = 1; i < cs.length; i++) {
+    const b = ledger.get(cs[i].path); if (!b) continue;
+    inT += b.inTok; outT += b.outTok; cr += b.cr; cw += b.cw; unk += b.unk; uc += b.uc; cost += b.cost; tools += b.tools; add += b.add; del += b.del;
+  }
+  for (const c of cs) {
+    c.inTok = inT; c.outTok = outT; c.cacheRTok = cr; c.cacheWTok = cw; c.unkTok = unk; c.unkCr = uc;
+    c.cost = (unk > 0 || uc > 0) && cost === 0 ? -1 : cost;
+    c.tools = tools; c.linesAdd = add; c.linesDel = del; c.twins = cs.length - 1;
+    if (c !== s) moved(c.path); // readers that keep per-session results re-check the other copies too
+  }
 }
 function rank(s: Sess, sod: number): number {
   if (s.path === L.prio && Date.now() - L.prioAt < 3000) return 0;
@@ -163,7 +201,7 @@ function visit(s: Sess, t0: number, q: Sess[]): Acc {
     const xm = a.xM; sidecar(s, a); if (a.xM !== xm) k.a = null; // new running totals: apply them
   }
   if (pending(s, a)) q.push(s);
-  if (a !== k.a || a.off !== k.off || s !== k.s) apply(s, a, k);
+  if (a !== k.a || a.off !== k.off || s !== k.s || s.twins !== twinsOf(s)) apply(s, a, k); // a copy came or went: the sum changes
   account(s, a, k);
   return a;
 }
