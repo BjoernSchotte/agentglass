@@ -20,14 +20,18 @@ export function aliases(): string[] { const o: string[] = []; for (const a of RE
 
 const WEEKDAYS = ["su", "mo", "tu", "we", "th", "fr", "sa"]; // Date.getDay() order
 export function weekdayIndex(v: string): number { return WEEKDAYS.indexOf(v.slice(0, 2).toLowerCase()); }
+// enum values known only at runtime (fleet: this machine's name + the configured hosts; features/fleet/hosts.ts sets it)
+export const HOST_ENUM = { values: (): string[] => ["local"] };
 export function enumValues(a: Attr): string[] {
   if (a.enumFn === "harness") return harnessIds();
+  if (a.enumFn === "host") return HOST_ENUM.values();
   return a.enumVals;
 }
 // "OpenCode" → "opencode" (ids and labels); "" when invalid
 export function canonEnum(a: Attr, v: string): string {
   const l = v.toLowerCase();
   if (a.enumFn === "harness") { for (const h of HARNESSES) if (h.id === l || h.label.toLowerCase() === l) return h.id; return ""; }
+  if (a.enumFn === "host") { for (const x of HOST_ENUM.values()) if (x.toLowerCase() === l) return x; return ""; }
   if (a.key === "weekday") { const full = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]; const i = full.indexOf(l); if (i >= 0) return WEEKDAYS[i] ?? ""; }
   return a.enumVals.indexOf(l) >= 0 ? l : "";
 }
@@ -64,6 +68,7 @@ r("agent", [], "session", "text", false, [], "", []);
 r("subagent", [], "session", "bool", false, [], "", []);
 r("live", [], "session", "bool", false, [], "", []);
 r("archived", [], "session", "bool", false, [], "", []);
+r("host", [], "session", "enum", false, [], "host", []); // fleet: the machine a session runs on (this one: fleet.localName)
 r("state", [], "session", "enum", false, ["stuck", "attention", "busy", "idle", "ended"], "", []);
 r("cost", [], "session", "usd", false, [], "", []);
 r("tokens", [], "session", "tok", false, [], "", []);

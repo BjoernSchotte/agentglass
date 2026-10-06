@@ -6,11 +6,16 @@ import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
 import { readBytes, KNOWN, LISTING } from "../util/fs.ts";
 import { S } from "../state.ts";
-import { H, applyMeta } from "../hooks.ts";
+import { H, applyMeta, remoteRows } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
 KNOWN.mtime = (path: string): number => { const s = sessions.get(path); return s ? s.mtime : 0; };
-export const SG = { gen: 0 }; // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
+export const SG = { gen: 0 };
+// fleet: a remote row is live while its host's report said so and that report is fresh (features/fleet/hosts.ts sets ok);
+// RG.gen moves whenever remote rows or their freshness change (buildView's signature)
+export const FRESH = { ok: (host: string): boolean => true };
+export const RG = { gen: 0 };
+export function isLive(s: Sess): boolean { return s.pid > 0 || (s.host !== "" && s.rlive && FRESH.ok(s.host)); } // bumped whenever a session is added or removed (caches over the session set key on it with sessions.size)
 
 // a known log is stat'ed every scan when it is pid-linked or written within 10 min, every 4th when within a day; the rest
 // in turns, 1/ROT of them per scan (~every 2 min at the hot scan interval): a history of old logs was most of a scan
@@ -144,6 +149,7 @@ function headHash(path: string, w: number): number {
 function mtimeOf(s: Sess): number { return Math.floor(s.mtime); } // whole ms: survives the cache's JSON round trip
 export function loadHead(s: Sess): void {
   s.headDone = true;
+  if (s.host) return; // a remote row: its path is no file
   const src = sourceOf(s.h); const ad = harnessOf(s.h);
   const w = window(src, ad.headBytes);
   const m = HEADS.get(s);
@@ -174,7 +180,7 @@ function keepEv(e: Ev): Ev { return { kind: e.kind, text: own(e.text), ts: own(e
 export interface TailMemo { size: number; t: number; x: string; ev: Ev | null; f: string[] }
 export const TAILS = { get: (s: Sess): TailMemo | null => null, put: (s: Sess, m: TailMemo): void => {} }; // cache.ts; off under --redact
 export function loadTail(s: Sess, lite = false): void {
-  if (s.tailSize === s.size) return;
+  if (s.tailSize === s.size || s.host) return;
   s.tailSize = s.size;
   const ad = harnessOf(s.h); const rf = ad.refresh; if (rf) { rf(s); applyMeta(s); }
   const src = sourceOf(s.h);
@@ -247,24 +253,25 @@ export function parentOf(s: Sess): Sess | null {
 // everything buildView reads, as one cheap pass of number adds: the session set, each session's mtime, pid and parent,
 // which subagents are active (time-based auto-expand), the expanded/collapsed sets, the active filters' matches and the
 // selection. Equal signatures build equal views. ps = the active filters' predicates
-function sigOf(ps: ((s: Sess) => boolean)[]): string {
+function sigOf(ps: ((s: Sess) => boolean)[], rem: Sess[]): string {
   const now = Date.now(); let mt = 0; let pid = 0; let par = 0; let act = 0; let hit = 0; let n = 0;
   for (const s of sessions.values()) {
     mt += s.mtime; pid += s.pid; par += s.parent.length;
     if (s.parent && now - s.mtime < 45000) act += 1 + (s.mtime % 1000003); // subActive
     if (ps.length && matchesAll(ps, s)) { n++; hit += 1 + (s.mtime % 1000003) + s.parent.length; }
   }
+  if (rem.length) { pid += RG.gen * 7919; for (const s of rem) if (ps.length && matchesAll(ps, s)) { n++; hit += 1 + (s.mtime % 1000003); } } // remote rows: their generation (rows, freshness) and filter hits
   let ex = ""; for (const k of expanded) ex += k + "\n"; ex += "|"; for (const k of collapsed) ex += k + "\n";
-  return String(SG.gen) + "|" + String(sessions.size) + "|" + String(mt) + "|" + String(pid) + "|" + String(par) + "|" + String(act) + "|" +
+  return String(SG.gen) + "|" + String(sessions.size) + "+" + String(rem.length) + "|" + String(mt) + "|" + String(pid) + "|" + String(par) + "|" + String(act) + "|" +
     String(ps.length) + ":" + String(n) + ":" + String(hit) + "|" + String(S.sel) + "|" + ex;
 }
 function activePreds(): ((s: Sess) => boolean)[] { const ps: ((s: Sess) => boolean)[] = []; for (const f of H.listFilter) { const p = f(); if (p) ps.push(p); } return ps; }
-export function viewSig(): string { return sigOf(activePreds()); }
+export function viewSig(): string { return sigOf(activePreds(), remoteRows()); }
 let lastSig = ""; let lastView: Sess[] = [];
 export function buildView(): void {
   // the predicates once per build: a filter's matching set is computed once, not per session (n² with 2k sessions)
-  const ps = activePreds();
-  const sig = sigOf(ps); if (sig === lastSig && S.view === lastView) return; // nothing it reads changed: S.view stays the same array
+  const ps = activePreds(); const rem = remoteRows();
+  const sig = sigOf(ps, rem); if (sig === lastSig && S.view === lastView) return; // nothing it reads changed: S.view stays the same array
   const filtering = ps.length > 0; const matches = (s: Sess): boolean => matchesAll(ps, s);
   const roots = new Map<string, Sess>();
   for (const s of sessions.values()) { s.subs = []; s.last = s.mtime; s.depth = 0; if (!s.parent) roots.set(s.h + ":" + s.id, s); }
@@ -281,7 +288,8 @@ export function buildView(): void {
     if (!matches(s) && !(filtering && s.subs.some((c: Sess) => matches(c)))) continue;
     tops.push(s);
   }
-  tops.sort((a, b) => (b.pid ? 1 : 0) - (a.pid ? 1 : 0) || b.last - a.last);
+  for (const s of rem) { s.subs = []; s.depth = 0; s.last = s.mtime; if (matches(s)) tops.push(s); } // other hosts' rows: top-level, never in sessions
+  tops.sort((a, b) => (isLive(b) ? 1 : 0) - (isLive(a) ? 1 : 0) || b.last - a.last);
   const out: Sess[] = [];
   for (const t of tops) {
     out.push(t);
@@ -295,7 +303,7 @@ export function buildView(): void {
   S.view = out;
   if (cur) { const i = S.view.indexOf(cur); if (i >= 0) S.sel = i; }
   S.sel = Math.max(0, Math.min(S.sel, S.view.length - 1));
-  lastSig = sigOf(ps); lastView = S.view; // after the selection moved with its session
+  lastSig = sigOf(ps, rem); lastView = S.view; // after the selection moved with its session
 }
 // bounds-checked reads: in scriptc an out-of-range object read traps instead of yielding undefined
 export function sessAt(i: number): Sess | null { return i >= 0 && i < S.view.length ? S.view[i] : null; }

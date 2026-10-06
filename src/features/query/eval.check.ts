@@ -1,7 +1,7 @@
 // agentglass — self-check for attribute values, compile and lifting: scriptc build src/features/query/eval.check.ts -o ec && ./ec
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import type { Sess } from "../../model/types.ts";
+import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { accOf, ledger, unread, LAZY } from "../usage/ledger.ts";
 import { bucket, tool } from "../usage/record.ts";
@@ -9,7 +9,7 @@ import { DICT, nameOf, localOf, MQ_MSG } from "../usage/facts.ts";
 import { setCallDaysForTest, saveCallsTo, loadCallsFrom } from "../usage/callcache.ts";
 import { newRows } from "../usage/rows.ts";
 import { parse, printClause } from "./parse.ts";
-import { register } from "./attrs.ts";
+import { register, HOST_ENUM } from "./attrs.ts";
 import { type Compiled, EMPTY, compile, matchSession, matchSessionMemo, MEMO_STATS, type RowMemo, sessMatches, dayMatches, callMatches, eachCall, extend, numOf, weekdayOf, beyondRetention } from "./eval.ts";
 import { projectOf, projectRoot } from "./project.ts";
 import { real } from "../../model/project.ts";
@@ -162,6 +162,27 @@ eq("no day left", String(beyondRetention([], [], "2025-01-01", cut)), "false");
   const e1 = MEMO_STATS.evals; const after = inc();
   eq("one entry moved: only it re-evaluated", String(MEMO_STATS.evals - e1), "1");
   eq("after a new Bash row: memo = full, k1 now matches", after + " " + String(after.indexOf("k1") >= 0), full() + " true");
+}
+// fleet: the host attribute; a remote row (s.host) is "local" never, and call/day clauses never match it (no rows here)
+{
+  fxBase();
+  const r = newSess("claude", "rem1", "@ws/claude:rem1", false); r.host = "ws"; r.headDone = true; r.mtime = Date.now();
+  HOST_ENUM.values = (): string[] => ["local", "ws", "vm1"];
+  const M = (src: string, s: Sess): boolean => { const p = parse(src); const c = p.err ? null : compile(p.cs, "list"); return c !== null && c.f !== null && matchSession(c.f, s, null); };
+  let loc: Sess | null = null; for (const s of sessions.values()) { loc = s; break; }
+  if (loc) {
+    eq("host is local: local row", String(M("host is local", loc)), "true");
+    eq("host is local: remote row", String(M("host is local", r)), "false");
+    eq("host is ws: remote row", String(M("host is ws", r)) + String(M("host is ws", loc)), "truefalse");
+    eq("host is_not ws", String(M("host is_not ws", loc)) + String(M("host is_not ws", r)), "truefalse");
+  }
+  eq("host is_one_of ws,vm1", String(M("host is_one_of ws,vm1", r)), "true");
+  eq("host case-insensitive", String(M("host is WS", r)), "true");
+  const pe = parse("host is nope").err;
+  eq("host is nope: an error listing the hosts", pe ? pe.msg : "", "host is one of local, ws, vm1 — got \"nope\"");
+  eq("tool is Bash never matches a remote row", String(M("tool is Bash", r)), "false");
+  eq("day clause never matches a remote row", String(M("day >= -3d", r)), "false");
+  HOST_ENUM.values = (): string[] => ["local"];
 }
 console.log(bad ? bad + " failed" : "filter eval: all checks passed");
 if (bad) process.exit(1);

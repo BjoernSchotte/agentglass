@@ -27,7 +27,10 @@ export function projectOf(cwd: string): string {
 // holds none: its parent's); null while unresolved: the cwd is in an unread head (or, behind huge first lines, an
 // unread tail), or queued. A subagent's head is read before falling back, since a worktree-isolated subagent works
 // elsewhere. A vanished cwd with a recorded remote is keyed by that remote.
+// fleet: a remote row's project comes from its report (features/fleet/hosts.ts); its cwd is on another machine
+export const REMOTE_IDENT = { of: (s: Sess): Ident | null => null };
 export function identOf(s: Sess): Ident | null {
+  if (s.host) return REMOTE_IDENT.of(s);
   let cwd = realCwd(s);
   if (cwd) rememberSess(s.path, cwd); else cwd = cwdOfSess(s.path);
   if (!cwd && (!s.headDone || (!s.parent && s.tailSize < 0 && s.size > 0))) return null;
@@ -43,6 +46,7 @@ export function identOf(s: Sess): Ident | null {
 // identOf for one-off asks (the @ jump, --json): reads what the identity needs now (head, tail, the parent's head) and
 // resolves the cwd at once instead of queueing it
 export function identSync(s: Sess): Ident | null {
+  if (s.host) return REMOTE_IDENT.of(s);
   if (!s.headDone) loadHead(s);
   if (!s.cwd && !s.parent && s.tailSize < 0) loadTail(s);
   const p = !s.cwd && s.parent ? parentOf(s) : null; if (p && !p.headDone) loadHead(p);

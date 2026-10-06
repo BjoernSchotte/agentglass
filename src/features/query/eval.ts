@@ -4,7 +4,7 @@
 // matches all of them" (the same call), day clauses "has a day bucket that matches all of them" (the same day).
 import { HOME } from "../../util/fs.ts";
 import type { Sess } from "../../model/types.ts";
-import { sessions, titleFrom, working, parentOf } from "../../model/sessions.ts";
+import { sessions, titleFrom, working, parentOf, isLive } from "../../model/sessions.ts";
 import { type RealMeta, realMeta, display } from "../../hooks.ts";
 import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/record.ts";
 import { DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
@@ -47,7 +47,10 @@ const UNK: Val = { n: 0, ss: ["unknown"], unk: true };
 function home(p: string): string { return p === "~" ? HOME : p.startsWith("~/") ? HOME + p.slice(1) : p; }
 // subagents have no process of their own: they are live while their parent is
 export function livePid(s: Sess): number { if (s.pid) return s.pid; const p = parentOf(s); return p ? p.pid : 0; }
+// fleet: this machine's name in the host attribute (fleet.localName; features/fleet/hosts.ts sets it)
+export const HOSTQ = { local: "local" };
 function stateOf(s: Sess): string {
+  if (s.host) return !isLive(s) ? "ended" : s.stuck ? "stuck" : s.attention ? "attention" : s.status === "busy" ? "busy" : "idle"; // a stale remote row is not live
   if (s.stuck) return "stuck";
   if (s.attention) return "attention";
   const pid = livePid(s);
@@ -84,7 +87,8 @@ export function sessVal(key: string, s: Sess): Val {
     case "id": return V([s.id.toLowerCase()]);
     case "agent": return both(realMeta(s).kind, s.kind);
     case "subagent": return V([s.parent !== "" ? "true" : "false"]);
-    case "live": return V([livePid(s) > 0 ? "true" : "false"]);
+    case "live": return V([livePid(s) > 0 || isLive(s) ? "true" : "false"]);
+    case "host": return V([(s.host || HOSTQ.local).toLowerCase()]);
     case "archived": return V([s.archived ? "true" : "false"]);
     case "state": return V([stateOf(s)]);
     case "cost": return s.cost < 0 ? UNK : N(s.cost);

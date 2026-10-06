@@ -5,7 +5,7 @@ import { width, vwidth, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
 import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
-import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current } from "../model/sessions.ts";
+import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current, isLive, FRESH } from "../model/sessions.ts";
 import { tmuxTarget } from "../model/procs.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, badge, BADGE_W, spin } from "./screen.ts";
@@ -30,6 +30,7 @@ export function actLines(s: Sess, w: number): string[] {
 
 // the status glyph's kind: b busy (spinner), l live idle ●, r recent ○, o old ·
 function glyphKind(s: Sess): string {
+  if (s.host) return isLive(s) ? (s.status === "busy" ? "b" : "l") : FRESH.ok(s.host) && Date.now() - s.mtime < 120000 ? "r" : "o"; // a remote row: as its report says while fresh
   if (s.pid) return working(s) || Date.now() - s.mtime < 8000 ? "b" : "l";
   return Date.now() - s.mtime < 120000 ? "r" : "o";
 }
