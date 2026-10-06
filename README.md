@@ -885,6 +885,19 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
   `--filter '<session clauses>'`, `--no-subagents`, `--batch N` (spans per request, default 512, at most 4 MB),
   `--compression gzip|none`, `--json` (summary on stdout). Exit codes: 0 sent, 1 some requests failed (run again to
   retry them), 2 usage error, 3 another export to the same endpoint is running.
+- **`--filter` is judged on what is known:** a session is selected only once its log shows the values the filter asks
+  about (a clause on cwd, branch, title, repo and the like waits for a cwd in the log), so a negated clause
+  (`not cwd ~ /work/client`) never lets an unread session through. `--watch --otlp` (and `--watch` JSONL) judge it
+  again on every poll, after reading what the session wrote: a session whose log moves outside the filter (an agent
+  that changed directory) sends nothing more, not even the turn that was open while it left. Pins from the TUI never
+  apply to an export (`--watch --otlp --pinned` is refused).
+
+> **2026.10.6 and earlier:** `--watch --otlp --filter` judged a session once, when it first saw it, so a session that
+> passed then (its log had no cwd yet, or the agent was inside the filter's directory for a while) kept streaming its
+> turns and its `agentglass.session.state` records (cwd, branch, git remote, `agentglass.repo.key`) after it no longer
+> matched; `export --filter` with a negated clause also took sessions whose log had not been read yet. If you used
+> `--filter` to keep projects out of a backend, check it for sessions outside the filter and delete that data (or
+> rotate the backend's storage).
 - **No duplicates:** span and trace ids are deterministic (SHA-256 of the session and turn, scheme `v1`), and a state
   file per endpoint (`~/.agentglass/otlp/`, mode 0600; `AGENTGLASS_OTLP_DIR` moves it) marks every turn the backend
   accepted. `--resend` sends again with the same ids: Jaeger keeps one copy; Grafana Tempo was seen storing both

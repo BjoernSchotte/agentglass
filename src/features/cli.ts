@@ -54,7 +54,7 @@ const NOTIFY_OPT = opt("--notify", "", "--watch: also run rules.json's notify co
 const REPOS_OPT = opt("--repos", "", "--json: one object per project instead of sessions (worktrees and clones of one remote merge)", "", []);
 const DAYS_OPT = opt("--days", "N", "--repos: the last N days (default 7, 0 = all history); day clauses of --filter narrow it", "7", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
-const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint, plus a logs stream of live state (heartbeat, session state, turn.open, alerts) to its /v1/logs (--since, --content, --detail, --no-subagents, --native, --compression, --batch as for export; JSONL lines then only with --jsonl)", "", []);
+const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint, plus a logs stream of live state (heartbeat, session state, turn.open, alerts) to its /v1/logs (--since, --filter, --harness, --content, --detail, --no-subagents, --native, --compression, --batch as for export; the filter is judged again on every poll; JSONL lines then only with --jsonl)", "", []);
 const NOLOGS_OPT = opt("--no-logs", "", "--watch --otlp: send no logs stream (also otlp.logs: false)", "", []);
 const JSONL_OPT = opt("--jsonl", "", "--watch --otlp: also print the JSONL event lines", "", []);
 const GIT_OPT = opt("--git", "", "--json: run git log for each listed session's commits (full sha, +add −del, present|missing|elsewhere)", "", []);
@@ -311,7 +311,9 @@ export function watch(o: Opts, sink: Sink | null): void {
         p = r.next; off.set(s.path, p);
         const evs: Ev[] = [];
         for (const l of r.lines) parseEvents(s.h, l, evs, s);
-        if (lines) for (const e of evs) emitEv(s, e, o.cf);
+        // judged again on what these lines brought (an agent's log follows it to another cwd): none of a session the filter
+        // no longer takes is printed
+        if (lines && (!o.cf || cliWatchSession(o.cf, s)) && visible(s, o.sc)) for (const e of evs) emitEv(s, e, o.cf);
       }
     }
   };

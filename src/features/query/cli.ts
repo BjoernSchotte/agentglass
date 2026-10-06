@@ -1,9 +1,9 @@
 // agentglass — filter language for --json and --watch: --filter (repeatable), --pinned, --harness/--live sugar (spec §8)
 // SPDX-License-Identifier: Apache-2.0
 // Pins are applied only with --pinned: scripts must be reproducible whatever the TUI has pinned.
-import { complete, screenOut } from "../../hooks.ts";
+import { complete, screenOut, realCwd, realMeta } from "../../hooks.ts";
 import type { Sess } from "../../model/types.ts";
-import { loadHead } from "../../model/sessions.ts";
+import { loadHead, parentOf } from "../../model/sessions.ts";
 import type { Clause } from "./types.ts";
 import { parse, caret } from "./parse.ts";
 import { keys } from "./attrs.ts";
@@ -54,6 +54,22 @@ export function cliFilter(exprs: string[], harness: string, live: boolean, pinne
   const nl: Clause[] = []; for (const c of ch) if (c.key !== "live") nl.push(c);
   return { f: r.f ?? EMPTY, cheap, ended: compile(nl, ctx).f ?? EMPTY, needsLedger: ledgerKeys, needsHead: head, content: (r.f ?? EMPTY).content.length > 0 };
 }
+// can the filter judge this session yet? Clauses on what a transcript's head holds (cwd, branch, title, repo…, and every
+// ledger key: their sessions are matched by project too) need the head read and a cwd in it (a subagent: its parent's),
+// title and text clauses also a prompt. Until then the session does not pass — a negated clause (`cwd !~ x`) would let an
+// unread session through, and an export would send what it holds once its log fills in. Export and --watch ask again
+// on every poll, so the session joins as soon as it can be judged
+export function needsHeadOf(cs: Clause[]): boolean { for (const c of cs) if (CHEAP.indexOf(c.key) < 0 && c.key !== "content" && c.key !== "event") return true; return false; }
+export function needsLedgerOf(cs: Clause[]): boolean { for (const c of cs) if (CHEAP.indexOf(c.key) < 0 && HEAD.indexOf(c.key) < 0 && c.key !== "content" && c.key !== "event") return true; return false; }
+export function judgeable(cs: Clause[], s: Sess): boolean {
+  if (!needsHeadOf(cs)) return true;
+  if (!s.headDone || !realCwd(s)) loadHead(s);
+  let cwd = realCwd(s);
+  if (!cwd && s.parent) { const p = parentOf(s); if (p) { if (!p.headDone || !realCwd(p)) loadHead(p); cwd = realCwd(p); } }
+  if (!cwd) return false;
+  for (const c of cs) if (c.key === "title" || c.key === "text") { const m = realMeta(s); if (!m.title && !m.prompt) return false; }
+  return true;
+}
 // --json: the sessions (among cands) the filter keeps; the ledger is completed only for the cheap clauses' survivors
 export function cliSelect(cf: CliFilter, cands: Sess[]): Sess[] {
   const out: Sess[] = [];
@@ -78,7 +94,7 @@ export function cliSelect(cf: CliFilter, cands: Sess[]): Sess[] {
 // --watch: does this session pass? ledger clauses re-evaluated at most every 10 s per session (complete() is incremental)
 const lastCheck = new Map<string, { at: number; ok: boolean }>();
 export function cliWatchSession(cf: CliFilter, s: Sess): boolean {
-  if (cf.needsHead && !s.headDone) loadHead(s);
+  if (cf.needsHead && !judgeable(cf.f.cs, s)) return false;
   if (!sessMatches(cf.cheap, s)) return false;
   if (!cf.needsLedger && !cf.content) return true;
   const hit = lastCheck.get(s.path);
@@ -89,7 +105,7 @@ export function cliWatchSession(cf: CliFilter, s: Sess): boolean {
   return ok;
 }
 // --watch: an agent process went away — its session is not live any more, the other cheap clauses still apply
-export function cliWatchExit(cf: CliFilter, s: Sess): boolean { return sessMatches(cf.ended, s) && cliWatchEvent(cf, s, "exit", "", ""); }
+export function cliWatchExit(cf: CliFilter, s: Sess): boolean { return (!cf.needsHead || judgeable(cf.f.cs, s)) && sessMatches(cf.ended, s) && cliWatchEvent(cf, s, "exit", "", ""); }
 // --watch: one event (kind, tool name, call arguments) against the event and call clauses
 export function cliWatchEvent(cf: CliFilter, s: Sess, kind: string, tool: string, args: string): boolean {
   for (const p of cf.f.event) if (!p(s, kind, tool, args)) return false;

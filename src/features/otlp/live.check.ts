@@ -4,6 +4,7 @@
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
+import { realCwd } from "../../hooks.ts";
 import { type XTurn, newSpan } from "./types.ts";
 import { newLive, liveTick, enqueue, liveStop, enqueueLog, flushLogs } from "./live.ts";
 import { type XLog, heartbeat } from "./logs.ts";
@@ -143,6 +144,35 @@ eq("approval wait recorded", call ? call.attrs.map((a) => a.k + "=" + String(a.n
   liveTick(LF, t, noSpans); liveTick(LF, t + 60000, noSpans);
   eq("404: one request, then off", String(fc) + " " + String(LF.lq.length) + " " + String(LF.logs), "1 0 false");
   sessions.delete(pl);
+}
+
+// --filter is judged on every poll, after the read: a session whose log moves out of it (an agent cd-ing elsewhere) sends
+// nothing more — not the turn it closes there, no state, no alert — and the heartbeat stops counting it; back in, it sends again (not the
+// turn it opened outside)
+{
+  const pm = dir + "/move-" + CID + ".jsonl"; const at = (l: string, cwd: string): string => l.split("/home/u/proj").join(cwd);
+  writeFileSync(pm, lines.slice(0, 9).map((l: string) => at(l, "/w/in")).join("\n") + "\n"); // turn 1 open, inside
+  const sm: Sess = newSess("claude", "move", pm, false); sm.pid = 4260; sessions.set(pm, sm);
+  let t = Date.parse("2026-09-01T10:01:00.000Z"); sm.mtime = t - 1000;
+  const LM = newLive(0); LM.logs = true; LM.want = (x: Sess) => realCwd(x).startsWith("/w/in"); // the real one: the suite runs with --redact LM.warn = (m: string) => { warns.push(m); };
+  LM.busyRule = (x) => !!x; LM.approval = (x: Sess) => x ? "" : "";
+  const logs: XLog[] = []; LM.sendLogs = (ls: XLog[]): boolean => { for (const l of ls) logs.push(l); return true; };
+  const spans: string[] = []; const sendM = (ts: XTurn[]): boolean => { for (const x of ts) spans.push(x.key + "@" + x.cwd); return true; };
+  const outs = (from: number): number => { let n = 0; for (const l of logs.slice(from)) for (const a of l.attrs) if (a.s.indexOf("/w/out") >= 0) n++; return n; };
+  sm.cwd = "/w/in"; liveTick(LM, t, sendM);
+  eq("filter: inside at the start", String(logs.filter((l: XLog) => l.name === "agentglass.session.state").length), "1");
+  appendFileSync(pm, at(lines[9] ?? "", "/w/out") + "\n"); t += 6000; sm.mtime = t; const n0 = logs.length;
+  LM.pend.push({ s: sm, a: { rule: "loop", severity: "critical", state: "fire", value: 9, threshold: 8, labels: [], message: "m" } });
+  liveTick(LM, t, sendM); t += 31000; liveTick(LM, t, sendM);
+  eq("filter: moved out — no turn", spans.join(","), "");
+  eq("filter: moved out — no record names it", String(outs(n0)), "0");
+  eq("filter: moved out — no state or alert", logs.slice(n0).map((l: XLog) => l.name).join(","), "agentglass.heartbeat");
+  const hb = logs[logs.length - 1]; eq("filter: heartbeat counts it no more", hb ? hb.attrs.map((a) => a.k + "=" + String(a.n) + a.s).filter((x: string) => x.indexOf(".live=") >= 0).join("") : "", "agentglass.sessions.live=0");
+  appendFileSync(pm, at(lines[11] ?? "", "/w/in") + "\n"); t += 6000; sm.mtime = t; const n1 = logs.length;
+  liveTick(LM, t, sendM);
+  eq("filter: back inside — state again", String(logs.slice(n1).filter((l: XLog) => l.name === "agentglass.session.state").length) + " " + String(outs(n1)), "1 0");
+  eq("filter: back inside — the turn opened outside is not sent", spans.join(","), "");
+  sessions.delete(pm);
 }
 
 // late events: turn 2 closes by quiet time (2 min); a later result opens a continuation turn, turn 2 is not sent again
