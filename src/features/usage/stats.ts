@@ -8,11 +8,11 @@ import { sessions, titleOf } from "../../model/sessions.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
-import { ledger, accOf, pending } from "./ledger.ts";
-import { type Day, type RlWin, L, todayKey, lastDays, startOfDay, skillUses, newDay, heavy } from "./record.ts";
+import { ledger, accOf, accsOf, pending, copyKey } from "./ledger.ts";
+import { type Acc, type Day, type RlWin, L, todayKey, lastDays, startOfDay, skillUsesOf, newDay, heavy } from "./record.ts";
 import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
-import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText, estTop } from "./costs.ts";
+import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText, estTopOf } from "./costs.ts";
 import { type Bill, type GW, type Allow, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
 import { type CostNow, costNow, budget, sourceCounts } from "./summary.ts";
@@ -76,6 +76,7 @@ function aggF(days: string[], f: Compiled): Agg {
   rowsDeferred("Stats", key, later); g.later = later ?? [];
   const hasRows = new Set<string>(); for (const k of rd.keys()) hasRows.add(k.slice(0, k.indexOf("\t")));
   const from = startOfDay() - (days.length - 1) * 86400000; // ±1h around DST: fine for a progress gauge
+  const once = new Set<string>(); // twins (ledger.ts copyKey) already counted: a session's copies are one session
   for (const s of sessions.values()) {
     const a = ledger.get(s.path);
     if (s.mtime >= from) { g.total += s.size; if (a) g.done += pending(s, a) ? Math.min(a.off, s.size) : s.size; }
@@ -96,7 +97,7 @@ function aggF(days: string[], f: Compiled): Agg {
       const hs = m ? m.hours : d.hours;
       for (let hh = 0; hh < 24; hh++) g.hours[hh] = numAt(g.hours, hh, 0) + numAt(hs, hh, 0);
     }
-    if (any && !s.parent) { r.sess++; tot.sess++; const mk = s.bill + "\t" + s.plan + "\t" + (s.billSrc === "config" ? "*" : ""); if (r.modes.indexOf(mk) < 0) r.modes.push(mk); }
+    if (any && !s.parent && (s.twins === 0 || !once.has(copyKey(s)))) { if (s.twins > 0) once.add(copyKey(s)); r.sess++; tot.sess++; const mk = s.bill + "\t" + s.plan + "\t" + (s.billSrc === "config" ? "*" : ""); if (r.modes.indexOf(mk) < 0) r.modes.push(mk); }
     if (st > g.busyTools) { g.busyTools = st; g.busyCost = sc; g.busy = s; }
   }
   cache.set(key, g);
@@ -715,7 +716,8 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   const tok = fg(C.cyan) + "↑" + kfmt(s.inTok) + " " + RST + fg(C.purple) + "↓" + kfmt(s.outTok) + " " + RST + fg(C.accent) + "↻" + kfmt(s.cacheRTok + s.cacheWTok) + RST;
   const bill = asBill(s.bill); const pl = bill === "plan" && s.plan ? fg(C.sub) + " (" + planLabel(s.plan, REDACT) + ")" + RST : "";
   // narrow (60 columns): the lines, then the tool count go whole rather than being cut mid-figure
-  const es = estTop(a); // alias-priced share: an estimate, ≈ even on an API key
+  const as = accsOf(s); // a session with copies (twins): the figures and these lines are the session's, over all copies
+  const es = estTopOf(as); // alias-priced share: an estimate, ≈ even on an API key
   const tl = [k + tok + dot + (s.cost < 0 ? fg(C.dim) + "cost ?" : fg(C.yellow) + moneyTag(s.cost, bill, es.usd > 1e-9)) + RST + pl, fg(C.text) + grp(s.tools) + RST + fg(C.sub) + " tools" + RST, linesStr(s.linesAdd, s.linesDel)];
   if (es.usd > 0.005) tl.splice(1, 0, fg(C.dim) + "incl. " + money(es.usd, "", true) + " alias (" + es.model + (es.n > 1 ? " +" + String(es.n - 1) : "") + ")" + RST);
   while (tl.length > 1 && vwidth(tl.join(dot)) > w) tl.pop();
@@ -723,20 +725,37 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   const pad = fit("", 9);
   if (s.unkTok > 0 || s.unkCr > 0) {
     let top = ""; let tn = 0; const um = new Map<string, number>();
-    for (const dd of a.days.values()) for (const [m, n] of dd.um) { const v = (um.get(m) ?? 0) + n; um.set(m, v); if (v > tn) { tn = v; top = m; } }
+    for (const x of as) for (const dd of x.days.values()) for (const [m, n] of dd.um) { const v = (um.get(m) ?? 0) + n; um.set(m, v); if (v > tn) { tn = v; top = m; } }
     const parts: string[] = [];
     if (s.unkTok > 0) parts.push("+ " + kfmt(s.unkTok) + " tok unpriced" + (top ? " (" + top + (um.size > 1 ? " +" + String(um.size - 1) : "") + ")" : ""));
     if (s.unkCr > 0) parts.push("+ " + kfmt(s.unkCr) + " credits (set kiroCreditUsd)");
     out.push(pad + fg(C.sub) + parts.join(" · ") + RST);
   }
   if (s.billSrc === "config") out.push(pad + fg(C.dim) + "billing assumed from current config" + RST);
-  const d = a.days.get(todayKey());
-  if (d && a.days.size > 1 && w > 30) out.push(fg(C.dim) + fit("today", 9) + RST + fg(C.yellow) + (d.cost === 0 && (d.unk > 0 || d.uc > 0) ? "cost ?" : moneyTag(d.cost, bill)) + RST + dot + fg(C.text) + grp(d.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(d.add, d.del));
-  const sk = new Map<string, number>(); for (const u of skillUses(a, null)) sk.set(u.name, (sk.get(u.name) ?? 0) + u.n); // both sources per name
+  // one session under several project dirs (a resume elsewhere copies the log): the same figures on every copy
+  if (s.twins > 0) {
+    const n = String(s.twins + 1); let t = n + " copies (project dirs) · usage is the session's, once";
+    if (vwidth(t) > w - 9) t = n + " copies · usage is the session's"; // narrow: the short form, whole
+    out.push(fg(C.dim) + fit("twin", 9) + RST + fg(C.sub) + t + RST);
+  }
+  const d = dayOver(as, todayKey()); const ds = new Set<string>(); for (const x of as) for (const k of x.days.keys()) ds.add(k);
+  if (d && ds.size > 1 && w > 30) out.push(fg(C.dim) + fit("today", 9) + RST + fg(C.yellow) + (d.cost === 0 && (d.unk > 0 || d.uc > 0) ? "cost ?" : moneyTag(d.cost, bill)) + RST + dot + fg(C.text) + grp(d.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(d.add, d.del));
+  const sk = new Map<string, number>(); for (const u of skillUsesOf(as, null)) sk.set(u.name, (sk.get(u.name) ?? 0) + u.n); // both sources per name
   if (sk.size && w > 30) out.push(fg(C.dim) + fit("skills", 9) + RST + [...sk.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).slice(0, 5)
     .map((e) => fg(C.cyan) + e[0] + RST + (e[1] > 1 ? fg(C.dim) + " ×" + String(e[1]) + RST : "")).join(fg(C.dim) + ", " + RST) + (sk.size > 5 ? fg(C.dim) + " +" + String(sk.size - 5) + RST : ""));
   return out;
 });
+// one day summed over entries (a session's copies): the preview's today line; null = no entry has it
+function dayOver(as: Acc[], k: string): Day | null {
+  let o: Day | null = null;
+  for (const x of as) {
+    const d = x.days.get(k); if (!d) continue;
+    if (as.length === 1) return d;
+    if (!o) o = newDay();
+    o.cost += d.cost; o.unk += d.unk; o.uc += d.uc; o.tools += d.tools; o.add += d.add; o.del += d.del;
+  }
+  return o;
+}
 // an allowance gauge " · <tag> 5h 13% 7d 64%": every window, the fuller in heat colour + bold; narrow drops the others, then the gauge
 export function allowGauge(tag: string, ws: GW[], w: number): string {
   const part = (x: GW): string => (x.hi ? fg(heat(x.pct / 100)) + CSI + "1m" : fg(C.dim)) + x.lbl + " " + String(x.pct) + "%" + RST;

@@ -2,6 +2,30 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.6
+
+### Features
+
+- **fleet:** several machines in one view over SSH (fleet Part A) (#73) (84328d1, [#73](https://github.com/BjoernSchotte/agentglass/pull/73))
+- **otlp:** export completeness — client TLS, logs stream, host.id and receiver contract (#72) (68fa33c, [#72](https://github.com/BjoernSchotte/agentglass/pull/72))
+- **mux:** herdr first-class — multiplexer port, send/jump/resume, approval, exact links, workspaces, CLI contract 1 (#71) (bca0831, [#71](https://github.com/BjoernSchotte/agentglass/pull/71))
+
+### Fixes
+
+- twin copies show the session's cost (one live copy per process); precise herdr wording for Gemini send/jump (#74) (46f50e1, [#74](https://github.com/BjoernSchotte/agentglass/pull/74))
+- cleanup round 2 — lazy Stats/Repos rows, steady ETA, price labels, bg-continuation prompts, alarm latency e2e (#70) (e5c3857, [#70](https://github.com/BjoernSchotte/agentglass/pull/70))
+
+### Performance
+
+- **darwin:** processes and open files through libproc instead of ps and lsof (#68) (bdfb5ad, [#68](https://github.com/BjoernSchotte/agentglass/pull/68))
+
+### Docs
+
+- **specs:** fleet (SSH pull + exactness), otlp-complete, otlp-hub (#69) (556e645, [#69](https://github.com/BjoernSchotte/agentglass/pull/69))
+- **specs:** mux-herdr — herdr first-class both ways (spec + plan, incl. plugin repo) (#67) (d1cdc99, [#67](https://github.com/BjoernSchotte/agentglass/pull/67))
+- **specs:** macos-footprint spec and plan (#66) (4e76de8, [#66](https://github.com/BjoernSchotte/agentglass/pull/66))
+- **readme:** quick install at the top; pin example 2026.10.5 (#65) (1f9fc83, [#65](https://github.com/BjoernSchotte/agentglass/pull/65))
+
 ## 2026.10.5
 
 ### Features

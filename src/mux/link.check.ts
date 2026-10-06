@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
 import { setMuxes, muxReset } from "./index.ts";
-import { applyRows, linkForCheck, linkSigForCheck, openForCheck, allProcs } from "../model/procs.ts";
+import { applyRows, linkForCheck, linkSigForCheck, openForCheck, liveForCheck, allProcs } from "../model/procs.ts";
+import { projectDirOf } from "../harness/claude.ts";
+import { findSession } from "../model/sessref.ts";
 import { newSess, type Proc, type Sess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
 
@@ -66,5 +68,19 @@ LINKS = [{ pid: 81, key: "codex:E", path: "" }];
 linkForCheck(roots);
 ok("an agreeing herdr link", E.pid === 81 && F.pid === 0, "E " + String(E.pid) + " F " + String(F.pid));
 openForCheck(E.path, 0);
+// the registry names a session id; a Claude session under two project dirs (twins) is linked once: the copy its process
+// writes (the project dir of the registry entry's cwd), else the newest copy
+LINKS = [];
+const tw = (dir: string, mtime: number): Sess => { const s = newSess("claude", "T", projectDirOf(dir) + "/T.jsonl", false); s.mtime = mtime; s.cwd = "/w/a"; s.headDone = true; sessions.set(s.path, s); return s; };
+const TA = tw("/w/a", now - 1000); const TB = tw("/w/a-codex", now - 90000);
+liveForCheck("claude:T", { id: "T", pid: 91, status: "busy", name: "", cwd: "/w/a-codex" });
+linkForCheck(roots);
+ok("twins: the copy in the process's project dir is live, the other is not", TB.pid === 91 && TA.pid === 0, "TB " + String(TB.pid) + " TA " + String(TA.pid));
+const fr = findSession("claude:T", (s: Sess): boolean => true);
+ok("twins: a reference resolves to the live copy", fr.s === TB, fr.s ? fr.s.path : "none");
+liveForCheck("claude:T", { id: "T", pid: 91, status: "busy", name: "", cwd: "/elsewhere" });
+linkForCheck(roots);
+ok("twins: no copy in the process's dir: the newest", TA.pid === 91 && TB.pid === 0, "TB " + String(TB.pid) + " TA " + String(TA.pid));
+liveForCheck("claude:T", null);
 console.log(bad ? bad + " failed" : "mux links: all checks passed");
 if (bad) process.exit(1);

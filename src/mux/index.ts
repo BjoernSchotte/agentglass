@@ -7,7 +7,8 @@ import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
 import { tmux } from "./tmux.ts";
 import { none, NONE_PANE } from "./none.ts";
 import { herdr } from "./herdr.ts";
-import { placeLabel } from "./herdr-parse.ts";
+import { placeLabel, envHerdr } from "./herdr-parse.ts";
+import { OS } from "../platform/index.ts";
 import { REDACT } from "../features/redact-on.ts";
 import { MUX_EVENTS } from "./events.ts";
 export { NONE_PANE, MUX_EVENTS };
@@ -41,6 +42,17 @@ export function paneOfSess(s: Sess): MuxPane {
 export function paneNow(s: Sess): MuxPane { muxRefresh(LAST.ps, Date.now(), true, LAST.known); return paneOfSess(s); }
 export function paneNowPid(pid: number): MuxPane { muxRefresh(LAST.ps, Date.now(), true, LAST.known); return paneOfPid(pid); }
 export function sendTo(p: MuxPane, msg: string): void { muxOf(p.kind).send(p, msg); }
+// why a live agent (pid, harness label) has no pane to send to or jump to: its environment names a herdr pane (herdr runs
+// it there, but lists no agent in it — herdr detects agents by name, Gemini CLI not yet), names none (outside both), or
+// cannot be read (macOS: no environments; another user's process) while herdr runs
+export const NOPANE = { env: (pid: number): Uint8Array => OS.envOf(pid) }; // a seam for checks
+export function unreachable(pid: number, label: string): string {
+  const e = NOPANE.env(pid); const hp = e.length ? envHerdr(e).pane : "";
+  const tail = " — send and jump unavailable";
+  if (hp) return "herdr does not list " + label + " as an agent yet (pane " + hp + ")" + tail;
+  const now = Date.now(); const hr = !e.length && MUXES.some((m: Mux) => m.id === "herdr" && m.present(now));
+  return label + " (pid " + String(pid) + ") " + (hr ? "is in no tmux pane and herdr does not list it as an agent" : "runs outside tmux and herdr") + tail;
+}
 export function focusOn(p: MuxPane): void { muxOf(p.kind).focus(p); }
 // resume an ended session in a new pane of the first multiplexer that can (herdr, when agentglass runs inside it)
 export function startIn(h: string, id: string, args: string[], cwd: string, top: string, label: string): boolean {

@@ -38,5 +38,11 @@ ok("end line", (ls[ls.length - 1] ?? "").startsWith("{\"end\""), ls[ls.length - 
 ok("parses back", parseReport(ls.join("\n")).r !== null, parseReport(ls.join("\n")).err);
 const r30 = pullReport(30, now);
 ok("30 days: 2 sessions, newest first", r30.sessions.length === 2 && (r30.sessions[0]?.key ?? "") === "claude:s-new", JSON.stringify(r30.sessions.map((x) => x.key)));
+// twins (one session under two project dirs: a resume from another worktree copies the log) are one row: rows are keyed
+// by harness:id on the viewer, the copy that stands for the session (sessref.ts owns) is sent
+const p2 = join(HOME, ".claude", "projects", "-w-app-codex"); mkdirSync(p2, { recursive: true });
+writeFileSync(join(p2, "s-new.jsonl"), sess("s-new", new Date(now - 60000).toISOString()) + sess("s-new2", new Date(now - 30000).toISOString()).split("s-new2").join("s-new"));
+const rt = pullReport(7, now);
+ok("twins: one row", rt.sessions.length === 1 && (rt.sessions[0]?.key ?? "") === "claude:s-new", JSON.stringify(rt.sessions.map((x) => x.key)));
 console.log(bad ? String(bad) + " failed" : "fleet pull: all checks passed");
 if (bad) process.exit(1);

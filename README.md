@@ -1099,8 +1099,9 @@ environment) and spawns nothing when it is absent. For agents in herdr panes:
   herdr's integration for the harness; jump and approval work with any herdr that has the commands.
 - **Gemini CLI**: herdr 0.9.1 does not detect Gemini CLI as an agent (its process is named `MainThread`), so a Gemini
   pane gets none of the above: agentglass keeps its own Gemini handling (tmux title, or the approval guess outside
-  tmux), `s` gives its "cannot inject input" warning, and `R` on an ended Gemini session resumes in agentglass's own
-  terminal. Once herdr lists Gemini panes, send, jump, approval and links work as for the others.
+  tmux); `s`, `R` and `a` say so at once ("herdr does not list Gemini as an agent yet (pane w1:p2) — send and jump
+  unavailable"; the pane comes from the process's environment, Linux), and `R` on an ended Gemini session resumes in
+  agentglass's own terminal. Once herdr lists Gemini panes, send, jump, approval and links work as for the others.
 
 herdr rings its own bell for blocked and finished agents. To keep only herdr's, scope agentglass's two built-ins in
 `~/.agentglass/rules.json`:
@@ -1196,7 +1197,11 @@ Notes:
   file whose session wrote the line, then the root session before a subagent, then a subagent before its forks, then
   the path). The copies still show in the transcript but add no tokens, cost, tool calls or turns there. A command that
   reads only some sessions (`--limit`, `session <id>`) also reads the logs their copies came from, so it shows the same
-  numbers as the TUI.
+  numbers as the TUI. The same session under two project dirs (a resume from another worktree copies its log there:
+  "twins") is one session: every copy shows the session's tokens, cost, tools and lines (what its copies book, each
+  message once), the preview says `twin`, `--json` rows carry `twins` (how many other rows are this session), only the
+  copy its process writes is live, and `session <id>` takes the live copy. Sums (`cost`, Stats, Repos, triage,
+  `compare`, `cost --by session`) count each message and each session once; `fleet pull` sends the session once.
 - **Codex**: the preview and `--json` show the session's git remote (`remote`) with credentials, query and fragment
   removed; a remote that still looks suspicious is not shown. Skills you mention with `$name` count as command uses.
   A forked rollout (`fork_context` subagents) starts with a copy of its parent's calls and token totals: those stay the

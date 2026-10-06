@@ -7,7 +7,7 @@ import { basename, resolve } from "node:path";
 import type { Sess } from "../../model/types.ts";
 import { sessions, parentOf } from "../../model/sessions.ts";
 import { P, labelOf, real } from "../../model/project.ts";
-import { ledger } from "../usage/ledger.ts";
+import { ledger, copyKey } from "../usage/ledger.ts";
 import { L, unionMin, spanMin, heavy } from "../usage/record.ts";
 import { type Cnt, newCnt } from "../usage/calls.ts";
 import { DICT, nameOf, localOf } from "../usage/facts.ts";
@@ -136,6 +136,7 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
     rootN.set(root.path, n); return n;
   };
   const cp = contentOk(f, later ? "defer" : "");
+  const counted = new Set<string>(); // "<repo key>\t<copyKey>": a session's copies (twins) count once
   for (const s of sessions.values()) {
     const a = ledger.get(s.path); if (!a || (tag && !allow.has(s.path)) || (f.needsCalls && !hasRows.has(s.path)) || !sessOk(f, cp, s)) continue;
     const id = identOf(s); if (!id) continue; // unresolved: the tab says "resolving N sessions…"
@@ -168,10 +169,11 @@ export function repoAggIn(days: string[], f0: Compiled | null, allow: Set<string
     r.worktrees.set(id.worktree || basename(id.top) || id.label, id.top); // clones and linked worktrees each count
     const h = haOf(r.byHarness, s.h); h.cost += cost; h.unk += unk;
     const pc = pcOf(s); r.commits += pc.n;
-    bookBranches(r.branches, pc, realMeta(s).branch, !s.parent, cost, unk); // real: commit rows carry real branches (--redact fakes both at output)
+    const ck2 = id.key + "\t" + copyKey(s); const first = !counted.has(ck2); counted.add(ck2);
+    bookBranches(r.branches, pc, realMeta(s).branch, !s.parent && first, cost, unk); // real: commit rows carry real branches (--redact fakes both at output)
     if (rootCommits(s) === 0) r.spendNoCommit += cost;
     const g = gi.get(s.path); if (g) for (const l of g.prs) if (l.how === "created" && ownPr(l.url, r.remote) && r.prs.indexOf(l.url) < 0) r.prs.push(l.url);
-    if (!s.parent) { r.sessions++; h.sess++; if (s.pid) r.live++; r.paths.push(s.path); }
+    if (!s.parent) { if (first) { r.sessions++; h.sess++; } if (s.pid) r.live++; r.paths.push(s.path); }
     const t = s.last || s.mtime; if (t > r.last) r.last = t;
   }
   for (const [ak, ls] of acts) { const r = by.get(ak.slice(0, ak.indexOf("\t"))); if (r) r.activeMin += unionMin(ls); }

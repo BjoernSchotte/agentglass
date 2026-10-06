@@ -1,7 +1,7 @@
 // agentglass — self-check for the multiplexer port: precedence, session panes, forced refresh, links, looks: sh scripts/check.sh
 // SPDX-License-Identifier: Apache-2.0
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
-import { NONE_PANE, setMuxes, muxReset, paneOfPid, paneOfSess, paneNow, muxSig, muxLook, sharedMuxLook, sendTo, muxRefresh } from "./index.ts";
+import { NONE_PANE, NOPANE, setMuxes, muxReset, paneOfPid, paneOfSess, paneNow, muxSig, muxLook, sharedMuxLook, sendTo, muxRefresh, unreachable } from "./index.ts";
 import { none } from "./none.ts";
 import { newSess } from "../model/types.ts";
 import { S } from "../state.ts";
@@ -47,8 +47,17 @@ sharedMuxLook(1000).title(pane("tmux", "a")); sharedMuxLook(1500).title(pane("tm
 const sl = CNT.titleLooks;
 ok("shared look for 1 s", sl.length === 3 && sl[0] === sl[1] && sl[2] !== sl[1], sl.join(","));
 sendTo(NONE_PANE, "x");
-ok("none: send warns", S.toastKind === "warn" && S.toast.indexOf("outside tmux and herdr") >= 0, S.toast);
+ok("none: send warns", S.toastKind === "warn" && S.toast === "no tmux or herdr agent pane — cannot send safely", S.toast);
 none.focus(NONE_PANE);
-ok("none: focus warns", S.toast === "not in a tmux or herdr pane", S.toast);
+ok("none: focus warns", S.toast === "no tmux or herdr agent pane to jump to", S.toast);
+// why a live agent has no pane: its environment names a herdr pane (herdr runs it, but lists no agent there), names
+// none (outside both), or cannot be read (macOS) while herdr runs
+const enc = (t: string): Uint8Array => new TextEncoder().encode(t);
+NOPANE.env = (pid: number): Uint8Array => pid === 40 ? enc("HOME=/x\u0000HERDR_PANE_ID=w1:p2\u0000") : pid === 41 ? enc("HOME=/x\u0000") : new Uint8Array(0);
+ok("unreachable: in a herdr pane herdr does not list as an agent", unreachable(40, "Gemini") === "herdr does not list Gemini as an agent yet (pane w1:p2) — send and jump unavailable", unreachable(40, "Gemini"));
+ok("unreachable: outside both", unreachable(41, "Gemini") === "Gemini (pid 41) runs outside tmux and herdr — send and jump unavailable", unreachable(41, "Gemini"));
+ok("unreachable: environment unknown, herdr runs", unreachable(42, "Gemini") === "Gemini (pid 42) is in no tmux pane and herdr does not list it as an agent — send and jump unavailable", unreachable(42, "Gemini"));
+setMuxes([stub("tmux", [10], "")]);
+ok("unreachable: environment unknown, no herdr", unreachable(42, "Gemini") === "Gemini (pid 42) runs outside tmux and herdr — send and jump unavailable", unreachable(42, "Gemini"));
 console.log(bad ? bad + " failed" : "mux: all checks passed");
 if (bad) process.exit(1);

@@ -260,9 +260,11 @@ export function turn(a: Acc, ms: number, iso: string, n: number): void { if (n >
 export function skill(d: Day, source: string, name: string): void { if (name) cnt(d.skills, source + "\t" + name); }
 export interface SkillUse { name: string; source: string; n: number }
 // skill uses over the given local days (null = all), most used first
-export function skillUses(a: Acc, days: string[] | null): SkillUse[] {
+export function skillUses(a: Acc, days: string[] | null): SkillUse[] { return skillUsesOf([a], days); }
+// the same over several entries (a session's copies, ledger.ts accsOf)
+export function skillUsesOf(as: Acc[], days: string[] | null): SkillUse[] {
   const m = new Map<string, number>();
-  for (const [k, d] of a.days) { if (days && days.indexOf(k) < 0) continue; for (const [sk, c] of d.skills) m.set(sk, (m.get(sk) ?? 0) + c.n); }
+  for (const a of as) for (const [k, d] of a.days) { if (days && days.indexOf(k) < 0) continue; for (const [sk, c] of d.skills) m.set(sk, (m.get(sk) ?? 0) + c.n); }
   const out: SkillUse[] = [];
   for (const [sk, n] of m) { const i = sk.indexOf("\t"); out.push({ name: sk.slice(i + 1), source: sk.slice(0, i), n }); }
   return out.sort((x, y) => y.n - x.n || (x.name < y.name ? -1 : x.name > y.name ? 1 : x.source < y.source ? -1 : 1));

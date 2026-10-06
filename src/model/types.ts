@@ -15,6 +15,7 @@ export interface Sess {
   // fleet: host "" = this machine; a remote row (features/fleet) is never in the sessions map and never read from disk:
   // rlive = its report said live, rat = when that report arrived (viewer clock)
   host: string; rlive: boolean; rat: number;
+  twins: number; // other copies of this session (Claude: the same log under another project dir); its figures are the session's
 }
 export interface Proc {
   pid: number; ppid: number; cpu: number; rss: number; etime: string; tty: string; args: string; h: string;
@@ -26,6 +27,6 @@ export function newSess(h: Harness, id: string, path: string, archived: boolean)
   return {
     h, id, path, cwd: "", title: "", prompt: "", branch: "", model: "", remote: "", mtime: 0, size: 0, ep: "", headDone: false, tailSize: -1, evs: [], pid: 0, status: "", name: "", archived, parent: "", kind: "", subs: [], last: 0, depth: 0,
     inTok: 0, outTok: 0, cacheRTok: 0, cacheWTok: 0, cost: -1, unkTok: 0, unkCr: 0, bill: "", plan: "", billSrc: "", tools: 0, linesAdd: 0, linesDel: 0, attention: false, stuck: "",
-    host: "", rlive: false, rat: 0,
+    host: "", rlive: false, rat: 0, twins: 0,
   };
 }

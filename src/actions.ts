@@ -10,7 +10,7 @@ import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
 import { sessions, SG, scan, buildView, parentOf, current, titleOf } from "./model/sessions.ts";
 import { refreshProcs, rootOf, procAt, procSess, sharedDaemon } from "./model/procs.ts";
-import { paneNow, sendTo, focusOn, startIn } from "./mux/index.ts";
+import { paneNow, sendTo, focusOn, startIn, unreachable } from "./mux/index.ts";
 import { tabLabel } from "./mux/herdr-parse.ts";
 import { identOf } from "./features/query/project.ts";
 import { REDACT } from "./features/redact-on.ts";
@@ -83,9 +83,9 @@ export function owner(s: Sess): Sess | null {
 export function sendPrompt(sub: Sess, msg: string): void {
   const s = owner(sub);
   if (!s) return;
-  if (s.pid) { sendTo(paneNow(s), msg); return; } // its tmux or herdr pane; the none adapter explains why not
+  if (s.pid) { const p = paneNow(s); if (p.kind === "none") say("warn", unreachable(s.pid, harnessOf(s.h).label)); else sendTo(p, msg); return; } // its tmux or herdr pane, else why not
   const hl = harnessOf(s.h).headless;
-  if (!hl) { say("warn", harnessOf(s.h).label + " has no headless mode — run it in tmux to send prompts"); return; }
+  if (!hl) { say("warn", harnessOf(s.h).label + " has no headless mode — run it in tmux or herdr to send prompts"); return; }
   const c = cmdOf(s.h);
   const args = c.slice(1).concat(hl(s, msg));
   const logDir = join(HOME, ".agentglass", "logs");
@@ -105,7 +105,7 @@ export function sendPrompt(sub: Sess, msg: string): void {
 export function resume(sub: Sess): void {
   const s = owner(sub);
   if (!s) return;
-  if (s.pid) { const p = paneNow(s); if (p.kind === "none") say("warn", "already running (pid " + s.pid + ")"); else focusOn(p); return; }
+  if (s.pid) { const p = paneNow(s); if (p.kind === "none") say("warn", unreachable(s.pid, harnessOf(s.h).label)); else focusOn(p); return; }
   const rs = harnessOf(s.h).resume;
   if (!rs) { say("warn", harnessOf(s.h).label + " can't resume a session by id"); return; }
   // inside herdr: a new tab in the workspace owning the session's directory (the agent must not live in our pane)
