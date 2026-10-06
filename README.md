@@ -1163,8 +1163,8 @@ Notes:
   numbers as the TUI. The same session under two project dirs (a resume from another worktree copies its log there:
   "twins") is one session: every copy shows the session's tokens, cost, tools and lines (what its copies book, each
   message once), the preview says `twin`, `--json` rows carry `twins` (how many other rows are this session), only the
-  copy its process writes is live, and `session <id>` takes the live copy. Sums (`cost`, Stats, Repos, `cost --by
-  session`) count each message and each session once.
+  copy its process writes is live, and `session <id>` takes the live copy. Sums (`cost`, Stats, Repos, triage,
+  `compare`, `cost --by session`) count each message and each session once; `fleet pull` sends the session once.
 - **Codex**: the preview and `--json` show the session's git remote (`remote`) with credentials, query and fragment
   removed; a remote that still looks suspicious is not shown. Skills you mention with `$name` count as command uses.
   A forked rollout (`fork_context` subagents) starts with a copy of its parent's calls and token totals: those stay the
