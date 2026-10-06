@@ -53,6 +53,13 @@ must --prefix "$t/p2" --version 2026.9.1
 if run --prefix "$t/p2" --version 2026.9.5; then echo "FAIL broken binary installed"; fail=1; fi
 grep -qi "does not run" "$t/out" || { echo "FAIL broken message: $(cat "$t/out")"; fail=1; }
 eq "working binary kept" "$("$t/p2/agentglass")" "2026.9.1"
+# an archive with the optional HTTPS receiver installs it next to agentglass; one without leaves an older one alone
+d="$t/dl/v2026.9.6"; mkdir -p "$d/x"; printf '#!/bin/sh\necho 2026.9.6\n' > "$d/x/agentglass"; printf '#!/bin/sh\necho tls\n' > "$d/x/agentglass-receive-tls"; chmod 755 "$d/x/"*
+tar -czf "$d/$asset" -C "$d/x" agentglass agentglass-receive-tls; rm -rf "$d/x"; (cd "$d" && $H "$asset" > SHA256SUMS)
+must --prefix "$t/p6" --version 2026.9.6
+eq "tls binary installed" "$("$t/p6/agentglass-receive-tls" 2>/dev/null)" tls
+must --prefix "$t/p6" --version 2026.9.1
+eq "tls binary kept by an archive without it" "$("$t/p6/agentglass-receive-tls" 2>/dev/null)" tls
 # a download cut off mid-script runs nothing
 lines=$(wc -l < "$here/install.sh")
 for pct in 25 50 75 90 95; do

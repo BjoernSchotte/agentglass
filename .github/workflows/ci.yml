@@ -50,6 +50,8 @@ jobs:
         with: { lane: "cbackend" }
       - run: sh build.sh && ./agentglass --version && AGENTGLASS_AGENT=0 HOME="$RUNNER_TEMP" ./agentglass --json --filter 'cost > $0.50 and tokens > 40k' > /dev/null
         env: { SCRIPTC_FLAGS: "--backend c" }
+      # agentglass-receive-tls is C-backend only (https.createServer): built and smoke-tested over TLS here on every PR
+      - run: sh scripts/build-tls.sh
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }

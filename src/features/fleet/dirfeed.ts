@@ -3,8 +3,8 @@
 // for an hour stays at its last complete state and says so. Only files owned by this user and not group- or
 // world-writable are opened (a shared folder can be written by others); at most one file is decompressed per poll
 // SPDX-License-Identifier: Apache-2.0
-import { gunzipSync } from "node:zlib";
 import { readBytes } from "../../util/fs.ts";
+import { gunzipCapped } from "../../util/inflate.ts";
 import { HOME } from "../../util/fs.ts";
 import { join, resolve } from "node:path";
 import { OS } from "../../platform/index.ts";
@@ -36,7 +36,10 @@ export function readDrop(path: string): { x: Snap | null; err: string } {
   const n = b.length; const isize = ((b[n - 4] ?? 0) | ((b[n - 3] ?? 0) << 8) | ((b[n - 2] ?? 0) << 16)) + (b[n - 1] ?? 0) * 16777216;
   if (isize > MAX_UNZIP) return { x: null, err: "decodes to more than 256 MB" };
   let text = "";
-  try { text = new TextDecoder("utf-8").decode(gunzipSync(b)); } catch (e) { return { x: null, err: "not gzip" }; }
+  // the trailer is the writer's claim: the inflate itself stops at the cap (zlib's gunzipSync has none in scriptc)
+  const g = gunzipCapped(b, MAX_UNZIP);
+  if (g.err) return { x: null, err: g.err.indexOf("over") >= 0 ? "decodes to more than 256 MB" : "not gzip" };
+  text = new TextDecoder("utf-8").decode(g.out);
   const p = newSnapParse(); feedSnap(p, text.split("\n"));
   if (!p.done) return { x: null, err: p.err || "incomplete snapshot" };
   return { x: p, err: "" };

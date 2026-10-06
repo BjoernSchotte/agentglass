@@ -80,7 +80,7 @@ function tick(): void {
   const now = Date.now(); FLEET.intervalMs = intervalMs(c, AWAY.on);
   let fresh = false; let running = 0; const toasts: string[] = [];
   for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir")) continue;
+    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir" && rh.cfg.kind !== "otlp")) continue; // otlp: the hosts hub sources found (syncHubs; no pulls)
     const st = rh.feed.poll(now); rh.st = st; const n = rh.cfg.name;
     if ((st.code === "dir" || st.code === "nossh") && !T.seeded.has(st.code)) { T.seeded.add(st.code); say("warn", "fleet: " + st.err); } // no pulls at all: say why once
     if (st.busy) { running++; T.busy.set(n, true); continue; }
@@ -171,7 +171,11 @@ export function hostTag(s: Sess): string {
 }
 H.rowPrefix.push(hostTag);
 REMOTE.hint = (s: Sess): string => sshHint(s);
+// a host of a hub source (otlp-hub) pushes its export: nothing here can reach it, so no command is offered
+export function hubHost(name: string): boolean { const rh = hostByName(name); return !!rh && rh.cfg.kind === "otlp"; }
+export const HUB_OPEN = "open it on that host: it pushes to the hub, nothing reaches it from here";
 export function sshHint(s: Sess): string {
+  if (hubHost(s.host)) return HUB_OPEN;
   const h = FLEET.cfg ? hostNamed(FLEET.cfg, s.host) : null;
   return openCmd(h ?? { name: s.host, ssh: s.host, agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }, s.h + ":" + s.id);
 }
@@ -245,15 +249,18 @@ export function headerSeg(n: number, marks: HostMark[], w: number, nossh: boolea
 function marks(now: number): HostMark[] {
   const c = FLEET.cfg; const o: HostMark[] = []; if (!c) return o;
   for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir") || rh.dupOf) continue;
+    if (!rh.cfg.enabled || !counted(rh) || rh.dupOf) continue;
     if (!rh.report) { if (rh.st && rh.st.code && rh.st.code !== "ok") o.push({ name: rh.cfg.name, stale: false, ageMs: 0, down: true }); continue; }
     if (!freshOf(rh, now, c, FLEET.intervalMs)) o.push({ name: rh.cfg.name, stale: true, ageMs: now - rh.okAt, down: false });
   }
   return o;
 }
+// the hosts the header counts and marks: ssh and dir hosts, and the hosts a hub source found (a source entry itself
+// never has a report of its own: it is a directory, not a host)
+function counted(rh: RemoteHost): boolean { return rh.cfg.kind === "ssh" || rh.cfg.kind === "dir" || (rh.cfg.kind === "otlp" && rh.mine !== null); }
 H.headerWidgets.push((w: number): string => {
   if (!T.on || !FLEET.cfg || w < 24) return ""; // narrow: the cost widget before it keeps its place (the tabs turn to numbers for it)
-  let n = 1; for (const rh of FLEET.hosts) if (rh.cfg.enabled && (rh.cfg.kind === "ssh" || rh.cfg.kind === "dir") && !rh.dupOf) n++;
+  let n = 1; for (const rh of FLEET.hosts) if (rh.cfg.enabled && counted(rh) && !rh.dupOf) n++;
   return headerSeg(n, marks(Date.now()), w, T.nossh);
 });
 
@@ -264,7 +271,8 @@ H.remoteCard.push((s: Sess, w: number): string[] => {
   const fresh = FRESH.ok(s.host); const out: string[] = [];
   const h: HostCfg | null = c ? hostNamed(c, s.host) : null;
   out.push(k("host") + fg(C.accent) + s.host + RST + fg(C.dim) + (h ? " · ssh " + h.ssh : "") + " · report " + (rh ? ago(rh.okAt) + " ago" : "—") + (fresh ? "" : " · stale") + RST);
-  out.push(k("open") + fg(C.text) + sshHint(s) + RST + fg(C.dim) + "  (the transcript is on " + s.host + ")" + RST); // one line, second: a short preview still shows it
+  if (hubHost(s.host)) out.push(k("open") + fg(C.dim) + "on " + s.host + " itself — a hub host pushes its export; nothing reaches it from here" + RST);
+  else out.push(k("open") + fg(C.text) + sshHint(s) + RST + fg(C.dim) + "  (the transcript is on " + s.host + ")" + RST); // one line, second: a short preview still shows it
   const state = !fresh ? "unknown (stale report)" : s.rlive ? (s.status === "busy" ? "running · busy" : "running") : "not running";
   out.push(k("process") + (fresh && s.rlive ? fg(C.green) : fg(C.dim)) + state + RST);
   const ov = FN.ov.has(s.h + ":" + s.id);

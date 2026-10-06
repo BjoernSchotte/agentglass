@@ -34,7 +34,7 @@ export function opt(flag: string, arg: string, summary: string, def: string, val
 // the one exit-code table of every command (text help, JSON help exitCodes, README "Exit codes"); EXIT_EXTRA = the
 // command-specific meanings on top of it
 export const EXIT_CODES: Obj = { "0": "ok (an empty result is ok)", "1": "runtime failure", "2": "usage error", "3": "not found", "4": "ambiguous reference" };
-const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed, 3 = another export to the endpoint runs;\n  fleet --strict 5 = a host failed or is stale; fleet serve 126 = refused";
+const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed, 3 = another export to the endpoint runs;\n  fleet --strict 5 = a host failed or is stale; fleet serve 126 = refused;\n  receive 3 = another receive serves its directory";
 export const EXAMPLES: string[] = [
   "agentglass session current --fields costUsd,tools,errors",
   "agentglass errors --since 24h --limit 5",
@@ -99,7 +99,8 @@ export function helpOf(cmd: string, args: string[], text: string): string {
 export function wantsHelp(args: string[]): boolean { return args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0; }
 // TUI-only, maintenance and version commands: --help lists them
 const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults", "prices set", "prices alias", "prices unset",
-  "--no-fleet", "fleet cost", "fleet status", "fleet pull", "fleet snapshot", "fleet watch", "fleet drop", "fleet serve", "fleet authorize"]; // fleet: one entry, fleet --help lists the rest
+  "--no-fleet", "fleet cost", "fleet status", "fleet pull", "fleet snapshot", "fleet watch", "fleet drop", "fleet serve", "fleet authorize",
+  "receive", "receive token", "receive status", "receive service"]; // fleet: one entry, fleet --help lists the rest; receive: a hub command, not an agent tool
 // the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word
 function brief(s: string): string {
   const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); if (t.length <= 36) return t;

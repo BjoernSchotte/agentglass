@@ -33,6 +33,7 @@ import { forget } from "./store.ts";
 import { pullCli, pullSessions } from "./pull.ts";
 import { snapshotCli } from "./snapshot.ts";
 import { dirFeed } from "./dirfeed.ts";
+import { hubFeed, syncHubs } from "../hub/fleet.ts";
 import { dropCli } from "./drop.ts";
 import { watchCli } from "./watch.ts";
 import { pricesSig } from "../usage/pricing.ts";
@@ -53,7 +54,8 @@ export function redactOf(h: HostCfg): boolean { return REDACT || h.redact; } // 
 export function makeFeeds(c: FleetCfg, spawn: (cmd: string, args: string[]) => number, lines: number): HostFeed[] {
   const fs: HostFeed[] = [];
   const me = hostId();
-  for (const h of c.hosts) fs.push(!h.enabled ? idleFeed(h.kind) : h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines, me) : h.kind === "dir" ? dirFeed(h, c, lines) : idleFeed(h.kind));
+  const names: string[] = []; for (const h of c.hosts) names.push(h.name);
+  for (const h of c.hosts) fs.push(!h.enabled ? idleFeed(h.kind) : h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines, me) : h.kind === "dir" ? dirFeed(h, c, lines) : h.kind === "otlp" ? hubFeed(h, names) : idleFeed(h.kind));
   return fs;
 }
 function sleep(s: string): void { try { execFileSync("sleep", [s]); } catch (e) { /* interrupted */ } }
@@ -90,7 +92,8 @@ export function pullAll(f: FleetCfg, force: boolean, now: number): { ok: string[
   reapply();
   const ok: string[] = []; const failed: Failed[] = [];
   for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir")) continue;
+    // hub hosts (otlp-hub) are judged like the others; a hub source's own entry is a directory, not a host
+    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir" && !(rh.cfg.kind === "otlp" && rh.mine))) continue;
     const st = rh.st;
     if (st && st.code === "ok" && rh.report && freshOf(rh, Date.now(), f, f.refreshS * 1000)) ok.push(rh.cfg.name);
     else failed.push({ name: rh.cfg.name, msg: st && st.err ? st.err : rh.report ? "the report is stale" : "no report yet", age: rh.report ? rh.okAt : -1 });
@@ -102,13 +105,14 @@ function setup(needSsh: boolean): FleetCfg {
   S.cli = true;
   const c = loadFleet();
   for (const w of c.warns) warn("config " + w);
-  let any = false; for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "dir")) any = true;
+  let any = false; for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "dir" || h.kind === "otlp")) any = true;
   if (!any) cliError("usage", "no hosts configured", "add \"fleet\": {\"hosts\": [{\"name\": \"ws\", \"ssh\": \"…\"}]} to " + CONFIG_FILE, 2);
   let ssh = false; for (const h of c.hosts) if (h.enabled && h.kind === "ssh") ssh = true;
   if (needSsh && ssh && !sshBin()) cliError("usage", "fleet needs ssh (AGENTGLASS_SSH)", "install OpenSSH's client, or point AGENTGLASS_SSH at it", 2);
   const names: string[] = []; for (const h of c.hosts) names.push(h.name);
   forget(names); // a host removed from the config: its spool files go
   setFleet(c, hostId(), makeFeeds(c, detachedPid, 0)); // a CLI run reads each report whole
+  syncHubs(Date.now(), true); // hub sources: their hosts, read to the end
   return c;
 }
 function failedLines(fs: Failed[]): void {

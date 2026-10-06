@@ -24,7 +24,7 @@ jobs:
           - { target: darwin-arm64, os: macos-14, container: "", flags: "" }
     steps:
       - if: matrix.container != ''
-        run: apt-get update -qq && apt-get install -y -qq clang git curl xz-utils ca-certificates binutils
+        run: apt-get update -qq && apt-get install -y -qq clang git curl xz-utils ca-certificates binutils openssl
       - uses: actions/checkout@v4
         with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
       - uses: actions/setup-node@v4
@@ -36,6 +36,16 @@ jobs:
           AGENTGLASS_CHANNEL: ${{ inputs.channel }}
           AGENTGLASS_COMMIT: ${{ inputs.ref }}
           SCRIPTC_FLAGS: ${{ matrix.flags }}
+      # built-in HTTPS for `agentglass receive` (otlp-hub 11.4): a second binary from the C backend, smoke-tested over TLS;
+      # optional by design — a target where it fails ships without it and says so in the summary
+      - id: tls
+        continue-on-error: true
+        run: sh scripts/build-tls.sh
+      - if: always()
+        shell: sh
+        run: |
+          if [ "${{ steps.tls.outcome }}" = success ]; then echo "${{ matrix.target }}: agentglass-receive-tls built (C backend) and smoke-tested" >> "$GITHUB_STEP_SUMMARY"
+          else rm -f agentglass-receive-tls; echo "::warning::${{ matrix.target }} ships without agentglass-receive-tls (C-backend build or TLS smoke test failed)"; echo "${{ matrix.target }}: agentglass-receive-tls SKIPPED — see the tls step" >> "$GITHUB_STEP_SUMMARY"; fi
       - run: sh scripts/package.sh ${{ matrix.target }} "${{ inputs.version }}"
       - uses: actions/upload-artifact@v4
         with: { name: "agentglass-${{ matrix.target }}", path: "dist/agentglass-${{ matrix.target }}.tar.gz", retention-days: 7, if-no-files-found: error }

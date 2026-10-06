@@ -1,6 +1,7 @@
 // agentglass — self-check for the fleet config section: scriptc build src/features/fleet/config.check.ts -o fc && ./fc
 // SPDX-License-Identifier: Apache-2.0
 import { fleetFrom, fleetOn, splitHostRef, openCmd } from "./config.ts";
+import { HUBS } from "../hub/config.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -31,8 +32,11 @@ ok("ranges", rng.refreshS === 60 && rng.days === 7 && rng.timeoutS === 90 && rng
 const ok2 = fleetFrom({ refreshSeconds: 15, days: 90, timeoutSeconds: 600 });
 ok("range ends", ok2.refreshS === 15 && ok2.days === 90 && ok2.timeoutS === 600 && ok2.warns.length === 0, JSON.stringify(ok2));
 const ot = fleetFrom({ hosts: [{ name: "ci", otlp: "/x" }] });
-ok("otlp kept", ot.hosts.length === 1 && (ot.hosts[0]?.kind ?? "") === "otlp" && !(ot.hosts[0]?.enabled ?? true) && has(ot.warns, "needs a newer agentglass"), JSON.stringify(ot));
-ok("otlp only: fleet off", !fleetOn(ot), "on");
+ok("otlp: a hub source, enabled", ot.hosts.length === 1 && (ot.hosts[0]?.kind ?? "") === "otlp" && (ot.hosts[0]?.enabled ?? false) && (ot.hosts[0]?.path ?? "") === "/x" && ot.warns.length === 0, JSON.stringify(ot));
+ok("otlp only: fleet on", fleetOn(ot), "off");
+const oh = fleetFrom({ hosts: [{ name: "hub", otlp: "/h", hosts: { ci: "0011223344556677", bad: "xyz" }, trust: "payload", maxAgeDays: 7 }] });
+const hc = HUBS.cfg.get("hub");
+ok("otlp: hub fields", hc !== undefined && hc.names.get("0011223344556677") === "ci" && hc.trust === "payload" && hc.maxAgeDays === 7 && has(oh.warns, "16 hex digits"), JSON.stringify(oh.warns));
 const dr = fleetFrom({ hosts: [{ name: "nas", dir: "~/Sync/agentglass/nas" }, { name: "rel", dir: "relative/x" }, { name: "abs", dir: "/srv/drop", enabled: false }], reprice: false });
 ok("dir host enabled", dr.hosts.length === 2 && (dr.hosts[0]?.kind ?? "") === "dir" && (dr.hosts[0]?.enabled ?? false) && (dr.hosts[0]?.path ?? "") === "~/Sync/agentglass/nas", JSON.stringify(dr.hosts));
 ok("dir: relative path refused", has(dr.warns, "dir must be an absolute path"), dr.warns.join("|"));

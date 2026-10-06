@@ -4,6 +4,7 @@
 //    "days", "timeoutSeconds", "reprice"}}
 import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { rawSection } from "../../util/config.ts";
+import { hubSourceFrom, HUBS } from "../hub/config.ts";
 
 // kind: "ssh" (pulled here), "dir" (a snapshot drop directory, spec 15), "otlp" (a later transport: kept, disabled), ""
 // never stored; snapshot: ssh hosts answer `fleet snapshot` (exact, Part B) and fall back to `fleet pull`; watch: the
@@ -52,8 +53,9 @@ function hostOf(v: unknown, i: number, localName: string, seen: Set<string>, w: 
   if (kind !== "ssh") {
     const p = str(o[kind]);
     if (!p) { w.push(who + ": " + kind + " must be a directory path — skipped"); return null; }
-    w.push(who + ": transport " + kind + " needs a newer agentglass — kept, not pulled");
     seen.add(name);
+    if (kind === "otlp") { HUBS.cfg.set(name, hubSourceFrom(o, who, w)); return { name, ssh: "", agentglass: "", redact, enabled, kind, path: p, snapshot: false, watch: false }; } // a hub source (otlp-hub)
+    w.push(who + ": transport " + kind + " needs a newer agentglass — kept, not pulled");
     return { name, ssh: "", agentglass: "", redact, enabled: false, kind, path: p, snapshot: false, watch: false };
   }
   const ssh = str(o["ssh"]);
@@ -90,10 +92,10 @@ export function loadFleet(): FleetCfg { if (!loaded) loaded = fleetFrom(rawSecti
 export const FLEET_TEST = { set: (c: FleetCfg | null): void => { loaded = c; } };
 // this run skips the fleet: --no-fleet or AGENTGLASS_FLEET=0
 export function fleetOff(): boolean { return process.argv.indexOf("--no-fleet") >= 0 || process.env["AGENTGLASS_FLEET"] === "0"; }
-// an enabled ssh or dir host exists and this run does not skip the fleet
+// an enabled ssh or dir host or hub source exists and this run does not skip the fleet
 export function fleetOn(c: FleetCfg): boolean {
   if (fleetOff()) return false;
-  for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "dir")) return true;
+  for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "dir" || h.kind === "otlp")) return true;
   return false;
 }
 export function hostNamed(c: FleetCfg, name: string): HostCfg | null { for (const h of c.hosts) if (h.name === name) return h; return null; }
