@@ -41,12 +41,13 @@ for (const lv of ["hot", "warm", "idle", "away"]) {
   const l = lv === "hot" ? "hot" : lv === "warm" ? "warm" : lv === "idle" ? "idle" : "away";
   eq("watch live " + lv, String(base("watch", l, true, false, false)), "1500");
   eq("watch " + lv, String(base("watch", l, false, false, false)), "5000");
-  // the ledger tick books what rule values read (session_cost/_tokens, tool_* counts): the alarm bound holds for them too
-  eq("tick live ≤ 1.5 s " + lv, String(base("tick", l, true, false, false) <= 1500), "true");
+  // the tick keeps its level's cadence and budget with agents live (the watch job books a live log the ledger is behind
+  // on before rules read it: main.ts); a costly tick is not pulled to the alarm cadence
+  eq("tick live = tick " + lv, String(base("tick", l, true, false, false)), String(base("tick", l, false, false, false)));
   const q = newSched(false, false, t); q.lv = l; cost(q, "tick", 400); q.unf = lv === "away";
-  eq("tick live capped " + lv, String(every(q, "tick", true, false) <= 1500), "true");
+  eq("tick live keeps its budget " + lv, String(every(q, "tick", true, false) > 4000), "true");
 }
-eq("tick away, no agent: 5 s", String(base("tick", "away", false, false, false)), "5000");
+eq("tick away: 5 s", String(base("tick", "away", true, false, false)), "5000");
 eq("fast idle", String(base("fast", "idle", false, false, false)), "-1");
 eq("size winch", String(base("size", "hot", false, false, true)), "-1");
 eq("size away", String(base("size", "away", false, false, false)), "10000");
