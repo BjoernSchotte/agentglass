@@ -17,18 +17,18 @@ export const HELP: HelpSec[] = [
     ["p  P", "pin the filter (every tab, remembered) · edit pins"], ["t", "triage: what is different about the filtered sessions"],
     ["m", "mark A / B for compare (again: unmark; a third replaces B)"], ["C", "compare: the marks · mark vs selected · selected vs its previous run"],
     ["h", "harness: all → " + harnessIds().join(" → ")], ["l", "live sessions only"], ["esc", "clear the filter (pins stay)"],
-    ["s", "send prompt (tmux if live, else headless)"], ["R", "resume interactively"],
+    ["s", "send prompt (live: its tmux or herdr pane; else headless)"], ["R", "resume (inside herdr: in a new herdr tab), or jump to the live agent's pane"],
     ["x", "SIGTERM the session's agent"], ["D", "move session to the trash"], ["y", "copy session id"], ["Y", "copy link (agentglass://open/…)"] ] },
   { name: "processes", ctx: "processes", keys: [
     ["↑↓  j k", "move"], ["g G  Home End", "first / last"], ["↵  →", "open linked session"],
-    ["s", "send prompt to the agent's tmux pane"], ["a", "switch tmux client to the pane"],
+    ["s", "send prompt to the agent's pane"], ["a", "jump to the agent's pane (tmux, herdr)"],
     ["x", "SIGTERM (asks first)"], ["X", "SIGKILL (asks first)"], ["P", "edit pins (harness, repo, cwd, live apply here)"] ] },
   { name: "transcript", ctx: "transcript", keys: [
     ["↑↓  j k", "previous / next event (cursor ▌)"], ["↵  →  click", "drill into event: full call, result, diff, files"],
     ["wheel", "scroll lines"], ["PgUp PgDn  b ␣", "scroll a page"], ["g  Home", "top"],
     ["G  End  f", "bottom + live follow"], ["t", "expand / collapse tool output"],
     ["n  N", "next / previous subagent"], ["u", "up to parent session"],
-    ["s", "send prompt"], ["R", "resume interactively"], ["Y", "copy link to the event under the cursor"], ["esc  q  ←", "back to list"] ] },
+    ["s", "send prompt"], ["R", "resume, or jump to the live agent's pane"], ["Y", "copy link to the event under the cursor"], ["esc  q  ←", "back to list"] ] },
   { name: "event details", ctx: "detail", keys: [
     ["↑↓  j k  wheel", "scroll"], ["[  ]  p n", "previous / next event"], ["1-9  click file", "open referenced file in $PAGER"],
     ["tab  o  e", "select file · open in pager · open in $EDITOR"], ["z  click ▸", "expand / collapse long blocks (>10 lines)"], ["w", "wrap / cut long code lines"], ["v", "whole detail in $PAGER"], ["y", "copy detail to clipboard"],

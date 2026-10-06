@@ -6,14 +6,15 @@ import { isoMs, num } from "../usage/record.ts";
 // key = request key Q ("" never: no request → null); providerId = key is the provider's message id (→ gen_ai.response.id);
 // t0 = the request's own start when logged (0 = the builder takes the previous event of the session), t = its end
 // provider = gen_ai.provider.name (providerOf); logged = the provider id the record itself names (pi/OpenCode), "" = none
-export interface Req { key: string; model: string; respModel: string; provider: string; logged: string; providerId: boolean; t0: number; t: number; err: string }
+// reqId = Claude's top-level requestId on the line ("" = none): joins Claude Code's own api_request records
+export interface Req { key: string; model: string; respModel: string; provider: string; logged: string; providerId: boolean; t0: number; t: number; err: string; reqId: string }
 // codex: the last cumulative totals seen, and the ordinal of requests per timestamp
 export interface ReqState { codexLast: number[]; codexTs: string; codexK: number }
 export function newReqState(): ReqState { return { codexLast: [], codexTs: "", codexK: 0 }; }
 
 // prov = the logged provider id (pi/OpenCode) or the harness's only one (claude, codex): the name when the model has no vendor
 function req(key: string, model: string, prov: string, idKey: boolean, t0: number, t: number): Req {
-  return { key, model, respModel: "", provider: providerOf(prov, model), logged: "", providerId: idKey, t0, t, err: "" };
+  return { key, model, respModel: "", provider: providerOf(prov, model), logged: "", providerId: idKey, t0, t, err: "", reqId: "" };
 }
 function logged(r: Req, prov: string): Req { r.logged = prov; return r; }
 function tm(o: Obj | null, k: string): number { const t = o ? obj(o["time"]) : null; return t ? num(t[k]) : 0; }
@@ -28,6 +29,7 @@ export function requestOf(h: string, o0: Obj | null, line: string, x: ReqState):
     const md = str(m["model"]);
     const r = req(id, md === "<synthetic>" ? "" : md, "anthropic", true, 0, isoMs(str(o["timestamp"])));
     if (o["isApiErrorMessage"] === true) r.err = str(o["error"]) || "api_error"; // the request failed before any model answered
+    r.reqId = str(o["requestId"]);
     return r;
   }
   if (h === "codex") {

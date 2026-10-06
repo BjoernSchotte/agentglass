@@ -100,3 +100,9 @@ export function applyPolicy(ns: Native[], pol: string, st: ExpState, now: number
   }
   return d;
 }
+// Claude Code's own telemetry sends user.email (and account/organization ids) by default when logged in (otlp-complete 4.7):
+// the advice where the user looks; "" when its export is not on
+export function emailNote(ns: Native[]): string {
+  for (const n of ns) if (n.h === "claude" && n.on === "on") return "claude: its own telemetry sends user.email by default — drop it at your collector (README \"OTLP: several hosts\")";
+  return "";
+}

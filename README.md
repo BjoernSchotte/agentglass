@@ -54,9 +54,10 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
 - **btop for agents.** A process view shows every running harness with its process tree, CPU
   braille graphs and memory. You also see what it's executing *right now* (that `pnpm test`, that
   runaway `find`), and you can SIGTERM or SIGKILL it with a confirm.
-- **Talk back.** Press `s` to send a prompt. If the agent lives in tmux it's typed into its pane,
-  otherwise agentglass resumes the session headless (`claude -p --resume`, `codex exec resume`,
-  `fx ask --resume-id`, `pi -p --session`, `opencode run -s`). Press `R` to jump back into a session interactively.
+- **Talk back.** Press `s` to send a prompt. If the agent lives in a tmux or [herdr](#herdr) pane it's typed into that
+  pane, otherwise agentglass resumes the session headless (`claude -p --resume`, `codex exec resume`,
+  `fx ask --resume-id`, `pi -p --session`, `opencode run -s`). Press `R` to jump to a live agent's pane, or to resume an
+  ended session interactively (inside herdr: in a new herdr tab of the workspace that owns its directory).
 - **Search everything.** `/` filters by title, path, id, branch or harness. `F` runs a ripgrep
   full-text search across every transcript you've ever had.
 - **Replay any session as a time-lapse.** Press `P` in a transcript and watch the agent's run play
@@ -88,6 +89,8 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
   while one runs. So that the bell, notification, notify command and
   `--watch` line carry the guess, a finished Gemini turn outside tmux alerts once that quiet window is decided (up to
   3 s later). In tmux the title alone decides.
+- **First-class in herdr.** Agents in [herdr](#herdr) panes get send, jump, resume in a new tab, the approval `◆` from
+  herdr's own `blocked` state, exact process ↔ session links, herdr's state in the row and grouping by herdr workspace.
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,
@@ -347,7 +350,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `p` `P` | pin the filter (every tab, remembered) · edit the pins |
 | `␣` | fold / unfold subagents |
 | `n` `u` | next subagent · up to parent |
-| `s` `R` | send a prompt · resume interactively |
+| `s` `R` | send a prompt · resume, or jump to the live agent's pane (tmux, herdr) |
 | `x` `X` | SIGTERM / SIGKILL the agent |
 | `1`–`9` `e` | open a referenced file in `$PAGER` / `$EDITOR` |
 | `P` (transcript) | replay the open transcript |
@@ -452,7 +455,8 @@ harness is pi, day >= -7d               duration > 30s                       con
   weekdays `mo`…`su`; `unknown` finds unpriced cost and untimed calls (`cost is unknown`). Paths take `*` globs.
 - Keys (`--help` and `?` list them): session `harness repo cwd branch model title id agent subagent live archived
   state cost tokens tokens.in/out/cache_read/cache_write tools errors error_rate lines lines.added/removed age text
-  content worktree project.kind session` (`session is claude:3f2a9c`: a run and its subagents), day `day weekday
+  content worktree project.kind session mux workspace` (`session is claude:3f2a9c`: a run and its subagents; `mux is
+  herdr`: the live agent's multiplexer, tmux | herdr | none; `workspace is webapp`: its herdr workspace), day `day weekday
   day.cost day.tokens day.tools`, call `tool server program command file ext status duration out hour`, `event`
   (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
   "has a day matching all of them". `model` of a call is the model of the message that issued it (Codex: per turn;
@@ -630,7 +634,7 @@ A rule with a built-in `id` changes only the fields it names: `{"id":"approval",
 | metric | unit | value (no value when …) | params |
 |---|---|---|---|
 | `turn_done` | duration | since a turn finished, seen in this run (busy, or no finished turn seen) | |
-| `approval_wait` | duration | age of an open tool call while the process tree is quiet (idle, < `samples` CPU samples, a subagent active, CPU ≥ `cpu_below`, a tool command started within `grace`). Gemini's approval title in tmux raises the degraded level at once; Gemini outside tmux, a reply without text or calls (only thoughts, or still empty) counts as a likely approval dialog (log-silent seconds, the CPU average taken over all of them, hint `likely`) | `cpu_below` 2, `samples` 7, `grace` 5 |
+| `approval_wait` | duration | age of an open tool call while the process tree is quiet (idle, < `samples` CPU samples, a subagent active, CPU ≥ `cpu_below`, a tool command started within `grace`). Gemini's approval title in tmux and herdr's `blocked` state (any harness) raise the degraded level at once; Gemini outside tmux, a reply without text or calls (only thoughts, or still empty) counts as a likely approval dialog (log-silent seconds, the CPU average taken over all of them, hint `likely`) | `cpu_below` 2, `samples` 7, `grace` 5 |
 | `repeat_run` | count | identical consecutive tool calls at the end; with call keys in `where`, the repeated call must match them | |
 | `command_age` | duration | age of the oldest tool shell command (no call pending) | |
 | `stalled` | duration | log silence while busy (fewer samples, CPU avg ≥ `cpu_below`, a tool command running) | `cpu_below` 1, `samples` 7 |
@@ -762,7 +766,13 @@ agentglass --theme list                                             # themes; --
 agentglass --redact                                                 # privacy mode for streams and screenshots
 agentglass sessions --since 7d --format table                       # json | jsonl | csv | table, for every list
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
+agentglass --json --live --fields id,mux_kind,mux_pane,mux_status --format csv  # the pane of every live agent
+agentglass cost --since 7d --by workspace --format csv --fields key,workspaceId,costUsd  # cost per herdr workspace
 ```
+
+Scripts, CI jobs and plugins should depend only on the **CLI contract** — the commands, fields and exit codes listed in
+[docs/cli-contract.md](docs/cli-contract.md), versioned by `contract` in `agentglass --version --json` (an integer; it
+moves only when something listed is removed or changes meaning).
 
 ### Exit codes
 
@@ -853,9 +863,9 @@ traces. It reads the transcripts, so it works for every harness, needs no hooks,
 docker run -d --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:latest
 agentglass export --otlp http://localhost:4318 --since 7d       # history; then open http://localhost:16686
 agentglass export --otlp http://localhost:4318                  # again later: only what is new is sent
-agentglass --watch --otlp http://localhost:4318                 # live: each turn as it finishes (Ctrl+C flushes)
+agentglass --watch --otlp http://localhost:4318                 # live: each turn as it finishes, plus live state as OTLP logs (Ctrl+C flushes)
 agentglass export --dry-run --since 1d | jq .                   # the OTLP/JSON requests, nothing sent
-agentglass export --status --otlp http://localhost:4318         # last export, gzip, the harnesses' own telemetry
+agentglass export --status --otlp http://localhost:4318         # last export, gzip, TLS, logs, the harnesses' own telemetry
 ```
 
 - **Shape:** one trace per turn. The root `invoke_agent <harness>` span holds one `chat <model>` span per API request
@@ -877,7 +887,22 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
   (until compaction); SigNoz and Honeycomb are untested — expect duplicates there.
 - **Content stays local:** without `--content` no prompt, answer, tool argument or result leaves the machine — only
   names, models, counts, durations, cwd and git remote (credentials scrubbed). `--content` adds them, each cut to
-  `otlp.contentMax`. `--redact` exports the same fake names the screen shows and drops the `vcs.*` attributes.
+  `otlp.contentMax`. `--redact` exports the same fake names the screen shows, drops the `vcs.*` attributes and sends
+  `agentglass.repo.key` as a salted hash (the first 16 hex digits of SHA-256 of `agentglass/repo/v1|<key>`: a receiver
+  that also gets plain exports hashes their key the same way to group both); the resource then carries
+  `agentglass.redact = true`.
+- **Opt-in extras:** `"titles": true` adds `agentglass.session.title` to each turn's root span and to the state records
+  (a title is usually the first prompt, so it is off by default; under `--redact` the fake title is sent).
+  `--detail meta` (or `"detail": "meta"`, implied by `--content`) adds `agentglass.tool.command` (the normalized shell
+  command, at most 200 characters) and `agentglass.tool.target` (a file call's path, relative to the session's cwd) to
+  `execute_tool` spans — enough to rebuild filters like `tool is Bash and cmd ~ deploy`, without arguments or results.
+  Both go through the scrubber.
+- **Always on:** `host.id` on every resource (16 hex digits of a SHA-256 over the machine id and your uid, or
+  `~/.agentglass/host-id`; `"attributes": {"drop": ["host.id"]}` removes it; `host.name` stays opt-in),
+  `agentglass.repo.key` (the project key `--json` shows as `repo.key`) on every span of a session in a project,
+  `agentglass.request.id` on Claude `chat` spans (Claude Code's `requestId`, where the transcript has one: recent
+  Claude Code versions write it on few lines), and
+  `agentglass.usage.cache_write_1h.input_tokens` (the 1-hour part of the cache writes, priced apart).
 - **Timing:** request start times are reconstructed (the previous event of the session to the response), so they
   include the harness's own queueing. Kiro and fx log no per-call times: their spans are spread over the turn and
   marked `agentglass.timing.estimated`. Live mode adds `agentglass.tool.approval_wait` (seconds, estimated by the
@@ -886,9 +911,10 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
   what each provider's API reports instead (Anthropic: without the cache). fx's split is unverified; Kiro logs no
   cache split at all.
 - **The harnesses' own telemetry:** Claude Code, Codex, Gemini CLI and OpenCode can export OTLP themselves (off by
-  default). agentglass notices when one does (`--status`) and warns that the backend may show those turns twice;
-  `--native skip` leaves new turns of such a harness to it and sends only the history before. The root span carries
-  the harness's own session key (`session.id`, Codex `conversation.id`) so both sources can be joined.
+  default). agentglass notices when one does (`--status`); `--native skip` leaves new turns of such a harness to it and
+  sends only the history before. The root span carries the harness's own session key (`session.id`, Codex
+  `conversation.id`), and [the receiver contract](#otlp-several-hosts) says how to keep one usage record per request
+  when both arrive.
 
 Configuration lives in `~/.agentglass/config.json`; header values never go on the command line:
 
@@ -899,7 +925,9 @@ Configuration lives in `~/.agentglass/config.json`; header values never go on th
   "headersFile": "~/.agentglass/otlp-headers",
   "content": false, "contentMax": 16384, "inputTokens": "inclusive", "hostName": false,
   "attributes": {"extra": {"deployment.environment.name": "laptop"}, "rename": {}, "drop": ["process.working_directory"]},
-  "batch": 512, "timeoutSeconds": 10, "insecure": false, "compression": "gzip", "native": "warn"
+  "batch": 512, "timeoutSeconds": 10, "insecure": false, "compression": "gzip", "native": "warn",
+  "tls": {"ca": "~/.agentglass/hub-ca.crt", "cert": "~/.agentglass/host.crt", "key": "~/.agentglass/host.key"},
+  "logs": true, "logsEndpoint": "", "titles": false, "detail": "none"
 }}
 ```
 
@@ -909,13 +937,90 @@ Without `--otlp` the endpoint comes from `otlp.endpoint`, then `OTEL_EXPORTER_OT
 the sending (config on stdin, so no token shows up in `ps`); proxies apply except for localhost. An endpoint that
 refuses gzip bodies gets plain JSON from then on.
 
+**TLS.** `otlp.tls.ca` pins the receiver to its own CA (only that file is trusted, not the system's); `cert` + `key`
+(always both) add a client certificate for mutual TLS. Without the config, `OTEL_EXPORTER_OTLP_CERTIFICATE`,
+`OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` and `OTEL_EXPORTER_OTLP_CLIENT_KEY` apply (the `_TRACES_` / `_LOGS_` variants
+win for their signal). The key must be unencrypted, yours and private (`chmod 600`); TLS settings need an `https://`
+endpoint. Paths go to curl on stdin, never on its command line. A certificate problem is not retried — the export
+stops with a message that names the fix (`the receiver requires a client certificate: set otlp.tls.cert and
+otlp.tls.key`, `cannot verify the receiver's certificate: set otlp.tls.ca to its CA`, …), the turns stay unsent, and
+the next `agentglass export` sends them once it is fixed. `--status` shows the files and the client certificate's
+expiry date (with `openssl` on PATH).
+
+**Live state (OTLP logs).** `--watch --otlp` also sends OTLP log records to the traces URL with `/v1/logs` instead of
+`/v1/traces` (`otlp.logsEndpoint`, or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` when the traces endpoint comes from the
+environment; a custom traces path needs `logsEndpoint`). Each record has `eventName` and the same `event.name`
+attribute; records of a turn carry its trace and root span ids. No content, best effort, never marked in the state
+file; a receiver that answers 404 switches the stream off for the run; `--no-logs` or `"logs": false` turns it off.
+
+| `eventName` | When | Main attributes |
+|---|---|---|
+| `agentglass.heartbeat` | every 30 s | `agentglass.sessions.live`, `.busy`, `.attention` (counts) |
+| `agentglass.session.state` | a session's `live`, `busy`, `attention`, `approval` or `stuck` changes; every 300 s while live; at start | `agentglass.session.*`, `gen_ai.conversation.id`, cwd, `vcs.*`, `agentglass.repo.key` (WARN when it needs you) |
+| `agentglass.turn.open` | a turn starts | `gen_ai.conversation.id`, `agentglass.turn.index`, `gen_ai.request.model` |
+| `agentglass.alert` | a rules.json transition (fire, escalate, deescalate, resolve) | `agentglass.alert.rule`, `.severity`, `.state`, `.value`, `.threshold`, `.label.<k>`; the body is the message only with `"titles": true`, else the rule id |
+
 An OpenTelemetry Collector that prints what arrives:
 
 ```yaml
 receivers: {otlp: {protocols: {http: {endpoint: 0.0.0.0:4318}}}}
 exporters: {debug: {verbosity: detailed}}
-service: {pipelines: {traces: {receivers: [otlp], exporters: [debug]}}}
+service: {pipelines: {traces: {receivers: [otlp], exporters: [debug]}, logs: {receivers: [otlp], exporters: [debug]}}}
 ```
+
+### OTLP: several hosts
+
+Machines that the viewer cannot reach over SSH (a laptop behind NAT, CI runners, containers) can push to one shared
+Collector. The full transcripts stay on each host. A Collector (contrib distribution) with mutual TLS that writes
+OTLP/JSON lines and drops Claude Code's `user.email` before storing anything:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 100.64.0.10:4318          # a tailnet or loopback address, not 0.0.0.0
+        tls: {cert_file: /etc/otelcol/server.crt, key_file: /etc/otelcol/server.key,
+              client_ca_file: /etc/otelcol/hosts-ca.crt, min_version: "1.3"}
+processors:
+  attributes/drop_email: {actions: [{key: user.email, action: delete}]}
+exporters:
+  file: {path: /var/lib/otelcol/agentglass.jsonl}
+service:
+  pipelines:
+    traces: {receivers: [otlp], processors: [attributes/drop_email], exporters: [file]}
+    logs:   {receivers: [otlp], processors: [attributes/drop_email], exporters: [file]}
+```
+
+On each host: the `otlp.tls` block above (a client certificate from the hosts' CA, `chmod 600` key), then
+`agentglass export --since all` once for the history and `agentglass --watch --otlp https://collector:4318` as a user
+service for the rest (it resumes exactly-once from its state file). [otlp-hub](specs/otlp-hub/spec.md) is the reader
+side that turns such a file into fleet rows.
+
+The receiver contract — how to rebuild agentglass's view from the export:
+
+1. **Host:** a host is its resource `host.id`. A receiver that authenticates senders (client certificate, bearer
+   token) trusts the authenticated identity first and rejects records whose `host.id` does not match it; `host.id`
+   alone is a label, not proof.
+2. **Sessions and turns:** one trace per turn, `gen_ai.conversation.id` per session; titles from
+   `agentglass.session.title` when present, else the conversation id.
+3. **Usage, exactly once:** usage lives only on `chat` spans. The same request can arrive more than once (a Claude
+   message copied into a fork or resumed file, a session synced to two hosts, a resend): keep one usage record per
+   `(gen_ai.provider.name, gen_ai.response.id)` — the agentglass `chat` span with the earliest end time. Spans without
+   a response id (Codex, Kiro, fx) are unique by span id.
+4. **Liveness:** a host is fresh while its last `agentglass.heartbeat` is at most 90 s old. A session is live, busy or
+   needs attention as its last `agentglass.session.state` says, only while its host is fresh. A turn is running while
+   it has an `agentglass.turn.open`, no span yet, its session's latest state is busy, and the host is fresh.
+5. **Alerts:** `agentglass.alert` records are the host's own rules engine results; show them, do not re-evaluate.
+6. **The harnesses' own telemetry at the same receiver:** prefer agentglass records for usage and cost (history,
+   billing mode, price source). Claude Code's `api_request` log records join `agentglass.request.id` on `request_id`
+   (when the span has one), its `llm_request` spans join on `gen_ai.response.id`: a match is the same request, keep the agentglass one. Native
+   metrics (`claude_code.cost.usage`, `claude_code.token.usage`, …) aggregate the same requests: never add them to span
+   sums. Codex, Gemini CLI and OpenCode share no verified request id: join on session id, start ± 2 s, model and token
+   counts and mark it approximate, switch their own export off on hosts that run agentglass, or use `--native skip`.
+7. **Personal identifiers:** agentglass sends no `user.*` attribute. Claude Code's own telemetry sends `user.email`,
+   `user.account_uuid` and `organization.id` by default when logged in: drop `user.email` at the receiver (the
+   `attributes/drop_email` processor above). `agentglass export --status` reminds you when that telemetry is on.
 
 `--format csv` is RFC 4180 with a header row: nested fields are flattened (`tokens_in`), lists joined with `;`, `null`
 is empty, and text starting with `= + - @` gets a leading `'` so spreadsheets do not run it. `--fields` picks and
@@ -923,6 +1028,50 @@ orders columns, nested ones by their flattened name (`tokens_in`, `git_commits`)
 keeps its type (`git_commits` stays an array of objects, only csv/table join lists); an unknown name exits 2 and lists
 the valid ones. On a terminal the default is `table`, in a pipe
 `json` (`--json` stays JSON).
+
+## herdr
+
+[herdr](https://herdr.dev) is a terminal multiplexer for coding agents. agentglass finds it on its
+own (the `herdr` binary, `HERDR_BIN_PATH`, and the API sockets of the default server, named sessions and every agent's
+environment) and spawns nothing when it is absent. For agents in herdr panes:
+
+- **Send** (`s`): `herdr agent prompt` types the text into the agent's pane (needs herdr ≥ 0.8.2, which refuses while the
+  agent waits at a dialog: answer it there, `R` jumps to it).
+- **Jump** (`R` on a live session, `a` in Processes): `herdr agent focus` moves herdr's clients to the pane.
+- **Resume** (`R` on an ended session while agentglass runs inside herdr): a new tab in the workspace whose worktree
+  holds the session's directory (else its repo's workspace, else a new workspace), the agent started there with its
+  resume arguments and focused. Outside herdr `R` resumes in agentglass's own terminal as before.
+- **Approval**: herdr's `blocked` state raises `◆` at once (`approval dialog open (herdr)`), for every harness, instead
+  of the CPU heuristic's 20 s; herdr's other states end Gemini's guess. It is read only while a dialog can be open (the
+  log quiet mid-turn), at most once per server per look.
+- **Exact links**: the session id herdr's integrations report (`herdr integration install claude|codex|…`) links the
+  agent process to its session, also where agentglass would guess by directory or link nothing.
+- **In the row**: herdr's `working` keeps the spinner turning while the log is quiet (a long tool run, a thinking
+  model); `done` (finished, not seen yet) shows a green `✓` until herdr reports otherwise or you select the session
+  here. States are read every 5 s while agentglass is focused and shows a herdr agent, every 30 s otherwise.
+- **Where**: the preview and Processes show the pane (`herdr webapp › 2 · w7:p1A`; only the pane id under `--redact`),
+  `--json` has `mux` (`{"kind":"herdr","pane":"w7:p1A","workspace":"webapp","tab":"2","status":"idle"}`), filter keys
+  `mux` and `workspace`, `cost --by workspace`, and the palette's "Sessions in this herdr workspace". An ended session
+  belongs to the workspace whose worktree holds its directory.
+- tmux inside a herdr pane: tmux owns the agent (the innermost multiplexer wins).
+- Versions: send needs herdr ≥ 0.8.2 (older: "too old to send safely", nothing typed); exact links need ≥ 0.6.5 and
+  herdr's integration for the harness; jump and approval work with any herdr that has the commands.
+- **Gemini CLI**: herdr 0.9.1 does not detect Gemini CLI as an agent (its process is named `MainThread`), so a Gemini
+  pane gets none of the above: agentglass keeps its own Gemini handling (tmux title, or the approval guess outside
+  tmux), `s` gives its "cannot inject input" warning, and `R` on an ended Gemini session resumes in agentglass's own
+  terminal. Once herdr lists Gemini panes, send, jump, approval and links work as for the others.
+
+herdr rings its own bell for blocked and finished agents. To keep only herdr's, scope agentglass's two built-ins in
+`~/.agentglass/rules.json`:
+
+```json
+{"rules": [{"id": "approval", "where": "mux is_not herdr"}, {"id": "waiting", "where": "mux is_not herdr"}]}
+```
+
+Off switch: `"mux": {"herdr": "off"}` in `~/.agentglass/config.json` (default `"auto"`) or `AGENTGLASS_HERDR=off`;
+`AGENTGLASS_HERDR=/path/to/herdr` picks the binary, `AGENTGLASS_HERDR_SOCKET=/path/herdr.sock` limits agentglass to that
+one server. The [agentglass-herdr](https://github.com/BjoernSchotte/agentglass-herdr) plugin brings agentglass into
+herdr (a popup, "open in agentglass", cost and alert tokens in the sidebar).
 
 ## Inside coding agents
 

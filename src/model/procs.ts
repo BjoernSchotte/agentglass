@@ -1,7 +1,7 @@
-// agentglass — harness processes (via the platform adapter, tmux) and their link to sessions
+// agentglass — harness processes (via the platform adapter, their multiplexer panes via src/mux/) and their link to sessions
 // SPDX-License-Identifier: Apache-2.0
 import { base } from "../util/json.ts";
-import { run, WAKE_ALL, WAKE_H, WAKE_DIRS } from "../util/fs.ts";
+import { WAKE_ALL, WAKE_H, WAKE_DIRS } from "../util/fs.ts";
 import { OS } from "../platform/index.ts";
 import { HARNESSES, harnessOfProc } from "../harness/index.ts";
 import type { Live } from "../harness/types.ts";
@@ -12,6 +12,8 @@ import { sessions, SG, SCANNED } from "./sessions.ts";
 import { S } from "../state.ts";
 import { linkByCwd, daemonWarn, type CwdProc, type CwdSess } from "./link.ts";
 import { H, applyMeta, realCwd } from "../hooks.ts";
+import { muxRefresh, muxLinks, muxSig, paneOfPid } from "../mux/index.ts";
+import type { MuxProc } from "../mux/types.ts";
 
 // agents without an adapter yet: shown in the process view under their own name
 const OTHER = ["aider", "cursor-agent", "amp", "qwen", "crush", "goose", "copilot"];
@@ -22,7 +24,6 @@ export let procView: Proc[] = []; // the rows the Processes tab shows: procs pas
 export const allProcs = new Map<number, Proc>();
 export const hist = new Map<number, number[]>();
 export const cpuHist: number[] = [];
-const tmuxByTty = new Map<string, string>();
 const cwdByPid = new Map<number, string>();
 const filePid = new Map<string, number>(); // open transcript → pid (HarnessAdapter.liveFile)
 const registry = new Map<string, Live>(); // "<harness>:<session id>" → entry (HarnessAdapter.liveRegistry)
@@ -166,6 +167,7 @@ function linkSig(): string {
   for (const [f, pid] of filePid) if (allProcs.has(pid)) o.push(f);
   let mt = 0; for (const ad of HARNESSES) if (ad.liveCwd) for (const s of sessions.values()) if (s.h === ad.id) mt += s.mtime;
   o.push(String(mt));
+  o.push(muxSig()); // a multiplexer's exact links (herdr agent_session) moved
   return o.join("\n");
 }
 export function refreshSlow(): void {
@@ -180,22 +182,27 @@ export function refreshSlow(): void {
   cwdByPid.clear(); filePid.clear();
   for (const [k, v] of f.cwd) cwdByPid.set(k, v);
   for (const [k, v] of f.open) filePid.set(k, v);
-  // tmux panes: listed when an agent sits on a tty no pane is known for (a new pane), else every 30 s (a moved one)
-  const now = Date.now(); let paneDue = now - SLOW.tmuxAt >= 30000;
-  if (!paneDue) for (const p of procs) { const d = OS.ttyDevice(p.tty); if (d && !tmuxByTty.has(d) && !SLOW.noPane.has(d)) { paneDue = true; break; } }
-  if (paneDue) readPanes(now);
+  // multiplexer panes (tmux, herdr): each adapter decides when to read them again (a new agent, 30 s, forced by actions)
+  // (a one-shot command's only pass reads everything at once)
+  muxRefresh(muxProcs(), Date.now(), S.cli && !SLOW.ran, knownPid); SLOW.ran = true;
   for (const p of procs) p.cwd = cwdByPid.get(p.pid) ?? "";
   if (S.pins.length) buildProcView(); // cwd known now: repo and cwd pins apply
   if (sig !== SLOW.sig) { SLOW.sig = sig; linkSessions(); lastLink = linkSig(); } // cwds or open transcripts moved: link again
 }
-const SLOW = { sig: "", tmuxAt: 0, noPane: new Set<string>() };
-function readPanes(now: number): void {
-  SLOW.tmuxAt = now; tmuxByTty.clear(); SLOW.noPane.clear();
-  for (const l of run("tmux", ["list-panes", "-a", "-F", "#{pane_tty} #{session_name}:#{window_index}.#{pane_index}"]).split("\n")) {
-    const i = l.indexOf(" ");
-    if (i > 0) tmuxByTty.set(l.slice(0, i), l.slice(i + 1));
-  }
-  for (const p of procs) { const d = OS.ttyDevice(p.tty); if (d && !tmuxByTty.has(d)) SLOW.noPane.add(d); } // outside tmux: not asked again till the 30 s
+const SLOW = { sig: "", ran: false };
+// every agent process (nested ones too: a pane's foreground process may be a wrapper's child) with its tty and root
+export function muxProcs(): MuxProc[] {
+  const out: MuxProc[] = [];
+  for (const p of allProcs.values()) if (p.h) { const r = rootOf(p.pid); out.push({ pid: p.pid, h: p.h, tty: OS.ttyDevice(p.tty), root: r ? r.pid : p.pid }); }
+  return out;
+}
+// the exact pid agentglass already has for a session (registry, open transcript): a multiplexer's session id then needs no
+// process lookup
+export function knownPid(key: string, path: string): number {
+  const l = key ? registry.get(key) : undefined; if (l && allProcs.has(l.pid)) return l.pid;
+  const fp = path ? filePid.get(path) ?? 0 : 0; if (fp && allProcs.has(fp)) { const r = rootOf(fp); return r ? r.pid : fp; }
+  if (key) for (const s of sessions.values()) if (s.h + ":" + s.id === key) { const f = filePid.get(s.path) ?? 0; if (f && allProcs.has(f)) { const r = rootOf(f); return r ? r.pid : f; } }
+  return 0;
 }
 export function rootOf(pid: number): Proc | null {
   let q = allProcs.get(pid);
@@ -222,9 +229,12 @@ function linkSessions(): void {
     linkOne(s, pid, status, name);
   }
   if (linked.size > sessions.size) for (const k of [...linked.keys()]) if (!sessions.has(k)) linked.delete(k);
+  // a multiplexer's exact pairs (herdr: the agent_session its integrations report) for sessions still unlinked; before
+  // the cwd guess, never over a registry or open-transcript link. A pid tmux claims is tmux's (the innermost owns it)
+  const muxPids = linkMux();
   // harnesses with neither registry nor open transcript: process cwd ↔ newest session in that cwd
   // (registry pids are daemons, not TUIs; subagents never own a TUI)
-  const regPids = new Set<number>();
+  const regPids = new Set<number>(); for (const p of muxPids) regPids.add(p);
   for (const l of registry.values()) regPids.add(l.pid);
   for (const ad of HARNESSES) {
     if (!ad.liveCwd) continue;
@@ -243,6 +253,27 @@ function linkSessions(): void {
   const now = Date.now();
   for (const s of sessions.values()) if (s.pid) { const r = rootOf(s.pid); if (r) r.sess = s.path; heldBy.set(s.path, { pid: s.pid, at: now }); }
   if (heldBy.size > sessions.size) for (const k of [...heldBy.keys()]) if (!sessions.has(k)) heldBy.delete(k);
+}
+// checks: link with these agent roots (their cwds) as the process pass would
+export function linkForCheck(roots: Proc[]): void { procs = roots; linkSessions(); }
+export function linkSigForCheck(): string { return linkSig(); }
+export function openForCheck(path: string, pid: number): void { if (pid) filePid.set(path, pid); else filePid.delete(path); }
+// a pid the registry or an open transcript already gives another session keeps that link: a disagreement is not acted on
+// (herdr may still report the session a TUI had before /new or /clear)
+function linkMux(): Set<number> {
+  const pids = new Set<number>(); const ls = muxLinks(); if (!ls.length) return pids;
+  const owned = new Map<number, string>(); for (const s of sessions.values()) if (s.pid) owned.set(s.pid, s.path);
+  const byKey = new Map<string, Sess>(); // a resumed session copied into a second project dir: the copy written last
+  for (const s of sessions.values()) { if (s.parent) continue; const k = s.h + ":" + s.id; const o = byKey.get(k); if (!o || s.mtime > o.mtime) byKey.set(k, s); }
+  for (const l of ls) {
+    if (!allProcs.has(l.pid) || paneOfPid(l.pid).kind === "tmux") continue;
+    const s = l.key ? byKey.get(l.key) : sessions.get(l.path);
+    const r = rootOf(l.pid); const pid = r ? r.pid : l.pid;
+    pids.add(pid);
+    const o = owned.get(pid);
+    if (s && !s.pid && (o === undefined || o === s.path)) { linkOne(s, pid, "open", ""); owned.set(pid, s.path); }
+  }
+  return pids;
 }
 // session → the last pid linked to it and when (linkByCwd: an older session a headless --resume run wrote to is not
 // taken by a lone TUI in that project for an in-TUI resume once the run ended)
@@ -269,23 +300,7 @@ export function sharedDaemon(pid: number): string {
   }
   return "";
 }
-// tmux pane titles by pane tty, read now (an agent's title can change within a second); empty outside tmux
-export function paneTitles(): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const l of run("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_title}"]).split("\n")) {
-    const i = l.indexOf("\t");
-    if (i > 0) m.set(l.slice(0, i), l.slice(i + 1));
-  }
-  return m;
-}
 export function ttyOf(pid: number): string { const p = allProcs.get(pid); return p ? OS.ttyDevice(p.tty) : ""; }
-// the target for an action (send keys, switch): the panes read now (the display's map may be up to 30 s old)
-export function tmuxTargetNow(pid: number): string { readPanes(Date.now()); return tmuxTarget(pid); }
-export function tmuxTarget(pid: number): string {
-  const p = allProcs.get(pid);
-  const dev = p ? OS.ttyDevice(p.tty) : "";
-  return dev ? tmuxByTty.get(dev) ?? "" : "";
-}
 // bounds-checked (see sessAt)
 export function procAt(i: number): Proc | null { return i >= 0 && i < procView.length ? procView[i] : null; }
 export function buildProcView(): void {

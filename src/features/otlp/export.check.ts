@@ -5,8 +5,10 @@
 import { mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { newSpan, type XTurn } from "./types.ts";
+import { emailNote } from "./native.ts";
+import { HOME } from "../../util/fs.ts";
 import { cfgFrom } from "./config.ts";
-import { type ExOpts, parseExport, batches, timeArg, runExport, fxDelta, fxAccepted, acks, ack } from "./export.ts";
+import { type ExOpts, parseExport, batches, timeArg, runExport, fxDelta, fxAccepted, acks, ack, cfgStatus, enddate } from "./export.ts";
 import { newState, markTurn, loadState, saveState } from "./state.ts";
 import { discover } from "../cli.ts";
 
@@ -42,11 +44,14 @@ eq("no endpoint", opts([]).indexOf("no endpoint") >= 0 ? "err" : "ok", "err");
 eq("dry run needs no endpoint", opts(["--dry-run"]), "");
 eq("batch 0", opts(["--otlp", "http://localhost:4318", "--batch", "0"]).indexOf("--batch") >= 0 ? "err" : "ok", "err");
 eq("unknown option", opts(["--otlp", "http://x", "--frobnicate"]).indexOf("unknown option --frobnicate") >= 0 ? "err" : "ok", "err");
+eq("detail meta", parseExport(["export", "--dry-run", "--detail", "meta"], C, NOW, env).o.detail, "meta");
+eq("detail default from config", parseExport(["export", "--dry-run"], cfgFrom({ detail: "meta" }), NOW, env).o.detail + parseExport(["export", "--dry-run"], C, NOW, env).o.detail, "metanone");
+eq("detail bad", opts(["--dry-run", "--detail", "full"]), "--detail takes none or meta");
 eq("default endpoint path", parseExport(["export", "--otlp", "http://localhost:4318"], C, NOW, env).o.url, "http://localhost:4318/v1/traces");
 
 // batching: whole turns; an oversized turn alone; a body over 4 MB split into requests of the same turn
 function turnOf(key: string, n: number, pad: number): XTurn {
-  const t: XTurn = { h: "claude", rootId: "s", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx: [], fxOn: false };
+  const t: XTurn = { h: "claude", rootId: "s", path: "/p", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0: 1, t1: 2, closed: true, closedBy: "next", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx: [], fxOn: false, title: "", repoKey: "" };
   for (let i = 0; i < n; i++) { const s = newSpan(i ? "execute_tool" : "invoke_agent", "x", "aaaaaaaaaaaa" + String(1000 + i), i ? "aaaaaaaaaaaa1000" : "", 1, "s"); s.tool = "Bash"; s.agent = "a".repeat(pad); t.spans.push(s); }
   return t;
 }
@@ -67,7 +72,7 @@ eq("5 MB turn split", String(huge.length >= 2) + " " + String(huge.every((b) => 
 // totals the endpoint already accepted; older turns of the same send carry none (a failed request loses nothing)
 {
   const fxTurn = (key: string, t0: number, fx: number[]): XTurn => {
-    const t: XTurn = { h: "fx", rootId: "fx-1", path: "/f/events.jsonl", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0, t1: t0 + 1, closed: true, closedBy: "quiet", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx, fxOn: false };
+    const t: XTurn = { h: "fx", rootId: "fx-1", path: "/f/events.jsonl", key, index: 1, traceId: "0123456789abcdef0123456789abcdef", t0, t1: t0 + 1, closed: true, closedBy: "quiet", compacted: false, ver: "", cwd: "", branch: "", remote: "", spans: [], fx, fxOn: false, title: "", repoKey: "" };
     const r = newSpan("invoke_agent", "invoke_agent fx", "a" + key.padStart(15, "0"), "", t0, "fx-1");
     const c = newSpan("chat", "chat m", "c" + key.padStart(15, "0"), r.spanId, t0, "fx-1");
     c.nIn = fx[0] ?? 0; c.nOut = fx[1] ?? 0; c.cr = fx[2] ?? 0; c.cw = fx[3] ?? 0; c.cost = fx[4] ?? 0; c.unk = fx[5] ?? 0; c.hasUsage = true; c.total = true; // as advance() leaves it
@@ -154,6 +159,23 @@ eq("415 → plain, remembered", enc1 + " / " + enc2, "gz+plain / plain");
 reset([]);
 run(["--resend", "--harness", "claude", "--compression", "gzip"]);
 eq("--compression gzip tries again", readFileSync(dir + "/enc", "utf8").trim(), "gz");
+
+// --status: TLS, logs, titles, detail (otlp-complete 1.5, 6), the user.email note (4.7)
+eq("enddate", enddate("notAfter=Jan  2 00:00:00 2020 GMT\n") + " " + enddate("notAfter=Oct 18 09:30:00 2026 GMT") + " " + enddate("garbage"), "2020-01-02 2026-10-18 ");
+{
+  const hd = HOME + "/st"; mkdirSync(hd, { recursive: true }); writeFileSync(hd + "/ca.crt", "x"); writeFileSync(hd + "/c.crt", "x"); writeFileSync(hd + "/c.key", "x"); chmodSync(hd + "/c.key", 0o600);
+  const cs = cfgStatus("https://h.example:4318/v1/traces", cfgFrom({ tls: { ca: hd + "/ca.crt", cert: hd + "/c.crt", key: hd + "/c.key" }, titles: true, detail: "meta" }), new Map<string, string>(), "2026-10-06");
+  eq("status tls", cs.tls, "ca " + hd + "/ca.crt · client certificate " + hd + "/c.crt");
+  eq("status logs/titles/detail", cs.logs + " " + String(cs.titles) + " " + cs.detail, "https://h.example:4318/v1/logs (live mode only) true meta");
+  eq("status: logs off", cfgStatus("https://h.example/x", cfgFrom({}), new Map<string, string>(), "2026-10-06").logs, "logs off: set otlp.logsEndpoint for https://h.example/x");
+  eq("status: logs disabled", cfgStatus("https://h.example/v1/traces", cfgFrom({ logs: false }), new Map<string, string>(), "2026-10-06").logs, "off (otlp.logs is false)");
+  eq("status: tls off", cfgStatus("https://h.example/v1/traces", cfgFrom({}), new Map<string, string>(), "2026-10-06").tls, "off");
+  eq("status: env TLS over http is noted, not an error", cfgStatus("http://localhost:4318/v1/traces", cfgFrom({}), new Map<string, string>([["OTEL_EXPORTER_OTLP_CERTIFICATE", hd + "/ca.crt"]]), "2026-10-06").tls, "off (OTEL_EXPORTER_OTLP_CERTIFICATE ignored: http://localhost:4318/v1/traces is not https)");
+  chmodSync(hd + "/c.key", 0o644);
+  eq("status: tls error shown", String(cfgStatus("https://h.example/v1/traces", cfgFrom({ tls: { cert: hd + "/c.crt", key: hd + "/c.key" } }), new Map<string, string>(), "2026-10-06").tls.indexOf("chmod 600") >= 0), "true");
+  rmSync(hd, { recursive: true, force: true });
+}
+eq("user.email note", String(emailNote([{ h: "claude", on: "on", src: "" }]).indexOf("user.email") >= 0) + " " + emailNote([{ h: "claude", on: "off", src: "" }, { h: "codex", on: "on", src: "" }]), "true ");
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("otlp export: all checks passed");
