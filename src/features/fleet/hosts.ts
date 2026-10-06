@@ -55,7 +55,25 @@ export function rowsOf(h: string, r: HostReport, at: number): Sess[] {
 }
 // a stale report's rows are not live: no attention, no stuck mark (the report's values come back when it is fresh)
 function markFresh(rows: Sess[], fresh: boolean): void {
-  for (const s of rows) { const o = OBJ.get(s.path); s.attention = fresh && !!o && o["attention"] === true; s.stuck = fresh && o ? str(o["stuck"]) : ""; }
+  for (const s of rows) { const o = OBJ.get(s.path); s.attention = fresh && !!o && o["attention"] === true; s.stuck = fresh && o ? str(o["stuck"]) : ""; s.rlive = fresh && !!o && o["live"] === true; }
+}
+// ── the live stream (spec 16): while its beats keep coming (≤ 90 s) its states override the report's for its sessions ──
+export const LIVE_FRESH_MS = 90000;
+export function liveFresh(rh: RemoteHost, now: number): boolean { return rh.beatAt > 0 && now - rh.beatAt <= LIVE_FRESH_MS; }
+// the stream's newest states onto the host's rows (after every report and every stream poll); false = nothing moved
+export function overlay(rh: RemoteHost, now: number): boolean {
+  const on = liveFresh(rh, now); if (!rh.live.size && !on) return false;
+  let moved = false;
+  for (const s of rh.rows) {
+    const l = on ? rh.live.get(s.h + ":" + s.id) ?? null : null; // the stream names every live session: one it does not name is not live
+    const o = OBJ.get(s.path);
+    const live = l ? l.live : on ? false : rh.fresh && !!o && o["live"] === true;
+    const att = l ? l.attention || l.approval : rh.fresh && !!o && o["attention"] === true;
+    const stk = l ? l.stuck : rh.fresh && o ? str(o["stuck"]) : "";
+    if (s.rlive !== live || s.attention !== att || s.stuck !== stk) { s.rlive = live; s.attention = att; s.stuck = stk; moved = true; }
+  }
+  if (moved) RG.gen++;
+  return moved;
 }
 // a new report for rh; ids = hostId → the name that holds it (this machine first, then earlier hosts): a report from this
 // machine or from a host listed twice is not merged
@@ -69,7 +87,7 @@ export function applyReport(rh: RemoteHost, r: HostReport, at: number, ids: Map<
   for (const s of rh.rows) OBJ.delete(s.path);
   rh.dupOf = dup; rh.applied = r;
   if (dup) rh.rows = [];
-  else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh); }
+  else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh); overlay(rh, Date.now()); }
   RG.gen++;
 }
 // the duplicate map of a round: this machine, then every host in config order
@@ -93,6 +111,7 @@ export function syncFresh(now: number): boolean {
   for (const rh of FLEET.hosts) {
     const fr = freshOf(rh, now, f, FLEET.intervalMs);
     if (fr !== rh.fresh) { rh.fresh = fr; markFresh(rh.rows, fr); moved = true; }
+    if (overlay(rh, now)) moved = true; // a stream that stopped beating: its states fall back to the report's
   }
   if (moved) RG.gen++;
   return moved;
@@ -226,7 +245,7 @@ H.remoteRows.push((): Sess[] => {
   for (const rh of merged()) o = o.concat(rh.rows);
   return o;
 });
-FRESH.ok = (host: string): boolean => { const rh = hostByName(host); return rh !== null && rh.fresh; };
+FRESH.ok = (host: string): boolean => { const rh = hostByName(host); return rh !== null && (rh.fresh || liveFresh(rh, Date.now())); };
 HOST_ENUM.values = (): string[] => { const c = FLEET.cfg; const o = [c ? c.localName : "local"]; if (c) for (const h of c.hosts) o.push(h.name); return o; };
 REMOTE_IDENT.of = (s: Sess): Ident | null => {
   const o = OBJ.get(s.path); const r = o ? obj(o["repo"]) : null; if (!r) return null;

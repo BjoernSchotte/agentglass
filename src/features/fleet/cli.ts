@@ -32,12 +32,13 @@ import { sshFeed, idleFeed, sshBin, hostControlPath } from "./ssh.ts";
 import { forget } from "./store.ts";
 import { pullCli, pullSessions } from "./pull.ts";
 import { snapshotCli } from "./snapshot.ts";
+import { watchCli } from "./watch.ts";
 import { pricesSig } from "../usage/pricing.ts";
 import { serveCli, authorizeCli } from "./serve.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function warn(msg: string): void { errLine("agentglass", "warning", msg, ""); }
-export const SUBS = ["cost", "status", "pull", "snapshot", "serve", "authorize"];
+export const SUBS = ["cost", "status", "pull", "snapshot", "watch", "serve", "authorize"];
 export const MAX_PARALLEL = 4;
 // the --json row fields: --json's, with host after harness and stale after live
 export const FLEET_FIELDS: string[] = [];
@@ -306,6 +307,8 @@ addCmd(rec("fleet snapshot", "agentglass fleet snapshot [--peer <id>] [--ack <ge
   [opt("--peer", "<id>", "the viewer's host id (16 hex): the host keeps that viewer's generations", "", []), opt("--ack", "<gen>", "the generation the viewer applied last: the snapshot is relative to it", "", []),
     opt("--full", "", "a full snapshot whatever was acknowledged", "", []), opt("--days", "N", "list sessions updated within N days (1–90); usage covers this month and 15 days", "7", []),
     opt("--redact", "", "fake titles, projects and paths at the source", "", [])], []), FIRST);
+addCmd(rec("fleet watch", "agentglass fleet watch [--redact]", "this host's live state for a fleet viewer, as JSON lines until the viewer goes: session state\n(live, busy, attention, approval, stuck), alert transitions, turn ends, a beat every 30 s; no event content",
+  [opt("--redact", "", "redact at the source (alert messages name no real title)", "", [])], []), FIRST);
 addCmd(rec("fleet serve", "agentglass fleet serve [--redact]", "the forced command of a viewer's key on a host (authorized_keys command=): runs only\nfleet pull/snapshot/watch and --version from SSH_ORIGINAL_COMMAND; exit 126 refused, 2 outside ssh",
   [opt("--redact", "", "answer every request redacted, whatever the viewer asks", "", [])], []), FIRST);
 addCmd(rec("fleet authorize", "agentglass fleet authorize <key.pub> [--from <cidr>]", "print the authorized_keys line that limits the viewer's key to fleet serve\n(restrict,command=…); run it on the host and append the line yourself (--redact: the host answers redacted)",
@@ -318,11 +321,12 @@ H.cli.unshift((args: string[]): boolean => { // before cli.ts's flag handlers: `
   if (wantsHelp(args)) { const r = cmdOf(name); if (!r) cliError("usage", "unknown command " + name, "agentglass --help lists the commands", 2); out(helpOf(name, args, cmdText(r))); process.exit(0); }
   if (sub === "pull") { pullCli(args); return true; }
   if (sub === "snapshot") { snapshotCli(args); return true; }
+  if (sub === "watch") { watchCli(args); return true; }
   if (sub === "serve") { serveCli(args); return true; }
   if (sub === "authorize") { authorizeCli(args); return true; }
   if (sub === "cost") { cost(args); return true; }
   if (sub === "status") { status(args); return true; }
-  if (sub && !sub.startsWith("-")) cliError("usage", "unknown fleet command " + sub, "agentglass fleet --help (fleet, fleet cost, fleet status, fleet pull, fleet snapshot, fleet serve, fleet authorize)", 2);
+  if (sub && !sub.startsWith("-")) cliError("usage", "unknown fleet command " + sub, "agentglass fleet --help (fleet, fleet cost, fleet status, fleet pull, fleet snapshot, fleet watch, fleet serve, fleet authorize)", 2);
   list(args);
   return true;
 });

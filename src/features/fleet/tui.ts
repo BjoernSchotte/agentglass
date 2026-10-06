@@ -24,10 +24,12 @@ import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
 import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed, openCmd } from "./config.ts";
 import type { HostReport } from "./model.ts";
-import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName } from "./hosts.ts";
-import { sshBin } from "./ssh.ts";
-import { forget } from "./store.ts";
-import { makeFeeds, hostStatus, statusLines, MAX_PARALLEL } from "./cli.ts";
+import { type RemoteHost, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh } from "./hosts.ts";
+import { sshBin, hostControlPath } from "./ssh.ts";
+import { forget, keyOf } from "./store.ts";
+import { makeFeeds, hostStatus, statusLines, redactOf, MAX_PARALLEL } from "./cli.ts";
+import { type WatchFeed, type WatchEv, watchFeed } from "./watchfeed.ts";
+import { OS } from "../../platform/index.ts";
 
 // on: hosts configured and this run pulls; force: the palette's "refresh now"; due/fails/doneAt per host name
 const T = { on: false, force: false, due: new Map<string, number>(), fails: new Map<string, number>(), busy: new Map<string, boolean>(), seeded: new Set<string>(), gen: 0, nossh: false };
@@ -101,9 +103,47 @@ function tick(): void {
     else { const f = (T.fails.get(rh.cfg.name) ?? 0) + 1; T.fails.set(rh.cfg.name, f); T.due.set(rh.cfg.name, nextDue(now, false, f, FLEET.intervalMs)); }
   }
 }
+// ── the live stream (spec 16): per host with watch: true once it delivered an exact report (its agentglass has fleet watch) ──
+const WF = new Map<string, WatchFeed>();
+const NOTIFIED = new Set<string>(); const TURN_AT = new Map<string, number>();
+export const TURN_SOON_MS = 5000; export const TURN_GAP_MS = 10000;
+// a closed remote turn moved its costs: the host's next snapshot within 5 s, at most one per 10 s
+export function turnDue(due: number, now: number, lastTurn: number): number { const t = Math.max(now + TURN_SOON_MS, lastTurn + TURN_GAP_MS); return Math.min(due, t); }
+// the toast of an alert line and whether it goes to the desktop: critical fire/escalate, once per host|key|rule|at
+export function alertOut(host: string, title: string, a: Obj, seen: Set<string>): { msg: string; notify: boolean } {
+  const msg = host + " · " + (title || str(a["key"])) + ": " + str(a["message"]);
+  const st = str(a["state"]); const k = host + "|" + str(a["key"]) + "|" + str(a["rule"]) + "|" + String(a["at"] ?? "");
+  const crit = str(a["severity"]) === "critical" && (st === "fire" || st === "escalate");
+  if (!crit || seen.has(k)) return { msg, notify: false };
+  seen.add(k); if (seen.size > 5000) seen.clear();
+  return { msg, notify: true };
+}
+function titleOf(rh: RemoteHost, key: string): string { for (const s of rh.rows) if (s.h + ":" + s.id === key) return s.title; return ""; }
+function streams(now: number): boolean {
+  let moved = false;
+  for (const rh of FLEET.hosts) {
+    const c = rh.cfg; const r = rh.report;
+    if (!c.enabled || c.kind !== "ssh" || !c.watch || !r || !r.exact || rh.dupOf) { const w = WF.get(c.name); if (w) { w.stop(); WF.delete(c.name); } continue; }
+    let w = WF.get(c.name);
+    if (!w) { w = watchFeed(c, keyOf(c.name, redactOf(c)), redactOf(c), hostControlPath(c), detachedPid); WF.set(c.name, w); }
+    if (!w.running()) w.start(now);
+    const ev: WatchEv = w.poll(now); const was = liveFresh(rh, now); rh.beatAt = w.beatAt();
+    for (const l of ev.rows) rh.live.set(l.key, l);
+    if (rh.live.size > 5000) rh.live.clear();
+    if (ev.rows.length || was !== liveFresh(rh, now)) { if (overlay(rh, now)) moved = true; }
+    for (const a of ev.alerts) {
+      const o = alertOut(c.name, titleOf(rh, str(a["key"])), a, NOTIFIED);
+      say(o.notify ? "err" : "warn", o.msg);
+      if (o.notify && process.env["AGENTGLASS_NOTIFY"] !== "0") OS.notify("agentglass", c.name + " · " + str(a["rule"]), o.msg);
+    }
+    if (ev.turns.length && !T.busy.get(c.name)) { const lt = TURN_AT.get(c.name) ?? 0; const d = turnDue(T.due.get(c.name) ?? now + FLEET.intervalMs, now, lt); T.due.set(c.name, d); TURN_AT.set(c.name, d); }
+  }
+  return moved;
+}
 H.start.push(init);
 H.onTick.push(tick);
-H.onQuit.push((): void => { for (const rh of FLEET.hosts) rh.feed.stop(); }); // running pulls only: shared ssh masters persist (fleet status --close)
+H.onTick.push((): void => { if (!T.on || T.nossh) return; if (streams(Date.now())) { T.gen++; S.dirty = true; } });
+H.onQuit.push((): void => { for (const rh of FLEET.hosts) rh.feed.stop(); for (const w of WF.values()) w.stop(); }); // running pulls and streams: shared ssh masters persist (fleet status --close)
 
 // ── rows: the host tag before the title ──
 // ≈ after it (local rows: alone) when the session is also on another host: its cost may count twice (spec 7.2)
