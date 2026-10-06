@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
-import { cfgFrom, endpointOf, withPath, expandHeaders, plainOk, safeUrl, tlsOf, tlsUrlErr, logsUrlOf, logHeaders } from "./config.ts";
+import { cfgFrom, endpointOf, withPath, expandHeaders, plainOk, safeUrl, tlsOf, tlsAt, tlsUrlErr, logsUrlOf, logHeaders } from "./config.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + got + " want " + want); } }
@@ -86,6 +86,16 @@ eq("tls group-readable key refused", String(gk.err.indexOf("chmod 600") >= 0 && 
 chmodSync(join(td, "cli.key"), 0o600);
 eq("tls with http refused", String(tlsUrlErr("http://h:4318/v1/traces", ["/a", "", ""]).indexOf("https") >= 0), "true");
 eq("tls with https ok", tlsUrlErr("https://h:4318/v1/traces", ["/a", "", ""]) + tlsUrlErr("http://h:4318", ["", "", ""]), "");
+// tlsAt: TLS for an endpoint. otlp.tls with http:// is refused; the OTEL_* variables (often set for other exporters) do
+// not apply to http:// — ignored with a note, as the OTel SDKs do, never an exit 2 for an existing http export
+const HE = env([["OTEL_EXPORTER_OTLP_CERTIFICATE", join(td, "nope.crt")], ["OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY", join(td, "cli.key")]]);
+const ah = tlsAt(d, HE, "TRACES", "http://localhost:4318/v1/traces");
+eq("tlsAt: env TLS ignored for http", ah.tls.join("|") + " " + ah.err + "|" + String(ah.note.indexOf("OTEL_EXPORTER_OTLP_CERTIFICATE") >= 0 && ah.note.indexOf("OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY") >= 0), "|| |true");
+eq("tlsAt: no note without variables", tlsAt(d, env([]), "TRACES", "http://localhost:4318").note, "");
+eq("tlsAt: config TLS with http refused", String(tlsAt(cfgFrom({ tls: { ca: "~/tls/ca.crt" } }), env([]), "TRACES", "http://h:4318/v1/traces").err.indexOf("https") >= 0), "true");
+eq("tlsAt: https validates the variables", String(tlsAt(d, HE, "TRACES", "https://h:4318/v1/traces").err.indexOf("does not exist") >= 0), "true");
+const as = tlsAt(cfgFrom({ tls: { ca: "~/tls/ca.crt" } }), env([]), "TRACES", "https://h:4318/v1/traces");
+eq("tlsAt: https", as.tls.join("|") + " " + as.err + as.note, join(td, "ca.crt") + "|| ");
 // logs endpoint (spec 2.2)
 eq("logs from /v1/traces", logsUrlOf("https://h:4318/v1/traces", true, d, env([])).url, "https://h:4318/v1/logs");
 const cust = logsUrlOf("https://h/otlp/traces", true, d, env([]));

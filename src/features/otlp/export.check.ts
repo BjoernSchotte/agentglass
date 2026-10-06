@@ -170,6 +170,7 @@ eq("enddate", enddate("notAfter=Jan  2 00:00:00 2020 GMT\n") + " " + enddate("no
   eq("status: logs off", cfgStatus("https://h.example/x", cfgFrom({}), new Map<string, string>(), "2026-10-06").logs, "logs off: set otlp.logsEndpoint for https://h.example/x");
   eq("status: logs disabled", cfgStatus("https://h.example/v1/traces", cfgFrom({ logs: false }), new Map<string, string>(), "2026-10-06").logs, "off (otlp.logs is false)");
   eq("status: tls off", cfgStatus("https://h.example/v1/traces", cfgFrom({}), new Map<string, string>(), "2026-10-06").tls, "off");
+  eq("status: env TLS over http is noted, not an error", cfgStatus("http://localhost:4318/v1/traces", cfgFrom({}), new Map<string, string>([["OTEL_EXPORTER_OTLP_CERTIFICATE", hd + "/ca.crt"]]), "2026-10-06").tls, "off (OTEL_EXPORTER_OTLP_CERTIFICATE ignored: http://localhost:4318/v1/traces is not https)");
   chmodSync(hd + "/c.key", 0o644);
   eq("status: tls error shown", String(cfgStatus("https://h.example/v1/traces", cfgFrom({ tls: { cert: hd + "/c.crt", key: hd + "/c.key" } }), new Map<string, string>(), "2026-10-06").tls.indexOf("chmod 600") >= 0), "true");
   rmSync(hd, { recursive: true, force: true });

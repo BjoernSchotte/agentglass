@@ -24,7 +24,7 @@ import { type XLog, type AlertT, encodeLogs } from "./logs.ts";
 import { type XTurn } from "./types.ts";
 import { newSessB, finish, fxChat } from "./build.ts";
 import { encodeRequest } from "./encode.ts";
-import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl, tlsOf, tlsUrlErr, logsUrlOf, logHeaders, hostOf } from "./config.ts";
+import { type OtlpCfg, loadCfg, envMap, endpointOf, expandHeaders, plainOk, safeUrl, tlsAt, logsUrlOf, logHeaders, hostOf } from "./config.ts";
 import { type ExpState, loadState, saveState, lock, unlock, marked, markTurn, markFx } from "./state.ts";
 import { type Native, detectNative, applyPolicy, projectDirs, emailNote } from "./native.ts";
 import { GZ, sendBatch } from "./send.ts";
@@ -273,8 +273,9 @@ export function enddate(o: string): string {
 export interface CfgStatus { tls: string; tlsCa: string; tlsCert: string; tlsExpires: string; logs: string; logsUrl: string; titles: boolean; detail: string }
 export function cfgStatus(url: string, c: OtlpCfg, env: Map<string, string>, today: string): CfgStatus {
   const r: CfgStatus = { tls: "off", tlsCa: "", tlsCert: "", tlsExpires: "", logs: "", logsUrl: "", titles: c.titles, detail: c.detail };
-  const tx = tlsOf(c, env, "TRACES");
+  const tx = tlsAt(c, env, "TRACES", url || "https:"); // no endpoint: the settings as an https one would use them
   if (tx.err) r.tls = "error: " + tx.err;
+  else if (tx.note) r.tls = "off (" + tx.note + ")";
   else if (tx.tls.some((p: string) => p !== "")) {
     r.tlsCa = tx.tls[0] ?? ""; r.tlsCert = tx.tls[1] ?? "";
     r.tlsExpires = r.tlsCert ? certEnd(r.tlsCert) : "";
@@ -282,7 +283,6 @@ export function cfgStatus(url: string, c: OtlpCfg, env: Map<string, string>, tod
     parts.push(r.tlsCa ? "ca " + r.tlsCa : "ca: the system's");
     if (r.tlsCert) parts.push("client certificate " + r.tlsCert + (r.tlsExpires ? " (expires " + r.tlsExpires + (r.tlsExpires < today ? " — EXPIRED" : "") + ")" : ""));
     r.tls = parts.join(" · ");
-    const ue = url ? tlsUrlErr(url, tx.tls) : ""; if (ue) r.tls += " — " + ue;
   }
   if (!c.logs) r.logs = "off (otlp.logs is false)";
   else if (!url) r.logs = "(no endpoint)";
@@ -331,8 +331,8 @@ export function runExport(o: ExOpts, c: OtlpCfg): number {
   const hx = expandHeaders(c, envMap());
   if (hx.err) { fail("usage", hx.err); return 2; }
   const pe = plainOk(o.url, c, hx.headers.length > 0); if (pe) { fail("usage", pe); return 2; }
-  const tx = tlsOf(c, envMap(), "TRACES"); if (tx.err) { fail("usage", tx.err); return 2; }
-  const te = tlsUrlErr(o.url, tx.tls); if (te) { fail("usage", te); return 2; }
+  const tx = tlsAt(c, envMap(), "TRACES", o.url); if (tx.err) { fail("usage", tx.err); return 2; }
+  if (tx.note) err("otlp: " + tx.note);
   const held = lock(o.url);
   if (held !== 0) { fail("busy", "another export to " + safeUrl(o.url) + " is running, pid " + String(held)); return 3; }
   try {
@@ -401,18 +401,18 @@ function liveExport(args: string[]): number {
   if (!curlBin()) { fail("usage", "export needs curl (AGENTGLASS_CURL)"); return 2; }
   const hx = expandHeaders(c, envMap()); if (hx.err) { fail("usage", hx.err); return 2; }
   const pe = plainOk(url, c, hx.headers.length > 0); if (pe) { fail("usage", pe); return 2; }
-  const tx = tlsOf(c, env, "TRACES"); if (tx.err) { fail("usage", tx.err); return 2; }
-  const te = tlsUrlErr(url, tx.tls); if (te) { fail("usage", te); return 2; }
+  const tx = tlsAt(c, env, "TRACES", url); if (tx.err) { fail("usage", tx.err); return 2; }
+  if (tx.note) err("otlp: " + tx.note);
   // the logs stream (otlp-complete 2.2): derived endpoint, its own headers and TLS variables, same checks as spans
   if (noLogs) c.logs = false;
   const lu = logsUrlOf(url, !!(flag && !flag.startsWith("--")) || !!c.endpoint, c, env);
-  let lhx: { headers: string[][]; err: string } = { headers: [], err: "" }; let ltx: { tls: string[]; err: string } = { tls: ["", "", ""], err: "" };
+  let lhx: { headers: string[][]; err: string } = { headers: [], err: "" }; let ltx: { tls: string[]; err: string; note: string } = { tls: ["", "", ""], err: "", note: "" };
   if (lu.url) {
     const le = urlErr(lu.url); if (le) { fail("usage", "otlp.logsEndpoint: " + le.replace(/^--otlp /, "")); return 2; }
     lhx = logHeaders(c, env); if (lhx.err) { fail("usage", lhx.err); return 2; }
     const lp = plainOk(lu.url, c, lhx.headers.length > 0); if (lp) { fail("usage", lp); return 2; }
-    ltx = tlsOf(c, env, "LOGS"); if (ltx.err) { fail("usage", ltx.err); return 2; }
-    const lt = tlsUrlErr(lu.url, ltx.tls); if (lt) { fail("usage", lt); return 2; }
+    ltx = tlsAt(c, env, "LOGS", lu.url); if (ltx.err) { fail("usage", ltx.err); return 2; }
+    if (ltx.note.indexOf("_LOGS_") >= 0) err("otlp: " + ltx.note); // the generic variables: noted once above
   } else if (lu.why) err("otlp: " + lu.why);
   const held = lock(url); if (held !== 0) { fail("busy", "another export to " + safeUrl(url) + " is running, pid " + String(held)); return 3; }
   const st = loadState(url); if (st.warn) err(st.warn);
@@ -443,10 +443,11 @@ function liveExport(args: string[]): number {
   };
   const send = sendWith(c.timeoutS);
   // logs: best effort, one request per flush (gzip as spans); 404/405 = this receiver takes no logs; a TLS failure halts
-  let logTimeout = c.timeoutS; let logFailed = false;
+  let logTimeout = c.timeoutS; let logFailed = false; let logGz = true; // logGz: the logs endpoint took gzip (or was not asked yet)
   L.sendLogs = (ls: XLog[]): boolean => {
     if (!ls.length) return true;
-    const r = sendBatch({ url: lu.url, headers: lhx.headers, timeoutS: logTimeout, gzip: gz && !GZ.off, live: true, tls: ltx.tls }, encodeLogs(ls, c), realSleep);
+    const r = sendBatch({ url: lu.url, headers: lhx.headers, timeoutS: logTimeout, gzip: gz && logGz && !GZ.off, live: true, tls: ltx.tls }, encodeLogs(ls, c), realSleep);
+    if (r.gzipRefused) { logGz = false; err("otlp: " + safeUrl(lu.url) + " refused gzip: sending the logs uncompressed"); } // else every flush posts twice
     if (r.ok) { if (logFailed) { logFailed = false; err("otlp: logs reach " + safeUrl(lu.url) + " again"); } return true; }
     if (r.status === 404 || r.status === 405) { L.logs = false; err("otlp: " + hostOf(lu.url) + " takes no OTLP logs: the stream is off (HTTP " + String(r.status) + "); spans continue"); return false; }
     if (r.final) { L.halt = r.msg; err("otlp: " + r.msg + " — sending stopped for this run; the turns stay unsent and `agentglass export` sends them once it is fixed"); return false; }

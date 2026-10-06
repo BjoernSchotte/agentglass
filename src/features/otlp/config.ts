@@ -174,6 +174,16 @@ export function tlsOf(c: OtlpCfg, env: Map<string, string>, signal: string): { t
   }
   return { tls, err: "" };
 }
+// TLS for one endpoint: tlsOf over https; over http:// otlp.tls is refused (tlsUrlErr) while the OTEL_* variables do not
+// apply (the OTel SDKs ignore them for insecure endpoints, and they are often set for other exporters): a note, no exit 2
+export function tlsAt(c: OtlpCfg, env: Map<string, string>, signal: string, url: string): { tls: string[]; err: string; note: string } {
+  if (!/^http:/i.test(url.trim())) { const r = tlsOf(c, env, signal); return { tls: r.tls, err: r.err, note: "" }; }
+  const none = ["", "", ""];
+  if (c.tls.some((p: string) => p !== "")) return { tls: none, err: tlsUrlErr(url, c.tls), note: "" };
+  const set: string[] = [];
+  for (const x of TLS_VARS) for (const v of ["OTEL_EXPORTER_OTLP_" + signal + "_" + x, "OTEL_EXPORTER_OTLP_" + x]) if ((env.get(v) ?? "").trim()) set.push(v);
+  return { tls: none, err: "", note: set.length ? set.join(", ") + " ignored: " + safeUrl(url) + " is not https" : "" };
+}
 export function tlsUrlErr(url: string, tls: string[]): string { return tls.some((p: string) => p !== "") && /^http:/i.test(url) ? "otlp.tls needs an https endpoint (got " + safeUrl(url) + ")" : ""; }
 
 // ── the logs endpoint (otlp-complete 2.2) ──
