@@ -36,7 +36,7 @@ jobs:
         with: { pattern: "agentglass-*", path: out, merge-multiple: true }
       - name: checksums + metadata
         run: sh scripts/release-assets.sh out stable "$TAG" "$VERSION" "$SHA" && sh scripts/verify-release-assets.sh out
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with: { subject-path: "out/agentglass-*.tar.gz" }
       - name: upload into the draft, publish when every asset is there (a published release is never touched)
         run: |
