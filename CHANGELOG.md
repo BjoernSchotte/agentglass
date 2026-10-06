@@ -2,6 +2,30 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.5
+
+### Features
+
+- model prices — editor, aliases, gateway prices, in-place re-pricing (#58) (e5b02e7, [#58](https://github.com/BjoernSchotte/agentglass/pull/58))
+
+### Fixes
+
+- **release:** a docs-only HEAD releases on the last CI run before it (#64) (84768b3, [#64](https://github.com/BjoernSchotte/agentglass/pull/64))
+- Gemini links only to a session begun after its start; new sessions get their process in the same turn (#62) (aa1985d, [#62](https://github.com/BjoernSchotte/agentglass/pull/62))
+- Claude twin dirs attribute to the cwd's project, header ●N live count, age filters re-match per time step (#56) (9e960eb, [#56](https://github.com/BjoernSchotte/agentglass/pull/56))
+
+### Performance
+
+- a pinned call filter re-checks only moved sessions; cold indexing keeps the whole process ≤ 20 % (#63) (63d1544, [#63](https://github.com/BjoernSchotte/agentglass/pull/63))
+- /proc process scan, incremental git attribution, change-only scan/view/labels, row-wise frames (tui-footprint T3–T6) (#59) (d00257f, [#59](https://github.com/BjoernSchotte/agentglass/pull/59))
+- streamed ledger cache, change-only ledger tick + indexing gauge, lazy columnar call rows (tui-footprint T0–T2, T7, T8) (#60) (212bb1e, [#60](https://github.com/BjoernSchotte/agentglass/pull/60))
+
+### Docs
+
+- **perf:** tui-footprint results (T9) (#61) (b1dff88, [#61](https://github.com/BjoernSchotte/agentglass/pull/61))
+- **specs:** tui-footprint — TUI memory and CPU (#57) (0e610f3, [#57](https://github.com/BjoernSchotte/agentglass/pull/57))
+- **specs:** model-prices — price editor, aliases, gateway prices, in-place re-pricing (#55) (1e47255, [#55](https://github.com/BjoernSchotte/agentglass/pull/55))
+
 ## 2026.10.4
 
 ### Fixes
