@@ -8,7 +8,7 @@
 # written); --config copies a config.json in (e.g. a pinned filter); --debug sets AGENTGLASS_DEBUG_REFRESH=1 and prints
 # the pane's last row (the debug footer) as `debug <text>`; --away reports a focus-out to the TUI after its first frame
 # (the terminal's focus event: nobody looks); --home runs it on a fixture HOME (scripts/fixture-agents.sh). Linux (/proc)
-# and macOS (ps -S: self plus its waited-for children). Kills only its own tmux session.
+# and macOS (proc_pid_rusage through scripts/proc-cpu.c: self plus its waited-for children). Kills only its own tmux session.
 set -e
 export LC_ALL=C # decimal points in awk/sleep whatever the locale
 os=$(uname -s); [ "$os" = Linux ] || [ "$os" = Darwin ] || { echo "footprint.sh: Linux or macOS only"; exit 2; }

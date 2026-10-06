@@ -55,7 +55,8 @@ if [ "${1:-}" = --job ]; then
     release) # the release build (-O2, as shipped) and a smoke test of it
          { scriptc build $RELEASE_FLAGS $CHECK_FFI src/main.ts -o "$CHECK_RELEASE_OUT" && h="$CHECK_OUT/release.home" && mkdir -p "$h" &&
            HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_STATE_HOME="$h/.local/state" XDG_CACHE_HOME="$h/.cache" sh -c \
-             '"$1" --version && "$1" --version --json && "$1" --json --limit 1 >/dev/null && echo "release build: smoke test ok"' _ "$CHECK_RELEASE_OUT"
+             '"$1" --version && "$1" --version --json && "$1" --json --limit 1 >/dev/null && echo "release build: smoke test ok"' _ "$CHECK_RELEASE_OUT" &&
+           { [ -z "$CHECK_FFI" ] || { nm -u "$CHECK_RELEASE_OUT" | grep -q '_proc_listallpids' && echo "release build: libproc bound"; }; }
          } >"$log" 2>&1 || rc=$? ;;
     check:*) f=${job#check:} # scriptc keys its cache on the output path: keep it stable. One directory per check: scriptc
          d="$PWD/.scriptc/check/$id"; mkdir -p "$d" # writes <source basename>.ll beside it, and basenames repeat
