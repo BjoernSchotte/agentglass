@@ -27,11 +27,14 @@ export function filterKeysHelp(): string {
   out.push(line);
   return out.join("\n");
 }
-export interface CliFilter { f: Compiled; cheap: Compiled; ended: Compiled /* cheap clauses but live: an exit event's session */; needsLedger: boolean; needsHead: boolean; content: boolean }
+export interface CliFilter { f: Compiled; cheap: Compiled; ended: Compiled /* cheap clauses but live: an exit event's session */; fixed: Compiled /* clauses a session's log never changes */; needsLedger: boolean; needsHead: boolean; content: boolean }
 // keys whose values need no ledger and no transcript: they pick the candidates before complete(s) runs
 // (cwd, branch, title and agent come from a transcript's head for some harnesses: loaded first when a clause names them)
 const CHEAP = ["harness", "id", "subagent", "live", "archived"];
 const HEAD = ["repo", "worktree", "project.kind", "cwd", "branch", "agent", "title", "text"];
+const FIXED = ["harness", "id", "subagent"]; // what a session's log never changes (judged out on these: never read)
+// the clauses of cs on FIXED keys: a session failing them never enters the filter, whatever its log says next
+export function fixedOf(cs: Clause[]): Compiled { const o: Clause[] = []; for (const c of cs) if (FIXED.indexOf(c.key) >= 0) o.push(c); return compile(o, "json").f ?? EMPTY; }
 // --filter values (merged with the same-scope rules), --harness / --live sugar, --pinned; a bad expression exits 2 with a caret
 export function cliFilter(exprs: string[], harness: string, live: boolean, pinned: boolean, watch: boolean): CliFilter {
   let cs: Clause[] = [];
@@ -52,7 +55,7 @@ export function cliFilter(exprs: string[], harness: string, live: boolean, pinne
   }
   const cheap = compile(ch, ctx).f ?? EMPTY;
   const nl: Clause[] = []; for (const c of ch) if (c.key !== "live") nl.push(c);
-  return { f: r.f ?? EMPTY, cheap, ended: compile(nl, ctx).f ?? EMPTY, needsLedger: ledgerKeys, needsHead: head, content: (r.f ?? EMPTY).content.length > 0 };
+  return { f: r.f ?? EMPTY, cheap, ended: compile(nl, ctx).f ?? EMPTY, fixed: fixedOf(cs), needsLedger: ledgerKeys, needsHead: head, content: (r.f ?? EMPTY).content.length > 0 };
 }
 // can the filter judge this session yet? Clauses on what a transcript's head holds (cwd, branch, title, repo…, and every
 // ledger key: their sessions are matched by project too) need the head read and a cwd in it (a subagent: its parent's),
@@ -104,6 +107,9 @@ export function cliWatchSession(cf: CliFilter, s: Sess): boolean {
   lastCheck.set(s.path, { at: Date.now(), ok });
   return ok;
 }
+// --watch: a session the filter judged out that its log may still bring in (an agent's log follows it to another cwd; a
+// ledger clause's number grows): it is read, so its fields stay current, and what it writes meanwhile is not printed
+export function cliWatchTrack(cf: CliFilter, s: Sess): boolean { return cf.needsHead && sessMatches(cf.fixed, s) && judgeable(cf.f.cs, s); }
 // --watch: an agent process went away — its session is not live any more, the other cheap clauses still apply
 export function cliWatchExit(cf: CliFilter, s: Sess): boolean { return (!cf.needsHead || judgeable(cf.f.cs, s)) && sessMatches(cf.ended, s) && cliWatchEvent(cf, s, "exit", "", ""); }
 // --watch: one event (kind, tool name, call arguments) against the event and call clauses

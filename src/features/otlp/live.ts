@@ -3,7 +3,7 @@
 // The transcripts are the spool: the queue is bounded, a dropped or unsent turn is not marked, so the next `export`
 // sends it from the transcripts. No second copy on disk.
 import type { Sess } from "../../model/types.ts";
-import { sessions } from "../../model/sessions.ts";
+import { sessions, loadTail } from "../../model/sessions.ts";
 import { approvalOf } from "../watchdog.ts";
 import { type SState, sessState, sameState } from "../../model/state.ts";
 import { type SessB, newSessB, advance, syncSubs, openCall, busyOf, repoKeyOf } from "./build.ts";
@@ -12,6 +12,7 @@ import { type OtlpCfg, cfgFrom } from "./config.ts";
 import { type XLog, type AlertT, heartbeat, stateLog, turnOpenLog, alertLog, HEARTBEAT_S } from "./logs.ts";
 
 export const QUIET_LIVE = 120000; // a turn without a close marker counts as finished after 2 quiet minutes
+const OUT_RECHECK = 2000; // a session judged out: how often its tail is read again to see whether it came in
 const FLUSH_MS = 5000; const FLUSH_SPANS = 512; const MAX_SPANS = 10000; const BACKOFF_MAX = 300000;
 const MAX_LOGS = 2000; const STATE_REPEAT = 300000; // logs stream (otlp-complete 2.6, 2.3)
 export interface PendAlert { s: Sess; a: AlertT }
@@ -34,6 +35,8 @@ export interface Live {
   lastBeat: number; st: Map<string, SState>; stAt: Map<string, number>; // last state per session path and when it was sent
   opened: Set<string>; // open turns announced (path + key); a closed turn leaves it
   away: Set<string>; // open turns (path + key) seen while their session was outside --filter: never sent
+  track: (s: Sess) => boolean; // not wanted now but may be later (--filter judged it out, not merely unknown): followed
+  outAt: Map<string, number>; // sessions judged out before they had a builder: the last such poll (their turns from before are never sent)
   pend: PendAlert[]; // rules transitions from the --watch loop (Sink.alert), queued on the next tick
   sendLogs: (logs: XLog[]) => boolean; // false = failed (backoff); it may switch L.logs off (404/405) or set L.halt
   busyRule: (b: SessB) => boolean; // the builder's busy rule (a stub in checks)
@@ -42,7 +45,7 @@ export function newLive(since: number): Live {
   return { b: new Map<string, SessB>(), q: [], qSpans: 0, lastFlush: 0, dropped: false, fails: 0, retryAt: 0, appr: new Map<string, string>(), apprAt: new Map<string, number>(), late: new Map<string, number[]>(), since, content: false, subagents: true, ticks: 0, running: new Set<string>(),
     want: (s: Sess) => !!s, skip: (t: XTurn) => !t, approval: approvalOf, warn: (m: string) => { process.stderr.write("agentglass: " + m + "\n"); }, sent: 0, lastOk: 0, halt: "",
     logs: false, cfg: cfgFrom({}), lq: [], lqDropped: false, lastLogFlush: 0, logFails: 0, logRetryAt: 0, resendState: false, lastBeat: 0, st: new Map<string, SState>(), stAt: new Map<string, number>(),
-    opened: new Set<string>(), away: new Set<string>(), pend: [], sendLogs: (ls: XLog[]) => ls.length >= 0, busyRule: busyOf };
+    opened: new Set<string>(), away: new Set<string>(), track: (s: Sess) => !s, outAt: new Map<string, number>(), pend: [], sendLogs: (ls: XLog[]) => ls.length >= 0, busyRule: busyOf };
 }
 // over MAX_SPANS: the oldest whole turns go (unmarked, so a later export resends them)
 export function enqueue(L: Live, t: XTurn): void {
@@ -151,9 +154,18 @@ export function liveTick(L: Live, now: number, send: (turns: XTurn[]) => boolean
     let b = L.b.get(s.path);
     if (!b) { // with the logs stream a session whose agent starts later is read too: its state is "now"
       const maybeRunning = (first && (s.pid > 0 || now - s.mtime < QUIET_LIVE)) || (L.logs && s.pid > 0);
-      if ((s.mtime < L.since && !maybeRunning) || !L.want(s)) continue;
+      if (s.mtime < L.since && !maybeRunning) continue;
+      if (!L.want(s)) {
+        // judged out (not merely unknown yet): its log's newest cwd is followed through the tail (every 2 s; a builder
+        // would read its whole history) — the agent may move in; what it did until then is never sent
+        if (!L.track(s)) continue;
+        const oa = L.outAt.get(s.path); if (oa !== undefined && now - oa < OUT_RECHECK) continue;
+        loadTail(s);
+        if (!L.want(s)) { L.outAt.set(s.path, now); continue; }
+      }
       b = newSessB(s, L.subagents ? s.subs : []); L.b.set(s.path, b);
     } else if (L.subagents) syncSubs(b, s.subs);
+    const outAt = L.outAt.get(s.path) ?? -1; L.outAt.delete(s.path); // it just came in: turns begun by its last poll outside stay out
     const appr = approvals(L, s, b, now);
     const ts = advance(b, { now, quietMs: QUIET_LIVE, content: L.content, subagents: L.subagents });
     // the filter is judged again on what this read brought (an agent's log follows it to another cwd): nothing of a
@@ -162,10 +174,11 @@ export function liveTick(L: Live, now: number, send: (turns: XTurn[]) => boolean
     const ok = L.want(s);
     for (const t of ts) {
       const k = t.path + "\u0000" + t.key; const was = L.running.delete(k); L.opened.delete(k); const away = L.away.delete(k);
-      if (!ok || away || (t.t0 < L.since && !was) || L.skip(t)) continue;
+      if (!ok || away || t.t0 <= outAt || (t.t0 < L.since && !was) || L.skip(t)) continue;
       enqueue(L, t);
     }
     const op = b.open; if (first && op) L.running.add(op.path + "\u0000" + op.key);
+    if (op && op.t0 <= outAt) L.away.add(op.path + "\u0000" + op.key);
     if (!ok) { if (op) L.away.add(op.path + "\u0000" + op.key); L.st.delete(s.path); L.stAt.delete(s.path); continue; } // the heartbeat counts the sessions inside only
     if (L.logs) logSession(L, s, b, appr, now);
   }

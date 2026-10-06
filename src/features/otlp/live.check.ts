@@ -1,7 +1,7 @@
 // agentglass — self-check for the live OTLP sink (queue, flush, late events, overflow, retries, approval waits):
 // scriptc build src/features/otlp/live.check.ts -o lc && ./lc
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, statSync } from "node:fs";
 import { type Sess, newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { realCwd } from "../../hooks.ts";
@@ -154,7 +154,7 @@ eq("approval wait recorded", call ? call.attrs.map((a) => a.k + "=" + String(a.n
   writeFileSync(pm, lines.slice(0, 9).map((l: string) => at(l, "/w/in")).join("\n") + "\n"); // turn 1 open, inside
   const sm: Sess = newSess("claude", "move", pm, false); sm.pid = 4260; sessions.set(pm, sm);
   let t = Date.parse("2026-09-01T10:01:00.000Z"); sm.mtime = t - 1000;
-  const LM = newLive(0); LM.logs = true; LM.want = (x: Sess) => realCwd(x).startsWith("/w/in"); // the real one: the suite runs with --redact LM.warn = (m: string) => { warns.push(m); };
+  const LM = newLive(0); LM.logs = true; LM.want = (x: Sess) => realCwd(x).startsWith("/w/in"); LM.warn = (m: string) => { warns.push(m); }; // the real cwd: the suite runs with --redact
   LM.busyRule = (x) => !!x; LM.approval = (x: Sess) => x ? "" : "";
   const logs: XLog[] = []; LM.sendLogs = (ls: XLog[]): boolean => { for (const l of ls) logs.push(l); return true; };
   const spans: string[] = []; const sendM = (ts: XTurn[]): boolean => { for (const x of ts) spans.push(x.key + "@" + x.cwd); return true; };
@@ -173,6 +173,28 @@ eq("approval wait recorded", call ? call.attrs.map((a) => a.k + "=" + String(a.n
   eq("filter: back inside — state again", String(logs.slice(n1).filter((l: XLog) => l.name === "agentglass.session.state").length) + " " + String(outs(n1)), "1 0");
   eq("filter: back inside — the turn opened outside is not sent", spans.join(","), "");
   sessions.delete(pm);
+}
+// judged out at first sight, then its agent moves in: it is followed while outside (track: its tail, not a builder), so
+// the move is seen; what it did outside (a turn closed there, the turn open while it moved) is never sent, its first turn
+// inside is
+{
+  const pb = dir + "/back-" + CID + ".jsonl"; const at = (l: string, cwd: string): string => l.split("/home/u/proj").join(cwd);
+  writeFileSync(pb, lines.slice(0, 13).map((l: string) => at(l, "/w/out")).join("\n") + "\n"); // turn 1 closed, turn 2 open: outside
+  const sb: Sess = newSess("claude", "back", pb, false); sb.pid = 4261; sessions.set(pb, sb);
+  let t = Date.parse("2026-09-01T10:06:00.000Z"); sb.mtime = t - 1000;
+  const LB = newLive(0); LB.logs = true; LB.warn = (m: string) => { warns.push(m); };
+  LB.want = (x: Sess) => realCwd(x).startsWith("/w/in"); LB.track = (x: Sess) => realCwd(x) !== "";
+  const logs: XLog[] = []; LB.sendLogs = (ls: XLog[]): boolean => { for (const l of ls) logs.push(l); return true; };
+  const spans: string[] = []; const sendB = (ts: XTurn[]): boolean => { for (const x of ts) spans.push(x.key); return true; };
+  sb.cwd = "/w/out"; sb.size = statSync(pb).size; liveTick(LB, t, sendB);
+  eq("track: outside — followed by its tail, no builder", String(LB.b.has(pb)) + " " + String(LB.outAt.get(pb) === t), "false true");
+  eq("track: outside at first sight — nothing sent", spans.join(",") + "|" + logs.filter((l: XLog) => l.name !== "agentglass.heartbeat").length, "|0");
+  const inside = at(lines[0] ?? "", "/w/in").split("2026-09-01T10:00:00.000Z").join("2026-09-01T10:10:00.000Z").split("fix the build").join("inside now").split("\"uuid\":\"").join("\"uuid\":\"in-");
+  appendFileSync(pb, inside + "\n"); t = Date.parse("2026-09-01T10:10:06.000Z"); sb.mtime = t; sb.size = statSync(pb).size; liveTick(LB, t, sendB); // closes turn 2, opens turn 3 inside
+  eq("track: moved in — state, not the turns from outside", spans.join(",") + "|" + logs.filter((l: XLog) => l.name === "agentglass.session.state").length, "|1");
+  t += 130000; liveTick(LB, t, sendB);
+  eq("track: its first turn inside is sent", spans.join(","), "2026-09-01T10:10:00.000Z#0");
+  sessions.delete(pb);
 }
 
 // late events: turn 2 closes by quiet time (2 min); a later result opens a continuation turn, turn 2 is not sent again

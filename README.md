@@ -887,17 +887,19 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
   retry them), 2 usage error, 3 another export to the same endpoint is running.
 - **`--filter` is judged on what is known:** a session is selected only once its log shows the values the filter asks
   about (a clause on cwd, branch, title, repo and the like waits for a cwd in the log), so a negated clause
-  (`not cwd ~ /work/client`) never lets an unread session through. `--watch --otlp` (and `--watch` JSONL) judge it
-  again on every poll, after reading what the session wrote: a session whose log moves outside the filter (an agent
-  that changed directory) sends nothing more, not even the turn that was open while it left. Pins from the TUI never
-  apply to an export (`--watch --otlp --pinned` is refused).
+  (`not cwd ~ /work/client`) never lets an unread session through. A one-shot `export` judges each session as a whole,
+  as its log stands. `--watch --otlp` and `--watch` JSONL judge it again on every poll, after reading what it wrote,
+  and keep reading the sessions outside the filter: one whose agent leaves the filter's directory sends nothing more
+  (not even the turn that was open when it left); one that enters it sends from then on, never what it did outside.
+  `--pinned` adds the TUI's pins to the filter; a pin an export cannot apply (a call clause) is refused.
 
-> **2026.10.6 and earlier:** `--watch --otlp --filter` judged a session once, when it first saw it, so a session that
-> passed then (its log had no cwd yet, or the agent was inside the filter's directory for a while) kept streaming its
-> turns and its `agentglass.session.state` records (cwd, branch, git remote, `agentglass.repo.key`) after it no longer
-> matched; `export --filter` with a negated clause also took sessions whose log had not been read yet. If you used
-> `--filter` to keep projects out of a backend, check it for sessions outside the filter and delete that data (or
-> rotate the backend's storage).
+> **Privacy note, 2026.10.6 and earlier.** Affected: `--filter` or `--pinned` with `--watch --otlp` or `--watch` JSONL,
+> and `--filter` with `export --otlp`. Sessions outside the filter could reach the backend or the output: `--watch --otlp` judged a session once, when it first saw it, so one that passed then (no cwd in its log
+> yet, or its agent inside the filter's directory for a while) kept sending its turns and its
+> `agentglass.session.state` records (cwd, branch, git remote, `agentglass.repo.key`); `--pinned` was not applied to
+> the export at all; `export --filter` with a negated clause took sessions whose log was not read yet. If you used a
+> filter or pins to keep projects out of a backend, search it for those projects' sessions and delete that data, or
+> rotate the backend's storage.
 - **No duplicates:** span and trace ids are deterministic (SHA-256 of the session and turn, scheme `v1`), and a state
   file per endpoint (`~/.agentglass/otlp/`, mode 0600; `AGENTGLASS_OTLP_DIR` moves it) marks every turn the backend
   accepted. `--resend` sends again with the same ids: Jaeger keeps one copy; Grafana Tempo was seen storing both
