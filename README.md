@@ -873,7 +873,7 @@ it they print what they have and name the failed hosts on stderr.
 **Live within seconds.** For each exact host the viewer keeps one more channel over the shared connection:
 `agentglass fleet watch` sends session state (running, mid-turn, needs attention, waiting for approval, stuck),
 alert transitions, turn ends and a beat every 30 s — no prompts, tool calls or output. Remote rows then show running
-and waiting within about a second; a remote `critical` alert also goes to the desktop (`AGENTGLASS_NOTIFY=0` turns that
+and waiting within a few seconds (the host looks every 3 s: about 1 % of a core on a busy host); a remote `critical` alert also goes to the desktop (`AGENTGLASS_NOTIFY=0` turns that
 off, as for local ones); a finished turn pulls the host's next snapshot within 5 s. Without a beat for 90 s the host's
 rows fall back to its last snapshot. `"watch": false` per host turns it off.
 

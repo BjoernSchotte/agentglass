@@ -59,6 +59,7 @@ export function watchCli(args: string[]): void {
   emit(JSON.stringify({ hello: { format: FORMAT, version: BUILD.version, hostId: hostId(), hostName: REDACT ? "" : hostName(), os: process.platform, tzOffsetMin: -new Date(now0).getTimezoneOffset(), redact: REDACT, days: 0, now: now0, priceSig: pricesSig() } }));
   const w = newWState(); let last = 0;
   const o = opts(["--watch"]); o.forMs = 0; o.idle = false; o.jsonl = false; o.alerts = true;
+  o.every = [20, 6, 20]; // new session files and process facts every 10 s, processes and rules every 3 s: ≤ 1 % of a core on a host with 39 live sessions (spec 16.4; measured 1.7 % at the --watch cadence)
   watch(o, {
     tick: (t: number): void => {
       if (t - last < 1000) return; // the loop polls every 500 ms; state once a second is enough for a viewer
