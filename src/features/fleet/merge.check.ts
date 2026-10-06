@@ -135,5 +135,34 @@ const za = shadowOf(tz, 120);
 ok("shadow re-bucketed", za.days.has("2026-09-02") && !za.days.has("2026-09-01") && Math.abs((za.days.get("2026-09-02")?.hc[1] ?? 0) - 0.5) < 1e-12, JSON.stringify([...za.days.keys()]));
 ok("half-hour zone rounds", shiftDH("2026-09-01", 10, 330).h === 16 || shiftDH("2026-09-01", 10, 330).h === 15, String(shiftDH("2026-09-01", 10, 330).h));
 
+// 7. three hosts and this machine, 60 messages, each copied 1–4 times across them at random times (copies are common:
+// 235 k distinct ids in 423 k occurrences on one real machine): the merged totals equal one machine reading every log
+let seed = 42; function rnd(n: number): number { seed = (seed * 48271) % 2147483647; return Math.floor(seed / 7) % n; } // Park–Miller: exact in doubles
+for (const sd of [42, 7, 1234]) {
+  seed = sd;
+  const owners = ["l", "a", "b", "c"]; const logs = new Map<string, string[]>();
+  for (const o of owners) for (let j = 0; j < 2; j++) logs.set(o + String(j), []);
+  const base = Date.parse("2026-09-10T08:00:00.000Z");
+  for (let i = 0; i < 60; i++) {
+    const n = 1 + rnd(4); const used = new Set<string>();
+    for (let c = 0; c < n; c++) {
+      const lg = owners[rnd(4)] + String(rnd(2)); if (used.has(lg)) continue; used.add(lg);
+      const ts = new Date(base + (i * 37 + rnd(5) * 3600) * 60000).toISOString(); // copies on other hours and days
+      (logs.get(lg) ?? []).push(asst("r" + String(i), ts, 10 + i, 1 + rnd(50), 100 * rnd(30), rnd(3) * 50));
+    }
+  }
+  const paths = new Map<string, string>(); for (const [k, ls] of logs) if (ls.length) paths.set(k, put("rand-" + k, ls));
+  const of2 = (o: string): string[] => { const r: string[] = []; for (const [k, p] of paths) if (k.charAt(0) === o) r.push(p); return r; };
+  const wantR = truth([...paths.values()]);
+  const hA = hostOf("a", "aaaaaaaaaaaaaaaa", of2("a")); const hB = hostOf("b", "bbbbbbbbbbbbbbbb", of2("b")); const hC = hostOf("c", "cccccccccccccccc", of2("c"));
+  r = fleet(localOf(of2("l")), [hA, hB, hC], false);
+  ok("seed " + String(sd) + ": random copies on 3 hosts + here: totals equal the truth", same(r.t, wantR), show(r.t) + " want " + show(wantR));
+  let nOcc = 0; for (const ls of logs.values()) nOcc += ls.length;
+  ok("random copies: something was removed", r.x.removed + r.x.corrected > 0, String(r.x.removed) + "/" + String(r.x.corrected) + " occurrences " + String(nOcc) + " logs " + String(paths.size));
+  // the hosts in another order: the same totals
+  r = fleet(localOf(of2("l")), [hC, hA, hB], false);
+  ok("host order does not matter", same(r.t, wantR), show(r.t));
+}
+
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("fleet merge: all checks passed");
