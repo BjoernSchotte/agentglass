@@ -801,9 +801,10 @@ host's own agentglass answers over SSH with its sessions, cost and live state. N
   "hosts": [
     {"name": "ws",  "ssh": "me@workstation"},
     {"name": "vm1", "ssh": "vm1", "agentglass": "~/.local/bin/agentglass", "redact": true},
-    {"name": "old", "ssh": "old-laptop", "enabled": false}
+    {"name": "old", "ssh": "old-laptop", "enabled": false},
+    {"name": "nas", "dir": "~/Sync/agentglass/nas"}
   ],
-  "localName": "local", "refreshSeconds": 60, "days": 7, "timeoutSeconds": 90
+  "localName": "local", "refreshSeconds": 60, "days": 7, "timeoutSeconds": 90, "reprice": true
 }}
 ```
 
@@ -817,6 +818,8 @@ In `~/.agentglass/config.json`. A host entry is the opt-in: without one nothing 
   prompt or ssh-agent. One shared connection per host (ControlMaster, 10 minutes) makes a refresh cost about a second of
   the remote agentglass.
 - **`agentglass`**: the binary on the host (default: `agentglass` on its `PATH`; `~/` is the host's home).
+- **`snapshot`** (default `true`): the host answers with exact, incremental snapshots (below); `false`, or an older
+  agentglass there, falls back to the plain report. **`watch`** (default `true`): the live stream (below).
 - **What moves**: the `--json` session fields (titles, cwd, branch, git remote without credentials, model, counts, cost,
   alerts) and the `cost --json` figures. No prompts beyond the title, no tool arguments or output, no file contents.
 - **What stays**: the reports are cached in `~/.agentglass/fleet` (0700) so an offline host shows its last report with
@@ -829,8 +832,8 @@ agentglass fleet authorize ~/agentglass-viewer.pub --from 100.64.0.0/10   # prin
 # restrict,from="100.64.0.0/10",command="/home/me/.local/bin/agentglass fleet serve" ssh-ed25519 AAAA… agentglass-viewer@laptop
 ```
 
-`restrict` turns off the shell, PTY, port, agent and X11 forwarding; `fleet serve` runs only `fleet pull` and
-`--version` from the requested command and refuses everything else (exit 126). `--redact` there makes the host
+`restrict` turns off the shell, PTY, port, agent and X11 forwarding; `fleet serve` runs only `fleet pull`,
+`fleet snapshot`, `fleet watch` and `--version` from the requested command and refuses everything else (exit 126). `--redact` there makes the host
 answer redacted whatever the viewer asks. agentglass never edits `authorized_keys` or `~/.ssh`.
 
 **In the TUI** remote rows carry a host tag (`ws`), sort with the local ones (live first) and filter with
@@ -852,11 +855,52 @@ agentglass open claude:5f1e…@ws  # a host's session: prints ssh -t me@workstat
 The `ssh -t … agentglass open …` command needs a login that may run agentglass interactively: the restricted viewer key
 above refuses it (exit 126), so it is meant for your usual key or login.
 
-**Limits of this version.** Each host prices with its own table and counts days in its own time zone (`fleet status`
-names a zone that differs). The same session read on two hosts (a shared directory, a copied history) is counted on
-both: its cost and the totals show `≈` and `fleet cost` reports it as `overlap`. A copied Claude history under a new
-session id is not detected. `fleet` and `fleet cost` exit 5 with `--strict` when a host could not be pulled or is
-stale; without it they print what they have and name the failed hosts on stderr.
+**Exact totals.** A host with this agentglass answers with a snapshot instead of a plain report: per session and
+local day its table-priced tokens, its harness-reported cost, and every owned Claude message as a salted 64-bit hash
+of its id with its usage (no message id leaves the host). The viewer counts a message once even when several hosts
+hold copies of it (forks, resumes, a history copied to another machine under a new session id): the earliest copy
+owns it, as on one machine. It prices every host's table-priced usage with its own table (`agentglass prices set` on
+the viewer prices the whole fleet; `"reprice": false` keeps each host's figure) and moves every host's hours into its
+own time zone, so "today" and the month mean one thing. Tool calls and turns of a copied history still count in each
+session that holds it. The first snapshot of a busy host is a few MB (it carries every owned message once); after
+that each refresh sends only what changed since the generation the viewer acknowledged — a lost answer is repaired by
+the next request. `fleet cost --json` says `exact: true` and how many copies it `removed`.
+
+A host on an older agentglass (or `"snapshot": false`) is pulled as before: each host prices with its own table and
+days, the same session read on two such hosts is counted on both (`≈`, `overlap` in `fleet cost`), and `fleet status`
+says `exact: no`. `fleet` and `fleet cost` exit 5 with `--strict` when a host could not be pulled or is stale; without
+it they print what they have and name the failed hosts on stderr.
+
+**Live within seconds.** For each exact host the viewer keeps one more channel over the shared connection:
+`agentglass fleet watch` sends session state (running, mid-turn, needs attention, waiting for approval, stuck),
+alert transitions, turn ends and a beat every 30 s — no prompts, tool calls or output. Remote rows then show running
+and waiting within a few seconds (the host looks every 3 s: about 1 % of a core on a busy host); a remote `critical` alert also goes to the desktop (`AGENTGLASS_NOTIFY=0` turns that
+off, as for local ones); a finished turn pulls the host's next snapshot within 5 s. Without a beat for 90 s the host's
+rows fall back to its last snapshot. `"watch": false` per host turns it off.
+
+**Hosts the viewer cannot reach** (a laptop behind NAT, a machine that sleeps) drop snapshots into a folder that a
+sync tool (Syncthing, rsync, a network share) brings to the viewer; the viewer lists it as a `dir` host:
+
+```sh
+agentglass fleet drop ~/Sync/agentglass/laptop --every 5m      # loop; or once from cron / a timer:
+# */5 * * * * agentglass fleet drop ~/Sync/agentglass/laptop --redact
+# systemd: a oneshot service running `agentglass fleet drop %h/Sync/agentglass/laptop` and a timer with OnUnitActiveSec=5min
+```
+
+One folder per host. It holds a base (daily, or when the changes since outgrow half of it) and numbered deltas, each
+written under a temporary name and renamed when complete; files older than a day that a newer base replaced are
+removed. The viewer applies the newest base and then the deltas in order; a delta that has not arrived yet (sync lag,
+files arriving out of order) is waited for, and after an hour `fleet status` says which one is missing. It opens only
+files owned by you that no group or other user can write. A drop is minutes old: its sessions never show as running
+and its alerts do not toast. **Use `--redact`** for a folder that a third-party service syncs; `fleet drop` warns when
+an unredacted drop goes outside your home directory.
+
+**One machine, several entries.** Entries whose reports carry the same host id (`~/.agentglass/host-id`, or the
+machine id) are one host: a laptop reachable over ssh at home that also drops into a folder, an ssh host that also
+exports to a hub. Its sessions show once, under the first entry, from the best report at hand: an exact one over a
+plain one, a fresh one over a stale one, a snapshot or drop over the hub, then the newest. Live state comes from
+whichever of them streams (one `fleet watch` per machine). `fleet status` lists the entries per host. Only this machine
+listed as a host is refused (its rows would double the local ones).
 
 ## Send to an OTLP backend
 

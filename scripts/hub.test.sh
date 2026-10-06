@@ -83,6 +83,32 @@ if "lap" not in hosts or hosts["lap"].get("kind") != "otlp" or hosts["lap"].get(
 if "hub" not in hosts: bad("fleet status lacks the source entry")
 sys.exit(0 if ok else 1)
 PY
+# fleet cost: the hub host's day rows are priced by the viewer (fleet 7.3, 13), exactly: A's finished session, not $0
+# (s1's turn is still open: not exported yet)
+V fleet cost --json > "$t/cost.json" 2>> "$t/fleet.err" || { echo "FAIL fleet cost: $(cat "$t/fleet.err")"; fail=1; }
+# one host through two feeds (fleet 17): A's own drop synced to the viewer and the hub → its rows once, counted once
+HOME="$t/a" AGENTGLASS_CACHE_DIR="$t/acache" AGENTGLASS_OFFLINE=1 "$t/ag" fleet drop "$t/drop" > /dev/null 2>> "$t/fleet.err" || { echo "FAIL fleet drop: $(cat "$t/fleet.err")"; fail=1; }
+mkdir -p "$t/sync"; chmod 700 "$t/sync"; cp "$t/drop/"*.snap.gz "$t/sync/"; chmod 600 "$t/sync/"*
+printf '{"fleet":{"hosts":[{"name":"hub","otlp":"%s","hosts":{"lap":"00112233445566ff"}},{"name":"nas","dir":"%s"}]}}\n' "$hub" "$t/sync" > "$t/v/.agentglass/config.json"
+V fleet --json > "$t/fleet2.json" 2>> "$t/fleet.err"; V fleet status --json > "$t/status2.json" 2>> "$t/fleet.err"; V fleet cost --json > "$t/cost2.json" 2>> "$t/fleet.err"
+python3 - "$t/cost.json" "$t/a.json" "$t/fleet2.json" "$t/status2.json" "$t/cost2.json" <<'PY' || fail=1
+import json, sys
+c = json.load(open(sys.argv[1])); src = {s["id"]: s for s in json.load(open(sys.argv[2]))}
+rows = json.load(open(sys.argv[3])); st = json.load(open(sys.argv[4])); c2 = json.load(open(sys.argv[5]))
+ok = True
+def bad(m): global ok; print("FAIL " + m); ok = False
+def today(x): return sum(v for v in x["total"]["week"]["byMode"].values() if isinstance(v, (int, float))) # s2 is two days old
+want = src["s2"]["costUsd"]
+if abs(today(c) - want) > 1e-6: bad("fleet cost (7 days) %r != A's finished session %r: %r" % (today(c), want, c["total"]))
+if not c.get("exact") or not [h for h in c["hosts"] if h["name"] == "lap" and h["ok"]]: bad("fleet cost: lap exact and ok: %r" % c["hosts"])
+ids = [r["id"] for r in rows if r.get("host") != "local"]
+if sorted(ids) != sorted(set(ids)) or not {"s1", "s2"} <= set(ids): bad("two feeds: each session once: %r" % [(r.get("host"), r["id"]) for r in rows])
+if len({r["host"] for r in rows if r.get("host") != "local"}) != 1: bad("two feeds: one host: %r" % sorted({r["host"] for r in rows}))
+hosts = {h["name"]: h for h in st["hosts"]}
+if hosts.get("lap", {}).get("feedOf") != "nas": bad("two feeds: lap is a feed of nas: %r" % {k: (v.get("feedOf"), v.get("dupOf")) for k, v in hosts.items()})
+if today(c2) + 1e-9 < today(c) or today(c2) > today(c) + sum((s["costUsd"] or 0) for s in src.values()) + 1e-6: bad("two feeds: counted once: %r vs %r" % (today(c2), today(c)))
+sys.exit(0 if ok else 1)
+PY
 kill -TERM $srv; wait $srv 2>/dev/null || true; srv=""
 [ $fail = 0 ] && echo "hub end to end: ok"
 exit $fail

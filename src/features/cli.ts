@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
 import { H, complete, screenOut, display } from "../hooks.ts";
-import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity } from "../model/sessions.ts";
+import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, probeLive } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
 import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf, window } from "../harness/index.ts";
 import { type Obj, base } from "../util/json.ts";
@@ -133,7 +133,7 @@ OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTG
 `);
 }
 
-export interface Opts { git: boolean; live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null; days: number; jsonl: boolean }
+export interface Opts { git: boolean; live: boolean; harness: string; limit: number; subs: boolean; fromStart: boolean; forMs: number; idle: boolean; f: Fmt; json: boolean; sc: Scope; filters: string[]; pinned: boolean; alerts: boolean; notify: boolean; cf: CliFilter | null; days: number; jsonl: boolean; every: number[] }
 // a consumer of the --watch poll loop (the OTLP live export): tick after every poll, stop before exit, alert per rules
 // transition of a watched top-level session (the rules run for a sink unless --no-alerts, JSONL lines or not)
 export interface Sink { tick: (now: number) => void; stop: () => void; alert: (s: Sess, a: AlertT) => void }
@@ -155,7 +155,7 @@ function out(line: string): void {
 export function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
 export function opts(args: string[]): Opts {
-  const o: Opts = { git: args.indexOf("--git") >= 0, live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args), filters: [], pinned: false, alerts: true, notify: false, cf: null, days: 7, jsonl: false };
+  const o: Opts = { git: args.indexOf("--git") >= 0, live: false, harness: "", limit: 0, subs: false, fromStart: false, forMs: 0, idle: false, f: fmtArgs(args), json: args.indexOf("--json") >= 0, sc: agentScope(args), filters: [], pinned: false, alerts: true, notify: false, cf: null, days: 7, jsonl: false, every: [4, 3, 10] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "--live") o.live = true;
@@ -348,9 +348,10 @@ export function watch(o: Opts, sink: Sink | null): void {
     tick++;
     const now = Date.now();
     if ((o.forMs > 0 && now - t0 >= o.forMs) || (o.idle && now - lastOut >= IDLE_MS)) quit(); // a sink flushes first
-    if (tick % 4 === 0) scan();
-    if (tick % 3 === 0) { refreshProcs(); liveDiff(); if (o.alerts && (lines || sink)) alerts(); }
-    if (tick % 10 === 0) { refreshSlow(); liveDiff(); }
+    // every: [scan, processes + rules, slow process facts] in 500 ms ticks (fleet watch polls less: a budget per host)
+    if (tick % (o.every[0] ?? 4) === 0) scan();
+    if (tick % (o.every[1] ?? 3) === 0) { refreshProcs(); if (!lines) probeLive(); liveDiff(); if (o.alerts && (lines || sink)) alerts(); } // a sink reads no logs: the live ones' sizes for their tails (busy)
+    if (tick % (o.every[2] ?? 10) === 0) { refreshSlow(); liveDiff(); }
     if (lines) poll();
     if (sink) sink.tick(Date.now());
   }, 500);

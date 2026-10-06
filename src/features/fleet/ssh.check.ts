@@ -21,7 +21,7 @@ ok("control path", /^\/home\/u\/\.agentglass\/run\/f-[0-9a-f]{12}$/.test(cp), cp
 ok("control path differs per target", cp !== controlPath("/home/u/.agentglass/run", "vm1"), "same");
 ok("control path too long", controlPath("/" + "x".repeat(80), "ws") === "", controlPath("/" + "x".repeat(80), "ws"));
 ok("control path at the limit", controlPath("/" + "x".repeat(74), "ws") !== "" && controlPath("/" + "x".repeat(75), "ws") === "", String(("/" + "x".repeat(74) + "/f-012345678901").length));
-const h: HostCfg = { name: "ws", ssh: "me@ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" };
+const h: HostCfg = { name: "ws", ssh: "me@ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true };
 const want = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "-o", "Compression=yes",
   "-o", "ControlMaster=auto", "-o", "ControlPath=/r/f-0123", "-o", "ControlPersist=600", "--", "me@ws", "'agentglass'", "'fleet'", "'pull'", "'--days'", "'7'", "'--redact'"];
 ok("argv", JSON.stringify(sshArgs(h, 7, true, "/r/f-0123")) === JSON.stringify(want), JSON.stringify(sshArgs(h, 7, true, "/r/f-0123")));
@@ -42,7 +42,7 @@ const dir = join(HOME, "fleet"); process.env["AGENTGLASS_FLEET_DIR"] = dir;
 const bin = join(HOME, "bin"); mkdirSync(bin, { recursive: true });
 function script(name: string, body: string): string { const p = join(bin, name); writeFileSync(p, "#!/bin/sh\n[ \"$1\" = -V ] && exit 0\n" + body + "\n"); chmodSync(p, 0o755); return p; }
 process.env["AGENTGLASS_SSH"] = script("ssh-stub", "exit 0");
-const f: FleetCfg = { hosts: [h], localName: "local", refreshS: 60, days: 7, timeoutS: 10, warns: [] };
+const f: FleetCfg = { hosts: [h], localName: "local", refreshS: 60, days: 7, timeoutS: 10, reprice: true, warns: [] };
 const calls: string[][] = [];
 let t = 1000000;
 const stub = sshFeed(h, f, false, (): number => t, (cmd: string, args: string[]): number => { calls.push([cmd].concat(args)); return 999999; }, 256);
@@ -56,7 +56,7 @@ ok("spool dir 0700", existsSync(dir), "missing");
 // real processes: a fake ssh that sleeps is killed with its group at the timeout
 FEEDTEST.timeoutMs = 300;
 process.env["AGENTGLASS_SSH"] = script("ssh-slow", "sleep 30");
-const hs: HostCfg = { name: "slow", ssh: "slow", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" };
+const hs: HostCfg = { name: "slow", ssh: "slow", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true };
 const slow = sshFeed(hs, f, false, (): number => Date.now(), detachedPid, 256);
 ok("slow start", slow.start(Date.now()), "false");
 const pid = Number((readFileSync(join(dir, "slow.pid"), "utf8").split(" ")[0]) ?? "");
@@ -73,7 +73,7 @@ for (let i = 0; i < 900; i++) rep.sessions.push(sessRowOf({ id: "s" + String(i),
 writeFileSync(join(HOME, "report.jsonl"), reportLines(rep).join("\n") + "\n");
 FEEDTEST.timeoutMs = 20000;
 process.env["AGENTGLASS_SSH"] = script("ssh-cat", "cat " + JSON.stringify(join(HOME, "report.jsonl")));
-const hc: HostCfg = { name: "cat", ssh: "cat", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" };
+const hc: HostCfg = { name: "cat", ssh: "cat", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true };
 const cf = sshFeed(hc, f, false, (): number => Date.now(), detachedPid, 256);
 ok("cat start", cf.start(Date.now()), "false");
 let got: FeedState | null = null; let polls = 0; const t0 = Date.now();
@@ -98,7 +98,7 @@ let ag: FeedState = again.poll(Date.now()); for (let i = 0; i < 10 && !ag.report
 ok("cached report at start", ag.report !== null && ag.report.sessions.length === 900 && ag.code === "cut", ag.code);
 // exit codes from the fake ssh
 process.env["AGENTGLASS_SSH"] = script("ssh-255", "echo 'ssh: connect to host gone port 22: Connection refused' >&2; exit 255");
-const gone = sshFeed({ name: "gone", ssh: "gone", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, f, false, (): number => Date.now(), detachedPid, 256);
+const gone = sshFeed({ name: "gone", ssh: "gone", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }, f, false, (): number => Date.now(), detachedPid, 256);
 gone.start(Date.now()); let gs: FeedState = gone.poll(Date.now()); const t2 = Date.now();
 while (gs.busy && Date.now() - t2 < 10000) { execFileSync("sleep", ["0.05"]); gs = gone.poll(Date.now()); }
 ok("exit 255", gs.code === "ssh" && gs.err.indexOf("Connection refused") >= 0 && gs.report === null, gs.code + " " + gs.err);

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { type Acc, peekHeavy, mkey } from "../usage/record.ts";
-import { type DayRow, type Hello, type HostReport, type OwnRow, type Owned, type SessRow } from "./model.ts";
+import { type DayRow, type Hello, type HostReport, type OwnRow, type Owned, type SessRow, ownSess } from "./model.ts";
 import { helloOf } from "./report.ts";
 
 export const SNAP = "agentglass-snapshot/v1";
@@ -87,24 +87,35 @@ export function feedSnap(p: Snap, lines: string[]): void {
 export function helloOfSnap(x: Snap): Hello { return helloOf(x.head); }
 
 // a finished snapshot onto the report a viewer holds (null = none yet). full → replaces everything; a delta replaces the
-// sessions it carries, appends or resets own rows, drops `gone` keys. The caller checks x.base against what it applied
+// sessions it carries, drops the `gone` sessions, appends or resets own rows (a reset without rows drops the key). The caller checks x.base against what it applied
 // last: a delta on another base must not apply (feed and dir reader do). The result is a new report (the old one stays
-// valid for whoever holds it); its `owned` map is shared with nobody
+// valid for whoever holds it); reports are never changed in place (a delta that changed nothing shares cur's arrays)
 export function applySnap(cur: HostReport | null, x: Snap): HostReport {
+  // a delta that changed no session keeps the sessions and owned rows as they were (the merge keys its cache on them)
+  if (cur && !x.full && !x.sess.length && !x.own.length && !x.gone.length) return { hello: helloOf(x.head), sessions: cur.sessions, cost: x.cost, allowance: x.allowance, live: cur.live, exact: true, owned: cur.owned };
   const own = new Map<string, OwnRow[]>();
   const keep = new Map<string, SessRow>(); const order: string[] = [];
   if (!x.full && cur) {
     for (const o of cur.owned) own.set(o.key, o.rows);
     for (const s of cur.sessions) { keep.set(s.key, s); order.push(s.key); }
   }
-  for (const k of x.gone) { keep.delete(k); own.delete(k); }
+  for (const k of x.gone) keep.delete(k);
   for (const s of x.sess) { if (!keep.has(s.key)) order.push(s.key); keep.set(s.key, s); }
   for (const o of x.own) {
     const old = own.get(o.key);
-    own.set(o.key, o.reset || !old ? o.rows : old.concat(o.rows));
+    if (o.reset && !o.rows.length) own.delete(o.key); // the key owns nothing any more
+    else own.set(o.key, o.reset || !old ? o.rows : old.concat(o.rows));
   }
+  // a session whose row and own rows the delta left alone stays the same object (its rows are not gathered again)
+  const moved = new Set<string>(); for (const o of x.own) moved.add(ownSess(o.key)); for (const sr of x.sess) moved.add(sr.key);
+  const bySess = new Map<string, OwnRow[]>();
+  for (const [k, v] of own) { const sk = ownSess(k); if (!x.full && cur && !moved.has(sk)) continue; const o = bySess.get(sk); bySess.set(sk, o ? o.concat(v) : v); }
   const sessions: SessRow[] = [];
-  for (const k of order) { const s = keep.get(k); if (!s) continue; sessions.push({ s: s.s, key: s.key, days: s.days, own: own.get(k) ?? [], prov: s.prov }); keep.delete(k); }
+  for (const k of order) {
+    const s = keep.get(k); if (!s) continue; keep.delete(k);
+    if (!x.full && cur && !moved.has(k) && s.own) { sessions.push(s); continue; }
+    sessions.push({ s: s.s, key: s.key, days: s.days, own: bySess.get(k) ?? [], prov: s.prov });
+  }
   sessions.sort((a: SessRow, b: SessRow) => { const ua = str(a.s["updated"]); const ub = str(b.s["updated"]); return ua < ub ? 1 : ua > ub ? -1 : 0; });
   const owned: Owned[] = []; for (const [k, v] of own) owned.push({ key: k, rows: v });
   return { hello: helloOf(x.head), sessions, cost: x.cost, allowance: x.allowance, live: cur && !x.full ? cur.live : null, exact: true, owned };

@@ -8,6 +8,7 @@ import { OS } from "../../platform/index.ts";
 import { secureDir, myUid } from "../palette/rundir.ts";
 import type { HostReport } from "./model.ts";
 import { type Parse, newParse, feedLines, toReport } from "./report.ts";
+import { type Snap, newSnapParse, feedSnap } from "./snap.ts";
 import { NAME_RE } from "./config.ts";
 
 // AGENTGLASS_FLEET_DIR: another spool (tests); read per call
@@ -67,8 +68,48 @@ export function readStep(r: Reader, maxLines: number): HostReport | null | undef
     return undefined;
   }
 }
+// ── snapshots (Part B): a file of one or more snapshots (the spool's last run, the state file, the journal), read a window
+// of lines per step; each finished snapshot comes back on its own, the next one starts at the byte after it ──
+export interface SnapReader { path: string; off: number; p: Snap; at: number }
+export function newSnapReader(path: string): SnapReader { return { path, off: 0, p: newSnapParse(), at: mtimeOf(path) }; }
+// undefined = not finished yet; null = the file ended (r.p.err: "" nothing more, else why: a torn snapshot, garbage);
+// else one finished snapshot
+export function readSnapStep(r: SnapReader, maxLines: number): Snap | null | undefined {
+  if (r.p.err) return null;
+  let w = WIN;
+  for (;;) {
+    const b = readBytes(r.path, r.off, w);
+    let z = b.length - 1; while (z >= 0 && b[z] !== 10) z--;
+    if (z < 0) {
+      if (b.length === w && w < MAX_LINE) { w *= 4; continue; }
+      if (r.p.gen) r.p.err = "incomplete snapshot"; // started, never ended: a cut run, a torn journal tail
+      return null;
+    }
+    // up to maxLines, and never past a snapshot's end line: the caller takes one snapshot at a time
+    let n = 0; let cut = -1; let st = 0;
+    for (let i = 0; i <= z; i++) {
+      if (b[i] !== 10) continue;
+      n++;
+      if (b[st] === 123 && b[st + 1] === 34 && b[st + 2] === 101 && b[st + 3] === 110 && b[st + 4] === 100 && b[st + 5] === 34) { cut = i; break; } // {"end"
+      if (n === maxLines) { cut = i; break; }
+      st = i + 1;
+    }
+    const end = cut >= 0 ? cut : z;
+    const lines = new TextDecoder("utf-8").decode(b.subarray(0, end + 1)).split("\n"); lines.pop();
+    feedSnap(r.p, lines); r.off += end + 1;
+    if (r.p.err) return null;
+    if (r.p.done) { const x = r.p; r.p = newSnapParse(); return x; }
+    return undefined;
+  }
+}
+// which kind of report a spool file holds: "pull" (hello first), "snap", "" (nothing readable yet)
+export function kindOf(path: string): string {
+  const t = readText(path, 0, 4096); const h = t.indexOf("{\"hello\""); const s = t.indexOf("{\"snap\"");
+  if (h < 0 && s < 0) return "";
+  return s < 0 || (h >= 0 && h < s) ? "pull" : "snap";
+}
 // spool files of hosts no longer configured: only names of the host pattern, only inside fleetDir(), only our extensions
-const EXTS = ["jsonl", "tmp", "err", "rc", "rc.tmp", "pid"];
+const EXTS = ["jsonl", "tmp", "err", "rc", "rc.tmp", "pid", "snap", "snap.tmp", "j", "watch.jsonl", "watch.err", "watch.pid"];
 export function forget(names: string[]): void {
   const d = fleetDir();
   for (const f of listDir(d)) {

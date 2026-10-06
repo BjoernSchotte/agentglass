@@ -7,7 +7,7 @@ import { H } from "../../hooks.ts";
 import { S } from "../../state.ts";
 import { type FeedState, type HostFeed, newFeedState } from "../fleet/model.ts";
 import type { HostCfg } from "../fleet/config.ts";
-import { FLEET, reapply } from "../fleet/hosts.ts";
+import { FLEET, reapply, newRemote } from "../fleet/hosts.ts";
 import { type HubSrcCfg, HUBS, expandHome } from "./config.ts";
 import { type HostSource, type HubHost, hubSource } from "./feed.ts";
 import { TICK_BYTES, TICK_LINES } from "./read.ts";
@@ -36,15 +36,18 @@ export function syncHubs(now: number, drain: boolean): boolean {
       if (!drain || !x.src.busy()) break;
     }
   }
-  // a CLI run applies the reports here; in the TUI fleet's tick applies them (its alert toasts and notifications)
-  for (const rh of FLEET.hosts) { const hh = OF.get(rh.cfg.name); if (hh && rh.cfg.kind === "otlp") { rh.st = hh.state; if (drain && hh.state.report && hh.state.report !== rh.report) { rh.report = hh.state.report; rh.okAt = hh.state.okAt; } } else if (SRC.has(rh.cfg.name)) rh.st = rh.feed.poll(now); }
-  if (changed && drain) reapply();
+  // a CLI run applies the reports here (as the entry's own report: fleet 17 picks what its host's rows show); in the TUI
+  // fleet's tick applies them (its alert toasts and notifications)
+  let applied = false;
+  for (const rh of FLEET.hosts) { const hh = OF.get(rh.cfg.name); if (hh && rh.cfg.kind === "otlp") { rh.st = hh.state; if (drain && hh.state.report && hh.state.report !== rh.mine) { rh.mine = hh.state.report; rh.mineAt = hh.state.okAt; applied = true; } } else if (SRC.has(rh.cfg.name)) rh.st = rh.feed.poll(now); }
+  if (applied) reapply();
   return changed;
 }
 function upsert(src: HostCfg, hh: HubHost): void {
   OF.set(hh.name, hh);
   for (const rh of FLEET.hosts) if (rh.cfg.name === hh.name) return;
-  FLEET.hosts.push({ cfg: { name: hh.name, ssh: "", agentglass: "", redact: src.redact, enabled: true, kind: "otlp", path: src.path }, feed: hostFeed(hh), report: null, rows: [], okAt: 0, dupOf: "", alertsSeen: new Set<string>(), fresh: false, st: hh.state, applied: null });
+  const rh = newRemote({ name: hh.name, ssh: "", agentglass: "", redact: src.redact, enabled: true, kind: "otlp", path: src.path, snapshot: false, watch: false }, hostFeed(hh));
+  rh.st = hh.state; FLEET.hosts.push(rh);
 }
 H.backlog.push((): boolean => { for (const x of SRC.values()) if (x.busy()) return true; return false; }); // a first read spreads over fast ticks
 H.onTick.push((): void => { if (SRC.size && syncHubs(Date.now(), false)) S.dirty = true; });

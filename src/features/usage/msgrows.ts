@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync, appendFileSync, renameSync, readFileSync } fr
 import { join } from "node:path";
 import { cacheDir, readBytes } from "../../util/fs.ts";
 import { sha256Hex } from "../../util/sha256.ts";
-import { type Obj, parse, obj, str, arr } from "../../util/json.ts";
+import { parse, obj, str, arr } from "../../util/json.ts";
 import { harnessOf } from "../../harness/index.ts";
 import { type Acc, type Booking, newAcc, setBookTap, flushSpans } from "./record.ts";
 import { mine, keyOf } from "./owners.ts";
@@ -25,6 +25,7 @@ export function rowsDir(): string { return join(cacheDir(), "msgrows"); }
 function base(path: string): string { return join(rowsDir(), sha256Hex(path).slice(0, 16)); }
 export function rowsFile(path: string): string { return base(path) + ".tsv"; }
 function stFile(path: string): string { return base(path) + ".st"; }
+function idsFile(path: string): string { return base(path) + ".ids"; } // the booked ids, read only to continue a log
 
 // the scratch reader's state between runs: byte offset, epoch, the booked ids (id → output tokens so far: a later line
 // of a streamed message adds only the growth), the adapter's state (model, x), the rows written and their token sums
@@ -36,13 +37,16 @@ function stIn(t: string): St | null {
   const st = newSt(str(o["ep"]));
   st.off = typeof o["off"] === "number" ? o["off"] as number : 0; st.model = str(o["model"]); st.x = nums(o["x"]);
   st.rows = typeof o["rows"] === "number" ? o["rows"] as number : 0; st.sum = nums(o["sum"]);
-  const ids = obj(o["ids"]) ?? {}; for (const k of Object.keys(ids)) { const n = ids[k]; st.ids.set(k, typeof n === "number" ? n as number : 0); }
   return st.sum.length === 4 ? st : null;
 }
-function stOut(st: St): string {
-  const ids: Obj = {}; for (const [k, n] of st.ids) ids[k] = n;
-  return JSON.stringify({ v: 1, off: st.off, ep: st.ep, model: st.model, x: st.x, rows: st.rows, sum: st.sum, ids });
+function stOut(st: St): string { return JSON.stringify({ v: 1, off: st.off, ep: st.ep, model: st.model, x: st.x, rows: st.rows, sum: st.sum }); }
+// "<id> <n>" lines; false = unreadable (start over)
+function idsIn(path: string, st: St): boolean {
+  const t = readAll(idsFile(path)); if (!t && st.rows > 0) return false;
+  for (const l of t.split("\n")) { if (!l) continue; const i = l.lastIndexOf(" "); if (i <= 0) return false; st.ids.set(l.slice(0, i), Number(l.slice(i + 1))); }
+  return true;
 }
+function idsOut(st: St): string { const o: string[] = []; for (const [k, n] of st.ids) o.push(k + " " + String(n)); return o.join("\n") + "\n"; }
 // the ledger entry's token sums the rows must add up to
 function sumOf(a: Acc): number[] { return [a.inTok, a.outTok, a.cr, a.cw]; }
 function same(x: number[], y: number[]): boolean { if (x.length !== y.length) return false; for (let i = 0; i < x.length; i++) if (Math.abs((x[i] ?? 0) - (y[i] ?? 0)) > 0.5) return false; return true; }
@@ -136,10 +140,10 @@ export function rowsFor(path: string, h: string, a: Acc): Rows {
   const canWrite = ensure();
   if (st && st.ep === a.ep && st.off < a.off) { // grew: continue, then check the sums
     const prev = readRows(path, 0);
-    if (prev.ok && prev.n === st.rows) {
+    if (prev.ok && prev.n === st.rows && idsIn(path, st)) {
       const add: OwnRow[] = []; scan(path, h, a, st, a.off, add);
       if (same(st.sum, want)) {
-        if (canWrite) { try { const t: string[] = []; for (const r of add) t.push(rowLine(r) + "\n"); if (t.length) appendFileSync(rowsFile(path), t.join("")); st.rows = prev.n + add.length; writeAtomic(stFile(path), stOut(st)); } catch (e) { /* the next run starts over */ } }
+        if (canWrite) { try { const t: string[] = []; for (const r of add) t.push(rowLine(r) + "\n"); if (t.length) appendFileSync(rowsFile(path), t.join("")); st.rows = prev.n + add.length; writeAtomic(idsFile(path), idsOut(st)); writeAtomic(stFile(path), stOut(st)); } catch (e) { /* the next run starts over */ } }
         return { rows: prev.rows.concat(add), ok: true, rebuilt: false };
       }
     }
@@ -147,18 +151,45 @@ export function rowsFor(path: string, h: string, a: Acc): Rows {
   st = newSt(a.ep); const rows: OwnRow[] = []; scan(path, h, a, st, a.off, rows);
   st.rows = rows.length;
   if (canWrite) {
-    try { const t: string[] = []; for (const r of rows) t.push(rowLine(r) + "\n"); writeAtomic(rowsFile(path), t.join("")); writeAtomic(stFile(path), stOut(st)); } catch (e) { /* rebuilt next time */ }
+    try { const t: string[] = []; for (const r of rows) t.push(rowLine(r) + "\n"); writeAtomic(rowsFile(path), t.join("")); writeAtomic(idsFile(path), idsOut(st)); writeAtomic(stFile(path), stOut(st)); } catch (e) { /* rebuilt next time */ }
   }
   return { rows, ok: same(st.sum, want), rebuilt: true };
 }
-// the ownership-only rows of a log's owned messages ("u:" prompt ids aside): hash and key, no usage. Cached per entry
-// while its owned set keeps its size (hashing 200 k ids costs a few hundred ms)
-const HC = new Map<string, { n: number; rows: OwnRow[] }>();
+// a log's owned messages ("u:" prompt ids aside) as hashes and order keys, read from the entry's stored text when it is
+// still text (the ledger keeps it undecoded: decoding every log's ids would hold a Map per log for nothing). Cached per
+// entry: an entry only grows (a re-read is a new entry), so a grown one hashes only its new ids (hashing 200 k ids
+// costs a few hundred ms once)
+export interface Hashes { hs: string[]; ks: number[] }
+const HC = new Map<string, { a: Acc; t: boolean; len: number; n: number; x: Hashes }>();
+function owned(a: Acc, from: number, x: Hashes): number {
+  let n = 0;
+  if (a.mv) { // "<id>,<key delta> …" (owners.ts moOut)
+    let prev = 0;
+    for (const e of a.mv.split(" ")) {
+      const i = e.indexOf(","); if (i <= 0) continue;
+      const t = prev + Number(e.slice(i + 1)); if (!(t >= 0)) continue; prev = t;
+      if (n++ < from) continue;
+      const id = e.slice(0, i); if (!id.startsWith("u:")) { x.hs.push(msgHash(id)); x.ks.push(t); }
+    }
+    return n;
+  }
+  for (const [id, key] of a.mo) { if (n++ < from) continue; if (!id.startsWith("u:")) { x.hs.push(msgHash(id)); x.ks.push(key); } }
+  return n;
+}
+export function ownHashes(path: string, a: Acc): Hashes {
+  const hit = HC.get(path);
+  if (hit && hit.a === a) {
+    if (a.mv) { if (hit.t && hit.len === a.mv.length) return hit.x; }
+    else if (a.mo.size === hit.n) return hit.x;
+    else if (a.mo.size > hit.n) { hit.n = owned(a, hit.n, hit.x); hit.t = false; hit.len = a.mo.size; return hit.x; } // grown: its new ids only
+  }
+  const x: Hashes = { hs: [], ks: [] }; const n = owned(a, 0, x);
+  HC.set(path, { a, t: !!a.mv, len: a.mv ? a.mv.length : a.mo.size, n, x }); // n: entries read (the text's are the Map's, in order)
+  return x;
+}
+// the same as ownership-only rows (the snapshot's own lines of sessions outside the window)
 export function ownKeys(path: string, a: Acc): OwnRow[] {
-  const m = mine(a); const hit = HC.get(path);
-  if (hit && hit.n === m.size) return hit.rows;
-  const rows: OwnRow[] = [];
-  for (const [id, key] of m) if (!id.startsWith("u:")) rows.push({ h: msgHash(id), key, d: "", hr: 0, m: "", prov: "", n: [] });
-  HC.set(path, { n: m.size, rows });
+  const x = ownHashes(path, a); const rows: OwnRow[] = [];
+  for (let i = 0; i < x.hs.length; i++) rows.push({ h: x.hs[i] ?? "", key: x.ks[i] ?? 0, d: "", hr: 0, m: "", prov: "", n: [] });
   return rows;
 }

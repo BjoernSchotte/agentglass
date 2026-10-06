@@ -37,7 +37,7 @@ ok("an own row with a raw id is refused", badRow.err === "bad own row", badRow.e
 const r1 = applySnap(null, p);
 ok("full: 2 sessions, own attached", r1.sessions.length === 2 && (r1.sessions[0]?.own?.length ?? 0) === 2 && r1.exact && r1.owned.length === 3, JSON.stringify(r1.sessions.map((s: SessRow) => s.key)));
 const delta: Snap = { head: HEAD, gen: "2222222222222222", base: "1111111111111111", full: false, sess: [sr("claude:a", "2026-10-01T11:00:00.000Z", 5)],
-  own: [{ key: "claude:a", reset: false, rows: [row("00000000000000a4", 20)] }], gone: ["claude:b"], cost: { today: { byMode: { api: 5 } } }, allowance: null, done: true, err: "" };
+  own: [{ key: "claude:a", reset: false, rows: [row("00000000000000a4", 20)] }, { key: "claude:b", reset: true, rows: [] }], gone: ["claude:b"], cost: { today: { byMode: { api: 5 } } }, allowance: null, done: true, err: "" };
 const dp = newSnapParse(); feedSnap(dp, snapLines(delta));
 const r2 = applySnap(r1, dp);
 ok("delta: b gone", r2.sessions.length === 1 && (r2.sessions[0]?.key ?? "") === "claude:a", JSON.stringify(r2.sessions.map((s: SessRow) => s.key)));

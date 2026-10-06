@@ -103,7 +103,7 @@ export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = [])
         if (!h) { h = { name: nameFor(key, rep.hello.hostId, rep.hello.hostName), hostId: rep.hello.hostId, state: newFeedState() }; states.set(key, h); }
         // the report's age is its data's: the newest span or heartbeat (a host whose export stopped turns stale)
         const at = rep.hello.now > 0 ? Math.min(now, rep.hello.now) : now;
-        h.state.report = rep; h.state.okAt = at; h.state.tryAt = now; h.state.err = ""; h.state.code = "";
+        h.state.report = rep; h.state.okAt = at; h.state.tryAt = now; h.state.err = ""; h.state.code = "ok";
         changed.push(h);
       }
       if (dirty && now - savedAt >= SAVE_MS && !src.backlog) save(now); // after the reports above: their change flags are taken

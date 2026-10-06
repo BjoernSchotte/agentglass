@@ -9,11 +9,12 @@ import { str } from "../../util/json.ts";
 import { identOf } from "../query/project.ts";
 import { newSum } from "../usage/costs.ts";
 import type { CostNow } from "../usage/summary.ts";
-import { budget } from "../usage/summary.ts";
-import { FORMAT, type HostReport, type HostFeed, newFeedState, noOwned } from "./model.ts";
+import { budget, pricedRows } from "../usage/summary.ts";
+import { todayKey } from "../usage/record.ts";
+import { FORMAT, type DayRow, type HostReport, type HostFeed, newFeedState, noOwned } from "./model.ts";
 import { sessRowOf } from "./report.ts";
-import type { FleetCfg } from "./config.ts";
-import { FLEET, setFleet, rowsOf, applyReport, idMap, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, syncFresh, hostByName, merged, rowObj } from "./hosts.ts";
+import type { FleetCfg, HostCfg } from "./config.ts";
+import { FLEET, setFleet, rowsOf, applyReport, idMap, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, syncFresh, hostByName, merged, rowObj, reapply, overlay, watcher } from "./hosts.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -26,8 +27,8 @@ function rep(hostId: string, sess: { id: string; live: boolean }[], today: numbe
     allowance: al ? { claude: { account: al.account, fetchedAt: al.fetchedAt, h5: { pct: al.pct, reset: now + 3600000 }, d7: null }, codex: null } : null, live: null, exact: false, owned: noOwned() };
 }
 const nofeed: HostFeed = { kind: "ssh", start: (t: number): boolean => false, poll: (t: number) => newFeedState(), stop: (): void => {} };
-const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, { name: "vm1", ssh: "vm1", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "" }],
-  localName: "local", refreshS: 60, days: 7, timeoutS: 90, warns: [] };
+const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }, { name: "vm1", ssh: "vm1", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }],
+  localName: "local", refreshS: 60, days: 7, timeoutS: 90, reprice: true, warns: [] };
 setFleet(cfg, "ffffffffffffffff", [nofeed, nofeed]);
 const r1 = rep("1111111111111111", [{ id: "a", live: true }, { id: "nul", live: false }], 2, true, { account: "acc", fetchedAt: 10, pct: 40 });
 const rows = rowsOf("ws", r1, now);
@@ -106,5 +107,49 @@ ok("view has remote rows", S.view.some((s) => s.host === "ws") && S.view.some((s
 ok("live remote row sorts first", (S.view[0]?.path ?? "") === "@ws/claude:a", S.view.map((s) => s.path).join(","));
 let leaked = false; for (const k of sessions.keys()) if (k.startsWith("@")) leaked = true;
 ok("sessions never holds a remote path", !leaked, "leaked");
+// ── one host through several feeds (spec 17): one RemoteHost per host id, never duplicated rows ──
+const kfeed = (k: string): HostFeed => ({ kind: k, start: (t: number): boolean => false, poll: (t: number) => newFeedState(), stop: (): void => {} });
+const hc = (name: string, kind: string): HostCfg => ({ name, ssh: kind === "ssh" ? name : "", agentglass: "agentglass", redact: false, enabled: true, kind, path: kind === "ssh" ? "" : "/x/" + name, snapshot: true, watch: true });
+const cfg3: FleetCfg = { hosts: [hc("ws", "ssh"), hc("nas", "dir"), hc("hub1", "otlp"), hc("vm2", "ssh")], localName: "local", refreshS: 60, days: 7, timeoutS: 90, reprice: true, warns: [] };
+setFleet(cfg3, "ffffffffffffffff", [kfeed("ssh"), kfeed("dir"), kfeed("otlp"), kfeed("ssh")]);
+const ws3 = hostByName("ws"); const nas = hostByName("nas"); const hub = hostByName("hub1"); const vm2 = hostByName("vm2");
+if (!ws3 || !nas || !hub || !vm2) throw new Error("hosts 3");
+const ex = (r: HostReport): HostReport => { r.exact = true; return r; };
+const rWs = ex(rep("5555555555555555", [{ id: "a", live: false }, { id: "b", live: false }], 1, true, null));
+const rNas = ex(rep("5555555555555555", [{ id: "a", live: false }, { id: "b", live: false }, { id: "c", live: false }], 1, true, null));
+const rHub = ex(rep("5555555555555555", [{ id: "a", live: false }, { id: "b", live: false }, { id: "c", live: false }, { id: "d", live: false }], 1, true, null));
+ws3.mine = rWs; ws3.mineAt = now - 30000; nas.mine = rNas; nas.mineAt = now - 20000; hub.mine = rHub; hub.mineAt = now - 1000;
+vm2.mine = ex(rep("6666666666666666", [{ id: "v", live: false }], 1, true, null)); vm2.mineAt = now;
+reapply();
+ok("17: one host shown, its other feeds merged into it", merged().length === 2 && nas.dupOf === "ws" && nas.merged && hub.dupOf === "ws" && hub.merged && ws3.dupOf === "" && !ws3.merged, JSON.stringify(merged().map((h) => h.cfg.name)) + " " + nas.dupOf + " " + hub.dupOf);
+ok("17: rows under the first name, never duplicated", nas.rows.length === 0 && hub.rows.length === 0 && ws3.rows.every((x) => x.host === "ws"), String(nas.rows.length + hub.rows.length));
+ok("17: all fresh and exact: the newest non-hub report (dir over hub)", ws3.report === rNas && ws3.via === "nas" && ws3.rows.length === 3, String(ws3.rows.length) + " via " + ws3.via);
+nas.mineAt = now - 3600000; reapply(); // the drop goes stale: the fresh ssh snapshot
+ok("17: a stale drop gives way to the fresh snapshot", ws3.report === rWs && ws3.via === "" && ws3.rows.length === 2, String(ws3.rows.length) + " via " + ws3.via);
+ws3.mineAt = now - 3600000; reapply(); // the snapshot too: the hub (the only fresh exact report)
+ok("17: only the hub is fresh: the hub", ws3.report === rHub && ws3.via === "hub1" && ws3.rows.length === 4 && ws3.fresh, String(ws3.rows.length) + " via " + ws3.via);
+hub.mine = rep("5555555555555555", [{ id: "a", live: false }], 1, true, null); reapply(); // a pulled (inexact) report never beats an exact one
+ok("17: an exact report over an inexact fresher one", ws3.report !== hub.mine && ws3.report !== null && ws3.report.exact, ws3.via);
+ok("17: the merge counts the host once", fleetCost(ln, merged(), now, cfg3, 0).perHost.length === 3, JSON.stringify(fleetCost(ln, merged(), now, cfg3, 0).perHost.map((p) => p.name)));
+// live state from the freshest live source among the feeds (a second feed's stream)
+ws3.mineAt = now; nas.mineAt = now - 3600000; hub.mine = rHub; hub.mineAt = now - 3600000; reapply();
+nas.beatAt = now - 1000; nas.live.set("claude:a", { key: "claude:a", at: now, live: true, busy: true, attention: true, approval: false, stuck: "", alerts: [] });
+overlay(ws3, now);
+const ra = ws3.rows.find((x) => x.id === "a");
+ok("17: another feed's live stream marks the host's row", !!ra && ra.rlive && ra.attention && FRESH.ok("ws"), JSON.stringify(ra ? { l: ra.rlive, a: ra.attention } : null));
+ok("17: one live stream per host (the first ssh feed)", watcher(ws3) && !watcher(nas) && !watcher(hub) && watcher(vm2), String(watcher(ws3)));
+// a feed whose host id changes leaves the group; this machine's id is never merged
+nas.mine = ex(rep("7777777777777777", [{ id: "n", live: false }], 1, true, null)); nas.mineAt = now; reapply();
+ok("17: a feed with its own id again", nas.dupOf === "" && !nas.merged && nas.rows.length === 1 && merged().length === 3, nas.dupOf);
+hub.mine = ex(rep("ffffffffffffffff", [{ id: "s", live: false }], 1, true, null)); hub.mineAt = now; reapply();
+ok("17: this machine's id: not merged, not shown", hub.dupOf === "local" && !hub.merged && hub.rows.length === 0, hub.dupOf);
+// an exact host's model without a price on this machine shows in the price panel's rows like a local one (spec 14)
+const rz = ex(rep("6666666666666666", [{ id: "z", live: false }], 1, true, null)); rz.hello.tzOffsetMin = -new Date().getTimezoneOffset();
+const none: string[][] = []; const zd: DayRow = { d: todayKey(), tp: [["3", "", "claude-zeta-9", "1000", "200", "0", "0", "0", "-1"]], hx: none, unk: 0, um: none.slice(), uc: 0, tools: 0, turns: 0, calls: 0, errors: 0 };
+const zr = rz.sessions[0]; if (zr) zr.days = [zd];
+vm2.mine = rz; vm2.mineAt = now; reapply();
+const pz = pricedRows([todayKey()], "").find((x) => x.model === "claude-zeta-9");
+ok("14: a remote unpriced model in the price panel", !!pz && pz.src === "unpriced" && pz.unk === 1200, JSON.stringify(pz ? { s: pz.src, u: pz.unk } : null));
+ok("14: not in one harness's rows (Stats per harness stay local)", !pricedRows([todayKey()], "codex").some((x) => x.model === "claude-zeta-9"), "leaked");
 console.log(bad ? String(bad) + " failed" : "fleet hosts: all checks passed");
 if (bad) process.exit(1);
