@@ -67,4 +67,21 @@ eq "notes_for newest" "$(notes_for 2026.9.3)" "- y"
 eq "notes_for older" "$(notes_for 2026.9.2)" "- x"
 eq "order" "$(grep -n '^## ' CHANGELOG.md | cut -d: -f2- | tr '\n' ' ')" "## 2026.9.3 ## 2026.9.2 "
 eq "notes_for missing" "$(notes_for 2026.1.1)" ""
+
+# ci_gate: HEAD's CI, or — when HEAD and the commits after the last CI run only touch files ci.yml ignores — that run's
+_ci_lookup() { awk -v s="$1" '$1 == s { print $2 }' "$t/cidata"; }
+: > "$t/cidata"
+c "code: x"; green=$(git rev-parse HEAD); printf '%s success\n' "$green" >> "$t/cidata"
+eq "ci head green" "$(ci_gate HEAD)" "success"
+mkdir -p docs; echo d > README.md; echo d > docs/a.txt; git add README.md docs/a.txt; git commit -qm "docs: only"
+eq "ci docs-only head uses last run" "$(ci_gate HEAD)" "success"
+echo x > LICENSE; git add LICENSE; git commit -qm "license"
+eq "ci docs chain" "$(ci_gate HEAD)" "success"
+echo s > script.sh; git add script.sh; git commit -qm "code without ci"
+eq "ci code head without run" "$(ci_gate HEAD)" "missing"
+git reset -q --hard HEAD~1
+printf '%s failure\n' "$green" > "$t/cidata"
+eq "ci last run failed" "$(ci_gate HEAD)" "failure"
+: > "$t/cidata"
+eq "ci no run anywhere" "$(ci_gate HEAD)" "missing"
 [ $fail = 0 ] && echo "release-lib: all tests passed"; exit $fail
