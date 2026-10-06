@@ -241,7 +241,7 @@ export function merged0(): boolean { return EX.x !== null && (!RUN.r || RUN.r.cs
 const XC = newXCache(); // what the merge keeps between rounds (merge.ts)
 // a merge in progress: the inputs it started with (sig/ver/at: what EX takes when it is done), this machine's Claude logs
 // hashed one after another (ss, i → ll), then the job
-interface Run { sig: string; ver: number; at: number; fh: FleetHost[]; csig: string; reprice: boolean; pv: string; ss: Sess[]; i: number; ll: LocalLog[]; job: MergeJob | null; t0: number }
+interface Run { sig: string; ver: number; at: number; fh: FleetHost[]; csig: string; reprice: boolean; pv: string; ss: Sess[]; i: number; ll: LocalLog[]; job: MergeJob | null; t0: number; fin: boolean }
 const RUN = { r: null as Run | null };
 export interface Progress { done: number; total: number; ms: number } // ms: how long it has been running
 export function merging(now: number): Progress | null {
@@ -270,7 +270,10 @@ export function mergeTick(until: number): boolean {
       if (Date.now() >= until && r.i + 1 < r.ss.length) { r.i++; return false; }
     }
     if (!r.job) r.job = mergeStart(r.ll, FLEET.localId, r.fh, r.reprice, localRows, XC, r.csig, r.pv, costDays(r.at));
-    if (!mergeStep(r.job, until)) return false;
+    if (!r.fin && !mergeStep(r.job, until)) return false;
+    // a slice that ended the job hands the result over on the next tick: summing it (about 50 ms with two mirrors) then
+    // gets a tick of its own instead of doubling this one
+    if (!r.fin && until !== Infinity) { r.fin = true; return false; }
     EX.at = r.at; EX.ver = r.ver; EX.sig = r.sig; EX.cs = r.csig; EX.x = r.job.x; EX.gen++; RUN.r = null;
     return true;
   } finally { const d = Date.now() - t0; EX.ms += d; if (until !== Infinity && d > EX.max) EX.max = d; }
@@ -293,7 +296,7 @@ export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: numb
   if (hit && sg === EX.sig && cs === EX.cs && (EX.ver === L.ver || now - EX.at < maxAgeMs)) return hit;
   const ss: Sess[] = []; for (const s of sessions.values()) if (s.h === "claude" && ledger.has(s.path)) ss.push(s);
   forgetIds((p: string): boolean => ledger.has(p)); // logs gone since: their ids
-  RUN.r = { sig: sg, ver: L.ver, at: now, fh, csig: cs, reprice, pv: String(PGEN.n), ss, i: 0, ll: [], job: null, t0: now };
+  RUN.r = { sig: sg, ver: L.ver, at: now, fh, csig: cs, reprice, pv: String(PGEN.n), ss, i: 0, ll: [], job: null, t0: now, fin: false };
   if (sync) { mergeTick(Infinity); return EX.x; }
   return last;
 }
