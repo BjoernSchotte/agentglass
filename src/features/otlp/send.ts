@@ -35,6 +35,7 @@ export function tlsFail(exit: number, err: string): string {
   if (e.indexOf("unknown ca") >= 0 || e.indexOf("bad certificate") >= 0 || e.indexOf("certificate unknown") >= 0) return "the receiver rejected the client certificate (unknown CA or wrong certificate)" + curlLine(err);
   if (e.indexOf("expired") >= 0) return "a certificate expired (receiver or client)" + curlLine(err);
   if (e.indexOf("revoked") >= 0) return "a certificate was revoked (receiver or client)" + curlLine(err);
+  if (e.indexOf("handshake failure") >= 0) return "the receiver ended the TLS handshake: it may require a client certificate (set otlp.tls.cert and otlp.tls.key) or a TLS version curl does not offer" + curlLine(err);
   if (exit === 58) return "the client key is encrypted or does not match the certificate: agentglass needs an unencrypted key file (chmod 600)" + curlLine(err);
   if (exit === 60 && (e.indexOf("subject name") >= 0 || e.indexOf("does not match") >= 0)) return "the receiver's certificate is not for this host name: use the name it was issued for" + curlLine(err);
   if (exit === 60) return "cannot verify the receiver's certificate: set otlp.tls.ca to its CA" + curlLine(err);
@@ -46,10 +47,10 @@ export function tlsFail(exit: number, err: string): string {
 export function resetLike(url: string, status: number, exit: number, err: string): boolean {
   return status === 0 && /^https:/i.test(url) && (exit === 35 || exit === 55 || exit === 56) && !tlsFail(exit, err);
 }
-// up to two tiny requests (an empty OTLP request) with the same TLS settings: the TLS failure behind a reset, "" = none
+// up to three tiny requests (an empty OTLP request) with the same TLS settings: the TLS failure behind a reset, "" = none
 function probeTls(c: SendCfg): string {
   const empty = new TextEncoder().encode("{}");
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     const p = postJson(c.url, c.headers, empty, c.timeoutS, false, c.tls);
     const f = p.status === 0 ? tlsFail(p.exit, p.err) : "";
     if (f || p.status > 0 || !resetLike(c.url, p.status, p.exit, p.err)) return f;

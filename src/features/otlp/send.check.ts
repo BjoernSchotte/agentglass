@@ -59,6 +59,7 @@ eq("cert required msg", String(tlsFail(56, "tlsv13 alert certificate required").
 eq("unknown ca msg", String(tlsFail(56, "tlsv1 alert unknown ca").indexOf("rejected the client certificate") >= 0), "true");
 eq("verify msg", String(tlsFail(60, "x").indexOf("otlp.tls.ca") >= 0), "true");
 eq("expired msg", String(tlsFail(56, "alert certificate expired").indexOf("expired") >= 0) + " " + String(tlsFail(60, "SSL certificate problem: certificate has expired").indexOf("expired") >= 0), "true true");
+eq("handshake failure msg", String(tlsFail(35, "TLS connect error: error:0A000410:SSL routines::ssl/tls alert handshake failure").indexOf("otlp.tls.cert") >= 0), "true");
 eq("key msg", String(tlsFail(58, "unable to set private key file").indexOf("unencrypted key") >= 0), "true");
 eq("decide", [decide(0, 56, "…tlsv13 alert certificate required", 0, false), decide(0, 56, "Recv failure: Connection reset by peer", 0, false), decide(503, 0, "", 3, false), decide(503, 0, "", 0, false), decide(503, 0, "", 0, true), decide(200, 0, "", 0, false), decide(400, 0, "", 0, false), decide(0, 60, "x", 0, true)].join(" "),
   "final retry fail retry fail ok fail final");
@@ -71,6 +72,7 @@ eq("no tls lines unset", String(readFileSync(dir + "/cfg", "utf8").indexOf("cace
 const HC: SendCfg = { url: "https://localhost:4318/v1/traces", headers: [], timeoutS: 5, gzip: true, live: true, tls: ["", "", ""] };
 eq("a reset over https: a probe finds the TLS rejection", run(["R55 - x", "T56 - x", "200 - {}"], big, HC), "false true 0 0 false 0 sleeps  gz+plain");
 eq("a reset over https: the probe connects, a plain failure", run(["R55 - x", "200 - {}"], big, HC), "false false 0 0 false 0 sleeps  gz+plain");
+eq("a reset over https: three probes at most, then a plain failure", run(["R55 - x", "R55 - x", "R55 - x", "R55 - x", "200 - {}"], big, HC), "false false 0 0 false 0 sleeps  gz+plain+plain+plain");
 eq("a reset over http: no probe", run(["R55 - x", "200 - {}"], big, { url: C.url, headers: [], timeoutS: 5, gzip: true, live: true, tls: ["", "", ""] }), "false false 0 0 false 0 sleeps  gz");
 eq("resetLike", [resetLike("https://h", 0, 55, "Send failure: Connection reset by peer"), resetLike("https://h", 0, 56, "Recv failure: Connection reset by peer"), resetLike("http://h", 0, 55, "x"), resetLike("https://h", 0, 7, "x"), resetLike("https://h", 0, 56, "tlsv13 alert certificate required")].join(" "), "true true false false false");
 eq("TLS failure: one attempt, final", run(["T56 - x", "200 - {}"], big, C), "false true 0 0 false 0 sleeps  gz");

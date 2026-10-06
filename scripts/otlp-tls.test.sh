@@ -22,7 +22,8 @@ c="$t/tls"; mkdir -p "$c"
   done
   chmod 600 ./*.key ) > "$t/openssl.log" 2>&1 || { cat "$t/openssl.log"; exit 1; }
 # server: TLS with CERT_REQUIRED; logs one "conn" per connection attempt and "POST <path>" per request; slow answers
-# so curl's argv can be sampled
+# so curl's argv can be sampled. Capped at TLS 1.2: Python's server resets the connection after a TLS 1.3 alert and curl
+# then sometimes sees a bare reset (send.ts probes for that; send.check covers it) — 1.2 rejects inside the handshake, every time
 cat > "$t/srv.py" <<'PY'
 import gzip, http.server, ssl, sys, time
 d, c = sys.argv[1], sys.argv[2]
@@ -40,7 +41,7 @@ class S(http.server.HTTPServer):
         open(d + "/log", "a").write("conn\n")
         return super().get_request()
 s = S(("127.0.0.1", 0), H)
-x = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); x.load_cert_chain(c + "/srv.crt", c + "/srv.key"); x.load_verify_locations(c + "/ca.crt"); x.verify_mode = ssl.CERT_REQUIRED
+x = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); x.load_cert_chain(c + "/srv.crt", c + "/srv.key"); x.load_verify_locations(c + "/ca.crt"); x.verify_mode = ssl.CERT_REQUIRED; x.maximum_version = ssl.TLSVersion.TLSv1_2
 s.socket = x.wrap_socket(s.socket, server_side=True)
 open(d + "/port", "w").write(str(s.server_port))
 s.serve_forever()
@@ -78,7 +79,7 @@ cfg "\"ca\":\"$c/ca.crt\""; : > "$t/log"
 rc=0; run "$url" || rc=$?
 eq "no cert exit" "$rc" 1
 has "no cert message" "$(cat "$t/err")" "otlp.tls.cert"
-n=$(grep -c conn "$t/log"); [ "$n" -ge 1 ] && [ "$n" -le 3 ] || { echo "FAIL no cert: $n connections, want 1 (+ at most 2 probes when the reset hides the alert), no retries"; fail=1; }
+eq "no cert: one attempt" "$(grep -c conn "$t/log")" 1
 
 # 3. no CA: the private CA is not trusted
 cfg ""; : > "$t/log"
@@ -102,7 +103,7 @@ has "http message" "$(cat "$t/err")" "needs an https endpoint"
 
 # 6. the standard OTel variables instead of the config
 cfg ""; : > "$t/log"
-rc=0; OTEL_EXPORTER_OTLP_CERTIFICATE="$c/ca.crt" OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE="$c/cli.crt" OTEL_EXPORTER_OTLP_CLIENT_KEY="$c/cli.key" run "$url" || rc=$?
+rc=0; (OTEL_EXPORTER_OTLP_CERTIFICATE="$c/ca.crt" OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE="$c/cli.crt" OTEL_EXPORTER_OTLP_CLIENT_KEY="$c/cli.key" run "$url") || rc=$? # subshell: macOS sh keeps an assignment before a function call
 eq "env exit" "$rc" 0
 eq "env request" "$(grep POST "$t/log")" "POST /v1/traces"
 
