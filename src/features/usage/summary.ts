@@ -141,14 +141,18 @@ export const SUMMARY_TEST = { inc: (on: boolean): void => { INC.on = on; nows.cl
 export function costNow(harness: string): CostNow {
   const hit = nows.get(harness);
   if (hit && fresh(hit.ver, hit.at)) return hit.c;
-  const now = Date.now();
-  const d15 = lastDays(15); const mk = monthStart(now); const inc = (INC.on || TERM.tui) && harness === ""; // the TUI (term.ts); a one-shot run sums once anyway
-  if (inc) { const win = mk.slice(); for (const k of d15) if (win.indexOf(k) < 0) win.push(k); incSync(win, now); }
-  const month = inc ? incSum(mk) : sumDays(mk, harness);
-  const rows = inc ? incRows(d15) : dayCosts(d15, harness);
-  const c = costFrom(inc ? incSum([todayKey()]) : sumDays([todayKey()], harness), inc ? incSum(lastDays(7)) : sumDays(lastDays(7), harness), month, rows, now);
+  const now = Date.now(); const p = parts(harness, now);
+  const c = costFrom(p.today, p.week, p.month, p.rows, now);
   nows.set(harness, { ver: L.ver, at: now, c });
   return c;
+}
+// the sums and the per-mode series of the last 15 days (the TUI's incremental day aggregates when harness is "")
+interface Parts { today: ModeSum; week: ModeSum; month: ModeSum; rows: DayCost[][] }
+function parts(harness: string, now: number): Parts {
+  const d15 = lastDays(15); const mk = monthStart(now); const inc = (INC.on || TERM.tui) && harness === ""; // the TUI (term.ts); a one-shot run sums once anyway
+  if (inc) { const win = mk.slice(); for (const k of d15) if (win.indexOf(k) < 0) win.push(k); incSync(win, now); }
+  return { today: inc ? incSum([todayKey()]) : sumDays([todayKey()], harness), week: inc ? incSum(lastDays(7)) : sumDays(lastDays(7), harness),
+    month: inc ? incSum(mk) : sumDays(mk, harness), rows: inc ? incRows(d15) : dayCosts(d15, harness) };
 }
 // the figures of one set of sums and per-mode day series (the last 15 days): projections and the budget state
 function costFrom(today: ModeSum, week: ModeSum, month: ModeSum, rows: DayCost[][], now: number): CostNow {
@@ -188,9 +192,9 @@ function plus(a: ModeSum, b: ModeSum): ModeSum { const m = newSum(); addSum(m, a
 // this machine's figures plus the given entries (the fleet's exact merge): the same sums, series and projections
 export function costWith(es: Ent[]): CostNow {
   const now = Date.now(); const d15 = lastDays(15); const mk = monthStart(now); const td = [todayKey()]; const wk = lastDays(7);
-  const rows = dayCosts(d15, ""); const extra = dayCostsOf(es, d15);
+  const p = parts("", now); const rows = p.rows; const extra = dayCostsOf(es, d15); // fresh series: added into in place
   for (let i = 0; i < rows.length; i++) { const r = rows[i]; const x = extra[i]; if (!r || !x) continue; for (let j = 0; j < r.length; j++) { const a = r[j]; const b = x[j]; if (!a || !b) continue; a.cost += b.cost; for (let h = 0; h < 24; h++) a.hc[h] = (a.hc[h] ?? 0) + (b.hc[h] ?? 0); } }
-  return costFrom(plus(sumDays(td, ""), sumDaysOf(es, td)), plus(sumDays(wk, ""), sumDaysOf(es, wk)), plus(sumDays(mk, ""), sumDaysOf(es, mk)), rows, now);
+  return costFrom(plus(p.today, sumDaysOf(es, td)), plus(p.week, sumDaysOf(es, wk)), plus(p.month, sumDaysOf(es, mk)), rows, now);
 }
 // the over-budget toast + desktop notification, at most once per calendar day
 export function budgetSend(msg: string): void {

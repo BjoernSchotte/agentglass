@@ -15,7 +15,7 @@ import { type CostNow, type Ent, budget, costWith, sumDaysOf } from "../usage/su
 import { ledger } from "../usage/ledger.ts";
 import { L, todayKey, lastDays } from "../usage/record.ts";
 import { modeOf } from "../usage/bill-live.ts";
-import { ownKeys, rowsFor } from "../usage/msgrows.ts";
+import { ownHashes, rowsFor } from "../usage/msgrows.ts";
 import { type LocalLog, type FleetHost, type Exact, type Shadow, exactFleet, modeOfShadow } from "./merge.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
 import type { HostFeed, HostReport, FeedState, OwnRow, LiveRow } from "./model.ts";
@@ -173,7 +173,8 @@ function localLogs(): LocalLog[] {
     if (s.h !== "claude") continue;
     const a = ledger.get(s.path); if (!a) continue;
     let top = s; for (let g = 0; top.parent && g < 8; g++) { const p = sessions.get(top.parent); if (!p) break; top = p; }
-    out.push({ path: s.path, skey: top.h + ":" + top.id, keys: ownKeys(s.path, a), bill: modeOf(s, "") });
+    const x = ownHashes(s.path, a);
+    out.push({ path: s.path, skey: top.h + ":" + top.id, hs: x.hs, ks: x.ks, bill: modeOf(s, "") });
   }
   return out;
 }

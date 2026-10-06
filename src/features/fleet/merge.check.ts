@@ -11,7 +11,7 @@ import { ledger, complete } from "../usage/ledger.ts";
 import { forget } from "../usage/owners.ts";
 import { loadUser } from "../usage/pricing.ts";
 import type { Acc } from "../usage/record.ts";
-import { rowsFor, ownKeys, msgHash } from "../usage/msgrows.ts";
+import { rowsFor, ownHashes, msgHash } from "../usage/msgrows.ts";
 import { type HostReport, type OwnRow, type SessRow, FORMAT, noOwned } from "./model.ts";
 import { dayRows } from "./snap.ts";
 import { type LocalLog, type FleetHost, type Exact, type Occ, type Shadow, exactFleet, ownerIndex, shiftDH, shadowOf } from "./merge.ts";
@@ -58,7 +58,7 @@ function truth(paths: string[]): Tot { reset(); for (const p of paths) complete(
 function localOf(paths: string[]): { logs: LocalLog[]; accs: Acc[] } {
   reset(); for (const p of paths) complete(sess(p));
   const logs: LocalLog[] = []; const accs: Acc[] = [];
-  for (const p of paths) { const a = ledger.get(p); if (!a) continue; accs.push(a); logs.push({ path: p, skey: "claude:" + p.slice(p.lastIndexOf("/") + 1, -6), keys: ownKeys(p, a), bill: "api" }); }
+  for (const p of paths) { const a = ledger.get(p); if (!a) continue; accs.push(a); const x = ownHashes(p, a); logs.push({ path: p, skey: "claude:" + p.slice(p.lastIndexOf("/") + 1, -6), hs: x.hs, ks: x.ks, bill: "api" }); }
   return { logs, accs };
 }
 function fleet(local: { logs: LocalLog[]; accs: Acc[] }, hosts: FleetHost[], rep: boolean): { t: Tot; x: Exact } {

@@ -117,8 +117,8 @@ function correct(a: Acc, row: OwnRow): void {
 }
 
 // ── the merge ──
-// a local Claude log: its session key (ties), its ownership rows (hash + key, every owned message), its billing mode
-export interface LocalLog { path: string; skey: string; keys: OwnRow[]; bill: string }
+// a local Claude log: its session key (ties), its owned messages (hs: hashes, ks: order keys), its billing mode
+export interface LocalLog { path: string; skey: string; hs: string[]; ks: number[]; bill: string }
 export interface FleetHost { name: string; hostId: string; r: HostReport; shiftMin: number }
 // one entry for the sums: an Acc and how its providers bill. host = the host's name ("" = a local correction)
 export interface Shadow { host: string; key: string; a: Acc; bill: string; prov: Map<string, string> }
@@ -134,8 +134,11 @@ export function exactFleet(local: LocalLog[], localId: string, hosts: FleetHost[
     const k0 = bk.get(h);
     if (k0 === undefined || first(key, idOf(i), sk, k0, idOf(bi.get(h) ?? -1), bs.get(h) ?? "")) { bk.set(h, key); bi.set(h, i); bs.set(h, sk); }
   };
-  for (const l of local) for (const r of l.keys) offer(r.h, r.key, -1, l.skey);
+  // the hosts first; then only the local messages some host also holds compete (any other one is this machine's alone:
+  // nothing to decide, and 200 k local ids stay out of the maps)
   for (let i = 0; i < hosts.length; i++) { const fh = hosts[i]; if (!fh) continue; for (const o of fh.r.owned) { const sk = ownSess(o.key); for (const r of o.rows) offer(r.h, r.key, i, sk); } }
+  const lose = new Set<number>(); // local logs (index) holding a message some host holds too
+  for (let j = 0; j < local.length; j++) { const l = local[j]; if (!l) continue; for (let i = 0; i < l.hs.length; i++) { const h = l.hs[i] ?? ""; if (bk.has(h)) { offer(h, l.ks[i] ?? 0, -1, l.skey); lose.add(j); } } }
   const wins = (h: string, i: number, sk: string): boolean => bi.get(h) === i && bs.get(h) === sk;
   const out: Shadow[] = []; let removed = 0; let corrected = 0; const inexact: string[] = [];
   for (let i = 0; i < hosts.length; i++) {
@@ -152,12 +155,13 @@ export function exactFleet(local: LocalLog[], localId: string, hosts: FleetHost[
       out.push({ host: fh.name, key: sr.key, a, bill: a.bill, prov: pm });
     }
   }
-  for (const l of local) {
-    let loses = false; for (const r of l.keys) if (!wins(r.h, -1, l.skey)) { loses = true; break; }
+  for (let j = 0; j < local.length; j++) {
+    const l = local[j]; if (!l || !lose.has(j)) continue;
+    let loses = false; for (const h of l.hs) if (bk.has(h) && !wins(h, -1, l.skey)) { loses = true; break; }
     if (!loses) continue;
     const rows = rowsOf(l.path); if (!rows) { inexact.push(l.path); continue; }
     const a = newAcc(); a.ro = true; const lost = new Set<string>();
-    for (const r of rows) if (r.h && !wins(r.h, -1, l.skey)) { correct(a, r); lost.add(r.h); }
+    for (const r of rows) if (r.h && bk.has(r.h) && !wins(r.h, -1, l.skey)) { correct(a, r); lost.add(r.h); } // a message no host holds stays this machine's
     corrected += lost.size;
     out.push({ host: "", key: l.path, a, bill: l.bill, prov: new Map<string, string>() });
   }

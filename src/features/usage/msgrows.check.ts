@@ -57,6 +57,7 @@ complete(sess(L1)); a1 = ledger.get(L1);
 r1 = a1 ? rowsFor(L1, "claude", a1) : null;
 ok("grown log: continued, not rebuilt", !!r1 && r1.ok && !r1.rebuilt && r1.rows.some((r: OwnRow) => r.h === msgHash("m5")), r1 ? String(r1.rebuilt) + " " + String(r1.rows.length) : "-");
 ok("grown: file holds every row", readRows(L1, 0).n === (r1 ? r1.rows.length : -1), String(readRows(L1, 0).n));
+ok("ownership keys follow a grown entry", !!a1 && ownKeys(L1, a1).length === 4 && ownKeys(L1, a1).some((r: OwnRow) => r.h === msgHash("m5")), a1 ? String(ownKeys(L1, a1).length) : "-");
 // log 2's copy of m2 moves earlier: log 1 restarts without it, log 2 owns it
 writeFileSync(L2, [asst("m2", T0, "claude-opus-4-1", 7, 9, 50, 0), asst("m4", T9, "claude-sonnet-4-5", 2, 2, 2, 2)].join("\n") + "\n");
 sessions.clear(); ledger.clear(); forget();

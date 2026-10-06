@@ -155,14 +155,41 @@ export function rowsFor(path: string, h: string, a: Acc): Rows {
   }
   return { rows, ok: same(st.sum, want), rebuilt: true };
 }
-// the ownership-only rows of a log's owned messages ("u:" prompt ids aside): hash and key, no usage. Cached per entry
-// while its owned set keeps its size (hashing 200 k ids costs a few hundred ms)
-const HC = new Map<string, { n: number; rows: OwnRow[] }>();
+// a log's owned messages ("u:" prompt ids aside) as hashes and order keys, read from the entry's stored text when it is
+// still text (the ledger keeps it undecoded: decoding every log's ids would hold a Map per log for nothing). Cached per
+// entry: an entry only grows (a re-read is a new entry), so a grown one hashes only its new ids (hashing 200 k ids
+// costs a few hundred ms once)
+export interface Hashes { hs: string[]; ks: number[] }
+const HC = new Map<string, { a: Acc; t: boolean; len: number; n: number; x: Hashes }>();
+function owned(a: Acc, from: number, x: Hashes): number {
+  let n = 0;
+  if (a.mv) { // "<id>,<key delta> …" (owners.ts moOut)
+    let prev = 0;
+    for (const e of a.mv.split(" ")) {
+      const i = e.indexOf(","); if (i <= 0) continue;
+      const t = prev + Number(e.slice(i + 1)); if (!(t >= 0)) continue; prev = t;
+      if (n++ < from) continue;
+      const id = e.slice(0, i); if (!id.startsWith("u:")) { x.hs.push(msgHash(id)); x.ks.push(t); }
+    }
+    return n;
+  }
+  for (const [id, key] of a.mo) { if (n++ < from) continue; if (!id.startsWith("u:")) { x.hs.push(msgHash(id)); x.ks.push(key); } }
+  return n;
+}
+export function ownHashes(path: string, a: Acc): Hashes {
+  const hit = HC.get(path);
+  if (hit && hit.a === a) {
+    if (a.mv) { if (hit.t && hit.len === a.mv.length) return hit.x; }
+    else if (a.mo.size === hit.n) return hit.x;
+    else if (a.mo.size > hit.n) { hit.n = owned(a, hit.n, hit.x); hit.t = false; hit.len = a.mo.size; return hit.x; } // grown: its new ids only
+  }
+  const x: Hashes = { hs: [], ks: [] }; const n = owned(a, 0, x);
+  HC.set(path, { a, t: !!a.mv, len: a.mv ? a.mv.length : a.mo.size, n, x }); // n: entries read (the text's are the Map's, in order)
+  return x;
+}
+// the same as ownership-only rows (the snapshot's own lines of sessions outside the window)
 export function ownKeys(path: string, a: Acc): OwnRow[] {
-  const m = mine(a); const hit = HC.get(path);
-  if (hit && hit.n === m.size) return hit.rows;
-  const rows: OwnRow[] = [];
-  for (const [id, key] of m) if (!id.startsWith("u:")) rows.push({ h: msgHash(id), key, d: "", hr: 0, m: "", prov: "", n: [] });
-  HC.set(path, { n: m.size, rows });
+  const x = ownHashes(path, a); const rows: OwnRow[] = [];
+  for (let i = 0; i < x.hs.length; i++) rows.push({ h: x.hs[i] ?? "", key: x.ks[i] ?? 0, d: "", hr: 0, m: "", prov: "", n: [] });
   return rows;
 }
