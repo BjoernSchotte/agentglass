@@ -9,8 +9,8 @@ for a in "$@"; do case "$a" in --dry-run) dry=1;; --yes) yes=1;; *) echo "usage:
 [ -z "$(git status --porcelain)" ] || { echo "release.sh: working tree not clean" >&2; exit 1; }
 git fetch -q origin main --tags
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "release.sh: main is not in sync with origin/main" >&2; exit 1; }
-ci=$(gh run list --workflow ci.yml --commit "$(git rev-parse HEAD)" --json conclusion -q '.[0].conclusion' 2>/dev/null || true)
-[ "$ci" = success ] || { echo "release.sh: CI for HEAD is '${ci:-missing}', need success" >&2; exit 1; }
+ci=$(ci_gate HEAD) # HEAD's run, or the last run before docs-only commits (ci.yml skips those)
+[ "$ci" = success ] || { echo "release.sh: CI for HEAD is '$ci', need success" >&2; exit 1; }
 v=$(next_version); prev=$(last_stable_tag HEAD)
 body=$(changelog "$prev" HEAD)
 printf '## %s\n\n%s\n' "$v" "$body"

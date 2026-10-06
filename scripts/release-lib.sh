@@ -114,3 +114,25 @@ prepend_changelog() {
   } > "$tmp"
   mv "$tmp" CHANGELOG.md
 }
+
+# CI conclusion of a commit (empty when no run): gh run list, overridable in tests
+_ci_lookup() { "${RELEASE_GH:-gh}" run list --workflow ci.yml --commit "$1" --json conclusion -q '.[0].conclusion' 2>/dev/null || true; }
+# only paths ci.yml's paths-ignore skips ("**/*.md", "docs/**", "LICENSE"): such a commit gets no CI run
+_ci_ignored_only() {
+  files=$(git show --name-only --format= "$1")
+  [ -n "$files" ] || return 1
+  printf '%s\n' "$files" | awk '!(/\.md$/ || /^docs\// || $0 == "LICENSE") { bad = 1 } END { exit bad }'
+}
+# the CI verdict for releasing <rev>: its own run, else — walking back over commits that only touch ignored paths —
+# the nearest run before them; "missing" when a code commit has no run
+ci_gate() {
+  rev=$(git rev-parse "$1"); n=0
+  while [ $n -lt 50 ]; do
+    r=$(_ci_lookup "$rev")
+    [ -n "$r" ] && { echo "$r"; return 0; }
+    _ci_ignored_only "$rev" || { echo missing; return 0; }
+    rev=$(git rev-parse "$rev~1" 2>/dev/null) || { echo missing; return 0; }
+    n=$((n + 1))
+  done
+  echo missing
+}
