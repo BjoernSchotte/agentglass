@@ -115,7 +115,8 @@ export function fill(t: string, m: Map<string, string>): string {
   }
   return out + t.slice(i);
 }
-export function render(r: Rule, v: MVal, level: number, s: Sess): string { return fill(r.message, placeholders(r, v, level, s)) + (v.hint ? " · " + v.hint : ""); }
+// the hint: a guess (" · approval?", " · likely"), or who saw the dialog (" (herdr)")
+export function render(r: Rule, v: MVal, level: number, s: Sess): string { return fill(r.message, placeholders(r, v, level, s)) + (v.hint === "herdr" ? " (herdr)" : v.hint ? " · " + v.hint : ""); }
 function alertOf(r: Rule, st: AState, s: Sess): Alert {
   return { rule: r.id, severity: severityOf(st.level), level: st.level, value: st.v.v, unit: unitOf(r.metric), threshold: thrOf(r, st.level), since: st.lvAt,
     message: render(r, st.v, st.level, s), labels: r.labels, acked: st.acked };

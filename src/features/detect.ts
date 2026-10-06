@@ -84,7 +84,7 @@ function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {
   const i = sh.args.indexOf(" -c ");
   return i >= 0 ? sh.args.slice(i + 4, i + 34) : base(sh.args.split(" ")[0] ?? "");
 }
-export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean; noAsk?: boolean; mayGuess?: boolean; guess?: boolean; bare?: boolean } // asks: the agent's terminal title says it waits for approval; noAsk: the harness never asks (pi); mayGuess: no title to read for a harness that hides its approval dialog (Gemini outside tmux); guess: approvalGuess holds; bare: the newest message is an empty reply (bareReply)
+export interface Obs { now: number; mtime: number; busy: boolean; evs: Ev[]; cpu: number[]; cmds: Cmd[]; subsActive: boolean; asks?: boolean; askBy?: string; noAsk?: boolean; mayGuess?: boolean; guess?: boolean; bare?: boolean } // asks: the agent's terminal title (tmux) or its multiplexer's state (askBy "herdr": blocked) says it waits for approval; noAsk: the harness never asks (pi); mayGuess: no title to read for a harness that hides its approval dialog (Gemini outside tmux); guess: approvalGuess holds; bare: the newest message is an empty reply (bareReply)
 function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 // a metric's value for a rule: v -1 = absent (its preconditions do not hold, the rule cannot fire); lv: the level the agent
 // itself asserts (1: Gemini's approval title), whatever the threshold; at: recorded time of the newest record behind v;
@@ -96,9 +96,9 @@ const SAMPLE_SEC = 1.5; // CPU sample cadence while an agent is live (sched.ts A
 // seconds a tool call has been open (or, likely, one Gemini has not logged yet: unlogged) while the tree is quiet (avg over samples
 // < cpuBelow) and no tool command started within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once
 export function approvalWait(o: Obs, cpuBelow: number, samples: number, graceSec: number): MVal {
-  if (o.noAsk) return absent(); // a quiet long call there is just a long call (pi execs `sleep` & co. without a shell)
+  if (o.noAsk && !o.askBy) return absent(); // a quiet long call there is just a long call (pi execs `sleep` & co. without a shell); herdr sees its dialogs (questions)
   const pend = (o.now - o.mtime) / 1000;
-  if (o.asks) { const m = mv(pend, pendingTool(o.evs) || "approval dialog", "", avgTail(o.cpu, samples).toFixed(0), o.mtime); m.lv = 1; return m; }
+  if (o.asks) { const m = mv(pend, pendingTool(o.evs) || "approval dialog", "", avgTail(o.cpu, samples).toFixed(0), o.mtime); m.lv = 1; if (o.askBy) m.hint = o.askBy; return m; }
   const call = pendingTool(o.evs); const t = call || (unlogged(o) ? "approval dialog" : "");
   if (!o.busy || !t || o.cpu.length < samples || o.subsActive) return absent();
   const cpu = avgTail(o.cpu, call ? samples : Math.max(samples, Math.floor(pend / SAMPLE_SEC))); // a guess: quiet over the whole silence
@@ -138,7 +138,7 @@ export function repeatRun(o: Obs): MVal { const n = loopRun(o.evs); return n > 0
 // waiting on a tool approval: tool call open > 20s, tree quiet (10s avg < 2%), no tool command started since the call
 export function approvalNote(o: Obs): string {
   const a = approvalWait(o, 2, 7, 5);
-  if (a.lv > 0) return "approval dialog open"; // the agent says so itself (Gemini logs the call only once it ran)
+  if (a.lv > 0) return "approval dialog open" + (a.hint === "herdr" ? " (herdr)" : ""); // the agent (or herdr) says so itself (Gemini logs the call only once it ran)
   return a.v > 20 ? a.tool + " pending " + dur(a.v) + ", cpu " + a.cpu + "%" + (a.hint ? " · " + a.hint : "") : "";
 }
 // heuristic (no title to read: not in tmux): a harness that logs a call only once it ran (Gemini, may: the caller says so)

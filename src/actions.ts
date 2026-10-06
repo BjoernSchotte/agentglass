@@ -3,13 +3,17 @@
 import { existsSync, openSync, writeSync, closeSync, mkdirSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { join } from "node:path";
-import { HOME, run } from "./util/fs.ts";
+import { HOME } from "./util/fs.ts";
 import { OS } from "./platform/index.ts";
 import { home } from "./util/text.ts";
 import type { Sess } from "./model/types.ts";
 import { S, say } from "./state.ts";
-import { sessions, SG, scan, buildView, parentOf, current } from "./model/sessions.ts";
-import { refreshProcs, rootOf, tmuxTarget, tmuxTargetNow, procAt, procSess, sharedDaemon } from "./model/procs.ts";
+import { sessions, SG, scan, buildView, parentOf, current, titleOf } from "./model/sessions.ts";
+import { refreshProcs, rootOf, procAt, procSess, sharedDaemon } from "./model/procs.ts";
+import { paneNow, sendTo, focusOn, startIn } from "./mux/index.ts";
+import { tabLabel } from "./mux/herdr-parse.ts";
+import { identOf } from "./features/query/project.ts";
+import { REDACT } from "./features/redact-on.ts";
 import { harnessOf, cmdOf } from "./harness/index.ts";
 import { enter, leave } from "./term.ts";
 import { realCwd } from "./hooks.ts";
@@ -69,13 +73,6 @@ export function pageDetail(): void {
   try { const fd = openSync(f, "w"); writeSync(fd, dv.plain + "\n"); closeSync(fd); } catch (err) { say("err", "cannot write " + home(f)); return; }
   openExternal(pagerCmd(), f);
 }
-export function sendTmux(t: string, msg: string): void {
-  try {
-    execFileSync("tmux", ["send-keys", "-t", t, "-l", "--", msg], { stdio: "ignore" });
-    // delayed Enter: TUIs like Codex treat an Enter inside a fast key burst as a pasted newline
-    setTimeout(() => { run("tmux", ["send-keys", "-t", t, "Enter"]); say("ok", "sent to tmux " + t); }, 400);
-  } catch (e) { say("err", "tmux send failed"); }
-}
 // subagent transcripts are not resumable sessions: prompts and resumes go to the owning session
 export function owner(s: Sess): Sess | null {
   if (!s.parent) return s;
@@ -86,12 +83,7 @@ export function owner(s: Sess): Sess | null {
 export function sendPrompt(sub: Sess, msg: string): void {
   const s = owner(sub);
   if (!s) return;
-  if (s.pid) {
-    const t = tmuxTargetNow(s.pid);
-    if (!t) { say("warn", "session is live outside tmux — cannot inject input safely"); return; }
-    sendTmux(t, msg);
-    return;
-  }
+  if (s.pid) { sendTo(paneNow(s), msg); return; } // its tmux or herdr pane; the none adapter explains why not
   const hl = harnessOf(s.h).headless;
   if (!hl) { say("warn", harnessOf(s.h).label + " has no headless mode — run it in tmux to send prompts"); return; }
   const c = cmdOf(s.h);
@@ -113,21 +105,24 @@ export function sendPrompt(sub: Sess, msg: string): void {
 export function resume(sub: Sess): void {
   const s = owner(sub);
   if (!s) return;
-  if (s.pid) {
-    const t = tmuxTargetNow(s.pid);
-    if (t && process.env.TMUX) { run("tmux", ["switch-client", "-t", t]); say("ok", "switched to " + t); }
-    else say("warn", "already running (pid " + s.pid + ")" + (t ? " in tmux " + t : ""));
-    return;
-  }
+  if (s.pid) { const p = paneNow(s); if (p.kind === "none") say("warn", "already running (pid " + s.pid + ")"); else focusOn(p); return; }
   const rs = harnessOf(s.h).resume;
   if (!rs) { say("warn", harnessOf(s.h).label + " can't resume a session by id"); return; }
+  // inside herdr: a new tab in the workspace owning the session's directory (the agent must not live in our pane)
+  const id = identOf(s);
+  if (startIn(s.h, s.id, rs(s), cwdOf(s), id ? id.top : "", tabLabel(titleOf(s), s.id, REDACT))) return;
   const c = cmdOf(s.h);
-  const args = c.slice(1).concat(rs(s));
-  leave();
-  try { execFileSync(c[0], args, { stdio: "inherit", cwd: cwdOf(s) }); } catch (e) { /* non-zero exit */ }
-  enter();
-  refreshProcs(); scan(); buildView();
+  ACT_IO.inTerminal(c[0], c.slice(1).concat(rs(s)), cwdOf(s));
 }
+// the in-terminal resume: leave the TUI, run the agent here, come back when it exits (a seam for checks)
+export const ACT_IO = {
+  inTerminal: (cmd: string, args: string[], cwd: string): void => {
+    leave();
+    try { execFileSync(cmd, args, { stdio: "inherit", cwd }); } catch (e) { /* non-zero exit */ }
+    enter();
+    refreshProcs(); scan(); buildView();
+  },
+};
 export function killPid(pid: number, sig: string): void {
   if (!pid) { say("warn", "no process linked"); return; }
   const w = sharedDaemon(pid); if (w) { say("warn", w); return; }

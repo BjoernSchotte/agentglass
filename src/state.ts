@@ -36,6 +36,7 @@ interface State {
   lastClickY: number; lastClickAt: number;
   cli: boolean; // --json / --watch: no screen, say() warnings go to stderr
   cliJson: boolean; // inside a coding agent: those warnings as one JSON line each ({"warning": …})
+  unfocused: boolean; // the terminal reported focus-out (main.ts): features that only matter to a viewer skip their reads
 }
 export const S: State = {
   W: 80, H: 24, frame: 0,
@@ -54,7 +55,7 @@ export const S: State = {
   helpScroll: 0, helpJump: false,
   prevSess: null, prevY0: 0, prevX0: 0, prevX1: 0,
   lastClickY: -1, lastClickAt: 0,
-  cli: false, cliJson: false,
+  cli: false, cliJson: false, unfocused: false,
 };
 
 export function say(kind: string, msg: string): void {

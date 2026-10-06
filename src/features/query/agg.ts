@@ -49,6 +49,9 @@ function sessModels(s: Sess): string[] {
   return o.length ? o : ["unknown"];
 }
 function startOf(s: Sess): { hour: string; wd: string } { const a = ledger.get(s.path); const t0 = a ? a.t0 : 0; if (t0 <= 0) return { hour: "unknown", wd: "unknown" }; const l = localOf(t0); return { hour: String(l.hour), wd: WD[l.wd] ?? "" }; }
+// dimensions other features add (mux: workspace)
+export interface DimFn { dim: string; f: (s: Sess) => string[] }
+export const DIMS: DimFn[] = [];
 // a session attribute as dimension values
 export function sessDim(dim: string, s: Sess): string[] {
   switch (dim) {
@@ -67,6 +70,7 @@ export function sessDim(dim: string, s: Sess): string[] {
     case "hour": return [startOf(s).hour];
     case "weekday": return [startOf(s).wd];
   }
+  for (const d of DIMS) if (d.dim === dim) { const f = d.f; return f(s); }
   return [];
 }
 function uniq(xs: string[]): string[] { const o: string[] = []; for (const x of xs) if (o.indexOf(x) < 0) o.push(x); return o; }
