@@ -31,9 +31,9 @@ run_check() { # run_check <id> <executable> <log>: sets rc
   # can read or write the user's real home (sessions, ~/.agentglass config, cache, run dir, palette, theme)
   h="$CHECK_OUT/$1.home"; mkdir -p "$h"; rc=0
   # (herdr: no HERDR_* of the developer's own pane and herdr off — a herdr check opts in with a fake binary and socket)
-  limit 300 env $HERDR_UNSET AGENTGLASS_HERDR=off -u GEMINI_CLI_HOME -u OPENCODE_DB -u PI_CODING_AGENT_DIR -u PI_CODING_AGENT_SESSION_DIR -u AGENTGLASS_CACHE_DIR \
+  limit 300 env $HERDR_UNSET -u GEMINI_CLI_HOME -u OPENCODE_DB -u PI_CODING_AGENT_DIR -u PI_CODING_AGENT_SESSION_DIR -u AGENTGLASS_CACHE_DIR \
     -u AGENTGLASS_CONFIG -u AGENTGLASS_RUN_DIR -u AGENTGLASS_PALETTE_FILE -u AGENTGLASS_OTLP_DIR -u AGENTGLASS_THEME -u AGENTGLASS_THEME_FILE -u AGENTGLASS_PRICES \
-    HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" XDG_STATE_HOME="$h/.local/state" \
+    AGENTGLASS_HERDR=off HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" XDG_STATE_HOME="$h/.local/state" \
     XDG_CACHE_HOME="$h/.cache" AGENTGLASS_HERMETIC=1 \
     AGENTGLASS_RULES=/nonexistent AGENTGLASS_NOTIFY=0 AGENTGLASS_REDACT=1 AGENTGLASS_REDACT_KEEP=keepme "$2" >"$3" 2>&1 || rc=$?
   rm -rf "$h"
@@ -77,7 +77,7 @@ if [ "${1:-}" = --job ]; then
            [ "$(cat "$CHECK_OUT/bin.done")" = 0 ] || { echo "skipped: agentglass build failed" > "$log"; rc=1; }
          fi
          # hermetic via their own temp HOME: no agentglass path overrides from the caller
-         [ $rc != 0 ] || limit 600 env $HERDR_UNSET AGENTGLASS_HERDR=off -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR -u AGENTGLASS_PRICES sh "$f" >"$log" 2>&1 || rc=$? ;;
+         [ $rc != 0 ] || limit 600 env $HERDR_UNSET -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR -u AGENTGLASS_PRICES AGENTGLASS_HERDR=off sh "$f" >"$log" 2>&1 || rc=$? ;;
   esac
   echo "$rc $(($(date +%s) - t0))" > "$CHECK_OUT/$id.status"; exit 0
 fi
