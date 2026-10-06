@@ -9,11 +9,13 @@ import type { Clause, Val } from "../query/types.ts";
 import { register } from "../query/attrs.ts";
 import { extend } from "../query/eval.ts";
 import { parse } from "../query/parse.ts";
+import { owns } from "../../model/sessref.ts";
 
 function hid(s: Sess): string { return s.h + ":" + s.id; }
 // "<harness>:<id>" (lowercase) → session; rebuilt when a lookup misses or finds a session that left the scan
 const idx = new Map<string, Sess>(); let idxN = -1;
-function reindex(): void { idx.clear(); for (const s of sessions.values()) idx.set(hid(s).toLowerCase(), s); idxN = sessions.size; }
+// twins (one Claude session under two project dirs) map to the owning copy (sessref.ts owns)
+function reindex(): void { idx.clear(); for (const s of sessions.values()) { const k = hid(s).toLowerCase(); const o = idx.get(k); if (!o || owns(s, o)) idx.set(k, s); } idxN = sessions.size; }
 function lookup(k: string): Sess | null {
   const l = k.toLowerCase();
   let s = idx.get(l);
