@@ -69,6 +69,11 @@ prefix=$(cd "$prefix" && pwd -P)   # physical path: agentglass compares it with 
 new="$prefix/.agentglass.new.$$"
 cp "$tmp/x/agentglass" "$new" 2>/dev/null || die "cannot write to $prefix — choose another --prefix"
 mv -f "$new" "$prefix/agentglass" || { rm -f "$new"; die "cannot write to $prefix — choose another --prefix"; }
+# the optional HTTPS receiver from the same (verified) archive: next to agentglass, where `agentglass receive --tls-cert` looks
+if tar -xzf "$tmp/$asset" -C "$tmp/x" agentglass-receive-tls 2>/dev/null && [ -f "$tmp/x/agentglass-receive-tls" ]; then
+  chmod 755 "$tmp/x/agentglass-receive-tls"
+  cp "$tmp/x/agentglass-receive-tls" "$new" 2>/dev/null && mv -f "$new" "$prefix/agentglass-receive-tls" || { rm -f "$new"; echo "note: agentglass-receive-tls not installed (built-in HTTPS for agentglass receive)"; }
+fi
 
 version=$("$prefix/agentglass" --version 2>/dev/null || echo unknown)
 mkdir -p "$HOME/.agentglass"

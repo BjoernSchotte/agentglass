@@ -14,6 +14,7 @@ import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { REDACT, PINNED } from "./redact-on.ts";
 import { attrOf } from "./query/attrs.ts";
 import { ESC_RE, firstLine } from "../util/text.ts";
+import { scrubSecrets } from "../util/secrets.ts";
 
 export { REDACT };
 const envKeep = process.env.AGENTGLASS_REDACT_KEEP;
@@ -206,34 +207,10 @@ function caseLike(orig: string, rep: string): string {
   const f = orig.slice(0, 1);
   return f.toUpperCase() === f && f.toLowerCase() !== f ? rep.slice(0, 1).toUpperCase() + rep.slice(1) : rep;
 }
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/g;
-function secret(t: string): boolean {
-  if (/^(toolu|call|msg|req|resp|fc|srvtoolu)_/.test(t)) return false; // tool-call / message ids: public, and the detail header shows them
-  if (/^[0-9a-fA-F]+$/.test(t)) return true;
-  return /[0-9]/.test(t) && /[a-z]/.test(t) && /[A-Z]/.test(t);
-}
-function isTokCh(c: number): boolean { return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 43 || c === 61; }
-// runs of ≥ 24 [A-Za-z0-9_+=] that look like keys → • of the same width
-// ponytail: a hand scan, not matchAll — scriptc crashed (use-after-free in the cycle collector) on `secret(m[0]) ? mask : m[0]`
-function maskTokens(s: string): string {
-  let o = ""; let last = 0; let st = -1;
-  for (let i = 0; i <= s.length; i++) {
-    if (i < s.length && isTokCh(s.charCodeAt(i))) { if (st < 0) st = i; continue; }
-    if (st >= 0 && i - st >= 24) { const tok = s.slice(st, i); if (secret(tok)) { o += s.slice(last, st); o += "•".repeat(i - st); last = i; } }
-    st = -1;
-  }
-  return last > 0 ? o + s.slice(last) : s;
-}
 // plain text (no escapes) → same text with every sensitive run replaced by one of the same length
 export function scrubText(t: string): string {
   if (t.length < 3) return t;
-  let s = t;
-  if (s.indexOf("@") >= 0) {
-    let o = ""; let last = 0;
-    for (const m of s.matchAll(EMAIL)) { const i = m.index ?? 0; const hit = m[0]; o += s.slice(last, i); o += hit.replace(/[A-Za-z0-9]/g, "x"); last = i + hit.length; }
-    s = o + s.slice(last);
-  }
-  if (s.length >= 24) s = maskTokens(s);
+  let s = scrubSecrets(t);
   let low = s.toLowerCase();
   if (low.length !== s.length) low = s; // ponytail: a case mapping that changes length (rare) → case-sensitive matching
   for (const d of dict) {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, appendFileSync, readdirSync, renameSync, chmodSync, copyFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
 import { OS } from "../../platform/index.ts";
@@ -85,6 +86,14 @@ const fb = dirFeed({ name: "nas4", ssh: "", agentglass: "", redact: false, enabl
 touchAt(bomb, Date.now() + 60000);
 s = settle(fb, Date.now());
 ok("a zip bomb is refused (the older base stands)", s.err.indexOf("256 MB") >= 0 && !!s.report, s.code + " " + s.err);
+// a bomb whose trailer lies: 300 gzip members of 1 MB of zeros each (the last trailer says 1 MB); the inflate stops at
+// 256 MB instead of decoding all of it
+const one = gzipSync(new Uint8Array(1048576)); const many = new Uint8Array(one.length * 300); for (let i = 0; i < 300; i++) many.set(one, i * one.length);
+const liar = join(view3, id + ".base-00000000000000bc.snap.gz"); writeFileSync(liar, many); chmodSync(liar, 0o600);
+const fl = dirFeed({ name: "nas5", ssh: "", agentglass: "", redact: false, enabled: true, kind: "dir", path: view3, snapshot: true, watch: false }, f, 256);
+touchAt(liar, Date.now() + 120000);
+s = settle(fl, Date.now());
+ok("a bomb with a lying trailer is refused at the cap (the older base stands)", s.err.indexOf("256 MB") >= 0 && !!s.report, s.code + " " + s.err);
 // pruning: after a day, deltas older than the newest base go; the newest base and its deltas stay
 const files = dropFiles(drop, id);
 const later = Date.now() + 25 * 3600000;

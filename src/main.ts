@@ -68,6 +68,7 @@ import "./features/update.ts";
 import "./features/otlp/export.ts";
 import "./features/fleet/cli.ts";
 import "./features/fleet/tui.ts";
+import "./features/hub/receive.ts";
 
 function render(): void {
   S.dirty = false; S.animating = false; headDirty = false; // spin() sets animating again while something on screen turns

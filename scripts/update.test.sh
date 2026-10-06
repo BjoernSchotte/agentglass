@@ -44,8 +44,11 @@ code() { if "$@"; then echo 0; else echo $?; fi; }
 eq "dry-run exit" "$(code ag good.json --dry-run --json)" 0
 grep -q '"tag":"v2026.9.2"' "$t/out" || { echo "FAIL dry-run target: $(cat "$t/out")"; fail=1; }
 eq "dry-run leaves binary" "$(v)" "2026.9.1"
+printf '#!/bin/sh\necho 2026.9.1\n' > "$t/bin/agentglass-receive-tls"; chmod 755 "$t/bin/agentglass-receive-tls" # the old version's HTTPS receiver
 eq "update exit" "$(code ag good.json)" 0
 eq "updated" "$(v)" "2026.9.2"
+[ ! -e "$t/bin/agentglass-receive-tls" ] || { echo "FAIL a release without agentglass-receive-tls left the old one"; fail=1; }
+grep -q "old one is removed" "$t/out" || { echo "FAIL no note about the removed agentglass-receive-tls: $(cat "$t/out")"; fail=1; }
 eq "prev kept" "$("$t/bin/agentglass.prev" --version)" "2026.9.1"
 grep -q '"channel": *"stable"' "$t/home/.agentglass/config.json" || { echo "FAIL channel persisted: $(cat "$t/home/.agentglass/config.json" 2>&1)"; fail=1; }
 grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL install.json version"; fail=1; }

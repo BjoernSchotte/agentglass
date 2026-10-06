@@ -96,6 +96,7 @@ ok("allowance newest", Array.isArray(cl) && JSON.stringify(cl).indexOf("\"pct\":
 // remote rows stay out of local paths
 const row = ws.rows[0];
 if (row) {
+  ok("a row carries the report's title and cwd", row.title.startsWith("t ") && row.cwd === "/w/x", JSON.stringify([row.title, row.cwd]));
   const before = JSON.stringify(row);
   enrich(row); complete(row); loadHead(row); loadTail(row);
   ok("enrich/complete/loadHead/loadTail do nothing", JSON.stringify(row) === before, JSON.stringify(row));

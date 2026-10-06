@@ -792,7 +792,8 @@ One table for every command (`agentglass --help` prints it, the JSON help carrie
 
 Command-specific on top: `cost --check` exits 3 when the month is over budget, `rules check` 1 on warnings and 2 on
 errors, `export` 1 when some requests failed and 3 when another export to the same endpoint is running, `fleet` and
-`fleet cost` 5 with `--strict` when a host failed or is stale, `fleet serve` 126 for a refused request.
+`fleet cost` 5 with `--strict` when a host failed or is stale, `fleet serve` 126 for a refused request, `receive` 3
+when another receiver serves the same directory.
 
 ## Several machines (fleet)
 
@@ -1070,8 +1071,8 @@ service:
 
 On each host: the `otlp.tls` block above (a client certificate from the hosts' CA, `chmod 600` key), then
 `agentglass export --since all` once for the history and `agentglass --watch --otlp https://collector:4318` as a user
-service for the rest (it resumes exactly-once from its state file). [otlp-hub](specs/otlp-hub/spec.md) is the reader
-side that turns such a file into fleet rows.
+service for the rest (it resumes exactly-once from its state file). The hub reader (below) turns such a file into
+fleet hosts.
 
 The receiver contract — how to rebuild agentglass's view from the export:
 
@@ -1097,6 +1098,87 @@ The receiver contract — how to rebuild agentglass's view from the export:
 7. **Personal identifiers:** agentglass sends no `user.*` attribute. Claude Code's own telemetry sends `user.email`,
    `user.account_uuid` and `organization.id` by default when logged in: drop `user.email` at the receiver (the
    `attributes/drop_email` processor above). `agentglass export --status` reminds you when that telemetry is on.
+
+### OTLP: a hub for hosts you cannot reach (`agentglass receive`)
+
+`agentglass receive` is a small OTLP/HTTP receiver for your own hosts: each host pushes its export with a token of
+its own, the hub stores it per host in Collector-compatible files, and the hub reader turns those files into hosts.
+No Collector needed. JSON and protobuf, gzip or plain; `/v1/traces` and `/v1/logs` are stored, `/v1/metrics` is
+accepted and discarded (counted), `/healthz` answers `ok` without a token.
+
+On the hub:
+
+```sh
+agentglass receive token add ci                         # prints the token once; the hub keeps only its SHA-256
+agentglass receive                                      # foreground, 127.0.0.1:4318, stores in ~/.agentglass/hub
+tailscale serve --bg --https=443 http://127.0.0.1:4318  # tailnet-only HTTPS in front (never Funnel)
+agentglass receive service --print                      # a systemd user unit / launchd agent to copy; never installed
+agentglass receive status                               # per host: last seen, requests, refusals, pinned host id
+```
+
+On each host (`ci` here): put the `Authorization: Bearer agr_…` line that `token add` printed into a file only you
+can read, point the exporter at the hub and run it as a user service:
+
+```sh
+umask 077; printf 'Authorization: Bearer agr_…\n' > ~/.agentglass/otlp-headers
+# ~/.agentglass/config.json: {"otlp": {"endpoint": "https://hub.your-tailnet.ts.net", "headersFile": "~/.agentglass/otlp-headers"}}
+agentglass export --since all     # the history, once
+agentglass --watch --otlp         # the rest, live (heartbeat, session state, alerts), resuming exactly-once
+```
+
+- **Tokens:** one per host. `token rotate ci [--grace 24h]` issues a new one and keeps the old one working for the
+  grace period; `token revoke ci` ends all of a host's tokens at once; `--expires 90d` sets a lifetime (`receive
+  status` warns 7 days ahead); `token list [--json]`. A running receiver picks up changes within a second. Tokens are
+  required on every address, loopback included. `token add` and `rotate` refuse to run inside a coding agent (the
+  token would land in its transcript).
+- **Host pinning:** the first accepted `host.id` under a token pins it; another `host.id` under that token is refused
+  (`403`, or a partial success naming it). A reinstalled machine: `agentglass receive token add ci --repin`.
+- **Listening:** loopback and the tailnet ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) need no flag. Anything else
+  needs `--listen-public` **and** TLS; plain HTTP on a public address is refused.
+- **Built-in HTTPS:** `agentglass receive --tls-cert server.crt --tls-key server.key` runs `agentglass-receive-tls`
+  (in the same release archive, installed next to `agentglass`; a separate binary because HTTPS needs scriptc's C
+  backend; `install.sh` and `agentglass update` install it, Homebrew does not yet). Both binaries must be of one
+  release. Certificate and key are re-read within 5 s when the files change; a key that does not belong to the
+  certificate is refused (at start: exit 2; on reload: the last good pair keeps serving); `receive status` shows the
+  expiry. No client certificates: for mutual TLS use a Collector (below).
+- **Behind a reverse proxy:** terminate TLS there and proxy HTTP/1.1 to `127.0.0.1:4318` with a body limit of 8 MB;
+  agentglass ignores `X-Forwarded-For`.
+- **Limits:** 8 MB per request on the wire, 64 MB decompressed (a gzip bomb stops at the cap, whatever its trailer
+  claims), 20,000 spans or log records and 100 JSON objects/arrays per record (2,010,000) per request, 120 requests
+  and 128 MB per token per minute and 8 bodies in flight per token (`429` with `Retry-After`), 64 connections, one
+  request per connection, 10 s for the headers, 60 s for the body. `Expect: 100-continue` is answered at once.
+- **Storage:** `~/.agentglass/hub/<host>/traces-YYYYMMDD.jsonl` and `logs-…` (UTC days, one request per line, larger
+  requests split into lines of at most 8 MB), directories `0700`, files `0600`. Closed days are gzipped an hour after
+  midnight UTC. `receive.maxDiskMB` (2048) and `receive.retentionDays` (30): older files go first, then the oldest
+  closed days of any host; today's files are never deleted. When today's files alone exceed the budget, ingest
+  answers `503` (exporters retry; agentglass's own resends from its transcripts) and `receive status` says so.
+- **Scrubbing at ingest** (a second line behind redaction at the source), in every attribute list wherever it sits
+  (links and unknown members too): `user.email` is always dropped; prompts (also the harnesses' native `prompt`),
+  outputs, tool arguments and results and status messages unless `receive.keepContent: true`; e-mail addresses and
+  key-like tokens are masked in titles, commands, paths, exception messages and log bodies; `receive.drop` lists more
+  keys to drop (e.g. `process.working_directory`). `receive status` names a host that sent content.
+- **Config** (`~/.agentglass/config.json`, flags win): `"receive": {"listen", "dir", "tls": {"cert", "key"},
+  "listenPublic", "maxBodyMB", "maxDecodedMB", "maxRecords", "ratePerMin", "mbPerMin", "maxDiskMB", "retentionDays",
+  "keepContent", "drop"}`. Exit code 2 for a refused listen address, a tokens file others can read or a port in use;
+  3 when another receiver serves the directory.
+
+**The Collector path** (mutual TLS, central policy): point the hosts at a Collector (contrib) with the mTLS receiver
+above and a file exporter (`format: json`). The hub reader reads its directory with `"trust": "payload"`: a host is
+its `host.id`; a Collector that authenticates hosts should stamp the identity as `agentglass.auth.subject` (records
+whose `host.id` changes under one subject are dropped). Run a Collector in Docker as your own user (`--user
+$(id -u):$(id -g)`): the reader skips files owned by another user (the image's default uid is 10001) and files
+others can write.
+
+**The viewer side:** a `fleet.hosts` entry with `"otlp": "~/.agentglass/hub"` (optional `"hosts": {"ci": "<host id>"}`
+names, `"trust"`, `"maxAgeDays"`; `"includeNative"` is not supported yet: Codex, Gemini CLI and OpenCode native records
+are ignored, Claude Code's `api_request` records count for sessions agentglass does not export) makes every host in that directory a fleet host: rows with its name in the list,
+`agentglass fleet --json`, `fleet status` (the source entry reports skipped files). The reader keeps its place in
+`~/.agentglass/fleet/hub-<source>.state` (0600): a restart resumes without re-reading. Hub hosts report exactly (day rows,
+owned Claude messages): fleet's exact merge counts a message held by a hub host and another host once. A turn's cost reaches the hub when the turn closes (spans
+are sent per finished turn); liveness and alerts arrive within seconds through the logs stream; a host whose heartbeat
+is over 90 s old stops showing as live. Not reconstructable from the export (null or 0 in `--json`): `pid`, `path`, `bytes`, lines
+added/removed, skills, git commits. Keep the hub on an encrypted disk: agentglass does not encrypt the files (the key
+would sit next to them).
 
 `--format csv` is RFC 4180 with a header row: nested fields are flattened (`tokens_in`), lists joined with `;`, `null`
 is empty, and text starting with `= + - @` gets a leading `'` so spreadsheets do not run it. `--fields` picks and

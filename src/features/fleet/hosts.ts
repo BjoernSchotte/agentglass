@@ -50,7 +50,8 @@ export function rowsOf(h: string, r: HostReport, at: number): Sess[] {
     if (hit && hit.o === o) { hit.s.rat = at; OBJ.set(path, o); seen.add(path); out.push(hit.s); continue; } // the same --json object: the same row
     const s = newSess(harness, id, path, false);
     s.host = h; s.rat = at; s.rlive = o["live"] === true; s.headDone = true; s.tailSize = 0;
-    s.title = str(o["title"]) || "(no prompt yet)"; s.cwd = str(o["cwd"]); s.branch = str(o["branch"]); s.remote = str(o["remote"]); s.model = str(o["model"]);
+    // a hub host (otlp-hub) sends titles only when its export opts in: no title there means "not sent", so the id shows
+    s.title = str(o["title"]) || (hostByName(h)?.cfg.kind === "otlp" ? id : "(no prompt yet)"); s.cwd = str(o["cwd"]); s.branch = str(o["branch"]); s.remote = str(o["remote"]); s.model = str(o["model"]);
     const t = Date.parse(str(o["updated"])); s.mtime = t > 0 ? t : 0; s.last = s.mtime; s.size = num(o["bytes"]);
     s.status = str(o["status"]); s.kind = str(o["kind"]);
     const tk = obj(o["tokens"]) ?? {}; s.inTok = num(tk["in"]); s.outTok = num(tk["out"]); s.cacheRTok = num(tk["cacheRead"]); s.cacheWTok = num(tk["cacheWrite"]);
@@ -348,7 +349,8 @@ H.remoteRows.push((): Sess[] => {
   return o;
 });
 FRESH.ok = (host: string): boolean => { const rh = hostByName(host); return rh !== null && (rh.fresh || liveFresh(liveSrc(rh), Date.now())); };
-HOST_ENUM.values = (): string[] => { const c = FLEET.cfg; const o = [c ? c.localName : "local"]; if (c) for (const h of c.hosts) o.push(h.name); return o; };
+// the filter's host names: this machine, the configured hosts and the hosts hub sources found (otlp-hub)
+HOST_ENUM.values = (): string[] => { const c = FLEET.cfg; const o = [c ? c.localName : "local"]; if (c) for (const h of c.hosts) o.push(h.name); for (const rh of FLEET.hosts) if (o.indexOf(rh.cfg.name) < 0) o.push(rh.cfg.name); return o; };
 REMOTE_IDENT.of = (s: Sess): Ident | null => {
   const o = OBJ.get(s.path); const r = o ? obj(o["repo"]) : null; if (!r) return null;
   return { key: str(r["key"]), label: str(r["label"]), kind: str(r["kind"]), top: str(r["top"]), common: "", gitdir: "", worktree: str(r["worktree"]), remote: str(r["remote"]), via: "remote", gone: false, unread: false };

@@ -1,4 +1,5 @@
 agentglass
+agentglass-receive-tls
 *.ll
 .scriptc/
 .claude/

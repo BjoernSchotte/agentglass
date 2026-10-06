@@ -1,7 +1,7 @@
 // agentglass — `agentglass update`: stable/dev channels from GitHub Releases, SHA256SUMS + self-check, atomic swap, rollback
 // SPDX-License-Identifier: Apache-2.0
 // Only this command talks to GitHub, and only when run. Downloads use curl (scriptc's fetch has no binary bodies).
-import { existsSync, mkdirSync, copyFileSync, renameSync, chmodSync, readSync, writeSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, renameSync, chmodSync, readSync, writeSync, openSync, closeSync, lstatSync, unlinkSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { str, parse } from "../util/json.ts";
@@ -153,6 +153,7 @@ async function update(args: string[]): Promise<number> {
       return fail("downloaded binary failed its self-check (expected " + tv + " " + tch + ") — nothing changed", 1);
     try { copyFileSync(exe, exe + ".prev"); renameSync(cand, exe); }
     catch (e) { return fail("cannot replace " + exe + ": " + String(e), 1); }
+    updateTls(arc, x, exe);
     if (!o.tag) try { setConfig("update", "channel", tch); } catch (e) { errLine("agentglass update", "config", "channel not saved: " + (e instanceof Error ? e.message : String(e)), ""); } // --tag is one-off: the saved channel stays
     rewriteInstallJson(exe, tch, tv);
     say(o, "updated " + BUILD.version + " → " + tv + " (" + tch + ")", { updated: true, from: BUILD.version, to: tv, channel: tch, tag: target.tag });
@@ -160,6 +161,23 @@ async function update(args: string[]): Promise<number> {
   } finally { rmrf(work); }
 }
 
+// the optional HTTPS receiver ships in the same archive (otlp-hub 11.4): replaced next to agentglass when the archive
+// has it, so `agentglass receive --tls-cert` never runs an older one
+// (an archive without it — its C build failed for this target — removes the old one: receive refuses a binary of
+// another version anyway)
+function updateTls(arc: string, x: string, exe: string): void {
+  const dst = join(dirname(exe), "agentglass-receive-tls");
+  try { execFileSync("tar", ["-xzf", arc, "-C", x, "agentglass-receive-tls"], { stdio: "ignore" }); }
+  catch (e) {
+    try { lstatSync(dst); } catch (e2) { return; } // none installed
+    try { unlinkSync(dst); errLine("agentglass update", "partial", "this release has no agentglass-receive-tls for this platform: the old one is removed (built-in HTTPS off; use tailscale serve or a TLS proxy)", ""); }
+    catch (e3) { errLine("agentglass update", "partial", "agentglass-receive-tls of the previous version left in place: " + (e3 instanceof Error ? e3.message : String(e3)), "remove it: rm " + dst); }
+    return;
+  }
+  const c = join(x, "agentglass-receive-tls");
+  try { chmodSync(c, 0o755); renameSync(c, dst); }
+  catch (e) { errLine("agentglass update", "partial", "agentglass-receive-tls not updated: " + (e instanceof Error ? e.message : String(e)), ""); }
+}
 // first in line: the generic CLI handler would take `update --json` for a --json snapshot
 H.cli.unshift((args: string[]): boolean => {
   if (args[0] !== "update" || args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) return false; // help: cli.ts prints the record
