@@ -80,12 +80,13 @@ export function sendBatch(c: SendCfg, json: string, sleep: (ms: number) => void)
     if (z.length < plain.length) { data = z; gz = true; }
   }
   const out: SendOut = { ok: false, status: 0, rejected: 0, msg: "", gzipRefused: false, retries: 0, final: false };
+  let probed = false; // a reset is probed once per batch: the retries after it are plain retries
   for (let k = 0; ; k++) {
     const r = postJson(c.url, c.headers, data, c.timeoutS, gz, c.tls);
     const d = decide(r.status, r.exit, r.err, k, c.live);
     out.status = r.status;
     if (d === "final") { out.final = true; out.msg = tlsFail(r.exit, r.err); return out; }
-    if (resetLike(c.url, r.status, r.exit, r.err)) { const f = probeTls(c); if (f) { out.final = true; out.msg = f; return out; } }
+    if (!probed && resetLike(c.url, r.status, r.exit, r.err)) { probed = true; const f = probeTls(c); if (f) { out.final = true; out.msg = f; return out; } }
     if (d === "ok") {
       const rj = rejectedOf(r.body); out.ok = true; out.rejected = rj.n;
       if (rj.n > 0) out.msg = String(rj.n) + " spans rejected" + (rj.msg ? ": " + rj.msg : "");

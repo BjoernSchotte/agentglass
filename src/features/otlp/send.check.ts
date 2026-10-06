@@ -14,6 +14,7 @@ writeFileSync(fake, "#!/bin/sh\n[ \"$1\" = -V ] && { echo curl 8; exit 0; }\ncat
   "grep -q 'Content-Encoding: gzip' " + dir + "/cfg && echo gz >> " + dir + "/log || echo plain >> " + dir + "/log\n" +
   "h=$(sed -n 's/^dump-header = \"\\(.*\\)\"$/\\1/p' " + dir + "/cfg); printf 'HTTP/1.1 %s x\\r\\n' \"$st\" > \"$h\"; [ \"$ra\" != - ] && printf 'Retry-After: %s\\r\\n' \"$ra\" >> \"$h\"\n" +
   "[ \"$st\" = 000 ] && { printf '\\n000'; exit 7; }\n" +
+  "[ \"$st\" = R56 ] && { echo 'curl: (56) Recv failure: Connection reset by peer' >&2; printf '\\n000'; exit 56; }\n" +
   "[ \"$st\" = R55 ] && { echo 'curl: (55) Send failure: Connection reset by peer' >&2; printf '\\n000'; exit 55; }\n" +
   "[ \"$st\" = T56 ] && { echo 'curl: (56) OpenSSL SSL_read: error:0A00045C:SSL routines::tlsv13 alert certificate required, errno 0' >&2; printf '\\n000'; exit 56; }\nprintf '%s\\n%s' \"$body\" \"$st\"\n");
 chmodSync(fake, 0o755);
@@ -74,6 +75,7 @@ eq("a reset over https: a probe finds the TLS rejection", run(["R55 - x", "T56 -
 eq("a reset over https: the probe connects, a plain failure", run(["R55 - x", "200 - {}"], big, HC), "false false 0 0 false 0 sleeps  gz+plain");
 eq("a reset over https: three probes at most, then a plain failure", run(["R55 - x", "R55 - x", "R55 - x", "R55 - x", "200 - {}"], big, HC), "false false 0 0 false 0 sleeps  gz+plain+plain+plain");
 eq("a reset over http: no probe", run(["R55 - x", "200 - {}"], big, { url: C.url, headers: [], timeoutS: 5, gzip: true, live: true, tls: ["", "", ""] }), "false false 0 0 false 0 sleeps  gz");
+eq("one-shot: resets probed once per batch, then the normal retries", run(["R56 - x", "200 - {}", "R56 - x", "R56 - x", "R56 - x"], big, { url: HC.url, headers: [], timeoutS: 5, gzip: true, live: false, tls: ["", "", ""] }), "false false 0 0 false 3 sleeps 1000/2000/4000 gz+plain+gz+gz+gz");
 eq("resetLike", [resetLike("https://h", 0, 55, "Send failure: Connection reset by peer"), resetLike("https://h", 0, 56, "Recv failure: Connection reset by peer"), resetLike("http://h", 0, 55, "x"), resetLike("https://h", 0, 7, "x"), resetLike("https://h", 0, 56, "tlsv13 alert certificate required")].join(" "), "true true false false false");
 eq("TLS failure: one attempt, final", run(["T56 - x", "200 - {}"], big, C), "false true 0 0 false 0 sleeps  gz");
 rmSync(dir, { recursive: true, force: true });
