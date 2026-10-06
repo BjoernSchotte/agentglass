@@ -52,6 +52,11 @@ const tn = addToken(f, "nat", 0, now, false);
 ok("a native host id (UUID) pins", pinToken(f, tokenHash(tn), "4c4c4544-0042-3510-8051-b4c04f4e3032") === "" && checkToken(readTokens(f).toks, tn, now)?.pin === "4c4c4544-0042-3510-8051-b4c04f4e3032", JSON.stringify(readTokens(f).toks));
 ok("a host id with spaces or newlines does not", pinToken(f, tokenHash(tn), "a b") !== "" && pinToken(f, tokenHash(tn), "x\n- 1 2") !== "", "pinned");
 revokeToken(f, "nat");
+// rotated before the first request: whichever of the host's tokens pins first pins them all (one host directory, one id)
+const tr = addToken(f, "rot", 0, now, false); const tr2 = rotateToken(f, "rot", 3600000, 0, now);
+pinToken(f, tokenHash(tr), "0011223344556677");
+ok("pin covers the host's other tokens", checkToken(readTokens(f).toks, tr2, now)?.pin === "0011223344556677", JSON.stringify(readTokens(f).toks));
+revokeToken(f, "rot");
 
 // rotate: both during grace, old fails after; the pin carries over
 const t2 = rotateToken(f, "ci", 3600000, 0, now);

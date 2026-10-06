@@ -129,10 +129,15 @@ export function checkToken(ts: Tok[], presented: string, now: number): Tok | nul
   for (const t of ts) if (ctEq(t.hash, h) && live(t, now) && !hit) hit = t;
   return hit;
 }
-// record the first accepted host.id under this token (by hash); "" ok, else the write error
+// record the first accepted host.id under this token (by hash) on every unpinned token of its host (a token rotated
+// before the first request must not pin another machine into the same directory); "" ok, else the write error
 export function pinToken(file: string, hash: string, hostId: string): string {
   if (!pinnable(hostId)) return "a host.id of letters, digits and . _ : - (at most 128) is needed to pin";
-  return edit(file, (ts: Tok[]): string => { for (const t of ts) if (t.hash === hash && !t.pin) t.pin = hostId; return ""; });
+  return edit(file, (ts: Tok[]): string => {
+    const me = ts.find((t: Tok) => t.hash === hash); if (!me) return "";
+    for (const t of ts) if (t.name === me.name && !t.pin) t.pin = hostId;
+    return "";
+  });
 }
 
 // the server's view: re-read when the file's mtime or size changes, stat at most once a second (SIGHUP forces it)
