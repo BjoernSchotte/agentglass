@@ -59,5 +59,16 @@ ok("log moving: not due", ST.dues.length === 1 && ST.dues[0] === false, ST.dues.
 ST.dues = [];
 approvalOf(s);
 ok("one-shot: due", ST.dues.length === 1 && ST.dues[0] === true, ST.dues.join(","));
+// every harness (Decision 6): a fresh blocked reading mid-turn is the dialog — pi (noApproval) too: herdr sees its questions
+// (the read is due mid-turn: Codex's turn marker; Claude's registry says "waiting" at a permission dialog, not "busy")
+for (const h of ["claude", "codex", "pi", "kiro"]) {
+  const x = newSess(h, "X-" + h, "/p/X-" + h + ".jsonl", false); x.pid = 7; x.mtime = Date.now() - 4000; x.evs = [ev("meta", "turn started"), ev("user", "go"), ev("tool", "Bash\u0000npm test")];
+  if (h === "claude") x.status = "waiting";
+  sessions.set(x.path, x);
+  ST.status = "blocked"; ST.at = Date.now(); P.at = 0; P.status = "";
+  const xo = observeWith(x, looker()); const xa = approvalWait(xo, 2, 7, 5);
+  ok(h + ": blocked → ◆ on the first look", xa.lv === 1 && xo.askBy === "herdr" && approvalNote(xo) === "approval dialog open (herdr)", JSON.stringify(xa));
+  sessions.delete(x.path);
+}
 console.log(bad ? bad + " failed" : "approval: all checks passed");
 if (bad) process.exit(1);

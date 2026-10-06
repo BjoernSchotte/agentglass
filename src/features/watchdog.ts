@@ -55,7 +55,8 @@ function observe(s: Sess, kids: Map<number, Proc[]>, lk: MuxLook, oneShot: boole
   // herdr reads the dialog from the agent's screen: its blocked state is the approval signal (read only while a dialog
   // can be open: the log quiet mid-turn, or a harness that hides its dialogs); a reading older than the log is stale
   if (hp.kind === "herdr") {
-    const due = oneShot || pollDue(now - s.mtime, busy, !!h.hiddenApproval, hp.status === "blocked" && fresh(hp.at, s.mtime), now - hp.at);
+    // busy, or the agent's registry says it waits for the user (Claude's "waiting": a permission dialog, not busy)
+    const due = oneShot || pollDue(now - s.mtime, busy || s.status === "waiting", !!h.hiddenApproval, hp.status === "blocked" && fresh(hp.at, s.mtime), now - hp.at);
     const st = lk.status(hp, due);
     if (st !== "" && st !== "unknown" && fresh(hp.at, s.mtime)) { known = true; asks = st === "blocked"; if (asks) askBy = "herdr"; }
   }
