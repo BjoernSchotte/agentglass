@@ -5,6 +5,9 @@ import { fxSession } from "../query/fixture.ts";
 import { type Group, groupOfSession, groupOfExpr, compareGroups } from "./metrics.ts";
 import { toolRows, cntRows, fileLists, modelRows, timeline } from "./sections.ts";
 import { TMP, cmpBase, cmpCleanup, sess, editLine } from "./fixture.ts";
+import type { Sess } from "../../model/types.ts";
+import { sessions } from "../../model/sessions.ts";
+import { H } from "../../hooks.ts";
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -56,6 +59,17 @@ eq("symlinked cwd: relative paths", fll.onlyA.map((f) => f.shown).join(",") + " 
 eq("symlinked cwd: root as recorded", fll.root, TMP + "/link");
 const flm = fileLists(compareGroups(A, groupOfSession(l2), [], true, null)); // one side via the link, one direct
 eq("link and direct: one repo", flm.onlyB.map((f) => f.shown).join(",") + " | " + flm.onlyA.map((f) => f.shown).join(","), "src/d.ts | src/a.ts,src/shared.ts");
+// --redact replaces each session's cwd for display (H.meta; realCwd gives it back): the root is found on the real paths, as
+// without --redact, and the shown paths are repo-relative (faked only at output)
+{
+  const fakes = new Map<string, string>();
+  for (const s of sessions.values()) if (s.cwd) { fakes.set(s.path, s.cwd); s.cwd = "/home/user/projects/faked-" + s.id; }
+  H.realCwd.push((s: Sess): string => fakes.get(s.path) ?? "");
+  const fr = fileLists(c);
+  eq("redact: root from the real cwds", fr.root === TMP + "/app" ? "root" : fr.root, "root");
+  eq("redact: repo-relative paths", fr.onlyA.map((f) => f.shown).join(",") + " | " + fr.onlyB.map((f) => f.shown).join(","), "src/a.ts | src/b.ts");
+  H.realCwd.pop(); for (const s of sessions.values()) { const r = fakes.get(s.path); if (r) s.cwd = r; }
+}
 cmpCleanup();
 console.log(bad ? String(bad) + " failed" : "compare sections: all checks passed");
 if (bad) process.exit(1);

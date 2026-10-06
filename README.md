@@ -136,8 +136,8 @@ Every screen in this README and the launch video was recorded this way.
   since.
 - **Light enough to leave open all day.** Refresh follows activity: fast while an agent streams or
   you type, slower when nothing happens, and at most one frame per second while the terminal is in
-  the background. Alarms (waiting for you, approval, stuck) keep a 1.5 s cadence whenever an agent
-  runs. Frames are only drawn when something changed. `{"refresh": {"mode": "fixed"}}` in
+  the background. Alarms (waiting for you, approval, stuck, and your own rules on cost, tokens and tool calls) keep a
+  1.5 s cadence whenever an agent runs (`scripts/alarm-latency.test.sh` checks it end to end, focused and in the background). Frames are only drawn when something changed. `{"refresh": {"mode": "fixed"}}` in
   `~/.agentglass/config.json` (or `AGENTGLASS_REFRESH=fixed`) restores the old fixed 500 ms tick;
   `AGENTGLASS_DEBUG_REFRESH=1` shows the activity level and each job's cost in the footer. Inside
   tmux, `set -g focus-events on` lets agentglass notice that its pane is not in front. Processes,
@@ -148,7 +148,8 @@ Every screen in this README and the launch video was recorded this way.
   streaming: about 175 MB of memory (260–270 MB with a pinned call-row filter), first frame in under a second, and
   about 4 % of one core in front, under 2 % in the background. A first start shows the session list at once. The
   header shows `⟳ indexing 34% · 8.0G left · ~3m` while the history is indexed in the background (the whole process
-  stays at ≤ 20 % of one core meanwhile; about 8 min here). Numbers and method: `specs/tui-footprint/results.md`.
+  stays at ≤ 20 % of one core meanwhile; about 8 min here). The time left reads `~…` for the first 30 s, then follows
+  the throughput of about the last two minutes in steps (minutes, then 5 and 15 min). Numbers and method: `specs/tui-footprint/results.md`.
 
 ## Prices
 

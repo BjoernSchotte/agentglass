@@ -385,15 +385,19 @@ export function matchSession(f: Compiled, s: Sess, days: string[] | null): boole
   for (const [dk, d] of a.days) { if (!any && !ds.has(dk)) continue; if (dayMatches(f, s, dk, d)) return true; }
   return false;
 }
-// every matching row as (s, r, i): r and i are valid only inside fn (rows are compacted between passes)
-export function eachCall(f: Compiled, days: string[], fn: (s: Sess, r: Rows, i: number) => void): void {
+// every matching row as (s, r, i): r and i are valid only inside fn (rows are compacted between passes). later: the TUI's
+// deferral (query/ui.ts rowsLater) — a session whose calls file this run has not read is put there instead of read
+export function eachCall(f: Compiled, days: string[], fn: (s: Sess, r: Rows, i: number) => void, later: Sess[] | null = null): void {
   const cut = callCutoff(); const ds = new Set<string>(days);
-  for (const s of sessions.values()) callsIn(f, s, ds, cut, (r: Rows, i: number) => fn(s, r, i));
+  for (const s of sessions.values()) callsIn(f, s, ds, cut, (r: Rows, i: number) => fn(s, r, i), later);
 }
 // one session's rows of eachCall (resumable aggregation steps a session at a time)
-export function callsIn(f: Compiled, s: Sess, days: Set<string>, cut: number, fn: (r: Rows, i: number) => void): void {
-  if (!all1(f.sess, s)) return;
-  const a = ledger.get(s.path); if (!a || !rowsMayMatch(a.days, cut, days, false)) return;
+export function callsIn(f: Compiled, s: Sess, days: Set<string>, cut: number, fn: (r: Rows, i: number) => void, later: Sess[] | null = null): void {
+  const a = ledger.get(s.path); if (!a) return;
+  // a model clause reads rows already in the session test: defer before it (as matchingPaths does); other session clauses
+  // are cheap and keep sessions nobody asks for out of the queue
+  if (later && unread.has(s.path) && rowsMayMatch(a.days, cut, days, false) && (f.rowx.length > 0 || all1(f.sess, s))) { later.push(s); return; }
+  if (!all1(f.sess, s) || !rowsMayMatch(a.days, cut, days, false)) return;
   const r = callsOf(s); const b = ledger.get(s.path) ?? a;
   for (let i = 0; i < r.n; i++) if (rowOk(f, s, b.days, r, i, cut, days, false)) fn(r, i);
 }

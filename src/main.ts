@@ -23,7 +23,7 @@ import { str } from "./util/json.ts";
 import { bytes } from "./util/text.ts";
 import { section, configProblem } from "./util/config.ts";
 import { L } from "./features/usage/record.ts";
-import { indexing } from "./features/usage/ledger.ts";
+import { indexing, liveBehind } from "./features/usage/ledger.ts";
 import { replaying } from "./features/replay.ts";
 import { agentHost, hostObj, cliError } from "./features/agentenv.ts";
 import { compactHelp } from "./features/clihelp.ts";
@@ -153,8 +153,10 @@ function body(j: Job, now: number): () => void {
     if (L.ver !== v && (!listShown() || shownMoved(true))) S.dirty = true;
   };
   // alarm latency = the watch interval: probe first (the probe may sleep up to 1 s, the tail follows the stat), and a
-  // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap)
-  if (j === "watch") return () => { probe(); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved(false)) S.dirty = true; else presence(); }; // the watchdog read tails: busy/idle glyphs
+  // changed alarm is drawn at once, also unfocused (rare, and the ◆ must not wait for the render cap). A live log the
+  // ledger is behind on (the probe or a scan saw it grow) is booked first (the tick, which keeps its beat from here):
+  // rules on cost, tokens and tool calls read the ledger, and would otherwise lag a tick behind the watch
+  if (j === "watch") return () => { probe(); if (liveBehind()) runJob(sc, "tick", body("tick", now), () => Date.now(), warnJob); for (const f of H.onWatch) f(); const g = alarmSig(); if (g !== watchSig) { watchSig = g; render(); } else if (listShown() && shownMoved(false)) S.dirty = true; else presence(); }; // the watchdog read tails: busy/idle glyphs
   if (j === "fast") return () => {
     let d = false; for (const f of H.onFastTick) if (f()) d = true;
     let hd = false; for (const f of H.onHeaderTick) if (f()) hd = true;

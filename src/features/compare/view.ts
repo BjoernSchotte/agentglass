@@ -237,7 +237,7 @@ function build(st: CState, W: number, Ht: number, sync: boolean): string[] {
   if (st.sec === 0) out.push(summaryHead(scols(W), W));
   else if (st.sec === 1) { out.push(tableHead(tableCols(W, true), "tool", W)); if (!V.sig) ban.push(fg(C.dim) + "small samples, no significance (χ² needs ≥ 50 calls per group)" + RST); else ban.push(fg(C.dim) + "● share differs between A and B (χ² ≥ 6.63, p < 0.01) · ␣ folds MCP servers · ↵ Stats drill-down for side A ([) or B (])" + RST); }
   else if (st.sec === 2 || st.sec === 3) { out.push(tableHead(tableCols(W, false), st.sec === 2 ? "program" : "command", W)); if (!V.sig && V.cnts.length) ban.push(fg(C.dim) + "small samples, no significance" + RST); }
-  else if (st.sec === 4) { const pw = Math.max(10, W - 2 - 34); out.push(fg(C.dim) + line("   " + fit(V.root ? "path (in " + home(V.root) + ")" : "path", pw - 2) + " " + fit("A edits  ±", 16) + " " + fit("B edits  ±", 16), W) + RST); }
+  else if (st.sec === 4) { const pw = Math.max(10, W - 2 - 34); out.push(fg(C.dim) + line("   " + fit(V.root ? "path (in " + home(display("cwd", V.root, null)) + ")" : "path", pw - 2) + " " + fit("A edits  ±", 16) + " " + fit("B edits  ±", 16), W) + RST); }
   else if (st.sec === 5) { const nw = Math.max(12, Math.min(30, W - 2 - 60)); out.push(fg(C.dim) + line(" " + fit("model", nw) + rp("calls A", 8) + rp("calls B", 8) + rp("tokens A", 10) + rp("tokens B", 10) + rp("cost A", 12) + rp("cost B", 12), W) + RST); if (V.limited) ban.push(fg(C.dim) + "calls: call rows are kept " + String(callDays()) + " days, older calls are not counted — tokens and cost cover all history" + RST); }
   if (st.sec === 6) {
     const tl = timeline(c);

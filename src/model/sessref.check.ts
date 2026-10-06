@@ -6,6 +6,7 @@ import { newSess } from "./types.ts";
 import { sessions } from "./sessions.ts";
 import { findSession, resolveRef, lastSession } from "./sessref.ts";
 import { setHost, scopeOf, inScope, projectKey } from "../features/agentenv.ts";
+import { OWN } from "../features/usage/owners.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -40,6 +41,29 @@ eq("scoped: in-scope id", fs("aaaaaa-1111"), "0||aaaaaa-1111|");
 put("claude", "aaaaaa-9999", dir + "/p2", 900, "");
 eq("scoped: a shared prefix resolves to the in-scope pair only", fs("aaaaaa"), "4|ambiguous|-|aaaaaa-2222,aaaaaa-1111");
 eq("scoped: prefix unique in scope", fs("aaaaaa-1"), "0||aaaaaa-1111|");
+
+// twins: one Claude session under two project dirs (a project moved or copied with its ~/.claude dir) is ONE session — a
+// full id, <harness>:<id> or a prefix of it picks the owning copy (the one at home, owners.ts OWN.home; then the newest),
+// never "ambiguous"; only different sessions are, and every candidate's <harness>:<id> then resolves
+{
+  const tw = (proj: string, mtime: number): Sess => { const x = newSess("claude", "b39ecea3-0000-4000-8000-000000000001", dir + "/" + proj + "/b39ecea3-0000-4000-8000-000000000001.jsonl", false); x.cwd = dir + "/p1"; x.mtime = mtime; sessions.set(x.path, x); return x; };
+  const home = tw("-w-p1", 100); const away = tw("-w-p1-copy", 200); // the copy is newer: home still owns
+  const was = OWN.home; OWN.home = (p: string): boolean => p === home.path;
+  const fp = (ref: string): string => { const r = findSession(ref, (x: Sess): boolean => true); return String(r.code) + "|" + (r.s ? r.s.path.slice(dir.length) : "-") + "|" + r.hint; };
+  eq("twins: full id → the home copy", fp("b39ecea3-0000-4000-8000-000000000001"), "0|/-w-p1/b39ecea3-0000-4000-8000-000000000001.jsonl|");
+  eq("twins: harness:id → the home copy", fp("claude:b39ecea3-0000-4000-8000-000000000001"), "0|/-w-p1/b39ecea3-0000-4000-8000-000000000001.jsonl|");
+  eq("twins: a prefix → the home copy", fp("b39ecea3"), "0|/-w-p1/b39ecea3-0000-4000-8000-000000000001.jsonl|");
+  OWN.home = (p: string): boolean => true; // both at home (no cwd known): the newest
+  eq("twins, no home decides: the newest", fp("b39ecea3"), "0|/-w-p1-copy/b39ecea3-0000-4000-8000-000000000001.jsonl|");
+  OWN.home = was;
+  // a different session under the same prefix: ambiguous, one candidate per session, and the hint names ids that work
+  const other = put("claude", "b39ecea3-ffff-4000-8000-000000000002", dir + "/p2", 300, "");
+  const r = findSession("b39ecea3", (x: Sess): boolean => true);
+  eq("different sessions: ambiguous, one candidate each", String(r.code) + "|" + r.cands.map((x: Sess) => x.id).join(","), "4|b39ecea3-ffff-4000-8000-000000000002,b39ecea3-0000-4000-8000-000000000001");
+  eq("hint names the full refs", r.hint, "use one of: claude:b39ecea3-ffff-4000-8000-000000000002, claude:b39ecea3-0000-4000-8000-000000000001");
+  for (const c2 of r.cands) eq("candidate resolves: " + c2.id, String(findSession(c2.h + ":" + c2.id, (x: Sess): boolean => true).code), "0");
+  for (const x of [home, away, other]) sessions.delete(x.path);
+}
 
 // last: newest top-level session of the cwd's project (sub dirs count), not the current one
 eq("last from p1", (lastSession(dir + "/p1", null) ?? c).id, "aaaaaa-2222");

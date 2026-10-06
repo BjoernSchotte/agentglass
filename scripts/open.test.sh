@@ -83,5 +83,21 @@ eq "hung server: our link withdrawn" "$(ls -A "$inbox")" ""
 kill -TERM "$srv"; i=0; while [ -f "$run_dir/tui.lock" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 [ -f "$run_dir/tui.lock" ] && { echo "FAIL lock left after SIGTERM"; fail=1; }
 srv=0
+# twins: the same session under a second project dir (a copied ~/.claude) is one session: a full id, claude:<id> and a
+# prefix open the copy at home (the dir Claude names after its cwd), never "ambiguous", though the other copy is newer;
+# compare takes it too
+enc=$(printf %s "$p1" | sed 's/[^a-zA-Z0-9]/-/g'); tw="$h/.claude/projects/$enc"; mkdir -p "$tw"
+cp "$cp/$A.jsonl" "$tw/$A.jsonl"; touch -t 202601010000 "$tw/$A.jsonl"; touch "$cp/$A.jsonl"
+for ref in "$A" "claude:$A" "${A%%-*}"; do
+  o=$(run "$t/ag" open "$ref" --print 2>&1) && c=0 || c=$?
+  eq "twins: open $ref exit" "$c" 0
+  has "twins: open $ref picks the home copy" "$o" "projects/$enc/$A.jsonl"
+done
+o=$(run "$t/ag" compare "claude:$A" "claude:$B" --json 2>&1) && c=0 || c=$?
+eq "twins: compare exit" "$c" 0
+# different sessions under one prefix stay ambiguous; the hint names refs that resolve
+o=$(run "$t/ag" open abcdef --print 2>&1) && c=0 || c=$?
+eq "different sessions: ambiguous" "$c" 4
+has "different sessions: the hint names full refs" "$o" "use one of: claude:"
 [ $fail = 0 ] && echo "open: all e2e tests passed"
 exit $fail
