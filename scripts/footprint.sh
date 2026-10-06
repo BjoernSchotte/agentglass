@@ -1,18 +1,19 @@
 #!/bin/sh
 # TUI footprint of one agentglass binary on this host's real transcripts: first frame, RSS, CPU (self + children).
 #   sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>]
-#                           [--config <config.json>] [--debug] [--away]
+#                           [--config <config.json>] [--home <dir>] [--debug] [--away]
 # Prints: first_frame_ms, rss_mb_5s, rss_mb_30s, rss_mb_end, cpu_self_pct, cpu_children_pct, cpu_total_pct (one per line,
 # CPU in % of one core over the window after the warm-up). Runs the TUI niced in a detached 160x45 tmux pane with every
 # AGENTGLASS_* path in the scratch dir and AGENTGLASS_AGENT=0; --warm copies the cache first (the original is never
 # written); --config copies a config.json in (e.g. a pinned filter); --debug sets AGENTGLASS_DEBUG_REFRESH=1 and prints
 # the pane's last row (the debug footer) as `debug <text>`; --away reports a focus-out to the TUI after its first frame
-# (the terminal's focus event: nobody looks). Linux only (/proc). Kills only its own tmux session.
+# (the terminal's focus event: nobody looks); --home runs it on a fixture HOME (scripts/fixture-agents.sh). Linux (/proc)
+# and macOS (proc_pid_rusage through scripts/proc-cpu.c: self plus its waited-for children). Kills only its own tmux session.
 set -e
 export LC_ALL=C # decimal points in awk/sleep whatever the locale
-[ "$(uname -s)" = Linux ] || { echo "footprint.sh: Linux only"; exit 2; }
-usage() { echo "usage: sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>] [--config <file>] [--debug] [--away]" >&2; exit 2; }
-bin=""; mode=""; warm=""; warmup=30; window=120; scratch=""; config=""; debug=0; away=0
+os=$(uname -s); [ "$os" = Linux ] || [ "$os" = Darwin ] || { echo "footprint.sh: Linux or macOS only"; exit 2; }
+usage() { echo "usage: sh scripts/footprint.sh --bin <path> (--cold | --warm <cache dir>) [--warmup 30] [--window 120] [--scratch <dir>] [--config <file>] [--home <dir>] [--debug] [--away]" >&2; exit 2; }
+bin=""; mode=""; warm=""; warmup=30; window=120; scratch=""; config=""; home=""; debug=0; away=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) bin=$2; shift ;;
@@ -22,6 +23,7 @@ while [ $# -gt 0 ]; do
     --window) window=$2; shift ;;
     --scratch) scratch=$2; shift ;;
     --config) config=$2; shift ;;
+    --home) home=$2; shift ;;
     --debug) debug=1 ;;
     --away) away=1 ;;
     *) usage ;;
@@ -41,18 +43,29 @@ ses="agfp-$$"
 cleanup() { tmux kill-session -t "$ses" 2> /dev/null || true; [ $own = 0 ] || rm -rf "$scratch"; }
 trap cleanup EXIT INT TERM
 
-ms() { date +%s%3N; }
-hz=$(getconf CLK_TCK)
-rss() { awk '/^VmRSS:/ { printf "%d", $2 / 1024 }' "/proc/$pid/status" 2> /dev/null || echo -1; }
-# utime stime cutime cstime: fields 14-17 of /proc/<pid>/stat; comm (field 2) may hold spaces, so count after its ")"
-ticks() { sed 's/.*) //' "/proc/$pid/stat" | awk '{ print $12 + $13, $14 + $15 }'; }
+if [ "$os" = Linux ]; then
+  ms() { date +%s%3N; }
+  hz=$(getconf CLK_TCK)
+  rss() { awk '/^VmRSS:/ { printf "%d", $2 / 1024 }' "/proc/$pid/status" 2> /dev/null || echo -1; }
+  # utime stime cutime cstime: fields 14-17 of /proc/<pid>/stat; comm (field 2) may hold spaces, so count after its ")"
+  ticks() { sed 's/.*) //' "/proc/$pid/stat" | awk '{ print $12 + $13, $14 + $15 }'; }
+  alive() { [ -r "/proc/$pid/stat" ] || { echo "footprint.sh: agentglass exited (pid $pid)" >&2; exit 1; }; }
+else # BSD date has no %N; cpu self + waited-for children in ms from proc_pid_rusage (scripts/proc-cpu.c: ps -S does
+  # not count the children on macOS)
+  ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
+  hz=1000
+  cc -O2 -Wall -Wextra -Werror -o "$scratch/proc-cpu" "$(dirname "$0")/proc-cpu.c"
+  rss() { r=$(ps -o rss= -p "$pid" 2> /dev/null | tr -d ' '); [ -n "$r" ] && echo $((r / 1024)) || echo -1; }
+  ticks() { "$scratch/proc-cpu" "$pid"; }
+  alive() { kill -0 "$pid" 2> /dev/null || { echo "footprint.sh: agentglass exited (pid $pid)" >&2; exit 1; }; }
+fi
 dbg=""; [ $debug = 0 ] || dbg="AGENTGLASS_DEBUG_REFRESH=1"
+hm=""; [ -z "$home" ] || hm="HOME='$(cd "$home" && pwd)'"
 t0=$(ms)
 pid=$(tmux new-session -d -P -F '#{pane_pid}' -s "$ses" -x 160 -y 45 \
   "exec env AGENTGLASS_CACHE_DIR='$scratch/cache' AGENTGLASS_CONFIG='$scratch/config.json' AGENTGLASS_RULES='$scratch/rules.json' \
    AGENTGLASS_RUN_DIR='$scratch/run' AGENTGLASS_PALETTE_FILE='$scratch/palette.json' AGENTGLASS_THEME_FILE='$scratch/theme' \
-   AGENTGLASS_OTLP_DIR='$scratch/otlp' AGENTGLASS_PRICES='$scratch/prices.json' AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 $dbg nice -n 10 '$bin'")
-alive() { [ -r "/proc/$pid/stat" ] || { echo "footprint.sh: agentglass exited (pid $pid)" >&2; exit 1; }; }
+   AGENTGLASS_OTLP_DIR='$scratch/otlp' AGENTGLASS_PRICES='$scratch/prices.json' AGENTGLASS_AGENT=0 AGENTGLASS_NOTIFY=0 $hm $dbg nice -n 10 '$bin'")
 
 first=-1
 while [ $(($(ms) - t0)) -lt 60000 ]; do

@@ -4,6 +4,9 @@
 # --strip: -O0 with cached object shards, same program behavior, about half the compile time; --strip skips macOS's
 # dsymutil; empty for -O2; also used for the tests' own builds). A check with a "// check: timing" line (a timing budget) builds -O2 and runs alone after the others;
 # a shell test with a "# check: timing" line (a latency bound) runs alone after the others too.
+# On macOS CHECK_FFI (--ffi src/platform/darwin/ffi.json: the libproc bindings) goes into the bin and release builds and
+# into every check with a "// check: ffi" line, those built with --backend c too (the darwin-x64 release's backend);
+# libproc.c is also compiled once with -Wall -Wextra -Werror (job cc:<file>).
 # The shell tests share one agentglass, built here once, in parallel with the checks: AGENTGLASS_BIN uses a prebuilt one
 # instead; else AGENTGLASS_OUT (default .scriptc/check/agentglass) with CHECK_BIN_FLAGS (default: the check flags).
 # CHECK_RELEASE_OUT: also build the release binary (-O2, as shipped) there and smoke-test it, as one more job.
@@ -49,20 +52,24 @@ if [ "${1:-}" = --summary ]; then summary "$2"; exit 0; fi
 if [ "${1:-}" = --job ]; then
   job=$2; id=$(printf %s "$job" | tr '/:.' '___'); log="$CHECK_OUT/$id.log"; rc=0; t0=$(date +%s)
   case "$job" in
-    bin) scriptc build $CHECK_BIN_FLAGS src/main.ts -o "$AGENTGLASS_BIN" >"$log" 2>&1 || rc=$?
+    bin) scriptc build $CHECK_BIN_FLAGS $CHECK_FFI src/main.ts -o "$AGENTGLASS_BIN" >"$log" 2>&1 || rc=$?
          echo $rc > "$CHECK_OUT/bin.done" ;;
     release) # the release build (-O2, as shipped) and a smoke test of it
-         { scriptc build $RELEASE_FLAGS src/main.ts -o "$CHECK_RELEASE_OUT" && h="$CHECK_OUT/release.home" && mkdir -p "$h" &&
+         { scriptc build $RELEASE_FLAGS $CHECK_FFI src/main.ts -o "$CHECK_RELEASE_OUT" && h="$CHECK_OUT/release.home" && mkdir -p "$h" &&
            HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_STATE_HOME="$h/.local/state" XDG_CACHE_HOME="$h/.cache" sh -c \
-             '"$1" --version && "$1" --version --json && "$1" --json --limit 1 >/dev/null && echo "release build: smoke test ok"' _ "$CHECK_RELEASE_OUT"
+             '"$1" --version && "$1" --version --json && "$1" --json --limit 1 >/dev/null && echo "release build: smoke test ok"' _ "$CHECK_RELEASE_OUT" &&
+           { [ -z "$CHECK_FFI" ] || { nm -u "$CHECK_RELEASE_OUT" | grep -q '_proc_listallpids' && echo "release build: libproc bound"; }; }
          } >"$log" 2>&1 || rc=$? ;;
     check:*) f=${job#check:} # scriptc keys its cache on the output path: keep it stable. One directory per check: scriptc
          d="$PWD/.scriptc/check/$id"; mkdir -p "$d" # writes <source basename>.ll beside it, and basenames repeat
          fl=$CHECK_SCRIPTC_FLAGS; timing=""; if grep -q '^// check: timing' "$f"; then fl=""; timing=1; fi
+         if [ -n "$CHECK_FFI" ] && grep -q '^// check: ffi' "$f"; then fl="$fl $CHECK_FFI --backend c"; fi
          if ! scriptc build $fl "$f" -o "$d/c" >"$log" 2>&1; then rc=build
          elif [ -n "$timing" ]; then rc=deferred # runs after the pool, alone
          else run_check "$id" "$d/c" "$log"; fi
          [ "$rc" = deferred ] || rm -rf "$d" ;; # a cache hit doesn't need the old executable
+    cc:*) f=${job#cc:} # the FFI's C file, warnings as errors
+         { cc -fsyntax-only -Wall -Wextra -Werror "$f" && echo "$f: no warnings"; } >"$log" 2>&1 || rc=$? ;;
     test:*) f=${job#test:}
          if grep -q AGENTGLASS_BIN "$f"; then # uses the shared binary: wait for the bin job (queued first, so already running)
            while [ ! -s "$CHECK_OUT/bin.done" ]; do sleep 0.2; done
@@ -86,7 +93,8 @@ CHECK_OUT=$(mktemp -d); trap 'rm -rf "$CHECK_OUT"' EXIT
 CHECK_SCRIPTC_FLAGS=${CHECK_SCRIPTC_FLAGS---optimization dev --strip}
 RELEASE_FLAGS="${SCRIPTC_FLAGS:-}"; CHECK_BIN_FLAGS="${SCRIPTC_FLAGS:-} ${CHECK_BIN_FLAGS-$CHECK_SCRIPTC_FLAGS}"
 SCRIPTC_FLAGS="${SCRIPTC_FLAGS:-} $CHECK_SCRIPTC_FLAGS" # the tests' own builds: build.sh honors SCRIPTC_FLAGS
-export CHECK_OUT CHECK_SCRIPTC_FLAGS CHECK_BIN_FLAGS RELEASE_FLAGS SCRIPTC_FLAGS PATH
+CHECK_FFI=""; if [ "$(uname -s)" = Darwin ] && [ -f src/platform/darwin/ffi.json ]; then CHECK_FFI="--ffi $PWD/src/platform/darwin/ffi.json"; fi
+export CHECK_OUT CHECK_SCRIPTC_FLAGS CHECK_BIN_FLAGS RELEASE_FLAGS SCRIPTC_FLAGS CHECK_FFI PATH
 rm -rf .scriptc/check; mkdir -p .scriptc/check
 checks=$(find src -name '*.check.ts' | sort); tests=$(find scripts -name '*.test.sh' | sort)
 shard=${CHECK_SHARD:-1/1}; si=${shard%/*}; sn=${shard#*/}
@@ -106,6 +114,7 @@ if [ -n "${CHECK_RELEASE_OUT:-}" ]; then
 fi
 all="$([ -z "$bin" ] || echo bin) $([ -z "${CHECK_RELEASE_OUT:-}" ] || echo release)"
 all="$all $(for f in $tests; do echo "test:$f"; done) $(for f in $checks; do echo "check:$f"; done)"
+[ -z "$CHECK_FFI" ] || all="$all cc:src/platform/darwin/libproc.c"
 node scripts/check-plan.mjs "$si" "$sn" $all > "$CHECK_OUT/queue"
 grep -qx bin "$CHECK_OUT/queue" || bin="" # on another shard
 grep -qx release "$CHECK_OUT/queue" && release=1 || release=""
@@ -136,6 +145,7 @@ if [ -n "$bin" ]; then
 fi
 if [ -n "$release" ]; then report release "src/main.ts -O2 -> $CHECK_RELEASE_OUT"; fi
 for f in $checks; do if grep -qxF "check:$f" "$CHECK_OUT/queue"; then report "check:$f" "$f"; fi; done
+for j in $(grep '^cc:' "$CHECK_OUT/queue"); do report "$j" "${j#cc:} (cc -Wall -Wextra -Werror)"; done
 for f in $tests; do if grep -qxF "test:$f" "$CHECK_OUT/queue"; then report "test:$f" "$f"; fi; done
 echo "$(grep -c '^check:' "$CHECK_OUT/queue") checks, $(grep -c '^test:' "$CHECK_OUT/queue") tests (shard $si/$sn), $jobs jobs, $(($(date +%s) - start)) s"
 exit $fail

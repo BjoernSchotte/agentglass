@@ -5,9 +5,14 @@ import { existsSync, renameSync } from "node:fs";
 import { join, basename } from "node:path";
 import { run } from "../util/fs.ts";
 import { own } from "../util/own.ts";
+import { DEBUG_PARTS } from "../util/selfmem.ts";
 import type { ProcRow, FileInfo } from "./types.ts";
 
-export function psProcs(): ProcRow[] { return parsePs(run("ps", ["-axo", "pid=,ppid=,pcpu=,rss=,etime=,tty=,args="])); }
+// the process table through ps: the fallback where the kernel cannot be read directly (a build without the macOS
+// libproc binding, no usable /proc, AGENTGLASS_PROCS=ps); the debug footer then says "procs ps"
+export const PROCS_PATH = { ps: false };
+DEBUG_PARTS.push((): string => PROCS_PATH.ps ? "procs ps" : "");
+export function psProcs(): ProcRow[] { PROCS_PATH.ps = true; return parsePs(run("ps", ["-axo", "pid=,ppid=,pcpu=,rss=,etime=,tty=,args="])); }
 // `ps -axo pid=,ppid=,pcpu=,rss=,etime=,tty=,args=` output → rows (rss in KB there, bytes here)
 export function parsePs(text: string): ProcRow[] {
   const out: ProcRow[] = [];

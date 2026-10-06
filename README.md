@@ -140,7 +140,10 @@ Every screen in this README and the launch video was recorded this way.
   1.5 s cadence whenever an agent runs (`scripts/alarm-latency.test.sh` checks it end to end, focused and in the background). Frames are only drawn when something changed. `{"refresh": {"mode": "fixed"}}` in
   `~/.agentglass/config.json` (or `AGENTGLASS_REFRESH=fixed`) restores the old fixed 500 ms tick;
   `AGENTGLASS_DEBUG_REFRESH=1` shows the activity level and each job's cost in the footer. Inside
-  tmux, `set -g focus-events on` lets agentglass notice that its pane is not in front.
+  tmux, `set -g focus-events on` lets agentglass notice that its pane is not in front. Processes,
+  their working directories and open files are read from the kernel (`/proc` on Linux, `libproc` on
+  macOS), with no `ps` or `lsof` child; `AGENTGLASS_PROCS=ps` reads them with `ps`/`lsof` instead
+  (diagnostics; the debug footer then shows `procs ps`).
 - **Small footprint on a big history.** Measured with 3,400 sessions (12 GB of transcripts) and 36 agents
   streaming: about 175 MB of memory (260–270 MB with a pinned call-row filter), first frame in under a second, and
   about 4 % of one core in front, under 2 % in the background. A first start shows the session list at once. The
