@@ -12,6 +12,7 @@ import type { ToolT } from "../query/agg.ts";
 import { EMPTY, callsIn, callCutoff } from "../query/eval.ts";
 import { projectRoot } from "../query/project.ts";
 import { real } from "../../model/project.ts";
+import { realCwd } from "../../hooks.ts";
 import { score } from "../triage/score.ts";
 import type { Cmp, Side } from "./metrics.ts";
 
@@ -88,11 +89,12 @@ export function cntRows(c: Cmp, which: "prog" | "cmds"): CntRow[] {
 
 // ── files ──
 export interface FileRow { path: string; shown: string; abs: string; editsA: number; editsB: number; addA: number; delA: number; addB: number; delB: number }
-// the one repo root every counted session of both sides shares ("" = several, or none)
+// the one repo root every counted session of both sides shares ("" = several, or none); from the real cwds (--redact
+// fakes s.cwd for display; the file paths are real and faked at output)
 function sharedRoot(c: Cmp): string {
   let root = ""; let first = true;
   for (const t of [c.a.t, c.b.t]) for (const p of t.paths) {
-    const s = sessions.get(p); const r = s ? projectRoot(s.cwd) : "";
+    const s = sessions.get(p); const r = s ? projectRoot(realCwd(s)) : "";
     if (!r) return "";
     if (first) { root = r; first = false; } else if (r !== root) return "";
   }
@@ -103,8 +105,8 @@ function sharedRoot(c: Cmp): string {
 function rootForms(c: Cmp, root: string): string[] {
   const o: string[] = [];
   for (const t of [c.a.t, c.b.t]) for (const p of t.paths) {
-    const s = sessions.get(p); if (!s || !s.cwd) continue;
-    const cwd = s.cwd.replace(/\/+$/, ""); const rc = real(cwd);
+    const s = sessions.get(p); const c0 = s ? realCwd(s) : ""; if (!c0) continue;
+    const cwd = c0.replace(/\/+$/, ""); const rc = real(cwd);
     if (rc !== root && !rc.startsWith(root + "/")) continue;
     const rel = rc.slice(root.length); if (!cwd.endsWith(rel)) continue;
     const f = cwd.slice(0, cwd.length - rel.length); if (f && f !== root && o.indexOf(f) < 0) o.push(f);

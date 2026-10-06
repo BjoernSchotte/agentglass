@@ -93,6 +93,17 @@ eq "agent exit" "$rc" 2
 eq "agent stdout empty" "$(wc -c < "$t/out" | tr -d ' ')" 0
 eq "agent error code" "$(head -1 "$t/err" | jq -r '.error.code')" usage
 eq "agent default json" "$(AGENTGLASS_AGENT=1 run prices --all-projects | jq -r '.models | length')" 3
+# set / alias on a gateway-priced model: the before/after lines resolve with the provider the model is booked under
+# (pi's models.json prices pi-gw-model for cliproxy only), not as "unpriced"
+mkdir -p "$H/.pi/agent"; printf '{"providers":{"cliproxy":{"models":[{"id":"pi-gw-model","cost":{"input":3,"output":15}}]}}}\n' > "$H/.pi/agent/models.json"
+printf '%s\n' "{\"type\":\"session\",\"version\":3,\"id\":\"p2000000-0000-4000-8000-000000000004\",\"timestamp\":\"$now\",\"cwd\":\"/w/app\"}" \
+  "{\"type\":\"message\",\"id\":\"e1\",\"parentId\":null,\"timestamp\":\"$now\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"model\":\"pi-gw-model\",\"provider\":\"cliproxy\",\"usage\":{\"input\":100,\"output\":10,\"cacheRead\":0,\"cacheWrite\":0,\"cost\":{\"total\":0}},\"stopReason\":\"stop\"}}" > "$H/.pi/agent/sessions/--w-app--/2026-10-05T11-00-00-000Z_p2000000-0000-4000-8000-000000000004.jsonl"
+eq "gateway model listed" "$(run prices --json | jq -r '.models[] | select(.model=="pi-gw-model") | .source + " " + .via')" "gateway cliproxy"
+eq "set on a gateway model" "$(code prices set pi-gw-model --in 1 --out 2)" 0
+grep -q "^pi-gw-model: gw cliproxy \$3 in / \$15 out → user \$1 in / \$2 out" "$t/out" || { echo "FAIL gateway before line"; cat "$t/out"; fail=1; }
+eq "unset a gateway model --json" "$(run prices unset pi-gw-model --json | jq -r '[.before.source, .after.source, .after.via, .provider] | join(" ")')" "user gateway cliproxy cliproxy"
+eq "alias a gateway model --json" "$(run prices alias pi-gw-model claude-sonnet-4-5 --json | jq -r '[.before.source, .before.via, .after.source] | join(" ")')" "gateway cliproxy alias"
+run prices unset pi-gw-model > /dev/null
 run prices --help | grep -q "prices alias <model> <target>" || { echo "FAIL prices --help"; fail=1; }
 run --help | grep -q "agentglass prices" || { echo "FAIL --help lists prices"; fail=1; }
 [ $fail = 0 ] && echo "prices: all tests passed"

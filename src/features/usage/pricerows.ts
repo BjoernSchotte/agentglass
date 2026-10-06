@@ -4,6 +4,7 @@
 import { type Acc, mkey } from "./record.ts";
 import { type Price, resolve, aliasOf, communitySource } from "./pricing.ts";
 import { harnessOf, isHarness } from "../../harness/index.ts";
+import { width } from "../../util/text.ts";
 
 // src: user | alias | gateway | community | built-in | harness | unpriced (JSON names); more = further sources of the
 // model's other providers; part = a share of its cost was reported by the harness (rh: which) and is never re-priced
@@ -93,10 +94,24 @@ export function rates(p: Price): number[] {
   return [p.i, p.o, p.cr >= 0 ? p.cr : p.i * 0.1, p.cw >= 0 ? p.cw : p.i * 1.25, p.cw1 >= 0 ? p.cw1 : p.i * 2];
 }
 // the TUI short form of a source: user, ≈ <target>, gw <provider>, litellm / models.dev, built-in, harness, unpriced
+function srcBase(r: PRow): string {
+  if (r.dead) return "≈ " + r.via + " (unpriced)";
+  return r.src === "alias" ? "≈ " + r.via : r.src === "gateway" ? "gw " + r.via : r.src === "community" ? (r.via || communitySource() || "community") : r.src;
+}
 export function srcLabel(r: PRow): string {
-  let s = r.src === "alias" ? "≈ " + r.via : r.src === "gateway" ? "gw " + r.via : r.src === "community" ? (r.via || communitySource() || "community") : r.src;
-  if (r.dead) s = "≈ " + r.via + " (unpriced)";
+  let s = srcBase(r);
   if (r.more > 0) s += " +" + r.more;
   if (r.part && r.src !== "harness") s += " +harness";
   return s;
 }
+// srcLabel in w cells: the marks shorten first (" +harness" → " +h", then without blanks), then the base keeps its start
+// ("gw clipr…") and the marks stay whole; the selected row's note spells the full label out (pricepanel.ts)
+export function srcFit(r: PRow, w: number): string {
+  const full = srcLabel(r); if (width(full) <= w) return full;
+  const base = srcBase(r); const more = r.more > 0 ? "+" + String(r.more) : ""; const h = r.part && r.src !== "harness" ? "+h" : "";
+  const forms: string[] = [base + (more ? " " + more : "") + (h ? " " + h : ""), base + more + h];
+  for (const o of forms) if (width(o) <= w) return o;
+  const tail = more + h; const room = w - width(tail) - 1;
+  return room >= 4 ? cut(base, room) + "…" + tail : cut(full, Math.max(0, w - 1)) + "…";
+}
+function cut(s: string, n: number): string { let o = ""; for (const c of s) { if (width(o + c) > n) break; o += c; } return o; }

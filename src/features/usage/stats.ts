@@ -28,7 +28,7 @@ import { parse } from "../query/parse.ts";
 import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from "../query/eval.ts";
 import { type Totals, totals } from "../query/agg.ts";
 import { setLocal } from "../query/scope.ts";
-import { tabFilter, chips, contentOk, callsChip, timeStep } from "../query/ui.ts";
+import { tabFilter, chips, contentOk, callsChip, timeStep, rowsLater, rowsDeferred, rowsFill, fillChip, fillEmpty } from "../query/ui.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export { kfmt, grp };
@@ -38,7 +38,7 @@ function rj(s: string, w: number): string { const n = width(s); return n >= w ? 
 // ── aggregation over a set of local days (cached per ledger version) ────────
 // ms = cost by billing mode + unpriced; modes = each session's label with whether it is assumed from config ("plan\tteam\t*")
 interface HA { h: string; sess: number; tools: number; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number; ms: ModeSum; modes: string[] }
-interface Agg { key: string; ver: number; at: number; rows: HA[]; tot: HA; names: Map<string, Cnt>; skills: Map<string, Cnt>; hours: number[]; perDay: number[]; dayCost: number[]; busy: Sess | null; busyTools: number; busyCost: number; done: number; total: number; scoped: boolean }
+interface Agg { key: string; ver: number; at: number; rows: HA[]; tot: HA; names: Map<string, Cnt>; skills: Map<string, Cnt>; hours: number[]; perDay: number[]; dayCost: number[]; busy: Sess | null; busyTools: number; busyCost: number; done: number; total: number; scoped: boolean; later: Sess[] /* deferred rows (ui.ts rowsLater) */ }
 function ha(h: string): HA { return { h, sess: 0, tools: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0, ms: newSum(), modes: [] }; }
 function zeros(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(0); return a; }
 function addCnt(m: Map<string, Cnt>, k: string, n: number, err: number, add: number, del: number): void {
@@ -52,7 +52,7 @@ const cache = new Map<string, Agg>();
 function sessOk(f: Compiled, ok: (path: string) => boolean, s: Sess): boolean { return f === EMPTY || (sessMatches(f, s) && ok(s.path)); }
 // per (session path, day): the matching call rows of a filter with call clauses (tools, errors, per tool, per hour)
 interface RowDay { n: number; names: Map<string, Cnt>; hours: number[] }
-function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean): Map<string, RowDay> {
+function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean, later: Sess[] | null): Map<string, RowDay> {
   const m = new Map<string, RowDay>();
   eachCall(f, days, (s: Sess, r: Rows, ri: number) => {
     if (!cp(s.path)) return;
@@ -60,22 +60,26 @@ function rowDays(f: Compiled, days: string[], cp: (path: string) => boolean): Ma
     let x = m.get(k); if (!x) { x = { n: 0, names: new Map<string, Cnt>(), hours: zeros(24) }; m.set(k, x); }
     x.n++; addCnt(x.names, nameOf(DICT.tool, r.tool[ri]), 1, r.err[ri] === 1 ? 1 : 0, 0, 0);
     const h = localOf(r.t[ri]).hour; x.hours[h] = numAt(x.hours, h, 0) + 1;
-  });
+  }, later);
   return m;
 }
 function aggF(days: string[], f: Compiled): Agg {
   const key = days.join(",") + "|" + f.key;
   const hit = cache.get(key);
-  if (hit && hit.ver === L.ver && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) return hit; // an age clause: its own step
+  if (hit && hit.ver === L.ver && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) { rowsDeferred("Stats", key, hit.later); return hit; } // an age clause: its own step
   const rows = HARNESSES.map((ad) => ha(ad.id)); const tot = ha("total");
-  const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls };
-  const cp = contentOk(f);
-  const rows0 = f.needsCalls; const rd = rows0 ? rowDays(f, days, cp) : new Map<string, RowDay>(); // call clauses: tools from matching rows, money from the session-days holding them
+  const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls, later: [] };
+  const cp = contentOk(f, "defer");
+  // call clauses: tools from matching rows, money from the session-days holding them; in the TUI unread rows are deferred
+  // (rowsLater), so only sessions with a matching row are looked at (a model clause would read rows in sessOk)
+  const rows0 = f.needsCalls; const later = rows0 ? rowsLater(f) : null; const rd = rows0 ? rowDays(f, days, cp, later) : new Map<string, RowDay>();
+  rowsDeferred("Stats", key, later); g.later = later ?? [];
+  const hasRows = new Set<string>(); for (const k of rd.keys()) hasRows.add(k.slice(0, k.indexOf("\t")));
   const from = startOfDay() - (days.length - 1) * 86400000; // ±1h around DST: fine for a progress gauge
   for (const s of sessions.values()) {
     const a = ledger.get(s.path);
     if (s.mtime >= from) { g.total += s.size; if (a) g.done += pending(s, a) ? Math.min(a.off, s.size) : s.size; }
-    if (!a || !sessOk(f, cp, s)) continue;
+    if (!a || (rows0 && !hasRows.has(s.path)) || !sessOk(f, cp, s)) continue;
     const ri = harnessIndex(s.h); const r = ri >= 0 ? rows[ri] : tot;
     let st = 0; let sc = 0; let any = false;
     for (let i = 0; i < days.length; i++) {
@@ -121,6 +125,16 @@ export function statsPeriod(): string[] { return period(); }
 export function statsSummaryFor(expr: string): { sess: number; tools: number; cost: number; inTok: number; outTok: number; add: number; del: number; scoped: boolean } {
   const r = compile(parse(expr).cs, "stats"); const g = aggF(period(), r.f ?? EMPTY); const t = g.tot;
   return { sess: t.sess, tools: t.tools, cost: t.cost, inTok: t.inTok, outTok: t.outTok, add: t.add, del: t.del, scoped: g.scoped };
+}
+// the Stats fill progress of an expression's aggregate over the current period (checks)
+export function statsFillFor(expr: string): { left: number; total: number } {
+  const r = compile(parse(expr).cs, "stats"); const f = r.f ?? EMPTY; return rowsFill("Stats", period().join(",") + "|" + f.key);
+}
+// the drill-down of tool under an expression as the Stats tab makes it (checks): matching calls of tool, errors, all calls
+export function statsDrillFor(expr: string, tool: string): { n: number; err: number; all: number } {
+  const k0 = dKey; const s0 = dServer; setLocal("Stats", parse(expr).cs); dKey = tool; dServer = false; dCache = null;
+  const d = dagg(period()); dKey = k0; dServer = s0; setLocal("Stats", []);
+  return { n: d.n, err: d.err, all: d.all };
 }
 export function statsDrillTool(): string { return dKey; }
 export function statsTabIndex(): number { return 2 + H.tabs.indexOf(tab); }
@@ -181,7 +195,8 @@ function renderStats(): void {
   if (dKey) { renderDrill(days); return; }
   const f = statsFilter(); const g = aggF(days, f); const t = g.tot;
   // summary; the subtitle carries the filter chips
-  const ch = f === EMPTY ? "" : chips("Stats", "stats", Math.max(10, W - 30));
+  const fl = rowsFill("Stats", g.key); // a call filter's rows still being read: the numbers grow to their final values
+  const ch = f === EMPTY ? "" : chips("Stats", "stats", Math.max(10, W - 30 - vwidth(fillChip(fl)))) + fillChip(fl);
   box(0, 1, W, 5, "usage", ch ? ch + fg(C.dim) + " · " + (week ? "last 7 days" : "today") + RST : week ? "last 7 days" : "today", true);
   const chip = (on: boolean, k: string, label: string): string => (on ? bg(C.accent) + fg("20;20;24") + CSI + "1m" : bg(C.sel) + fg(C.sub)) + " " + k + " " + label + " " + RST;
   const frac = g.total > 0 ? g.done / g.total : 1;
@@ -201,7 +216,7 @@ function renderStats(): void {
   l2 += sc;
   const b = g.busy;
   const busiest = b ? fg(C.yellow) + "★ busiest  " + RST + badge(b.h) + fg(C.text) + CSI + "1m" + grp(g.busyTools) + RST + fg(C.sub) + " tools " + RST + fg(C.yellow) + (g.busyCost > 0 ? moneyTag(g.busyCost, asBill(b.bill)) + " " : "") + RST +
-    fg(C.text) + clean(titleOf(b)) + RST : fg(C.dim) + "no activity yet" + RST;
+    fg(C.text) + clean(titleOf(b)) + RST : fl.left > 0 ? fg(C.yellow) + fillEmpty(fl) + RST : fg(C.dim) + "no activity yet" + RST;
   // the projection: after "busiest" when wide, else in its place (busiest stays first in the table order)
   const pj = projLine(); const bst = costNow("").bs.state;
   const pjs = (bst === "over" ? fg(C.red) : bst === "watch" ? fg(C.yellow) : fg(C.sub)) + pj + RST;
@@ -351,7 +366,7 @@ function toggle(r: Row, want: number): void { // want: 1 open, 0 close, -1 flip
 
 // ── drill-down: one tool or MCP server over the period ─────────────────────
 interface DR { path: string; h: string; r: Rec; err: boolean }
-interface DA { key: string; ver: number; at: number; n: number; err: number; dn: number; ms: number; max: number; out: number; hist: number[]; vals: number[]; hs: number[]; all: number;
+interface DA { key: string; ver: number; at: number; later: Sess[]; n: number; err: number; dn: number; ms: number; max: number; out: number; hist: number[]; vals: number[]; hs: number[]; all: number;
   prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt>; kids: Map<string, Cnt>; slow: DR[]; errs: DR[] }
 let dKey = ""; let dServer = false; let dLabel = ""; let dsel = 0; let dList: DR[] = [];
 const hitY: number[] = []; const hitX0: number[] = []; const hitX1: number[] = []; const hitI: number[] = [];
@@ -363,11 +378,12 @@ function dagg(days: string[]): DA {
   const f = statsFilter();
   const key = days.join(",") + "|" + dKey + "|" + f.key;
   const hit = dCache;
-  if (hit && hit.key === key && hit.ver === L.ver && Date.now() - hit.at < Math.min(3000, timeStep(f.cs))) return hit;
-  const da: DA = { key, ver: L.ver, at: Date.now(), n: 0, err: 0, dn: 0, ms: 0, max: 0, out: 0, hist: zeros(HB), vals: zeros(days.length > 1 ? days.length : 24), hs: zeros(HARNESSES.length), all: 0,
+  if (hit && hit.key === key && hit.ver === L.ver && Date.now() - hit.at < Math.min(3000, timeStep(f.cs))) { rowsDeferred("Stats", key, hit.later); return hit; }
+  const da: DA = { key, ver: L.ver, at: Date.now(), later: [], n: 0, err: 0, dn: 0, ms: 0, max: 0, out: 0, hist: zeros(HB), vals: zeros(days.length > 1 ? days.length : 24), hs: zeros(HARNESSES.length), all: 0,
     prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>(), kids: new Map<string, Cnt>(), slow: [], errs: [] };
   const pre = dKey + "\t";
-  if (f.needsCalls) { rowDrill(da, f, days); dCache = da; return da; }
+  if (f.needsCalls) { rowDrill(da, f, days, key); dCache = da; return da; }
+  rowsDeferred("Stats", key, null);
   const cp = contentOk(f);
   for (const s of sessions.values()) {
     const a = ledger.get(s.path); if (!a || !sessOk(f, cp, s)) continue;
@@ -398,9 +414,10 @@ function dagg(days: string[]): DA {
 }
 // the drill-down from call rows (a filter with call clauses): counts, durations, programs/commands/files of the matching
 // calls; slowest/error lists keep only the remembered calls whose id is a matching row's
-function rowDrill(da: DA, f: Compiled, days: string[]): void {
+function rowDrill(da: DA, f: Compiled, days: string[], key: string): void {
   const ids = new Set<string>(); const pathsOf = new Set<string>();
-  const ix = new Map<string, number>(); for (let i = 0; i < days.length; i++) ix.set(days[i] ?? "", i); const cp = contentOk(f);
+  const ix = new Map<string, number>(); for (let i = 0; i < days.length; i++) ix.set(days[i] ?? "", i); const cp = contentOk(f, "defer");
+  const later = rowsLater(f);
   eachCall(f, days, (s: Sess, r: Rows, ri: number) => {
     if (!cp(s.path)) return;
     da.all = da.all + 1;
@@ -419,7 +436,8 @@ function rowDrill(da: DA, f: Compiled, days: string[]): void {
     }
     if ((r.cid[ri] ?? "")) ids.add((r.cid[ri] ?? ""));
     pathsOf.add(s.path);
-  });
+  }, later);
+  rowsDeferred("Stats", key, later); da.later = later ?? [];
   for (const p of pathsOf) {
     const s = sessions.get(p); const a = ledger.get(p); if (!s || !a) continue;
     for (const dk of days) {
@@ -481,7 +499,7 @@ function renderDrill(days: string[]): void {
   dsel = Math.max(0, Math.min(dsel, dList.length - 1));
   hitY.length = 0; hitX0.length = 0; hitX1.length = 0; hitI.length = 0;
   // header
-  const ch = statsFilter() === EMPTY ? "" : chips("Stats", "stats", Math.max(10, W - 40));
+  const ch = statsFilter() === EMPTY ? "" : chips("Stats", "stats", Math.max(10, W - 40 - vwidth(fillChip(rowsFill("Stats", da.key))))) + fillChip(rowsFill("Stats", da.key));
   box(0, 1, W, 5, dLabel, ch ? ch + fg(C.dim) + " · " + (wk ? "last 7 days" : "today") + " · esc back" + RST : (wk ? "last 7 days" : "today") + " · esc back", true);
   const er = da.n ? da.err / da.n : 0;
   const errs = da.err === 0 ? fg(C.green) + "no errors" + RST : fg(heat(Math.min(1, er * 5))) + CSI + "1m" + grp(da.err) + " errors" + RST + fg(C.sub) + " (" + (er < 0.1 ? (er * 100).toFixed(1) : String(Math.round(er * 100))) + "%)" + RST;

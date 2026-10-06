@@ -18,11 +18,11 @@ import { type Acc, todayKey, lastDays, spanMin, startOfDay, heavy } from "../usa
 import type { Cnt } from "../usage/calls.ts";
 import { kfmt, grp, money, split, single } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
-import { EMPTY } from "../query/eval.ts";
-import { tabFilter, chips } from "../query/ui.ts";
+import { type Compiled, EMPTY } from "../query/eval.ts";
+import { tabFilter, chips, fillChip, fillEmpty } from "../query/ui.ts";
 import { identOf, identSync } from "../query/project.ts";
 import { openGraph } from "../callgraph/view.ts";
-import { type RepoAgg, type HarnessAgg, type BranchAgg, type FileAgg, repoAgg, relFile, errPct, allDays, topFiles } from "./agg.ts";
+import { type RepoAgg, type HarnessAgg, type BranchAgg, type FileAgg, repoAgg, repoFill, relFile, errPct, allDays, topFiles } from "./agg.ts";
 import { perCommit, openGit } from "../vcs/view.ts";
 export { topFiles };
 
@@ -165,7 +165,8 @@ function renderList(): void {
   const W = S.W; const Ht = S.H; const iw = W - 4;
   const f = tabFilter("Repos", "stats");
   const rs = rows(); lastRows = rs;
-  const ch = f === EMPTY ? "" : chips("Repos", "stats", Math.max(10, W - 40));
+  const fc = fillChip(repoFill(periodDays(), f)); // a call filter's rows still being read: the rows grow to their final numbers
+  const ch = f === EMPTY ? "" : chips("Repos", "stats", Math.max(10, W - 40 - vwidth(fc))) + fc;
   const title = "repos" + progress();
   box(0, 1, W, Ht - 2, title, ch ? ch + fg(C.dim) + " · " + periodName() + RST : periodName() + " · " + String(rs.length) + " projects", true);
   line(1, 2, W - 2, " " + chip(RV.period === "d", "d", "Today") + " " + chip(RV.period === "w", "w", "7 days") + " " + chip(RV.period === "m", "m", "30 days") + " " + chip(RV.period === "a", "a", "All") +
@@ -186,7 +187,7 @@ function renderList(): void {
   listY0 = y0; listN = Math.min(vis, rs.length - RV.top);
   for (let i = 0; i < vis; i++) {
     const r = RV.top + i < rs.length ? rs[RV.top + i] : undefined;
-    if (!r) { line(1, y0 + i, W - 2, i === 0 && !rs.length ? "  " + fg(C.dim) + emptyLine(f !== EMPTY) + RST : ""); continue; }
+    if (!r) { line(1, y0 + i, W - 2, i === 0 && !rs.length ? "  " + emptyLine(f) + RST : ""); continue; }
     const on = RV.top + i === RV.sel; const b = on ? bg(C.sel) : "";
     const nm = clean(shown(r.label));
     // the worktree count goes before the name is cut; a name still too long ends in "…" (a path keeps its end: the
@@ -210,9 +211,10 @@ function progress(): string {
   const res = PL.left > 0 ? "resolving " + grp(PL.left) + " of " + grp(PL.total) + " sessions…" : "";
   return res || idx ? " · " + spin() + " " + [res, idx].filter((x: string) => x.length > 0).join(" · ") : ""; // box titles are plain text
 }
-function emptyLine(filtered: boolean): string {
-  if (PL.left > 0 || PL.idx < 0.999) return "placing sessions in their projects…";
-  return filtered ? "no project matches the filter in this period — / edits it, d/w/m/a switch the period" : "no session activity in this period — d/w/m/a switch the period";
+function emptyLine(f: Compiled): string {
+  const fl = repoFill(periodDays(), f); if (fl.left > 0) return fg(C.yellow) + fillEmpty(fl);
+  if (PL.left > 0 || PL.idx < 0.999) return fg(C.dim) + "placing sessions in their projects…";
+  return fg(C.dim) + (f !== EMPTY ? "no project matches the filter in this period — / edits it, d/w/m/a switch the period" : "no session activity in this period — d/w/m/a switch the period");
 }
 
 // ── detail ──
@@ -272,7 +274,8 @@ function renderDetail(): void {
   // header: label, remote, kind, worktrees, totals
   const iw = W - 4;
   const fc = RV.file ? fg(C.accent) + "file:" + display("file", RV.file, null) + RST + fg(C.dim) + " (esc clears) · " + RST : "";
-  const ch = tabFilter("Repos", "stats") === EMPTY ? "" : chips("Repos", "stats", Math.max(10, W - 50)) + fg(C.dim) + " · " + RST;
+  const rf = tabFilter("Repos", "stats"); const fl = fillChip(repoFill(periodDays(), rf));
+  const ch = rf === EMPTY ? "" : chips("Repos", "stats", Math.max(10, W - 50 - vwidth(fl))) + fl + fg(C.dim) + " · " + RST;
   box(0, 1, W, 5, shown(r.label), fc + ch + fg(C.dim) + periodName() + RST, false);
   const via = r.via && r.via !== "origin" ? fg(C.dim) + " (remote: " + r.via + ")" + RST : "";
   const l1 = fg(C.text) + CSI + "1m" + clean(shown(r.label)) + RST + "  " + (r.remote ? fg(C.sub) + clean(display("remote", r.remote, null)) + RST + via : fg(C.dim) + "no remote" + RST) + dot + fg(C.dim) + r.kind + (r.unread ? " · .git unreadable" : "") + RST;

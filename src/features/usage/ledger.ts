@@ -169,15 +169,24 @@ function visit(s: Sess, t0: number, q: Sess[]): Acc {
 }
 // bytes/s booked while indexing history (the gauge's ETA) and the ingest of live appends (debug footer, Decision 2):
 // sums over spans of ≥ 1 s, folded into EWMAs
-const RATE = { at: 0, bytes: 0, bps: 0, since: 0 };
+// The history rate is wall-clock throughput while history is pending: spans that booked nothing count (the CPU budget's
+// waits are part of the time left), idle time does not. Its memory is about the last two minutes (TAU, by time; until
+// that much was sampled, the plain mean), so bursts of credit and fast or slow logs no longer swing the ETA (was 3–19 min)
+export interface Rate { at: number; bytes: number; bps: number; span: number } // span: ms of indexing time sampled
+export function newRate(): Rate { return { at: 0, bytes: 0, bps: 0, span: 0 }; }
+const TAU = 120000;
+export function rateAdd(r: Rate, now: number, bytes: number, active: boolean): void {
+  if (!active) { r.at = 0; r.bytes = 0; return; }
+  r.bytes += bytes;
+  if (!r.at) { r.at = now; return; } // a span starts: the bytes of this first tick count into it
+  const dt = now - r.at; if (dt < 1000) return;
+  const x = r.bytes * 1000 / dt; const k = Math.max(1 - Math.exp(-dt / TAU), dt / (r.span + dt));
+  r.bps += (x - r.bps) * k; r.span += dt; r.at = now; r.bytes = 0;
+}
+const RATE = newRate(); let histBytes = 0;
 export const INGEST = { ms: 0, bytes: 0, at: 0, accMs: 0, accBytes: 0 };
 function fold(now: number): void {
-  if (!RATE.at) RATE.at = now;
-  const dt = now - RATE.at;
-  if (dt >= 1000) {
-    if (RATE.bytes > 0) { const r = RATE.bytes * 1000 / dt; RATE.bps = RATE.bps > 0 ? RATE.bps * 0.7 + r * 0.3 : r; if (!RATE.since) RATE.since = now; }
-    RATE.at = now; RATE.bytes = 0;
-  }
+  rateAdd(RATE, now, histBytes, RUN.hist > 0); histBytes = 0;
   if (!INGEST.at) INGEST.at = now;
   const di = now - INGEST.at;
   if (di >= 1000) {
@@ -242,7 +251,7 @@ function tick(): void {
     const b = ledger.get(s.path) ?? a; const k = tkOf(s);
     apply(s, b, k); account(s, b, k);
     booked += n;
-    if (live) { INGEST.accMs += Date.now() - ts; INGEST.accBytes += n; } else RATE.bytes += n;
+    if (live) { INGEST.accMs += Date.now() - ts; INGEST.accBytes += n; } else histBytes += n;
   }
   if (booked > 0) { L.ver++; L.idx++; }
   // a log took messages from others: they restarted at offset 0 and are pending now
@@ -253,9 +262,11 @@ function tick(): void {
 // history is being indexed (a first index, a resume far behind, a log of a finished agent that grew): the refresh level
 // stays hot so the gauge advances, and the cache saves every 30 s. A live agent's appends are ingest, not indexing.
 export function indexing(): boolean { return RUN.hist > 0; }
-export interface IndexState { done: number; total: number; left: number; bps: number; since: number }
-// done/total over every log; bps: EWMA of history bytes per second, 0 = unknown; since: first sample (ms, 0 = none)
-export function indexState(): IndexState { return { done: L.done, total: L.total, left: Math.max(0, L.total - L.done), bps: RATE.bps, since: RATE.since }; }
+// a live (pid-linked) log has bytes the ledger has not booked: the watch job books them before rules read the numbers
+export function liveBehind(): boolean { for (const s of sessions.values()) { if (s.pid <= 0) continue; const a = ledger.get(s.path); if (!a || pending(s, a)) return true; } return false; }
+export interface IndexState { done: number; total: number; left: number; bps: number; span: number }
+// done/total over every log; bps: history bytes per second (Rate), 0 = unknown; span: ms of indexing time it has sampled
+export function indexState(): IndexState { return { done: L.done, total: L.total, left: Math.max(0, L.total - L.done), bps: RATE.bps, span: RATE.span }; }
 DEBUG_PARTS.push(() => "ingest " + String(Math.round(INGEST.ms)) + "ms/s · " + String(Math.round(INGEST.bytes / 1024)) + "KB/s");
 // blocking: everything up to the end of the file (CLI exports)
 export function complete(s: Sess): void {

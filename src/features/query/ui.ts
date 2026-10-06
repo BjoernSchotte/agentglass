@@ -11,7 +11,7 @@ import { ask } from "../../actions.ts";
 import { TERM } from "../../term.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { harnessIds, harnessOf } from "../../harness/index.ts";
-import { ledger, callsOf, MOVED, moved, LGEN } from "../usage/ledger.ts";
+import { ledger, callsOf, MOVED, moved, LGEN, unread } from "../usage/ledger.ts";
 import { L, todayKey, lastDays, heavy } from "../usage/record.ts";
 import { DICT } from "../usage/facts.ts";
 import { mcpServer } from "../usage/calls.ts";
@@ -88,17 +88,48 @@ function filling(): boolean { return FILL.on || TERM.tui; } // the TUI (from its
 // the list's filter changed to one without call rows (or none): stop reading rows nobody asked for
 function fillStop(): void { if (FILL.queue.length) FILL.queue = []; FILL.fkey = ""; FILL.total = 0; }
 export function fillOnForTest(on: boolean): void { FILL.on = on; FILL.fkey = ""; FILL.queue = []; }
-// one slice of reads; true when it read something
+// The Stats and Repos aggregates of a call-row filter defer the same way: a pass leaves out the sessions whose rows are
+// unread (eval.ts eachCall's later), queues them here per tab, newest first, and says "filtering n/m" until they are in;
+// each slice moves L.ver, so the tab's cached aggregate is made again and its numbers settle at the eager ones
+interface RF { key: string; total: number; left: number; queue: string[] }
+const RFILL = new Map<string, RF>();
+// the list to pass as eachCall's later: null = read at once (one-shot runs, checks without the fill, no row clauses)
+export function rowsLater(f: Compiled): Sess[] | null { return filling() && (f.call.length > 0 || f.rowx.length > 0) ? [] : null; }
+// after a pass of tab's aggregate (key: its cache key — the filter and the period): what it deferred is queued, n/m kept
+export function rowsDeferred(tab: string, key: string, later: Sess[] | null): void {
+  let r = RFILL.get(tab);
+  if (!later || !later.length) { if (r) { r.queue = []; r.left = 0; r.total = 0; r.key = key; } return; }
+  if (!r) { r = { key: "", total: 0, left: 0, queue: [] }; RFILL.set(tab, r); }
+  later.sort((x: Sess, y: Sess) => x.mtime - y.mtime); // popped from the end: newest first
+  const q: string[] = []; for (const s of later) q.push(s.path);
+  if (r.key !== key) { r.key = key; r.total = q.length; } else r.total = Math.max(r.total, q.length);
+  r.queue = q; r.left = q.length;
+}
+// tab's progress for the aggregate of key ({0, 0} = complete)
+export function rowsFill(tab: string, key: string): { left: number; total: number } {
+  const r = RFILL.get(tab); return r && r.key === key && r.left > 0 ? { left: r.left, total: r.total } : { left: 0, total: 0 };
+}
+function rowQueued(): boolean { for (const r of RFILL.values()) if (r.queue.length) return true; return false; }
+// one slice of reads (the Sessions list's fill first, then the tabs'); true when it read something
 export function fillStep(ms: number): boolean {
-  if (!FILL.queue.length) return false;
+  if (!FILL.queue.length && !rowQueued()) return false;
   const t0 = Date.now(); let n = 0;
-  while (FILL.queue.length && (n === 0 || Date.now() - t0 < ms)) { const p = FILL.queue.pop() ?? ""; const s = sessions.get(p); if (s) { callsOf(s); moved(p); n++; } }
+  const more = (): boolean => n === 0 || Date.now() - t0 < ms;
+  while (FILL.queue.length && more()) { const p = FILL.queue.pop() ?? ""; const s = sessions.get(p); if (s) { callsOf(s); moved(p); n++; } }
+  for (const r of RFILL.values()) while (r.queue.length && more()) {
+    const p = r.queue.pop() ?? ""; const s = sessions.get(p); if (!s || !unread.has(p)) continue; // read since (the list's fill)
+    callsOf(s); moved(p); n++;
+  }
   if (n) { L.ver++; S.dirty = true; }
   return n > 0;
 }
 H.onTick.push(() => { fillStep(50); });
-H.backlog.push(() => FILL.queue.length > 0); // the tick keeps its burst cadence while the filter fills in
+H.backlog.push(() => FILL.queue.length > 0 || rowQueued()); // the tick keeps its burst cadence while a filter fills in
 export function fillState(f: Compiled): { left: number; total: number } { return f.key === FILL.fkey ? { left: FILL.queue.length, total: FILL.total } : { left: 0, total: 0 }; }
+// the box subtitle's progress, the same in every tab: " · filtering n/m" ("" = complete)
+export function fillChip(st: { left: number; total: number }): string { return st.left > 0 ? fg(C.yellow) + " · filtering " + String(st.total - st.left) + "/" + String(st.total) + RST : ""; }
+// an empty list or table while rows are still being read says so instead of "nothing matches"
+export function fillEmpty(st: { left: number; total: number }): string { return st.left > 0 ? "filtering… " + String(st.total - st.left) + "/" + String(st.total) + " — matches appear as call rows are read" : ""; }
 // lazy: "" reads what it needs now; "list" (the Sessions list's own filter) defers unread rows and owns the "filtering"
 // progress; "defer" defers the same way without it (counts beside the list: pins hide n, which settle as the rows arrive)
 export function matchingPaths(f: Compiled, lazy = ""): Set<string> {
@@ -150,9 +181,10 @@ export function matchingPaths(f: Compiled, lazy = ""): Set<string> {
   return out;
 }
 // does a session path pass f's content (full-text) clauses? Made once per pass over sessions or calls, asked per item
-export function contentOk(f: Compiled): (path: string) => boolean {
+// (lazy "defer": rows unread in the TUI are left out, for aggregates that defer them too)
+export function contentOk(f: Compiled, lazy = ""): (path: string) => boolean {
   if (!f.content.length) return (_p: string): boolean => true;
-  const m = matchingPaths(f); return (p: string): boolean => m.has(p);
+  const m = matchingPaths(f, lazy); return (p: string): boolean => m.has(p);
 }
 // top-level rows a clause list leaves (a parent stays when a subagent matches)
 function countTop(cs: Clause[]): number {
@@ -436,13 +468,13 @@ H.boxChips.push((where: string, w: number): string => {
   const f = tabFilter("Sessions", "list"); if (f === EMPTY) return "";
   // while the rows fill in, "pins hide n" would count the unread sessions as hidden: it shows once the fill is done
   const fl = fillState(f); const hid = fl.left > 0 ? 0 : hiddenCount("Sessions"); const all: string[] = []; const cc = callsChip(f, all);
-  const tail = (fl.left > 0 ? fg(C.yellow) + " · filtering " + String(fl.total - fl.left) + "/" + String(fl.total) + RST : "") + (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (cc ? " " + cc : "");
+  const tail = fillChip(fl) + (headsLeft > 0 ? fg(C.dim) + " · reading " + String(headsLeft) + RST : "") + (hid > 0 ? fg(C.yellow) + " · pins hide " + String(hid) + RST : "") + (cc ? " " + cc : "");
   return chips("Sessions", "list", Math.max(8, w - vwidth(tail))) + tail;
 });
 H.emptyText.push((where: string): string => {
   if (where !== "sessions" || tabFilter("Sessions", "list") === EMPTY) return "";
   const fl = fillState(tabFilter("Sessions", "list"));
-  if (fl.left > 0) return fg(C.yellow) + "filtering… " + String(fl.total - fl.left) + "/" + String(fl.total) + " — matches appear as call rows are read" + RST;
+  if (fl.left > 0) return fg(C.yellow) + fillEmpty(fl) + RST;
   const hid = hiddenCount("Sessions");
   return fg(C.sub) + "no sessions match" + (hid > 0 ? " — " + String(hid) + " hidden by pins (P edits)" : localFor("Sessions").length ? " — esc clears the filter" : "") + RST;
 });
