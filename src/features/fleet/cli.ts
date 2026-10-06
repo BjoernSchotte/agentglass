@@ -32,13 +32,15 @@ import { sshFeed, idleFeed, sshBin, hostControlPath } from "./ssh.ts";
 import { forget } from "./store.ts";
 import { pullCli, pullSessions } from "./pull.ts";
 import { snapshotCli } from "./snapshot.ts";
+import { dirFeed } from "./dirfeed.ts";
+import { dropCli } from "./drop.ts";
 import { watchCli } from "./watch.ts";
 import { pricesSig } from "../usage/pricing.ts";
 import { serveCli, authorizeCli } from "./serve.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function warn(msg: string): void { errLine("agentglass", "warning", msg, ""); }
-export const SUBS = ["cost", "status", "pull", "snapshot", "watch", "serve", "authorize"];
+export const SUBS = ["cost", "status", "pull", "snapshot", "watch", "drop", "serve", "authorize"];
 export const MAX_PARALLEL = 4;
 // the --json row fields: --json's, with host after harness and stale after live
 export const FLEET_FIELDS: string[] = [];
@@ -51,7 +53,7 @@ export function redactOf(h: HostCfg): boolean { return REDACT || h.redact; } // 
 export function makeFeeds(c: FleetCfg, spawn: (cmd: string, args: string[]) => number, lines: number): HostFeed[] {
   const fs: HostFeed[] = [];
   const me = hostId();
-  for (const h of c.hosts) fs.push(h.enabled && h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines, me) : idleFeed(h.kind));
+  for (const h of c.hosts) fs.push(!h.enabled ? idleFeed(h.kind) : h.kind === "ssh" ? sshFeed(h, c, redactOf(h), (): number => Date.now(), spawn, lines, me) : h.kind === "dir" ? dirFeed(h, c, lines) : idleFeed(h.kind));
   return fs;
 }
 function sleep(s: string): void { try { execFileSync("sleep", [s]); } catch (e) { /* interrupted */ } }
@@ -69,7 +71,7 @@ export function pullAll(f: FleetCfg, force: boolean, now: number): { ok: string[
   loadCached();
   const queue: RemoteHost[] = [];
   for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || rh.cfg.kind !== "ssh") continue;
+    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir")) continue;
     const st = rh.st; const fresh = st !== null && st.report !== null && now - st.okAt < f.refreshS * 1000;
     if (force || !fresh) queue.push(rh);
   }
@@ -88,7 +90,7 @@ export function pullAll(f: FleetCfg, force: boolean, now: number): { ok: string[
   reapply();
   const ok: string[] = []; const failed: Failed[] = [];
   for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || rh.cfg.kind !== "ssh") continue;
+    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir")) continue;
     const st = rh.st;
     if (st && st.code === "ok" && rh.report && freshOf(rh, Date.now(), f, f.refreshS * 1000)) ok.push(rh.cfg.name);
     else failed.push({ name: rh.cfg.name, msg: st && st.err ? st.err : rh.report ? "the report is stale" : "no report yet", age: rh.report ? rh.okAt : -1 });
@@ -100,9 +102,10 @@ function setup(needSsh: boolean): FleetCfg {
   S.cli = true;
   const c = loadFleet();
   for (const w of c.warns) warn("config " + w);
-  let any = false; for (const h of c.hosts) if (h.enabled && h.kind === "ssh") any = true;
+  let any = false; for (const h of c.hosts) if (h.enabled && (h.kind === "ssh" || h.kind === "dir")) any = true;
   if (!any) cliError("usage", "no hosts configured", "add \"fleet\": {\"hosts\": [{\"name\": \"ws\", \"ssh\": \"…\"}]} to " + CONFIG_FILE, 2);
-  if (needSsh && !sshBin()) cliError("usage", "fleet needs ssh (AGENTGLASS_SSH)", "install OpenSSH's client, or point AGENTGLASS_SSH at it", 2);
+  let ssh = false; for (const h of c.hosts) if (h.enabled && h.kind === "ssh") ssh = true;
+  if (needSsh && ssh && !sshBin()) cliError("usage", "fleet needs ssh (AGENTGLASS_SSH)", "install OpenSSH's client, or point AGENTGLASS_SSH at it", 2);
   const names: string[] = []; for (const h of c.hosts) names.push(h.name);
   forget(names); // a host removed from the config: its spool files go
   setFleet(c, hostId(), makeFeeds(c, detachedPid, 0)); // a CLI run reads each report whole
@@ -224,6 +227,7 @@ function statusText(x: HostStatus, c: FleetCfg, localTz: number): string[] {
   const o = [x.name + "  " + x.kind + " " + x.target + (x.enabled ? "" : "  (disabled)")];
   if (x.dupOf) o.push("  ✗ the same machine as " + x.dupOf + " (host id " + x.hostId + "): not merged — give one of them its own ~/.agentglass/host-id");
   else if (problem(x)) o.push("  ✗ " + (x.err || (x.code === "none" ? "no report yet: agentglass fleet --refresh pulls now" : x.code)));
+  else if (x.err) o.push("  note: " + x.err);
   if (x.okAgeSec >= 0) o.push("  last report " + ago(Date.now() - x.okAgeSec * 1000) + " ago · " + String(x.sessions) + " sessions, " + String(x.live) + " live" + (x.overlap ? ", " + String(x.overlap) + " also on another host (≈)" : "") +
     (x.okAgeSec * 1000 > 2 * c.refreshS * 1000 + c.timeoutS * 1000 ? " · stale" : ""));
   if (x.version) o.push("  agentglass " + x.version + " · " + x.os + " · " + tz(x.tzOffsetMin) + (x.tzOffsetMin !== localTz ? " (here " + tz(localTz) + (x.exact ? ": re-bucketed into this machine's days)" : ": its days differ)") : "") + (x.redact ? " · redacted" : "") + " · host id " + x.hostId);
@@ -309,6 +313,9 @@ addCmd(rec("fleet snapshot", "agentglass fleet snapshot [--peer <id>] [--ack <ge
     opt("--redact", "", "fake titles, projects and paths at the source", "", [])], []), FIRST);
 addCmd(rec("fleet watch", "agentglass fleet watch [--redact]", "this host's live state for a fleet viewer, as JSON lines until the viewer goes: session state\n(live, busy, attention, approval, stuck), alert transitions, turn ends, a beat every 30 s; no event content",
   [opt("--redact", "", "redact at the source (alert messages name no real title)", "", [])], []), FIRST);
+addCmd(rec("fleet drop", "agentglass fleet drop <dir> [--every 5m] [--days N] [--redact]", "write this host's snapshots into a synced directory (rsync, Syncthing, a share) for a viewer\nthat cannot reach it over ssh: a base, then deltas; once (cron, a timer) or --every <dur>",
+  [opt("--every", "<dur>", "write again every 1m–24h until stopped (default: once)", "", []), opt("--days", "N", "list sessions updated within N days (1–90)", "7", []),
+    opt("--redact", "", "fake titles, projects and paths (recommended for third-party sync)", "", [])], []), FIRST);
 addCmd(rec("fleet serve", "agentglass fleet serve [--redact]", "the forced command of a viewer's key on a host (authorized_keys command=): runs only\nfleet pull/snapshot/watch and --version from SSH_ORIGINAL_COMMAND; exit 126 refused, 2 outside ssh",
   [opt("--redact", "", "answer every request redacted, whatever the viewer asks", "", [])], []), FIRST);
 addCmd(rec("fleet authorize", "agentglass fleet authorize <key.pub> [--from <cidr>]", "print the authorized_keys line that limits the viewer's key to fleet serve\n(restrict,command=…); run it on the host and append the line yourself (--redact: the host answers redacted)",
@@ -322,11 +329,12 @@ H.cli.unshift((args: string[]): boolean => { // before cli.ts's flag handlers: `
   if (sub === "pull") { pullCli(args); return true; }
   if (sub === "snapshot") { snapshotCli(args); return true; }
   if (sub === "watch") { watchCli(args); return true; }
+  if (sub === "drop") { dropCli(args); return true; }
   if (sub === "serve") { serveCli(args); return true; }
   if (sub === "authorize") { authorizeCli(args); return true; }
   if (sub === "cost") { cost(args); return true; }
   if (sub === "status") { status(args); return true; }
-  if (sub && !sub.startsWith("-")) cliError("usage", "unknown fleet command " + sub, "agentglass fleet --help (fleet, fleet cost, fleet status, fleet pull, fleet snapshot, fleet watch, fleet serve, fleet authorize)", 2);
+  if (sub && !sub.startsWith("-")) cliError("usage", "unknown fleet command " + sub, "agentglass fleet --help (fleet, fleet cost, fleet status, fleet pull, fleet snapshot, fleet watch, fleet drop, fleet serve, fleet authorize)", 2);
   list(args);
   return true;
 });

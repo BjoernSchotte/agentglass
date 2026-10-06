@@ -64,7 +64,8 @@ function init(): void {
   for (const w of c.warns) say("warn", "config " + w);
   if (!fleetOn(c)) return;
   T.on = true;
-  if (!sshBin()) { T.nossh = true; say("warn", "fleet needs ssh (AGENTGLASS_SSH): hosts are not pulled"); }
+  let ssh = false; for (const h of c.hosts) if (h.enabled && h.kind === "ssh") ssh = true;
+  if (ssh && !sshBin()) { T.nossh = true; say("warn", "fleet needs ssh (AGENTGLASS_SSH): hosts are not pulled"); }
   const names: string[] = []; for (const h of c.hosts) names.push(h.name);
   forget(names);
   setFleet(c, hostId(), makeFeeds(c, detachedPid, 256)); // ≤ 256 parsed lines per host and tick
@@ -74,7 +75,7 @@ function tick(): void {
   const now = Date.now(); FLEET.intervalMs = intervalMs(c, AWAY.on);
   let fresh = false; let running = 0; const toasts: string[] = [];
   for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || rh.cfg.kind !== "ssh") continue;
+    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir")) continue;
     const st = rh.feed.poll(now); rh.st = st; const n = rh.cfg.name;
     if ((st.code === "dir" || st.code === "nossh") && !T.seeded.has(st.code)) { T.seeded.add(st.code); say("warn", "fleet: " + st.err); } // no pulls at all: say why once
     if (st.busy) { running++; T.busy.set(n, true); continue; }
@@ -85,7 +86,7 @@ function tick(): void {
     }
     if (st.report && st.report !== rh.report) {
       const seed = !T.seeded.has(n); T.seeded.add(n);
-      for (const m of newAlerts(rh, st.report, seed || !freshAt(st.okAt, now, c, FLEET.intervalMs))) toasts.push(m); // a stale report (the cache at start) only seeds
+      for (const m of newAlerts(rh, st.report, seed || rh.cfg.kind === "dir" || !freshAt(st.okAt, now, c, FLEET.intervalMs))) toasts.push(m); // a stale report (the cache at start) and a drop (minutes old) only seed
       rh.report = st.report; rh.okAt = st.okAt; fresh = true;
       if (!T.due.has(n)) T.due.set(n, st.okAt + FLEET.intervalMs); // a cached report: the next pull when it would be due
     }
@@ -178,7 +179,7 @@ FLEET_HOOK.line = (w: number, week: boolean): string => {
   const f = fleetNow(costNow("")); const usd = (x: number): string => "$" + (x < 1000 ? x.toFixed(2) : grp(x));
   const parts: string[] = [];
   for (const p of f.per) parts.push(fg(p.local ? C.text : C.accent) + p.name + RST + " " + fg(C.yellow) + (p.stale ? "≈" : "") + usd(week ? p.wk : p.usd) + RST + (p.stale ? fg(C.dim) + " (" + ago(Date.now() - p.age) + " old)" + RST : ""));
-  for (const rh of FLEET.hosts) if (rh.cfg.enabled && rh.cfg.kind === "ssh" && !rh.report) parts.push(fg(C.dim) + rh.cfg.name + " —" + RST);
+  for (const rh of FLEET.hosts) if (rh.cfg.enabled && (rh.cfg.kind === "ssh" || rh.cfg.kind === "dir") && !rh.report) parts.push(fg(C.dim) + rh.cfg.name + " —" + RST);
   let l = fg(C.dim) + "fleet  " + RST + parts.join(fg(C.dim) + " · " + RST);
   if (f.ov.size) l += fg(C.dim) + " · " + RST + fg(C.yellow) + String(f.ov.size) + " session" + (f.ov.size === 1 ? "" : "s") + " on 2+ hosts ≈" + RST;
   return vwidth(l) <= w ? l : fitStyled(l, w);
@@ -224,7 +225,7 @@ export function headerSeg(n: number, marks: HostMark[], w: number, nossh: boolea
 function marks(now: number): HostMark[] {
   const c = FLEET.cfg; const o: HostMark[] = []; if (!c) return o;
   for (const rh of FLEET.hosts) {
-    if (!rh.cfg.enabled || rh.cfg.kind !== "ssh" || rh.dupOf) continue;
+    if (!rh.cfg.enabled || (rh.cfg.kind !== "ssh" && rh.cfg.kind !== "dir") || rh.dupOf) continue;
     if (!rh.report) { if (rh.st && rh.st.code && rh.st.code !== "ok") o.push({ name: rh.cfg.name, stale: false, ageMs: 0, down: true }); continue; }
     if (!freshOf(rh, now, c, FLEET.intervalMs)) o.push({ name: rh.cfg.name, stale: true, ageMs: now - rh.okAt, down: false });
   }
@@ -232,7 +233,7 @@ function marks(now: number): HostMark[] {
 }
 H.headerWidgets.push((w: number): string => {
   if (!T.on || !FLEET.cfg || w < 24) return ""; // narrow: the cost widget before it keeps its place (the tabs turn to numbers for it)
-  let n = 1; for (const rh of FLEET.hosts) if (rh.cfg.enabled && rh.cfg.kind === "ssh" && !rh.dupOf) n++;
+  let n = 1; for (const rh of FLEET.hosts) if (rh.cfg.enabled && (rh.cfg.kind === "ssh" || rh.cfg.kind === "dir") && !rh.dupOf) n++;
   return headerSeg(n, marks(Date.now()), w, T.nossh);
 });
 

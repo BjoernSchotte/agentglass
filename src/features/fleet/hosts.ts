@@ -54,9 +54,13 @@ export function rowsOf(h: string, r: HostReport, at: number): Sess[] {
   return out;
 }
 // a stale report's rows are not live: no attention, no stuck mark (the report's values come back when it is fresh)
-function markFresh(rows: Sess[], fresh: boolean): void {
-  for (const s of rows) { const o = OBJ.get(s.path); s.attention = fresh && !!o && o["attention"] === true; s.stuck = fresh && o ? str(o["stuck"]) : ""; s.rlive = fresh && !!o && o["live"] === true; }
+// (a dir host's state is minutes old: never shown as running, spec 15.4)
+function markFresh(rows: Sess[], fresh: boolean, canLive: boolean): void {
+  for (const s of rows) { const o = OBJ.get(s.path); s.attention = fresh && !!o && o["attention"] === true; s.stuck = fresh && o ? str(o["stuck"]) : ""; s.rlive = canLive && fresh && !!o && o["live"] === true; }
 }
+// a dir host's drop cadence (the writer's --every, from its snapshots; host name → ms, 0 = once: cron or a timer)
+export const DIR_EVERY = new Map<string, number>();
+export const DIR_EVERY_DEFAULT = 900000;
 // ── the live stream (spec 16): while its beats keep coming (≤ 90 s) its states override the report's for its sessions ──
 export const LIVE_FRESH_MS = 90000;
 export function liveFresh(rh: RemoteHost, now: number): boolean { return rh.beatAt > 0 && now - rh.beatAt <= LIVE_FRESH_MS; }
@@ -87,7 +91,7 @@ export function applyReport(rh: RemoteHost, r: HostReport, at: number, ids: Map<
   for (const s of rh.rows) OBJ.delete(s.path);
   rh.dupOf = dup; rh.applied = r;
   if (dup) rh.rows = [];
-  else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh); overlay(rh, Date.now()); }
+  else { rh.rows = rowsOf(rh.cfg.name, r, at); markFresh(rh.rows, rh.fresh, rh.cfg.kind !== "dir"); overlay(rh, Date.now()); }
   RG.gen++;
 }
 // the duplicate map of a round: this machine, then every host in config order
@@ -102,7 +106,12 @@ export function reapply(): void {
   for (const rh of FLEET.hosts) if (rh.report) applyReport(rh, rh.report, rh.okAt, ids);
 }
 // fresh while its age ≤ 2 × interval + timeout (interval: the effective one, stretched while unfocused)
-export function freshOf(rh: RemoteHost, now: number, f: FleetCfg, intervalMs: number): boolean { return rh.report !== null && freshAt(rh.okAt, now, f, intervalMs); }
+// a dir host: while its newest applied file is at most 2 × the writer's cadence + 10 min old (spec 15.4)
+export function freshOf(rh: RemoteHost, now: number, f: FleetCfg, intervalMs: number): boolean {
+  if (rh.report === null) return false;
+  if (rh.cfg.kind === "dir") { const e = DIR_EVERY.get(rh.cfg.name) || DIR_EVERY_DEFAULT; return now - rh.okAt <= 2 * e + 600000; }
+  return freshAt(rh.okAt, now, f, intervalMs);
+}
 export function freshAt(okAt: number, now: number, f: FleetCfg, intervalMs: number): boolean { return now - okAt <= 2 * intervalMs + f.timeoutS * 1000; }
 // recomputes every host's freshness; true = one changed (rows re-marked, the view's signature moved)
 export function syncFresh(now: number): boolean {
@@ -110,7 +119,7 @@ export function syncFresh(now: number): boolean {
   let moved = false;
   for (const rh of FLEET.hosts) {
     const fr = freshOf(rh, now, f, FLEET.intervalMs);
-    if (fr !== rh.fresh) { rh.fresh = fr; markFresh(rh.rows, fr); moved = true; }
+    if (fr !== rh.fresh) { rh.fresh = fr; markFresh(rh.rows, fr, rh.cfg.kind !== "dir"); moved = true; }
     if (overlay(rh, now)) moved = true; // a stream that stopped beating: its states fall back to the report's
   }
   if (moved) RG.gen++;
