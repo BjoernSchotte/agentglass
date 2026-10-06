@@ -129,13 +129,14 @@ export function hostByName(name: string): RemoteHost | null { for (const rh of F
 // the hosts whose rows count: enabled, a report under 7 days old (older ones: fleet status only), not a duplicate
 export const SHOWN_MS = 7 * 86400000;
 export function merged(): RemoteHost[] { const o: RemoteHost[] = []; const now = Date.now(); for (const rh of FLEET.hosts) if (rh.cfg.enabled && rh.report && !rh.dupOf && now - rh.okAt <= SHOWN_MS) o.push(rh); return o; }
-// "harness:id" keys present on 2+ hosts (this machine counts as one) where one of them is a Part A host: the same session
-// read twice, which only the exact merge (exact reports, this machine) can tell apart (spec 7.2)
+// "harness:id" keys present on 2+ hosts (this machine counts as one) that the exact merge cannot tell apart: one of them
+// is a Part A host, or the harness is not Claude (no message ownership): the same session read twice (spec 7.2)
 export function overlap(local: Sess[], hosts: RemoteHost[]): Set<string> {
   const seen = new Map<string, number>(); const loose = new Set<string>();
   const add = (k: string, set: Set<string>, exact: boolean): void => { if (!set.has(k)) { set.add(k); seen.set(k, (seen.get(k) ?? 0) + 1); if (!exact) loose.add(k); } };
   const l = new Set<string>(); for (const s of local) if (!s.parent) add(s.h + ":" + s.id, l, true);
-  for (const rh of hosts) { const m = new Set<string>(); const ex = !!rh.report && rh.report.exact; for (const s of rh.rows) add(s.h + ":" + s.id, m, ex); }
+  // message ownership covers Claude only: another harness's session on 2+ hosts stays marked whatever the reports
+  for (const rh of hosts) { const m = new Set<string>(); const ex = !!rh.report && rh.report.exact; for (const s of rh.rows) add(s.h + ":" + s.id, m, ex && s.h === "claude"); }
   const out = new Set<string>(); for (const [k, n] of seen) if (n >= 2 && loose.has(k)) out.add(k);
   return out;
 }
