@@ -32,6 +32,14 @@ Kiro, Gemini CLI).
 | [model-prices](model-prices/spec.md) (implemented, PR pending review) | price unknown models from the TUI (`$` in Stats, palette) and the CLI (`agentglass prices`), aliases (estimates, `≈`), per-model costs from pi/OpenCode configs, price sources in Stats/`--json`/OTLP, price changes re-price the ledger in memory (`Day.tp`, no re-index) | honest-costs (`Day.mt/um/cp/hc`), cli-agent-mode, command-palette (`H.dynActions`); independent of tui-footprint (model-prices bumps `VERSION`; tui-footprint keeps it) |
 | [tui-footprint](tui-footprint/spec.md) | TUI memory and CPU: streamed one-session-per-line ledger cache, lazy columnar call rows, ledger/scan/view/git work only on change, Linux `/proc` process scan instead of `ps`, frames on visible change, cold-start indexing gauge; golden comparison keeps every number identical (RSS ~820 → ≤ 300 MB, CPU 19 % → ≤ 2 %) | — ; independent of model-prices (tui-footprint keeps `VERSION`; model-prices bumps it, `Day.tp` stays a plain field in the cache line) |
 | [macos-footprint](macos-footprint/spec.md) | the tui-footprint CPU gains on macOS: processes, cwd and open files read through `libproc`/`sysctl` (scriptc FFI + a small C file) instead of spawning `ps` every 1.5 s and `lsof` every 5 s; one incremental scanner shared with Linux; `AGENTGLASS_PROCS=ps` fallback; a one-runner macos-14 footprint workflow and a ps-parity check (away ≤ 2 %, children ~1.6 % → ≤ 0.2 %) | tui-footprint (released 2026.10.5) |
+| [fleet](fleet/spec.md) | `agentglass fleet`: several machines in one view over SSH — `fleet.hosts` config, each host's own `fleet pull` (its `--json` sessions + `cost --json` + allowance) through a shared, detached SSH connection into a 0700 spool, host-qualified rows with a host badge and a `host` filter key, staleness and cached reports for offline hosts, fleet-wide cost/budget/allowance, `fleet status`, a forced-command key (`fleet serve`, `fleet authorize`) and redaction at the source; the `HostFeed` → `HostReport` model later transports plug into | cli-agent-mode (`jsonSess`, `format.ts`), honest-costs (`budgetState`, allowance guard), filter-language (attribute catalogue); shares `src/util/hostid.ts` with otlp-complete (whichever lands first creates it) |
+| [otlp-complete](otlp-complete/spec.md) | export completeness, so a receiver can rebuild agentglass's view: client TLS (`otlp.tls` CA / client cert / key, mTLS to a Collector; TLS failures not retried), an OTLP logs stream from `--watch --otlp` (heartbeat, session state, `turn.open`, alerts), `host.id`, opt-in titles, `agentglass.request.id`, `agentglass.repo.key`, opt-in `meta` call details, and a receiver contract (dedup by response id, native-telemetry joins, drop `user.email`); transcripts stay on the host | otlp-export (implemented), rules-config (alert transitions), repo-view (`keyShown`); `hostId()` shared with fleet |
+
+## Later
+Multi-host collection beyond the SSH pull; each is one more `HostFeed` (fleet spec section 1).
+- **OTLP hub feed**: read the OTLP/JSON files an OTel Collector writes (spans + otlp-complete logs) as `HostReport`s, usage deduped by `gen_ai.response.id`.
+- **Built-in OTLP receiver** (`agentglass receive`): **later, decision pending** (fleet spec Decision 16; decided after the hub feed ships).
+- **SSH snapshot exactness**: `agentglass-snapshot/v1` with day buckets and hashed message ids (exact cross-host dedup, re-pricing), a live `fleet watch`, snapshot-drop hosts.
 
 ## Why this order
 1. **Phase 1** fixes numbers people already read (cost, titles, turns) and is small — every later feature builds on
@@ -81,5 +89,6 @@ Kiro, Gemini CLI).
   → command-palette.
 
 ## Explicitly not planned
-Team/adoption analytics, LLM-based session evaluation, query engines (PromQL/SQL), dashboards-as-code, autonomous
-fixing, and a local OTLP receiver (revisit only if a needed signal is missing from on-disk transcripts).
+Team/adoption analytics, LLM-based session evaluation, query engines (PromQL/SQL), dashboards-as-code and autonomous
+fixing. A local OTLP receiver moved from here to "Later" (decision pending, fleet spec Decision 16): hosts the viewer
+cannot reach are the "needed signal missing from on-disk transcripts" this entry named as its trigger.
