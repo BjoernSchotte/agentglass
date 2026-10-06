@@ -886,6 +886,21 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
   `--filter '<session clauses>'`, `--no-subagents`, `--batch N` (spans per request, default 512, at most 4 MB),
   `--compression gzip|none`, `--json` (summary on stdout). Exit codes: 0 sent, 1 some requests failed (run again to
   retry them), 2 usage error, 3 another export to the same endpoint is running.
+- **`--filter` is judged on what is known:** a session is selected only once its log shows the values the filter asks
+  about (a clause on cwd, branch, title, repo and the like waits for a cwd in the log), so a negated clause
+  (`not cwd ~ /work/client`) never lets an unread session through. A one-shot `export` judges each session as a whole,
+  as its log stands. `--watch --otlp` and `--watch` JSONL judge it again on every poll, after reading what it wrote,
+  and keep reading the sessions outside the filter: one whose agent leaves the filter's directory sends nothing more
+  (not even the turn that was open when it left); one that enters it sends from then on, never what it did outside.
+  `--pinned` adds the TUI's pins to the filter; a pin an export cannot apply (a call clause) is refused.
+
+> **Privacy note, 2026.10.6 and earlier.** Affected: `--filter` or `--pinned` with `--watch --otlp` or `--watch` JSONL,
+> and `--filter` with `export --otlp`. Sessions outside the filter could reach the backend or the output: `--watch --otlp` judged a session once, when it first saw it, so one that passed then (no cwd in its log
+> yet, or its agent inside the filter's directory for a while) kept sending its turns and its
+> `agentglass.session.state` records (cwd, branch, git remote, `agentglass.repo.key`); `--pinned` was not applied to
+> the export at all; `export --filter` with a negated clause took sessions whose log was not read yet. If you used a
+> filter or pins to keep projects out of a backend, search it for those projects' sessions and delete that data, or
+> rotate the backend's storage.
 - **No duplicates:** span and trace ids are deterministic (SHA-256 of the session and turn, scheme `v1`), and a state
   file per endpoint (`~/.agentglass/otlp/`, mode 0600; `AGENTGLASS_OTLP_DIR` moves it) marks every turn the backend
   accepted. `--resend` sends again with the same ids: Jaeger keeps one copy; Grafana Tempo was seen storing both

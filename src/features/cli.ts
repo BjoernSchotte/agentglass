@@ -26,7 +26,7 @@ import { gitJson, gitCli, peers } from "./vcs/json.ts";
 import { saveVcs } from "./vcs/enrich.ts";
 import { labelOf } from "../model/project.ts";
 import { keyShown, reposCli } from "./repos/cli.ts";
-import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
+import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchTrack, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
 import { livePid } from "./query/eval.ts";
 import { type Alert, stateOf, render, severityOf, flags } from "./rules/engine.ts";
 import type { AlertT } from "./otlp/logs.ts";
@@ -54,7 +54,7 @@ const NOTIFY_OPT = opt("--notify", "", "--watch: also run rules.json's notify co
 const REPOS_OPT = opt("--repos", "", "--json: one object per project instead of sessions (worktrees and clones of one remote merge)", "", []);
 const DAYS_OPT = opt("--days", "N", "--repos: the last N days (default 7, 0 = all history); day clauses of --filter narrow it", "7", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
-const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint, plus a logs stream of live state (heartbeat, session state, turn.open, alerts) to its /v1/logs (--since, --content, --detail, --no-subagents, --native, --compression, --batch as for export; JSONL lines then only with --jsonl)", "", []);
+const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint, plus a logs stream of live state (heartbeat, session state, turn.open, alerts) to its /v1/logs (--since, --filter, --pinned, --harness, --content, --detail, --no-subagents, --native, --compression, --batch as for export; the filter is judged again on every poll; JSONL lines then only with --jsonl)", "", []);
 const NOLOGS_OPT = opt("--no-logs", "", "--watch --otlp: send no logs stream (also otlp.logs: false)", "", []);
 const JSONL_OPT = opt("--jsonl", "", "--watch --otlp: also print the JSONL event lines", "", []);
 const GIT_OPT = opt("--git", "", "--json: run git log for each listed session's commits (full sha, +add −del, present|missing|elsewhere)", "", []);
@@ -292,7 +292,8 @@ export function watch(o: Opts, sink: Sink | null): void {
     for (const s of sessions.values()) {
       let at = off.get(s.path);
       if (at === undefined) { at = 0; off.set(s.path, 0); } // appeared after start: read it whole
-      if (o.cf && !cliWatchSession(o.cf, s)) continue;
+      // judged out: still read (it may come in; nothing is printed meanwhile); not judgeable yet: unread, printed once it is
+      if (o.cf && !cliWatchSession(o.cf, s) && !cliWatchTrack(o.cf, s)) continue;
       const src = sourceOf(s.h);
       const st = src.stat(s);
       if (!st) continue;
@@ -311,7 +312,9 @@ export function watch(o: Opts, sink: Sink | null): void {
         p = r.next; off.set(s.path, p);
         const evs: Ev[] = [];
         for (const l of r.lines) parseEvents(s.h, l, evs, s);
-        if (lines) for (const e of evs) emitEv(s, e, o.cf);
+        // judged again on what these lines brought (an agent's log follows it to another cwd): none of a session the filter
+        // no longer takes is printed
+        if (lines && (!o.cf || cliWatchSession(o.cf, s)) && visible(s, o.sc)) for (const e of evs) emitEv(s, e, o.cf);
       }
     }
   };
@@ -321,9 +324,10 @@ export function watch(o: Opts, sink: Sink | null): void {
     const rs = rules(); const lk = looker(); const now = Date.now(); const led = ledgerRule(rs);
     for (const s of sessions.values()) {
       if (!watched(s) || !wanted(s, o)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } forgetSession(s.path); continue; } // as the TUI: an ended session keeps no flag
-      const shown = !o.cf || cliWatchEvent(o.cf, s, "alert", "", ""); // event/call clauses: an alert line is an event too
       if (led && now - (ledAt.get(s.path) ?? 0) >= 10000) { ledAt.set(s.path, now); ledgerComplete(s); } // cost, tokens, call rows
       loadTail(s);
+      // judged again on what the tail brought (it may have left the filter since); event/call clauses: an alert line is an event too
+      const shown = !o.cf || (cliWatchSession(o.cf, s) && cliWatchEvent(o.cf, s, "alert", "", ""));
       for (const t of watchStep(s, observeWith(s, lk), rs, now)) {
         const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
         const msg = render(r, a.v, t.to || t.from, s);
