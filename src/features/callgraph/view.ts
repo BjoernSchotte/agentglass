@@ -3,6 +3,7 @@
 import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home, ESC_RE } from "../../util/text.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
+import { remoteOnly } from "../../model/remote.ts";
 import { H } from "../../hooks.ts";
 import { harnessOf, sourceOf, window, parseEvents, epochOf } from "../../harness/index.ts";
 import { titleOf, subActive, current } from "../../model/sessions.ts";
@@ -356,7 +357,7 @@ H.keys.push((mode: string, k: string): boolean => {
   }
   if (k === "c" && (mode === "transcript" || (mode === "list" && S.tab === 0))) {
     const s = mode === "transcript" ? (S.tv ? S.tv.s : null) : current();
-    if (s) open(s);
+    if (s && !remoteOnly(s, "the call graph")) open(s);
     return true;
   }
   if (mode !== "view" || S.fview !== NAME) return false;

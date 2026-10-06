@@ -6,6 +6,7 @@ import { fit, fitTail, fitStyled, fillTo, width, vwidth, clean, numAt, ago } fro
 import { basename } from "node:path";
 import type { Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
+import { remoteOnly } from "../../model/remote.ts";
 import { H, type Tab, display, realCwd } from "../../hooks.ts";
 import { sessions, titleOf, loadHead, loadTail, current, parentOf } from "../../model/sessions.ts";
 import { subOf } from "../../model/project.ts";
@@ -426,7 +427,7 @@ export function jumpToProject(s: Sess | null): boolean {
 }
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list" || S.tab !== 0 || k !== "@") return false;
-  jumpToProject(current());
+  if (!remoteOnly(current(), "the project view")) jumpToProject(current());
   return true;
 });
 H.footerHints.push((mode: string): string[][] => {

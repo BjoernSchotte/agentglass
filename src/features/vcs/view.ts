@@ -5,6 +5,7 @@
 import { fit, fitStyled, clean, home } from "../../util/text.ts";
 import type { Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
+import { remoteOnly } from "../../model/remote.ts";
 import { H, display } from "../../hooks.ts";
 import { sessions, titleOf, current } from "../../model/sessions.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
@@ -184,7 +185,7 @@ H.keys.push((mode: string, k: string): boolean => {
   if (mode === "transcript" && V.inTx && (k === "esc" || k === "q" || k === "left")) { S.tv = null; S.mode = "view"; S.fview = NAME; V.inTx = false; return true; }
   if (k === "V" && (mode === "transcript" || (mode === "list" && S.tab === 0))) {
     const s = mode === "transcript" ? (S.tv ? S.tv.s : null) : current();
-    if (s) open(s);
+    if (s && !remoteOnly(s, "the git view")) open(s);
     return true;
   }
   if (mode !== "view" || S.fview !== NAME || !V.s) return false;

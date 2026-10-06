@@ -42,7 +42,7 @@ function statusGlyph(s: Sess): string {
 // as renderSessions draws it from these inputs; the preview by its session's fields, last events (the tail is read here
 // as the frame would), its subagents and the usage its sections show
 function rowKey(s: Sess, sub: boolean, last: boolean): string {
-  const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + agoK(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + agoK(s.last) + "|" + s.cwd + "|" +
+  const k = (sub ? (subActive(s) ? "A" : "a") + s.kind + "|" + agoK(s.mtime) + "|" + s.name + (last ? "L" : "") : glyphKind(s) + s.h + "|" + agoK(s.last) + "|" + s.cwd + "|" + (s.host ? (FRESH.ok(s.host) ? "f" : "s" + agoK(s.rat)) + "|" : "") +
     (s.subs.length ? (isOpen(s) ? "v" : ">") + String(activeSubs(s)) + "/" + String(s.subs.length) : ""));
   let b = ""; for (const f of H.rowBadges) b += f(s);
   return k + "|" + titleOf(s) + "|" + rowPrefix(s) + b;
@@ -128,8 +128,9 @@ export function renderSessions(): void {
     const chip = s.subs.length ? (isOpen(s) ? "▾" : "▸") + "⑂" + activeSubs(s) + "/" + s.subs.length : "";
     const cw2 = chip ? Math.min(12, width(chip) + 1) : 0;
     const tw = iw - 21 - BADGE_W - cw2 - slot - pw;
-    const row = cursor + statusGlyph(s) + b + " " + badge(s.h) + b + fg(C.dim) + fit(ago(s.last), 4) + RST + b + fg(C.purple) + fit(proj, 13) + RST + b + " " + badgeSlot(s, b) +
-      px + tstyle + fit(clean(titleOf(s)), tw) + RST + b + (activeSubs(s) ? fg(C.cyan) : fg(C.dim)) + fit(chip, cw2) + RST;
+    const stale = s.host !== "" && !FRESH.ok(s.host); // a stale remote row: dimmed, the age of its report with a "?"
+    const row = cursor + statusGlyph(s) + b + " " + badge(s.h) + b + fg(C.dim) + fit(stale ? ago(s.rat) + "?" : ago(s.last), 4) + RST + b + fg(stale ? C.dim : C.purple) + fit(proj, 13) + RST + b + " " + badgeSlot(s, b) +
+      px + (stale ? fg(C.dim) : tstyle) + fit(clean(titleOf(s)), tw) + RST + b + (activeSubs(s) ? fg(C.cyan) : fg(C.dim)) + fit(chip, cw2) + RST;
     put(1, 2 + r, row);
   }
   const s = current();
@@ -152,10 +153,11 @@ export function renderSessions(): void {
     if (s.remote) { const r = scrubRemote(s.remote); if (r) kv("remote", remoteLabel(r), C.green); }
     if (s.model) kv("model", s.model, C.cyan);
     kv("updated", ago(s.mtime) + " ago · " + localDay(new Date(s.mtime).toISOString()) + " " + localHM(new Date(s.mtime).toISOString()), C.sub); // both local: a UTC day next to a local clock was off by one around midnight
-    if (s.pid) { const t = tmuxTarget(s.pid); kv("process", "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : "") + (t ? " · tmux " + t : ""), C.green); }
+    if (s.host) { for (const f of H.remoteCard) for (const l of f(s, iw2)) lines.push(fitStyled(l, iw2)); } // a remote row: its report's facts, nothing read here
+    else if (s.pid) { const t = tmuxTarget(s.pid); kv("process", "pid " + s.pid + (s.status ? " · " + s.status : "") + (s.name ? " · " + s.name : "") + (t ? " · tmux " + t : ""), C.green); }
     else kv("process", s.archived ? "archived" : "not running", C.dim);
-    if (s.depth === 1 || s.parent) { const par = parentOf(s); kv("subagent", s.kind + (s.name ? " · " + s.name : "") + (par ? "  ↰ " + titleOf(par) : ""), C.cyan); }
-    for (const f of H.previewSections) for (const l of f(s, iw2)) lines.push(fitStyled(l, iw2));
+    if (!s.host && (s.depth === 1 || s.parent)) { const par = parentOf(s); kv("subagent", s.kind + (s.name ? " · " + s.name : "") + (par ? "  ↰ " + titleOf(par) : ""), C.cyan); }
+    if (!s.host) for (const f of H.previewSections) for (const l of f(s, iw2)) lines.push(fitStyled(l, iw2));
     if (s.subs.length) {
       lines.push(fg(C.line) + "─ " + fg(C.cyan) + "subagents " + fg(C.dim) + activeSubs(s) + " active / " + s.subs.length + RST);
       const kids = s.subs.slice().sort((a, b) => (subActive(b) ? 1 : 0) - (subActive(a) ? 1 : 0) || b.mtime - a.mtime).slice(0, 6);

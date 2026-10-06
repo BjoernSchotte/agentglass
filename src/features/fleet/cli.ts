@@ -245,31 +245,38 @@ function status(args: string[]): void {
     out(JSON.stringify(close ? { localName: c.localName, hostId: hostId(), hosts: o, closed } : { localName: c.localName, hostId: hostId(), hosts: o }));
     process.exit(0);
   }
-  const localTz = -new Date().getTimezoneOffset();
-  xs.sort((a: HostStatus, b: HostStatus) => (problem(b) ? 1 : 0) - (problem(a) ? 1 : 0)); // problems first
-  out("this machine: " + c.localName + " · host id " + hostId() + " · " + tz(localTz));
-  for (const x of xs) { out(""); for (const l of statusText(x, c, localTz)) out(l); }
-  if (ov.size) { out(""); out(String(ov.size) + " session" + (ov.size === 1 ? "" : "s") + " seen on 2+ hosts: their cost may be counted twice (≈)"); }
+  for (const l of statusLines(c, xs, ov.size)) out(l);
   if (close) { out(""); out("closed " + String(closed) + " shared ssh connection" + (closed === 1 ? "" : "s")); }
   process.exit(0);
+}
+// the text of fleet status (also the TUI's "fleet: status" view): this machine, then every host, problems first
+export function statusLines(c: FleetCfg, xs: HostStatus[], ov: number): string[] {
+  const localTz = -new Date().getTimezoneOffset(); const o: string[] = [];
+  const ys = xs.slice(); ys.sort((a: HostStatus, b: HostStatus) => (problem(b) ? 1 : 0) - (problem(a) ? 1 : 0));
+  o.push("this machine: " + c.localName + " · host id " + hostId() + " · " + tz(localTz));
+  for (const x of ys) { o.push(""); for (const l of statusText(x, c, localTz)) o.push(l); }
+  if (ov) { o.push(""); o.push(String(ov) + " session" + (ov === 1 ? "" : "s") + " seen on 2+ hosts: their cost may be counted twice (≈)"); }
+  return o;
 }
 
 // ── help and dispatch ──
 function rec(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
+const FIRST = "--update-prices"; // the fleet rows go before the maintenance commands in --help
 const REFRESH = opt("--refresh", "", "pull every host now (default: only reports older than fleet.refreshSeconds)", "", []);
 const STRICT = opt("--strict", "", "exit 5 when a host could not be pulled or its report is stale", "", []);
 addCmd(rec("fleet", "agentglass fleet [--json] [--filter …] [--refresh] [--strict]", "every host's sessions (fleet.hosts in ~/.agentglass/config.json, pulled over ssh) and this machine's,\nnewest first, with a host column (--json: host and stale fields; --strict: exit 5 when a host failed)",
-  [opt("--json", "", "the rows as JSON", "", []), FILTER_OPT, FORMAT_OPT, FIELDS_OPT, REFRESH, STRICT], FLEET_FIELDS));
+  [opt("--json", "", "the rows as JSON", "", []), FILTER_OPT, FORMAT_OPT, FIELDS_OPT, REFRESH, STRICT], FLEET_FIELDS), FIRST);
 addCmd(rec("fleet cost", "agentglass fleet cost [--json] [--check]", "costs per host and over the fleet (today / 7 days / month, projection, the budget over the fleet);\n≈ when a host is stale or a session is on 2+ hosts (--refresh, --strict; --check: exit 3 over budget)",
-  [opt("--json", "", "{hosts, total (the cost --json shape), overlap, approx}", "", []), REFRESH, STRICT, opt("--check", "", "exit 3 when the fleet is over budget", "", [])], []));
+  [opt("--json", "", "{hosts, total (the cost --json shape), overlap, approx}", "", []), REFRESH, STRICT, opt("--check", "", "exit 3 when the fleet is over budget", "", [])], []), FIRST);
 addCmd(rec("fleet status", "agentglass fleet status [--json] [--close]", "per host: what works and what does not (last report, error, version, host id, time zone, connection sharing)",
-  [opt("--json", "", "one object per host", "", []), opt("--close", "", "end the shared ssh connections (ControlMaster)", "", []), opt("--refresh", "", "pull every host first", "", [])], []));
+  [opt("--json", "", "one object per host", "", []), opt("--close", "", "end the shared ssh connections (ControlMaster)", "", []), opt("--refresh", "", "pull every host first", "", [])], []), FIRST);
 addCmd(rec("fleet pull", "agentglass fleet pull [--days N] [--redact]", "this host's report for a fleet viewer (JSON lines: hello, cost, allowance, sessions, end);\nwhat the viewer runs over ssh",
-  [opt("--days", "N", "sessions updated within N days (1–90), plus every live one", "7", []), opt("--redact", "", "fake titles, projects and paths at the source", "", [])], []));
+  [opt("--days", "N", "sessions updated within N days (1–90), plus every live one", "7", []), opt("--redact", "", "fake titles, projects and paths at the source", "", [])], []), FIRST);
 addCmd(rec("fleet serve", "agentglass fleet serve [--redact]", "the forced command of a viewer's key on a host (authorized_keys command=): runs only\nfleet pull and --version from SSH_ORIGINAL_COMMAND; exit 126 refused, 2 outside ssh",
-  [opt("--redact", "", "answer every request redacted, whatever the viewer asks", "", [])], []));
+  [opt("--redact", "", "answer every request redacted, whatever the viewer asks", "", [])], []), FIRST);
 addCmd(rec("fleet authorize", "agentglass fleet authorize <key.pub> [--from <cidr>]", "print the authorized_keys line that limits the viewer's key to fleet serve\n(restrict,command=…); run it on the host and append the line yourself (--redact: the host answers redacted)",
-  [opt("--from", "<cidr>", "only from these addresses (from=…), e.g. 100.64.0.0/10", "", []), opt("--redact", "", "the host answers redacted (fleet serve --redact)", "", [])], []));
+  [opt("--from", "<cidr>", "only from these addresses (from=…), e.g. 100.64.0.0/10", "", []), opt("--redact", "", "the host answers redacted (fleet serve --redact)", "", [])], []), FIRST);
+addCmd(rec("--no-fleet", "agentglass --no-fleet", "the TUI without pulling or showing fleet hosts this run (also AGENTGLASS_FLEET=0)", [], []), "--help");
 H.cli.unshift((args: string[]): boolean => { // before cli.ts's flag handlers: `fleet --json` is this command's flag
   if (args[0] !== "fleet") return false;
   const sub = args[1] ?? "";

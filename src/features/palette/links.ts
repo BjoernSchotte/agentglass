@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
 import { S } from "../../state.ts";
+import { remoteOnly } from "../../model/remote.ts";
 import { H, type Ctx } from "../../hooks.ts";
 import { current } from "../../model/sessions.ts";
 import { copyText } from "../../actions.ts";
@@ -23,7 +24,7 @@ function cursorEv(): Ev | null {
 }
 H.keys.push((mode: string, k: string): boolean => {
   if (k !== "Y") return false;
-  if (mode === "list" && S.tab === 0) { const s = current(); if (s) copyText(linkOf(s, null), "link"); return true; }
+  if (mode === "list" && S.tab === 0) { const s = current(); if (s && !remoteOnly(s, "a link")) copyText(linkOf(s, null), "link"); return true; }
   if (mode === "transcript" && S.tv) { copyText(linkOf(S.tv.s, cursorEv()), "link"); return true; }
   return false;
 });
@@ -31,4 +32,4 @@ addActions([
   keyAction("session.copyLink", "Session", "Copy link (agentglass://)", "Y", "Y", inSessions),
   keyAction("transcript.copyLink", "Transcript", "Copy link to the event under the cursor", "Y", "Y", inTranscript),
 ]);
-H.sessionActions.push((s: Sess) => ({ id: "copyLink", title: "Copy link (agentglass://)", group: "Session", keys: "Y", when: (c: Ctx): boolean => true, run: (c: Ctx): void => copyText(linkOf(s, null), "link") }));
+H.sessionActions.push((s: Sess) => ({ id: "copyLink", title: "Copy link (agentglass://)", group: "Session", keys: "Y", when: (c: Ctx): boolean => true, run: (c: Ctx): void => { if (!remoteOnly(s, "a link")) copyText(linkOf(s, null), "link"); } }));

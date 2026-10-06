@@ -118,13 +118,15 @@ export function sumOf(cost: Obj | null): HostSum {
   return { today: modeSum(obj(c["today"])), week: modeSum(obj(c["week"])), month: modeSum(month), proj, projOk: pr !== null };
 }
 export interface HostCost { name: string; today: number; week: number; month: number; age: number; stale: boolean; local: boolean }
-export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; perHost: HostCost[] }
+// approx: some figure is an estimate (a stale host, a session on 2+ hosts, a host without a projection); marked: the
+// period figures themselves are (stale or overlap: the header's and the Stats line's ≈)
+export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; marked: boolean; perHost: HostCost[] }
 function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; return t; }
 // this machine's figures plus each merged host's own (Part A: each prices with its own table and day boundaries)
 export function fleetCost(localNow: CostNow, hosts: RemoteHost[], now: number, f: FleetCfg, ov: number): FleetCost {
   const today = newSum(); const week = newSum(); const month = newSum(); const proj: number[] = [];
   addSum(today, localNow.today); addSum(week, localNow.week); addSum(month, localNow.month);
-  let approx = ov > 0;
+  let approx = ov > 0; let marked = ov > 0;
   for (let i = 0; i < MODES.length; i++) { const p = localNow.projByMode[i]; const v = p ? p.month : -1; proj.push(v >= 0 ? v : localNow.month.by[i] ?? 0); if (v < 0 && (localNow.month.by[i] ?? 0) > 0) approx = true; }
   const per: HostCost[] = [{ name: f.localName, today: tot(localNow.today), week: tot(localNow.week), month: tot(localNow.month), age: 0, stale: false, local: true }];
   for (const rh of hosts) {
@@ -134,9 +136,10 @@ export function fleetCost(localNow: CostNow, hosts: RemoteHost[], now: number, f
     for (let i = 0; i < MODES.length; i++) { const v = hs.proj[i] ?? -1; proj[i] = (proj[i] ?? 0) + (v >= 0 ? v : hs.month.by[i] ?? 0); if (v < 0 && (hs.month.by[i] ?? 0) > 0) approx = true; }
     const stale = !freshOf(rh, now, f, FLEET.intervalMs);
     if (stale || !hs.projOk) approx = true;
+    if (stale) marked = true;
     per.push({ name: rh.cfg.name, today: tot(hs.today), week: tot(hs.week), month: tot(hs.month), age: now - rh.okAt, stale, local: false });
   }
-  return { today, week, month, projByMode: proj, approx, perHost: per };
+  return { today, week, month, projByMode: proj, approx, marked, perHost: per };
 }
 // the local budget over the fleet (one account, one budget; the hosts' own budgets are ignored)
 export function fleetBudget(fc: FleetCost): BState {

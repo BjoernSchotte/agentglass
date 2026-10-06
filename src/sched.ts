@@ -157,6 +157,8 @@ function dur(ms: number): string {
   if (ms < 10) return String(Math.round(ms * 10) / 10) + "ms";
   return ms < 1000 ? String(Math.round(ms)) + "ms" : String(Math.round(ms / 100) / 10) + "s";
 }
+// the user is not looking (terminal unfocused, or the idle/away level): slow background work (fleet pulls) stretches
+export const AWAY = { on: false };
 export const DBG = { on: false, line: "" }; // AGENTGLASS_DEBUG_REFRESH=1: footer.ts shows line
 // AGENTGLASS_DEBUG_REFRESH footer: lvl hot · procs 18ms/1s · scan 41ms/2s · …
 // extra: process-wide parts (rss, ingest) right after the level, where a narrow footer does not cut them off

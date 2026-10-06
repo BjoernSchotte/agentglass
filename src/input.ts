@@ -3,6 +3,7 @@
 import { run } from "./util/fs.ts";
 import { clean, numAt } from "./util/text.ts";
 import { S, say } from "./state.ts";
+import { remoteOnly } from "./model/remote.ts";
 import { H, tabAt } from "./hooks.ts";
 import { buildView, titleOf, parentOf, isOpen, expanded, collapsed, current } from "./model/sessions.ts";
 import { procView, procAt, procSess, tmuxTarget, tmuxTargetNow, sharedDaemon } from "./model/procs.ts";
@@ -160,6 +161,7 @@ export function onInput(k: string): void {
         buildView(); const i = S.view.indexOf(root); if (i >= 0 && cur !== root && !isOpen(root)) S.sel = i;
       }
     }
+    else if ((k === "s" || k === "R" || k === "x" || k === "D") && remoteOnly(current(), k === "s" ? "send" : k === "R" ? "resume" : k === "x" ? "stop" : "trash")) { /* told */ }
     else if (k === "s") { const c = current(); const s = c ? owner(c) : null; if (s) ask("send to " + s.h + (c !== s ? " parent" : "") + (s.pid ? " (live)" : " (headless)"), "send", ""); }
     else if (k === "R") { const s = current(); if (s) resume(s); }
     else if (k === "x") { const s = current(); const w = s && s.pid ? sharedDaemon(targetPid()) : ""; if (w) say("warn", w); else if (s && s.pid) confirm("SIGTERM agent pid " + targetPid() + "?", "TERM"); else say("warn", "session not running"); }
