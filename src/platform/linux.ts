@@ -9,13 +9,14 @@ import { type ProcFs, scanProcs, knownProcs, btimeOf, procfsUsable } from "./pro
 import { psProcs, devOf, detached, freeName, ownerModeOf, fileInfoOf } from "./posix.ts";
 
 // the process table from /proc (procfs.ts): no ps child, and only new, young and tracked pids are read on most passes;
-// a full pass every 30 s catches execs and reparenting of the rest. Falls back to ps where /proc is not usable.
+// a full pass every 30 s catches execs and reparenting of the rest. Falls back to ps where /proc is not usable or
+// AGENTGLASS_PROCS=ps asks for it.
 const PFS: ProcFs = { root: "/proc", hz: 0, page: 0, btime: 0 };
 const FULL_MS = 30000;
 let useProc = -1; let lastFull = 0;
 function clkTck(): number { if (!PFS.hz) PFS.hz = Number(run("getconf", ["CLK_TCK"]).trim()) || 100; return PFS.hz; }
 function listProcs(tracked: Set<number>, wantArgs: (comm: string) => boolean, discover: boolean): ProcRow[] {
-  if (useProc < 0) { clkTck(); PFS.page = Number(run("getconf", ["PAGESIZE"]).trim()) || 4096; PFS.btime = btimeOf(PFS.root); useProc = procfsUsable(PFS) ? 1 : 0; }
+  if (useProc < 0) { clkTck(); PFS.page = Number(run("getconf", ["PAGESIZE"]).trim()) || 4096; PFS.btime = btimeOf(PFS.root); useProc = process.env.AGENTGLASS_PROCS !== "ps" && procfsUsable(PFS) ? 1 : 0; }
   if (!useProc) return psProcs();
   const now = Date.now(); const full = discover && now - lastFull >= FULL_MS;
   if (full) lastFull = now;
