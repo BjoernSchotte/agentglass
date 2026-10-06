@@ -21,8 +21,16 @@ export function watchArgs(h: HostCfg, redact: boolean, cp: string): string[] {
   if (redact) a.push(q("--redact"));
   return a;
 }
-// the fixed snippet (paths and argv as positional parameters, as the pull's): the stream appends to the spool file
-export const WATCH_SNIPPET = "umask 077\nd=$1; k=$2; shift 2\nexec \"$@\" >> \"$d/$k.watch.jsonl\" 2>> \"$d/$k.watch.err\"";
+// the fixed snippet (paths and argv as positional parameters, as the pull's): the stream appends to the spool file, and
+// ends within 5 s of the viewer (pid v) going away however it went (a closed terminal, a kill): no stream outlives it
+export const WATCH_SNIPPET = [
+  "umask 077",
+  "d=$1; k=$2; v=$3; shift 3",
+  "\"$@\" >> \"$d/$k.watch.jsonl\" 2>> \"$d/$k.watch.err\" & c=$!",
+  "trap 'kill $c 2>/dev/null; exit 0' TERM INT HUP",
+  "while kill -0 \"$v\" 2>/dev/null && kill -0 $c 2>/dev/null; do sleep 5; done",
+  "kill $c 2>/dev/null; wait $c 2>/dev/null",
+].join("\n");
 function num(v: unknown): number { return typeof v === "number" ? v as number : 0; }
 // one line of the stream → into ev; beat/hello times (the host's clock) are not used: the viewer's clock at reading is
 export function feedWatch(ev: WatchEv, line: string, now: number): boolean {
@@ -52,7 +60,7 @@ export function watchFeed(h: HostCfg, k: string, redact: boolean, cp: string, sp
       // a fresh file per stream: what an earlier stream left is old state
       try { writeFileSync(file, "", { mode: 0o600 }); } catch (e) { return false; }
       w.off = 0;
-      const pid = spawn("sh", ["-c", WATCH_SNIPPET, "sh", fleetDir(), k, b].concat(watchArgs(h, redact, cp)));
+      const pid = spawn("sh", ["-c", WATCH_SNIPPET, "sh", fleetDir(), k, String(process.pid), b].concat(watchArgs(h, redact, cp)));
       if (pid <= 0) { w.next = now + BACK0; return false; }
       w.pid = pid; w.startedAt = now;
       return true;

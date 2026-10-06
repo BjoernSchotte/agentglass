@@ -11,7 +11,7 @@ import type { SState } from "../../model/state.ts";
 import type { HostCfg } from "./config.ts";
 import type { LiveRow } from "./model.ts";
 import { type WState, newWState, watchLines, alertLine, BEAT_MS, REPEAT_MS } from "./watch.ts";
-import { type WatchEv, watchFeed, feedWatch, watchArgs, WATCH_MAX } from "./watchfeed.ts";
+import { type WatchEv, watchFeed, feedWatch, watchArgs, WATCH_MAX, WATCH_SNIPPET } from "./watchfeed.ts";
 import { type RemoteHost, overlay, liveFresh, LIVE_FRESH_MS } from "./hosts.ts";
 import { alertOut, turnDue } from "./tui.ts";
 import { spoolPath } from "./store.ts";
@@ -80,6 +80,18 @@ ok("rotation: a fresh file on start", wf.start(Date.now()) && existsSync(file) &
 wf.stop();
 ok("stop kills our pid", !wf.running(), "running");
 try { process.kill(pid, "SIGKILL"); } catch (e) { /* gone */ }
+
+// ── the real snippet: the stream ends when its viewer goes, however it went ──
+const viewer = Number(execFileSync("sh", ["-c", "sleep 60 >/dev/null 2>&1 & echo $!"], { encoding: "utf8" }).trim());
+const slowSsh = join(bin, "ssh-slow"); writeFileSync(slowSsh, "#!/bin/sh\necho '{\"beat\":1}'\nexec sleep 60\n"); chmodSync(slowSsh, 0o755);
+const sp = Number(execFileSync("sh", ["-c", "sh -c \"$1\" sh \"$2\" ws2 \"$3\" \"$4\" >/dev/null 2>&1 & echo $!", "x", WATCH_SNIPPET, dir, String(viewer), slowSsh], { encoding: "utf8" }).trim());
+execFileSync("sleep", ["0.5"]);
+const kid = (): string => { try { return execFileSync("pgrep", ["-P", String(sp)], { encoding: "utf8" }).trim(); } catch (e) { return ""; } };
+ok("stream running while its viewer is", kid() !== "", "no child");
+try { process.kill(viewer, "SIGKILL"); } catch (e) { /* gone */ }
+let gone = false; for (let i = 0; i < 70 && !gone; i++) { execFileSync("sleep", ["0.1"]); let alive = true; try { process.kill(sp, 0); } catch (e) { alive = false; } gone = !alive || kid() === ""; }
+ok("the viewer gone: the stream ends within ~5 s", gone, kid());
+try { process.kill(sp, "SIGKILL"); } catch (e) { /* gone */ }
 
 // ── the host's rows: the stream's states while it beats, the report's after 90 s without a beat ──
 const s = newSess("claude", "a", "@ws/claude:a", false); s.host = "ws"; s.rlive = false;
