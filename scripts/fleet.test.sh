@@ -23,11 +23,15 @@ home h3 x1 1000000 "vm task" 3333333333333333
 cat > "$t/ssh" <<'SH'
 #!/bin/sh
 [ "$1" = -V ] && { echo "fake ssh" >&2; exit 0; }
-while [ $# -gt 0 ]; do case "$1" in -o|-O) shift 2;; -T) shift;; *) break;; esac; done
+while [ $# -gt 0 ]; do case "$1" in -o|-O) shift 2;; -T) shift;; --) shift; break;; *) break;; esac; done
 dest=$1; shift
 case "$dest" in
   slow) exec sh -c 'sleep 60; : fleet-test-slow' ;;
   gone) echo "ssh: connect to host gone port 22: Connection refused" >&2; exit 255 ;;
+  nodns) echo "ssh: Could not resolve hostname nodns: Name or service not known" >&2; exit 255 ;;
+  noauth) echo "me@noauth: Permission denied (publickey)." >&2; exit 255 ;;
+  noag) echo "sh: 1: agentglass: not found" >&2; exit 127 ;;
+  old) echo "agentglass needs an interactive terminal" >&2; exit 1 ;; # an agentglass without fleet (measured: 2026.10.5)
   cut) HOME="$FAKE_HOMES/h2" eval "$*" | sed '$d'; exit 0 ;;
 esac
 HOME="$FAKE_HOMES/$dest" eval "$*"
@@ -60,6 +64,21 @@ left() { ps -eo args | grep -c '[f]leet-test-slow' || true; }
 n=0; while [ "$(left)" != 0 ] && [ $n -lt 30 ]; do sleep 0.1; n=$((n + 1)); done # a TERM'd group may take a moment to go
 [ "$(left)" = 0 ] || { echo "FAIL no sleep left from slow:"; ps -eo pid,pgid,ppid,stat,args | grep '[f]leet-test-slow'; fail=1; }
 run fleet status | grep -q "✗ ssh: connect to host gone" || { echo "FAIL status text"; run fleet status; fail=1; }
+# what fleet status says for each failure: DNS, auth, no agentglass there, an agentglass without fleet
+cfg '{"fleet":{"hosts":[{"name":"nodns","ssh":"nodns"},{"name":"noauth","ssh":"noauth"},{"name":"noag","ssh":"noag"},{"name":"old","ssh":"old"}]}}'
+run fleet status --refresh > "$t/st"
+for want in "✗ ssh: Could not resolve hostname nodns" "✗ me@noauth: Permission denied (publickey). — ssh needs a key without a prompt, or ssh-agent" \
+  "✗ agentglass not found on noag: set fleet.hosts[].agentglass" "✗ agentglass on old is older than fleet: update it there"; do
+  grep -qF "$want" "$t/st" || { echo "FAIL status: $want"; cat "$t/st"; fail=1; }
+done
+# open <ref>@<host>: the ssh command that opens it there; @ this machine's name: a local ref; an unknown host: not found
+cfg '{"fleet":{"hosts":[{"name":"h2","ssh":"me@h2","agentglass":"~/.local/bin/agentglass"}]}}'
+eq "open @host" "$(run open claude:abcdef12@h2)" "ssh -t me@h2 ~/.local/bin/agentglass open claude:abcdef12"
+eq "open @host anchor" "$(run open 'claude:abcdef12@h2#call=c1' --print | jq -r .command)" "ssh -t me@h2 ~/.local/bin/agentglass open claude:abcdef12#call=c1"
+set +e; run open claude:abcdef12@local > /dev/null 2> "$t/err"; rc=$?; set -e
+eq "open @local: resolved here" "$rc:$(grep -c 'fleet host' "$t/err")" "3:0"
+set +e; run open claude:abcdef12@nope > /dev/null 2> "$t/err"; rc=$?; set -e
+eq "open @unknown host" "$rc:$(grep -c 'no fleet host nope' "$t/err")" "3:1"
 
 # totals: the sum of each home's own cost --json
 cfg '{"fleet":{"hosts":[{"name":"h2","ssh":"h2"},{"name":"h3","ssh":"h3"}]}}'

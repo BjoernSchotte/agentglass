@@ -1,6 +1,6 @@
 // agentglass — self-check for the fleet config section: scriptc build src/features/fleet/config.check.ts -o fc && ./fc
 // SPDX-License-Identifier: Apache-2.0
-import { fleetFrom, fleetOn } from "./config.ts";
+import { fleetFrom, fleetOn, splitHostRef, openCmd } from "./config.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -43,5 +43,10 @@ ok("not an object", bad3.hosts.length === 0 && has(bad3.warns, "fleet in ~/.agen
 const dis = fleetFrom({ hosts: [{ name: "old", ssh: "x", enabled: false }] });
 ok("disabled", dis.hosts.length === 1 && !(dis.hosts[0]?.enabled ?? true) && !fleetOn(dis), JSON.stringify(dis));
 ok("no section", fleetFrom(undefined).warns.length === 0 && !fleetOn(fleetFrom(undefined)), "warns");
+// <ref>@<host>: the host before or after the anchor; links and plain refs have none
+const SH = (r: string): string => { const x = splitHostRef(r); return x.ref + " | " + x.host; };
+for (const [r, want] of [["claude:abc123@ws", "claude:abc123 | ws"], ["claude:abc123@ws#call=c1", "claude:abc123#call=c1 | ws"], ["claude:abc123#call=c1@ws", "claude:abc123#call=c1 | ws"],
+  ["abc123", "abc123 | "], ["agentglass://open/claude/abc@x", "agentglass://open/claude/abc@x | "], ["abc123@", "abc123 | "]]) ok("split " + r, SH(r) === want, SH(r));
+ok("open command", openCmd({ name: "ws", ssh: "me@ws", agentglass: "~/bin/agentglass", redact: false, enabled: true, kind: "ssh", path: "" }, "claude:abc") === "ssh -t me@ws ~/bin/agentglass open claude:abc", "cmd");
 console.log(bad ? String(bad) + " failed" : "fleet config: all checks passed");
 if (bad) process.exit(1);

@@ -10,10 +10,10 @@ import type { Sess } from "../../model/types.ts";
 import { type Obj, str } from "../../util/json.ts";
 import { CONFIG_FILE } from "../../util/config.ts";
 import { hostId } from "../../util/hostid.ts";
-import { ago } from "../../util/text.ts";
+import { ago, clean } from "../../util/text.ts";
 import { detachedPid } from "../../platform/posix.ts";
 import { REDACT } from "../redact-on.ts";
-import { cliError, errLine } from "../agentenv.ts";
+import { agentHost, cliError, errLine } from "../agentenv.ts";
 import { type CmdRec, type OptRec, addCmd, opt, cmdOf, cmdText, helpOf, wantsHelp } from "../clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "../format.ts";
 import { discover, jsonSess, JSON_FIELDS, FILTER_OPT, FORMAT_OPT, FIELDS_OPT } from "../cli.ts";
@@ -23,7 +23,9 @@ import { peers } from "../vcs/json.ts";
 import { MODES } from "../usage/billing.ts";
 import { type ModeSum, type BState, grp } from "../usage/costs.ts";
 import { budget } from "../usage/summary.ts";
-import { type FleetCfg, type HostCfg, loadFleet } from "./config.ts";
+import { type FleetCfg, type HostCfg, loadFleet, hostNamed, openCmd, splitHostRef } from "./config.ts";
+import { type OpenArgs, REMOTE_OPEN } from "../palette/open.ts";
+import { SELF, parseRef } from "../palette/ref.ts";
 import type { HostFeed, FeedState } from "./model.ts";
 import { type RemoteHost, type FleetCost, FLEET, setFleet, reapply, merged, overlap, fleetCost, fleetBudget, freshOf, rowObj } from "./hosts.ts";
 import { sshFeed, idleFeed, sshBin, hostControlPath } from "./ssh.ts";
@@ -236,7 +238,7 @@ function status(args: string[]): void {
   let closed = 0;
   if (close) {
     const b = sshBin();
-    for (const rh of FLEET.hosts) { const cp = cpOf(rh); if (!b || !cp) continue; try { execFileSync(b, ["-O", "exit", "-o", "ControlPath=" + cp, rh.cfg.ssh], { stdio: "ignore", timeout: 5000 }); closed++; } catch (e) { /* no master running */ } }
+    for (const rh of FLEET.hosts) { const cp = cpOf(rh); if (!b || !cp) continue; try { execFileSync(b, ["-O", "exit", "-o", "ControlPath=" + cp, "--", rh.cfg.ssh], { stdio: "ignore", timeout: 5000 }); closed++; } catch (e) { /* no master running */ } }
   }
   if (asJson) {
     const o: Obj[] = [];
@@ -256,8 +258,28 @@ export function statusLines(c: FleetCfg, xs: HostStatus[], ov: number): string[]
   o.push("this machine: " + c.localName + " · host id " + hostId() + " · " + tz(localTz));
   for (const x of ys) { o.push(""); for (const l of statusText(x, c, localTz)) o.push(l); }
   if (ov) { o.push(""); o.push(String(ov) + " session" + (ov === 1 ? "" : "s") + " seen on 2+ hosts: their cost may be counted twice (≈)"); }
-  return o;
+  return o.map((l: string) => clean(l)); // version, os, errors: the remote's own text, never a terminal escape
 }
+
+// ── open <ref>@<host>: the transcript is on that host — print the ssh command that opens it there (spec 7.1) ──
+export function remoteOpen(o: OpenArgs, c: FleetCfg): { cmd: string; host: string; ref: string } | null {
+  const sp = splitHostRef(o.ref); if (!sp.host) return null;
+  if (sp.host === c.localName) { o.ref = sp.ref; return null; } // this machine: a local ref
+  const r = parseRef(sp.ref);
+  if (!r.ok) cliError("usage", r.err, "agentglass open --help shows the link forms", 2);
+  if (r.trace || (!r.harness && SELF.indexOf(r.sess) >= 0)) cliError("usage", "a fleet host's session needs its id: <harness>:<id>@" + sp.host, "agentglass fleet --json lists them (harness, id, host)", 2);
+  const h = hostNamed(c, sp.host);
+  if (!h) { const ns: string[] = []; for (const x of c.hosts) ns.push(x.name); cliError("not_found", "no fleet host " + sp.host, ns.length ? "the hosts: " + c.localName + ", " + ns.join(", ") : "add \"fleet\": {\"hosts\": [{\"name\": \"" + sp.host + "\", \"ssh\": \"…\"}]} to " + CONFIG_FILE, 3); }
+  if (h.kind !== "ssh") cliError("unsupported", sp.host + " is a " + h.kind + " host: its sessions are not opened over ssh", "", 2);
+  return { cmd: openCmd(h, sp.ref), host: h.name, ref: sp.ref };
+}
+REMOTE_OPEN.run = (o: OpenArgs): boolean => {
+  const x = remoteOpen(o, loadFleet()); if (!x) return false;
+  S.cli = true;
+  if (o.print) out(JSON.stringify({ host: x.host, ref: x.ref, command: x.cmd }));
+  else { out(x.cmd); if (process.stdout.isTTY === true && !agentHost().on) warn("the session is on " + x.host + ": the command above opens it there"); }
+  process.exit(0);
+};
 
 // ── help and dispatch ──
 function rec(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }

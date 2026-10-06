@@ -83,3 +83,13 @@ export function fleetOn(c: FleetCfg): boolean {
   return false;
 }
 export function hostNamed(c: FleetCfg, name: string): HostCfg | null { for (const h of c.hosts) if (h.name === name) return h; return null; }
+// the command that opens ref (a ref as that host knows it) on host h: a remote row's preview and toasts, open <ref>@<host>
+export function openCmd(h: HostCfg, ref: string): string { return "ssh -t " + h.ssh + " " + h.agentglass + " open " + ref; }
+// "<ref>@<host>" (the host part before or after a #anchor) → the ref without it and the host; host "" = none (a local ref,
+// an agentglass:// link). "@" is in no session id, call id or time, so the last one starts the host
+export function splitHostRef(raw: string): { ref: string; host: string } {
+  if (raw.slice(0, 13).toLowerCase() === "agentglass://") return { ref: raw, host: "" };
+  const at = raw.lastIndexOf("@"); if (at < 0) return { ref: raw, host: "" };
+  const hi = raw.indexOf("#", at); const end = hi >= 0 ? hi : raw.length;
+  return { ref: raw.slice(0, at) + raw.slice(end), host: raw.slice(at + 1, end) };
+}
