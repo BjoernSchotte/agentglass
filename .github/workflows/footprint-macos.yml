@@ -12,6 +12,7 @@ on:
     paths:
       - scripts/footprint.sh
       - scripts/fake-agent.c
+      - scripts/proc-cpu.c
       - scripts/fixture-agents.sh
       - scripts/fixture-agents.test.sh
       - .github/workflows/footprint-macos.yml
@@ -34,12 +35,14 @@ jobs:
       - name: tmux (V4 times it)
         run: |
           t0=$(date +%s); HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tmux; t1=$(date +%s)
-          echo "brew install tmux: $((t1 - t0)) s" | tee -a "$RUNNER_TEMP/notes"
-      - name: ps -S counts waited-for children (V1)
-        run: |
-          c=$(sh -c 'perl -e "1 while 1" & p=$!; sleep 1; kill $p; wait $p; ps -S -o time= -p $$')
-          echo "V1: ps -S -o time= after a 1 s busy child: $c" | tee -a "$RUNNER_TEMP/notes"
-          echo "$c" | awk '{ n = split($1, a, ":"); exit !(a[n] + (n > 1 ? a[n - 1] * 60 : 0) >= 0.8) }'
+          echo "brew install tmux: $((t1 - t0)) s ($(tmux -V))" | tee -a "$RUNNER_TEMP/notes"
+      - name: children's cpu (V1)
+        run: | # ps -S read 0:00.00 here (run 37423253579): footprint.sh reads proc_pid_rusage's ri_child_* (proc-cpu.c)
+          c=$(sh -c 'perl -e "1 while 1" & p=$!; sleep 1; kill $p; wait $p; ps -S -o time= -p $$' 2> /dev/null)
+          cc -O2 -o "$RUNNER_TEMP/proc-cpu" scripts/proc-cpu.c
+          k=$(sh -c 'perl -e "1 while 1" & p=$!; sleep 1; kill $p; wait $p; "$0" $$' "$RUNNER_TEMP/proc-cpu" 2> /dev/null)
+          echo "V1: after a 1 s busy child: ps -S -o time= says $c; proc-cpu (self, children ms) says $k" | tee -a "$RUNNER_TEMP/notes"
+          [ "${k#* }" -ge 800 ] # the children's cpu is counted
       - name: build before and after
         run: |
           for n in before after; do
@@ -83,12 +86,12 @@ jobs:
             for m in first_frame_ms rss_mb_5s rss_mb_30s rss_mb_end cpu_self_pct cpu_children_pct cpu_total_pct; do
               row="| $m"
               for r in before-focused after-focused before-away after-away; do
-                row="$row | $(awk -v m="$m" '$1 == m { print $2 }' "$RUNNER_TEMP/out-$r" 2> /dev/null)"
+                row="$row | $(awk -v m="$m" '$1 == m { print $2 }' "$RUNNER_TEMP/out-$r" 2> /dev/null || true)"
               done
               echo "$row |"
             done
             echo; echo '```'; cat "$RUNNER_TEMP/notes" 2> /dev/null
-            for r in before-focused after-focused before-away after-away; do echo "$r $(grep '^debug ' "$RUNNER_TEMP/out-$r" 2> /dev/null)"; done
+            for r in before-focused after-focused before-away after-away; do echo "$r $(grep '^debug ' "$RUNNER_TEMP/out-$r" 2> /dev/null || true)"; done
             echo '```'; } > "$o"
           cat "$o" >> "$GITHUB_STEP_SUMMARY"; cat "$o"
       - if: always()

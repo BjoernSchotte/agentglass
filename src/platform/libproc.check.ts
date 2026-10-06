@@ -49,7 +49,7 @@ if (process.platform !== "darwin" || !nativeProcs()) {
   const busy = spawn("sh", ["-c", "while :; do :; done"], { stdio: "ignore" });
   const bp = busy.pid ?? 0;
   sleepMs(200);
-  const bs = lpStat(bp); eq("child's ppid", bs ? String(bs.ppid) : "", String(process.pid)); eq("child's comm", bs ? bs.comm : "", "sh");
+  const bs = lpStat(bp); eq("child's ppid", bs ? String(bs.ppid) : "", String(process.pid)); ok("child's comm", bs !== null && (bs.comm === "sh" || bs.comm === "bash"), bs ? bs.comm : "null"); // macOS /bin/sh runs bash
   eq("child's args", lpArgs(bp, "sh"), "sh -c while :; do :; done");
   const b0 = lpStat(bp); const t0 = Date.now();
   sleepMs(1000);

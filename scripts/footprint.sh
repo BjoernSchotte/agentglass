@@ -50,13 +50,13 @@ if [ "$os" = Linux ]; then
   # utime stime cutime cstime: fields 14-17 of /proc/<pid>/stat; comm (field 2) may hold spaces, so count after its ")"
   ticks() { sed 's/.*) //' "/proc/$pid/stat" | awk '{ print $12 + $13, $14 + $15 }'; }
   alive() { [ -r "/proc/$pid/stat" ] || { echo "footprint.sh: agentglass exited (pid $pid)" >&2; exit 1; }; }
-else # BSD date has no %N; ps time is [[dd-]hh:]mm:ss.cc, -S adds the exited children it waited for
+else # BSD date has no %N; cpu self + waited-for children in ms from proc_pid_rusage (scripts/proc-cpu.c: ps -S does
+  # not count the children on macOS)
   ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
-  hz=100
+  hz=1000
+  cc -O2 -Wall -Wextra -Werror -o "$scratch/proc-cpu" "$(dirname "$0")/proc-cpu.c"
   rss() { r=$(ps -o rss= -p "$pid" 2> /dev/null | tr -d ' '); [ -n "$r" ] && echo $((r / 1024)) || echo -1; }
-  cs() { ps "$@" -o time= -p "$pid" | awk '{ n = split($1, a, /[-:]/); s = 0; m = 1
-    for (i = n; i >= 1; i--) { s += a[i] * m; m = (m == 1 ? 60 : m == 60 ? 3600 : 86400) } printf "%d", s * 100 + 0.5 }'; }
-  ticks() { s=$(cs); a=$(cs -S); echo "$s $((a - s))"; } # self, children (in 1/100 s)
+  ticks() { "$scratch/proc-cpu" "$pid"; }
   alive() { kill -0 "$pid" 2> /dev/null || { echo "footprint.sh: agentglass exited (pid $pid)" >&2; exit 1; }; }
 fi
 dbg=""; [ $debug = 0 ] || dbg="AGENTGLASS_DEBUG_REFRESH=1"
