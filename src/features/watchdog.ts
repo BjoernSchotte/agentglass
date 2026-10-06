@@ -7,6 +7,7 @@ import { H } from "../hooks.ts";
 import { sessions, loadTail, working, current, sessAt, titleOf } from "../model/sessions.ts";
 import { allProcs, hist, rootOf, refreshProcs, PG } from "../model/procs.ts";
 import { type MuxLook, paneOfSess, muxLook, sharedMuxLook } from "../mux/index.ts";
+import { pollDue, fresh } from "../mux/herdr-parse.ts";
 import { harnessOf } from "../harness/index.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf } from "./detect.ts";
@@ -43,14 +44,24 @@ function kidsMap(): Map<number, Proc[]> {
   KM.gen = PG.gen; KM.n = allProcs.size; KM.k = k;
   return k;
 }
-function observe(s: Sess, kids: Map<number, Proc[]>, lk: MuxLook): Obs {
+// oneShot: a --json run's single look (no history to gate on): herdr's state is read for every herdr-hosted session
+function observe(s: Sess, kids: Map<number, Proc[]>, lk: MuxLook, oneShot: boolean): Obs {
   const r = rootOf(s.pid); const rp = r ? r.pid : s.pid;
   let subs = false; for (const c of s.subs) if (Date.now() - c.mtime < 45000) subs = true;
-  const h = harnessOf(s.h); const at = h.approvalTitle; const p = at ? paneOfSess(s) : null;
-  const title = at && p && p.kind === "tmux" ? lk.title(p) : undefined; // undefined: not in a tmux pane
-  const asks = !!at && title !== undefined && at(title);
-  const o: Obs = { now: Date.now(), mtime: s.mtime, busy: working(s), evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!h.noApproval };
-  o.mayGuess = !!h.hiddenApproval && title === undefined;
+  const h = harnessOf(s.h); const at = h.approvalTitle; const hp = paneOfSess(s);
+  const title = at && hp.kind === "tmux" ? lk.title(hp) : undefined; // undefined: not in a tmux pane
+  let asks = !!at && title !== undefined && at(title); let askBy = ""; let known = false;
+  const busy = working(s); const now = Date.now();
+  // herdr reads the dialog from the agent's screen: its blocked state is the approval signal (read only while a dialog
+  // can be open: the log quiet mid-turn, or a harness that hides its dialogs); a reading older than the log is stale
+  if (hp.kind === "herdr") {
+    const due = oneShot || pollDue(now - s.mtime, busy, !!h.hiddenApproval, hp.status === "blocked" && fresh(hp.at, s.mtime), now - hp.at);
+    const st = lk.status(hp, due);
+    if (st !== "" && st !== "unknown" && fresh(hp.at, s.mtime)) { known = true; asks = st === "blocked"; if (asks) askBy = "herdr"; }
+  }
+  const o: Obs = { now, mtime: s.mtime, busy, evs: s.evs, cpu: hist.get(rp) ?? [], cmds: toolCmds(rp, kids), subsActive: subs, asks, noAsk: !!h.noApproval };
+  if (askBy) o.askBy = askBy;
+  o.mayGuess = !!h.hiddenApproval && title === undefined && !known; // herdr saw the screen: no guess
   const br = h.bareReply; o.bare = o.mayGuess && br ? br(s) : false;
   o.guess = approvalGuess(o, o.mayGuess);
   return o;
@@ -59,7 +70,7 @@ function observe(s: Sess, kids: Map<number, Proc[]>, lk: MuxLook): Obs {
 // titles: one list-panes per look, only when a live agent reports approval in its title)
 export interface Looker { kids: Map<number, Proc[]>; look: MuxLook }
 export function looker(): Looker { return { kids: kidsMap(), look: muxLook(Date.now()) }; }
-export function observeWith(s: Sess, lk: Looker): Obs { return observe(s, lk.kids, lk.look); }
+export function observeWith(s: Sess, lk: Looker): Obs { return observe(s, lk.kids, lk.look, false); }
 function rowMetric(r: Rule): boolean { return CALL_METRICS.indexOf(r.metric) >= 0 && r.metric !== "repeat_run"; }
 // an enabled rule reads the ledger (cost, tokens, call rows)
 export function ledgerRule(rs: RuleSet): boolean { for (const r of rs.rules) if (r.enabled && (rowMetric(r) || r.metric === "session_cost" || r.metric === "session_tokens")) return true; return false; }
@@ -102,7 +113,7 @@ function tick(): void {
   for (const s of sessions.values()) {
     if (!watched(s)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } if (st.has(s.path) || watching(s.path)) forgetSession(s.path); continue; }
     loadTail(s);
-    const o = observe(s, lk.kids, lk.look);
+    const o = observe(s, lk.kids, lk.look, false);
     for (const t of watchStep(s, o, rs, now)) {
       const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
       onTrans(s, r, t, a.acked, false, true, rs.notify, a.v, render(r, a.v, t.to || t.from, s), a.lvAt);
@@ -119,7 +130,7 @@ function tick(): void {
 }
 H.onWatch.push(tick);
 // one session's approval estimate outside the TUI (the OTLP live sink): "" = no approval wait seen; CPU history comes from refreshProcs
-export function approvalOf(s: Sess): string { if (!watched(s)) return ""; loadTail(s); return approvalNote(observe(s, kidsMap(), sharedMuxLook(Date.now()))); }
+export function approvalOf(s: Sess): string { if (!watched(s)) return ""; loadTail(s); return approvalNote(observe(s, kidsMap(), sharedMuxLook(Date.now()), true)); }
 
 // --json: one-shot evaluation on the current state (no tick history, no bell/desktop/command, no ack); live TUI state wins
 const SNAP = new Map<string, Alert[]>();
@@ -130,7 +141,7 @@ H.complete.push((s: Sess) => {
   if (!allProcs.size) refreshProcs();
   loadTail(s);
   if (ledgerRule(rs)) ledgerComplete(s);
-  const o = observe(s, kidsMap(), sharedMuxLook(Date.now()));
+  const o = observe(s, kidsMap(), sharedMuxLook(Date.now()), true);
   // turn_done: threshold 0 needs a transition (absent); a threshold > 0 counts from the last recorded activity when idle
   const vals = ruleVals(rs, s, o, (r: Rule) => (r.hasDeg ? r.deg : r.crit) > 0 ? s.mtime : 0);
   const sn = snapshot(rs, s, vals, Date.now());
