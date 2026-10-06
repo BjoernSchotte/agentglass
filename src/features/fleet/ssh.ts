@@ -196,7 +196,10 @@ export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => num
         } else if (sp) {
           const s = statusOf(sp.rc, sp.err, h, f.timeoutS);
           // an agentglass without fleet snapshot (or a serve that allows only pull): the pull for the rest of this run
-          if (mode === "snapshot" && (s.code === "old" || (s.code === "refused" && /only fleet pull and --version/.test(sp.err)))) { mode = "pull"; setErr({ code: "old", msg: "agentglass on " + h.name + " has no fleet snapshot: update it there for an exact merge (pulling meanwhile)" }); st.tryAt = 0; }
+          if (mode === "snapshot" && (s.code === "old" || (s.code === "refused" && /only fleet pull and --version/.test(sp.err)))) {
+            mode = "pull"; setErr({ code: "old", msg: "agentglass on " + h.name + " has no fleet snapshot: update it there for an exact merge (pulling meanwhile)" });
+            feed.start(t); // the pull right away, as part of this refresh
+          }
           else setErr(s);
         }
       }
@@ -210,7 +213,7 @@ export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => num
             if (applyDurable(k, ss, r, text)) { st.report = ss.rep; st.okAt = sr.at; setErr({ code: "ok", msg: "ok" }); }
             else { ss.gen = ""; setErr({ code: "cut", msg: "snapshot on another generation: asking for a full one" }); }
             sr = null;
-          } else if (srFile === "snap") { ss.rep = applySnap(null, r); ss.gen = r.gen; st.report = ss.rep; st.okAt = sr.at; }
+          } else if (srFile === "snap") { ss.rep = applySnap(null, r); ss.gen = r.gen; st.report = ss.rep; st.okAt = sr.at; if (!st.code) setErr({ code: "ok", msg: "ok" }); } // the cached state; its status stays the last run's
           else if (!r.full && r.base === ss.gen) { ss.rep = applySnap(ss.rep, r); ss.gen = r.gen; st.report = ss.rep; st.okAt = mtimeOf(spoolPath(k, "j")); }
         } else if (r === null) {
           if (srFile === "run" && sr.p.err && sr.p.err !== "") { const e = sr.p.err; setErr(e.startsWith("newer format") ? parseStatus(e, h) : { code: "cut", msg: "incomplete snapshot (connection cut)" }); }
