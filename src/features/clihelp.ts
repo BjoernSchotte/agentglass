@@ -99,7 +99,8 @@ export function helpOf(cmd: string, args: string[], text: string): string {
 export function wantsHelp(args: string[]): boolean { return args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0; }
 // TUI-only, maintenance and version commands: --help lists them
 const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults", "prices set", "prices alias", "prices unset",
-  "--no-fleet", "fleet cost", "fleet status", "fleet pull", "fleet serve", "fleet authorize"]; // fleet: one entry, fleet --help lists the rest
+  "--no-fleet", "fleet cost", "fleet status", "fleet pull", "fleet serve", "fleet authorize",
+  "receive", "receive token", "receive status", "receive service"]; // fleet: one entry, fleet --help lists the rest; receive: a hub command, not an agent tool
 // the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word
 function brief(s: string): string {
   const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); if (t.length <= 36) return t;
