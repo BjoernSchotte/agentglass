@@ -136,8 +136,9 @@ for (const first of ["away", "home"]) {
     eq("twins: Stats counts the session once", String(statsSummaryFor("").sess) + " | " + fig(a), "1 | cr 970 out 6 twins 1");
     for (const wt of ["count", "tokens"]) {
       const g = aggregate(EMPTY, "session", [tk], ["harness", "project"], wt === "count" ? "count" : "tokens");
-      const dd = g.map((x) => x.dim + " " + String(x.total) + " " + String(x.wTotal) + " [" + [...x.vals.entries()].map((e) => e[0] + ":" + String(e[1].n) + "/" + String(e[1].w)).sort().join(",") + "]").join(" | ");
-      eq("twins: triage (" + wt + ") counts the session once per value", dd, wt === "count" ? "harness 1 1 [claude:1/1] | project 1 1 [(no project):1/1,crab-box-codex:1/1]" : "harness 1 822 [claude:1/822] | project 1 822 [(no project):1/311,crab-box-codex:1/511]");
+      const dd = g.map((x) => x.dim + " " + String(x.total) + " " + String(x.wTotal) + " [" + [...x.vals.values()].map((b) => String(b.n) + "/" + String(b.w)).sort().join(",") + "]").join(" | ");
+      // (project: one value per copy's dir — names are redacted in the suite)
+      eq("twins: triage (" + wt + ") counts the session once per value", dd, wt === "count" ? "harness 1 1 [1/1] | project 1 1 [1/1,1/1]" : "harness 1 822 [1/822] | project 1 822 [1/311,1/511]");
     }
     sessions.delete(HOME); complete(a);
     eq("twins: the other copy gone", fig(a), "cr 670 out 5 twins 0");
