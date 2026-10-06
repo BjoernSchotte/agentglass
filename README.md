@@ -13,6 +13,22 @@ You have agents running in five tmux panes and two IDE windows, plus a Codex des
 in the background. Which one is stuck? Which one just rewrote your auth layer? What did today cost?
 **agentglass answers that in one keystroke.**
 
+## Quick install
+
+```sh
+# Homebrew (macOS, Linux)
+brew install bjoernschotte/tap/agentglass
+
+# or the install script: into ~/.local/bin, checksums verified
+curl -fsSL https://raw.githubusercontent.com/BjoernSchotte/agentglass/main/install.sh | sh
+
+agentglass
+```
+
+Prebuilt for macOS (Apple Silicon, Intel) and Linux (x64, arm64; glibc 2.36+). Update with `agentglass update`
+(Homebrew: `brew upgrade`). The first start indexes your history in the background; the session list and live
+agents show at once. Dev channel, pinned versions and building from source: [Install](#install).
+
 | Every agent, one screen | Every call, every diff |
 |---|---|
 | ![sessions](docs/screenshots/sessions.png) | ![event drill-down](docs/screenshots/detail.png) |
@@ -262,7 +278,7 @@ curl -fsSL https://raw.githubusercontent.com/BjoernSchotte/agentglass/main/insta
 curl -fsSL https://raw.githubusercontent.com/BjoernSchotte/agentglass/main/install.sh | sh -s -- --channel dev
 ```
 
-`--version 2026.10.1` pins a release, `--prefix <dir>` picks another directory.
+`--version 2026.10.5` pins a release, `--prefix <dir>` picks another directory.
 
 **From source** (needs Node 24+, [scriptc](https://github.com/vercel-labs/scriptc) and clang; Linux: `apt install clang`)
 
