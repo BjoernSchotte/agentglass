@@ -61,7 +61,7 @@ const cred = ustr("https://x-access-token:ghs_SECRET@github.com/o/r/pull/3");
 eq("credentials scrubbed", cred, "pr 3 https://github.com/o/r/pull/3");
 yes("no secret kept", cred.indexOf("ghs_SECRET") < 0);
 eq("query token dropped", ustr("https://github.com/o/r/pull/3?token=abc"), "pr 3 https://github.com/o/r/pull/3");
-eq("token-shaped path dropped", ustr("https://github.com/ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/r/pull/3"), "");
+eq("token-shaped path dropped", ustr("https://github.com/ghp_" + "a".repeat(36) + "/r/pull/3"), "");
 eq("escaped JSON URL", ustr(unesc("https:\\/\\/github.com\\/o\\/r\\/issues\\/5")), "issue 5 https://github.com/o/r/issues/5");
 eq("non-http scheme ignored", ustr("ssh://github.com/o/r/pull/3"), "");
 eq("two urls", ustr("https://github.com/o/r/pull/1 and https://github.com/o/r/issues/2"), "pr 1 https://github.com/o/r/pull/1;issue 2 https://github.com/o/r/issues/2");

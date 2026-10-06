@@ -83,8 +83,8 @@ Rules (spec §5, in order): trim; reject control chars (`/[\x00-\x1f\x7f]/`) or 
   `https://a:b@c@github.com/o/r` → `https://github.com/o/r` (last `@`);
   `https://user%40corp:tok@host/o/r` → `https://host/o/r`;
   `https://host/o/r?token=abc` → `https://host/o/r`; `https://host/o/r#frag` → `https://host/o/r`;
-  `https://host/o%40x/r` → `null`; `https://ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@host/o/r` → `https://host/o/r` (token in userinfo removed); `https://host/o/r?access_token=glpat-xyz#oauth2` → `https://host/o/r`;
-  path segments are never dropped as tokens: `https://host/ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/r` → kept, owner `ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, name `r`; `https://host/oauth2/r` → kept; `https://host/o/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8` → kept, owner `o`, name `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8`;
+  `https://host/o%40x/r` → `null`; `https://ghp_<36×a>@host/o/r` → `https://host/o/r` (token in userinfo removed); `https://host/o/r?access_token=glpat-xyz#oauth2` → `https://host/o/r`;
+  path segments are never dropped as tokens: `https://host/ghp_<36×a>/r` → kept, owner `ghp_<36×a>`, name `r`; `https://host/oauth2/r` → kept; `https://host/o/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8` → kept, owner `o`, name `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8`;
   `git@github.com:o/r.git` → `ssh://github.com/o/r`; `ssh://git@host:2222/o/r.git` → `ssh://host:2222/o/r`;
   `git+ssh://git@host/o/r` → `git+ssh://host/o/r`; `git://host/o/r` → `git://host/o/r`;
   `HTTPS://GitHub.com/O/R` → `https://github.com/O/R` (host lowercased, path kept);
