@@ -9,8 +9,9 @@ import { str } from "../../util/json.ts";
 import { identOf } from "../query/project.ts";
 import { newSum } from "../usage/costs.ts";
 import type { CostNow } from "../usage/summary.ts";
-import { budget } from "../usage/summary.ts";
-import { FORMAT, type HostReport, type HostFeed, newFeedState, noOwned } from "./model.ts";
+import { budget, pricedRows } from "../usage/summary.ts";
+import { todayKey } from "../usage/record.ts";
+import { FORMAT, type DayRow, type HostReport, type HostFeed, newFeedState, noOwned } from "./model.ts";
 import { sessRowOf } from "./report.ts";
 import type { FleetCfg, HostCfg } from "./config.ts";
 import { FLEET, setFleet, rowsOf, applyReport, idMap, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, syncFresh, hostByName, merged, rowObj, reapply, overlay, watcher } from "./hosts.ts";
@@ -142,5 +143,13 @@ nas.mine = ex(rep("7777777777777777", [{ id: "n", live: false }], 1, true, null)
 ok("17: a feed with its own id again", nas.dupOf === "" && !nas.merged && nas.rows.length === 1 && merged().length === 3, nas.dupOf);
 hub.mine = ex(rep("ffffffffffffffff", [{ id: "s", live: false }], 1, true, null)); hub.mineAt = now; reapply();
 ok("17: this machine's id: not merged, not shown", hub.dupOf === "local" && !hub.merged && hub.rows.length === 0, hub.dupOf);
+// an exact host's model without a price on this machine shows in the price panel's rows like a local one (spec 14)
+const rz = ex(rep("6666666666666666", [{ id: "z", live: false }], 1, true, null)); rz.hello.tzOffsetMin = -new Date().getTimezoneOffset();
+const none: string[][] = []; const zd: DayRow = { d: todayKey(), tp: [["3", "", "claude-zeta-9", "1000", "200", "0", "0", "0", "-1"]], hx: none, unk: 0, um: none.slice(), uc: 0, tools: 0, turns: 0, calls: 0, errors: 0 };
+const zr = rz.sessions[0]; if (zr) zr.days = [zd];
+vm2.mine = rz; vm2.mineAt = now; reapply();
+const pz = pricedRows([todayKey()], "").find((x) => x.model === "claude-zeta-9");
+ok("14: a remote unpriced model in the price panel", !!pz && pz.src === "unpriced" && pz.unk === 1200, JSON.stringify(pz ? { s: pz.src, u: pz.unk } : null));
+ok("14: not in one harness's rows (Stats per harness stay local)", !pricedRows([todayKey()], "codex").some((x) => x.model === "claude-zeta-9"), "leaked");
 console.log(bad ? String(bad) + " failed" : "fleet hosts: all checks passed");
 if (bad) process.exit(1);

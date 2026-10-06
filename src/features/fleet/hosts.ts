@@ -11,7 +11,9 @@ import { HOSTQ } from "../query/eval.ts";
 import { HOST_ENUM } from "../query/attrs.ts";
 import { type Bill, MODES } from "../usage/billing.ts";
 import { type ModeSum, type BState, newSum, addSum, budgetState, monthStart } from "../usage/costs.ts";
-import { type CostNow, type Ent, budget, costWith, sumDaysOf } from "../usage/summary.ts";
+import { type CostNow, type Ent, budget, costWith, sumDaysOf, PRICE_EXTRA } from "../usage/summary.ts";
+import type { SessAcc } from "../usage/pricerows.ts";
+import { PGEN } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
 import { L, todayKey, lastDays } from "../usage/record.ts";
 import { modeOf } from "../usage/bill-live.ts";
@@ -209,7 +211,7 @@ export interface HostCost { name: string; today: number; week: number; month: nu
 export interface FleetCost { today: ModeSum; week: ModeSum; month: ModeSum; projByMode: number[]; approx: boolean; marked: boolean; perHost: HostCost[]; exact: boolean; removed: number }
 function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; return t; }
 // ── the exact merge (spec 13): local Claude logs and every exact report, cached until a report or the ledger moves ──
-const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null };
+const EX = { at: 0, ver: -1, sig: "", x: null as Exact | null, gen: 0 };
 function localLogs(): LocalLog[] {
   const out: LocalLog[] = [];
   for (const s of sessions.values()) {
@@ -225,12 +227,12 @@ function localRows(path: string): OwnRow[] | null { const a = ledger.get(path); 
 function localShift(hostTz: number): number { return -new Date().getTimezoneOffset() - hostTz; }
 // maxAgeMs: how long a result may be reused while only the local ledger moved (the TUI: 30 s; a CLI run: always fresh)
 export function exactMerge(hosts: RemoteHost[], reprice: boolean, maxAgeMs: number): Exact {
-  const now = Date.now(); const fh: FleetHost[] = []; const sig: string[] = [reprice ? "r" : "n"];
+  const now = Date.now(); const fh: FleetHost[] = []; const sig: string[] = [reprice ? "r" : "n", String(PGEN.n)]; // a price change re-prices the shadows
   for (const rh of hosts) { const r = rh.report; if (!r || !r.exact) continue; fh.push({ name: rh.cfg.name, hostId: r.hello.hostId, r, shiftMin: localShift(r.hello.tzOffsetMin) }); sig.push(rh.cfg.name + "@" + String(rh.okAt) + "#" + String(r.hello.now)); }
   const sg = sig.join("|"); const hit = EX.x;
   if (hit && sg === EX.sig && (EX.ver === L.ver || now - EX.at < maxAgeMs)) return hit;
   const x = exactFleet(localLogs(), FLEET.localId, fh, reprice, localRows);
-  EX.at = now; EX.ver = L.ver; EX.sig = sg; EX.x = x;
+  EX.at = now; EX.ver = L.ver; EX.sig = sg; EX.x = x; EX.gen++;
   return x;
 }
 export function entOf(x: Shadow): Ent { return { a: x.a, mode: (p: string): Bill => modeOfShadow(x, p) }; }
@@ -292,6 +294,18 @@ export function fleetAllowance(local: Obj | null, hosts: RemoteHost[]): Obj | nu
   return { claude: cl, codex };
 }
 
+// the price panel's extra entries: every shadow and correction of the merge (harness from the session key)
+function panelMerge(): Exact | null {
+  const c = FLEET.cfg; const hs = merged(); if (!c || !hs.length) return null;
+  for (const rh of hs) if (rh.report && rh.report.exact) return exactMerge(hs, c.reprice, 30000); // cached: a signature compare
+  return null;
+}
+PRICE_EXTRA.accs = (): SessAcc[] => {
+  const o: SessAcc[] = []; const x = panelMerge(); if (!x) return o;
+  for (const e of x.accs) { const i = e.key.indexOf(":"); o.push({ a: e.a, h: e.host && i > 0 ? e.key.slice(0, i) : "claude" }); }
+  return o;
+};
+PRICE_EXTRA.gen = (): number => panelMerge() ? EX.gen : -1;
 // ── registration: rows, freshness, the host filter key, remote projects ──
 H.remoteRows.push((): Sess[] => {
   let o: Sess[] = [];

@@ -212,15 +212,19 @@ H.onTick.push(() => {
 
 // the price rows of the given days over every session (Stats subtitle counts, the price panel), harness "" = all;
 // cached per ledger version and price table (≤ 5 s like the sums)
-const prs = new Map<string, { ver: number; at: number; pg: number; rows: PRow[] }>();
+// entries beyond this machine's sessions (the fleet's exact merge: other hosts' sessions, repriced here, and the local
+// copies they own; fleet spec 14: a remote model without a price shows and is priced in the panel like a local one);
+// gen moves when they change
+export const PRICE_EXTRA = { accs: (): SessAcc[] => [], gen: (): number => 0 };
+const prs = new Map<string, { ver: number; at: number; pg: number; xg: number; rows: PRow[] }>();
 export function pricedRows(days: string[], harness: string): PRow[] {
   const key = harness + "|" + days.join(",");
-  const hit = prs.get(key);
-  if (hit && hit.pg === PGEN.n && fresh(hit.ver, hit.at)) return hit.rows;
-  const list: SessAcc[] = [];
+  const hit = prs.get(key); const xg = harness ? 0 : PRICE_EXTRA.gen();
+  if (hit && hit.pg === PGEN.n && hit.xg === xg && fresh(hit.ver, hit.at)) return hit.rows;
+  const list: SessAcc[] = harness ? [] : PRICE_EXTRA.accs();
   for (const s of sessions.values()) { if (harness && s.h !== harness) continue; const a = ledger.get(s.path); if (a) list.push({ a, h: s.h }); }
   const rows = priceRows(list, days);
-  prs.set(key, { ver: L.ver, at: Date.now(), pg: PGEN.n, rows });
+  prs.set(key, { ver: L.ver, at: Date.now(), pg: PGEN.n, xg, rows });
   return rows;
 }
 // models with usage in the period per non-default source: "2 user · 1 alias · 1 gw" ("" = none)
