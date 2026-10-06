@@ -34,5 +34,17 @@ ok("needed: spaced and nested keys", scrubNeeded("{\"key\" :  \"user.email\"}", 
 ok("needed: a backslash in a key", scrubNeeded("{\"key\":\"user\\/email\"}", cfg), "missed");
 ok("not needed: a plain span", !scrubNeeded("{\"resourceSpans\":[{\"resource\":{\"attributes\":[" + kv("host.id", "0011223344556677") + "]}}]}", cfg), "needed");
 ok("an escaped key is scrubbed", scrubNeeded("{\"key\":\"user\\u002eemail\"}", cfg) && scrubRequest("{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"user\\u002eemail\",\"value\":{\"stringValue\":\"me@example.com\"}}]}}]}", false, []).json.indexOf("example") < 0, "bypassed");
+// every attribute list, wherever a sender puts it: span links, members the OTLP schema does not have, kvlists in arrays
+const odd = "{\"resourceSpans\":[{\"resource\":{\"attributes\":[]},\"scopeSpans\":[{\"spans\":[{\"spanId\":\"b\",\"links\":[{\"spanId\":\"c\",\"attributes\":[" + kv("gen_ai.input.messages", "LINKSECRET") + "," + kv("user.email", "l@example.com") + "]}]," +
+  "\"extra\":{\"deep\":[" + kv("user.email", "x@example.com") + "]},\"attributes\":[{\"key\":\"a\",\"value\":{\"arrayValue\":{\"values\":[{\"kvlistValue\":{\"values\":[" + kv("gen_ai.tool.call.arguments", "ARGSECRET") + "]}}]}}}]}]}]}]}";
+const od = scrubRequest(odd, false, []);
+ok("links, made-up members, kvlists in arrays: scrubbed", od.json.indexOf("SECRET") < 0 && od.json.indexOf("@example") < 0 && od.json.indexOf("\"spanId\":\"c\"") >= 0 && od.dropped === 4, od.json + " " + String(od.dropped));
+ok("needed for a link or a made-up member", scrubNeeded(odd, cfg), "not needed");
+// native harness prompts (Claude Code, Codex and Gemini CLI user_prompt events carry the prompt text as "prompt")
+const np = scrubRequest("{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"attributes\":[" + kv("event.name", "user_prompt") + "," + kv("prompt", "PROMPTSECRET") + "]}]}]}]}", false, []);
+ok("native prompt attribute dropped", np.json.indexOf("PROMPTSECRET") < 0 && np.json.indexOf("user_prompt") >= 0 && np.dropped === 1, np.json);
+// only the request's own signal is kept: a traces request cannot smuggle unscrubbed logs (or anything else) to disk
+const sm = scrubRequest("{\"resourceSpans\":[],\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"body\":{\"stringValue\":\"SMUGGLED\"}}]}]}],\"x\":1}", false, []);
+ok("other top-level members dropped", sm.json === "{\"resourceSpans\":[]}", sm.json);
 if (bad) console.log(String(bad) + " failed"); else console.log("hub scrub: all checks passed");
 if (bad) process.exit(1);
