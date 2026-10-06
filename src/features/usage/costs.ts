@@ -37,9 +37,11 @@ export function estDay(d: Day, m: ModeSum | null = null, mode: ((prov: string) =
 }
 export function estOf(a: Acc): number { return estTop(a).usd; }
 // a session's alias-priced cost and the model holding most of it (the preview names it)
-export function estTop(a: Acc): { usd: number; model: string; n: number } {
+export function estTop(a: Acc): { usd: number; model: string; n: number } { return estTopOf([a]); }
+// the same over several entries (a session's copies, ledger.ts accsOf)
+export function estTopOf(as: Acc[]): { usd: number; model: string; n: number } {
   const by = new Map<string, number>(); let usd = 0;
-  for (const d of a.days.values()) for (const [k, r] of d.tp) {
+  for (const a of as) for (const d of a.days.values()) for (const [k, r] of d.tp) {
     const v = r[5] ?? -1; if (v <= 0) continue;
     const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1); const m = k.slice(t2 + 1);
     const z = resolve(m, k.slice(t1 + 1, t2)); if (!z || z.src !== "alias") continue;

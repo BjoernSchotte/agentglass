@@ -87,7 +87,7 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
     if (!f.endsWith(".lock")) continue;
     const o = parseJson(readText(join(DIR, f), 0, 4096).trim());
     const pid = o ? num(o["pid"]) : 0;
-    if (pid && alive(pid)) out.push({ id: f.slice(0, -5), pid, status: "open", name: "" });
+    if (pid && alive(pid)) out.push({ id: f.slice(0, -5), pid, status: "open", name: "", cwd: "" });
   }
   return out;
 }

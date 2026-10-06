@@ -184,7 +184,7 @@ function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: numbe
     const o = parseJson(readText(join(sd, f), 0, 8192).trim());
     if (!o) continue;
     const pid = num(o["pid"]);
-    if (pid && alive(pid)) { const id = str(o["sessionId"]); out.push({ id, pid, status: str(o["status"]), name: str(o["name"]) }); if (id && !WAKE.ids.has(id)) { const k = str(o["status"]) + "|" + String(num(o["updatedAt"])); if (WAKE.unknown.get(id) !== k) { WAKE.unknown.set(id, k); WAKE.at = Date.now(); } } }
+    if (pid && alive(pid)) { const id = str(o["sessionId"]); out.push({ id, pid, status: str(o["status"]), name: str(o["name"]), cwd: str(o["cwd"]) }); if (id && !WAKE.ids.has(id)) { const k = str(o["status"]) + "|" + String(num(o["updatedAt"])); if (WAKE.unknown.get(id) !== k) { WAKE.unknown.set(id, k); WAKE.at = Date.now(); } } }
   }
   return out;
 }

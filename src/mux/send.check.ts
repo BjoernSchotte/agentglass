@@ -1,7 +1,7 @@
 // agentglass — self-check for send, jump and resume through the multiplexer port (stub adapters): sh scripts/check.sh
 // SPDX-License-Identifier: Apache-2.0
 import type { Mux, MuxPane, MuxProc, MuxLink } from "./types.ts";
-import { setMuxes, muxReset } from "./index.ts";
+import { setMuxes, muxReset, NOPANE } from "./index.ts";
 import { sendPrompt, resume, ACT_IO } from "../actions.ts";
 import { newSess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
@@ -36,12 +36,18 @@ ok("herdr pane: herdr send", has("herdr send herdr20 hello") && !has("tmux send"
 ok("forced refresh before send", LOG.indexOf("herdr refresh forced") >= 0 && LOG.indexOf("herdr refresh forced") < LOG.indexOf("herdr send herdr20 hello"), LOG.join(" / "));
 LOG.length = 0; s.pid = 10; sendPrompt(s, "x");
 ok("both claim: tmux (innermost)", has("tmux send tmux10 x") && !has("herdr send"), LOG.join(" / "));
+NOPANE.env = (pid: number): Uint8Array => new TextEncoder().encode(pid === 40 ? "HERDR_PANE_ID=w1:p2\u0000" : "HOME=/x\u0000");
 LOG.length = 0; s.pid = 30; sendPrompt(s, "x");
-ok("nobody: warn", S.toastKind === "warn" && S.toast.indexOf("outside tmux and herdr") >= 0 && !has(" send "), S.toast);
+ok("nobody: warn", S.toastKind === "warn" && S.toast === "Claude (pid 30) runs outside tmux and herdr — send and jump unavailable" && !has(" send "), S.toast);
+const g = newSess("gemini", "G1", "/p/G1.json", false); sessions.set(g.path, g); g.pid = 40;
+LOG.length = 0; sendPrompt(g, "x");
+ok("a herdr pane herdr lists no agent in: says so", S.toast === "herdr does not list Gemini as an agent yet (pane w1:p2) — send and jump unavailable" && !has(" send "), S.toast);
+LOG.length = 0; resume(g);
+ok("jump there: says so too", S.toast === "herdr does not list Gemini as an agent yet (pane w1:p2) — send and jump unavailable" && !has(" focus "), S.toast);
 LOG.length = 0; s.pid = 20; resume(s);
 ok("resume live herdr: focus", has("herdr focus herdr20"), LOG.join(" / "));
 LOG.length = 0; s.pid = 30; resume(s);
-ok("resume live elsewhere: already running", S.toast === "already running (pid 30)", S.toast);
+ok("resume live elsewhere: why it cannot jump", S.toast === "Claude (pid 30) runs outside tmux and herdr — send and jump unavailable", S.toast);
 LOG.length = 0; s.pid = 0; resume(s);
 ok("resume ended: started in herdr", has("herdr start claude S1 --resume S1 | S1") && term === 0, LOG.join(" / ") + " term " + String(term)); // --redact (check.sh): the id as the label
 startOk = false; LOG.length = 0; resume(s);
