@@ -96,6 +96,8 @@ function foreignRun(k: string, now: number, limitMs: number): number {
   return pid > 0 && at > 0 && now - at < limitMs && alive(pid) ? at : 0;
 }
 export interface SshFeed extends HostFeed { key: string; cp: string }
+// a host this viewer does not pull (disabled, another transport): a feed that never starts
+export function idleFeed(kind: string): HostFeed { const st = newFeedState(); return { kind, start: (t: number): boolean => false, poll: (t: number): FeedState => st, stop: (): void => {} }; }
 // one host's feed; spawn = detachedPid in production, a stub in checks
 export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => number, spawn: (cmd: string, args: string[]) => number): SshFeed {
   const k = keyOf(h.name, redact);
@@ -126,6 +128,7 @@ export function sshFeed(h: HostCfg, f: FleetCfg, redact: boolean, now: () => num
         try { process.kill(-run.pid, "SIGTERM"); } catch (e) { try { process.kill(run.pid, "SIGTERM"); } catch (e2) { /* gone */ } } // its group: sh and ssh together
         run.pid = 0; st.busy = false; setErr(statusOf(RC_TIMEOUT, "", h, f.timeoutS));
         try { unlinkSync(spoolPath(k, "pid")); } catch (e) { /* gone */ }
+        writeFileAtomic(spoolPath(k, "rc"), String(RC_TIMEOUT) + "\n"); rcAt = mtimeOf(spoolPath(k, "rc")); // fleet status reads it later
       }
       if (run.foreign && t - run.foreign > limit() + 30000) { run.foreign = 0; st.busy = false; }
       const at = mtimeOf(spoolPath(k, "rc"));
