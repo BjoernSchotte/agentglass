@@ -293,13 +293,16 @@ addActions([
   { id: "fleet.status", title: "status (what works per host)", group: "Fleet", keys: "", when: (c: Ctx): boolean => T.on, run: (c: Ctx): void => openStatus() },
 ]);
 H.helpSections.push({ name: "fleet", ctx: "sessions", keys: [
-  ["", "other machines' sessions: fleet.hosts in ~/.agentglass/config.json, pulled over ssh (agentglass fleet --help)"],
+  ["", "other machines' sessions: fleet.hosts in ~/.agentglass/config.json, over ssh or a synced folder (agentglass fleet --help)"],
   ["ws ", "host tag before the title: a session on another machine, pulled over ssh (dim: its report is stale)"],
   ["", "header: · N hosts (this machine included) · vm1 stale 2h (yellow) · vm1 ✗ (red: unreachable, no report)"],
   ["2h?", "a stale remote row: the age of its report; it counts as not running (no attention, no alarms)"],
   ["/", "host is local · host is ws · host is_one_of ws,vm1 (calls and days are not in a remote report)"],
   ["↵", "a remote row: its facts and the ssh command that opens it there; transcript, kill, send, compare need the host"],
   ["^K", "Fleet: refresh hosts now · Fleet: status (what works per host)"],
-  ["", "Stats: the fleet line (each host's own figures; ≈ = stale or on 2+ hosts) · the cost widget sums the fleet"],
+  ["", "Stats: the fleet line (≈ = stale, or a pulled host's session on 2+ hosts) · the cost widget sums the fleet"],
+  ["", "exact hosts (snapshots): a message copied to several hosts counts once, priced with this machine's table and days"],
+  ["", "live stream (fleet watch): remote running / waiting within seconds; critical remote alerts reach the desktop"],
+  ["", "dir hosts: snapshots a host drops into a synced folder (agentglass fleet drop); never shown as running"],
   ["", "--no-fleet / AGENTGLASS_FLEET=0: this run without hosts · agentglass fleet status in a shell"]] });
 export const FLEET_TUI_TEST = { T, tick, init };
