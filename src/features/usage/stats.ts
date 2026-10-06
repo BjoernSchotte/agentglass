@@ -8,7 +8,7 @@ import { sessions, titleOf } from "../../model/sessions.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
-import { ledger, accOf, accsOf, pending } from "./ledger.ts";
+import { ledger, accOf, accsOf, pending, copyKey } from "./ledger.ts";
 import { type Acc, type Day, type RlWin, L, todayKey, lastDays, startOfDay, skillUsesOf, newDay, heavy } from "./record.ts";
 import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
@@ -76,6 +76,7 @@ function aggF(days: string[], f: Compiled): Agg {
   rowsDeferred("Stats", key, later); g.later = later ?? [];
   const hasRows = new Set<string>(); for (const k of rd.keys()) hasRows.add(k.slice(0, k.indexOf("\t")));
   const from = startOfDay() - (days.length - 1) * 86400000; // ±1h around DST: fine for a progress gauge
+  const once = new Set<string>(); // twins (ledger.ts copyKey) already counted: a session's copies are one session
   for (const s of sessions.values()) {
     const a = ledger.get(s.path);
     if (s.mtime >= from) { g.total += s.size; if (a) g.done += pending(s, a) ? Math.min(a.off, s.size) : s.size; }
@@ -96,7 +97,7 @@ function aggF(days: string[], f: Compiled): Agg {
       const hs = m ? m.hours : d.hours;
       for (let hh = 0; hh < 24; hh++) g.hours[hh] = numAt(g.hours, hh, 0) + numAt(hs, hh, 0);
     }
-    if (any && !s.parent) { r.sess++; tot.sess++; const mk = s.bill + "\t" + s.plan + "\t" + (s.billSrc === "config" ? "*" : ""); if (r.modes.indexOf(mk) < 0) r.modes.push(mk); }
+    if (any && !s.parent && (s.twins === 0 || !once.has(copyKey(s)))) { if (s.twins > 0) once.add(copyKey(s)); r.sess++; tot.sess++; const mk = s.bill + "\t" + s.plan + "\t" + (s.billSrc === "config" ? "*" : ""); if (r.modes.indexOf(mk) < 0) r.modes.push(mk); }
     if (st > g.busyTools) { g.busyTools = st; g.busyCost = sc; g.busy = s; }
   }
   cache.set(key, g);

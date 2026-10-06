@@ -120,6 +120,7 @@ export function aggregateWhere(f: Compiled, days: string[], dims: string[], weig
 export interface AggJob {
   k: string /* cache key, "" = not cached */; f: Compiled; entity: "session" | "call"; days: string[]; dset: Set<string>; dims: string[]; weight: Weight;
   keep: ((s: Sess, r: Rows, i: number) => boolean) | null; rows: boolean; cut: number; sl: boolean[] /* dims answered per session */; ss: Sess[]; i: number; out: Dist[]; done: boolean;
+  once: Set<string> /* session entity: twins already counted (sessInto) */;
 }
 export function aggJob(f: Compiled, entity: "session" | "call", days: string[], dims: string[], weight: Weight, keep: ((s: Sess, r: Rows, i: number) => boolean) | null): AggJob {
   fresh();
@@ -127,7 +128,7 @@ export function aggJob(f: Compiled, entity: "session" | "call", days: string[], 
   let rows = f.needsCalls || keep !== null; if (entity === "call") for (const d of dims) if (ROW_DIMS.indexOf(d) >= 0) rows = true;
   const sl: boolean[] = []; for (const d of dims) sl.push(CALL_LEVEL.indexOf(d) < 0);
   const ss: Sess[] = []; if (!hit) for (const s of sessions.values()) ss.push(s);
-  return { k, f, entity, days, dset: new Set<string>(days), dims, weight, keep, rows, cut: callCutoff(), sl, ss, i: 0, out: hit ?? newDists(dims, rows ? "rows" : "buckets"), done: !!hit };
+  return { k, f, entity, days, dset: new Set<string>(days), dims, weight, keep, rows, cut: callCutoff(), sl, ss, i: 0, out: hit ?? newDists(dims, rows ? "rows" : "buckets"), done: !!hit, once: new Set<string>() };
 }
 // sessions until the clock reaches `until` (Infinity = to the end); true when done (j.out is then complete and cached)
 export function aggStep(j: AggJob, until: number): boolean {
@@ -164,11 +165,19 @@ function bucketSess(j: AggJob, s: Sess): void {
     if (weight === "cost") { if (unpricedDay(d)) unp = true; w += d.cost; } else if (weight === "tokens") w += dayTok(d);
   }
   if (!any) return;
-  if (weight === "count") w = 1;
-  for (const ds of j.out) {
-    const vs = ds.dim === "tool" ? tools : ds.dim === "program" ? progs : ds.dim === "ext" ? exts : ds.dim === "day" ? dks : sessDim(ds.dim, s);
-    ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
-    for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += err; }
+  const vss: string[][] = [];
+  for (const ds of j.out) vss.push(ds.dim === "tool" ? tools : ds.dim === "program" ? progs : ds.dim === "ext" ? exts : ds.dim === "day" ? dks : sessDim(ds.dim, s));
+  sessInto(j, s, vss, w, err, unp);
+}
+// one session's values (per distribution) into the job's distributions. Its copies (twins, ledger.ts copyKey) are one
+// session: counted once in a total and once per value; what each copy books (cost, tokens, durations, errors) adds up
+function sessInto(j: AggJob, s: Sess, vss: string[][], w: number, err: number, unp: boolean): void {
+  const ck = s.twins > 0 ? copyKey(s) : ""; const cnt = j.weight === "count";
+  const first = (k: string): boolean => { if (!ck) return true; const x = k + "\u0000" + ck; if (j.once.has(x)) return false; j.once.add(x); return true; };
+  for (let i = 0; i < j.out.length; i++) {
+    const ds = j.out[i]; const one = first(String(i));
+    if (one) ds.total++; ds.wTotal += cnt ? (one ? 1 : 0) : w; if (unp && first(String(i) + "\u0000?")) ds.unpriced++;
+    for (const v of vss[i] ?? []) { const b = bin(ds, v); const n1 = first(String(i) + "\u0000=" + v); if (n1) b.n++; b.w += cnt ? (n1 ? 1 : 0) : w; b.err += err; }
   }
 }
 // one tool's day counter into a call-entity distribution
@@ -236,12 +245,9 @@ function rowsSess(j: AggJob, s: Sess): void {
   let w = 1; let unp = false;
   if (weight === "cost" || weight === "tokens") { w = 0; if (a) for (const dk of dks) { const d = a.days.get(dk); if (!d) continue; if (weight === "cost") { w += d.cost; if (unpricedDay(d)) unp = true; } else w += dayTok(d); } }
   else if (weight === "duration") w = dur;
-  for (let i = 0; i < j.out.length; i++) {
-    const ds = j.out[i]; const dim = dims[i] ?? "";
-    const vs = dim === "hour" || dim === "weekday" ? sessDim(dim, s) : (vals[i] ?? []);
-    ds.total++; ds.wTotal += w; if (unp) ds.unpriced++;
-    for (const v of vs) { const b = bin(ds, v); b.n++; b.w += w; b.err += err; }
-  }
+  const vss: string[][] = [];
+  for (let i = 0; i < j.out.length; i++) { const dim = dims[i] ?? ""; vss.push(dim === "hour" || dim === "weekday" ? sessDim(dim, s) : (vals[i] ?? [])); }
+  sessInto(j, s, vss, w, err, unp);
 }
 
 // "rest" baselines: a − b per value (never below 0; values reaching 0 are dropped)

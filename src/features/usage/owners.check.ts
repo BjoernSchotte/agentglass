@@ -15,6 +15,9 @@ import { costRows, sessionObj } from "../queries.ts";
 import { cliFilter } from "../query/cli.ts";
 import { scopeOf } from "../agentenv.ts";
 import { str, obj, arr } from "../../util/json.ts";
+import { statsSummaryFor } from "./stats.ts";
+import { aggregate } from "../query/agg.ts";
+import { EMPTY } from "../query/eval.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -126,8 +129,18 @@ for (const first of ["away", "home"]) {
     const so = sessionObj(a); const m0 = obj(arr(so["models"])[0]);
     eq("twins: session models over the copies", (m0 ? String(m0["cacheRead"]) : "-") + " subagents " + String(arr(so["subagents"]).length) + " twins " + String(so["twins"]), "175 subagents 1 twins 1"); // with its subagent's 5
     eq("twins: cost --by session", rs.map((r) => str(r["key"]) + " " + String(r["cacheRead"]) + " " + String(r["sessions"])).join(" | "), "claude:T 170 1 | claude:agent-t1 5 1 | total 175 2");
+    // both copies active today (each books its own message): Stats and triage count one session, their weights add up
+    const now = new Date().toISOString(); const tk = dayKey(new Date(now));
+    appendFileSync(HOME, asst("h5", now, 300, 1, "") + "\n"); sess(HOME, ""); complete(h);
+    appendFileSync(AWAY, asst("h6", now, 500, 1, "") + "\n"); sess(AWAY, ""); complete(a);
+    eq("twins: Stats counts the session once", String(statsSummaryFor("").sess) + " | " + fig(a), "1 | cr 970 out 6 twins 1");
+    for (const wt of ["count", "tokens"]) {
+      const g = aggregate(EMPTY, "session", [tk], ["harness", "project"], wt === "count" ? "count" : "tokens");
+      const dd = g.map((x) => x.dim + " " + String(x.total) + " " + String(x.wTotal) + " [" + [...x.vals.entries()].map((e) => e[0] + ":" + String(e[1].n) + "/" + String(e[1].w)).sort().join(",") + "]").join(" | ");
+      eq("twins: triage (" + wt + ") counts the session once per value", dd, wt === "count" ? "harness 1 1 [claude:1/1] | project 1 1 [(no project):1/1,crab-box-codex:1/1]" : "harness 1 822 [claude:1/822] | project 1 822 [(no project):1/311,crab-box-codex:1/511]");
+    }
     sessions.delete(HOME); complete(a);
-    eq("twins: the other copy gone", fig(a), "cr 170 out 4 twins 0");
+    eq("twins: the other copy gone", fig(a), "cr 670 out 5 twins 0");
   } else eq("twins: sessions kept", "missing", "present");
 }
 // a session with one copy keeps its own figures
