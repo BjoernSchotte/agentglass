@@ -43,6 +43,13 @@ i=0; while [ "$(serial)" != "$want" ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i+1)
 eq "certificate reloaded" "$(serial)" "$want"
 [ "$s1" != "$want" ] || { echo "FAIL the two certificates share a serial"; fail=1; }
 eq "TLS POST after reload" "$(post "$tok")" 200
+# a renewal with the wrong key (a.crt with b's key): refused, the last good pair keeps serving
+cp "$t/a.crt" "$t/srv.crt"
+i=0; while ! grep -q 'reload refused' "$t/srv.err" && [ $i -lt 40 ]; do sleep 0.25; i=$((i+1)); done
+grep -q 'reload refused: the key .* does not belong' "$t/srv.err" || { echo "FAIL a mismatched pair was not refused: $(cat "$t/srv.err")"; fail=1; }
+eq "still serving the good pair" "$(serial)" "$want"
+eq "TLS POST after a refused reload" "$(post "$tok")" 200
+cp "$t/b.crt" "$t/srv.crt"
 sleep 10.5 # status.json flush
 ag receive status --json > "$t/st.json"
 grep -q '"tls":"TLS certificate expires' "$t/st.json" || { echo "FAIL status lacks the certificate expiry: $(cat "$t/st.json")"; fail=1; }
@@ -52,6 +59,10 @@ kill -TERM $srv; wait $srv 2>/dev/null || true; srv=""
 sleep 0.5
 if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then echo "FAIL the TLS child outlived SIGTERM to agentglass receive"; kill "$child"; fail=1; fi
 [ ! -e "$hub/receive.lock" ] || { echo "FAIL lock left behind"; fail=1; }
+# a mismatched pair at start: exit 2 with the reason
+HOME="$t/home" AGENTGLASS_HUB_DIR="$hub" AGENTGLASS_NOTIFY=0 "$t/agentglass-receive-tls" --tls-cert "$t/a.crt" --tls-key "$t/b.key" --listen 127.0.0.1:0 2> "$t/mm.err" && rc=0 || rc=$?
+eq "mismatched pair at start" "$rc" 2
+grep -q 'does not belong' "$t/mm.err" || { echo "FAIL no reason for the mismatched pair: $(cat "$t/mm.err")"; fail=1; }
 # --listen-public with TLS starts (on loopback: tests never bind a public address, and macOS has no 127.0.0.2)
 rm -f "$hub/port"
 HOME="$t/home" AGENTGLASS_HUB_DIR="$hub" AGENTGLASS_NOTIFY=0 "$t/agentglass-receive-tls" --tls-cert "$t/a.crt" --tls-key "$t/a.key" --listen 127.0.0.1:0 --listen-public 2> "$t/srv.err" & srv=$!

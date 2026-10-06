@@ -26,7 +26,15 @@ function certNote(rt: Rt, cert: string): void {
   rt.tlsNote = exp ? "TLS certificate expires " + new Date(exp).toISOString().slice(0, 10) : "TLS on";
   rt.tlsExpires = exp;
 }
-function mtimes(a: string, b: string): string { try { return String(statSync(a).mtimeMs) + "/" + String(statSync(b).mtimeMs); } catch (e) { return ""; } }
+// "" = the key belongs to the certificate (or openssl is missing: nothing to compare with), else why not. https accepts
+// a mismatched pair and then fails every handshake: a renewal that swapped in the wrong key would stop the hub silently
+export function pairProblem(cert: string, key: string): string {
+  const a = run("openssl", ["x509", "-noout", "-pubkey", "-in", cert]).trim(); const b = run("openssl", ["pkey", "-pubout", "-in", key]).trim();
+  if (!a && !b) return "";
+  return a && a === b ? "" : "the key " + key + " does not belong to the certificate " + cert;
+}
+// the files' identity: a renamed-in replacement can keep an older mtime, so size and inode count too
+function ident(a: string, b: string): string { try { const x = statSync(a); const y = statSync(b); return [x.mtimeMs, x.size, x.ino, y.mtimeMs, y.size, y.ino].join("/"); } catch (e) { return ""; } }
 
 function main(args: string[]): void {
   if (args[0] === "--version") { writeSync(1, BUILD.version + "\n"); process.exit(0); }
@@ -48,6 +56,7 @@ function main(args: string[]): void {
   const host = l ? l.host : "127.0.0.1";
   let pem = ["", ""];
   try { pem = [readFileSync(cert, "utf8"), readFileSync(key, "utf8")]; } catch (e) { die("cannot read the certificate or key: " + (e instanceof Error ? e.message : String(e)), 2); }
+  const pp = pairProblem(cert, key); if (pp) die(pp, 2);
   const rt = newRt(c);
   const b = boot(rt); if (b.code) die(b.err, b.code);
   certNote(rt, cert);
@@ -56,16 +65,25 @@ function main(args: string[]): void {
   srv.on("error", (e: Error) => { releaseRecvLock(c.dir); die("cannot listen on " + c.listen + ": " + e.message, 2); });
   srv.listen(l ? l.port : 0, host, () => {
     const a = srv.address(); const port = a && typeof a === "object" ? (a as { port: number }).port : 0;
-    let seen = mtimes(cert, key);
+    let seen = ident(cert, key); let cur = pem;
+    // a replaced pair: a new server takes the port; if it cannot (a bad pair, the port taken meanwhile) the last good
+    // pair serves again, so a failed renewal never leaves the hub without a listener
     const reload = setInterval(() => {
-      const m = mtimes(cert, key); if (!m || m === seen) return;
+      const m = ident(cert, key); if (!m || m === seen) return;
       let p = ["", ""]; try { p = [readFileSync(cert, "utf8"), readFileSync(key, "utf8")]; } catch (e) { return; } // half-written: next round
       if (p[0].indexOf("-----BEGIN") < 0 || p[1].indexOf("-----BEGIN") < 0) return;
       seen = m;
-      const n = make(p);
-      n.on("error", (e: Error) => { say("certificate reload failed (" + e.message + ") — still serving the old one"); });
-      const old = srv; old.close(); srv = n;
-      n.listen(port, host, () => { certNote(rt, cert); say("certificate reloaded (" + rt.tlsNote + ")"); });
+      const bad = pairProblem(cert, key); if (bad) { say("certificate reload refused: " + bad + " — still serving the old one (replace both files)"); return; }
+      let n: https.Server | null = null;
+      try { n = make(p); } catch (e) { say("certificate reload failed (" + (e instanceof Error ? e.message : String(e)) + ") — still serving the old one"); return; }
+      const nx = n; srv.close(); srv = nx;
+      nx.on("error", (e: Error) => {
+        say("certificate reload failed (" + e.message + ") — serving the previous certificate again");
+        const back = make(cur); srv = back;
+        back.on("error", (e2: Error) => { releaseRecvLock(c.dir); die("cannot listen on " + c.listen + " again: " + e2.message, 2); });
+        back.listen(port, host);
+      });
+      nx.listen(port, host, () => { cur = p; certNote(rt, cert); say("certificate reloaded (" + rt.tlsNote + ")"); });
     }, 5000);
     const stop = started(rt, port);
     onSignals(rt, (done: () => void) => { srv.close(() => { done(); }); }, () => { clearInterval(reload); stop(); });

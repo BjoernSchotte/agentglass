@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import { type Obj, obj, str } from "../../util/json.ts";
 import { HOME, readWhole, run } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
+import { BUILD } from "../../build-info.ts";
 import { addCmd, opt, cmdText, cmdOf, helpOf, wantsHelp } from "../clihelp.ts";
 import { agentHost, errLine } from "../agentenv.ts";
 import { type RecvCfg, loadRecv, listenOk, splitListen, expandHome } from "./config.ts";
@@ -54,7 +55,9 @@ function serve(args: string[]): void {
   if (lp) die(lp, "", 2);
   if (tls) { // built-in HTTPS is a separate C-backend binary next to this one (Decision 8)
     const bin = join(dirname(process.execPath), TLS_BIN);
-    if (!existsSync(bin)) die("built-in HTTPS needs " + TLS_BIN + " next to " + process.execPath, "install it from the release archive (install.sh does), or keep 127.0.0.1 and use tailscale serve / a TLS proxy", 2);
+    if (!existsSync(bin)) die("built-in HTTPS needs " + TLS_BIN + " next to " + process.execPath, "install.sh installs it from the release archive (Homebrew does not); or keep 127.0.0.1 and use tailscale serve / a TLS proxy", 2);
+    const tv = run(bin, ["--version"]).trim(); // a binary left from another version must not serve (it misses that version's fixes)
+    if (tv !== BUILD.version) die(bin + " is version " + (tv || "unknown") + ", agentglass is " + BUILD.version, "reinstall both from one release (install.sh, or agentglass update)", 2);
     const a = ["--listen", c.listen, "--dir", c.dir, "--tls-cert", expandHome(c.tls[0] ?? ""), "--tls-key", expandHome(c.tls[1] ?? "")];
     if (c.listenPublic) a.push("--listen-public");
     const ch = spawn(bin, a, { stdio: "inherit" });
