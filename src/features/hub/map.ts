@@ -19,7 +19,7 @@ export interface SessAgg {
   key: string; h: string; id: string; title: string; cwd: string; branch: string; remote: string; repoKey: string; repoName: string;
   model: string; modelAt: number; updated: number; tin: number; tout: number; tcr: number; tcw: number; cost: number; priced: boolean; unk: number;
   modes: Map<string, number>; tools: number; errors: number; subs: number; days: Map<string, DayAgg>; own: Map<string, OwnRow>; prov: Map<string, string>; // own: per chat span id (a message may have several bookings)
-  live: LiveRow | null; alerts: Map<string, Obj>;
+  live: LiveRow | null; alerts: Map<string, Obj>; native: boolean; // native: rebuilt from Claude Code's own api_request records
 }
 export interface HostAgg {
   name: string; hostId: string; hostName: string; version: string; os: string; redact: boolean; exact: boolean;
@@ -60,7 +60,7 @@ function hostAgg(a: Agg, name: string, hostId: string): HostAgg {
 function sessAgg(h: HostAgg, harness: string, id: string): SessAgg {
   const key = harness + ":" + id;
   let x = h.sess.get(key);
-  if (!x) { x = { key, h: harness, id, title: "", cwd: "", branch: "", remote: "", repoKey: "", repoName: "", model: "", modelAt: 0, updated: 0, tin: 0, tout: 0, tcr: 0, tcw: 0, cost: 0, priced: false, unk: 0, modes: new Map<string, number>(), tools: 0, errors: 0, subs: 0, days: new Map<string, DayAgg>(), own: new Map<string, OwnRow>(), prov: new Map<string, string>(), live: null, alerts: new Map<string, Obj>() }; h.sess.set(key, x); }
+  if (!x) { x = { key, h: harness, id, title: "", cwd: "", branch: "", remote: "", repoKey: "", repoName: "", model: "", modelAt: 0, updated: 0, tin: 0, tout: 0, tcr: 0, tcw: 0, cost: 0, priced: false, unk: 0, modes: new Map<string, number>(), tools: 0, errors: 0, subs: 0, days: new Map<string, DayAgg>(), own: new Map<string, OwnRow>(), prov: new Map<string, string>(), live: null, alerts: new Map<string, Obj>(), native: false }; h.sess.set(key, x); }
   return x;
 }
 function dayAgg(x: SessAgg, d: string): DayAgg {
@@ -243,7 +243,7 @@ function jsonOf(x: SessAgg, live: LiveRow | null): Obj {
   const o: Obj = {};
   const alerts: Obj[] = []; for (const al of x.alerts.values()) alerts.push(al);
   const tok: Obj = {}; tok["in"] = x.tin; tok["out"] = x.tout; tok["cacheRead"] = x.tcr; tok["cacheWrite"] = x.tcw;
-  const bill: Obj = {}; bill["mode"] = topMode(x); bill["plan"] = ""; bill["source"] = "otlp";
+  const bill: Obj = {}; bill["mode"] = topMode(x); bill["plan"] = ""; bill["source"] = x.native ? "otlp-native" : "otlp";
   let repo: Obj | null = null; if (x.repoKey) { repo = {}; repo["key"] = x.repoKey; repo["label"] = x.repoName || x.cwd.slice(x.cwd.lastIndexOf("/") + 1); repo["kind"] = ""; repo["worktree"] = ""; repo["top"] = ""; repo["remote"] = x.remote; }
   const vals: Obj = {};
   vals["id"] = x.id; vals["harness"] = x.h; vals["title"] = x.title; vals["cwd"] = x.cwd; vals["branch"] = x.branch; vals["remote"] = x.remote || null; vals["model"] = x.model;
@@ -270,7 +270,7 @@ export function reportsOf(a: Agg, now: number, all: boolean, maxAgeDays: number)
     for (const o of h.native) {
       const req = str(o["req"]); if (req && h.reqIds.has(req)) continue;
       const sid = str(o["sess"]); if (!sid || h.sess.has("claude:" + sid)) continue;
-      const x = sessAgg(tmp, "claude", sid); natives.set(x.key, x);
+      const x = sessAgg(tmp, "claude", sid); x.native = true; natives.set(x.key, x);
       const t = typeof o["t"] === "number" ? o["t"] as number : 0;
       const v = (f: string): number => typeof o[f] === "number" ? o[f] as number : 0;
       x.tin += v("in"); x.tout += v("out"); x.tcr += v("cr"); x.tcw += v("cw"); x.cost += v("usd"); x.priced = true;
@@ -300,4 +300,58 @@ export function reportsOf(a: Agg, now: number, all: boolean, maxAgeDays: number)
     out.set(h.name, { hello, sessions: rows, cost: null, allowance: null, live: lives, exact: h.exact && natives.size === 0, owned });
   }
   return out;
+}
+
+// ── persistence (spec 3.5): a host's aggregates back from its report (fleet's snapshot codec carries it) plus what a
+// report does not hold: the 48 h span ids (resends after a restart still count once), agentglass request ids and the
+// pending native records. Live state is not kept: the next session.state / heartbeat brings it (≤ 300 s)
+export interface HostExtra { seen: string[][]; req: string[]; native: Obj[] }
+export function extraOf(a: Agg, key: string): HostExtra {
+  const h = a.hosts.get(key); const seen: string[][] = []; const req: string[] = []; const native: Obj[] = [];
+  if (h) { for (const k of h.seen.keys()) seen.push([k, String(h.seen.get(k) ?? 0)]); for (const r of h.reqIds) req.push(r); for (const o of h.native) native.push(o); }
+  return { seen, req, native };
+}
+function numOf(v: unknown): number { return typeof v === "number" && isFinite(v as number) ? v as number : 0; }
+export function restoreHost(a: Agg, key: string, r: HostReport, x: HostExtra): void {
+  const h = hostAgg(a, key, r.hello.hostId);
+  h.hostName = r.hello.hostName; h.version = r.hello.version; h.os = r.hello.os; h.redact = r.hello.redact; h.exact = r.exact; h.newest = r.hello.now;
+  for (const p of x.seen) h.seen.set(p[0] ?? "", Number(p[1] ?? "0"));
+  for (const q of x.req) h.reqIds.add(q);
+  for (const o of x.native) h.native.push(o);
+  const om = new Map<string, OwnRow[]>(); for (const o of r.owned) om.set(o.key, o.rows);
+  for (const sr of r.sessions) {
+    const o = sr.s; const bill = obj(o["billing"]) ?? {};
+    if (str(bill["source"]) === "otlp-native") continue; // rebuilt from h.native at report time
+    const i = sr.key.indexOf(":"); if (i <= 0) continue;
+    const ss = sessAgg(h, sr.key.slice(0, i), sr.key.slice(i + 1));
+    const tok = obj(o["tokens"]) ?? {}; const repo = obj(o["repo"]);
+    ss.title = str(o["title"]); ss.cwd = str(o["cwd"]); ss.branch = str(o["branch"]); ss.remote = str(o["remote"]); ss.model = str(o["model"]);
+    ss.repoKey = repo ? str(repo["key"]) : ""; ss.repoName = repo ? str(repo["label"]) : "";
+    const up = Date.parse(str(o["updated"])); ss.updated = up > 0 ? up : 0; ss.modelAt = ss.updated;
+    ss.tin = numOf(tok["in"]); ss.tout = numOf(tok["out"]); ss.tcr = numOf(tok["cacheRead"]); ss.tcw = numOf(tok["cacheWrite"]);
+    ss.unk = numOf(o["unpricedTokens"]); ss.tools = numOf(o["tools"]); ss.subs = numOf(o["subagents"]);
+    const c = o["costUsd"]; ss.priced = typeof c === "number" && (c as number) > 0; ss.cost = numOf(c);
+    if (ss.priced) ss.modes.set(str(bill["mode"]) || "unknown", ss.cost);
+    for (const p of sr.prov) ss.prov.set(p[0] ?? "", p[1] ?? "unknown");
+    for (const dr of sr.days ?? []) {
+      const g = dayAgg(ss, dr.d);
+      for (const t of dr.tp) {
+        const k = (t[0] ?? "0") + "\u0000" + (t[1] ?? "") + "\u0000" + (t[2] ?? "");
+        const v: number[] = [Number(t[3] ?? "0"), Number(t[4] ?? "0"), Number(t[5] ?? "0"), Number(t[6] ?? "0"), Number(t[7] ?? "0")];
+        const usd = Number(t[8] ?? "0"); if (usd < 0) { v.push(0); g.tu.set(k, v); } else { v.push(usd); g.tp.set(k, v); }
+      }
+      for (const hx of dr.hx) g.hx.set((hx[0] ?? "0") + "\u0000" + (hx[1] ?? ""), Number(hx[2] ?? "0"));
+      for (const u of dr.um) g.um.set(u[0] ?? "", Number(u[1] ?? "0"));
+      g.unk = dr.unk; g.tools = dr.tools; g.turns = dr.turns; g.calls = dr.calls; g.errors = dr.errors; ss.errors += dr.errors;
+    }
+    let j = 0; for (const row of om.get(sr.key) ?? []) ss.own.set("restored:" + String(j++), row);
+  }
+  // sessions outside the window: their ownership-only rows
+  for (const ow of r.owned) {
+    if (h.sess.has(ow.key)) continue;
+    const i = ow.key.indexOf(":"); if (i <= 0) continue;
+    const ss = sessAgg(h, ow.key.slice(0, i), ow.key.slice(i + 1)); ss.updated = 1;
+    let j = 0; for (const row of ow.rows) ss.own.set("restored:" + String(j++), row);
+  }
+  h.changed = true;
 }

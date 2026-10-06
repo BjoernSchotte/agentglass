@@ -40,7 +40,7 @@ today=$(date -u +%Y%m%d)
 [ -s "$hub/a/logs-$today.jsonl" ] || { echo "FAIL no logs stored"; fail=1; }
 grep -q '"hostId":"00112233445566ff"' "$hub/a/.host" || { echo "FAIL host not pinned: $(cat "$hub/a/.host")"; fail=1; }
 grep -q 'Bearer' "$t/err" "$t/out" && { echo "FAIL the token reached the exporter output"; fail=1; }
-"$t/read" "$hub" > "$t/view"
+HOME="$t/rhome" AGENTGLASS_FLEET_DIR="$t/rfleet" "$t/read" "$hub" > "$t/view" # the reader keeps a state file: never in the real home
 python3 - "$t/view" "$t/a.json" <<'PY' || fail=1
 import json, sys
 view = [json.loads(l) for l in open(sys.argv[1]) if l.startswith("{")]

@@ -1,18 +1,23 @@
 // agentglass — a hub source as fleet hosts (otlp-hub spec 1–3): one fleet.hosts entry with "otlp" yields every host
 // found in its directory. Each poll reads within the tick budget, maps the new lines and returns the hosts whose report
 // changed, with display names (spec 2: the hosts map, the receive label, host.name, else <source>-<6 hex>).
-// fleet's hosts.ts consumes this as a multi-host feed (kind "otlp"); until fleet's snapshot codec lands (fleet Part B)
-// the source keeps no state file and re-reads its directory on start (bounded by maxAgeDays and the tick budget).
+// State (spec 3.5): ~/.agentglass/fleet/hub-<source>.state holds the cursors and, per host, its report as a full
+// agentglass-snapshot/v1 (fleet's codec) plus the span ids, request ids and native records a report does not carry; a
+// restart resumes from it without re-reading. Saved at most every 30 s while lines arrive, and on stop.
 // SPDX-License-Identifier: Apache-2.0
 import { join, dirname, basename } from "node:path";
 import { readWhole } from "../../util/fs.ts";
 import { type FeedState, newFeedState } from "../fleet/model.ts";
 import type { HubSrcCfg } from "./config.ts";
-import { type Source, newSource, readStep, trustOf, TICK_BYTES, TICK_LINES } from "./read.ts";
-import { type Agg, type Label, newAgg, ingestLine, reportsOf, prune } from "./map.ts";
+import { type Source, newSource, readStep, trustOf, saveState, loadState, TICK_BYTES, TICK_LINES } from "./read.ts";
+import { type Agg, type Label, type HostExtra, newAgg, ingestLine, reportsOf, prune, extraOf, restoreHost } from "./map.ts";
+import { type Obj, obj, arr, str } from "../../util/json.ts";
+import { newSnap, feedSnap, applySnap, snapLines, fullOf } from "../fleet/snap.ts";
+import { randomBytes, hex } from "../../util/rand.ts";
 
 export interface HubHost { name: string; hostId: string; state: FeedState }
-export interface HostSource { name: string; poll(now: number, budget: { bytes: number; lines: number }): HubHost[]; hosts(): HubHost[]; busy(): boolean; status(): string[]; stop(): void }
+export interface HostSource { name: string; poll(now: number, budget: { bytes: number; lines: number }): HubHost[]; hosts(): HubHost[]; busy(): boolean; save(now: number): string; status(): string[]; stop(): void }
+export const SAVE_MS = 30000;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 // host.name → the fleet name pattern ("" when nothing usable is left)
 export function sanitizeName(s: string): string {
@@ -48,6 +53,38 @@ export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = [])
     used.add(n); return n;
   };
   let skipped = 0; // lines from files without a label in a receive directory
+  let dirty = false; let savedAt = 0;
+  // the state file's body: per host a {"hubhost": …} line, then its report as a full snapshot
+  const body = (now: number): string[] => {
+    const out: string[] = []; const reps = reportsOf(agg, now, true, cfg.maxAgeDays);
+    for (const key of reps.keys()) {
+      const rep = reps.get(key); if (!rep) continue;
+      const x = extraOf(agg, key); const hh = states.get(key);
+      const head: Obj = {}; head["key"] = key; head["name"] = hh ? hh.name : ""; head["seen"] = x.seen; head["req"] = x.req; head["native"] = x.native;
+      const w: Obj = {}; w["hubhost"] = head; out.push(JSON.stringify(w));
+      for (const l of snapLines(fullOf(rep, hex(randomBytes(8))))) out.push(l);
+    }
+    return out;
+  };
+  const restore = (lines: string[]): void => {
+    let i = 0;
+    while (i < lines.length) {
+      let o: Obj | null = null; try { o = obj(JSON.parse(lines[i] ?? "")); } catch (e) { o = null; }
+      const head = o ? obj(o["hubhost"]) : null; i++;
+      if (!head) continue;
+      const grp: string[] = []; while (i < lines.length && (lines[i] ?? "").indexOf("{\"hubhost\":") !== 0) { grp.push(lines[i] ?? ""); i++; }
+      const sn = newSnap(); feedSnap(sn, grp); if (!sn.done || sn.err) continue; // an incomplete host: its files are re-read
+      const seen: string[][] = []; for (const p of arr(head["seen"])) { const a = arr(p); seen.push([str(a[0]), str(a[1])]); }
+      const req: string[] = []; for (const q of arr(head["req"])) req.push(str(q));
+      const nat: Obj[] = []; for (const n of arr(head["native"])) { const no = obj(n); if (no) nat.push(no); }
+      const x: HostExtra = { seen, req, native: nat };
+      const key = str(head["key"]); if (!key) continue;
+      restoreHost(agg, key, applySnap(null, sn), x);
+      const nm = str(head["name"]); if (nm && !used.has(nm)) { used.add(nm); const hst = { name: nm, hostId: sn.head["hostId"] !== undefined ? str(sn.head["hostId"]) : "", state: newFeedState() }; states.set(key, hst); }
+    }
+  };
+  { const st = loadState(src); if (st) restore(st); else src.cur.clear(); } // no state (or another directory): read from the start
+  const save = (now: number): string => { savedAt = now; dirty = false; return saveState(src, body(now)); };
   return {
     name,
     poll(now: number, budget: { bytes: number; lines: number }): HubHost[] {
@@ -57,7 +94,7 @@ export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = [])
         ingestLine(agg, line, l);
       });
       budget.bytes -= r.bytes; budget.lines -= r.lines;
-      if (r.lines) prune(agg);
+      if (r.lines) { prune(agg); dirty = true; }
       const changed: HubHost[] = [];
       const reps = reportsOf(agg, now, false, cfg.maxAgeDays);
       for (const key of reps.keys()) {
@@ -69,8 +106,10 @@ export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = [])
         h.state.report = rep; h.state.okAt = at; h.state.tryAt = now; h.state.err = ""; h.state.code = "";
         changed.push(h);
       }
+      if (dirty && now - savedAt >= SAVE_MS && !src.backlog) save(now); // after the reports above: their change flags are taken
       return changed;
     },
+    save,
     busy(): boolean { return src.backlog; },
     hosts(): HubHost[] { const o: HubHost[] = []; for (const h of states.values()) o.push(h); return o; },
     status(): string[] {
@@ -80,6 +119,6 @@ export function hubSource(name: string, cfg: HubSrcCfg, reserved: string[] = [])
       if (agg.refused) o.push(name + ": " + String(agg.refused) + " resource(s) dropped: host.id changed under one agentglass.auth.subject");
       return o;
     },
-    stop(): void { /* nothing spawned */ },
+    stop(): void { if (dirty) save(Date.now()); },
   };
 }
