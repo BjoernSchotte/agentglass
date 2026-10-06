@@ -30,6 +30,7 @@ import { type CmdRec, type OptRec, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";
 import { type Scope, agentHost, agentScope, visible, cliError, realDir } from "./agentenv.ts";
 import { type Found, resolveRef } from "../model/sessref.ts";
+import { argVal } from "../util/argv.ts";
 
 function r6(c: number): number { return Math.round(c * 1e6) / 1e6; }
 // per model over the sessions (their ledger accs, filled by complete()) and local days (null = all): cost desc, then tokens;
@@ -339,7 +340,7 @@ export function qopts(cmd: string, args: string[], allowed: string[], refOk: boo
     const a = args[i] ?? "";
     if (!a.startsWith("-")) { if (!refOk || o.ref) bad("unexpected argument " + a); o.ref = a; continue; }
     if (allowed.indexOf(a) < 0 && ALWAYS.indexOf(a) < 0) bad("unknown option " + a);
-    const v = VAL.indexOf(a) >= 0 ? args[++i] ?? "" : "";
+    const v = VAL.indexOf(a) >= 0 ? argVal(args, i++) ?? "" : "";
     if (VAL.indexOf(a) >= 0 && !v) bad(a + " needs a value");
     if (a === "--root") o.root = true;
     else if (a === "--live") o.live = true;

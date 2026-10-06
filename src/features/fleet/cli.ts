@@ -38,6 +38,7 @@ import { dropCli } from "./drop.ts";
 import { watchCli } from "./watch.ts";
 import { pricesSig } from "../usage/pricing.ts";
 import { serveCli, authorizeCli } from "./serve.ts";
+import { argVal } from "../../util/argv.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function warn(msg: string): void { errLine("agentglass", "warning", msg, ""); }
@@ -135,8 +136,8 @@ function list(args: string[]): void {
   const filters: string[] = []; let refresh = false; let strict = false; const f: Fmt = fmtArgs(args); const asJson = args.indexOf("--json") >= 0;
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--filter") { if (i + 1 >= args.length) cliError("usage", "--filter needs an expression", "e.g. --filter 'host is ws'", 2); filters.push(args[i + 1] ?? ""); i++; }
-    else if (a === "--format" || a === "--fields") i++;
+    if (a === "--filter") { const v = argVal(args, i); if (v === null) cliError("usage", "--filter needs an expression", "e.g. --filter 'host is ws'", 2); filters.push(String(v)); i++; }
+    else if (a === "--format" || a === "--fields") i++; // fmtArgs checks the value
     else if (a === "--refresh") refresh = true;
     else if (a === "--strict") strict = true;
     else if (a !== "--json") cliError("usage", "unknown option " + a + " for fleet", "agentglass fleet [--json] [--filter …] [--format …] [--fields …] [--refresh] [--strict]", 2);

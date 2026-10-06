@@ -26,6 +26,9 @@ Everything else — the TUI, other `--json` fields, text output, files under `~/
    person (a popup, a status bar): agent mode narrows the scope to the current project and changes defaults.
 5. `agentglass <command> --help --format json` lists every field of a command (`commands[].fields`); the contract test
    checks that each field below appears there.
+6. Arguments: `--flag value` or `--flag=value`. A value never starts with `--`; a flag without its value, an unknown
+   option and a stray argument exit 2 (before 2026.10.8 some were ignored, and a bare `--watch --otlp` took the next
+   flag as its URL).
 
 Types below: `string`, `number`, `bool`, `object|null`, `string|null`, `number|null`, `array`.
 

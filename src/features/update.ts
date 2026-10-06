@@ -14,6 +14,7 @@ import { installMethod, samePath, versionOfTag, versionInfo } from "./version.ts
 import { errLine, interactive } from "./agentenv.ts";
 import { opt, setOptions } from "./clihelp.ts";
 import { type Rel, relsFromJson, pickTarget, isDowngrade, sumFor, caMissing, fetchErr, curlErr } from "./update-core.ts";
+import { argVal } from "../util/argv.ts";
 
 const REPO = "BjoernSchotte/agentglass";
 const INSTALL_JSON = join(HOME, ".agentglass", "install.json");
@@ -35,8 +36,8 @@ function opts(args: string[]): Opts | string {
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
     if (a === "status") o.status = true;
-    else if (a === "--channel") { o.channel = args[++i] ?? ""; if (o.channel !== "stable" && o.channel !== "dev") return "--channel must be stable or dev"; }
-    else if (a === "--tag") { o.tag = args[++i] ?? ""; if (!o.tag) return "--tag needs a version or tag"; }
+    else if (a === "--channel") { o.channel = argVal(args, i++) ?? ""; if (o.channel !== "stable" && o.channel !== "dev") return "--channel must be stable or dev"; }
+    else if (a === "--tag") { o.tag = argVal(args, i++) ?? ""; if (!o.tag) return "--tag needs a version or tag"; }
     else if (a === "--dry-run") o.dry = true;
     else if (a === "--json") o.json = true;
     else if (a === "--yes" || a === "-y") o.yes = true;

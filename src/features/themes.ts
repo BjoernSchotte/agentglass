@@ -6,6 +6,7 @@ import { HOME, readText } from "../util/fs.ts";
 import { S, say } from "../state.ts";
 import { H, type Ctx } from "../hooks.ts";
 import { C, HL } from "../ui/theme.ts";
+import { argVal } from "../util/argv.ts";
 
 // every field of C and HL (HL.text → code); values are "r;g;b" or official-palette hex
 interface Theme {
@@ -88,8 +89,7 @@ H.cli.push((args) => {
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     let v = "";
-    if (a === "--theme") v = args[i + 1] ?? "";
-    else if (a.startsWith("--theme=")) v = a.slice(8);
+    if (a === "--theme") { const n = argVal(args, i); if (n === null) { console.error("--theme needs a name — available: " + names() + " (--theme list)"); process.exit(2); } v = String(n); i++; }
     else continue;
     if (v === "list") { for (const t of THEMES) console.log((t.name === THEMES[cur].name ? "* " : "  ") + t.name); return true; }
     const n = find(v);

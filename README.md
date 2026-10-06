@@ -776,13 +776,17 @@ moves only when something listed is removed or changes meaning).
 
 ### Exit codes
 
+Arguments follow one rule on every command: `--flag value` or `--flag=value`; a value never starts with `--` (a flag
+without its value is a usage error, it never takes the next flag), and nothing is ignored: an unknown option or a stray
+argument exits 2.
+
 One table for every command (`agentglass --help` prints it, the JSON help carries it as `exitCodes`):
 
 | Code | Meaning |
 |------|---------|
 | 0 | ok (an empty result is ok) |
 | 1 | runtime failure |
-| 2 | usage error (bad option or value, an id prefix shorter than 6) |
+| 2 | usage error (an unknown option or stray argument, a missing or bad value, an id prefix shorter than 6) |
 | 3 | not found (unknown session, event or `current` outside an agent) |
 | 4 | ambiguous reference (an id prefix that matches several sessions; the candidates go to stderr) |
 
@@ -945,6 +949,15 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
 > the export at all; `export --filter` with a negated clause took sessions whose log was not read yet. If you used a
 > filter or pins to keep projects out of a backend, search it for those projects' sessions and delete that data, or
 > rotate the backend's storage.
+>
+> **Privacy note, 2026.10.3 to 2026.10.7.** `--watch --otlp` without a URL (the endpoint from the config or
+> `OTEL_EXPORTER_OTLP_ENDPOINT`) took the next argument as its URL and then ignored it. With `--otlp --filter '…'` the
+> filter was dropped: every session with a running agent sent its finished turns to the backend, and from 2026.10.6 also
+> its `agentglass.session.state` and `agentglass.turn.open` records (cwd, branch, git remote, `agentglass.repo.key`). A
+> `--harness`, `--pinned`, `--no-subagents` or `--no-logs` right after a bare `--otlp` was dropped the same way. Not
+> affected: `--otlp <url>`, and these flags before `--otlp`. If you ran this form, search the backend for sessions outside
+> the filter and delete that data, as above. From 2026.10.8 no flag takes another flag as its value, and an unknown
+> option or stray argument is a usage error (exit 2) on every command.
 - **No duplicates:** span and trace ids are deterministic (SHA-256 of the session and turn, scheme `v1`), and a state
   file per endpoint (`~/.agentglass/otlp/`, mode 0600; `AGENTGLASS_OTLP_DIR` moves it) marks every turn the backend
   accepted. `--resend` sends again with the same ids: Jaeger keeps one copy; Grafana Tempo was seen storing both

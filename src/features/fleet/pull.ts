@@ -19,6 +19,7 @@ import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { pricesSig } from "../usage/pricing.ts";
 import { type HostReport, FORMAT, noOwned } from "./model.ts";
 import { sessRowOf, reportLines } from "./report.ts";
+import { argVal } from "../../util/argv.ts";
 
 export const DAY_MS = 86400000;
 // the top-level sessions updated within days, or live, newest first; twins (one session under two project dirs) once, as
@@ -49,7 +50,7 @@ export function pullCli(args: string[]): void {
   let days = 7;
   for (let i = 2; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--days") { const v = args[i + 1] ?? ""; i++; days = /^\d+$/.test(v) ? Number(v) : 0; if (days < 1 || days > 90) cliError("usage", "--days needs a whole number 1–90", "e.g. agentglass fleet pull --days 7", 2); }
+    if (a === "--days") { const v = argVal(args, i) ?? ""; i++; days = /^\d+$/.test(v) ? Number(v) : 0; if (days < 1 || days > 90) cliError("usage", "--days needs a whole number 1–90", "e.g. agentglass fleet pull --days 7", 2); }
     else if (a === "--redact" || a === "--agent" || a === "--no-agent") continue;
     else cliError("usage", "unknown option " + a + " for fleet pull", "agentglass fleet pull [--days N] [--redact]", 2);
   }
