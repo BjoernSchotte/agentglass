@@ -44,11 +44,11 @@ for (const w of WANT) {
 }
 const rj = obj(JSON.parse(jsonHelp("rules", {}) || "{}"));
 eq("rules --help (json) = both subcommands", String(rj ? arr(rj["commands"]).length : -1), "2");
-const ch = compactHelp({ harness: "claude", session: "abc", scope: "project" });
+const ch = compactHelp({ harness: "claude", session: "fa90ea98-0000-4000-8000-000000000000", scope: "project" }); // a real id's length
 eq("compact parses", String(obj(JSON.parse(ch)) !== null), "true");
 eq("compact has no option tables", String(ch.indexOf("\"options\"") < 0 && ch.indexOf("\"fields\"") < 0), "true");
-eq("compact ≤ 1 KB (" + String(ch.length) + ")", String(ch.length <= 1024), "true");
-// prices set / alias / unset are not compact rows (the 1 KB budget): the prices row names them, so an agent finds them
+eq("compact ≤ 1.5 KB (" + String(ch.length) + ")", String(ch.length <= 1536), "true");
+// prices set / alias / unset are not compact rows (the 1.5 KB budget): the prices row names them, so an agent finds them
 eq("compact: prices names its subcommands", String(ch.indexOf("{\"cmd\":\"prices\",\"summary\":\"model prices: list/set/alias/unset\"}") >= 0), "true");
 
 console.log(bad ? bad + " failed" : "clihelp: all checks passed");

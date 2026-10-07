@@ -52,10 +52,14 @@ s0=$(date +%s)
 set +e; out=$(pty "env -i HOME='$h' PATH='$PATH' CLAUDECODE=1 AGENTGLASS_CACHE_DIR='$t/cache' perl -e 'alarm 3; exec @ARGV' '$t/ag'" < /dev/null | tr -d '\r'); set -e; s1=$(date +%s)
 [ $((s1 - s0)) -le 2 ] || { echo "FAIL pty: took $((s1 - s0)) s"; fail=1; }
 eq "pty: valid JSON" "$(printf '%s' "$out" | jq -r '.name')" agentglass
-[ "$(printf '%s' "$out" | wc -c)" -le 1024 ] || { echo "FAIL pty: compact help over 1 KB"; fail=1; }
+[ "$(printf '%s' "$out" | wc -c)" -le 1536 ] || { echo "FAIL pty: compact help over 1.5 KB"; fail=1; }
 case "$out" in *'"options"'*|*"$(printf '\033')"*) echo "FAIL pty: option tables or escapes in the compact help"; fail=1;; esac
 eq "pipe: compact help" "$(agent < /dev/null | jq -r '.agentMode.harness')" claude
 eq "compact help: fleet discoverable" "$(printf '%s' "$out" | jq -r '[.commands[].cmd | select(. == "fleet")] | length')" 1
+# with a real session id (36 characters) too, and the commands an agent runs listed (wait, open, --version)
+ch=$(agent < /dev/null)
+[ "$(printf '%s' "$ch" | wc -c)" -le 1536 ] || { echo "FAIL compact help with a session id over 1.5 KB ($(printf '%s' "$ch" | wc -c))"; fail=1; }
+eq "compact help: wait, open, --version" "$(printf '%s' "$ch" | jq -r '[.commands[].cmd | select(. == "wait" or . == "open" or . == "--version")] | length')" 3
 
 # update never asks inside an agent: a downgrade without --yes exits 2 with one JSON error line
 printf '[{"tag_name":"v2000.1.1","prerelease":false,"draft":false,"assets":[{"name":"agentglass-x.tar.gz"},{"name":"SHA256SUMS"},{"name":"build-metadata.json"}]}]' > "$t/rels.json"

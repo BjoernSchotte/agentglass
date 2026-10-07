@@ -1318,7 +1318,7 @@ herdr (a popup, "open in agentglass", cost and alert tokens in the sidebar).
 
 When a coding agent runs `agentglass` from its shell tool, agentglass notices (`CLAUDECODE`, `AI_AGENT`, `CODEX_*`,
 `GEMINI_CLI`, `PI_CODING_AGENT`, `OPENCODE*`, `KIRO_SESSION_ID`) and behaves like a CLI for machines: it never starts
-the TUI and never prompts, bare `agentglass` prints a compact JSON help (< 1 KB), `--help` is JSON, output is compact
+the TUI and never prompts, bare `agentglass` prints a compact JSON help (< 1.5 KB), `--help` is JSON, output is compact
 JSON, and errors are one line `{"error":{"code","message","hint"}}` on stderr. `--agent` / `--no-agent` (or
 `AGENTGLASS_AGENT=1|0`) force it either way, for example to open the TUI in tmux started from an agent.
 
