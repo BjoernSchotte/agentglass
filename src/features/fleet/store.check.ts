@@ -21,7 +21,7 @@ process.env["AGENTGLASS_FLEET_DIR"] = g;
 ok("group-writable refused", ensureDir().indexOf("allows group/other access") >= 0, ensureDir());
 process.env["AGENTGLASS_FLEET_DIR"] = dir;
 ok("keyOf", keyOf("ws", true) === "ws.r" && keyOf("ws", false) === "ws", keyOf("ws", true));
-const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 1, priceSig: "" }, sessions: [], cost: null, allowance: null, live: null, exact: false, owned: noOwned() };
+const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 1, priceSig: "" }, sessions: [], cost: null, allowance: null, live: null, exact: false, owned: noOwned(), wait: null };
 for (let i = 0; i < 900; i++) rep.sessions.push(sessRowOf({ id: "s" + String(i), harness: "codex", title: "ünïcode " + String(i) }));
 writeFileSync(join(dir, "ws.jsonl"), reportLines(rep).join("\n") + "\n");
 const r = newReader("ws");

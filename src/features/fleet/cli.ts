@@ -316,8 +316,9 @@ addCmd(rec("fleet cost", "agentglass fleet cost [--json] [--check]", "costs per 
   [opt("--json", "", "{hosts, total (the cost --json shape), overlap, approx, exact, removed}", "", []), REFRESH, STRICT, opt("--check", "", "exit 3 when the fleet is over budget", "", [])], []), FIRST);
 addCmd(rec("fleet status", "agentglass fleet status [--json] [--close]", "per host: what works and what does not (last report, error, version, host id, time zone, connection sharing)",
   [opt("--json", "", "one object per host", "", []), opt("--close", "", "end the shared ssh connections (ControlMaster)", "", []), opt("--refresh", "", "pull every host first", "", [])], []), FIRST);
-addCmd(rec("fleet pull", "agentglass fleet pull [--days N] [--redact]", "this host's report for a fleet viewer (JSON lines: hello, cost, allowance, sessions, end);\nwhat the viewer runs over ssh",
-  [opt("--days", "N", "sessions updated within N days (1–90), plus every live one", "7", []), opt("--redact", "", "fake titles, projects and paths at the source", "", [])], []), FIRST);
+addCmd(rec("fleet pull", "agentglass fleet pull [--days N] [--wait] [--redact]", "this host's report for a fleet viewer (JSON lines: hello, cost, allowance, wait, sessions, end);\nwhat the viewer runs over ssh",
+  [opt("--days", "N", "sessions updated within N days (1–90), plus every live one", "7", []), opt("--wait", "", "also the agent-wait report of the N days (families and kinds, no command lines)", "", []),
+    opt("--redact", "", "fake titles, projects and paths at the source", "", [])], []), FIRST);
 addCmd(rec("fleet snapshot", "agentglass fleet snapshot [--peer <id>] [--ack <gen>] [--full] [--days N] [--redact]", "this host's exact state for a fleet viewer (agentglass-snapshot/v1 JSON lines: day rows, hashed message\nownership, cost); relative to the generation the viewer acknowledged (--ack), else full",
   [opt("--peer", "<id>", "the viewer's host id (16 hex): the host keeps that viewer's generations", "", []), opt("--ack", "<gen>", "the generation the viewer applied last: the snapshot is relative to it", "", []),
     opt("--full", "", "a full snapshot whatever was acknowledged", "", []), opt("--days", "N", "list sessions updated within N days (1–90); usage covers this month and 15 days", "7", []),

@@ -192,6 +192,14 @@ eq "cut: status" "$(echo "$s" | jq -r '.hosts[0].code')" cut
 eq "cut: previous report kept" "$(echo "$s" | jq -r '.hosts[0].sessions')" 1
 eq "cut: rows still there" "$(run fleet --json 2>/dev/null | jq '[.[] | select(.host=="h2")] | length')" 1
 
+# agent-wait: wait --fleet pulls every host with --wait and merges; the hosts' now blocks stay apart
+cfg '{"fleet":{"hosts":[{"name":"h2","ssh":"h2"},{"name":"h3","ssh":"h3"}]}}'
+w=$(run wait --fleet --json 2>/dev/null)
+eq "wait --fleet: hosts" "$(echo "$w" | jq -c '[.hosts[].name]')" '["local","h2","h3"]'
+eq "wait --fleet: merged over 3" "$(echo "$w" | jq -r '.merged.hosts')" 3
+eq "wait --fleet: now per host" "$(echo "$w" | jq -c '[.hosts[] | (.now != null)]')" '[true,true,true]'
+eq "wait --fleet: no merged peak" "$(echo "$w" | jq -r '.merged.heavy')" null
+grep -q -- "--wait" "$t/spool/h2.err" 2>/dev/null && { echo "FAIL h2 stderr mentions --wait"; fail=1; }
 # a host removed from the config: its spool files go
 cfg '{"fleet":{"hosts":[{"name":"h3","ssh":"h3"}]}}'
 run fleet status > /dev/null

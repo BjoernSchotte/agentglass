@@ -70,6 +70,7 @@ export function allowed(w: string[]): { args: string[]; redact: boolean; err: st
       args.push(a); args.push(v); continue;
     }
     if (sub === "snapshot" && a === "--full") { args.push(a); continue; }
+    if (sub === "pull" && a === "--wait") { args.push(a); continue; } // agent-wait: families and kinds, never command lines
     return no;
   }
   return { args, redact, err: "" };

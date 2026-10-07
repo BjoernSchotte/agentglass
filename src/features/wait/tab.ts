@@ -28,11 +28,17 @@ import { type WRow, type WaitRun, type WaitReport, type SlowCall, newWaitRun, st
 import type { GroupOverlap } from "./overlap.ts";
 import { type Run, LIVE, liveNow, heavyNow } from "./live.ts";
 import { maxOf, overlapFor, groupFor, rowsBy, hours, pctTxt, trendTxt, kindShort, whenTxt, splitTxt } from "./fmt.ts";
+import type { Obj } from "../../util/json.ts";
+import { FLEET } from "../fleet/hosts.ts";
+import { WANT } from "../fleet/ssh.ts";
+import { HOSTQ } from "../query/eval.ts";
+import { waitJson, rowJson } from "./cli.ts";
+import { mergeWait, reportOfObj, rowsOfObj } from "./merge.ts";
 
 // ── state ──
 export const SORTS = ["total", "count", "p95", "err", "trend", "peak"];
 const VIEWS = ["family", "kind", "tool"];
-const WV = { period: "w", view: "family", sort: 0, sel: 0, top: 0, selKey: "", detail: "", dsel: 0, dtop: 0 };
+const WV = { period: "w", view: "family", sort: 0, sel: 0, top: 0, selKey: "", detail: "", dsel: 0, dtop: 0, hosts: "merged" /* fleet: merged | per host */ };
 // run: the report being computed; rep: the last finished one (shown meanwhile when only the ledger moved); key: what it
 // was computed for (period, filter, day); fixed: a check's report (never recomputed)
 const J = { run: null as WaitRun | null, rep: null as WaitReport | null, key: "", at: 0, ver: -1, ovF: [] as GroupOverlap[], ovK: [] as GroupOverlap[], fixed: false, cpu: 0, slice: 0, last: 0 };
@@ -61,7 +67,35 @@ function work(f: Compiled): void {
   S.dirty = true;
 }
 DEBUG_PARTS.push((): string => J.last > 0 || J.run ? "wait " + String(J.run ? J.cpu : J.last) + "ms (slice ≤ " + String(J.slice) + "ms)" : "");
-function ovOf(): GroupOverlap[] { return WV.view === "kind" ? J.ovK : J.ovF; }
+function ovOf(): GroupOverlap[] { return fleetOn() ? [] : WV.view === "kind" ? J.ovK : J.ovF; }
+
+// ── fleet (spec §9): hosts' wait reports (fleet pull --wait, asked while the tab shows), merged or per host ──
+interface HostWait { name: string; o: Obj; at: number }
+const RW = new Map<string, HostWait>(); // the last wait report per host (a pull without --wait keeps the one before)
+const FX = { rep: null as WaitReport | null, local: null as Obj | null, key: "", rows: [] as WRow[], hostOf: [] as string[], mrep: null as WaitReport | null };
+function hostWaits(): HostWait[] {
+  for (const rh of FLEET.hosts) { const r = rh.report; if (rh.cfg.enabled && r && r.wait && !rh.dupOf) { const old = RW.get(rh.cfg.name); if (!old || old.at !== rh.okAt) RW.set(rh.cfg.name, { name: rh.cfg.name, o: r.wait, at: rh.okAt }); } }
+  return [...RW.values()];
+}
+function fleetOn(): boolean { return FLEET.hosts.length > 0 && RW.size > 0 && J.rep !== null; }
+function localObj(rep: WaitReport): Obj {
+  const o = waitJson(rep, J.ovF, null, {}, "family", 500); const ks: Obj[] = []; const ts: Obj[] = [];
+  for (const w of rep.kinds) ks.push(rowJson(w, groupFor(J.ovK, w, "kind"), rep));
+  for (const w of rep.tools) ts.push(rowJson(w, null, rep));
+  o["kinds"] = ks; o["tools"] = ts; return o;
+}
+// the rows the table shows: this machine's, or (fleet) merged / per host with the host of each row
+function fleetRows(): void {
+  const rep = J.rep; if (!rep) return;
+  const hw = hostWaits(); const k = String(J.at) + "|" + WV.view + "|" + WV.hosts + "|" + hw.map((h: HostWait) => h.name + "@" + String(h.at)).join(",");
+  if (k === FX.key) return;
+  FX.key = k; if (!FX.local || FX.rep !== rep) { FX.local = localObj(rep); FX.rep = rep; }
+  const loc = FX.local ?? {}; FX.rows = []; FX.hostOf = [];
+  if (WV.hosts === "merged") { const objs: Obj[] = [loc]; for (const h of hw) objs.push(h.o); const m = reportOfObj(mergeWait(objs)); FX.rows = rowsBy(m, WV.view); FX.mrep = m; return; }
+  for (const w of rowsOfObj(loc, WV.view)) { FX.rows.push(w); FX.hostOf.push(HOSTQ.local); }
+  for (const h of hw) for (const w of rowsOfObj(h.o, WV.view)) { FX.rows.push(w); FX.hostOf.push(h.name); }
+  const all: Obj[] = [loc]; for (const h of hw) all.push(h.o); FX.mrep = reportOfObj(mergeWait(all));
+}
 
 // ── pure helpers (checks) ──
 const BARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
@@ -87,7 +121,13 @@ export function sortRows(rows: WRow[], s: string, ov: GroupOverlap[]): WRow[] {
   o.sort((a: WRow, b: WRow) => sortVal(b, s, ov) - sortVal(a, s, ov) || b.ms - a.ms || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return o;
 }
-function rows(): WRow[] { const r = J.rep; return r ? sortRows(rowsBy(r, WV.view), SORTS[WV.sort] ?? "total", ovOf()) : []; }
+function rows(): WRow[] {
+  const r = J.rep; if (!r) return [];
+  if (fleetOn()) { fleetRows(); if (WV.hosts === "merged") return sortRows(FX.rows, SORTS[WV.sort] ?? "total", []); return FX.rows; }
+  return sortRows(rowsBy(r, WV.view), SORTS[WV.sort] ?? "total", ovOf());
+}
+// the report whose split and trend the table shows (fleet: the merged one)
+function shownRep(): WaitReport | null { return fleetOn() && FX.mrep ? FX.mrep : J.rep; }
 function cur(): WRow | null { const rs = rows(); return rs[WV.sel] ?? null; }
 
 // ── drawing ──
@@ -125,11 +165,11 @@ function cols(iw: number): Cols {
   c.name = Math.max(10, iw - 1 - kind - c.share - c.total - c.n - c.p50 - c.p95 - c.err - c.trend - c.peak);
   return c;
 }
-function rowText(w: WRow, c: Cols, rep: WaitReport, ov: GroupOverlap[], on: boolean): string {
+function rowText(w: WRow, c: Cols, rep: WaitReport, ov: GroupOverlap[], on: boolean, host: string): string {
   const b = on ? bg(C.sel) : ""; const g = groupFor(ov, w, WV.view);
   const p50 = pct(w.hist, 0.5, w.max); const p95 = pct(w.hist, 0.95, w.max); const tr = trendOf(w, rep.complete);
   const e = w.n ? w.err / w.n : 0;
-  const name = clean(WV.view === "family" ? shownFam(w.key, w.generic) : WV.view === "tool" ? display("tool", w.key, null) : w.key);
+  const name = (host ? fit(host, 8) + " " : "") + clean(WV.view === "family" ? shownFam(w.key, w.generic) : WV.view === "tool" ? display("tool", w.key, null) : w.key);
   return (on ? fg(C.accent) + "▌" + RST + b : " ") + (on ? fg(C.text) + CSI + "1m" : fg(w.heavy ? C.text : C.sub)) + fit(name, c.name) + RST + b +
     fg(C.dim) + fit(" " + (c.kind < 10 ? kindShort(w.kind) : w.kind), c.kind) + RST + b + fg(C.text) + rj(pctTxt(shareOf(w, rep.split)), c.share) + rj(hours(w.ms), c.total) + rj(grp(w.n), c.n) + RST + b +
     fg(C.sub) + rj(p50 < 0 ? "·" : fmtMs(p50), c.p50) + rj(p95 < 0 ? "·" : fmtMs(p95), c.p95) + RST + b +
@@ -155,9 +195,11 @@ function renderList(): void {
   const f = tabFilter("Wait", "stats");
   work(f);
   LIVE.want = Date.now() + 5000; // host load and memory for the now line, while the tab shows
-  const rep = J.rep; const ov = ovOf();
+  if (FLEET.hosts.length) WANT.wait = Date.now() + 120000; // the hosts' next pulls bring their wait reports
+  const rows0 = rows(); const rep = shownRep(); const ov = ovOf(); const fl = fleetOn();
   const ch = f === EMPTY ? "" : chips("Wait", "stats", Math.max(10, W - 40));
-  box(0, 1, W, Ht - 2, "wait" + progress(), ch ? ch + fg(C.dim) + " · " + periodName() + RST : periodName() + (rep ? " · " + String(rep.sessions) + " sessions" : ""), true);
+  const fh = fl ? " · " + String(RW.size + 1) + " hosts " + (WV.hosts === "merged" ? "merged" : "per host") + " (h)" : "";
+  box(0, 1, W, Ht - 2, "wait" + progress(), ch ? ch + fg(C.dim) + " · " + periodName() + fh + RST : periodName() + (rep && !fl ? " · " + String(rep.sessions) + " sessions" : "") + fh, true);
   line(1, 2, iw, " " + chip(WV.period === "d", "d", "Today") + " " + chip(WV.period === "w", "w", "7 days") + " " + chip(WV.period === "m", "m", "30 days") + " " + chip(WV.period === "a", "a", "All") +
     fg(C.dim) + "  v " + RST + fg(C.text) + WV.view + RST + fg(C.dim) + "  s " + RST + fg(C.text) + (SORTS[WV.sort] ?? "total") + RST);
   const sp = rep ? splitTxt(rep) : ""; const vs = rep && !rep.complete ? " · no trend: the period before is past retention" : " · trend vs the " + periodName() + " before";
@@ -165,7 +207,7 @@ function renderList(): void {
   line(1, 4, iw, " " + nowLine(iw - 1));
   const c = cols(iw);
   line(1, 5, iw, " " + fg(C.dim) + fit(WV.view, c.name) + fit(" kind", c.kind) + rj("share", c.share) + rj("total", c.total) + rj("n", c.n) + rj("p50≈", c.p50) + rj("p95≈", c.p95) + rj("err", c.err) + rj("trend", c.trend) + rj("peak", c.peak) + RST);
-  const rs = rows(); const y0 = 6; const vis = Math.max(0, Ht - 2 - y0 - 2);
+  const rs = rows0; const y0 = 6; const vis = Math.max(0, Ht - 2 - y0 - 2);
   if (WV.selKey) for (let i = 0; i < rs.length; i++) if (rs[i]?.key === WV.selKey) { WV.sel = i; break; }
   WV.sel = Math.max(0, Math.min(WV.sel, rs.length - 1)); WV.selKey = rs[WV.sel]?.key ?? "";
   if (WV.sel < WV.top) WV.top = WV.sel;
@@ -176,10 +218,19 @@ function renderList(): void {
     const w = rs[WV.top + i];
     if (!w || !rep) { line(1, y0 + i, iw, i === 0 && !rs.length ? "  " + fg(C.dim) + emptyText(f) + RST : ""); continue; }
     const on = WV.top + i === WV.sel;
-    line(1, y0 + i, iw, (on ? bg(C.sel) : "") + rowText(w, c, rep, ov, on));
+    line(1, y0 + i, iw, (on ? bg(C.sel) : "") + rowText(w, c, rep, ov, on, fl && WV.hosts !== "merged" ? FX.hostOf[WV.top + i] ?? "" : ""));
   }
-  const bl = rep ? bottom(rs[WV.sel] ?? null, rep, ov, iw) : ["", ""];
+  const bl = rep && !fl ? bottom(rs[WV.sel] ?? null, rep, ov, iw) : fl ? [fg(C.dim) + "── fleet: sums and histograms over the hosts; peaks and overlap stay per host (h: per host)" + RST, fleetNow(iw)] : ["", ""];
   line(1, Ht - 4, iw, " " + (bl[0] ?? "")); line(1, Ht - 3, iw, " " + (bl[1] ?? ""));
+}
+// one now summary per remote host (its report's now block and age)
+function fleetNow(iw: number): string {
+  const ps: string[] = [];
+  for (const h of RW.values()) {
+    const nw = h.o["now"]; const n = nw && typeof nw === "object" ? (nw as Obj)["heavyRunning"] : null;
+    ps.push(h.name + " " + (typeof n === "number" ? String(n) + " heavy" : "?") + " (" + fmtMs(Date.now() - h.at).replace(/\.\d+s$/, "s") + " ago)");
+  }
+  return fg(C.sub) + fit("now on hosts: " + ps.join(" · "), iw - 2) + RST;
 }
 function emptyText(f: Compiled): string {
   if (J.run) return "reading call rows…";
@@ -248,6 +299,7 @@ function key(k: string): boolean {
   else if (k === "g" || k === "home") WV.sel = 0;
   else if (k === "G" || k === "end") WV.sel = Math.max(0, n - 1);
   else if (k === "s") { WV.sort = (WV.sort + 1) % SORTS.length; WV.sel = 0; WV.top = 0; WV.selKey = ""; say("info", "wait rows sorted by " + (SORTS[WV.sort] ?? "total")); return true; }
+  else if (k === "h") { if (!fleetOn()) { say("info", FLEET.hosts.length ? "no fleet host has sent wait data yet: pull hosts send it with their next pull; snapshot hosts do not — agentglass wait --fleet asks them" : "no fleet hosts configured (fleet.hosts)"); return true; } WV.hosts = WV.hosts === "merged" ? "per host" : "merged"; WV.sel = 0; WV.top = 0; WV.selKey = ""; return true; }
   else if (k === "v") { WV.view = VIEWS[(VIEWS.indexOf(WV.view) + 1) % VIEWS.length] ?? "family"; WV.sel = 0; WV.top = 0; WV.selKey = ""; return true; }
   else if (k === "enter" || k === "right") { const w = rs[WV.sel]; if (w) { WV.detail = w.key; WV.dsel = 0; WV.dtop = 0; } }
   else if (k === "t") { const w = rs[WV.sel]; if (w) triage(w); }
@@ -274,11 +326,12 @@ H.backlog.push(() => J.run !== null && mine()); // a report in slices: tick at t
 H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || S.tab - 2 !== H.tabs.indexOf(WAIT_TAB)) return [];
   if (WV.detail) return [["↑↓", "call"], ["↵", "open at the call"], ["esc", "back"], ["d/w/m/a", "period"]];
-  return [["↑↓", WV.view], ["↵", "calls"], ["v", "view"], ["s", "sort"], ["d/w/m/a", "period"], ["t", "triage"], ["f", "filter sessions"], ["/", "filter"]];
+  const h: string[][] = fleetOn() ? [["h", WV.hosts === "merged" ? "per host" : "merged"]] : [];
+  return [["↑↓", WV.view], ["↵", "calls"], ["v", "view"], ["s", "sort"], ["d/w/m/a", "period"]].concat(h, [["t", "triage"], ["f", "filter sessions"], ["/", "filter"]]);
 });
 H.helpSections.push({ name: "wait", ctx: "Wait", keys: [["d w m a", "period: today, 7 days, 30 days, all kept days (vs the period before)"], ["v", "view: command families, kinds, non-shell tools"],
   ["s", "sort: total, count, p95, err, trend, peak"], ["↵  click", "the row's slowest calls · ↵ there opens the session at that call"], ["t", "triage: what is different about this family's calls"],
-  ["f", "filter the Sessions list to this family (kind, tool)"], ["esc  ⌫", "back from the calls"], ["/  p  P", "filter the calls first (repo is x, harness is codex) · pin · pins"],
+  ["f", "filter the Sessions list to this family (kind, tool)"], ["h", "fleet: all hosts merged ↔ per host (hosts send wait data with their next pull)"], ["esc  ⌫", "back from the calls"], ["/  p  P", "filter the calls first (repo is x, harness is codex) · pin · pins"],
   ["", "share = time ÷ agent time (parallel calls each count); p50/p95 ≈ from a histogram; trend vs the period before"],
   ["", "peak = most heavy calls at once (tests, type checks, lint, builds, installs ≥ wait.minSec); overlapped = ≥ 50 % of a"],
   ["", "  call ran beside another; slower when overlapped is a correlation, not a cause"],

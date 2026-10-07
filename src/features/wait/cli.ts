@@ -25,6 +25,15 @@ import { HOSTQ, sessMatches } from "../query/eval.ts";
 import { keyShown } from "../repos/cli.ts";
 import { looker } from "../watchdog.ts";
 import { rules } from "../rules/state.ts";
+import { startOfDay } from "../usage/record.ts";
+import { PULL_WAIT } from "../fleet/pull.ts";
+import { execFileSync } from "node:child_process";
+import { WANT, sshArgs, sshBin, hostControlPath } from "../fleet/ssh.ts";
+import { loadFleet } from "../fleet/config.ts";
+import { parseReport } from "../fleet/report.ts";
+import { redactOf } from "../fleet/cli.ts";
+import { obj, arr, str } from "../../util/json.ts";
+import { mergeWait, reportOfObj } from "./merge.ts";
 import { SHELL_KINDS, shownFam, waitCfg } from "./family.ts";
 import { type WRow, type WaitReport, newWaitRun, stepWait, waitResult, trendOf, shareOf } from "./report.ts";
 import { type GroupOverlap, ALL } from "./overlap.ts";
@@ -49,6 +58,7 @@ const WAIT_OPTS = setOptions("wait", [
   opt("--family", "f", "--check: count only this family (e.g. \"pnpm test\")", "", []),
   opt("--kind", "k", "--check: count only this kind (" + SHELL_KINDS.slice(0, 5).join(", ") + ")", "", SHELL_KINDS),
   opt("--max", "N", "--check: the limit (default: the contention rule's threshold, 3)", "3", []),
+  opt("--fleet", "", "every fleet host too (fleet.hosts): sums and histograms merged, peaks and now per host", "", []),
   opt("--all-projects", "", "inside an agent: history of every project (default: the current one)", "", []),
   opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", []),
 ]);
@@ -168,6 +178,19 @@ export function runReport(since: number, until: number, exprs: string[]): WaitRe
   return waitResult(r);
 }
 
+// the object a host sends in `fleet pull --wait` (unscoped): rows by family plus every kind and tool row (the viewer's
+// v view), the now block of this host
+export function hostWaitObj(days: number, now: number): Obj {
+  const rep = runReport(startOfDay() - (days - 1) * 86400000, now + 1, []);
+  const o = waitJson(rep, overlapFor(rep, "family"), liveLook(), { filter: null, project: null, now: "host" }, "family", 200);
+  const ovK = overlapFor(rep, "kind"); const ks: Obj[] = []; const ts: Obj[] = [];
+  for (const w of rep.kinds) ks.push(rowJson(w, groupFor(ovK, w, "kind"), rep));
+  for (const w of rep.tools.slice(0, 100)) ts.push(rowJson(w, null, rep));
+  o["kinds"] = ks; o["tools"] = ts;
+  return o;
+}
+PULL_WAIT.fn = (days: number, now: number): Obj | null => hostWaitObj(days, now);
+
 // ── text ──
 function text(rep: WaitReport, ov: GroupOverlap[], lw: LiveWait, o: WaitOpts): void {
   const by = o.by; const rows = rowsBy(rep, by).slice(0, o.limit);
@@ -214,6 +237,7 @@ function wait(args: string[]): void {
     else out(nowTxt(lw, contentionMax()));
     process.exit(0);
   }
+  if (o.fleet) { fleetWait(o); return; }
   const exprs = o.filters.slice(); let project: string | null = null;
   if (agent && sc.name === "project") { const pc = projectClause(sc.cwd); exprs.push(pc); project = keyShown(parse(pc).cs[0]?.vals[0] ?? ""); }
   const until = Date.now() + 1;
@@ -228,6 +252,47 @@ function wait(args: string[]): void {
     out(formatRows(rows, { fmt, fields: o.f.fields }, false, TABLE_COLS, WAIT_FIELDS, false));
   } else text(rep, ov, lw, o);
   for (const f of H.onQuit) f(); // the indexing work is kept for the next run
+  process.exit(0);
+}
+
+// --fleet: this machine's report and every ssh host's, each asked now with `fleet pull --wait` (whatever transport the
+// TUI uses for it: snapshot hosts send no wait data in their snapshots), merged; now per host
+function hostPull(args: string[], timeoutS: number): Obj | null {
+  try {
+    const t = execFileSync(sshBin(), args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: timeoutS * 1000, maxBuffer: 268435456 });
+    const r = parseReport(t).r; return r ? r.wait : null;
+  } catch (e) { return null; }
+}
+function fleetWait(o: WaitOpts): void {
+  if (o.filters.length) fail("--fleet takes no --filter (hosts report their whole history)");
+  const days = Math.max(1, Math.round((startOfDay() - o.sinceMs) / 86400000) + 1);
+  const c = loadFleet(); let any = false; for (const h of c.hosts) if (h.enabled) any = true;
+  if (!any) cliError("usage", "no fleet hosts configured", "add \"fleet\": {\"hosts\": [{\"name\": \"ws\", \"ssh\": \"…\"}]} to ~/.agentglass/config.json", 2);
+  WANT.wait = Date.now() + 600000;
+  const objs: Obj[] = [hostWaitObj(days, Date.now())]; const hosts: Obj[] = [{ name: HOSTQ.local, now: objs[0]?.["now"] ?? null }];
+  for (const h of c.hosts) {
+    if (!h.enabled) continue;
+    const w = h.kind === "ssh" && sshBin() ? hostPull(sshArgs(h, days, redactOf(h), hostControlPath(h)), c.timeoutS) : null;
+    if (!w) { hosts.push({ name: h.name, now: null, missing: h.kind === "ssh" ? "no wait report (unreachable, or an older agentglass there)" : "a " + h.kind + " host sends no wait data" }); continue; }
+    objs.push(w); hosts.push({ name: h.name, now: w["now"] ?? null });
+  }
+  const m = mergeWait(objs);
+  if (agentHost().on || o.json || o.f.fmt === "json") { out(JSON.stringify({ merged: m, hosts })); process.exit(0); }
+  const rep = reportOfObj(m); const rows = rowsBy(rep, o.by).slice(0, o.limit);
+  out(cut("wait · " + periodTxt(o.since) + " · " + String(objs.length) + " hosts merged (peaks stay per host)", 80));
+  out(cut(splitTxt(rep), 80));
+  out(lp(o.by, 18) + " " + lp("kind", 9) + rp("share", 6) + rp("total", 7) + rp("n", 7) + rp("p50", 7) + rp("p95", 7) + rp("err", 5) + rp("trend", 6));
+  for (const w of rows) {
+    const p50 = pct(w.hist, 0.5, w.max); const p95 = pct(w.hist, 0.95, w.max);
+    out(lp(w.key, 18) + " " + lp(w.kind, 9) + rp(pctTxt(shareOf(w, rep.split)), 6) + rp(hours(w.ms), 7) + rp(String(w.n), 7) + rp(p50 < 0 ? "·" : fmtMs(p50), 7) + rp(p95 < 0 ? "·" : fmtMs(p95), 7) +
+      rp(w.n ? pctTxt(w.err / w.n) : "·", 5) + rp(trendTxt(trendOf(w, rep.complete)), 6));
+  }
+  for (const h of hosts) {
+    const nw = obj(h["now"]);
+    if (!nw) { out(cut(str(h["name"]) + ": " + str(h["missing"]), 80)); continue; }
+    const fams: string[] = []; for (const x of arr(nw["running"])) { const r = obj(x); if (r && r["heavy"] === true) fams.push(str(r["family"])); }
+    out(cut(str(h["name"]) + ": " + (fams.length ? String(fams.length) + " heavy: " + fams.join(", ") : "no heavy command running"), 80));
+  }
   process.exit(0);
 }
 

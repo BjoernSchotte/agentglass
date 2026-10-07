@@ -48,8 +48,11 @@ export function sshOpts(cp: string): string[] {
 }
 // options, "--", the destination (never starting with "-": config.ts), then the remote words, each quoted. OpenSSH parses
 // options again after the destination unless "--" ended them: nothing after it is ever an option
+// agent-wait: the Wait tab (while it shows) and `agentglass wait --fleet` ask for each host's wait report until this time
+export const WANT = { wait: 0 };
 export function sshArgs(h: HostCfg, days: number, redact: boolean, cp: string): string[] {
   const a = sshOpts(cp).concat(["--", h.ssh, q(h.agentglass), q("fleet"), q("pull"), q("--days"), q(String(days))]);
+  if (WANT.wait > Date.now()) a.push(q("--wait"));
   if (redact) a.push(q("--redact"));
   return a;
 }

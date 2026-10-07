@@ -2,6 +2,7 @@
 // load: the sessions of the window as `--json` objects, the `cost --json` object and the allowance, as JSON lines
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
+import type { Obj } from "../../util/json.ts";
 import { complete, screenOut } from "../../hooks.ts";
 import { S } from "../../state.ts";
 import { cliError } from "../agentenv.ts";
@@ -29,8 +30,10 @@ export function pullSessions(days: number, now: number): Sess[] {
   for (const s of sessions.values()) if (s.depth === 0 && !s.parent && (s.mtime >= from || livePid(s) > 0)) out.push(s);
   return distinct(out);
 }
-// the whole report; discover() first (a CLI run: scan, processes, view)
-export function pullReport(days: number, now: number): HostReport {
+// agentglass wait sets it (wait/cli.ts): the host's `wait --json` object for `fleet pull --wait`, unscoped
+export const PULL_WAIT = { fn: (days: number, now: number): Obj | null => null };
+// the whole report; discover() first (a CLI run: scan, processes, view); wait: also the agent-wait report
+export function pullReport(days: number, now: number, wait = false): HostReport {
   discover();
   const sel = pullSessions(days, now);
   // indexed first, then the rows (as --json does: the git attribution is built once)
@@ -40,21 +43,22 @@ export function pullReport(days: number, now: number): HostReport {
   return {
     hello: { format: FORMAT, version: BUILD.version, hostId: hostId(), hostName: REDACT ? "" : hostName(), os: process.platform, tzOffsetMin: -new Date(now).getTimezoneOffset(),
       redact: REDACT, days, now, priceSig: pricesSig() },
-    sessions: rows, cost, allowance: { claude: allowanceInfo(now), codex: codexWins() }, live: null, exact: false, owned: noOwned(),
+    sessions: rows, cost, allowance: { claude: allowanceInfo(now), codex: codexWins() }, live: null, exact: false, owned: noOwned(), wait: wait ? PULL_WAIT.fn(days, now) : null,
   };
 }
 
 // `fleet pull [--days N] [--redact]`: the report on stdout, one line each (a closed reader ends quietly). The host's own
 // fleet config is not read: a host never pulls others
 export function pullCli(args: string[]): void {
-  let days = 7;
+  let days = 7; let wait = false;
   for (let i = 2; i < args.length; i++) {
     const a = args[i] ?? "";
+    if (a === "--wait") { wait = true; continue; }
     if (a === "--days") { const v = argVal(args, i) ?? ""; i++; days = /^\d+$/.test(v) ? Number(v) : 0; if (days < 1 || days > 90) cliError("usage", "--days needs a whole number 1–90", "e.g. agentglass fleet pull --days 7", 2); }
     else if (a === "--redact" || a === "--agent" || a === "--no-agent") continue;
-    else cliError("usage", "unknown option " + a + " for fleet pull", "agentglass fleet pull [--days N] [--redact]", 2);
+    else cliError("usage", "unknown option " + a + " for fleet pull", "agentglass fleet pull [--days N] [--wait] [--redact]", 2);
   }
   S.cli = true;
-  for (const l of reportLines(pullReport(days, Date.now()))) { try { writeSync(1, screenOut(l) + "\n"); } catch (e) { process.exit(0); } }
+  for (const l of reportLines(pullReport(days, Date.now(), wait))) { try { writeSync(1, screenOut(l) + "\n"); } catch (e) { process.exit(0); } }
   process.exit(0);
 }
