@@ -99,9 +99,10 @@ export function collectLive(ss: Sess[], kids: Map<number, Proc[]>, now: number):
     const shells = (roots.get(p) ?? 0) > 1 ? [] : toolShells(p, kids); // a root shared by sessions: whose shell is whose is unknown
     let seen = false;
     for (const sh of shells) {
+      const age = etimeSec(sh.etime); if (age >= 86400) continue; // a day-old shell is a server the agent started, not a tool call
       const f = famOfArgs(sh.args); if (!f) continue;
       seen = true;
-      lw.running.push({ path: s.path, h: s.h, family: f.family, kind: f.kind, heavy: f.heavy, ageSec: etimeSec(sh.etime), rssKb: treeRss(sh, kids), pid: sh.pid, bg: open.length === 0 });
+      lw.running.push({ path: s.path, h: s.h, family: f.family, kind: f.kind, heavy: f.heavy, ageSec: age, rssKb: treeRss(sh, kids), pid: sh.pid, bg: open.length === 0 });
     }
     if (seen || shells.length) continue;
     for (const c of open) { const f = callFamily(c.cmds.map((x: string): string => norm(x)), waitCfg()); lw.running.push({ path: s.path, h: s.h, family: f.name, kind: f.kind, heavy: f.heavy, ageSec: Math.floor((now - c.t) / 1000), rssKb: -1, pid: 0, bg: false }); }

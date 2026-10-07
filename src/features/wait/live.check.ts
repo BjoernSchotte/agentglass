@@ -33,7 +33,7 @@ kids.set(100, [pr(200, 100, "02:10", 3000, "/usr/bin/zsh -c eval 'pnpm test' \\<
 kids.set(200, [pr(201, 200, "02:09", 900000, "node vitest")]);
 kids.set(300, [pr(400, 300, "00:40", 2000, "/bin/bash -c npx tsc"), pr(402, 300, "1:00:00", 50000, "node /x/mcp-server.js")]);
 kids.set(400, [pr(401, 400, "00:39", 600000, "node tsc")]);
-kids.set(700, [pr(800, 700, "00:05", 1000, "/bin/zsh -c eval 'git status'")]);
+kids.set(700, [pr(800, 700, "00:05", 1000, "/bin/zsh -c eval 'git status'"), pr(810, 700, "7-22:03:19", 1000, "sh -c playwright-mcp"), pr(820, 700, "1-00:00:00", 1000, "sh -c pnpm test")]);
 const now = Date.now();
 const lw = collectLive([a, b, c, d], kids, now);
 const rs = lw.running.slice().sort((x: Run, y: Run) => x.pid - y.pid);

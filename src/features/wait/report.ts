@@ -14,7 +14,7 @@ import { type Compiled, sessMatches, callsIn, callCutoff } from "../query/eval.t
 import { rowFam, famName, famKind, famHeavy, famGeneric, toolFamily, toolKind, waitCfg } from "./family.ts";
 import type { CallSpan } from "./overlap.ts";
 
-export interface SlowCall { path: string; t: number; ms: number }
+export interface SlowCall { path: string; t: number; ms: number; id: string /* the harness call id (transcript focus) */ }
 // one family (shell calls), tool (other calls) or kind: n calls (timed: with a duration), ms total, err failed, agents =
 // distinct top-level sessions; prev* = the previous window; slow = the 10 longest calls
 export interface WRow {
@@ -94,7 +94,7 @@ function session(r: WaitRun, s: Sess, idx: number): void {
     if (ms < 0) return;
     w.timed++; w.ms += ms; if (ms > w.max) w.max = ms;
     const b = hb(ms); w.hist[b] = (w.hist[b] ?? 0) + 1;
-    slowIn(w, { path: s.path, t, ms });
+    slowIn(w, { path: s.path, t, ms, id: rw.cid[i] ?? "" });
     if (ms > 0) {
       tv.push(t); tv.push(t + ms);
       if (kind === "user" && fid < 0) { uv.push(t); uv.push(t + ms); }

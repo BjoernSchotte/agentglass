@@ -74,6 +74,9 @@ npx rollup -c	rollup	build
 npx webpack --mode production	webpack	build
 npx biome check .	biome	lint
 npx prisma migrate dev	prisma	other
+npx -y @playwright/mcp@latest	@playwright/mcp	other
+npm exec create-vite@latest app	create-vite	other
+playwright-mcp	playwright-mcp	other
 npx	npx	other
 uv run --frozen pytest -q tests/	pytest	test
 uv run pytest	pytest	test

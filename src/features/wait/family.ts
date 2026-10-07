@@ -203,7 +203,10 @@ function cut(s: string): string { return s.length > 40 ? s.slice(0, 40) : s; }
 // a segment's family from its program at i; "" = trivial (names no family)
 function famAt(ws: string[], i: number, depth: number): FN {
   if (i < 0 || i >= ws.length) return NONE;
-  const p = base(ws[i] ?? ""); if (!p || TRIV.indexOf(p) >= 0) return NONE;
+  const raw = ws[i] ?? ""; const at = raw.lastIndexOf("@");
+  if (at > 0 && raw.indexOf("/", at) < 0) return fn(cut(raw.startsWith("@") ? raw.slice(0, at) : base(raw.slice(0, at)))); // npx pkg@version, @scope/pkg@latest
+  if (raw.startsWith("@") && raw.indexOf("/") > 0) return fn(cut(raw)); // a scoped package
+  const p = base(raw); if (!p || TRIV.indexOf(p) >= 0) return NONE;
   if (PM.indexOf(p) >= 0) {
     const j = skipOpts(ws, i + 1, PM_OPT); const a0 = ws[j] ?? "";
     if (!a0) return fn(p === "yarn" ? "yarn install" : p);
@@ -287,6 +290,7 @@ function parts(t: string): string[] {
 export function kindOfName(name: string): string {
   const toks = name.split(" ");
   const ps: string[] = []; for (const t of toks) for (const x of parts(t)) ps.push(x);
+  if (ps.indexOf("mcp") >= 0) return "other"; // an MCP server (playwright-mcp) is never a check, whatever its name says
   for (const [k, ws] of KINDS) for (const w of ws) {
     if (w.indexOf(" ") >= 0) { if (name === w || name.startsWith(w + " ")) return k; continue; }
     if (k === "vcs" || k === "net" || k === "wait") { if (toks[0] === w) return k; continue; } // the program itself (not "agentglass wait")

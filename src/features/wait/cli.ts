@@ -9,7 +9,6 @@ import { S } from "../../state.ts";
 import type { Sess } from "../../model/types.ts";
 import { sessions, loadHead } from "../../model/sessions.ts";
 import type { Obj } from "../../util/json.ts";
-import { width } from "../../util/text.ts";
 import { argVal } from "../../util/argv.ts";
 import { discover } from "../cli.ts";
 import { agentHost, agentScope, cliError } from "../agentenv.ts";
@@ -26,10 +25,12 @@ import { HOSTQ, sessMatches } from "../query/eval.ts";
 import { keyShown } from "../repos/cli.ts";
 import { looker } from "../watchdog.ts";
 import { rules } from "../rules/state.ts";
-import { ALL_KINDS, SHELL_KINDS, famKind, shownFam, waitCfg } from "./family.ts";
+import { SHELL_KINDS, shownFam, waitCfg } from "./family.ts";
 import { type WRow, type WaitReport, newWaitRun, stepWait, waitResult, trendOf, shareOf } from "./report.ts";
-import { type CallSpan, type GroupOverlap, ALL, overlap, bucketFor } from "./overlap.ts";
+import { type GroupOverlap, ALL } from "./overlap.ts";
+import { maxOf, overlapFor, groupOf, groupFor, rowsBy, cut, lp, rp, hours, pctTxt, trendTxt, whenTxt, splitTxt, periodTxt, nowTxt } from "./fmt.ts";
 import { type LiveWait, LIVE, collectLive, heavyNow, famCounts } from "./live.ts";
+export { overlapFor };
 
 export const WAIT_FIELDS = ["key", "kind", "heavy", "calls", "timedCalls", "totalMs", "share", "p50Ms", "p95Ms", "maxMs", "errors", "errorRate", "prevTotalMs", "trend",
   "agents", "peak", "peakAt", "atLeast2Ms", "atLeast3Ms", "slowdown", "hist"];
@@ -119,19 +120,8 @@ export function nowJson(lw: LiveWait): Obj {
     rssMb: r.rssKb < 0 ? null : Math.round(r.rssKb / 102.4) / 10, bg: r.bg });
   return { at: iso(lw.at || Date.now()), host: HOSTQ.local, load1: n1(lw.load1), cpus: n1(lw.cpus), memAvailPct: n1(lw.memAvailPct), running: rs, heavyRunning: heavyNow(lw, "", "").length };
 }
-// the contention rule's threshold (enabled or not): what "too many" means here
-export function contentionMax(): number { for (const r of rules().rules) if (r.id === "contention" && r.hasDeg) return r.deg; return 3; }
-
+export function contentionMax(): number { return maxOf(rules()); }
 // ── history ──
-// overlap groups for the rows of `by`: families (their ids), kinds (index in ALL_KINDS), tools (none: only ALL)
-export function overlapFor(rep: WaitReport, by: string): GroupOverlap[] {
-  const days = Math.max(1, Math.ceil((rep.until - rep.since) / 86400000));
-  let sp: CallSpan[] = rep.spans;
-  if (by === "kind") { sp = []; for (const s of rep.spans) sp.push({ t0: s.t0, t1: s.t1, group: ALL_KINDS.indexOf(famKind(s.group)), agent: s.agent }); }
-  return overlap(sp, rep.since, rep.until, bucketFor(days));
-}
-function groupOf(ov: GroupOverlap[], id: number): GroupOverlap | null { for (const g of ov) if (g.group === id) return g; return null; }
-export function rowsBy(rep: WaitReport, by: string): WRow[] { return by === "kind" ? rep.kinds : by === "tool" ? rep.tools : rep.fams; }
 export function rowJson(w: WRow, g: GroupOverlap | null, rep: WaitReport): Obj {
   const p50 = pct(w.hist, 0.5, w.max); const p95 = pct(w.hist, 0.95, w.max); const tr = trendOf(w, rep.complete);
   return {
@@ -146,7 +136,7 @@ export function rowJson(w: WRow, g: GroupOverlap | null, rep: WaitReport): Obj {
 // the spec §7 object (fleet pull --wait prints it too); live null = no now block
 export function waitJson(rep: WaitReport, ov: GroupOverlap[], live: LiveWait | null, scope: Obj, by: string, limit: number): Obj {
   const rows: Obj[] = [];
-  for (const w of rowsBy(rep, by).slice(0, limit)) rows.push(rowJson(w, by === "tool" ? null : groupOf(ov, by === "kind" ? ALL_KINDS.indexOf(w.kind) : w.id), rep));
+  for (const w of rowsBy(rep, by).slice(0, limit)) rows.push(rowJson(w, groupFor(ov, w, by), rep));
   const all = groupOf(ov, ALL);
   const sp = rep.split;
   return {
@@ -179,41 +169,16 @@ export function runReport(since: number, until: number, exprs: string[]): WaitRe
 }
 
 // ── text ──
-function cut(s: string, w: number): string { return width(s) <= w ? s : s.slice(0, w - 1) + "…"; }
-function lp(s: string, w: number): string { const n = width(s); return n >= w ? cut(s, w) : s + " ".repeat(w - n); }
-function rp(s: string, w: number): string { const n = width(s); return n >= w ? cut(s, w) : " ".repeat(w - n) + s; }
-export function hours(ms: number): string { return ms <= 0 ? "0" : ms < 3600000 ? fmtMs(ms) : (ms / 3600000).toFixed(ms < 36000000 ? 1 : 0) + "h"; }
-export function pctTxt(x: number): string { return x <= 0 ? "0%" : x < 0.1 ? (x * 100).toFixed(1) + "%" : String(Math.round(x * 100)) + "%"; }
-export function trendTxt(t: number | null): string { return t === null ? "·" : (t >= 0 ? "+" : "") + String(Math.round(t * 100)) + "%"; }
-const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-export function whenTxt(t: number): string { const d = new Date(t); return (WD[d.getDay()] ?? "") + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
-export function splitTxt(rep: WaitReport): string {
-  const sp = rep.split; const a = sp.activeMs;
-  if (a <= 0) return "no agent time recorded";
-  return (a / 3600000).toFixed(a < 36000000 ? 1 : 0) + "h · tools " + pctTxt(sp.toolMs / a) + " (polling " + pctTxt(sp.pollMs / a) + ") · you " + pctTxt(sp.userMs / a) + " · model " + pctTxt(sp.modelMs / a);
-}
-export function periodTxt(since: string): string {
-  if (since === "today") return "today";
-  const m = /^(\d+)([dh])$/.exec(since); if (m) return (m[1] ?? "") + (m[2] === "d" ? (m[1] === "1" ? " day" : " days") : "h");
-  return "since " + since;
-}
-export function nowTxt(lw: LiveWait, max: number): string {
-  const hv = heavyNow(lw, "", "");
-  const host = (lw.load1 >= 0 ? " · load " + lw.load1.toFixed(1) + (lw.cpus > 0 ? "/" + String(lw.cpus) : "") : "") + (lw.memAvailPct >= 0 ? " · mem " + String(lw.memAvailPct) + "% free" : "");
-  if (!hv.length) return "now: no heavy command running" + host;
-  let rss = 0; let known = false; for (const r of hv) if (r.rssKb >= 0) { rss += r.rssKb; known = true; }
-  return "now: " + String(hv.length) + " heavy" + (hv.length >= max ? " (≥ " + String(max) + ")" : "") + ": " + famCounts(hv) + (known ? " · " + (rss / 1048576).toFixed(1) + "G" : "") + host;
-}
 function text(rep: WaitReport, ov: GroupOverlap[], lw: LiveWait, o: WaitOpts): void {
   const by = o.by; const rows = rowsBy(rep, by).slice(0, o.limit);
   out(cut("wait · " + periodTxt(o.since) + (rep.complete ? " vs the " + (o.since.startsWith("2") ? "period" : periodTxt(o.since)) + " before" : "") + " · " + String(rep.sessions) + (rep.sessions === 1 ? " session" : " sessions") + (o.filters.length ? " · filter " + o.filters.join(" and ") : ""), 80));
-  out(cut("agent time " + splitTxt(rep), 80));
+  out(cut(splitTxt(rep), 80));
   if (rep.since < callCutoff()) out("(call rows are kept " + String(callDays()) + " days: the period's older part is missing — filter.callDays)");
   if (!rows.length) { out("no " + (by === "tool" ? "tool calls" : "shell calls") + " in this period" + (o.filters.length ? " matching the filter" : "")); }
   else {
     out(lp(by, 18) + " " + lp("kind", 9) + rp("share", 6) + rp("total", 7) + rp("n", 7) + rp("p50", 7) + rp("p95", 7) + rp("err", 5) + rp("trend", 6) + rp("peak", 5));
     for (const w of rows) {
-      const g = by === "tool" ? null : groupOf(ov, by === "kind" ? ALL_KINDS.indexOf(w.kind) : w.id);
+      const g = groupFor(ov, w, by);
       const p50 = pct(w.hist, 0.5, w.max); const p95 = pct(w.hist, 0.95, w.max);
       out(lp(shownFam(w.key, w.generic), 18) + " " + lp(w.kind, 9) + rp(pctTxt(shareOf(w, rep.split)), 6) + rp(hours(w.ms), 7) + rp(String(w.n), 7) +
         rp(p50 < 0 ? "·" : fmtMs(p50), 7) + rp(p95 < 0 ? "·" : fmtMs(p95), 7) + rp(w.n ? pctTxt(w.err / w.n) : "·", 5) + rp(trendTxt(trendOf(w, rep.complete)), 6) + rp(g && g.peak > 1 ? String(g.peak) : "·", 5));
@@ -259,7 +224,7 @@ function wait(args: string[]): void {
   const fmt = o.f.fmt || (o.json || agent ? "json" : "");
   if (fmt === "json" && !o.f.fields.length) out(process.stdout.isTTY && !agent ? JSON.stringify(waitJson(rep, ov, lw, scope, o.by, o.limit), null, 2) : JSON.stringify(waitJson(rep, ov, lw, scope, o.by, o.limit)));
   else if (fmt) {
-    const rows: Obj[] = []; for (const w of rowsBy(rep, o.by).slice(0, o.limit)) rows.push(rowJson(w, o.by === "tool" ? null : groupOf(ov, o.by === "kind" ? ALL_KINDS.indexOf(w.kind) : w.id), rep));
+    const rows: Obj[] = []; for (const w of rowsBy(rep, o.by).slice(0, o.limit)) rows.push(rowJson(w, groupFor(ov, w, o.by), rep));
     out(formatRows(rows, { fmt, fields: o.f.fields }, false, TABLE_COLS, WAIT_FIELDS, false));
   } else text(rep, ov, lw, o);
   for (const f of H.onQuit) f(); // the indexing work is kept for the next run
