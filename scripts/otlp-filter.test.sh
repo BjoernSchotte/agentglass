@@ -74,7 +74,8 @@ grow() { # during a run: the mover leaves, the late session gets its metadata, e
   { user sout /w/out-secret br-out-secret "third-out-secret" 3; } >> "$H/.claude/projects/-w-out-secret/sout.jsonl"
   for r in "$H"/.codex/sessions/*/*/*/rollout-*.jsonl; do printf '{"timestamp":"%s","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"codex-out-next"}]}}\n' "$(ts)" >> "$r"; done
 }
-stop_agents() { kill $a1 $a2 $a3 $a4 $a5 2>/dev/null || true; wait $a1 $a2 $a3 $a4 $a5 2>/dev/null || true; a1=""; a2=""; a3=""; a4=""; a5=""; }
+# KILL: setup forks them just before, and bash can lose a TERM that lands before a child's exec (the sleep runs on, wait hangs)
+stop_agents() { kill -KILL $a1 $a2 $a3 $a4 $a5 2>/dev/null || true; wait $a1 $a2 $a3 $a4 $a5 2>/dev/null || true; a1=""; a2=""; a3=""; a4=""; a5=""; }
 env_ag() { HOME="$H" AGENTGLASS_RULES="$t/rules.json" AGENTGLASS_OTLP_DIR="$t/otlp" AGENTGLASS_CACHE_DIR="$t/cache" AGENTGLASS_OFFLINE=1 AGENTGLASS_NOTIFY=0 "$t/ag" "$@"; }
 # a rule that fires on every session (an alert record names its session): only the inside ones may reach the receiver
 printf '{"version":1,"builtins":false,"rules":[{"id":"any","metric":"session_cost","op":">","critical":0,"ack":"none","notify":false,"message":"spent {value}"}]}\n' > "$t/rules.json"

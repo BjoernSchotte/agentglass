@@ -13,13 +13,14 @@ for f in "$here"/scripts/*.sh; do # (install.sh starts no background job: no chi
   grep -qE '^[^#]*trap .*EXIT' "$f" || continue
   grep -qF '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit' "$f" || { echo "FAIL $(basename "$f"): EXIT trap without the own-shell guard"; fail=1; }
 done
-# storm <shell> <guarded|bare>: 100 children killed right after their fork; prints how many of them ran the trap and
+# storm <shell> <guarded|bare>: 100 children killed right after their fork (a short sleep: bash can lose a TERM that lands
+# before its exec, the sleep then runs on); prints how many of them ran the trap and
 # whether the dir was still there when the loop ended
 cat > "$t/storm.sh" <<'SH'
 d=$1; n=$2; mkdir -p "$d"; : > "$n"
 if [ "$3" = guarded ]; then trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$d"' EXIT
 else trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || echo child >> "$n"; rm -rf "$d"' EXIT; fi
-i=0; while [ $i -lt 100 ]; do sleep 600 & a=$!; kill $a; wait $a 2> /dev/null || true; i=$((i + 1)); done
+i=0; while [ $i -lt 100 ]; do sleep 1 & a=$!; kill $a; wait $a 2> /dev/null || true; i=$((i + 1)); done
 [ -d "$d" ] && echo kept || echo gone
 SH
 storm() { k=$($1 "$t/storm.sh" "$t/storm" "$t/children" $2 2> /dev/null || true); echo "$(wc -l < "$t/children" | tr -d ' ') $k"; }
