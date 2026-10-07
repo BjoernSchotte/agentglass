@@ -56,7 +56,8 @@ slot_try() { # slot_try <slot> <token>: take that slot now, fail (1: it is held)
   _lo=$(readlink "$1" 2>/dev/null) || return 1 # freed meanwhile: the next round takes it
   ! lock_alive "$_lo" || return 1
   # stale: move it aside (atomic: one reclaimer wins), delete it only if it is still the stale one; else it was
-  # reclaimed and taken by another meanwhile: put that one back
+  # reclaimed and taken by another meanwhile: put that one back (if a third took the slot in that instant, the put-back
+  # fails and that run has one extra holder: a bound of one, for one run, on macOS only)
   _lg="$LOCK_DIR/.reap.$$"; rm -f "$_lg"; mv "$1" "$_lg" 2>/dev/null || return 1
   _ln=$(readlink "$_lg" 2>/dev/null); rm -f "$_lg"
   if [ "$_ln" != "$_lo" ]; then ln -s "$_ln" "$1" 2>/dev/null; return 1; fi
