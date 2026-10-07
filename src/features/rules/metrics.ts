@@ -5,7 +5,8 @@ import type { Sess } from "../../model/types.ts";
 import type { Rows } from "../usage/rows.ts";
 import { callMatches } from "../query/eval.ts";
 import { type Obs, type MVal, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, toolName } from "../detect.ts";
-import { type Rule, paramDefault } from "./config.ts";
+import { type Rule, HOST_METRICS, paramDefault } from "./config.ts";
+import { type Run, type LiveWait, liveNow, famCounts } from "../wait/live.ts";
 
 function prm(r: Rule, k: string): number { const v = r.params.get(k); return v !== undefined ? v : paramDefault(r.metric, k); }
 function val(v: number, at: number): MVal { const m = absent(); m.v = v; m.at = at; return m; }
@@ -59,6 +60,19 @@ export function repeatWhere(r: Rule, s: Sess, o: Obs, base: MVal): MVal {
   }
   return absent();
 }
+// agent-wait: heavy commands running on this host (≥ min_age s); present only for a session that runs one itself;
+// contention_family counts those of its oldest heavy command's family
+export function hostMetric(r: Rule, s: Sess, lw: LiveWait): MVal {
+  const minAge = prm(r, "min_age"); const all: Run[] = []; let mine: Run | null = null;
+  for (const x of lw.running) {
+    if (!x.heavy || x.ageSec < minAge) continue;
+    all.push(x); if (x.path === s.path && (!mine || x.ageSec > mine.ageSec)) mine = x;
+  }
+  if (!mine) return absent();
+  const fam = mine.family; const n: Run[] = r.metric === "contention_family" ? all.filter((x: Run) => x.family === fam) : all;
+  const m = val(n.length, lw.at - mine.ageSec * 1000); m.cmd = famCounts(n);
+  return m;
+}
 // memo key: one computation per (session, metric, params, window, min_calls, where) per tick
 function memoKey(r: Rule): string {
   let p = ""; for (const [k, v] of r.params) p += k + "=" + String(v) + ";";
@@ -70,6 +84,7 @@ export function metricOf(r: Rule, s: Sess, o: Obs, turnAt: number, rows: Rows, m
   let v = absent();
   if (r.metric === "session_cost" || r.metric === "session_tokens") v = sessMetric(r, s);
   else if (r.metric === "tool_calls" || r.metric === "tool_errors" || r.metric === "tool_error_rate") v = callMetric(r, s, rows);
+  else if (HOST_METRICS.indexOf(r.metric) >= 0) v = hostMetric(r, s, liveNow(o.now));
   else { v = procMetric(r, o, turnAt); if (r.metric === "repeat_run") v = repeatWhere(r, s, o, v); }
   memo.set(k, v);
   return v;

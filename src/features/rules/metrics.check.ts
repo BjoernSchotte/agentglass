@@ -7,6 +7,7 @@ import { rowsFrom, newRows } from "../usage/rows.ts";
 import { type Obs, type MVal, approvalWait, commandAge, stalledFor, spinningFor, repeatRun } from "../detect.ts";
 import { type Rule, loadRules } from "./config.ts";
 import { metricOf, procMetric, sessMetric } from "./metrics.ts";
+import { type Run, LIVE } from "../wait/live.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -100,5 +101,23 @@ const r1 = rule('{"id":"a","metric":"session_cost","degraded":1}'); const r2 = r
 const a1 = metricOf(r1, s, o0, 0, rows, memo); s.cost = 7; const a2 = metricOf(r2, s, o0, 0, rows, memo);
 eq("memo same value", v(a2), "2.5");
 eq("memo one entry", String(memo.size) + " " + v(a1), "1 2.5");
+// agent-wait: host-wide contention metrics from the live look (present only for a session running a heavy command)
+{
+  const run = (path: string, family: string, kind: string, heavy: boolean, age: number): Run => ({ path, h: "claude", family, kind, heavy, ageSec: age, rssKb: 1, pid: 1, bg: false });
+  LIVE.cur = { at: now, load1: -1, cpus: 8, memAvailPct: -1, running: [run("/A", "pnpm test", "test", true, 30), run("/B", "pnpm test", "test", true, 90), run("/C", "tsc", "typecheck", true, 120), run("/D", "git status", "vcs", false, 500)] };
+  const ss = ["A", "B", "C", "D", "E"].map((x: string) => newSess("claude", x, "/" + x, false));
+  const o = obs(1, true, [], []);
+  const rc = rule('{"id":"c","metric":"contention","degraded":3}');
+  const rf = rule('{"id":"f","metric":"contention_family","degraded":2}');
+  const rm = rule('{"id":"m","metric":"contention","degraded":3,"params":{"min_age":60}}');
+  const val = (r: Rule, i: number): MVal => metricOf(r, ss[i] ?? ss[0], o, 0, newRows(), new Map<string, MVal>());
+  eq("contention per session", [0, 1, 2, 3, 4].map((i: number) => v(val(rc, i))).join(","), "3,3,3,absent,absent");
+  eq("contention_family", v(val(rf, 0)) + "," + v(val(rf, 2)), "2,1");
+  eq("min_age 60", [0, 1, 2].map((i: number) => v(val(rm, i))).join(","), "absent,2,2");
+  eq("{cmd}", val(rc, 0).cmd, "pnpm test ×2, tsc");
+  eq("{cmd} family", val(rf, 0).cmd, "pnpm test ×2");
+  LIVE.cur = { at: now - 60000, load1: -1, cpus: 8, memAvailPct: -1, running: LIVE.cur.running };
+  eq("stale look: absent", v(val(rc, 0)), "absent");
+}
 console.log(bad ? bad + " failed" : "rules metrics: all checks passed");
 if (bad) process.exit(1);

@@ -18,8 +18,10 @@ export interface NotifyCfg { bell: boolean; desktop: boolean; throttleSec: numbe
 export interface RuleSet { rules: Rule[]; notify: NotifyCfg; diags: Diag[]; syntax: string /* "" or the JSON error */; cmdAt: number[] /* [line, col] of notify.command */ }
 
 // ── metric catalog (spec §2) ──
-export const METRICS: string[] = ["turn_done", "approval_wait", "repeat_run", "command_age", "stalled", "spinning", "session_cost", "session_tokens", "tool_calls", "tool_errors", "tool_error_rate"];
-const UNITS = ["duration", "duration", "count", "duration", "duration", "duration", "usd", "count", "count", "count", "ratio"];
+export const METRICS: string[] = ["turn_done", "approval_wait", "repeat_run", "command_age", "stalled", "spinning", "session_cost", "session_tokens", "tool_calls", "tool_errors", "tool_error_rate", "contention", "contention_family"];
+const UNITS = ["duration", "duration", "count", "duration", "duration", "duration", "usd", "count", "count", "count", "ratio", "count", "count"];
+// agent-wait: heavy commands running on this host (one value for every session running one); notified once per (rule, host)
+export const HOST_METRICS = ["contention", "contention_family"];
 export const CALL_METRICS = ["repeat_run", "tool_calls", "tool_errors", "tool_error_rate"];
 const ROW_METRICS = ["tool_calls", "tool_errors", "tool_error_rate"]; // read the ledger's call rows (window, min_calls)
 export function unitOf(metric: string): string { for (let i = 0; i < METRICS.length && i < UNITS.length; i++) if (METRICS[i] === metric) return UNITS[i]; return ""; }
@@ -28,6 +30,7 @@ const PARAMS: Record<string, string[][]> = {
   approval_wait: [["cpu_below", "2", "0", "100"], ["samples", "7", "1", "400"], ["grace", "5", "0", "-1"]],
   stalled: [["cpu_below", "1", "0", "100"], ["samples", "7", "1", "400"]],
   spinning: [["cpu_above", "80", "0", "100"], ["samples", "120", "1", "400"]],
+  contention: [["min_age", "0", "0", "-1"]], contention_family: [["min_age", "0", "0", "-1"]], // min_age: seconds a command runs before it counts
 };
 export function paramDefault(metric: string, p: string): number { for (const d of PARAMS[metric] ?? []) if (d[0] === p) return Number(d[1]); return 0; }
 // the event keys a repeated call can be filtered by (its name and argument text are all there is)
@@ -39,6 +42,7 @@ const DEFMSG: Record<string, string> = {
   session_cost: "cost {value} (threshold {threshold})", session_tokens: "{value} tokens (threshold {threshold})",
   tool_calls: "{value} calls (threshold {threshold})", tool_errors: "{value} failed calls (threshold {threshold})",
   tool_error_rate: "error rate {value} (threshold {threshold})",
+  contention: "{value} heavy commands running: {cmd}", contention_family: "{value} of the same heavy command running: {cmd}",
 };
 export const STATES = ["fire", "escalate", "deescalate", "resolve"];
 const OPS = [">", ">=", "<", "<="];
@@ -170,8 +174,11 @@ export function builtins(): Rule[] {
     mk("long-cmd", "command_age", ">", -1, 600, "none", false, "{cmd} running {value}", "long cmd", "[long-cmd] "),
     mk("stalled", "stalled", ">", -1, 480, "none", false, "no log activity {value}, cpu {cpu}%", "stalled", "[stalled] "),
     mk("spinning", "spinning", ">", -1, 180, "none", false, "cpu > {cpu}% for 3m while the log is silent {value}", "spinning", "[spinning] "),
+    contention(),
   ];
 }
+// agent-wait: ≥ 3 heavy commands on this host for 30 s; off until enabled ({"rules": [{"id": "contention", "enabled": true}]})
+function contention(): Rule { const r = mk("contention", "contention", ">=", 3, -1, "none", true, "{value} heavy commands running: {cmd}", "contention", "[contention] "); r.forSec = 30; r.enabled = false; return r; }
 export function defaultNotify(): NotifyCfg { return { bell: true, desktop: true, throttleSec: 30, command: [], on: ["fire", "escalate"] }; }
 export function rulesFile(): string { return RULES_FILE; }
 
@@ -275,9 +282,9 @@ function applyRule(cx: Ctx, path: string, o: Obj, r: Rule, isNew: boolean): bool
       let d: string[] | null = null; for (const x of PARAMS[r.metric] ?? []) if (x[0] === k) d = x;
       if (!d) { diag(cx, path + ".params." + k + ":k", r.id, "unknown param \"" + k + "\" for " + r.metric + " (ignored)", false); continue; }
       const raw = po[k];
-      const n = k === "grace" && typeof raw === "string" ? durSec(raw as string) : isNum(raw) ? (raw as number) : NaN;
+      const n = (k === "grace" || k === "min_age") && typeof raw === "string" ? durSec(raw as string) : isNum(raw) ? (raw as number) : NaN;
       const lo = Number(d[2]); const hi = Number(d[3]);
-      if (!(n >= lo) || (hi >= 0 && n > hi) || (k === "samples" && !Number.isInteger(n))) err("params." + k, k + " must be " + (k === "samples" ? "an integer " : "") + "between " + d[2] + " and " + (hi >= 0 ? d[3] : "∞") + (k === "grace" ? " seconds" : ""));
+      if (!(n >= lo) || (hi >= 0 && n > hi) || (k === "samples" && !Number.isInteger(n))) err("params." + k, k + " must be " + (k === "samples" ? "an integer " : "") + "between " + d[2] + " and " + (hi >= 0 ? d[3] : "∞") + (k === "grace" || k === "min_age" ? " seconds" : ""));
       else r.params.set(k, n);
     }
   }

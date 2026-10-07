@@ -5,9 +5,9 @@ import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
 import { newSess } from "../../model/types.ts";
 import { readText, run } from "../../util/fs.ts";
 import { absent } from "../detect.ts";
-import { type NotifyCfg, loadRules, defaultNotify } from "./config.ts";
+import { type NotifyCfg, type Rule, loadRules, defaultNotify } from "./config.ts";
 import type { Trans } from "./engine.ts";
-import { CMD, IO, alertJson, argvFor, cmdSubs, cmdEnv, runCommand, onTrans } from "./notify.ts";
+import { CMD, IO, alertJson, argvFor, cmdSubs, cmdEnv, runCommand, onTrans, throttleKey } from "./notify.ts";
 import { fileSafe, withSafety } from "./state.ts";
 import { applyMeta } from "../../hooks.ts";
 import "../redact.ts"; // --redact (the check env) fakes titles and projects in the session model
@@ -24,6 +24,16 @@ const cfg = (cmd: string[], on: string[]): NotifyCfg => { const c = defaultNotif
 const toasts: string[] = []; IO.toast = (m: string): void => { toasts.push(m); };
 IO.bell = (): void => { /* quiet */ };
 
+// agent-wait: host-wide metrics notify once per (rule, host): three sessions in contention ring one bell
+{
+  let bells = 0; IO.bell = (): void => { bells++; };
+  const cr = loadRules('{"rules":[{"id":"contention","enabled":true}]}', true).rules.filter((r: Rule) => r.id === "contention")[0] ?? ap;
+  const cv = absent(); cv.v = 3; cv.cmd = "pnpm test ×2, tsc";
+  for (const id of ["h1", "h2", "h3"]) { const x = newSess("claude", id, "/h/" + id, false); onTrans(x, cr, { at: 5000000, path: x.path, rule: "contention", from: 0, to: 1, state: "fire", v: 3, thr: 3 }, false, false, false, defaultNotify(), cv, "3 heavy commands running", 0); }
+  eq("contention: one bell for three sessions", String(bells), "1");
+  eq("throttle key", throttleKey(cr, newSess("claude", "h9", "/h/h9", false)) + "|" + throttleKey(ap, s), "contention\t@host|" + s.path);
+  IO.bell = (): void => { /* quiet */ };
+}
 eq("kill default 10 s", String(CMD.killMs), "10000");
 eq("argv literal", argvFor(["/tmp/x/hook", "{rule}", "$(id)", "{tool} {value}"], cmdSubs(ap, v, tr("fire"), s)).join("|"), "/tmp/x/hook|approval|$(id)|Bash 42s");
 const j = alertJson(s, ap, tr("fire"), "Bash pending 42s", 1000000);
