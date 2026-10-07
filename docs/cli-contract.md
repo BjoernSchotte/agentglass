@@ -113,6 +113,40 @@ line per row. `--format json`: `{"rows": [...], "source": …, "scope": …}` �
 
 Exit 0, 2 on a usage error.
 
+## `agentglass wait` — what agents wait on
+
+```
+agentglass wait --json [--since today|7d|30d|YYYY-MM-DD] [--by family|kind|tool] [--filter '<expr>'] [--limit N]
+agentglass wait --format csv --fields key,kind,calls,totalMs
+agentglass wait --now --json
+agentglass wait --check [--family f | --kind k] [--max N]
+```
+
+`--json` prints one object: `period`, `previous` (null when the previous period is past the call-row retention),
+`scope`, `retention`, `agentTime`, `rows`, `heavy`, `now`, `guard`, `warnings`. `--format csv|jsonl|table` prints the
+rows only. Inside an agent, history is the current project (`scope.project`); `now` and `--check` are always host-wide
+(`scope.now` = `"host"`).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `rows[].key` | string | the command family (`pnpm test`, `tsc`, `gh run watch`), kind or tool, by `--by` |
+| `rows[].kind` | string | `test`, `typecheck`, `lint`, `build`, `install`, `ci`, `wait`, `vcs`, `net`, `other`; tools: `user`, `agent`, `web`, `mcp`, `file`, `wait`, `other` (more may be added) |
+| `rows[].heavy` | bool | counts as a heavy command (contention) |
+| `rows[].calls` | number | calls in the period (untimed ones included) |
+| `rows[].totalMs` | number | summed wall time of the timed calls |
+| `rows[].share` | number | `totalMs` ÷ the agents' active time (parallel calls each count) |
+| `rows[].p50Ms`, `rows[].p95Ms` | number\|null | ≈ quantiles from a duration histogram; null = no timed call |
+| `rows[].errors` | number | failed calls |
+| `rows[].trend` | number\|null | `totalMs` ÷ the previous period's − 1; null = no previous data or past retention |
+| `rows[].peak` | number\|null | most calls of this row running at once (heavy calls ≥ `wait.minSec`); null for tools |
+| `agentTime.activeMs` | number | the agents' active time in the period; `toolMs`, `userMs`, `modelMs`, `pollingMs` split it |
+| `now.running` | array | heavy and other commands running now: objects with `session`, `harness`, `family`, `kind`, `heavy` (bool), `ageSec`, `rssMb` (number\|null), `bg` (bool) |
+| `now.heavyRunning` | number | heavy commands running now on this machine |
+| `guard` | string\|null | null, `empty` (no rows) or `retention` (the period starts before the call-row retention) |
+
+Exit 0; `--check`: 3 when the heavy commands running now (of `--family` / `--kind`) reach `--max` (default: the
+`contention` rule's threshold, 3), else 0; 2 on a usage error.
+
 ## `agentglass open <ref>`
 
 ```

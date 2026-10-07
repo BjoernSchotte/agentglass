@@ -11,14 +11,14 @@ import { DICT, nameOf, localOf } from "../usage/facts.ts";
 import type { Rows } from "../usage/rows.ts";
 import { HB, hb } from "../usage/calls.ts";
 import { type Compiled, sessMatches, callsIn, callCutoff } from "../query/eval.ts";
-import { rowFam, famName, famKind, famHeavy, toolFamily, toolKind, waitCfg } from "./family.ts";
+import { rowFam, famName, famKind, famHeavy, famGeneric, toolFamily, toolKind, waitCfg } from "./family.ts";
 import type { CallSpan } from "./overlap.ts";
 
 export interface SlowCall { path: string; t: number; ms: number }
 // one family (shell calls), tool (other calls) or kind: n calls (timed: with a duration), ms total, err failed, agents =
 // distinct top-level sessions; prev* = the previous window; slow = the 10 longest calls
 export interface WRow {
-  key: string; kind: string; heavy: boolean; isTool: boolean; n: number; timed: number; ms: number; max: number;
+  key: string; id: number /* family id (overlap group); -1 tools and kinds */; generic: boolean /* interpreter + script (family.ts) */; kind: string; heavy: boolean; isTool: boolean; n: number; timed: number; ms: number; max: number;
   hist: number[]; err: number; agents: number; prevN: number; prevMs: number; slow: SlowCall[];
 }
 // agent time of the window: active (Day.act), tools = union of the calls' spans, user = questions to the user, polling =
@@ -37,8 +37,8 @@ export interface WaitRun {
 export const STEPS = { n: 0 }; // stepWait calls (the tab's hidden-work check)
 
 function zeros(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(0); return a; }
-function newRow(key: string, kind: string, heavy: boolean, isTool: boolean): WRow {
-  return { key, kind, heavy, isTool, n: 0, timed: 0, ms: 0, max: 0, hist: zeros(HB), err: 0, agents: 0, prevN: 0, prevMs: 0, slow: [] };
+function newRow(key: string, id: number, generic: boolean, kind: string, heavy: boolean, isTool: boolean): WRow {
+  return { key, id, generic, kind, heavy, isTool, n: 0, timed: 0, ms: 0, max: 0, hist: zeros(HB), err: 0, agents: 0, prevN: 0, prevMs: 0, slow: [] };
 }
 // local day keys of [since, until)
 export function dayKeysOf(since: number, until: number): string[] {
@@ -82,10 +82,10 @@ function session(r: WaitRun, s: Sess, idx: number): void {
     if (!cur && !(t >= r.prevSince && t < r.since)) return;
     const ms = rw.ms[i] + 0; const fid = rowFam(rw, i);
     let a: Acc | undefined; let kind = "";
-    if (fid >= 0) { a = r.fams.get(fid); kind = famKind(fid); if (!a) { a = { w: newRow(famName(fid), kind, famHeavy(fid), false), agents: new Set<string>() }; r.fams.set(fid, a); } }
+    if (fid >= 0) { a = r.fams.get(fid); kind = famKind(fid); if (!a) { a = { w: newRow(famName(fid), fid, famGeneric(fid), kind, famHeavy(fid), false), agents: new Set<string>() }; r.fams.set(fid, a); } }
     else {
       const name = nameOf(DICT.tool, rw.tool[i] + 0); const key = toolFamily(name); kind = toolKind(name);
-      a = r.tools.get(key); if (!a) { a = { w: newRow(key, kind, false, true), agents: new Set<string>() }; r.tools.set(key, a); }
+      a = r.tools.get(key); if (!a) { a = { w: newRow(key, -1, false, kind, false, true), agents: new Set<string>() }; r.tools.set(key, a); }
     }
     const w = a.w;
     if (!cur) { w.prevN++; if (ms >= 0) w.prevMs += ms; return; }
@@ -132,7 +132,7 @@ export function waitResult(r: WaitRun): WaitReport {
   const kinds = new Map<string, Acc>(); const hk = waitCfg().heavyKinds;
   const addKind = (acc: Acc): void => {
     const w = acc.w; let k = kinds.get(w.kind);
-    if (!k) { k = { w: newRow(w.kind, w.kind, hk.indexOf(w.kind) >= 0, false), agents: new Set<string>() }; kinds.set(w.kind, k); }
+    if (!k) { k = { w: newRow(w.kind, -1, false, w.kind, hk.indexOf(w.kind) >= 0, false), agents: new Set<string>() }; kinds.set(w.kind, k); }
     const x = k.w; x.n += w.n; x.timed += w.timed; x.ms += w.ms; x.err += w.err; x.prevN += w.prevN; x.prevMs += w.prevMs; if (w.max > x.max) x.max = w.max;
     for (let b = 0; b < HB; b++) x.hist[b] = (x.hist[b] ?? 0) + (w.hist[b] ?? 0);
     for (const c of w.slow) slowIn(x, c);

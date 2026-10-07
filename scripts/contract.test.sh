@@ -96,6 +96,18 @@ eq "cost --by workspace types" "$(types "$t/c.json" key:string,workspaceId:strin
 eq "cost help" "$(helped cost key,costUsd)" ok
 eq "cost help workspaceId" "$(helped cost workspaceId)" ok
 
+# wait: the report object, its rows (a fake HOME without shell calls: the object's top-level fields), --check's exit
+run wait --json > "$t/w.json"
+eq "wait object" "$(python3 -c 'import json,sys;print(",".join(json.load(open(sys.argv[1])).keys()))' "$t/w.json")" "period,previous,scope,retention,agentTime,rows,heavy,now,guard,warnings"
+python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));json.dump({"agentTime":d["agentTime"],"now":d["now"],"guard":d["guard"],"rows":d["rows"]},open(sys.argv[2],"w"))' "$t/w.json" "$t/w2.json"
+python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));json.dump(d["now"],open(sys.argv[2],"w"))' "$t/w.json" "$t/wn.json"
+eq "wait now types" "$(types "$t/wn.json" running:array,heavyRunning:number)" ok
+eq "wait guard empty" "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["guard"])' "$t/w.json")" empty
+set +e; run wait --check > /dev/null 2>&1; rc=$?; run wait --check --max nope > /dev/null 2>&1; rc2=$?; set -e
+eq "wait --check exit" "$rc" 0
+eq "wait --check usage exit" "$rc2" 2
+eq "wait help" "$(helped wait key,kind,heavy,calls,totalMs,share,p50Ms,p95Ms,errors,trend,peak)" ok
+
 # open: in a pipe it prints the resolution; exit codes 0, 3, 4, 2
 set +e
 run open "claude:$A" --new-instance > /dev/null 2>&1; eq "open exit" $? 0

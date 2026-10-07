@@ -463,8 +463,10 @@ harness is pi, day >= -7d               duration > 30s                       con
   state cost tokens tokens.in/out/cache_read/cache_write tools errors error_rate lines lines.added/removed age text
   content worktree project.kind session mux workspace` (`session is claude:3f2a9c`: a run and its subagents; `mux is
   herdr`: the live agent's multiplexer, tmux | herdr | none; `workspace is webapp`: its herdr workspace), day `day weekday
-  day.cost day.tokens day.tools`, call `tool server program command file ext status duration out hour`, `event`
-  (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
+  day.cost day.tokens day.tools`, call `tool server program command family kind file ext status duration out hour`,
+  `event` (`--watch`). `family` is the call's command family (`pnpm test`, `tsc`; other tools: the tool) and `kind`
+  its kind (`test typecheck lint build install ci wait vcs net other`, tools `user agent web mcp file`), as
+  `agentglass wait` groups them: `kind is lint` in Stats drills into lint runs. On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
   "has a day matching all of them". `model` of a call is the model of the message that issued it (Codex: per turn;
   fx: per session; Kiro: unknown).
 - In the TUI, `/` parses as you type; the last valid filter stays while the text does not parse, the error shows
