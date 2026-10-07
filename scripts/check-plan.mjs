@@ -5,7 +5,7 @@
 // transitively; 0.97 correlated with measured build times). A test that builds agentglass weighs one src/main.ts per
 // "# check: builds <k>" (default 1); other tests are light. "bin" and the tests that use the shared binary stay on
 // shard 1.
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 
 const closures = new Map();
@@ -27,15 +27,18 @@ const read = (f) => { try { return readFileSync(f, "utf8"); } catch { return "";
 // text names (its own and its helpers' outside src/main.ts's closure: fixtures, testdata, specs/…/fixtures — the path,
 // its file name, a prefix two directories deep like "testdata/otlp/golden-", or a glob like scripts/*.sh). A shell
 // test when it changed, when a path in the closure of what it builds or runs changed (src/main.ts when it uses the
-// shared binary, builds or runs scriptc build; every .ts path it names), or when it names a changed path. A path
+// shared binary, builds or runs scriptc build; every .ts path it names), or when it names a changed path; its text
+// includes the scripts it names, transitively. Shell variables are no part of a path ("$here/testdata/"). A path
 // that shapes every job (check.sh, this file, check-lock.sh, toolchain.sh, build-info.sh, build.sh, CI) or a non-TS
 // file under src/ (ffi.json, libproc.c) runs everything, and so does a changed path no job names (unknown reach),
-// unless it is documentation (*.md, docs/, specs/) or TypeScript nothing imports. "bin" runs when a selected test uses
+// unless it is documentation (*.md, docs/; a spec's fixtures are not) or TypeScript nothing imports. "bin" runs when a selected test uses
 // the shared binary, "release" when src/main.ts's closure changed.
-const DOC = /(^|\/)[^/]*\.md$|^docs\/|^specs\/|^LICENSE$|^\.gitignore$/;
+const DOC = /\.md$|^docs\/|^LICENSE$|^\.gitignore$/;
+// a shell or template variable is no part of a path: "$here/testdata/x/" names testdata/x/, not here/testdata/x/
+const unvar = (s) => s.replace(/\$\{?\w+\}?/g, " ");
 function mention(text, c) { // the name under which text refers to changed path c, or ""
   const doc = DOC.test(c), base = c.slice(c.lastIndexOf("/") + 1);
-  for (let t of text.match(/[\w.@*-]*(?:\/[\w.@*-]*)+/g) || []) { // path-like words: a/b, "$here"/../c/d, x/*.sh
+  for (let t of unvar(text).match(/[\w.@*-]*(?:\/[\w.@*-]*)+/g) || []) { // path-like words: a/b, "$here"/../c/d, x/*.sh
     while (/^(\/|\.\.?\/)/.test(t)) t = t.replace(/^(\/|\.\.?\/)/, "");
     if (!t) continue;
     if (t.includes("*")) { // a glob under a named directory: scripts/*.sh (not "*.json", nor a comment's "/**")
@@ -48,6 +51,8 @@ function mention(text, c) { // the name under which text refers to changed path 
   if (!doc && base.length >= 4 && new RegExp("(^|[^\\w.-])" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^\\w.-])").test(text)) return base;
   return "";
 }
+// the scripts a shell test can run besides itself (scripts/*, not the tests, not the check machinery)
+const HELPERS = readdirSync("scripts").filter((n) => !n.endsWith(".test.sh") && !/^(check|check-plan|check-lock)\./.test(n)).map((n) => "scripts/" + n);
 function changed(paths, jobs) {
   const all = paths.find((c) => /^(build\.sh|scripts\/(check|check-plan|check-lock|toolchain|build-info)\.(sh|mjs)|\.github\/)/.test(c));
   if (all) return [["ALL", all + " changed: it shapes every job"]];
@@ -64,8 +69,16 @@ function changed(paths, jobs) {
       entries = [f];
       for (const g of closureOf(f).files) if (g !== f && !main.has(g)) text += "\n" + read(g); // its helpers
     } else { // what the test builds or runs: the shared binary / build.sh / scriptc build, and every .ts it names
-      entries = /AGENTGLASS_BIN|build\.sh|scriptc build/.test(src) ? ["src/main.ts"] : [];
-      for (let t of src.match(/[\w.\/-]+\.ts\b/g) || []) {
+      // its text includes the scripts it names, transitively ("$here/scripts/fixture-agents.sh" builds fake-agent.c)
+      for (let more = true; more;) {
+        more = false;
+        for (const h of HELPERS) {
+          const m = text.includes("\0" + h) ? "" : mention(text, h);
+          if (m && !m.includes("*")) { text += "\n\0" + h + "\n" + read(h); more = true; } // (not each of scripts/*.sh)
+        }
+      }
+      entries = /AGENTGLASS_BIN|build\.sh|scriptc build/.test(text) ? ["src/main.ts"] : [];
+      for (let t of unvar(text).match(/[\w.\/-]+\.ts\b/g) || []) {
         while (/^(\/|\.\.?\/)/.test(t)) t = t.replace(/^(\/|\.\.?\/)/, "");
         if (!entries.includes(t) && read(t)) entries.push(t);
       }

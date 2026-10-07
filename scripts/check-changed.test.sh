@@ -41,6 +41,13 @@ has check:src/features/otlp/otlp.check.ts golden; has test:scripts/otlp-export.t
 plan testdata/hub/pb/logs.bin; has test:scripts/receive.test.sh logs.bin
 plan specs/pi-opencode-harnesses/fixtures/opencode.sql; has check:src/harness/opencode.check.ts opencode.sql
 plan docs/cli-contract.md; has test:scripts/contract.test.sh cli-contract.md
+# by a directory after a shell variable ("$here/testdata/otlp/fixtures/$h/."), not "here/testdata/…"
+plan testdata/otlp/golden-gemini.json; has test:scripts/open-trace.test.sh golden-gemini
+plan testdata/otlp/fixtures/claude/.claude.json; has test:scripts/open-trace.test.sh claude-fixture; has test:scripts/otlp-export.test.sh claude-fixture
+# a spec's fixtures are no documentation: read through a directory prefix (FX + "/active.json")
+plan specs/pi-opencode-depth/fixtures/oc-http/active.json; has check:src/harness/opencode-http.check.ts oc-http
+# through the script a test runs (fixture-agents.sh compiles fake-agent.c), not the full suite
+plan scripts/fake-agent.c; has test:scripts/fixture-agents.test.sh fake-agent.c; hasnt ALL fake-agent.c
 
 # the whole suite: what shapes every job, CI, non-TS sources, and anything no job names
 n=nobody; for c in scripts/check.sh scripts/check-plan.mjs scripts/check-lock.sh scripts/toolchain.sh "build"".sh" .github/workflows/ci.yml \
@@ -63,7 +70,7 @@ for f in $bin_tests; do has "test:$f" "every source changed"; done
 unset AGENTGLASS''_BIN AGENTGLASS_OUT CHECK_SHARD CHECK_RELEASE_OUT CHECK_FFI # (split: a test naming it runs the binary)
 r="$t/repo"; mkdir -p "$r/docs"
 cp -R scripts src testdata "build"".sh" .gitignore "$r/"; cp docs/cli-contract.md "$r/docs/"; rm -f "$r/src/build-info.ts"
-echo "# r" > "$r/README.md"
+d=specs/notes; mkdir "$r/specs"; echo "# r" > "$r/$d.md" # (a doc no job names: built at run time)
 cd "$r"
 g() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g init -q; g add -A; g commit -qm base
@@ -80,9 +87,14 @@ g commit -qam gzip # committed: base...HEAD
 run HEAD~1; want check:src/util/gzip.check.ts committed; want test:scripts/gzip.test.sh committed
 printf '#!/bin/sh\necho ok\n' > scripts/zz-new.test.sh # untracked
 run HEAD; want test:scripts/zz-new.test.sh untracked; wantnt check:src/util/gzip.check.ts untracked
-rm scripts/zz-new.test.sh; echo more >> README.md # docs only
+rm scripts/zz-new.test.sh
+g mv src/util/gzip.ts src/util/gzip2.ts # renamed (uncommitted): the old path's importers too
+run HEAD; want check:src/util/gzip.check.ts renamed; g mv src/util/gzip2.ts src/util/gzip.ts
+rm testdata/hub/pb/logs.bin # deleted: who read it
+run HEAD; want test:scripts/receive.test.sh deleted; g checkout -q testdata/hub/pb/logs.bin
+echo more >> "$d.md" # docs only
 run HEAD; grep -q 'nothing to run' "$t/out" || bad "docs only: $(cat "$t/out")"; wantnt bin "docs only"
-g checkout -q README.md; echo '// x' >> scripts/check-plan.mjs # the planner itself: everything
+g checkout -q "$d.md"; echo '// x' >> scripts/check-plan.mjs # the planner itself: everything
 run HEAD; grep -q 'full suite' "$t/out" || bad "planner changed: $(head -3 "$t/out")"; want check:src/util/text.check.ts "planner changed"
 g checkout -q scripts/check-plan.mjs
 sh scripts/check.sh --changed no-such-ref --dry-run > "$t/out" 2>&1; rc=$?
