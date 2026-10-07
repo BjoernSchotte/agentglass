@@ -5,13 +5,13 @@
 // ids at read time (family.ts memo); nothing here is cached or written.
 import type { Sess } from "../../model/types.ts";
 import { sessions, parentOf } from "../../model/sessions.ts";
-import { ledger } from "../usage/ledger.ts";
+import { ledger, unread, callsOf } from "../usage/ledger.ts";
 import { spanMin } from "../usage/record.ts";
 import { DICT, nameOf, localOf } from "../usage/facts.ts";
-import type { Rows } from "../usage/rows.ts";
+import { type Rows, KIND_CMD } from "../usage/rows.ts";
 import { HB, hb } from "../usage/calls.ts";
 import { type Compiled, sessMatches, callsIn, callCutoff } from "../query/eval.ts";
-import { rowFam, famName, famKind, famHeavy, famGeneric, toolFamily, toolKind, waitCfg } from "./family.ts";
+import { rowFam, cmdFam, famKnown, famName, famKind, famHeavy, famGeneric, toolFamily, toolKind, waitCfg } from "./family.ts";
 import type { CallSpan } from "./overlap.ts";
 
 export interface SlowCall { path: string; t: number; ms: number; id: string /* the harness call id (transcript focus) */ }
@@ -32,7 +32,7 @@ const SLOW = 10;
 interface Acc { w: WRow; agents: Set<string> }
 export interface WaitRun {
   f: Compiled; since: number; until: number; prevSince: number; cur: Set<string>; both: Set<string>; cut: number; minMs: number;
-  ss: Sess[]; i: number; fams: Map<number, Acc>; tools: Map<string, Acc>; split: Split; spans: CallSpan[]; roots: Set<string>; done: boolean;
+  ss: Sess[]; i: number; phase: number /* ss[i]: 0 to read, 1 rows read, 2 families being worked out */; cmds: number[]; ci: number; fams: Map<number, Acc>; tools: Map<string, Acc>; split: Split; spans: CallSpan[]; roots: Set<string>; done: boolean;
 }
 export const STEPS = { n: 0 }; // stepWait calls (the tab's hidden-work check)
 
@@ -51,7 +51,7 @@ export function newWaitRun(f: Compiled, since: number, until: number): WaitRun {
   const prevSince = since - (until - since);
   const cur = new Set<string>(dayKeysOf(since, until)); const both = new Set<string>(dayKeysOf(prevSince, until));
   const ss: Sess[] = []; for (const s of sessions.values()) if (!s.host) ss.push(s);
-  return { f, since, until, prevSince, cur, both, cut: callCutoff(), minMs: waitCfg().minSec * 1000, ss, i: 0, fams: new Map<number, Acc>(), tools: new Map<string, Acc>(),
+  return { f, since, until, prevSince, cur, both, cut: callCutoff(), minMs: waitCfg().minSec * 1000, ss, i: 0, phase: 0, cmds: [], ci: 0, fams: new Map<number, Acc>(), tools: new Map<string, Acc>(),
     split: { activeMs: 0, toolMs: 0, userMs: 0, pollMs: 0, modelMs: 0 }, spans: [], roots: new Set<string>(), done: false };
 }
 function slowIn(w: WRow, c: SlowCall): void {
@@ -112,12 +112,41 @@ function session(r: WaitRun, s: Sess, idx: number): void {
   sp.modelMs = sp.modelMs + Math.max(0, act - tool);
 }
 // one session at a time until budgetMs passed (0: exactly one); true when finished
+// a session whose call rows this run has not read yet and that has a day in the windows: its calls file is read first,
+// as a step of its own (the read interns its commands; their families are worked out before the session's pass)
+function unreadIn(r: WaitRun, s: Sess): boolean {
+  if (!unread.has(s.path)) return false;
+  const a = ledger.get(s.path); if (!a) return false;
+  for (const k of a.days.keys()) if (r.both.has(k)) return true;
+  return false;
+}
+// the command ids of s's rows in the windows whose family is not worked out yet
+function newCmds(r: WaitRun, s: Sess): number[] {
+  const o: number[] = []; const seen = new Set<number>();
+  callsIn(r.f, s, r.both, r.cut, (rw: Rows, i: number): void => {
+    const e = i + 1 < rw.n ? rw.lo[i + 1] + 0 : rw.nl;
+    for (let k = rw.lo[i] + 0; k < e; k++) { const v = rw.li[k] + 0; if (v % 4 === KIND_CMD) { const id = (v - KIND_CMD) / 4; if (!famKnown(id) && !seen.has(id)) { seen.add(id); o.push(id); } } }
+  });
+  return o;
+}
+// per session: its calls file read (a step of its own), then the families of its new commands (in slices: a session
+// with thousands of new commands does not blow a frame), then its pass
 export function stepWait(r: WaitRun, budgetMs: number): boolean {
   STEPS.n++;
   const until = Date.now() + budgetMs;
   while (!r.done) {
     if (r.i >= r.ss.length) { r.done = true; break; }
-    const s = r.ss[r.i]; const idx = r.i; r.i++;
+    const s = r.ss[r.i];
+    if (s && r.phase === 0 && sessMatches(r.f, s)) {
+      r.phase = 1;
+      if (unreadIn(r, s)) { callsOf(s); if (Date.now() >= until) break; }
+    }
+    if (s && r.phase === 1 && sessMatches(r.f, s)) { r.cmds = newCmds(r, s); r.ci = 0; r.phase = 2; }
+    if (r.phase === 2) {
+      while (r.ci < r.cmds.length) { cmdFam((r.cmds[r.ci] ?? -1) + 0); r.ci++; if ((r.ci & 63) === 0 && Date.now() >= until) break; }
+      if (r.ci < r.cmds.length) break;
+    }
+    const idx = r.i; r.i++; r.phase = 0; r.cmds = [];
     if (s) session(r, s, idx);
     if (Date.now() >= until) break;
   }

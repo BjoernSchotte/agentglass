@@ -70,32 +70,34 @@ export function setWaitCfgForTest(c: WaitCfg | null): void { cfg = c; memo = new
 // joined the lines: "<<WORD" up to a later " WORD" token, or the end)
 function isSp(c: number): boolean { return c === 32 || c === 9; }
 export function segments(line: string): string[][] {
-  const out: string[][] = []; let ws: string[] = []; let w = ""; let inW = false; let q = 0;
+  const out: string[][] = []; let ws: string[] = []; let w = ""; let inW = false; let r0 = -1; // r0: start of a plain run not yet in w
   const L = line.length; let i = 0;
-  const endWord = (): void => { if (inW) ws.push(w); w = ""; inW = false; };
-  const endSeg = (): void => { endWord(); if (ws.length) out.push(ws); ws = []; };
+  const flush = (j: number): void => { if (r0 >= 0) { w += line.slice(r0, j); r0 = -1; } };
+  const endWord = (j: number): void => { flush(j); if (inW) ws.push(w); w = ""; inW = false; };
+  const endSeg = (j: number): void => { endWord(j); if (ws.length) out.push(ws); ws = []; };
   while (i < L) {
     const c = line.charCodeAt(i);
-    if (q) { // inside quotes: '…' literal, "…" with \" escapes
-      if (c === q) { q = 0; i++; continue; }
-      if (q === 34 && c === 92 && i + 1 < L) { w += line.charAt(i + 1); i += 2; continue; }
-      w += line.charAt(i); i++; continue;
+    if (c === 39) { flush(i); inW = true; const e = line.indexOf("'", i + 1); if (e < 0) { w += line.slice(i + 1); i = L; } else { w += line.slice(i + 1, e); i = e + 1; } continue; } // '…' literal
+    if (c === 34) { // "…" with \" escapes
+      flush(i); inW = true; let j = i + 1; let s0 = j;
+      while (j < L) { const d = line.charCodeAt(j); if (d === 34) break; if (d === 92 && j + 1 < L) { w += line.slice(s0, j) + line.charAt(j + 1); j += 2; s0 = j; continue; } j++; }
+      w += line.slice(s0, j); i = j < L ? j + 1 : L; continue;
     }
-    if (c === 39 || c === 34) { q = c; inW = true; i++; continue; }
-    if (c === 92 && i + 1 < L) { w += line.charAt(i + 1); inW = true; i += 2; continue; }
-    if (isSp(c)) { endWord(); i++; continue; }
-    if (c === 60 && line.charCodeAt(i + 1) === 60 && line.charCodeAt(i + 2) !== 60) { i = heredoc(line, i + 2); endWord(); continue; } // <<WORD … WORD
-    if (c === 60 && line.charCodeAt(i + 1) === 60) { w += "<<<"; inW = true; i += 3; continue; } // <<< here-string: a redirect word
-    if (c === 59 || c === 124) { endSeg(); i += line.charCodeAt(i + 1) === c || (c === 124 && line.charCodeAt(i + 1) === 38) ? 2 : 1; continue; } // ; ;; | || |&
+    if (c === 92 && i + 1 < L) { flush(i); w += line.charAt(i + 1); inW = true; i += 2; continue; }
+    if (isSp(c)) { endWord(i); i++; continue; }
+    if (c === 60 && line.charCodeAt(i + 1) === 60 && line.charCodeAt(i + 2) !== 60) { endWord(i); i = heredoc(line, i + 2); continue; } // <<WORD … WORD
+    if (c === 60 && line.charCodeAt(i + 1) === 60) { flush(i); w += "<<<"; inW = true; i += 3; continue; } // <<< here-string: a redirect word
+    if (c === 59 || c === 124) { endSeg(i); i += line.charCodeAt(i + 1) === c || (c === 124 && line.charCodeAt(i + 1) === 38) ? 2 : 1; continue; } // ; ;; | || |&
     if (c === 38) { // && and a lone & separate; 2>&1, &>, >&2 belong to a redirect
       const p = i > 0 ? line.charCodeAt(i - 1) : 0; const n = line.charCodeAt(i + 1);
-      if (n === 38) { endSeg(); i += 2; continue; }
-      if (p === 62 || p === 60 || n === 62) { w += "&"; inW = true; i++; continue; }
-      endSeg(); i++; continue;
+      if (n === 38) { endSeg(i); i += 2; continue; }
+      if (p === 62 || p === 60 || n === 62) { if (r0 < 0) r0 = i; inW = true; i++; continue; }
+      endSeg(i); i++; continue;
     }
-    w += line.charAt(i); inW = true; i++;
+    if (r0 < 0) r0 = i;
+    inW = true; i++;
   }
-  endSeg();
+  endSeg(L);
   return out;
 }
 // after "<<": skip "-", blanks and the delimiter word (quoted or not); then past its closing " WORD" token, or to the end
@@ -287,7 +289,13 @@ function parts(t: string): string[] {
   for (let i = 0; i <= t.length; i++) { const c = i < t.length ? t.charAt(i) : ":"; if (c === ":" || c === "." || c === "/" || c === "_" || c === "-") { if (i > s) o.push(t.slice(s, i)); s = i + 1; } }
   return o;
 }
+const KMEMO = new Map<string, string>(); // family name → built-in kind (families repeat across many command lines)
 export function kindOfName(name: string): string {
+  const hit = KMEMO.get(name); if (hit !== undefined) return hit;
+  const k = kindOf0(name); if (KMEMO.size > 50000) KMEMO.clear();
+  KMEMO.set(name, k); return k;
+}
+function kindOf0(name: string): string {
   const toks = name.split(" ");
   const ps: string[] = []; for (const t of toks) for (const x of parts(t)) ps.push(x);
   if (ps.indexOf("mcp") >= 0) return "other"; // an MCP server (playwright-mcp) is never a check, whatever its name says
@@ -398,6 +406,8 @@ export function cmdFam(cmdId: number): number {
   const id = famIdOf(familyOf(nameOf(DICT.cmd, cmdId), waitCfg()));
   memo[cmdId] = id + 1; return id;
 }
+// is the family of this command id worked out already (no normalisation on the next rowFam)?
+export function famKnown(cmdId: number): boolean { return cmdId < 0 || (cmdId < memo.length && memo[cmdId] > 0); }
 // family id of row i of r; -1 = the row has no shell command (a non-shell tool: toolFamily / toolKind of its tool)
 export function rowFam(r: Rows, i: number): number {
   if (i < 0 || i >= r.n) return -1;

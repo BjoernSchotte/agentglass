@@ -323,6 +323,7 @@ export const WAIT_TAB: Tab = { name: "Wait", render: () => { if (WV.detail) rend
 H.tabs.push(WAIT_TAB);
 function mine(): boolean { return S.mode === "list" && S.tab - 2 === H.tabs.indexOf(WAIT_TAB); }
 H.backlog.push(() => J.run !== null && mine()); // a report in slices: tick at the burst cadence until it is done
+H.onTick.push(() => { if (J.run && mine()) work(tabFilter("Wait", "stats")); }); // a slice per tick too, not only per frame (nothing while hidden)
 H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || S.tab - 2 !== H.tabs.indexOf(WAIT_TAB)) return [];
   if (WV.detail) return [["↑↓", "call"], ["↵", "open at the call"], ["esc", "back"], ["d/w/m/a", "period"]];
