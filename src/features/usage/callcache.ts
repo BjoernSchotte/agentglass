@@ -129,20 +129,24 @@ function refIds(d: Dict, rs: number[], pl: number[], rl: string[], tab: Map<numb
 }
 // + 0: scriptc cannot index with a bare element read that came out of this same function (SC1090)
 function at(m: number[], i: number): number { if (i < 0 || i >= m.length) return -1; return m[i] + 0; }
+const LITE_SKIP = new Set<string>(["model", "prog", "file", "filep", "filel", "mo", "mq", "ou", "pg", "fi"]);
 // a calls file's members, read with the pull reader (util/jsonscan.ts: no JSON tree); a missing column reads as empty
 interface CF {
   v: number; path: string; off: number; cp: string; tool: string[]; model: string[]; prog: string[]; cmdl: string[]; filel: string[]; ci: string[];
   cmd: number[]; cmdp: number[]; file: number[]; filep: number[]; t: number[]; to: number[]; mo: number[]; mq: number[]; ms: number[]; er: number[]; ou: number[];
   pg: number[][]; cm: number[][]; fi: number[][];
 }
-function readCF(body: string): CF | null {
+// lite (scanCalls): only what the wait report reads (times, tools, durations, results, call ids, command refs; the command
+// texts only when texts); the other members are skipped unparsed
+function readCF(body: string, lite: boolean, texts: boolean): CF | null {
   const f: CF = { v: -1, path: "", off: -1, cp: "", tool: [], model: [], prog: [], cmdl: [], filel: [], ci: [], cmd: [], cmdp: [], file: [], filep: [], t: [], to: [], mo: [], mq: [], ms: [], er: [], ou: [], pg: [], cm: [], fi: [] };
   const c = cursor(body);
   if (!eat(c, 123)) return null;
   if (eat(c, 125)) return f;
   for (;;) {
     const k = sstr(c); if (!c.ok || !eat(c, 58)) return null;
-    if (k === "v") f.v = snum(c); else if (k === "off") f.off = snum(c); else if (k === "path") f.path = sstr(c); else if (k === "cp") f.cp = sstr(c);
+    if (lite && (LITE_SKIP.has(k) || (!texts && (k === "cmdp" || k === "cmdl")))) skip(c);
+    else if (k === "v") f.v = snum(c); else if (k === "off") f.off = snum(c); else if (k === "path") f.path = sstr(c); else if (k === "cp") f.cp = sstr(c);
     else if (k === "tool") f.tool = sstrs(c); else if (k === "model") f.model = sstrs(c); else if (k === "prog") f.prog = sstrs(c);
     else if (k === "cmdl") f.cmdl = sstrs(c); else if (k === "filel") f.filel = sstrs(c); else if (k === "ci") f.ci = sstrs(c);
     else if (k === "cmd") f.cmd = snums(c); else if (k === "cmdp") f.cmdp = snums(c); else if (k === "file") f.file = snums(c); else if (k === "filep") f.filep = snums(c);
@@ -159,7 +163,7 @@ function readCF(body: string): CF | null {
 // null = missing, corrupt, written for another path or another ledger offset, or referring to texts this ledger state lacks:
 // the caller re-indexes the session. a = the session's ledger entry the file must be consistent with (off, day counters).
 export function decodeCalls(body: string, path: string, a: Acc): Rows | null {
-  const o = readCF(body);
+  const o = readCF(body, false, false);
   if (!o || o.v !== FORMAT || o.path !== path || o.off !== a.off) return null;
   const tg = globalIds(DICT.tool, o.tool); const mg = globalIds(DICT.model, o.model); const pg = globalIds(DICT.prog, o.prog);
   const rt = refTables(a);
@@ -182,6 +186,41 @@ export function decodeCalls(body: string, path: string, a: Acc): Rows | null {
   }
   out.n = n; out.nl = k;
   return out;
+}
+
+// A calls file read for one pass, nothing kept (agent-wait: a period's report reads thousands of files once): rows as plain
+// columns with local ids (cm: indexes into the file's command list, ncmd long; an index out of range names nothing, as in
+// decodeCalls), no interning into DICT and no Rows; cmds = the command texts, only when asked (resolving references
+// decodes the session's day counters), else empty. Valid exactly when decodeCalls is (null: read it through callsOf).
+export interface CallScan { n: number; t: number[]; to: number[]; tools: string[]; ms: number[]; er: number[]; cp: string; ci: string[]; cm: number[][]; ncmd: number; cmds: string[] }
+export function scanCalls(body: string, path: string, a: Acc, texts: boolean): CallScan | null {
+  const o = readCF(body, true, texts);
+  if (!o || o.v !== FORMAT || o.path !== path || o.off !== a.off) return null;
+  const n = o.t.length;
+  for (const col of [o.to, o.ms, o.er]) if (col.length !== n) return null;
+  if (o.ci.length !== n || o.cm.length !== n) return null;
+  let cmds: string[] = [];
+  if (texts) {
+    const ls = frontIn(o.cmdp, o.cmdl); if (!ls) return null;
+    const tab = cmdRefs(a);
+    for (const r of o.cmd) {
+      if (r < 0) { const i = -r - 1; if (i >= ls.length) return null; cmds.push(ls[i] ?? ""); continue; }
+      const hit = tab.get(r); if (hit === undefined || hit === AMBIG) return null; cmds.push(hit);
+    }
+  }
+  const t: number[] = []; let tt = 0; for (let i = 0; i < n; i++) { tt += at(o.t, i); t.push(tt); }
+  return { n, t, to: o.to, tools: o.tool, ms: o.ms, er: o.er, cp: o.cp, ci: o.ci, cm: o.cm, ncmd: o.cmd.length, cmds };
+}
+// refTables' command half (a day not decoded yet is decoded for this and dropped again)
+function cmdRefs(a: Acc): Map<number, string> {
+  const m = new Map<number, string>();
+  for (const d of a.days.values()) for (const k of peekHeavy(d).cmds.keys()) refInto(m, k);
+  return m;
+}
+export function scanCallsFrom(dir: string, path: string, a: Acc, texts: boolean): CallScan | null {
+  const f = fileOf(dir, path);
+  let size = 0; try { size = statSync(f).size; } catch (e) { return null; }
+  return scanCalls(readText(f, 0, size).trim(), path, a, texts);
 }
 
 // drop rows older than cutoff (rows are in call order, but a restored session may interleave: filter, not slice); the

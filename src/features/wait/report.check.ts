@@ -2,15 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { fxReset, fxSession, isoAt } from "../query/fixture.ts";
 import { sessions } from "../../model/sessions.ts";
-import { ledger, callsOf } from "../usage/ledger.ts";
+import { ledger, callsOf, unread } from "../usage/ledger.ts";
 import { startOfDay, spanMin } from "../usage/record.ts";
-import { callList } from "../usage/rows.ts";
+import { type Rows, callList, newRows } from "../usage/rows.ts";
 import { DICT, nameOf, localOf } from "../usage/facts.ts";
-import { setCallDaysForTest } from "../usage/callcache.ts";
+import { setCallDaysForTest, saveCallsTo, CALLS_DIR, CACHE_DIR } from "../usage/callcache.ts";
+import { existsSync } from "node:fs";
 import { compile, EMPTY } from "../query/eval.ts";
 import { parse } from "../query/parse.ts";
-import { type WRow, type SlowCall, newWaitRun, stepWait, waitResult, trendOf, shareOf } from "./report.ts";
-import { parseWaitCfg, setWaitCfgForTest } from "./family.ts";
+import { type WRow, type SlowCall, newWaitRun, stepWait, waitResult, trendOf, shareOf, dropWaitBase, BASE_STATS } from "./report.ts";
+import { parseWaitCfg, setWaitCfgForTest, FAM_STATS } from "./family.ts";
+import { famCacheFile, setFamCacheDirForTest } from "./famcache.ts";
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -124,6 +126,31 @@ eq("filter tool", rt.fams.length + " " + rt.tools.map((w: WRow): string => w.key
 const f0 = EMPTY; const r1 = newWaitRun(f0, since, until); let steps = 0; while (!stepWait(r1, 0)) steps++;
 eq("steps", String(steps >= 2), "true");
 eq("resumable = one pass", JSON.stringify(waitResult(r1)), JSON.stringify(rep));
+
+// calls files not in memory: scanned for the pass alone (no rows kept), the families stored for the next run; both
+// runs equal the in-memory report. Then the static part: a report with nothing changed starts from it and is the same.
+const kept = new Map<string, Rows>();
+for (const s of sessions.values()) { const a = ledger.get(s.path); if (!a) continue; saveCallsTo(CALLS_DIR, s.path, a); kept.set(s.path, a.rows); a.rows = newRows(); unread.add(s.path); }
+const want = JSON.stringify(rep);
+dropWaitBase(); FAM_STATS.norm = 0;
+const sc1 = full("");
+eq("scanned = in memory", JSON.stringify(sc1), want);
+eq("scanned: families worked out", String(FAM_STATS.norm > 0), "true");
+eq("scanned: rows not kept", String([...sessions.values()].every((s) => unread.has(s.path) && (ledger.get(s.path)?.rows.n ?? 0) === 0)), "true");
+eq("families stored", String(existsSync(famCacheFile())), "true");
+setFamCacheDirForTest(CACHE_DIR); dropWaitBase(); FAM_STATS.norm = 0;
+const sc2 = full("");
+eq("stored families = in memory", JSON.stringify(sc2), want);
+eq("stored families: none normalised", String(FAM_STATS.norm), "0");
+const u0 = BASE_STATS.used; const sc3 = full("");
+eq("static part reused", String(BASE_STATS.used - u0), "1");
+eq("static part = in memory", JSON.stringify(sc3), want);
+// a session that changed (its ledger entry moved): the static part is not reused
+for (const s of sessions.values()) { const a = ledger.get(s.path); if (a) { a.rows = kept.get(s.path) ?? a.rows; unread.delete(s.path); } }
+const ab = ledger.get([...sessions.keys()][0] ?? ""); if (ab) ab.off++;
+const u1 = BASE_STATS.used; full(""); eq("changed session: static part dropped", String(BASE_STATS.used - u1), "0");
+if (ab) ab.off--;
+eq("filtered: scanned = in memory", (() => { for (const s of sessions.values()) { const a = ledger.get(s.path); if (a) { saveCallsTo(CALLS_DIR, s.path, a); a.rows = newRows(); unread.add(s.path); } } return JSON.stringify(full("cwd is /w/b")); })(), JSON.stringify(rb));
 
 setWaitCfgForTest(null);
 console.log(bad ? bad + " failed" : "report: all checks passed");

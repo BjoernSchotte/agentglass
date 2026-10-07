@@ -15,7 +15,6 @@ import { agentHost, agentScope, cliError } from "../agentenv.ts";
 import { opt, optTable, setOptions, helpOf, wantsHelp, addCmd } from "../clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "../format.ts";
 import { parseSince } from "../queries.ts";
-import { rowsOf } from "../usage/ledger.ts";
 import { pct, fmtMs } from "../usage/calls.ts";
 import { callDays, callCutoff } from "../usage/callcache.ts";
 import { cliFilter } from "../query/cli.ts";
@@ -160,7 +159,8 @@ export function waitJson(rep: WaitReport, ov: GroupOverlap[], live: LiveWait | n
     warnings: waitCfg().diags.slice(),
   };
 }
-// every session that can hold a row of either window, indexed to its end (cheap clauses of the filter pick them first)
+// every session that can hold a row of either window, indexed to its end (cheap clauses of the filter pick them first);
+// a session with nothing new keeps its rows on disk: the report scans its calls file (report.ts)
 export function indexFor(since: number, until: number, exprs: string[]): void {
   const cf = cliFilter(exprs, "", false, false, false);
   const from = since - (until - since) - 3600000;
@@ -168,7 +168,7 @@ export function indexFor(since: number, until: number, exprs: string[]): void {
     if (s.host || s.mtime < from) continue;
     if (cf.needsHead && !s.headDone) loadHead(s);
     if (!sessMatches(cf.cheap, s)) continue;
-    loadHead(s); rowsOf(s); complete(s);
+    loadHead(s); complete(s);
   }
 }
 export function runReport(since: number, until: number, exprs: string[]): WaitReport {
