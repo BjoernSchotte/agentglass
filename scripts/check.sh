@@ -154,8 +154,12 @@ all="$([ -z "$bin" ] || echo bin) $([ -z "${CHECK_RELEASE_OUT:-}" ] || echo rele
 all="$all $(for f in $tests; do echo "test:$f"; done) $(for f in $checks; do echo "check:$f"; done)"
 [ -z "$CHECK_FFI" ] || all="$all cc:src/platform/darwin/libproc.c"
 if [ -n "$changed" ]; then # keep the jobs the change reaches; say which and why
-  { git diff --name-only --no-renames "$base...HEAD"; git diff --name-only --no-renames HEAD; git ls-files --others --exclude-standard; } |
-    sort -u > "$CHECK_OUT/changed"
+  # each git must succeed: a failed diff (no merge base, a shallow clone) must not shrink the selection
+  git diff --name-only --no-renames "$base...HEAD" > "$CHECK_OUT/changed" ||
+    { echo "check.sh --changed: no diff against '$base' (no common history? git fetch --unshallow origin)" >&2; exit 2; }
+  { git diff --name-only --no-renames HEAD && git ls-files --others --exclude-standard; } >> "$CHECK_OUT/changed" ||
+    { echo "check.sh --changed: git cannot list the uncommitted changes" >&2; exit 2; }
+  sort -u -o "$CHECK_OUT/changed" "$CHECK_OUT/changed"
   nf=$(grep -c . "$CHECK_OUT/changed" || true); nc=$(echo "$checks" | grep -c .); nt=$(echo "$tests" | grep -c .)
   if [ "$nf" = 0 ]; then echo "--changed $base: nothing changed: nothing to run"; exit 0; fi
   echo "--changed $base: $nf changed: $(head -5 "$CHECK_OUT/changed" | paste -sd' ' -)$([ "$nf" -le 5 ] || echo " …")"

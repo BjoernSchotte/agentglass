@@ -87,6 +87,10 @@ run HEAD; grep -q 'full suite' "$t/out" || bad "planner changed: $(head -3 "$t/o
 g checkout -q scripts/check-plan.mjs
 sh scripts/check.sh --changed no-such-ref --dry-run > "$t/out" 2>&1; rc=$?
 [ $rc = 2 ] && grep -q "no-such-ref" "$t/out" || bad "bad base: exit $rc: $(cat "$t/out")"
+# no merge base (unrelated history, a shallow clone): an error, never a smaller selection
+b0=$(git symbolic-ref --short HEAD); g checkout -q --orphan unrelated; g commit -qm other; g checkout -q "$b0"
+sh scripts/check.sh --changed unrelated --dry-run > "$t/out" 2>&1; rc=$?
+[ $rc = 2 ] && grep -q "unrelated" "$t/out" || bad "no merge base: exit $rc: $(cat "$t/out")"
 sh scripts/check.sh --bogus > "$t/out" 2>&1; rc=$?; [ $rc = 2 ] && grep -q 'usage' "$t/out" || bad "unknown argument: exit $rc"
 
 [ $fail = 0 ] && echo "check --changed: all tests passed"
