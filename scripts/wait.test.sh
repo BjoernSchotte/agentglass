@@ -87,5 +87,17 @@ eq "help fields" "$(run --help --format json | jq -c '.commands[] | select(.cmd 
 # a bad wait config entry: one warning, the rest works
 printf '{"wait":{"families":[{"match":""}],"minSec":5}}\n' > "$t/config.json"
 eq "warnings" "$(run wait --json 2>/dev/null | jq -r '.warnings | length')" 1
+# --watch evaluates the contention rule (heavy commands host-wide, as the TUI's tick): three fake agents each run
+# `sh -c "sleep …"`, a user family rule makes sleep a heavy test run; the rule fires on the agents' sessions
+fx="$t/fx"; sh "$here/scripts/fixture-agents.sh" start "$fx" --agents 3 --history 0 > /dev/null
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; sh "$here/scripts/fixture-agents.sh" stop "$fx" > /dev/null 2>&1 || true; rm -rf "$t"' EXIT
+printf '{"wait":{"families":[{"match":"sleep ...","family":"slow suite","kind":"test"}]}}\n' > "$t/config.json"
+printf '{"version":1,"builtins":false,"rules":[{"id":"contention","metric":"contention","op":">=","degraded":3,"for":"0s","ack":"none","message":"{value} heavy: {cmd}"}]}\n' > "$t/rules.json"
+env -i HOME="$fx/home" PATH="$PATH" AGENTGLASS_CACHE_DIR="$t/cache2" AGENTGLASS_CONFIG="$t/config.json" AGENTGLASS_RULES="$t/rules.json" AGENTGLASS_RUN_DIR="$t/run" \
+  AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 AGENTGLASS_AGENT=0 AGENTGLASS_HERDR=off "$t/ag" --watch > "$t/watch.jsonl" 2> /dev/null & wp=$!
+i=0; while [ $i -lt 40 ] && ! grep -q '"kind":"alert"' "$t/watch.jsonl" 2> /dev/null; do sleep 0.5; i=$((i + 1)); done
+kill "$wp" 2> /dev/null || true; wait "$wp" 2> /dev/null || true
+sh "$here/scripts/fixture-agents.sh" stop "$fx" > /dev/null
+eq "watch: contention alert" "$(grep '"kind":"alert"' "$t/watch.jsonl" | head -n 1 | jq -r '.text')" "3 heavy: slow suite ×3"
 [ $fail = 0 ] && echo "wait: all checks passed"
 exit $fail
