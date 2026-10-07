@@ -92,7 +92,18 @@ if [ "${1:-}" = --job ]; then
   echo "$rc $(($(date +%s) - t0))" > "$CHECK_OUT/$id.status"; exit 0
 fi
 
-usage() { echo "usage: sh scripts/check.sh [--changed [base]] [--dry-run]  (see the top of scripts/check.sh)"; }
+usage() {
+  cat <<'EOF'
+usage: sh scripts/check.sh [--changed [base]] [--dry-run]
+  every self-check (src/**/*.check.ts) and shell test (scripts/*.test.sh), in parallel; exit 1 if any fails
+  --changed [base]  only what the change reaches: base...HEAD (default origin/main) plus uncommitted and untracked
+                    files; after each edit. The full suite once before a push; CI runs everything
+  --dry-run         print the selection and the job queue, run nothing
+environment: CHECK_JOBS (parallel jobs), CHECK_MAX_SUITES / CHECK_MAX_BUILDS (machine-wide suites and scriptc builds
+  at once, default 2 / cores/4 up to 6, 0: no limit, off on CI unless set; sh scripts/check-lock.sh status),
+  CHECK_SHARD, CHECK_RELEASE_OUT, AGENTGLASS_BIN, CHECK_SCRIPTC_FLAGS (see the top of scripts/check.sh)
+EOF
+}
 changed=""; base=origin/main; dry=""
 while [ $# -gt 0 ]; do
   case "$1" in

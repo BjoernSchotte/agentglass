@@ -62,7 +62,10 @@ slot_try() { # slot_try <slot> <token>: take that slot now, or fail
 # says so once on stderr, naming the holders. LOCK_WAITED: 1 when it had to wait
 slot_take() {
   [ "$2" -gt 0 ] || return 0
-  mkdir -p "$LOCK_DIR" 2>/dev/null; chmod 700 "$LOCK_DIR" 2>/dev/null
+  if ! mkdir -p "$LOCK_DIR" 2>/dev/null || ! [ -w "$LOCK_DIR" ]; then # never wait forever on slots that cannot exist
+    [ "$1" != suite ] || echo "check slots: cannot write $LOCK_DIR — running without the machine-wide limit" >&2; return 0
+  fi
+  chmod 700 "$LOCK_DIR" 2>/dev/null || true
   LOCK_TOK="$$|$(lock_start $$)|$LOCK_WHO"; _lsaid=""; LOCK_WAITED=""
   while :; do
     _li=1; _lnum=0; _lwho=""

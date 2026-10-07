@@ -24,6 +24,9 @@ lk() {
   env -u CI -u CHECK_LOCK_SUITE_HELD -u CHECK_LOCK_IN_BUILD CHECK_LOCK_IMPL=$_i CHECK_LOCK_DIR="$t/$_i/locks" \
     CHECK_LOCK_POLL=0.1 CHECK_LOCK_WHO="wt-$_i" $_a sh "$L" "$@"
 }
+# held <dir> <impl>: wait (up to 10 s) until a suite slot in that lock dir is taken: a slow runner starts holders late
+held() { _n=0; until env -u CI CHECK_LOCK_DIR="$1" CHECK_LOCK_IMPL="$2" sh "$L" status | grep -q '^suite\.'; do
+  sleep 0.1; _n=$((_n + 1)); [ $_n -lt 100 ] || { bad "no holder appeared in $1"; return 1; }; done; }
 # a job that records how many jobs hold a slot at once: count the live markers, keep the peak
 cat > "$t/job.sh" <<'EOF'
 d=$1; : > "$d/on.$$"; n=$(ls "$d" | grep -c '^on\.'); echo "$n" >> "$d/peak"; sleep "${2:-0.4}"; rm -f "$d/on.$$"; echo done >> "$d/done"
@@ -64,19 +67,19 @@ EOF
   [ "$(wc -l < "$t/$i/nested" 2>/dev/null)" -eq 4 ] || bad "$i: nested takes did not pass through"
 
   # a held slot blocks (a live holder is never reclaimed), its release lets the waiter in
-  within 5 lk $i CHECK_MAX_SUITES=1 run suite sleep 1.5 & h=$!; sleep 0.4
-  s0=$(date +%s); within 6 lk $i CHECK_MAX_SUITES=1 run suite true 2>/dev/null || bad "$i: waiter never got the freed slot"
+  within 15 lk $i CHECK_MAX_SUITES=1 run suite sleep 1.5 & h=$!; held "$t/$i/locks" $i
+  s0=$(date +%s); within 15 lk $i CHECK_MAX_SUITES=1 run suite true 2>/dev/null || bad "$i: waiter never got the freed slot"
   [ $(($(date +%s) - s0)) -ge 1 ] || bad "$i: a live holder's slot was taken"
   wait $h
 
   # a holder killed with SIGKILL (no cleanup) leaves no lasting slot (env execs sh: $! is the holder itself)
   env -u CI CHECK_LOCK_IMPL=$i CHECK_LOCK_DIR="$t/$i/locks" CHECK_MAX_SUITES=1 sh "$L" run suite sh -c 'echo $$ > "$1"; exec sleep 30' _ "$t/$i/orphan" & h=$!
-  sleep 0.4; kill -9 $h; wait $h 2>/dev/null
+  held "$t/$i/locks" $i; kill -9 $h; wait $h 2>/dev/null
   within 4 lk $i CHECK_MAX_SUITES=1 run suite true 2>/dev/null || bad "$i: the SIGKILLed holder's slot was not reclaimed"
   kill "$(cat "$t/$i/orphan")" 2>/dev/null # its orphaned sleep, by its own pid
 
   # status lists the held slots
-  within 5 lk $i CHECK_MAX_SUITES=1 run suite sleep 1 2>/dev/null & h=$!; sleep 0.4
+  within 15 lk $i CHECK_MAX_SUITES=1 run suite sleep 1 2>/dev/null & h=$!; held "$t/$i/locks" $i
   lk $i status | grep -q "suite.1 .*wt-$i" || bad "$i status: $(lk $i status)"
   wait $h
 done
@@ -106,17 +109,23 @@ within 1 env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 
 grep -q "1 running: wt-live" "$t/stale/err2" || bad "stale: message: $(cat "$t/stale/err2")"
 kill $live; wait $live 2>/dev/null; rm -f "$d/suite.1"
 
-# CI: off by default (a held slot does not block), on when the limit is set explicitly
+# CI: off by default (a held slot does not block), on when the limit is set explicitly; the holder outlives the
+# generous bounds below, so passing one means not waiting for it
 d="$t/ci/locks"; mkdir -p "$d"
-within 5 env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=1 sh "$L" run suite sleep 1.5 & h=$!; sleep 0.4
-within 1 env CI=true CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 sh "$L" run suite true || bad "CI: the limit applied without being set"
+env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=1 sh "$L" run suite sh -c 'echo $$ > "$1"; exec sleep 20' _ "$t/ci/holder" & h=$!; held "$d" link
+within 5 env CI=true CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 sh "$L" run suite true || bad "CI: the limit applied without being set"
 within 1 env CI=true CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 CHECK_MAX_SUITES=1 sh "$L" run suite true 2>/dev/null
 [ $? = 124 ] || bad "CI: an explicit CHECK_MAX_SUITES was ignored"
-wait $h
 # 0 means no limit; garbage is refused with the fix
-within 1 env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=0 sh "$L" run suite true || bad "CHECK_MAX_SUITES=0 still limited"
+within 5 env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=0 sh "$L" run suite true || bad "CHECK_MAX_SUITES=0 still limited"
+kill "$(cat "$t/ci/holder")"; wait $h 2>/dev/null
 out=$(CHECK_LOCK_DIR="$d" CHECK_MAX_BUILDS=lots sh "$L" run build true 2>&1); rc=$?
 [ $rc = 2 ] && echo "$out" | grep -q 'CHECK_MAX_BUILDS=lots' || bad "bad limit: rc $rc: $out"
+
+# a lock directory that cannot be made: no limit, said once, never a hang
+: > "$t/file"
+out=$(within 5 env -u CI CHECK_LOCK_DIR="$t/file/locks" CHECK_MAX_SUITES=1 sh "$L" run suite echo ran 2>&1) || bad "unwritable lock dir: $out"
+case "$out" in *"cannot write"*ran) ;; *) bad "unwritable lock dir: $out";; esac
 
 [ $fail = 0 ] && echo "check lock: all tests passed"
 exit $fail
