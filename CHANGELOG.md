@@ -2,6 +2,25 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.10
+
+### Features
+
+- **wait:** what agents wait on — command families, contention, Wait tab, agentglass wait (#93) (f03b4f6, [#93](https://github.com/BjoernSchotte/agentglass/pull/93))
+- **check:** machine-wide check slots and --changed selection (#92) (4c303ea, [#92](https://github.com/BjoernSchotte/agentglass/pull/92))
+
+### Build & CI
+
+- actions majors — checkout 7, setup-node 7, upload-artifact 7, download-artifact 8, attest-build-provenance 4; release dry run (#89) (5024702, [#89](https://github.com/BjoernSchotte/agentglass/pull/89))
+
+### Refactoring & other
+
+- EXIT traps clean up only in the test's own shell (macOS otlp-filter flake) (#91) (01cbcc9, [#91](https://github.com/BjoernSchotte/agentglass/pull/91))
+
+### Docs
+
+- **specs:** agent-wait — what agents wait on, contention between agents, spec and plan (#90) (893fe8a, [#90](https://github.com/BjoernSchotte/agentglass/pull/90))
+
 ## 2026.10.9
 
 ### Performance
