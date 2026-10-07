@@ -11,6 +11,7 @@ command -v python3 > /dev/null 2>&1 || { echo "mux-herdr: skipped (needs python3
 t=$(mktemp -d) # short: the socket path must stay under ~100 bytes
 srv=0
 cleanup() {
+  [ "$(exec sh -c "echo \$PPID")" = $$ ] || exit
   if [ "$srv" -gt 0 ]; then
     for p in $(cat "$t/agent.pids" 2>/dev/null); do kill -TERM "$p" 2>/dev/null || true; done
     H server stop > /dev/null 2>&1 || true; sleep 0.5; kill -TERM "$srv" 2>/dev/null || true

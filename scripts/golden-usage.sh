@@ -29,7 +29,7 @@ done
 command -v python3 > /dev/null || { echo "golden-usage.sh: needs python3" >&2; exit 2; }
 own=0; if [ -z "$scratch" ]; then scratch=$(mktemp -d); own=1; fi
 mkdir -p "$scratch"; scratch=$(cd "$scratch" && pwd)
-[ $own = 0 ] || trap 'rm -rf "$scratch"' EXIT
+[ $own = 0 ] || trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$scratch"' EXIT
 rm -rf "$scratch/ref" "$scratch/new"; mkdir -p "$scratch/ref/cache" "$scratch/new/cache"
 
 FIELDS=id,harness,path,bytes,updated,tokens,costUsd,unpricedTokens,unpricedCredits,tools,linesAdded,linesRemoved,skills,billing

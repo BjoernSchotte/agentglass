@@ -3,7 +3,7 @@
 # "line 9: 123 Terminated  sleep 9", "Killed") and trailing blank lines are skipped
 set -e
 cd "$(dirname "$0")/.."
-d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+d=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$d"' EXIT
 fail=0
 t() { # t <name> <want> <log lines…>
   n=$1; want=$2; shift 2; printf '%s\n' "$@" > "$d/log"

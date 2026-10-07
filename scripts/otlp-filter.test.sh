@@ -8,7 +8,7 @@ unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR AGENTGLASS_OTLP_DI
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 command -v python3 > /dev/null || { echo "skipped: no python3"; exit 0; }
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; ag=""; a1=""; a2=""; a3=""; a4=""; a5=""
-trap '{ kill $srv $ag $a1 $a2 $a3 $a4 $a5; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; { kill $srv $ag $a1 $a2 $a3 $a4 $a5; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
 fail=0
 has() { grep -q -- "$2" "$3" 2>/dev/null || { echo "FAIL $1: no '$2' in $(basename "$3")"; fail=1; }; }
 none() { n=$(cat "$t"/v1_*.jsonl "$t/out" 2>/dev/null | grep -c -- "$2" || true); [ "$n" = 0 ] || { echo "FAIL $1: '$2' appears $n times"; fail=1; }; }

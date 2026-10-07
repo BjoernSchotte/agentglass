@@ -3,7 +3,7 @@
 # --print, an unsafe run dir, a hung server, quit cleanup: sh scripts/open.test.sh
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d)
-srv=0; cleanup() { [ "$srv" -gt 0 ] && kill -CONT "$srv" 2>/dev/null; [ "$srv" -gt 0 ] && kill -TERM "$srv" 2>/dev/null; rm -rf "$t"; }
+srv=0; cleanup() { [ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; [ "$srv" -gt 0 ] && kill -CONT "$srv" 2>/dev/null; [ "$srv" -gt 0 ] && kill -TERM "$srv" 2>/dev/null; rm -rf "$t"; }
 trap cleanup EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 has() { case "$2" in *"$3"*) ;; *) echo "FAIL $1: '$3' not in: $2"; fail=1 ;; esac; }

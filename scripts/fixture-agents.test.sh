@@ -4,7 +4,7 @@
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d)
 fail=0; no() { echo "FAIL $*"; fail=1; }
-trap 'sh "$here/scripts/fixture-agents.sh" stop "$t" > /dev/null 2>&1 || true; rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; sh "$here/scripts/fixture-agents.sh" stop "$t" > /dev/null 2>&1 || true; rm -rf "$t"' EXIT
 out=$(sh "$here/scripts/fixture-agents.sh" start "$t" --agents 3 --history 5 --background 2)
 [ "$out" = "agents 3 pids 5" ] || no "start printed '$out'"
 h="$t/home"

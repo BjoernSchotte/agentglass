@@ -4,7 +4,7 @@ set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fake HOME decides, not the caller's overrides
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$T"' EXIT
 # AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
 BIN="$T/agentglass"; if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$BIN"; else scriptc build src/main.ts -o "$BIN" >/dev/null; fi
 mkdir -p "$T/home/.claude/projects/-w-app" "$T/home/.codex/sessions/2026/10/01" "$T/home/.agentglass"

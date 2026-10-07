@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests for release-assets.sh + verify-release-assets.sh: sh scripts/verify-release-assets.test.sh
 set -e
-here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0
 mkfix() { rm -rf "$t/r"; mkdir -p "$t/r"; for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do echo "bin $p" > "$t/r/agentglass-$p.tar.gz"; done
   sh "$here/release-assets.sh" "$t/r" stable v2026.9.1 2026.9.1 0123456789abcdef0123456789abcdef01234567 >/dev/null; }
