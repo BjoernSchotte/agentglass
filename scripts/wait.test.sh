@@ -97,6 +97,10 @@ env -i HOME="$fx/home" PATH="$PATH" AGENTGLASS_CACHE_DIR="$t/cache2" AGENTGLASS_
   AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 AGENTGLASS_AGENT=0 AGENTGLASS_HERDR=off "$t/ag" --watch > "$t/watch.jsonl" 2> /dev/null & wp=$!
 i=0; while [ $i -lt 40 ] && ! grep -q '"kind":"alert"' "$t/watch.jsonl" 2> /dev/null; do sleep 0.5; i=$((i + 1)); done
 kill "$wp" 2> /dev/null || true; wait "$wp" 2> /dev/null || true
+now=$(env -i HOME="$fx/home" PATH="$PATH" AGENTGLASS_CACHE_DIR="$t/cache2" AGENTGLASS_CONFIG="$t/config.json" AGENTGLASS_RULES="$t/rules.json" AGENTGLASS_RUN_DIR="$t/run" \
+  AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 AGENTGLASS_AGENT=0 AGENTGLASS_HERDR=off "$t/ag" wait --now --json 2> /dev/null || true)
+eq "now: three heavy" "$(printf '%s' "$now" | jq -r '.now.heavyRunning')" 3
+grep -q '"kind":"alert"' "$t/watch.jsonl" || { echo "watch saw: $(grep -c . "$t/watch.jsonl") lines, kinds $(jq -r .kind "$t/watch.jsonl" | sort | uniq -c | tr '\n' ' ')"; ps -axo pid=,ppid=,args= | grep -F "$fx" | grep -v grep | head -n 12; }
 sh "$here/scripts/fixture-agents.sh" stop "$fx" > /dev/null
 eq "watch: contention alert" "$(grep '"kind":"alert"' "$t/watch.jsonl" | head -n 1 | jq -r '.text')" "3 heavy: slow suite ×3"
 [ $fail = 0 ] && echo "wait: all checks passed"
