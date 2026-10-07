@@ -36,13 +36,19 @@ lock_alive() { # lock_alive <pid|start|who>: that process still runs (same pid, 
   [ -z "$_ls" ] || [ "$(lock_start "$_lp")" = "$_ls" ]
 }
 lock_holder() { # lock_holder <slot>: its holder's worktree (empty when free)
-  if [ "$LOCK_IMPL" = flock ]; then _lh=$(cat "$1" 2>/dev/null); else _lh=$(readlink "$1" 2>/dev/null); fi
+  if [ -L "$1" ]; then _lh=$(readlink "$1" 2>/dev/null); else _lh=$(cat "$1" 2>/dev/null); fi
   [ -z "$_lh" ] || printf '%s\n' "${_lh#*|*|}"
 }
 
-slot_try() { # slot_try <slot> <token>: take that slot now, or fail
+slot_try() { # slot_try <slot> <token>: take that slot now, fail (1: it is held), or 2: it cannot be taken at all
+  # a slot the other implementation left (a file system that changed, CHECK_LOCK_IMPL): held while its holder lives,
+  # else removed; never a slot neither can take
+  if [ "$LOCK_IMPL" = flock ] && [ -L "$1" ]; then ! lock_alive "$(readlink "$1")" || return 1; rm -f "$1"; fi
+  if [ "$LOCK_IMPL" = link ] && [ -f "$1" ] && ! [ -L "$1" ]; then
+    ! { command -v flock >/dev/null 2>&1 && ! flock -n "$1" true 2>/dev/null; } || return 1; rm -f "$1"
+  fi
   if [ "$LOCK_IMPL" = flock ]; then # fd 9 holds it; >> does not truncate a holder's token
-    exec 9>>"$1" || return 1
+    { command exec 9>>"$1"; } 2>/dev/null || return 2 # (command: a failed exec must not end the shell)
     if flock -n 9; then printf '%s\n' "$2" > "$1"; LOCK_HELD=$1; return 0; fi
     exec 9>&-; return 1
   fi
@@ -66,11 +72,19 @@ slot_take() {
     [ "$1" != suite ] || echo "check slots: cannot write $LOCK_DIR — running without the machine-wide limit" >&2; return 0
   fi
   chmod 700 "$LOCK_DIR" 2>/dev/null || true
+  # a file system without flock (an NFS home without lockd): symlinks instead. A shared lock on a file no one locks
+  # exclusively fails only there, so every process on that file system makes the same choice
+  if [ "$LOCK_IMPL" = flock ] && ! { command exec 8>>"$LOCK_DIR/.probe" && flock -n -s 8; } 2>/dev/null; then LOCK_IMPL=link; fi
+  exec 8>&-
   LOCK_TOK="$$|$(lock_start $$)|$LOCK_WHO"; _lsaid=""; LOCK_WAITED=""
   while :; do
     _li=1; _lnum=0; _lwho=""
     while [ $_li -le "$2" ]; do
-      slot_try "$LOCK_DIR/$1.$_li" "$LOCK_TOK" && return 0
+      _lr=0; slot_try "$LOCK_DIR/$1.$_li" "$LOCK_TOK" || _lr=$?
+      [ $_lr != 0 ] || return 0
+      if [ $_lr = 2 ]; then # never wait forever on a slot that cannot be taken
+        [ "$1" != suite ] || echo "check slots: cannot open $LOCK_DIR/$1.$_li — running without the machine-wide limit" >&2; return 0
+      fi
       _lh=$(lock_holder "$LOCK_DIR/$1.$_li"); [ -z "$_lh" ] || { _lnum=$((_lnum + 1)); _lwho="$_lwho, $_lh"; }
       _li=$((_li + 1))
     done
@@ -108,8 +122,8 @@ case "${1:-}" in
     lock_init; echo "check slots in $LOCK_DIR ($LOCK_IMPL): $LOCK_SUITES suites, $LOCK_BUILDS builds (0: no limit)"
     for f in "$LOCK_DIR"/suite.* "$LOCK_DIR"/build.*; do
       [ -e "$f" ] || [ -L "$f" ] || continue
-      if [ "$LOCK_IMPL" = flock ]; then flock -n "$f" true 2>/dev/null && continue; h=$(cat "$f")
-      else h=$(readlink "$f"); lock_alive "$h" || continue; fi
+      if [ -L "$f" ]; then h=$(readlink "$f"); lock_alive "$h" || continue
+      else ! flock -n "$f" true 2>/dev/null || continue; h=$(cat "$f"); fi
       echo "${f##*/} pid ${h%%|*}: ${h#*|*|}"
     done ;;
   *) echo "usage: sh scripts/check-lock.sh run <suite|build> <cmd>… | status" >&2; exit 2 ;;

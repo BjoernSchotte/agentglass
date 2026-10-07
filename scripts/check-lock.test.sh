@@ -112,7 +112,7 @@ kill $live; wait $live 2>/dev/null; rm -f "$d/suite.1"
 # CI: off by default (a held slot does not block), on when the limit is set explicitly; the holder outlives the
 # generous bounds below, so passing one means not waiting for it
 d="$t/ci/locks"; mkdir -p "$d"
-env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=1 sh "$L" run suite sh -c 'echo $$ > "$1"; exec sleep 20' _ "$t/ci/holder" & h=$!; held "$d" link
+env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=1 sh "$L" run suite sh -c 'echo $$ > "$1"; exec sleep 20' _ "$t/ci/holder" 2>/dev/null & h=$!; held "$d" link
 within 5 env CI=true CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 sh "$L" run suite true || bad "CI: the limit applied without being set"
 within 1 env CI=true CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 CHECK_MAX_SUITES=1 sh "$L" run suite true 2>/dev/null
 [ $? = 124 ] || bad "CI: an explicit CHECK_MAX_SUITES was ignored"
@@ -126,6 +126,27 @@ out=$(CHECK_LOCK_DIR="$d" CHECK_MAX_BUILDS=lots sh "$L" run build true 2>&1); rc
 : > "$t/file"
 out=$(within 5 env -u CI CHECK_LOCK_DIR="$t/file/locks" CHECK_MAX_SUITES=1 sh "$L" run suite echo ran 2>&1) || bad "unwritable lock dir: $out"
 case "$out" in *"cannot write"*ran) ;; *) bad "unwritable lock dir: $out";; esac
+
+# flock: a slot file that cannot be opened (another user's, mode 000) neither ends the suite nor waits forever
+if command -v flock >/dev/null 2>&1 && [ "$(id -u)" != 0 ]; then
+  d="$t/ro/locks"; mkdir -p "$d"; : > "$d/suite.1"; chmod 000 "$d/suite.1"
+  out=$(within 5 env -u CI CHECK_LOCK_IMPL=flock CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=1 sh "$L" run suite echo ran 2>&1) || bad "unopenable slot: $out"
+  case "$out" in *"cannot open"*ran) ;; *) bad "unopenable slot: $out";; esac
+fi
+# the other implementation's slot (a file system that changed, CHECK_LOCK_IMPL): free -> taken, held -> waited for
+d="$t/mixed/locks"; mkdir -p "$d"; ln -s "999999|Thu Jan  1 00:00:00 1970|wt-dead" "$d/suite.1"
+for i in $impls; do
+  [ $i = link ] && { rm -f "$d/suite.1"; : > "$d/suite.1"; } # a flock file no one holds
+  within 3 env -u CI CHECK_LOCK_IMPL=$i CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 CHECK_MAX_SUITES=1 sh "$L" run suite true 2>/dev/null ||
+    bad "$i: the other implementation's free slot was never taken"
+  rm -f "$d/suite.1"
+done
+if [ "$impls" = "flock link" ]; then
+  env -u CI CHECK_LOCK_IMPL=flock CHECK_LOCK_DIR="$d" CHECK_MAX_SUITES=1 sh "$L" run suite sh -c 'echo $$ > "$1"; exec sleep 20' _ "$t/mixed/holder" 2>/dev/null & h=$!; held "$d" flock
+  within 1 env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 CHECK_MAX_SUITES=1 sh "$L" run suite true 2>/dev/null
+  [ $? = 124 ] || bad "link: a held flock slot was taken"
+  kill "$(cat "$t/mixed/holder")"; wait $h 2>/dev/null
+fi
 
 [ $fail = 0 ] && echo "check lock: all tests passed"
 exit $fail

@@ -28,7 +28,7 @@ HERDR_UNSET="-u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID
 limit() {
   s=$1; shift
   "$@" </dev/null 9>&- & p=$! # 9: the suite slot (scripts/check-lock.sh), not for jobs or what they leave running
-  ( sleep "$s"; kill -0 "$p" 2>/dev/null || exit 0; echo "TIMEOUT after ${s}s: $*"; pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null ) 2>/dev/null & w=$! # quiet: killing its sleep must not print "Terminated" into the log
+  ( sleep "$s"; kill -0 "$p" 2>/dev/null || exit 0; echo "TIMEOUT after ${s}s: $*"; pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null ) 2>/dev/null 9>&- & w=$! # quiet: killing its sleep must not print "Terminated" into the log
   wait "$p"; rc=$?
   pkill -P "$w" 2>/dev/null; wait "$w" 2>/dev/null # its sleep ends, the watchdog sees cmd gone and exits
   return $rc
@@ -185,8 +185,11 @@ swait=$(date +%s); LOCK_WAITED=""
 if [ -z "${CHECK_LOCK_SUITE_HELD:-}" ]; then slot_take suite "$LOCK_SUITES"; export CHECK_LOCK_SUITE_HELD=1; fi
 swait=$([ -z "$LOCK_WAITED" ] || echo $(($(date +%s) - swait)))
 if [ "$LOCK_BUILDS" -gt 0 ] && [ -z "${CHECK_LOCK_IN_BUILD:-}" ]; then
+  # the real scriptc, also in a check.sh a test runs (whose PATH has this shim first)
+  CHECK_LOCK_SCRIPTC=${CHECK_LOCK_SCRIPTC:-$(command -v scriptc)}; export CHECK_LOCK_SCRIPTC
+  q() { printf "'%s'" "$(printf %s "$1" | sed "s/'/'\\\\''/g")"; } # single-quoted for sh
   mkdir "$CHECK_OUT/shim"
-  printf '#!/bin/sh\nexec sh "%s" run build "%s" "$@"\n' "$PWD/scripts/check-lock.sh" "$(command -v scriptc)" > "$CHECK_OUT/shim/scriptc"
+  printf '#!/bin/sh\nexec sh %s run build %s "$@"\n' "$(q "$PWD/scripts/check-lock.sh")" "$(q "$CHECK_LOCK_SCRIPTC")" > "$CHECK_OUT/shim/scriptc"
   chmod +x "$CHECK_OUT/shim/scriptc"; PATH="$CHECK_OUT/shim:$PATH"
 fi
 grep -qx bin "$CHECK_OUT/queue" || bin="" # on another shard
