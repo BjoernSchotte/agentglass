@@ -62,7 +62,12 @@ const SHELLS = ["sh", "bash", "zsh", "fish", "dash"];
 function isShell(p: Proc): boolean { return SHELLS.indexOf(base(p.args.split(" ")[0] ?? "").replace(/^-/, "")) >= 0; }
 export interface Cmd { age: number; name: string }
 // tool commands run by the agent = its outermost descendant shells (MCP servers & co are spawned directly, not via a shell)
+// memo per children map (a new map = the process table changed): the watchdog's look and the live wait collection walk
+// each agent's tree once per change, not twice per tick
+const TS = { kids: new Map<number, Proc[]>(), m: new Map<number, Proc[]>() };
 export function toolShells(root: number, kids: Map<number, Proc[]>): Proc[] {
+  if (TS.kids !== kids) { TS.kids = kids; TS.m = new Map<number, Proc[]>(); }
+  const hit = TS.m.get(root); if (hit) return hit;
   const out: Proc[] = [];
   const stack: number[] = [root];
   while (stack.length) {
@@ -72,6 +77,7 @@ export function toolShells(root: number, kids: Map<number, Proc[]>): Proc[] {
       else stack.push(c.pid);
     }
   }
+  TS.m.set(root, out);
   return out;
 }
 export function toolCmds(root: number, kids: Map<number, Proc[]>): Cmd[] {

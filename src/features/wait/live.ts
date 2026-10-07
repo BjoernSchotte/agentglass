@@ -81,11 +81,11 @@ function treeRss(p: Proc, kids: Map<number, Proc[]>): number {
   while (st.length) { const q = st.pop() as Proc; n += q.rss; for (const c of kids.get(q.pid) ?? []) st.push(c); }
   return n;
 }
-// the session's open calls with a shell command (age < 24 h): [time, commands]
-function openShell(s: Sess, now: number): { t: number; cmds: string[] }[] {
-  const o: { t: number; cmds: string[] }[] = []; const a = ledger.get(s.path); if (!a) return o;
-  for (const p of a.pend.values()) if (p.cmd && p.t > 0 && now - p.t < 86400000) o.push({ t: p.t, cmds: p.cmd.split("\n") });
-  return o;
+// the session has an open call with a shell command (age < 24 h); calls: those calls ([time, commands]) when asked
+function openShell(s: Sess, now: number, calls: { t: number; cmds: string[] }[] | null): boolean {
+  const a = ledger.get(s.path); if (!a) return false; let any = false;
+  for (const p of a.pend.values()) if (p.cmd && p.t > 0 && now - p.t < 86400000) { any = true; if (!calls) return true; calls.push({ t: p.t, cmds: p.cmd.split("\n") }); }
+  return any;
 }
 // ss: the watched sessions (top-level, live)
 export function collectLive(ss: Sess[], kids: Map<number, Proc[]>, now: number): LiveWait {
@@ -95,16 +95,17 @@ export function collectLive(ss: Sess[], kids: Map<number, Proc[]>, now: number):
   for (const s of ss) { const r = rootOf(s.pid); const p = r ? r.pid : s.pid; rp.push(p); roots.set(p, (roots.get(p) ?? 0) + 1); }
   for (let k = 0; k < ss.length; k++) {
     const s = ss[k]; if (!s) continue; const p = (rp[k] ?? 0) + 0;
-    const open = openShell(s, now);
     const shells = (roots.get(p) ?? 0) > 1 ? [] : toolShells(p, kids); // a root shared by sessions: whose shell is whose is unknown
-    let seen = false;
+    let bg = -1; // -1 not asked yet, else 1 = no open shell call
     for (const sh of shells) {
-      const age = etimeSec(sh.etime); if (age >= 86400) continue; // a day-old shell is a server the agent started, not a tool call
+      const age = sh.start > 0 ? Math.max(0, Math.floor((now - sh.start) / 1000)) : etimeSec(sh.etime);
+      if (age >= 86400) continue; // a day-old shell is a server the agent started, not a tool call
       const f = famOfArgs(sh.args); if (!f) continue;
-      seen = true;
-      lw.running.push({ path: s.path, h: s.h, family: f.family, kind: f.kind, heavy: f.heavy, ageSec: age, rssKb: treeRss(sh, kids), pid: sh.pid, bg: open.length === 0 });
+      if (bg < 0) bg = openShell(s, now, null) ? 0 : 1;
+      lw.running.push({ path: s.path, h: s.h, family: f.family, kind: f.kind, heavy: f.heavy, ageSec: age, rssKb: treeRss(sh, kids), pid: sh.pid, bg: bg === 1 });
     }
-    if (seen || shells.length) continue;
+    if (shells.length) continue;
+    const open: { t: number; cmds: string[] }[] = []; openShell(s, now, open);
     for (const c of open) { const f = callFamily(c.cmds.map((x: string): string => norm(x)), waitCfg()); lw.running.push({ path: s.path, h: s.h, family: f.name, kind: f.kind, heavy: f.heavy, ageSec: Math.floor((now - c.t) / 1000), rssKb: -1, pid: 0, bg: false }); }
   }
   return lw;

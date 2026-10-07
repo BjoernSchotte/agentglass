@@ -34,7 +34,7 @@ export function opt(flag: string, arg: string, summary: string, def: string, val
 // the one exit-code table of every command (text help, JSON help exitCodes, README "Exit codes"); EXIT_EXTRA = the
 // command-specific meanings on top of it
 export const EXIT_CODES: Obj = { "0": "ok (an empty result is ok)", "1": "runtime failure", "2": "usage error", "3": "not found", "4": "ambiguous reference" };
-const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed, 3 = another export to the endpoint runs;\n  fleet --strict 5 = a host failed or is stale; fleet serve 126 = refused;\n  receive 3 = another receive serves its directory";
+const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed, 3 = another export to the endpoint runs;\n  fleet --strict 5 = a host failed or is stale; fleet serve 126 = refused; wait --check 3 = heavy commands at the limit;\n  receive 3 = another receive serves its directory";
 export const EXAMPLES: string[] = [
   "agentglass session current --fields costUsd,tools,errors",
   "agentglass errors --since 24h --limit 5",
