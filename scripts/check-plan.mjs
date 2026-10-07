@@ -1,24 +1,111 @@
 // splits scripts/check.sh's jobs across CI shards: node scripts/check-plan.mjs <i> <n> <job>... prints shard i's jobs
+// --changed <list> <job>...: the jobs a change reaches (scripts/check.sh --changed; <list>: one changed path per line);
+// see changed() below
 // A job's weight estimates its build time: the bytes of TypeScript it compiles (the entry and every relative import,
 // transitively; 0.97 correlated with measured build times). A test that builds agentglass weighs one src/main.ts per
 // "# check: builds <k>" (default 1); other tests are light. "bin" and the tests that use the shared binary stay on
 // shard 1.
-import { readFileSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 
-const [i, n, ...jobs] = process.argv.slice(2);
-const shard = Number(i), shards = Number(n);
 const closures = new Map();
-function closure(entry) { // bytes of entry + its transitive relative imports
+function closure(entry) { // entry + its transitive relative imports: their bytes and paths (relative to the repo root)
   const seen = new Set(); const stack = [resolve(entry)]; let bytes = 0;
   while (stack.length) {
     const f = stack.pop(); if (seen.has(f)) continue; seen.add(f);
     let src; try { src = readFileSync(f, "utf8"); bytes += statSync(f).size; } catch { continue; }
     for (const m of src.matchAll(/(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g)) stack.push(resolve(dirname(f), m[1]));
   }
-  return bytes;
+  return { bytes, files: new Set([...seen].map((f) => relative(".", f))) };
 }
-const bytesOf = (f) => { if (!closures.has(f)) closures.set(f, closure(f)); return closures.get(f); };
+const closureOf = (f) => { if (!closures.has(f)) closures.set(f, closure(f)); return closures.get(f); };
+const bytesOf = (f) => closureOf(f).bytes;
+const read = (f) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
+
+// changed(paths, jobs): [job, why] for every job a change reaches, or [["ALL", why]] when the whole suite must run.
+// Conservative: when unsure, a job runs. A check is reached when a path in its import closure changed, or one its
+// text names (its own and its helpers' outside src/main.ts's closure: fixtures, testdata, specs/…/fixtures — the path,
+// its file name, a prefix two directories deep like "testdata/otlp/golden-", or a glob like scripts/*.sh). A shell
+// test when it changed, when a path in the closure of what it builds or runs changed (src/main.ts when it uses the
+// shared binary, builds or runs scriptc build; every .ts path it names), or when it names a changed path; its text
+// includes the scripts it names, transitively. Shell variables are no part of a path ("$here/testdata/"). A path
+// that shapes every job (check.sh, this file, check-lock.sh, toolchain.sh, build-info.sh, build.sh, CI) or a non-TS
+// file under src/ (ffi.json, libproc.c) runs everything, and so does a changed path no job names (unknown reach),
+// unless it is documentation (*.md, docs/; a spec's fixtures are not) or TypeScript nothing imports. "bin" runs when a selected test uses
+// the shared binary, "release" when src/main.ts's closure changed.
+const DOC = /\.md$|^docs\/|^LICENSE$|^\.gitignore$/;
+// a shell or template variable is no part of a path: "$here/testdata/x/" names testdata/x/, not here/testdata/x/
+const unvar = (s) => s.replace(/\$\{?\w+\}?/g, " ");
+function mention(text, c) { // the name under which text refers to changed path c, or ""
+  const doc = DOC.test(c), base = c.slice(c.lastIndexOf("/") + 1);
+  for (let t of unvar(text).match(/[\w.@*-]*(?:\/[\w.@*-]*)+/g) || []) { // path-like words: a/b, "$here"/../c/d, x/*.sh
+    while (/^(\/|\.\.?\/)/.test(t)) t = t.replace(/^(\/|\.\.?\/)/, "");
+    if (!t) continue;
+    if (t.includes("*")) { // a glob under a named directory: scripts/*.sh (not "*.json", nor a comment's "/**")
+      if (!/^[^/*]+\//.test(t)) continue;
+      const re = new RegExp("(^|/)" + t.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*") + "$");
+      if (re.test(c)) return t;
+    } else if (t === c || (!doc && /^[^/]+\/[^/]+\//.test(t) && c.startsWith(t))) return t; // the path, or a prefix below 2 dirs
+  }
+  // a file's bare name: a sibling script ("$here/release-lib.sh"); not for docs, whose names are everywhere
+  if (!doc && base.length >= 4 && new RegExp("(^|[^\\w.-])" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^\\w.-])").test(text)) return base;
+  return "";
+}
+// the scripts a shell test can run besides itself (scripts/*, not the tests, not the check machinery)
+const HELPERS = readdirSync("scripts").filter((n) => !n.endsWith(".test.sh") && !/^(check|check-plan|check-lock)\./.test(n)).map((n) => "scripts/" + n);
+function changed(paths, jobs) {
+  const all = paths.find((c) => /^(build\.sh|scripts\/(check|check-plan|check-lock|toolchain|build-info)\.(sh|mjs)|\.github\/)/.test(c));
+  if (all) return [["ALL", all + " changed: it shapes every job"]];
+  const odd = paths.find((c) => c.startsWith("src/") && !c.endsWith(".ts"));
+  if (odd) return [["ALL", odd + " changed: not TypeScript, its reach is unknown"]];
+  const main = closureOf("src/main.ts").files, out = [], reached = new Set();
+  const pick = (job, why, c) => { if (!out.some((o) => o[0] === job)) out.push([job, why]); reached.add(c); };
+  for (const job of jobs) {
+    const f = job.slice(job.indexOf(":") + 1), src = read(f);
+    if (job.startsWith("cc:")) { for (const c of paths) if (c === f) pick(job, "changed", c); continue; }
+    if (!job.startsWith("check:") && !job.startsWith("test:")) continue;
+    let entries, text = src;
+    if (job.startsWith("check:")) {
+      entries = [f];
+      for (const g of closureOf(f).files) if (g !== f && !main.has(g)) text += "\n" + read(g); // its helpers
+    } else { // what the test builds or runs: the shared binary / build.sh / scriptc build, and every .ts it names
+      // its text includes the scripts it names, transitively ("$here/scripts/fixture-agents.sh" builds fake-agent.c)
+      for (let more = true; more;) {
+        more = false;
+        for (const h of HELPERS) {
+          const m = text.includes("\0" + h) ? "" : mention(text, h);
+          if (m && !m.includes("*")) { text += "\n\0" + h + "\n" + read(h); more = true; } // (not each of scripts/*.sh)
+        }
+      }
+      entries = /AGENTGLASS_BIN|build\.sh|scriptc build/.test(text) ? ["src/main.ts"] : [];
+      for (let t of unvar(text).match(/[\w.\/-]+\.ts\b/g) || []) {
+        while (/^(\/|\.\.?\/)/.test(t)) t = t.replace(/^(\/|\.\.?\/)/, "");
+        if (!entries.includes(t) && read(t)) entries.push(t);
+      }
+    }
+    for (const c of paths) {
+      if (c === f) { pick(job, "changed", c); continue; }
+      const e = entries.find((e) => closureOf(e).files.has(c));
+      if (e === f) pick(job, "imports " + c, c);
+      else if (e === "src/main.ts") pick(job, /AGENTGLASS_BIN/.test(src) ? "runs agentglass, built from " + c + " among others" : "builds agentglass, " + c + " among its sources", c);
+      else if (e) pick(job, e === c ? "names " + c : "builds " + e + ", which imports " + c, c);
+      else { const m = mention(text, c); if (m) pick(job, "names " + m + (m === c ? "" : " (" + c + ")"), c); }
+    }
+  }
+  const lost = paths.find((c) => !reached.has(c) && !DOC.test(c) && !(c.startsWith("src/") && c.endsWith(".ts")) && !main.has(c));
+  if (lost) return [["ALL", lost + " changed and no check or test names it: its reach is unknown"]];
+  if (jobs.includes("bin") && out.some(([j]) => j.startsWith("test:") && /AGENTGLASS_BIN/.test(read(j.slice(5))))) out.unshift(["bin", "the selected tests run the shared agentglass"]);
+  if (jobs.includes("release") && paths.some((c) => main.has(c))) out.unshift(["release", "src/main.ts's closure changed"]);
+  return out;
+}
+if (process.argv[2] === "--changed") {
+  const [list, ...jobs] = process.argv.slice(3);
+  for (const [job, why] of changed(read(list).split("\n").filter(Boolean), jobs)) console.log(job + "\t" + why);
+  process.exit(0);
+}
+
+const [i, n, ...jobs] = process.argv.slice(2);
+const shard = Number(i), shards = Number(n);
 const main = bytesOf("src/main.ts");
 function weight(job) {
   if (job === "bin") return main;
