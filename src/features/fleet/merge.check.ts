@@ -49,7 +49,7 @@ function hostOf(name: string, hostId: string, paths: string[]): FleetHost {
     ss.push({ s: { harness: "claude", id: key.slice(7), billing: { mode: "api" } }, key, days: dayRows([a], allDays(a)), own: ch, prov: [] });
     owned.push({ key, rows: ch });
   }
-  const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId, hostName: name, os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 0, priceSig: "" }, sessions: ss, cost: null, allowance: null, live: null, exact: true, owned };
+  const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId, hostName: name, os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 0, priceSig: "" }, sessions: ss, cost: null, allowance: null, live: null, exact: true, owned, wait: null };
   return { name, hostId, r: rep, shiftMin: 0 };
 }
 interface Tot { tok: number[]; cost: number }
@@ -238,7 +238,7 @@ for (const sd of [42, 7, 1234, 99, 2026]) {
       const prevOwn = new Map<string, OwnChunk[]>(); for (const o of hB.r.owned) prevOwn.set(o.key, o.rows);
       const owned2: Owned[] = []; let appended = 0; let reset = 0;
       for (const o of fresh.r.owned) { const pr = prevOwn.get(o.key); const n0 = pr ? lenOf(pr) : 0; const n1 = lenOf(o.rows); if (pr && n1 >= n0) { owned2.push({ key: o.key, rows: n1 > n0 ? pr.concat([chunkOf(rowsOfChunks(o.rows).slice(n0))]) : pr }); appended += n1 - n0; } else { owned2.push(o); reset++; } }
-      const hB2: FleetHost = { name: "b", hostId: "bbbbbbbbbbbbbbbb", shiftMin: 0, r: { hello: fresh.r.hello, sessions: fresh.r.sessions, cost: null, allowance: null, live: null, exact: true, owned: owned2 } };
+      const hB2: FleetHost = { name: "b", hostId: "bbbbbbbbbbbbbbbb", shiftMin: 0, r: { hello: fresh.r.hello, sessions: fresh.r.sessions, cost: null, allowance: null, live: null, exact: true, owned: owned2, wait: null } };
       const loc3 = localOf(lps); // the local log as grown above, read again
       const t3 = (x: Exact): Tot => { const as: Acc[] = loc3.accs.slice(); for (const e of x.accs) as.push(e.a); return totOf(as); };
       const g0 = MSTAT.grown; const f0 = MSTAT.full;

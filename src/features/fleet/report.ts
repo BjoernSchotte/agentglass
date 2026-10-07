@@ -4,8 +4,8 @@
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { type Hello, type HostReport, type SessRow, noOwned } from "./model.ts";
 
-export interface Parse { hello: Hello | null; cost: Obj | null; allowance: Obj | null; sessions: SessRow[]; done: boolean; err: string }
-export function newParse(): Parse { return { hello: null, cost: null, allowance: null, sessions: [], done: false, err: "" }; }
+export interface Parse { hello: Hello | null; cost: Obj | null; allowance: Obj | null; wait: Obj | null; sessions: SessRow[]; done: boolean; err: string }
+export function newParse(): Parse { return { hello: null, cost: null, allowance: null, wait: null, sessions: [], done: false, err: "" }; }
 function num(v: unknown): number { return typeof v === "number" ? v as number : 0; }
 export function helloOf(o: Obj): Hello {
   return { format: str(o["format"]), version: str(o["version"]), hostId: str(o["hostId"]), hostName: str(o["hostName"]), os: str(o["os"]), tzOffsetMin: num(o["tzOffsetMin"]),
@@ -33,6 +33,7 @@ export function feedLines(p: Parse, lines: string[]): void {
     if (s) { p.sessions.push(sessRowOf(s)); continue; }
     if (o["cost"] !== undefined) { p.cost = obj(o["cost"]); continue; }
     if (o["allowance"] !== undefined) { p.allowance = obj(o["allowance"]); continue; }
+    if (o["wait"] !== undefined) { p.wait = obj(o["wait"]); continue; } // agent-wait (fleet pull --wait)
     const e = obj(o["end"]);
     if (e) { if (num(e["sessions"]) === p.sessions.length) p.done = true; else p.err = "incomplete report"; continue; }
     // unknown keys: a newer v1 writer's additions
@@ -42,7 +43,7 @@ export function feedLines(p: Parse, lines: string[]): void {
 export function toReport(p: Parse): HostReport | null {
   const h = p.hello;
   if (!p.done || p.err || !h) return null;
-  return { hello: h, sessions: p.sessions, cost: p.cost, allowance: p.allowance, live: null, exact: false, owned: noOwned() };
+  return { hello: h, sessions: p.sessions, cost: p.cost, allowance: p.allowance, live: null, exact: false, owned: noOwned(), wait: p.wait };
 }
 // a whole text at once (CLI, checks); null with the reason
 export function parseReport(text: string): { r: HostReport | null; err: string } {
@@ -54,6 +55,7 @@ function helloObj(h: Hello): Obj { return { format: h.format, version: h.version
 // the inverse: what `fleet pull` prints, one JSON object per line
 export function reportLines(r: HostReport): string[] {
   const out: string[] = [JSON.stringify({ hello: helloObj(r.hello) }), JSON.stringify({ cost: r.cost }), JSON.stringify({ allowance: r.allowance })];
+  if (r.wait) out.push(JSON.stringify({ wait: r.wait }));
   for (const s of r.sessions) out.push(JSON.stringify({ s: s.s }));
   out.push(JSON.stringify({ end: { sessions: r.sessions.length } }));
   return out;

@@ -9,7 +9,7 @@ import { titleOf } from "../../model/sessions.ts";
 import { screenOut } from "../../hooks.ts";
 import { say } from "../../state.ts";
 import type { MVal } from "../detect.ts";
-import { type Rule, type NotifyCfg, unitOf } from "./config.ts";
+import { type Rule, type NotifyCfg, HOST_METRICS, unitOf } from "./config.ts";
 import { type Trans, severityOf, placeholders, fill } from "./engine.ts";
 
 export interface JAlert { rule: string; severity: string; state: string; value: number; unit: string; threshold: number; since: string; session: string; harness: string; title: string; project: string; message: string; labels: { [k: string]: string } }
@@ -20,7 +20,9 @@ export const IO = {
   desk: (title: string, sub: string, msg: string): void => { OS.notify(title, sub, msg); },
   toast: (msg: string): void => { say("warn", msg); },
 };
-const lastBell = new Map<string, number>(); // path → last bell/notification (shared throttle)
+const lastBell = new Map<string, number>(); // throttleKey → last bell/notification (shared throttle)
+// per session; a host-wide metric (contention) per (rule, host): three agents in contention give one notification
+export function throttleKey(r: Rule, s: Sess): string { return HOST_METRICS.indexOf(r.metric) >= 0 ? r.id + "\t@host" : s.path; }
 interface Job { argv: string[]; env: { [k: string]: string }; input: string }
 // SIGTERM at killMs, SIGKILL graceMs later; past max running, jobs wait in queue (oldest first, ≤ qmax): a burst of
 // transitions (every live session's alert at TUI start) runs in turn instead of being dropped
@@ -85,11 +87,22 @@ function spawnJob(job: Job): string {
 export function lead(r: Rule, v: MVal): string { return v.hint === "likely" ? r.prefix.trimEnd() + " (likely) " : (v.hint && v.hint !== "herdr" ? v.hint + " " : "") + r.prefix; }
 // one transition: bell + desktop (fire/escalate, notify rules, not acked, not in --watch, throttled per session), the command
 // on every state in notify.on regardless of acknowledgement (in --watch only with --notify)
+// host-wide rules (contention): the sessions each rule fires on; outputs only when the first one fires (the host enters
+// the condition) and when the last one resolves — three agents in one contention give one notification
+const hostOn = new Map<string, string[]>();
+function hostGate(r: Rule, t: Trans): boolean {
+  const on = hostOn.get(r.id) ?? []; const i = on.indexOf(t.path); const was = on.length;
+  if (t.state === "resolve") { if (i >= 0) on.splice(i, 1); hostOn.set(r.id, on); return was > 0 && on.length === 0; }
+  if (i < 0) on.push(t.path);
+  hostOn.set(r.id, on);
+  return was === 0 || (t.state === "escalate" && i >= 0);
+}
 export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boolean, cmdOn: boolean, cfg: NotifyCfg, v: MVal, message: string, since: number): void {
+  if (HOST_METRICS.indexOf(r.metric) >= 0 && !hostGate(r, t)) return; // another session of this host already said it
   if (!inWatch && r.notify && !acked && (t.state === "fire" || t.state === "escalate")) {
-    const last = lastBell.get(s.path) ?? 0;
+    const tk = throttleKey(r, s); const last = lastBell.get(tk) ?? 0;
     if (t.at - last >= cfg.throttleSec * 1000) {
-      lastBell.set(s.path, t.at);
+      lastBell.set(tk, t.at);
       if (cfg.bell) IO.bell();
       if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), lead(r, v) + titleOf(s).slice(0, 120));
     }
@@ -99,4 +112,4 @@ export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boo
     if (why) IO.toast("rules: " + why);
   }
 }
-export function forget(path: string): void { lastBell.delete(path); }
+export function forget(path: string): void { lastBell.delete(path); for (const on of hostOn.values()) { const i = on.indexOf(path); if (i >= 0) on.splice(i, 1); } }

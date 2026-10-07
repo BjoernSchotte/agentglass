@@ -17,6 +17,7 @@ import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
 import { printClause, suggest } from "./parse.ts";
 import { repoVals } from "./project.ts";
+import { rowFam, rowKind, famName, famLabel, toolFamily } from "../wait/family.ts";
 export { callCutoff };
 
 export type Ctx = "list" | "stats" | "json" | "watch" | "procs";
@@ -139,6 +140,8 @@ export function callVal(key: string, s: Sess, r: Rows, i: number): Val {
     case "server": return V([mcpServer(nameOf(DICT.tool, r.tool[i] + 0)).toLowerCase()]);
     case "program": return V(progVals(rowIds(r, i, KIND_PROG)));
     case "command": return V(names(DICT.cmd, rowIds(r, i, KIND_CMD)));
+    case "family": { const f = rowFam(r, i); if (f < 0) return V([toolFamily(nameOf(DICT.tool, r.tool[i] + 0)).toLowerCase()]); const n = famName(f).toLowerCase(); const sh = famLabel(f).toLowerCase(); return V(sh === n ? [n] : [n, EXACT + sh]); }
+    case "kind": return V([rowKind(r, i)]);
     case "file": return V(names(DICT.file, rowIds(r, i, KIND_FILE)));
     case "ext": { const o: string[] = []; for (const f of rowIds(r, i, KIND_FILE)) { const e = extOf(nameOf(DICT.file, f)); if (o.indexOf(e) < 0) o.push(e); } return V(o); }
     case "status": { const e = r.err[i] + 0; return V([e === 1 ? "error" : e === 0 ? "ok" : "unknown"]); }

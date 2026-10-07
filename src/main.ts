@@ -37,6 +37,7 @@ import "./features/replay.ts";
 import "./features/rules/cli.ts"; // before cli.ts: `rules --help` is its own
 import "./features/cli.ts";
 import "./features/cost-cli.ts";
+import "./features/wait/cli.ts";
 import "./features/prices-cli.ts";
 import "./features/queries.ts";
 import "./features/themes.ts";
@@ -47,6 +48,7 @@ import "./features/repos/ident.ts";
 import "./mux/attr.ts";
 import "./features/usage/stats.ts";
 import "./features/repos/tab.ts";
+import "./features/wait/tab.ts"; // the 5th tab, after Repos
 import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
 import "./features/vcs/view.ts";
 import "./features/query/ui.ts";

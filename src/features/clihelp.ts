@@ -34,7 +34,7 @@ export function opt(flag: string, arg: string, summary: string, def: string, val
 // the one exit-code table of every command (text help, JSON help exitCodes, README "Exit codes"); EXIT_EXTRA = the
 // command-specific meanings on top of it
 export const EXIT_CODES: Obj = { "0": "ok (an empty result is ok)", "1": "runtime failure", "2": "usage error", "3": "not found", "4": "ambiguous reference" };
-const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed, 3 = another export to the endpoint runs;\n  fleet --strict 5 = a host failed or is stale; fleet serve 126 = refused;\n  receive 3 = another receive serves its directory";
+const EXIT_EXTRA = "cost --check 3 = over budget; rules check 1 = warnings, 2 = errors; export 1 = some requests failed, 3 = another export to the endpoint runs;\n  fleet --strict 5 = a host failed or is stale; fleet serve 126 = refused; wait --check 3 = heavy commands at the limit;\n  receive 3 = another receive serves its directory";
 export const EXAMPLES: string[] = [
   "agentglass session current --fields costUsd,tools,errors",
   "agentglass errors --since 24h --limit 5",
@@ -97,8 +97,8 @@ export function helpOf(cmd: string, args: string[], text: string): string {
   return agentHost().on || (fi >= 0 && args[fi + 1] === "json") ? jsonHelp(cmd, hostObj(true)) : text;
 }
 export function wantsHelp(args: string[]): boolean { return args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0; }
-// TUI-only, maintenance and version commands: --help lists them
-const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--version", "--update-prices", "update", "rules check", "rules defaults", "prices set", "prices alias", "prices unset",
+// TUI-only and maintenance commands: --help lists them
+const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--update-prices", "update", "rules check", "rules defaults", "prices set", "prices alias", "prices unset",
   "--no-fleet", "fleet cost", "fleet status", "fleet pull", "fleet snapshot", "fleet watch", "fleet drop", "fleet serve", "fleet authorize",
   "receive", "receive token", "receive status", "receive service"]; // fleet: one entry, fleet --help lists the rest; receive: a hub command, not an agent tool
 // the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word
@@ -107,8 +107,9 @@ function brief(s: string): string {
   const cut = t.slice(0, 36); const sp = cut.lastIndexOf(" ");
   return (sp > 16 ? cut.slice(0, sp) : cut.slice(0, 35)).replace(/[,:/ ]+$/, "") + "…";
 }
-// bare agentglass inside an agent: what exists and three examples, no option tables (target ≤ 1 KB: it costs the agent
-// tokens; the version is left to --version)
+// bare agentglass inside an agent: what exists and three examples, no option tables. Budget 1.5 KB (~400 tokens, read
+// once): 1 KB forced commands out (--version, then open: inside an agent it resolves a link, a running TUI shows it) and cut
+// summaries to fragments; an agent finding a command matters more
 export function compactHelp(agent: Obj): string {
   const cs: Obj[] = [];
   for (const sub of [true, false]) // subcommands (the queries) first, then the flag commands

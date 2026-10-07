@@ -24,7 +24,7 @@ function rep(hostId: string, sess: { id: string; live: boolean }[], today: numbe
     tokens: { in: 10, out: 2, cacheRead: 0, cacheWrite: 0 }, billing: { mode: "api", plan: "", source: "config" }, attention: x.live, stuck: null, repo: { key: "git:github.com/a/x", label: "x", kind: "git", worktree: "", top: "/w/x", remote: "" } }));
   return { hello: { format: FORMAT, version: "x", hostId, hostName: "h", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now, priceSig: "" }, sessions: ss,
     cost: { today: { byMode: { api: today, plan: 0, metered: 0, gateway: 0, unknown: 0 }, estimatedUsd: 0, unpriced: { tokens: 5, byModel: { m: 5 }, credits: 0 } }, week: { byMode: { api: today * 2 } }, month: { byMode: { api: today * 3 }, projected: proj ? { byMode: { api: today * 10 }, total: today * 10 } : null } },
-    allowance: al ? { claude: { account: al.account, fetchedAt: al.fetchedAt, h5: { pct: al.pct, reset: now + 3600000 }, d7: null }, codex: null } : null, live: null, exact: false, owned: noOwned() };
+    allowance: al ? { claude: { account: al.account, fetchedAt: al.fetchedAt, h5: { pct: al.pct, reset: now + 3600000 }, d7: null }, codex: null } : null, live: null, exact: false, owned: noOwned(), wait: null };
 }
 const nofeed: HostFeed = { kind: "ssh", start: (t: number): boolean => false, poll: (t: number) => newFeedState(), stop: (): void => {} };
 const cfg: FleetCfg = { hosts: [{ name: "ws", ssh: "ws", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }, { name: "vm1", ssh: "vm1", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true }],

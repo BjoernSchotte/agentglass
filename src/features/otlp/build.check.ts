@@ -57,6 +57,7 @@ if (ct.length === 2) {
   eq("streamed chat window", String((m.t1 - m.t0) / 1000) + " " + m.respId + " " + m.provider, "3 msg_a anthropic");
   eq("streamed chat: one span at the final output_tokens", String(m.nOut) + " " + String(m.nIn), "14 10");
   eq("bash", ct[0].spans[2].prog + " " + String((ct[0].spans[2].t1 - ct[0].spans[2].t0) / 1000), "git 1.5");
+  eq("bash family", String(ct[0].spans[2].fam.startsWith("git")) + " " + ct[0].spans[2].fkind, "true vcs");
   eq("mcp", ct[0].spans[3].mcp, "ctx");
 }
 eq("claude conservation (root)", sum(ct, CID), ledger(cs, false));

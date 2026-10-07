@@ -63,6 +63,7 @@ function ruleJson(r: Rule): string {
   if (r.hasDeg) o.push("\"degraded\": " + t(r.deg));
   if (r.hasCrit) o.push("\"critical\": " + t(r.crit));
   if (r.where) o.push("\"where\": " + q(r.where));
+  if (r.forSec > 0) { const x = thrJson("duration", r.forSec); o.push("\"for\": " + (typeof x === "string" ? q(x) : String(x))); }
   if (r.window > 0) o.push("\"window\": " + String(r.window));
   if (r.minCalls !== 1) o.push("\"min_calls\": " + String(r.minCalls));
   o.push("\"ack\": " + q(r.ack)); o.push("\"notify\": " + String(r.notify)); o.push("\"message\": " + q(r.message));
@@ -76,6 +77,7 @@ const EXAMPLES = [
   '{"id":"bash-errors-recent","metric":"tool_error_rate","where":"tool is Bash","min_calls":20,"window":50,"degraded":"30%","enabled":false}',
   '{"id":"bash-repeats","metric":"repeat_run","where":"tool is Bash","degraded":5,"enabled":false}',
   '{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look","enabled":false}',
+  '{"id":"same-heavy-command","metric":"contention_family","degraded":2,"for":"30s","enabled":false}',
 ];
 export function defaultsText(examples: boolean): string {
   const rows: string[] = []; for (const r of builtins()) rows.push(ruleJson(r));
@@ -84,7 +86,7 @@ export function defaultsText(examples: boolean): string {
 }
 
 const CHECK_OPTS: OptRec[] = setOptions("rules check", [opt("--json", "", "check: {file, exists, rules[], diagnostics[{line,col,rule,message,severity}]}", "", [])]);
-const DEFAULTS_OPTS: OptRec[] = setOptions("rules defaults", [opt("--examples", "", "defaults: plus disabled example rules (cost, error rate, repeats, per harness)", "", [])]);
+const DEFAULTS_OPTS: OptRec[] = setOptions("rules defaults", [opt("--examples", "", "defaults: plus disabled example rules (cost, error rate, repeats, per harness, same heavy command)", "", [])]);
 export const RULES_HELP = `usage: agentglass rules check [--json]
        agentglass rules defaults [--examples]
 

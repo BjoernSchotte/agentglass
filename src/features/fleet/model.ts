@@ -36,6 +36,7 @@ export interface HostReport {
   exact: boolean;            // every session carries days and own: the merge can be exact (13)
   owned: Owned[];            // every Claude session on the host with its owned rows, also those outside the window
                              // (ownership-only rows): who owns a copy is decided over the host's whole history; [] = none (Part A)
+  wait: Obj | null;          // agent-wait: the host's `wait --json` object (fleet pull --wait), null = not asked or not sent
 }
 export interface FeedState { report: HostReport | null; okAt: number; tryAt: number; err: string; code: string; busy: boolean } // viewer clock
 export interface HostFeed {

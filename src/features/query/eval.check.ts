@@ -185,5 +185,18 @@ eq("no day left", String(beyondRetention([], [], "2025-01-01", cut)), "false");
   eq("no ledger entry for a remote row", String(ledger.has(r.path)), "false");
   HOST_ENUM.values = (): string[] => ["local"];
 }
+// agent-wait: call attributes family and kind (from the command family; non-shell tools: their tool family and kind)
+fxBase();
+eq("family is", S0("family is \"npm test\""), "x1");
+eq("family is make", S0("family is make"), "c1");
+eq("family ~", S0("family ~ npm"), "x1");
+eq("kind is test", S0("kind is test"), "x1");
+eq("kind is build", S0("kind is build"), "c1,x1");
+eq("kind is file (non-shell tools)", S0("kind is file"), "c1,c1s");
+eq("kind is_one_of", S0("kind is_one_of test,wait"), "c1,x1");
+eq("same call: family and status", S0("family is sleep and status is unknown"), "c1");
+eq("family of a non-shell tool", S0("family is Grep"), "c1s");
+const ke = parse("kind is nope").err;
+eq("kind is nope: an error listing the kinds", ke ? ke.msg : "", "kind is one of test, typecheck, lint, build, install, ci, wait, vcs, net, other, user, agent, web, mcp, file — got \"nope\"");
 console.log(bad ? bad + " failed" : "filter eval: all checks passed");
 if (bad) process.exit(1);

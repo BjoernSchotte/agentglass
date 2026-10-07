@@ -37,6 +37,7 @@ import { complete as ledgerComplete } from "./usage/ledger.ts";
 import { relatedJson } from "./related/cli.ts";
 import { relCfg } from "./related/model.ts";
 import { section } from "../util/config.ts";
+import { LIVE, collectLive } from "./wait/live.ts";
 import { watched, looker, observeWith, watchStep, forgetSession, ruleOf, ledgerRule, alertsOf } from "./watchdog.ts";
 
 const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
@@ -323,6 +324,10 @@ export function watch(o: Opts, sink: Sink | null): void {
   const ledAt = new Map<string, number>();
   const alerts = (): void => {
     const rs = rules(); const lk = looker(); const now = Date.now(); const led = ledgerRule(rs);
+    // agent-wait: heavy commands on this host, as the TUI's tick collects them (contention metrics are host-wide: every
+    // watched session counts, whatever the filter shows)
+    const ws: Sess[] = []; for (const s of sessions.values()) if (watched(s)) ws.push(s);
+    LIVE.cur = collectLive(ws, lk.kids, now); LIVE.ver++;
     for (const s of sessions.values()) {
       if (!watched(s) || !wanted(s, o)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } forgetSession(s.path); continue; } // as the TUI: an ended session keeps no flag
       if (led && now - (ledAt.get(s.path) ?? 0) >= 10000) { ledAt.set(s.path, now); ledgerComplete(s); } // cost, tokens, call rows

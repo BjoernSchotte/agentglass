@@ -42,7 +42,7 @@ ok("merge chip: a later one, slow", mergeText({ done: 1, total: 3, ms: 1500 }, t
 ok("merge chip: capped at 99", mergeText({ done: 5, total: 5, ms: 0 }, false) === "merging 99%" && mergeText(null, false) === "", mergeText({ done: 5, total: 5, ms: 0 }, false));
 // alerts: a transition toasts once; the first report only seeds
 const rep = (alerts: unknown[]): HostReport => ({ hello: { format: FORMAT, version: "x", hostId: "1", hostName: "h", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 1, priceSig: "" },
-  sessions: [sessRowOf({ id: "a", harness: "claude", title: "fix login", alerts })], cost: null, allowance: null, live: null, exact: false, owned: noOwned() });
+  sessions: [sessRowOf({ id: "a", harness: "claude", title: "fix login", alerts })], cost: null, allowance: null, live: null, exact: false, owned: noOwned(), wait: null });
 const ws = hostByName("ws"); if (!ws) throw new Error("ws");
 const a1 = { rule: "stuck", severity: "warning", since: "2026-10-06T10:00:00.000Z", message: "no output for 10 min" };
 ok("first report seeds", newAlerts(ws, rep([a1]), true).length === 0, "toasted");

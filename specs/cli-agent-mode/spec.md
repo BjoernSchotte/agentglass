@@ -194,8 +194,8 @@ scope default is decision 3.6.
    `agentglass session current --fields costUsd,tools,errors`. Keep them short: they cost the agent tokens.
 4. The README gets a paragraph for `CLAUDE.md`/`AGENTS.md`: "Run `agentglass session current` to see this session's
    cost and failed tool calls."
-5. **Compact help** (bare `agentglass` in agent mode): one compact JSON object, target ≤ 1 KB, rendered from the
-   same records — `{name, version, agentMode: {harness, session, scope}, commands: [{cmd, summary}], examples: [3
+5. **Compact help** (bare `agentglass` in agent mode): one compact JSON object, target ≤ 1.5 KB (1 KB until the
+   agent-wait review: the list lost commands as it grew), rendered from the same records — `{name, version, agentMode: {harness, session, scope}, commands: [{cmd, summary}], examples: [3
    most useful], more: "agentglass --help"}`. No option tables, no field lists; `--help` gives the full form (4.2).
 
 ### 5. Failure modes
@@ -223,7 +223,7 @@ scope default is decision 3.6.
   `agentHost().on/harness/session/via`. Ancestry runs on a synthetic `allProcs` map: nested agents, a wrapper binary,
   a missing `ps`.
 - **No TUI in an agent:** run the binary under `script -qc` (PTY) with `CLAUDECODE=1`. Bare `agentglass` must exit 0
-  within 2 s and print the compact help (valid JSON, ≤ 1 KB, no option tables).
+  within 2 s and print the compact help (valid JSON, ≤ 1.5 KB, no option tables).
 - **Scope:** agent mode defaults to the current project; `--all-projects` and `agent.scope: "all"` widen it;
   `--project-only` narrows a configured `all`; an invalid `agent.scope` warns and uses `project`. `agentglass update --tag <older>` must exit 2 without reading stdin.
 - **Format golden tests:** the same rows in json, jsonl, csv (quoting, formula guard, flattening) and table (CJK and

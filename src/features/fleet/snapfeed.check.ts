@@ -90,7 +90,7 @@ ok("a delta on another base never applies", norm(s.report) === norm(want3), norm
 serve(snapLines(full), 0, ""); run(fd);
 ok("…and the next request asks for a full one", lastWords().indexOf("--ack") < 0, lastWords());
 // an agentglass without fleet snapshot: the pull for the rest of the run
-const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: Date.now(), priceSig: "" }, sessions: [sessRowOf({ id: "p", harness: "claude" })], cost: null, allowance: null, live: null, exact: false, owned: noOwned() };
+const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: Date.now(), priceSig: "" }, sessions: [sessRowOf({ id: "p", harness: "claude" })], cost: null, allowance: null, live: null, exact: false, owned: noOwned(), wait: null };
 const ho: HostCfg = { name: "old", ssh: "old", agentglass: "agentglass", redact: false, enabled: true, kind: "ssh", path: "", snapshot: true, watch: true };
 const fo = sshFeed(ho, f, false, (): number => Date.now(), detachedPid, 256, PEER);
 serve(["x"], 2, "agentglass: unknown fleet command snapshot\n");

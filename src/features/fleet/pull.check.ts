@@ -10,6 +10,8 @@ import { type Obj, obj } from "../../util/json.ts";
 import { FORMAT } from "./model.ts";
 import { pullReport } from "./pull.ts";
 import { reportLines, parseReport } from "./report.ts";
+import { REDACT } from "../redact-on.ts";
+import "../wait/cli.ts"; // registers fleet pull --wait
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -44,5 +46,21 @@ const p2 = join(HOME, ".claude", "projects", "-w-app-codex"); mkdirSync(p2, { re
 writeFileSync(join(p2, "s-new.jsonl"), sess("s-new", new Date(now - 60000).toISOString()) + sess("s-new2", new Date(now - 30000).toISOString()).split("s-new2").join("s-new"));
 const rt = pullReport(7, now);
 ok("twins: one row", rt.sessions.length === 1 && (rt.sessions[0]?.key ?? "") === "claude:s-new", JSON.stringify(rt.sessions.map((x) => x.key)));
+// agent-wait: --wait adds one wait line after allowance (families, no command line; --redact: no script name)
+{
+  const q = (x: string): string => JSON.stringify(x); const t0 = new Date(now - 120000).toISOString(); const t1 = new Date(now - 60000).toISOString();
+  writeFileSync(join(p, "s-gen.jsonl"), '{"type":"user","sessionId":"s-gen","cwd":"/w/app","timestamp":' + q(t0) + ',"message":{"role":"user","content":"gen"}}\n' +
+    '{"type":"assistant","sessionId":"s-gen","timestamp":' + q(t0) + ',"message":{"id":"m-gen","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"tool_use","id":"tg","name":"Bash","input":{"command":"node scripts/gen.js --all"}}],"usage":{"input_tokens":1,"output_tokens":1}}}\n' +
+    '{"type":"user","sessionId":"s-gen","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tg","content":"x"}]},"uuid":"ug","timestamp":' + q(t1) + '}\n');
+  const lw = reportLines(pullReport(7, now, true)); const l0 = reportLines(pullReport(7, now));
+  ok("--wait: one wait line after allowance", (lw[3] ?? "").startsWith("{\"wait\":") && lw.filter((l: string) => l.startsWith("{\"wait\"")).length === 1 && (lw[2] ?? "").startsWith("{\"allowance\""), lw.slice(0, 4).join("\n").slice(0, 300));
+  ok("without --wait: none", l0.filter((l: string) => l.startsWith("{\"wait\"")).length === 0, "a wait line");
+  const wl = lw[3] ?? "";
+  ok("wait carries the family", wl.indexOf(REDACT ? "\"key\":\"node\"" : "\"key\":\"node gen.js\"") >= 0, wl.slice(0, 300));
+  ok("no command line", wl.indexOf("--all") < 0, "the command line leaked");
+  if (REDACT) ok("--redact: no script name", wl.indexOf("gen.js") < 0, "gen.js in the wait line");
+  const back = parseReport(lw.join("\n")).r;
+  ok("wait round-trips", back !== null && JSON.stringify(back.wait) === wl.slice(8, wl.length - 1), back ? JSON.stringify(back.wait).slice(0, 200) : "no report");
+}
 console.log(bad ? String(bad) + " failed" : "fleet pull: all checks passed");
 if (bad) process.exit(1);

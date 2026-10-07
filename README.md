@@ -370,7 +370,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `V` | git view: the session's commits, PRs/MRs, issues (see [Git linkage](#git-linkage)) |
 | `!` | cycle the agents needing you: stuck `⚠` first, then waiting `◆` (acknowledged ones skipped) |
 | `T` | cycle themes |
-| `Tab` `1` `2` `3` `4` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) ⇄ Repos |
+| `Tab` `1` `2` `3` `4` `5` | Sessions ⇄ Processes ⇄ Stats (`↵` on a tool drills in) ⇄ Repos ⇄ Wait |
 | `B` | in Stats: budget state and the config path |
 | `@` | in Sessions: open the selected session's project in the Repos tab |
 | `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
@@ -409,6 +409,55 @@ rate, an 8-cell harness mix (by cost, by sessions when nothing is priced), chang
   `worktree` and `project.kind` (`git` `gitdir` `path` `none`). `--json` sessions carry
   `repo{key,label,kind,worktree,top,remote}`, and `agentglass --json --repos [--days N] [--filter …]` prints one
   object per project (`--days` defaults to 7, `0` = all history).
+
+## What do my agents wait on?
+
+The Wait tab (`5`) and `agentglass wait` sum the wall time of every tool call by **command family** — `pnpm test`,
+`tsc`, `cargo build`, `gh run watch`, `sh check.sh` — and by non-shell tool (`AskUserQuestion`, `TaskOutput`, MCP
+servers), over a period and the period before it: share of agent time, calls, ≈ p50/p95, failure rate, trend. The
+header splits the agents' active time into tools (with polling: `sleep`, `gh run watch`, `TaskOutput`), questions to
+you and the model. Families come from the command lines agentglass already records, at read time (no re-index):
+wrappers (`sudo`, `timeout 600`, `env A=1`, `rtk proxy`, `flock <lockfile>`) and steps such as `cd` or `export` are
+skipped, `cat x | python3 -` is `python3`, `npx tsc` is `tsc`, `uv run pytest` is `pytest`, `pnpm typecheck` keeps its
+script. Each family has a **kind** (`test typecheck lint build install ci wait vcs net other`); the first five are
+**heavy**.
+
+- Heavy commands at the same time: history (the most at once, time with ≥ 2 and ≥ 3 running, a timeline, and how much
+  slower a command was when another heavy one covered half of it — a correlation, labelled so) and now (each running
+  heavy command with its age and memory, the machine's load and free memory; red at the `contention` threshold).
+- Keys: `d` `w` `m` `a` period · `v` families / kinds / tools · `s` sort (total, count, p95, err, trend, peak) · `↵`
+  the slowest calls (`↵` opens the session at the call) · `t` [triage](#triage) of that family · `f` filter the
+  Sessions list to it · `/` filters the calls first (`repo is x`, `harness is codex`) · with fleet hosts `h` merged ↔
+  per host. The report runs only while the tab shows, in 20 ms slices.
+- `agentglass wait [--since 7d] [--by family|kind|tool] [--filter …] [--json]`, `--now` (the heavy commands running
+  now, no history read), `--check [--kind test | --family f] [--max N]` (exit 3 at the limit), `--fleet` (every ssh
+  host asked with `fleet pull --wait`: sums and histograms merge exactly, peaks and now stay per host). Inside an
+  agent it prints JSON, history is the current project and now/`--check` the whole machine. Fields:
+  [docs/cli-contract.md](docs/cli-contract.md#agentglass-wait--what-agents-wait-on).
+- Filter keys `family` and `kind` work wherever call keys do: `kind is lint` in Stats, `--select 'family is "pnpm
+  test"'` in triage, rule scopes. OTLP `execute_tool` spans carry `agentglass.tool.family` and `agentglass.tool.kind`.
+- Opt-in alert: `{"rules": [{"id": "contention", "enabled": true}]}` in `rules.json` (see [Alert rules](#alert-rules)).
+- For agents, before a test run: `agentglass wait --check --kind test || echo "3+ heavy runs on this machine — wait or
+  run a subset"`. To serialise heavy runs yourself, wrap them in a lock: `flock /tmp/heavy.lock pnpm test` (the family
+  stays `pnpm test`).
+- Your own families, in `~/.agentglass/config.json` (read at start; a bad entry is skipped with one warning):
+
+```json
+{ "wait": {
+    "families": [
+      { "match": "make *", "family": "make $1", "kind": "build" },
+      { "match": "./scripts/ci.sh ...", "family": "ci.sh", "kind": "test", "heavy": true },
+      { "match": "pnpm run storybook:*", "kind": "test" } ],
+    "heavyKinds": ["test", "typecheck", "lint", "build", "install"],
+    "minSec": 10 } }
+```
+
+  `match` is words: `*` is one word (`$1`…`$9` in `family`), a trailing `...` the rest, `*` inside a word a glob; rules
+  go first, in order. `minSec`: heavy calls shorter than this do not count as overlapping.
+- Limits: tool time includes approval dialogs (no record separates them); background runs (`run_in_background`, Codex
+  commands that outlive their yield) end their call at launch and are not timed in history (they count live); a
+  command line is stored up to 200 characters, so a long `cd … && export … && pnpm test` may lose its last step
+  (family `sh`). `--redact` shows an interpreter + script family (`node gen.js`) as its program (`node`).
 
 ## Git linkage
 
@@ -469,8 +518,10 @@ harness is pi, day >= -7d               duration > 30s                       con
   state cost tokens tokens.in/out/cache_read/cache_write tools errors error_rate lines lines.added/removed age text
   content worktree project.kind session mux workspace` (`session is claude:3f2a9c`: a run and its subagents; `mux is
   herdr`: the live agent's multiplexer, tmux | herdr | none; `workspace is webapp`: its herdr workspace), day `day weekday
-  day.cost day.tokens day.tools`, call `tool server program command file ext status duration out hour`, `event`
-  (`--watch`). On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
+  day.cost day.tokens day.tools`, call `tool server program command family kind file ext status duration out hour`,
+  `event` (`--watch`). `family` is the call's command family (`pnpm test`, `tsc`; other tools: the tool) and `kind`
+  its kind (`test typecheck lint build install ci wait vcs net other`, tools `user agent web mcp file`), as
+  `agentglass wait` groups them: `kind is lint` in Stats drills into lint runs. On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
   "has a day matching all of them". `model` of a call is the model of the message that issued it (Codex: per turn;
   fx: per session; Kiro: unknown).
 - In the TUI, `/` parses as you type; the last valid filter stays while the text does not parse, the error shows
@@ -656,6 +707,8 @@ A rule with a built-in `id` changes only the fields it names: `{"id":"approval",
 | `tool_calls` | count | matching calls | |
 | `tool_errors` | count | matching failed calls | |
 | `tool_error_rate` | ratio | failed / matching calls with a result (fewer than `min_calls`) | |
+| `contention` | count | heavy commands (tests, type checks, lint, builds, installs) running on this host — the same value for every session running one (the session runs none) | `min_age` 0 (seconds a command runs before it counts) |
+| `contention_family` | count | running heavy commands of the family of the session's oldest heavy command (the session runs none) | `min_age` 0 |
 
 `samples` is at most 400 (one sample per ~1.5 s; the CPU history grows to the largest one in use).
 
@@ -669,6 +722,10 @@ Built-ins (`agentglass rules defaults` prints them as an editable file, `--examp
 | `long-cmd` | `command_age` | `⚠` `>` 10m | none | no | `{cmd} running {value}` |
 | `stalled` | `stalled` | `⚠` `>` 8m | none | no | `no log activity {value}, cpu {cpu}%` |
 | `spinning` | `spinning` | `⚠` `>` 3m | none | no | `cpu > {cpu}% for 3m while the log is silent {value}` |
+| `contention` | `contention` | `◆` `>=` 3, for 30s | none | yes | `{value} heavy commands running: {cmd}` — **off** until `{"id":"contention","enabled":true}` |
+
+The `contention` metrics are host-wide: every agent running a heavy command gets the alert (the rows show which), but
+the bell, the desktop notification and the notify command come once per rule and host, not once per agent.
 
 More examples:
 
@@ -676,6 +733,8 @@ More examples:
 |---|---|
 | only nag after 5 min of waiting (◆ and bell come at 5 min) | `{"id":"waiting","degraded":"5m"}` |
 | long test suites are fine | `{"id":"long-cmd","critical":"45m"}` |
+| warn when 3+ heavy runs overlap on this machine | `{"id":"contention","enabled":true}` |
+| two agents running the same suite at once | `{"id":"same-heavy-command","metric":"contention_family","degraded":2,"for":"30s"}` |
 | the same command repeated more than 5 times | `{"id":"bash-repeats","metric":"repeat_run","where":"tool is Bash","degraded":5}` |
 | Bash error rate over the last 50 calls | `{"id":"bash-errors","metric":"tool_error_rate","where":"tool is Bash","min_calls":20,"window":50,"degraded":"30%"}` |
 | Codex waits 5 min, everything else keeps the default | `{"id":"waiting","where":"harness is_not codex"}` and `{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look"}` (a copy repeats the `ack`/`notify`/`message` it wants) |
@@ -780,6 +839,8 @@ agentglass sessions --since 7d --format table                       # json | jso
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
 agentglass --json --live --fields id,mux_kind,mux_pane,mux_status --format csv  # the pane of every live agent
 agentglass cost --since 7d --by workspace --format csv --fields key,workspaceId,costUsd  # cost per herdr workspace
+agentglass wait --by kind --since 30d                               # what agents wait on: tests, lint, CI, you, the model
+agentglass wait --check --kind test || echo "3+ heavy runs here"    # for agents, before a test run (exit 3)
 ```
 
 Scripts, CI jobs and plugins should depend only on the **CLI contract** — the commands, fields and exit codes listed in
@@ -802,7 +863,8 @@ One table for every command (`agentglass --help` prints it, the JSON help carrie
 | 3 | not found (unknown session, event or `current` outside an agent) |
 | 4 | ambiguous reference (an id prefix that matches several sessions; the candidates go to stderr) |
 
-Command-specific on top: `cost --check` exits 3 when the month is over budget, `rules check` 1 on warnings and 2 on
+Command-specific on top: `cost --check` exits 3 when the month is over budget, `wait --check` 3 when as many heavy
+commands run on the machine as `--max` (default: the `contention` rule's threshold, 3), `rules check` 1 on warnings and 2 on
 errors, `export` 1 when some requests failed and 3 when another export to the same endpoint is running, `fleet` and
 `fleet cost` 5 with `--strict` when a host failed or is stale, `fleet serve` 126 for a refused request, `receive` 3
 when another receiver serves the same directory.
@@ -996,7 +1058,10 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
   `agentglass.repo.key` (the project key `--json` shows as `repo.key`) on every span of a session in a project,
   `agentglass.request.id` on Claude `chat` spans (Claude Code's `requestId`, where the transcript has one: recent
   Claude Code versions write it on few lines), and
-  `agentglass.usage.cache_write_1h.input_tokens` (the 1-hour part of the cache writes, priced apart).
+  `agentglass.usage.cache_write_1h.input_tokens` (the 1-hour part of the cache writes, priced apart), and on shell
+  `execute_tool` spans `agentglass.tool.family` and `agentglass.tool.kind` (the command family and kind of
+  `agentglass wait`: `pnpm test` / `test`; an interpreter + script family such as `node gen.js` is sent as its program
+  `node` unless `--detail meta` is on).
 - **Timing:** request start times are reconstructed (the previous event of the session to the response), so they
   include the harness's own queueing. Kiro and fx log no per-call times: their spans are spread over the turn and
   marked `agentglass.timing.estimated`. Live mode adds `agentglass.tool.approval_wait` (seconds, estimated by the
@@ -1253,7 +1318,7 @@ herdr (a popup, "open in agentglass", cost and alert tokens in the sidebar).
 
 When a coding agent runs `agentglass` from its shell tool, agentglass notices (`CLAUDECODE`, `AI_AGENT`, `CODEX_*`,
 `GEMINI_CLI`, `PI_CODING_AGENT`, `OPENCODE*`, `KIRO_SESSION_ID`) and behaves like a CLI for machines: it never starts
-the TUI and never prompts, bare `agentglass` prints a compact JSON help (< 1 KB), `--help` is JSON, output is compact
+the TUI and never prompts, bare `agentglass` prints a compact JSON help (< 1.5 KB), `--help` is JSON, output is compact
 JSON, and errors are one line `{"error":{"code","message","hint"}}` on stderr. `--agent` / `--no-agent` (or
 `AGENTGLASS_AGENT=1|0`) force it either way, for example to open the TUI in tmux started from an agent.
 

@@ -1,0 +1,315 @@
+# agent-wait command families: command<TAB>family<TAB>kind (spec agent-wait §1; checked by family.check.ts)
+# Hand-written shapes (no real commands): each line is the contract for the built-in rules. A changed line needs a reason
+# in its commit. Commands are as stored (norm(): one line, ≤ 200 characters).
+#
+# package managers
+pnpm test	pnpm test	test
+pnpm typecheck	pnpm typecheck	typecheck
+pnpm run lint -- --fix	pnpm run lint	lint
+npm run build	npm run build	build
+npm ci	npm install	install
+npm test	npm test	test
+npm t	npm test	test
+npm install	npm install	install
+npm i -D vitest	npm install	install
+pnpm add -D zod	pnpm install	install
+pnpm install --frozen-lockfile	pnpm install	install
+pnpm i	pnpm install	install
+yarn	yarn install	install
+yarn test	yarn test	test
+yarn build	yarn build	build
+yarn lint	yarn lint	lint
+pnpm lint	pnpm lint	lint
+pnpm build	pnpm build	build
+pnpm dev	pnpm dev	other
+pnpm	pnpm	other
+pnpm -C packages/web test	pnpm test	test
+pnpm --filter @acme/web build	pnpm build	build
+pnpm --filter=@acme/web typecheck	pnpm typecheck	typecheck
+npm run test:unit	npm run test:unit	test
+npm run e2e	npm run e2e	test
+pnpm test:e2e	pnpm test:e2e	test
+pnpm run check-types	pnpm run check-types	typecheck
+pnpm type-check	pnpm type-check	typecheck
+pnpm format	pnpm format	lint
+pnpm run format:check	pnpm run format:check	lint
+pnpm lint:fix	pnpm lint:fix	lint
+pnpm prettier --write .	pnpm prettier	lint
+pnpm run storybook:build	pnpm run storybook:build	build
+pnpm run	pnpm run	other
+bun test	bun test	test
+bun run build	bun run build	build
+bun install	bun install	install
+npm run dev -- --port 3000	npm run dev	other
+npm publish --access public	npm publish	other
+yarn workspace @acme/web test	yarn test	test
+turbo run build --filter web	turbo run build	build
+turbo test	turbo test	test
+nx test web	nx test	test
+nx run web:build	nx run web:build	build
+# runners: the family of what they run
+npx tsc --noEmit -p .	tsc	typecheck
+bunx vitest	vitest	test
+pnpm exec playwright test	playwright	test
+pnpm exec tsc -p tsconfig.json	tsc	typecheck
+pnpm dlx prisma generate	prisma	other
+yarn dlx tsc	tsc	typecheck
+npm exec -- eslint .	eslint	lint
+npx eslint .	eslint	lint
+npx -y prettier --check .	prettier	lint
+npx --yes tsx scripts/seed.ts	tsx seed.ts	other
+npx vitest run --coverage	vitest	test
+npx next build	next build	build
+npx vite build	vite build	build
+npx vite	vite	other
+npx jest --ci	jest	test
+npx mocha	mocha	test
+npx cypress run	cypress	test
+npx stylelint "**/*.css"	stylelint	lint
+npx svelte-check	svelte-check	typecheck
+npx vue-tsc --noEmit	vue-tsc	typecheck
+npx tsup	tsup	build
+npx esbuild src/a.ts --bundle	esbuild	build
+npx rollup -c	rollup	build
+npx webpack --mode production	webpack	build
+npx biome check .	biome	lint
+npx prisma migrate dev	prisma	other
+npx -y @playwright/mcp@latest	@playwright/mcp	other
+npm exec create-vite@latest app	create-vite	other
+playwright-mcp	playwright-mcp	other
+npx	npx	other
+uv run --frozen pytest -q tests/	pytest	test
+uv run pytest	pytest	test
+uv run --with rich python tools/x.py	python x.py	other
+uv run ruff check .	ruff	lint
+uv run mypy src	mypy	typecheck
+uv sync	uv sync	install
+uv sync --all-extras	uv sync	install
+uv pip install -r requirements.txt	uv pip	install
+uvx ruff format .	ruff	lint
+poetry run pytest	pytest	test
+poetry install	poetry install	install
+pipenv run python manage.py test	python manage.py	other
+python3 -m pytest -x	pytest	test
+python -m mypy .	mypy	typecheck
+python3 -m pip install -e .	pip install	install
+python3 -m http.server 8000	http.server	other
+python3.12 -m pytest	pytest	test
+bundle exec rspec spec/a_spec.rb	rspec	test
+bundle install	bundle install	install
+# test, lint and type tools called directly
+pytest -x tests/test_a.py	pytest	test
+pyright	pyright	typecheck
+ruff check --fix .	ruff	lint
+mypy --strict src	mypy	typecheck
+rspec	rspec	test
+tsc -b	tsc	typecheck
+eslint --max-warnings 0 src	eslint	lint
+shellcheck scripts/*.sh	shellcheck	lint
+golangci-lint run ./...	golangci-lint	lint
+playwright test --headed	playwright	test
+vitest run src/a.test.ts	vitest	test
+jest	jest	test
+prettier --check .	prettier	lint
+biome check --write .	biome	lint
+# CLIs with subcommands
+timeout 600 cargo build --release	cargo build	build
+RUST_LOG=info cargo test -p core	cargo test	test
+cargo build --release	cargo build	build
+cargo check --all-targets	cargo check	typecheck
+cargo clippy -- -D warnings	cargo clippy	lint
+cargo fmt --check	cargo fmt	lint
+cargo run --bin acme	cargo run	other
+cargo +nightly build	cargo build	build
+cargo nextest run	cargo nextest	test
+go test ./...	go test	test
+go build ./cmd/acme	go build	build
+go vet ./...	go vet	lint
+go mod tidy	go mod	install
+go run main.go	go run	other
+go tool golangci-lint run	go tool golangci-lint	lint
+go generate ./...	go generate	other
+make -j8 test	make test	test
+make	make	build
+make lint	make lint	lint
+make -C build install	make install	build
+make build	make build	build
+just lint	just lint	lint
+just test	just test	test
+just	just	other
+docker build -t x .	docker build	build
+docker compose up -d	docker compose	other
+docker ps	docker ps	other
+docker run --rm -it acme/app sh	docker run	other
+kubectl -n acme get pods	kubectl get	other
+git status --short	git status	vcs
+git diff --stat	git diff	vcs
+git -C /w/app log --oneline -5	git log	vcs
+git add -A && git commit -m "x"	git add	vcs
+git push origin HEAD	git push	vcs
+git fetch origin && git rebase origin/main	git fetch	vcs
+git worktree add -b x ../y origin/main	git worktree	vcs
+gh run watch 123 --exit-status	gh run watch	ci
+gh pr checks 12 --watch	gh pr checks	ci
+gh pr view 12	gh pr view	other
+gh run list --limit 5	gh run list	ci
+gh workflow run ci.yml	gh workflow run	ci
+gh api repos/acme/app/pulls	gh api	other
+gh pr create --fill	gh pr create	other
+gh -R acme/app issue list	gh issue list	other
+act -j test	act	ci
+tmux send-keys -t x q Enter	tmux send-keys	other
+tmux capture-pane -p -t x	tmux capture-pane	other
+scriptc build src/main.ts -o x	scriptc build	build
+agentglass wait --check	agentglass wait	other
+./agentglass --json	agentglass	other
+dotnet test	dotnet test	test
+dotnet build -c Release	dotnet build	build
+mvn -q test	mvn test	test
+./gradlew build	gradlew build	build
+terraform plan	terraform plan	other
+composer install	composer install	install
+mix test	mix test	test
+flutter test	flutter test	test
+deno test -A	deno test	test
+deno run -A main.ts	deno run	other
+rake test	rake test	test
+brew install jq	brew install	install
+apt-get install -y jq	apt-get install	install
+helm upgrade --install acme ./chart	helm upgrade	other
+# wrappers and assignments
+rtk proxy pnpm test	pnpm test	test
+flock -w 600 /tmp/acme-heavy.lock pnpm typecheck	pnpm typecheck	typecheck
+flock /tmp/acme.lock pnpm test	pnpm test	test
+flock -x -w 900 /tmp/acme.lock sh scripts/check.sh	sh check.sh	test
+sudo apt-get install -y jq	apt-get install	install
+env NODE_ENV=test pnpm test	pnpm test	test
+timeout 300 pnpm test	pnpm test	test
+timeout -s KILL 60 npx vitest run	vitest	test
+timeout 10m pnpm e2e	pnpm e2e	test
+nice -n 10 cargo build	cargo build	build
+nice cargo build	cargo build	build
+ionice -c3 nice pnpm lint	pnpm lint	lint
+nohup pnpm dev	pnpm dev	other
+time pnpm typecheck	pnpm typecheck	typecheck
+exec pnpm start	pnpm start	other
+caffeinate -i pnpm test	pnpm test	test
+stdbuf -oL pnpm test	pnpm test	test
+rtk git status	git status	vcs
+rtk tsc --noEmit	tsc	typecheck
+rtk vitest run	vitest	test
+rtk cargo test	cargo test	test
+rtk err pnpm build	pnpm build	build
+rtk summary pnpm test	pnpm test	test
+A=1 B=2 pnpm test	pnpm test	test
+CI=1 npx playwright test --project chromium	playwright	test
+sudo -u acme env HOME=/w pnpm test	pnpm test	test
+# heredocs (norm() joined the lines)
+python3 - <<'EOF' import json print(1) EOF	python3	other
+cat > /tmp/x.json <<EOF {"a":1} EOF	cat	other
+cat <<'EOF' > notes.md hello EOF && git add notes.md	git add	vcs
+python3 <<EOF print(1) EOF	python3	other
+bash <<'SH' pnpm test SH	bash	other
+node - <<'JS' console.log(1) JS	node	other
+git commit -F - <<'MSG' fix: x MSG	git commit	vcs
+gh pr create --title x --body-file - <<'EOF' body && more EOF	gh pr create	other
+cat <<-END a END	cat	other
+cat <<'EOF' > x.sh a; b | c EOF && pnpm test	pnpm test	test
+# pipes and filters: a filter names the family only when nothing else ran
+cat build.log | python3 -	python3	other
+grep -rn TODO src	grep	other
+grep -c x f | wc -l	grep	other
+rg -n foo src | head -20	rg	other
+pnpm test 2>&1 | tail -30	pnpm test	test
+pnpm test 2>&1 | tee /tmp/t.log	pnpm test	test
+npx tsc --noEmit 2>&1 | head -50	tsc	typecheck
+pnpm test > /tmp/out.txt 2>&1	pnpm test	test
+pnpm test &> /tmp/out.txt	pnpm test	test
+jq '.rows[0]' out.json	jq	other
+sed -n '1,40p' src/a.ts	sed	other
+head -100 file.txt | grep -v '|'	head	other
+echo "a && b" | wc -c	wc	other
+awk '{print $1}' x | sort | uniq -c	awk	other
+ls -la src	ls	other
+find . -name '*.ts' | xargs wc -l	find	other
+curl -s http://localhost:3000/api | jq .	curl	net
+ps aux | grep node	ps	other
+tail -f /tmp/x.log	tail	other
+cat package.json	cat	other
+cat <<<"x" | wc -l	cat	other
+git log --oneline | head -5	git log	vcs
+pnpm test |& tail -5	pnpm test	test
+# interpreters: interpreter + script name (generic: --redact shows the program only)
+sh scripts/check.sh	sh check.sh	test
+node scripts/gen.js	node gen.js	other
+bash ./deploy.sh staging	bash deploy.sh	other
+python3 scripts/report.py 30	python3 report.py	other
+python3 -c "print(1)"	python3	other
+python3 -	python3	other
+node -e "console.log(1)"	node	other
+node --max-old-space-size=8192 build.js	node build.js	build
+node -r ts-node/register src/x.ts	node x.ts	other
+tsx src/cli.ts	tsx cli.ts	other
+ts-node x.ts	ts-node x.ts	other
+ruby x.rb	ruby x.rb	other
+perl -pi -e 's/a/b/' f	perl	other
+bash -lc "pnpm test"	pnpm test	test
+sh -c 'cd /w && make'	make	build
+zsh -c "echo hi"	zsh	other
+bash -x deploy.sh	bash deploy.sh	other
+bash	bash	other
+node	node	other
+/usr/bin/python3 tools/x.py	python3 x.py	other
+python3 -u x.py	python3 x.py	other
+# path programs: their basename
+./build.sh && sh scripts/check.sh	build.sh	build
+./scripts/test.sh --fast	test.sh	test
+./node_modules/.bin/vitest run	vitest	test
+node_modules/.bin/tsc -p .	tsc	typecheck
+.venv/bin/pytest -q	pytest	test
+./scripts/release.sh	release.sh	other
+# loops, conditions, groups
+until gh run view 1 --json status | grep -q completed; do sleep 20; done	gh run view	ci
+for f in a b; do sed -n 1p $f; done	sed	other
+while true; do pnpm test && break; sleep 5; done	pnpm test	test
+while ! curl -sf localhost:3000; do sleep 1; done	curl	net
+if [ -f x ]; then pnpm build; fi	pnpm build	build
+for i in 1 2 3; do echo $i; done	sh	other
+sleep 30 && tail -5 /tmp/x.log	sleep	wait
+sleep 60	sleep	wait
+wait	wait	wait
+while sleep 5; do pgrep -f x || break; done	sleep	wait
+(cd /w/app && pnpm test)	pnpm test	test
+{ pnpm lint; pnpm test; }	pnpm lint	lint
+pnpm build & pnpm test & wait	pnpm build	build
+test -f x && pnpm test	pnpm test	test
+[ -d node_modules ] || pnpm install	pnpm install	install
+[[ -n "$CI" ]] && pnpm test	pnpm test	test
+shopt -u promptvars nullglob; _f=/tmp/g/x.tmp ( trap 'jobs -p > "$_f"' EXIT npm test ) __code=$? exit $__code	npm test	test
+trap 'rm -f /tmp/x' EXIT INT	sh	other
+# trivial steps only
+echo done	sh	other
+export A=1; cd x	sh	other
+cd /w/app	sh	other
+true	sh	other
+mkdir -p out && cd out	sh	other
+source .venv/bin/activate && pytest	pytest	test
+. ./env.sh && make test	make test	test
+set -e; pnpm test	pnpm test	test
+cd /w/app && export CI=1 && pnpm typecheck	pnpm typecheck	typecheck
+# quotes keep separators inside
+echo 'a; b' && pnpm lint	pnpm lint	lint
+git commit -m "fix: a && b; c | d"	git commit	vcs
+printf "%s\n" "x|y" | sort	sort	other
+# other programs
+ssh host uptime	ssh	net
+scp a host:/tmp/	scp	net
+rsync -a src/ host:/w/	rsync	net
+wget -q https://example.com/x	wget	net
+rm -rf dist && pnpm build	rm	other
+cp a b	cp	other
+pgrep -f vitest	pgrep	other
+kill 1234	kill	other
+# 200-character cut: the stored text ends mid-command
+cd /w/app && export A=1 B=2 C=3 D=4 E=5 F=6 G=7 H=8 I=9 J=10 K=11 L=12 M=13 N=14 O=15 P=16 Q=17 R=18 S=19 T=20 U=21 V=22 W=23 X=24 Y=25 Z=26 AA=27 BB=28 CC=29 DD=30 EE=31 FF=32 GG=33 && pnp	pnp	other
+cd /w/app && pnpm vitest run src/features/very/long/path/to/a/test/file/that/goes/on/and/on/and/on/x.test.ts --reporter=verbose --coverage --coverage.reporter=text --coverage.all --poo	pnpm vitest	test

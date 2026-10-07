@@ -50,5 +50,9 @@ ok("bad from", keyLine("/a/agentglass", "ssh-ed25519 AAAA", "1.2.3.4\" x", false
 ok("escape in the key comment", keyLine("/a/agentglass", "ssh-ed25519 AAAA a\u001b]0;x\u0007b", "", false).err !== "", "accepted");
 ok("non-ASCII key comment", keyLine("/a/agentglass", "ssh-ed25519 AAAA björn@laptop", "", false).err === "", "refused");
 ok("space in path", keyLine("/a b/agentglass", "ssh-ed25519 AAAA", "", false).err.indexOf("plain path") >= 0, "accepted");
+// agent-wait: --wait for pull only, once
+ok("pull --wait", JSON.stringify(allowed(["agentglass", "fleet", "pull", "--wait"]).args) === JSON.stringify(["fleet", "pull", "--wait"]), A(["agentglass", "fleet", "pull", "--wait"]));
+ok("pull --wait --wait refused", allowed(["agentglass", "fleet", "pull", "--wait", "--wait"]).err !== "", A(["agentglass", "fleet", "pull", "--wait", "--wait"]));
+ok("snapshot --wait refused", allowed(["agentglass", "fleet", "snapshot", "--wait"]).err !== "", A(["agentglass", "fleet", "snapshot", "--wait"]));
 console.log(bad ? String(bad) + " failed" : "fleet serve: all checks passed");
 if (bad) process.exit(1);

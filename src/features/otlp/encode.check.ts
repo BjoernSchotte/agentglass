@@ -169,5 +169,18 @@ if (REDACT) {
   if (hashed === "") bad++;
 }
 
+// agent-wait: shell tool spans carry the command family and kind; a generic family (interpreter + script) only with meta
+{
+  const t = turn("claude", "w#0");
+  const ok = newSpan("execute_tool", "execute_tool Bash pnpm", "1111111111111111", t.spans[0]?.spanId ?? "", T0 + 1400, "s1"); ok.t1 = T0 + 1500; ok.tool = "Bash"; ok.prog = "pnpm"; ok.fam = "pnpm test"; ok.fkind = "test";
+  const gen = newSpan("execute_tool", "execute_tool Bash node", "2222222222222222", t.spans[0]?.spanId ?? "", T0 + 1600, "s1"); gen.t1 = T0 + 1700; gen.tool = "Bash"; gen.prog = "node"; gen.fam = "node gen.js"; gen.fkind = "other"; gen.fgen = true;
+  t.spans = [t.spans[0] ?? ok, ok, gen];
+  const w0 = spans(req([t], {})); const wm = spans(req([t], { detail: "meta" }));
+  const fk = (o: Obj): string => (attrs(o).get("agentglass.tool.family") ?? "-") + " " + (attrs(o).get("agentglass.tool.kind") ?? "-");
+  eq("family + kind", fk(w0[1] ?? {}), "stringValue:\"pnpm test\" stringValue:\"test\"");
+  eq("generic family: program only", fk(w0[2] ?? {}), "stringValue:\"node\" stringValue:\"other\"");
+  eq("generic family with meta", fk(wm[2] ?? {}), "stringValue:\"node gen.js\" stringValue:\"other\"");
+  eq("no family on the root", fk(w0[0] ?? {}), "- -");
+}
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("otlp encode: all checks passed");

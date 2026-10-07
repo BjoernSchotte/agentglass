@@ -98,7 +98,7 @@ export function helloOfSnap(x: Snap): Hello { return helloOf(x.head); }
 // valid for whoever holds it); reports are never changed in place (a delta that changed nothing shares cur's arrays)
 export function applySnap(cur: HostReport | null, x: Snap): HostReport {
   // a delta that changed no session keeps the sessions and owned rows as they were (the merge keys its cache on them)
-  if (cur && !x.full && !x.sess.length && !x.own.length && !x.gone.length) return { hello: helloOf(x.head), sessions: cur.sessions, cost: x.cost, allowance: x.allowance, live: cur.live, exact: true, owned: cur.owned };
+  if (cur && !x.full && !x.sess.length && !x.own.length && !x.gone.length) return { hello: helloOf(x.head), sessions: cur.sessions, cost: x.cost, allowance: x.allowance, live: cur.live, exact: true, owned: cur.owned, wait: null };
   const own = new Map<string, OwnChunk[]>();
   const keep = new Map<string, SessRow>(); const order: string[] = [];
   if (!x.full && cur) {
@@ -124,7 +124,7 @@ export function applySnap(cur: HostReport | null, x: Snap): HostReport {
   }
   sessions.sort((a: SessRow, b: SessRow) => { const ua = str(a.s["updated"]); const ub = str(b.s["updated"]); return ua < ub ? 1 : ua > ub ? -1 : 0; });
   const owned: Owned[] = []; for (const [k, v] of own) owned.push({ key: k, rows: v });
-  return { hello: helloOf(x.head), sessions, cost: x.cost, allowance: x.allowance, live: cur && !x.full ? cur.live : null, exact: true, owned };
+  return { hello: helloOf(x.head), sessions, cost: x.cost, allowance: x.allowance, live: cur && !x.full ? cur.live : null, exact: true, owned, wait: null };
 }
 // the report as one full snapshot (the viewer's persisted state, the drop writer's base)
 export function fullOf(r: HostReport, gen: string): Snap {

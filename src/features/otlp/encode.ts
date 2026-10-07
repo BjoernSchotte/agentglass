@@ -119,6 +119,11 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
     if (sv) { a.push(attrS("mcp.method.name", "tools/call")); a.push(attrS("agentglass.mcp.server.name", sv)); }
     if (sp.prog) a.push(attrS("process.executable.name", sp.prog));
     if (sp.exit >= 0 && sp.prog) a.push(attrI("process.exit.code", sp.exit));
+    if (sp.fam) { // agent-wait: backends sum wait time by family without parsing commands; a script name only with meta
+      const i = sp.fam.indexOf(" ");
+      a.push(attrS("agentglass.tool.family", sp.fgen && c.detail !== "meta" && !c.content && i > 0 ? sp.fam.slice(0, i) : sp.fam));
+      a.push(attrS("agentglass.tool.kind", sp.fkind));
+    }
     if (sp.skill) a.push(attrS("gen_ai.skill.name", sp.skill));
     if (c.detail === "meta" || c.content) { // call details (otlp-complete 3.5): the normalized command, the target path
       const k = sv ? -1 : catOf(sp.tool);

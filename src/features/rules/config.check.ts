@@ -1,6 +1,6 @@
 // agentglass — self-check for rules.json loading: scriptc build src/features/rules/config.check.ts -o rc && ./rc
 // SPDX-License-Identifier: Apache-2.0
-import { type Rule, type RuleSet, loadRules, builtins, durSec, parseThr, jsonPos, lineCol, unitOf, METRICS } from "./config.ts";
+import { type Rule, type Diag, type RuleSet, loadRules, builtins, durSec, parseThr, jsonPos, lineCol, unitOf, METRICS } from "./config.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -9,7 +9,7 @@ function diags(rs: RuleSet): string { return rs.diags.map((d) => String(d.line) 
 function first(rs: RuleSet): string { const d = rs.diags[0]; return d ? String(d.line) + ":" + String(d.col) + " " + d.rule + " " + (d.err ? "E" : "W") : "none"; }
 function en(rs: RuleSet, id: string): string { const r = rule(rs, id); return r ? String(r.enabled) : "missing"; }
 
-eq("metrics", String(METRICS.length), "11");
+eq("metrics", String(METRICS.length), "13");
 eq("unit", [unitOf("tool_error_rate"), unitOf("session_cost"), unitOf("stalled"), unitOf("tool_calls")].join(","), "ratio,usd,duration,count");
 eq("durSec 2m", String(durSec("2m")), "120");
 eq("durSec 500ms", String(durSec("500ms")), "0.5");
@@ -22,12 +22,20 @@ eq("thr dur on usd", String(parseThr("2m", "usd")), "-1");
 eq("thr num dur", String(parseThr(20, "duration")), "20");
 
 const none = loadRules("", false);
-eq("missing: 6 built-ins", String(none.rules.length), "6");
+eq("missing: 7 built-ins", String(none.rules.length), "7");
 eq("missing: no diags", String(none.diags.length), "0");
 const ids = none.rules.map((r: Rule) => r.id).join(",");
-eq("built-in order", ids, "waiting,approval,loop,long-cmd,stalled,spinning");
-eq("built-in reasons", none.rules.map((r: Rule) => r.reason).join(","), "waiting,approval,loop,long cmd,stalled,spinning");
-eq("built-in count", String(builtins().length), "6");
+eq("built-in order", ids, "waiting,approval,loop,long-cmd,stalled,spinning,contention");
+eq("built-in reasons", none.rules.map((r: Rule) => r.reason).join(","), "waiting,approval,loop,long cmd,stalled,spinning,contention");
+eq("built-in count", String(builtins().length), "7");
+// agent-wait: the contention built-in is off until enabled; contention_family and min_age validate
+const ctb = builtins()[6];
+eq("contention built-in", ctb ? ctb.metric + " " + ctb.op + " " + String(ctb.deg) + " " + String(ctb.forSec) + " " + String(ctb.enabled) + " " + ctb.ack + " " + String(ctb.notify) + " " + ctb.message : "", "contention >= 3 30 false none true {value} heavy commands running: {cmd}");
+eq("contention enabled", en(loadRules('{"rules":[{"id":"contention","enabled":true}]}', true), "contention"), "true");
+const cten = rule(loadRules('{"rules":[{"id":"contention","enabled":true}]}', true), "contention");
+eq("contention enabled keeps threshold and for", cten ? String(cten.deg) + " " + String(cten.forSec) : "", "3 30");
+eq("contention_family valid", diags(loadRules('{"rules":[{"id":"same","metric":"contention_family","degraded":2,"for":"30s","params":{"min_age":"1m"}}]}', true)), "");
+eq("min_age -1", String(loadRules('{"rules":[{"id":"x","metric":"contention","degraded":3,"params":{"min_age":-1}}]}', true).diags.filter((d: Diag) => d.err).length), "1");
 
 const ap = loadRules('{"rules":[{"id":"approval","critical":"2m"}]}', true);
 const a = rule(ap, "approval");
@@ -97,7 +105,7 @@ eq("unknown field: enabled", en(uf, "x"), "true");
 // syntax error
 const sy = loadRules('{"rules":[}', true);
 eq("syntax non-empty", String(sy.syntax !== ""), "true");
-eq("syntax: built-ins", String(sy.rules.length), "6");
+eq("syntax: built-ins", String(sy.rules.length), "7");
 eq("syntax pos", first(sy), "1:11  E");
 eq("syntax multi-line", first(loadRules('{\n "rules": [\n  {"id": "x",}\n ]\n}', true)), "3:14  E");
 // valid where compiles; call rule

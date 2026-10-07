@@ -306,7 +306,7 @@ export function reportsOf(a: Agg, now: number, all: boolean, maxAgeDays: number)
     }
     rows.sort((p, q) => str(q.s["updated"]) < str(p.s["updated"]) ? -1 : 1);
     const hello: Hello = { format: FORMAT, version: h.version, hostId: h.hostId, hostName: h.hostName, os: h.os, tzOffsetMin: tz, redact: h.redact, days: maxAgeDays, now: Math.max(h.newest, h.beat), priceSig: "" };
-    out.set(h.name, { hello, sessions: rows, cost: null, allowance: null, live: lives, exact: h.exact && natives.size === 0, owned });
+    out.set(h.name, { hello, sessions: rows, cost: null, allowance: null, live: lives, exact: h.exact && natives.size === 0, owned, wait: null });
   }
   return out;
 }
