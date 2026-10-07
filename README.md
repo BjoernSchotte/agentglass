@@ -990,7 +990,10 @@ agentglass export --status --otlp http://localhost:4318         # last export, g
   `agentglass.repo.key` (the project key `--json` shows as `repo.key`) on every span of a session in a project,
   `agentglass.request.id` on Claude `chat` spans (Claude Code's `requestId`, where the transcript has one: recent
   Claude Code versions write it on few lines), and
-  `agentglass.usage.cache_write_1h.input_tokens` (the 1-hour part of the cache writes, priced apart).
+  `agentglass.usage.cache_write_1h.input_tokens` (the 1-hour part of the cache writes, priced apart), and on shell
+  `execute_tool` spans `agentglass.tool.family` and `agentglass.tool.kind` (the command family and kind of
+  `agentglass wait`: `pnpm test` / `test`; an interpreter + script family such as `node gen.js` is sent as its program
+  `node` unless `--detail meta` is on).
 - **Timing:** request start times are reconstructed (the previous event of the session to the response), so they
   include the harness's own queueing. Kiro and fx log no per-call times: their spans are spread over the turn and
   marked `agentglass.timing.estimated`. Live mode adds `agentglass.tool.approval_wait` (seconds, estimated by the

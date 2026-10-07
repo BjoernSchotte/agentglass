@@ -10,6 +10,7 @@ import { identSync } from "../query/project.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
 import { type Acc, type Booking, newAcc, setBookTap } from "../usage/record.ts";
 import { setCallTap, program, norm, mcpServer } from "../usage/calls.ts";
+import { familyOf, waitCfg } from "../wait/family.ts";
 import { ledger } from "../usage/ledger.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { kiroTurns, type KTurn } from "../../harness/kiro.ts";
@@ -178,7 +179,10 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
     sp.mcp = mcpServer(name);
     const arg = toolArg(e);
     const cat = catOf(name);
-    if (cat === 0 && arg) { const n0 = norm(arg); sp.prog = program(n0); sp.name = "execute_tool " + name + " " + sp.prog; sp.cmd = cut(n0, 200); }
+    if (cat === 0 && arg) {
+      const n0 = norm(arg); sp.prog = program(n0); sp.name = "execute_tool " + name + " " + sp.prog; sp.cmd = cut(n0, 200);
+      const fm = familyOf(n0, waitCfg()); sp.fam = fm.name; sp.fkind = fm.kind; sp.fgen = fm.generic;
+    }
     if (cat === 1 || cat === 2) sp.target = targetOf(name, arg, e.full);
     if (name === "Skill" || name === "activate_skill") { const m = /"(?:skill|name)":"([^"]+)"/.exec(e.full); sp.skill = m ? m[1] ?? "" : arg; }
     if (o.content) sp.args = cut(e.full || arg, CMAX);
