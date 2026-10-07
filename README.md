@@ -327,6 +327,8 @@ builds with `git pull && ./build.sh`.
   except `RELEASE_MAINTAINERS` / `RELEASE_MAINTAINER_NAMES` and bots), looked up with `gh`;
   offline (`RELEASE_OFFLINE=1`) or without `gh` they fall back to git author names.
 - Dev releases run on their own (`dev-release.yml`, 02:43 UTC) or via *Run workflow*.
+- `release-dry-run.yml` runs the release pipeline without publishing (4-target build, artifacts between jobs,
+  checksums, the formula's `brew` proof from the local archives) on PRs that touch it, and via *Run workflow*.
 - Secret `HOMEBREW_TAP_TOKEN`: a fine-grained PAT with **Contents: write** and **Actions: write** on
   `BjoernSchotte/homebrew-tap` and **Contents: write** on this repo (the Release cut workflow pushes the
   tag with it, because a `GITHUB_TOKEN` push would not start `release.yml`). The release renders the stable
