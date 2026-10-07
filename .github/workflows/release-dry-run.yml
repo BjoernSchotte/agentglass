@@ -1,0 +1,58 @@
+name: Release dry run
+# release.yml end to end without publishing, for PRs that touch the release pipeline (release.yml and dev-release.yml run
+# only on a tag or a schedule, so a PR's CI never ran them: 2026.10.3 broke at release time) and by hand: the 4-target
+# build with agentglass-receive-tls (build-artifacts.yml, the same reusable workflow), artifacts uploaded and downloaded
+# between jobs as publish does, SHA256SUMS + build-metadata.json verified, and the stable formula rendered from them and
+# proven with brew audit, install and test (from the local archives). Version 9999.1.1: a placeholder no release has.
+# Left out, because each would publish: the release itself, the tap commit, and attest-build-provenance (in a public
+# repo it signs into the public Sigstore log before it stores anything).
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/dev-release.yml
+      - .github/workflows/build-artifacts.yml
+      - .github/workflows/release-dry-run.yml
+      - scripts/package.sh
+      - scripts/release-assets.sh
+      - scripts/verify-release-assets.sh
+      - scripts/formula.sh
+      - scripts/formula-proof.sh
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency: { group: "release-dry-run-${{ github.ref }}", cancel-in-progress: true }
+env: { VERSION: "9999.1.1", TAG: "v9999.1.1", SHA: "${{ github.event.pull_request.head.sha || github.sha }}" }
+jobs:
+  build:
+    uses: ./.github/workflows/build-artifacts.yml
+    with: { ref: "${{ github.event.pull_request.head.sha || github.sha }}", version: "9999.1.1", channel: stable }
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ env.SHA }}", persist-credentials: false }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { pattern: "agentglass-*", path: out, merge-multiple: true }
+      - name: checksums + metadata
+        run: |
+          sh scripts/release-assets.sh out stable "$TAG" "$VERSION" "$SHA" && sh scripts/verify-release-assets.sh out
+          { echo '```'; ls -l out; cat out/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with: { name: release-assets, path: out, retention-days: 3, if-no-files-found: error }
+  tap:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ env.SHA }}", persist-credentials: false }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: release-assets, path: assets }
+      - name: render the formula from the assets
+        run: |
+          sh scripts/verify-release-assets.sh assets
+          sh scripts/formula.sh assets "$VERSION" > agentglass.rb
+      - name: brew audit, install (from the local archives), test
+        run: sh scripts/formula-proof.sh agentglass.rb assets
