@@ -62,16 +62,21 @@ const SHELLS = ["sh", "bash", "zsh", "fish", "dash"];
 function isShell(p: Proc): boolean { return SHELLS.indexOf(base(p.args.split(" ")[0] ?? "").replace(/^-/, "")) >= 0; }
 export interface Cmd { age: number; name: string }
 // tool commands run by the agent = its outermost descendant shells (MCP servers & co are spawned directly, not via a shell)
-export function toolCmds(root: number, kids: Map<number, Proc[]>): Cmd[] {
-  const out: Cmd[] = [];
+export function toolShells(root: number, kids: Map<number, Proc[]>): Proc[] {
+  const out: Proc[] = [];
   const stack: number[] = [root];
   while (stack.length) {
     const pid = stack.pop() as number;
     for (const c of kids.get(pid) ?? []) {
-      if (isShell(c)) out.push({ age: etimeSec(c.etime), name: cmdName(c, kids) });
+      if (isShell(c)) out.push(c);
       else stack.push(c.pid);
     }
   }
+  return out;
+}
+export function toolCmds(root: number, kids: Map<number, Proc[]>): Cmd[] {
+  const out: Cmd[] = [];
+  for (const c of toolShells(root, kids)) out.push({ age: etimeSec(c.etime), name: cmdName(c, kids) });
   return out;
 }
 function cmdName(sh: Proc, kids: Map<number, Proc[]>): string {

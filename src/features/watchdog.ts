@@ -19,6 +19,7 @@ import { metricOf } from "./rules/metrics.ts";
 import { type Trans, type Alert, LOG, stepSession, unwatch, prune, ackLook, flags, firing, stateOf, watching, snapshot, render, severityOf } from "./rules/engine.ts";
 import { onTrans, forget } from "./rules/notify.ts";
 import { R, rules } from "./rules/state.ts";
+import { LIVE, collectLive } from "./wait/live.ts";
 export { type Obs, type MVal, type Cmd, etimeSec, loopRun, toolName, pendingTool, avgTail, toolCmds, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, approvalNote, approvalGuess, alarmOf, stuckOf };
 
 // ── live state ────────────────────────────────────────────────────────────────
@@ -111,10 +112,15 @@ function tick(): void {
   const cp = cur ? cur.path : "";
   if (cp !== selPath) { selPath = cp; selSince = now; }
   let changed = false;
+  const ws: Sess[] = []; const os: Obs[] = [];
   for (const s of sessions.values()) {
     if (!watched(s)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } if (st.has(s.path) || watching(s.path)) forgetSession(s.path); continue; }
     loadTail(s);
-    const o = observe(s, lk.kids, lk.look, false);
+    ws.push(s); os.push(observe(s, lk.kids, lk.look, false));
+  }
+  LIVE.cur = collectLive(ws, lk.kids, now); LIVE.ver++; // agent-wait: heavy commands on this host (the contention metrics read it below)
+  for (let k = 0; k < ws.length; k++) {
+    const s = ws[k]; const o = os[k]; if (!s || !o) continue;
     for (const t of watchStep(s, o, rs, now)) {
       const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
       onTrans(s, r, t, a.acked, false, true, rs.notify, a.v, render(r, a.v, t.to || t.from, s), a.lvAt);
