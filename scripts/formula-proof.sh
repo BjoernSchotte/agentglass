@@ -25,7 +25,7 @@ brew tap "$tap"
 # current Homebrew loads formulae from third-party taps only once trusted
 if brew commands | grep -qx trust; then brew trust --tap "$tap"; fi
 f="$(brew --repository "$tap")/Formula/agentglass.rb"
-cleanup() { brew uninstall --force agentglass > /dev/null 2>&1 || true; git -C "$(dirname "$f")" checkout -q -- agentglass.rb 2> /dev/null || true; }
+cleanup() { [ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; brew uninstall --force agentglass > /dev/null 2>&1 || true; git -C "$(dirname "$f")" checkout -q -- agentglass.rb 2> /dev/null || true; }
 trap cleanup EXIT
 cp "$rb" "$f"
 brew audit --strict --except=version --formula "$tap/agentglass"

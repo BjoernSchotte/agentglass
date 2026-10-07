@@ -7,7 +7,7 @@ unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR AGENTGLASS_OTLP_DI
 export AGENTGLASS_AGENT=0 AGENTGLASS_FLEET=0 AGENTGLASS_NOTIFY=0 # human mode, also when the suite runs inside a coding agent
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$T"' EXIT
 BIN="$T/agentglass"; if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$BIN"; else scriptc build src/main.ts -o "$BIN" >/dev/null; fi
 H="$T/home"; mkdir -p "$H/.claude/projects/-w-in-app" "$H/.claude/projects/-w-out-secret" "$H/.agentglass"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)

@@ -15,7 +15,7 @@ set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR AGENTGLASS_PRICES PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR AGENTGLASS_RUN_DIR AGENTGLASS_PALETTE_FILE AGENTGLASS_THEME_FILE AGENTGLASS_OTLP_DIR
 command -v python3 > /dev/null || { echo "alarm latency: skipped (needs python3)"; exit 0; }
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); t=$(cd "$t" && pwd -P)
-trap 'rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
 H="$t/home"; mkdir -p "$H/.agentglass" "$t/bin" "$t/run"; chmod 700 "$t/run"
 # the notify command: rule id and its own clock, one line per run

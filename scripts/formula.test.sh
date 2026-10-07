@@ -2,7 +2,7 @@
 # the stable Homebrew formula generator (release.yml's tap job): checksums per platform, agentglass-receive-tls installed
 # from the archives that ship it, refusals: sh scripts/formula.test.sh
 set -e
-here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 has() { case "$2" in *"$3"*) ;; *) echo "FAIL $1: '$3' not in output"; fail=1 ;; esac; }
 if command -v sha256sum > /dev/null 2>&1; then H="sha256sum"; else H="shasum -a 256"; fi

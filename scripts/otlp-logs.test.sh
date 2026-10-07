@@ -6,7 +6,7 @@ set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR AGENTGLASS_OTLP_DIR # hermetic: the fake HOME decides
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 command -v python3 > /dev/null || { echo "skipped: no python3"; exit 0; }
-here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; agent=""; trap '{ kill $srv $agent; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; agent=""; trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; { kill $srv $agent; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 has() { grep -q -- "$2" "$3" 2>/dev/null || { echo "FAIL $1: no '$2' in $(basename "$3")"; fail=1; }; }
 if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi

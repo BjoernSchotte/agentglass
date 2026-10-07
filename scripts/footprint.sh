@@ -42,7 +42,7 @@ rm -rf "$scratch/cache" "$scratch/run" "$scratch/otlp" "$scratch/fleet" "$scratc
 [ "$mode" = cold ] || cp -R "$warm/." "$scratch/cache/"
 [ -z "$config" ] || cp "$config" "$scratch/config.json"
 ses="agfp-$$"
-cleanup() { tmux kill-session -t "$ses" 2> /dev/null || true; [ $own = 0 ] || rm -rf "$scratch"; }
+cleanup() { [ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; tmux kill-session -t "$ses" 2> /dev/null || true; [ $own = 0 ] || rm -rf "$scratch"; }
 trap cleanup EXIT INT TERM
 
 if [ "$os" = Linux ]; then

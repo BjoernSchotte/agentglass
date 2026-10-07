@@ -13,7 +13,7 @@ case "$draft" in
     else gh release create "$tag" --draft --verify-tag --title "$title" --notes-file "$notes"; fi ;;
 esac
 gh release upload "$tag" "$dir"/* --clobber
-check=$(mktemp -d); trap 'rm -rf "$check"' EXIT
+check=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$check"' EXIT
 gh release download "$tag" -D "$check" && sh "$here/verify-release-assets.sh" "$check"
 if [ "$channel" = dev ]; then gh release edit "$tag" --draft=false --prerelease --latest=false
 else gh release edit "$tag" --draft=false --latest; fi

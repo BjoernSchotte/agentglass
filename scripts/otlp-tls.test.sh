@@ -6,7 +6,7 @@ set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fake HOME decides, not the caller's overrides
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
 command -v openssl > /dev/null && command -v python3 > /dev/null || { echo "skipped: no openssl/python3"; exit 0; }
-here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; snoop=""; trap '{ kill $srv $snoop; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; snoop=""; trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; { kill $srv $snoop; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 has() { case "$2" in *"$3"*) ;; *) echo "FAIL $1: '$3' not in: $2"; fail=1 ;; esac; }
 # AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here

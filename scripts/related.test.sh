@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."
 . ./scripts/toolchain.sh
-T=$(mktemp -d); trap 'rm -rf "$T" "$T.lnk"' EXIT
+T=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$T" "$T.lnk"' EXIT
 # AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
 BIN="$T/agentglass"; if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$BIN"; else scriptc build src/main.ts -o "$BIN" >/dev/null; fi
 # the repos sit behind a symlink, as under macOS's /tmp → /private/tmp: logs keep the link, identities the real path

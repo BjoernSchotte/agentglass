@@ -6,7 +6,7 @@ set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR
 export AGENTGLASS_AGENT=0
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""
-trap '{ [ -z "$srv" ] || kill $srv; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; { [ -z "$srv" ] || kill $srv; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
 # RECEIVE_TLS_REQUIRED=1 (release CI): a skip is a failure
 skip() { echo "skipped: $1"; [ -z "${RECEIVE_TLS_REQUIRED:-}" ] || exit 1; exit 0; }
 command -v openssl > /dev/null || skip "no openssl"

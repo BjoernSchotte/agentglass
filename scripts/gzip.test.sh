@@ -2,7 +2,7 @@
 # pure-TS gzip (src/util/gzip.ts) against the system gzip: every output decodes to its input: sh scripts/gzip.test.sh
 set -e
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
-here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 . "$here/scripts/toolchain.sh"
 scriptc build "$here/testdata/otlp/gzip-driver.ts" -o "$t/gz" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
 fail=0

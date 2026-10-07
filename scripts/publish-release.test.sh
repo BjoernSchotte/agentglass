@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests for publish-release.sh with a fake gh: sh scripts/publish-release.test.sh
 set -e
-here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0
 mkdir -p "$t/bin" "$t/out"
 cat > "$t/bin/gh" <<'EOG'
