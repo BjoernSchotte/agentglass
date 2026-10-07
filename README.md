@@ -336,7 +336,13 @@ builds with `git pull && ./build.sh`.
   (`scripts/formula-proof.sh`; the `formula` workflow runs the same on PRs) and commits it to the tap.
   Without Contents access there it falls back to the tap's `update-formula.yml` (versions and checksums
   only) and warns.
-- All tests: `sh scripts/check.sh`.
+- Tests: `sh scripts/check.sh --changed` after each change: only the checks and tests the change
+  reaches (the diff against `origin/main` plus uncommitted and untracked files; `--changed <base>` for
+  another base, `--dry-run` shows the pick and why). The full `sh scripts/check.sh` once, before the
+  final push; CI always runs everything.
+- One machine, many worktrees or agents: all check runs share `CHECK_MAX_SUITES` suite slots (default 2;
+  the rest wait their turn) and `CHECK_MAX_BUILDS` scriptc builds (default cores/4, at most 6), set in
+  the environment, 0 for no limit, off on CI. `sh scripts/check-lock.sh status` shows who holds them.
 
 </details>
 
