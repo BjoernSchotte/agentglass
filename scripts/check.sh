@@ -1,5 +1,12 @@
 #!/bin/sh
 # build + run every self-check (src/**/*.check.ts) and shell test (scripts/*.test.sh) in parallel; exit 1 if any fails
+#   sh scripts/check.sh [--changed [base]] [--dry-run]
+# --changed [base] (default origin/main): only the checks and tests the change reaches — base...HEAD plus uncommitted
+# and untracked files — chosen by scripts/check-plan.mjs (import closures, named paths; when unsure, a job runs; a
+# change to the check machinery, build.sh or CI runs everything). For after each edit; the full suite before a push.
+# --dry-run: print the selection and the job queue, run nothing.
+# Machine-wide limits (scripts/check-lock.sh; off on CI unless set): CHECK_MAX_SUITES suites at once (default 2), each
+# waiting its turn, and CHECK_MAX_BUILDS scriptc builds (default cores/4, at most 6) across every worktree and agent.
 # CHECK_JOBS: parallel jobs (default: CPU count). CHECK_SCRIPTC_FLAGS: check build flags (default: --optimization dev
 # --strip: -O0 with cached object shards, same program behavior, about half the compile time; --strip skips macOS's
 # dsymutil; empty for -O2; also used for the tests' own builds). A check with a "// check: timing" line (a timing budget) builds -O2 and runs alone after the others;
@@ -20,7 +27,7 @@ HERDR_UNSET="-u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID
 # limit S cmd…: run cmd with stdin from /dev/null, kill it (and its children) after S seconds: a hang fails fast
 limit() {
   s=$1; shift
-  "$@" </dev/null & p=$!
+  "$@" </dev/null 9>&- & p=$! # 9: the suite slot (scripts/check-lock.sh), not for jobs or what they leave running
   ( sleep "$s"; kill -0 "$p" 2>/dev/null || exit 0; echo "TIMEOUT after ${s}s: $*"; pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null ) 2>/dev/null & w=$! # quiet: killing its sleep must not print "Terminated" into the log
   wait "$p"; rc=$?
   pkill -P "$w" 2>/dev/null; wait "$w" 2>/dev/null # its sleep ends, the watchdog sees cmd gone and exits
@@ -85,14 +92,31 @@ if [ "${1:-}" = --job ]; then
   echo "$rc $(($(date +%s) - t0))" > "$CHECK_OUT/$id.status"; exit 0
 fi
 
+usage() { echo "usage: sh scripts/check.sh [--changed [base]] [--dry-run]  (see the top of scripts/check.sh)"; }
+changed=""; base=origin/main; dry=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --changed) changed=1; case "${2:-}" in ''|-*) ;; *) base=$2; shift ;; esac ;;
+    --dry-run) dry=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "check.sh: unknown argument '$1'" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+if [ -n "$changed" ] && ! git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1; then
+  echo "check.sh --changed: no commit '$base' to compare with — git fetch origin, or name one: --changed <base>" >&2; exit 2
+fi
+
 . ./scripts/toolchain.sh
+. ./scripts/check-lock.sh
 start=$(date +%s)
 # once, before any build (no job rewrites src/build-info.ts); the commit date, not now, keeps it byte-identical across
 # runs on one commit, so unchanged checks are scriptc cache hits
 AGENTGLASS_BUILD_DATE=${AGENTGLASS_BUILD_DATE:-$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd 2>/dev/null || true)}
 export AGENTGLASS_BUILD_DATE; sh scripts/build-info.sh
 jobs=${CHECK_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}
-CHECK_OUT=$(mktemp -d); trap 'rm -rf "$CHECK_OUT"' EXIT
+CHECK_OUT=$(mktemp -d); trap 'slot_drop; rm -rf "$CHECK_OUT"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+LOCK_HELD=""
 CHECK_SCRIPTC_FLAGS=${CHECK_SCRIPTC_FLAGS---optimization dev --strip}
 RELEASE_FLAGS="${SCRIPTC_FLAGS:-}"; CHECK_BIN_FLAGS="${SCRIPTC_FLAGS:-} ${CHECK_BIN_FLAGS-$CHECK_SCRIPTC_FLAGS}"
 SCRIPTC_FLAGS="${SCRIPTC_FLAGS:-} $CHECK_SCRIPTC_FLAGS" # the tests' own builds: build.sh honors SCRIPTC_FLAGS
@@ -118,10 +142,40 @@ fi
 all="$([ -z "$bin" ] || echo bin) $([ -z "${CHECK_RELEASE_OUT:-}" ] || echo release)"
 all="$all $(for f in $tests; do echo "test:$f"; done) $(for f in $checks; do echo "check:$f"; done)"
 [ -z "$CHECK_FFI" ] || all="$all cc:src/platform/darwin/libproc.c"
+if [ -n "$changed" ]; then # keep the jobs the change reaches; say which and why
+  { git diff --name-only --no-renames "$base...HEAD"; git diff --name-only --no-renames HEAD; git ls-files --others --exclude-standard; } |
+    sort -u > "$CHECK_OUT/changed"
+  nf=$(grep -c . "$CHECK_OUT/changed" || true); nc=$(echo "$checks" | grep -c .); nt=$(echo "$tests" | grep -c .)
+  if [ "$nf" = 0 ]; then echo "--changed $base: nothing changed: nothing to run"; exit 0; fi
+  echo "--changed $base: $nf changed: $(head -5 "$CHECK_OUT/changed" | paste -sd' ' -)$([ "$nf" -le 5 ] || echo " …")"
+  node scripts/check-plan.mjs --changed "$CHECK_OUT/changed" $all > "$CHECK_OUT/picked"
+  if grep -q '^ALL	' "$CHECK_OUT/picked"; then echo "  full suite: $(cut -f2 "$CHECK_OUT/picked")"
+  else # one line per reason: the job itself when alone, else how many and the first few
+    awk -F'\t' '$1 ~ /^(check|test):/ { k = substr($1, 1, index($1, ":") - 1); f = substr($1, index($1, ":") + 1)
+           if (!($2 in n)) o[++m] = $2; n[$2]++; kind[$2] = k; one[$2] = f; b = f; sub(/.*\//, "", b); if (n[$2] <= 3) l[$2] = l[$2] (n[$2] > 1 ? ", " : "") b }
+         END { for (i = 1; i <= m; i++) { r = o[i]
+                 if (n[r] == 1) printf "  %-5s %s: %s\n", kind[r], one[r], r
+                 else printf "  %d %ss: %s (%s%s)\n", n[r], kind[r], r, l[r], (n[r] > 3 ? ", …" : "") } }' "$CHECK_OUT/picked"
+    all=$(cut -f1 "$CHECK_OUT/picked")
+    echo "--changed: $(echo "$all" | grep -c '^check:') of $nc checks, $(echo "$all" | grep -c '^test:') of $nt tests"
+    if [ -z "$all" ]; then echo "--changed: nothing to run (no check or test reads what changed)"; exit 0; fi
+  fi
+fi
 node scripts/check-plan.mjs "$si" "$sn" $all > "$CHECK_OUT/queue"
+if [ -n "$dry" ]; then echo "would run (shard $si/$sn):"; cat "$CHECK_OUT/queue"; exit 0; fi
+# the machine-wide limits: this suite's slot (waits its turn), and every scriptc — the jobs', and the tests' own via
+# build.sh or scriptc build — through a shim on PATH that takes a build slot
+lock_init; export CHECK_LOCK_WHO="$LOCK_WHO" CHECK_LOCK_DIR="$LOCK_DIR" CHECK_LOCK_WAITS="$CHECK_OUT/waits"
+swait=$(date +%s); if [ -z "${CHECK_LOCK_SUITE_HELD:-}" ]; then slot_take suite "$LOCK_SUITES"; export CHECK_LOCK_SUITE_HELD=1; fi
+swait=$(($(date +%s) - swait))
+if [ "$LOCK_BUILDS" -gt 0 ] && [ -z "${CHECK_LOCK_IN_BUILD:-}" ]; then
+  mkdir "$CHECK_OUT/shim"
+  printf '#!/bin/sh\nexec sh "%s" run build "%s" "$@"\n' "$PWD/scripts/check-lock.sh" "$(command -v scriptc)" > "$CHECK_OUT/shim/scriptc"
+  chmod +x "$CHECK_OUT/shim/scriptc"; PATH="$CHECK_OUT/shim:$PATH"
+fi
 grep -qx bin "$CHECK_OUT/queue" || bin="" # on another shard
 grep -qx release "$CHECK_OUT/queue" && release=1 || release=""
-xargs -n 1 -P "$jobs" sh scripts/check.sh --job < "$CHECK_OUT/queue"
+xargs -n 1 -P "$jobs" sh scripts/check.sh --job < "$CHECK_OUT/queue" 9>&-
 for j in $(grep -E '^(check|test):' "$CHECK_OUT/queue"); do # the timing checks and tests, one at a time on an idle machine
   id=$(printf %s "$j" | tr '/:.' '___'); set -- $(cat "$CHECK_OUT/$id.status")
   if [ "$1" = deferred ]; then
@@ -150,5 +204,9 @@ if [ -n "$release" ]; then report release "src/main.ts -O2 -> $CHECK_RELEASE_OUT
 for f in $checks; do if grep -qxF "check:$f" "$CHECK_OUT/queue"; then report "check:$f" "$f"; fi; done
 for j in $(grep '^cc:' "$CHECK_OUT/queue"); do report "$j" "${j#cc:} (cc -Wall -Wextra -Werror)"; done
 for f in $tests; do if grep -qxF "test:$f" "$CHECK_OUT/queue"; then report "test:$f" "$f"; fi; done
-echo "$(grep -c '^check:' "$CHECK_OUT/queue") checks, $(grep -c '^test:' "$CHECK_OUT/queue") tests (shard $si/$sn), $jobs jobs, $(($(date +%s) - start)) s"
+if [ -s "$CHECK_OUT/waits" ]; then # how long the machine-wide build limit held this suite's builds back
+  awk -v m="$LOCK_BUILDS" '{ n++; s += $2 } END { printf "build slots: %d builds waited %d s in all (CHECK_MAX_BUILDS=%d)\n", n, s, m }' "$CHECK_OUT/waits"
+fi
+[ "$swait" = 0 ] || echo "check slot: waited $swait s for a free suite slot (CHECK_MAX_SUITES=$LOCK_SUITES)"
+echo "$(grep -c '^check:' "$CHECK_OUT/queue") checks, $(grep -c '^test:' "$CHECK_OUT/queue") tests (shard $si/$sn$([ -z "$changed" ] || echo ", --changed $base")), $jobs jobs, $(($(date +%s) - start)) s"
 exit $fail
