@@ -59,11 +59,11 @@ slot_try() { # slot_try <slot> <token>: take that slot now, or fail
 }
 
 # slot_take <suite|build> <max>: wait for a free slot of that kind and take it (nothing with max 0); a waiting suite
-# says so once on stderr, naming the holders
+# says so once on stderr, naming the holders. LOCK_WAITED: 1 when it had to wait
 slot_take() {
   [ "$2" -gt 0 ] || return 0
   mkdir -p "$LOCK_DIR" 2>/dev/null; chmod 700 "$LOCK_DIR" 2>/dev/null
-  LOCK_TOK="$$|$(lock_start $$)|$LOCK_WHO"; _lsaid=""
+  LOCK_TOK="$$|$(lock_start $$)|$LOCK_WHO"; _lsaid=""; LOCK_WAITED=""
   while :; do
     _li=1; _lnum=0; _lwho=""
     while [ $_li -le "$2" ]; do
@@ -72,6 +72,7 @@ slot_take() {
       _li=$((_li + 1))
     done
     if [ "$1" = suite ] && [ -z "$_lsaid" ]; then echo "waiting for a check slot ($_lnum running: ${_lwho#, })" >&2; _lsaid=1; fi
+    LOCK_WAITED=1
     sleep "${CHECK_LOCK_POLL:-0.5}"
   done
 }
@@ -96,8 +97,8 @@ case "${1:-}" in
     esac
     export CHECK_LOCK_SUITE_HELD CHECK_LOCK_IN_BUILD 2>/dev/null
     trap 'slot_drop' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
-    t0=$(date +%s); slot_take "$k" "$max"
-    w=$(($(date +%s) - t0)); [ $w = 0 ] || [ -z "${CHECK_LOCK_WAITS:-}" ] || echo "$k $w" >> "$CHECK_LOCK_WAITS"
+    t0=$(date +%s); LOCK_WAITED=""; slot_take "$k" "$max"
+    [ -z "$LOCK_WAITED" ] || [ -z "${CHECK_LOCK_WAITS:-}" ] || echo "$k $(($(date +%s) - t0))" >> "$CHECK_LOCK_WAITS"
     rc=0; "$@" 9>&- || rc=$? # the command does not inherit the lock: a daemon it leaves behind cannot hold the slot
     exit $rc ;;
   status)

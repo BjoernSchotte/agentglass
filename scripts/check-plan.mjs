@@ -24,7 +24,8 @@ const read = (f) => { try { return readFileSync(f, "utf8"); } catch { return "";
 
 // changed(paths, jobs): [job, why] for every job a change reaches, or [["ALL", why]] when the whole suite must run.
 // Conservative: when unsure, a job runs. A check is reached when a path in its import closure changed, or one its
-// text names (its own and its helpers' outside src/main.ts's closure: fixtures, testdata, specs/…/fixtures). A shell
+// text names (its own and its helpers' outside src/main.ts's closure: fixtures, testdata, specs/…/fixtures — the path,
+// its file name, a prefix two directories deep like "testdata/otlp/golden-", or a glob like scripts/*.sh). A shell
 // test when it changed, when a path in the closure of what it builds or runs changed (src/main.ts when it uses the
 // shared binary, builds or runs scriptc build; every .ts path it names), or when it names a changed path. A path
 // that shapes every job (check.sh, this file, check-lock.sh, toolchain.sh, build-info.sh, build.sh, CI) or a non-TS
@@ -41,7 +42,7 @@ function mention(text, c) { // the name under which text refers to changed path 
       if (!/^[^/*]+\//.test(t)) continue;
       const re = new RegExp("(^|/)" + t.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*") + "$");
       if (re.test(c)) return t;
-    } else if (t === c || (!doc && /^[^/]+\/./.test(t) && c.startsWith(t))) return t; // the path, or a prefix of 2+ parts
+    } else if (t === c || (!doc && /^[^/]+\/[^/]+\//.test(t) && c.startsWith(t))) return t; // the path, or a prefix below 2 dirs
   }
   // a file's bare name: a sibling script ("$here/release-lib.sh"); not for docs, whose names are everywhere
   if (!doc && base.length >= 4 && new RegExp("(^|[^\\w.-])" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^\\w.-])").test(text)) return base;

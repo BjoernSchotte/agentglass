@@ -26,6 +26,9 @@ for f in $bin_tests; do has "test:$f" "gzip.ts (binary user)"; done
 hasnt test:scripts/check-summary.test.sh gzip.ts; hasnt test:scripts/release-lib.test.sh gzip.ts; hasnt ALL gzip.ts
 # transitive too: otlp.check.ts reaches otlp/state.ts only through the modules it imports
 plan src/features/otlp/state.ts; has check:src/features/otlp/state.check.ts state.ts; has check:src/features/otlp/otlp.check.ts state.ts
+# precise enough: a leaf module reaches its importers, not every check that names some "src/f" prefix
+plan src/features/triage/score.ts; has check:src/features/triage/score.check.ts score.ts; hasnt check:src/features/repos/cli.check.ts score.ts
+[ "$(grep -c '^check:' "$t/plan")" -le 15 ] || bad "score.ts: $(grep -c '^check:' "$t/plan") checks"
 
 # a sibling script: its test (named by basename), and the test that scans scripts/*.sh; no binary
 plan scripts/release-lib.sh

@@ -166,8 +166,9 @@ if [ -n "$dry" ]; then echo "would run (shard $si/$sn):"; cat "$CHECK_OUT/queue"
 # the machine-wide limits: this suite's slot (waits its turn), and every scriptc — the jobs', and the tests' own via
 # build.sh or scriptc build — through a shim on PATH that takes a build slot
 lock_init; export CHECK_LOCK_WHO="$LOCK_WHO" CHECK_LOCK_DIR="$LOCK_DIR" CHECK_LOCK_WAITS="$CHECK_OUT/waits"
-swait=$(date +%s); if [ -z "${CHECK_LOCK_SUITE_HELD:-}" ]; then slot_take suite "$LOCK_SUITES"; export CHECK_LOCK_SUITE_HELD=1; fi
-swait=$(($(date +%s) - swait))
+swait=$(date +%s); LOCK_WAITED=""
+if [ -z "${CHECK_LOCK_SUITE_HELD:-}" ]; then slot_take suite "$LOCK_SUITES"; export CHECK_LOCK_SUITE_HELD=1; fi
+swait=$([ -z "$LOCK_WAITED" ] || echo $(($(date +%s) - swait)))
 if [ "$LOCK_BUILDS" -gt 0 ] && [ -z "${CHECK_LOCK_IN_BUILD:-}" ]; then
   mkdir "$CHECK_OUT/shim"
   printf '#!/bin/sh\nexec sh "%s" run build "%s" "$@"\n' "$PWD/scripts/check-lock.sh" "$(command -v scriptc)" > "$CHECK_OUT/shim/scriptc"
@@ -207,6 +208,6 @@ for f in $tests; do if grep -qxF "test:$f" "$CHECK_OUT/queue"; then report "test
 if [ -s "$CHECK_OUT/waits" ]; then # how long the machine-wide build limit held this suite's builds back
   awk -v m="$LOCK_BUILDS" '{ n++; s += $2 } END { printf "build slots: %d builds waited %d s in all (CHECK_MAX_BUILDS=%d)\n", n, s, m }' "$CHECK_OUT/waits"
 fi
-[ "$swait" = 0 ] || echo "check slot: waited $swait s for a free suite slot (CHECK_MAX_SUITES=$LOCK_SUITES)"
+[ -z "$swait" ] || echo "check slot: waited $swait s for a free suite slot (CHECK_MAX_SUITES=$LOCK_SUITES)"
 echo "$(grep -c '^check:' "$CHECK_OUT/queue") checks, $(grep -c '^test:' "$CHECK_OUT/queue") tests (shard $si/$sn$([ -z "$changed" ] || echo ", --changed $base")), $jobs jobs, $(($(date +%s) - start)) s"
 exit $fail
