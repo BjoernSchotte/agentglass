@@ -63,41 +63,49 @@ export function waitCfg(): WaitCfg {
   return n;
 }
 // checks: a fixed config (null: read config.json again); the memo depends on it
-export function setWaitCfgForTest(c: WaitCfg | null): void { cfg = c; memo = new Float64Array(0); }
+export function setWaitCfgForTest(c: WaitCfg | null): void { cfg = c; memo = new Float64Array(0); TXT.m = new Map<number, number>(); }
 
 // ── tokens ──
 // a line → segments (split on && || ; | & outside quotes) of words (quotes removed); heredoc bodies dropped (norm() has
 // joined the lines: "<<WORD" up to a later " WORD" token, or the end)
 function isSp(c: number): boolean { return c === 32 || c === 9; }
-export function segments(line: string): string[][] {
-  const out: string[][] = []; let ws: string[] = []; let w = ""; let inW = false; let r0 = -1; // r0: start of a plain run not yet in w
-  const L = line.length; let i = 0;
-  const flush = (j: number): void => { if (r0 >= 0) { w += line.slice(r0, j); r0 = -1; } };
-  const endWord = (j: number): void => { flush(j); if (inW) ws.push(w); w = ""; inW = false; };
-  const endSeg = (j: number): void => { endWord(j); if (ws.length) out.push(ws); ws = []; };
+// one segment at a time (pick stops at the first that runs a program): its words from i0 on into ws; returns the index
+// past it (ws stays empty only at the end of the line). keep false: a segment pick skips, its words stay "" (no slicing).
+// An index rather than a cursor object: the object form hung pick under scriptc 0.1.7.
+function nextSeg(line: string, i0: number, ws: string[], keep: boolean): number {
+  // no closures over w / inW: captured variables cost a heap cell per access (this loop runs per character)
+  const L = line.length; let i = i0; let w = ""; let inW = false;
   while (i < L) {
     const c = line.charCodeAt(i);
-    if (c === 39) { flush(i); inW = true; const e = line.indexOf("'", i + 1); if (e < 0) { w += line.slice(i + 1); i = L; } else { w += line.slice(i + 1, e); i = e + 1; } continue; } // '…' literal
+    if (c === 39) { inW = true; const e = line.indexOf("'", i + 1); if (e < 0) { if (keep) w += line.slice(i + 1); i = L; } else { if (keep) w += line.slice(i + 1, e); i = e + 1; } continue; } // '…' literal
     if (c === 34) { // "…" with \" escapes
-      flush(i); inW = true; let j = i + 1; let s0 = j;
-      while (j < L) { const d = line.charCodeAt(j); if (d === 34) break; if (d === 92 && j + 1 < L) { w += line.slice(s0, j) + line.charAt(j + 1); j += 2; s0 = j; continue; } j++; }
-      w += line.slice(s0, j); i = j < L ? j + 1 : L; continue;
+      inW = true; let j = i + 1; let s0 = j;
+      while (j < L) { const d = line.charCodeAt(j); if (d === 34) break; if (d === 92 && j + 1 < L) { if (keep) w += line.slice(s0, j) + line.charAt(j + 1); j += 2; s0 = j; continue; } j++; }
+      if (keep) w += line.slice(s0, j); i = j < L ? j + 1 : L; continue;
     }
-    if (c === 92 && i + 1 < L) { flush(i); w += line.charAt(i + 1); inW = true; i += 2; continue; }
-    if (isSp(c)) { endWord(i); i++; continue; }
-    if (c === 60 && line.charCodeAt(i + 1) === 60 && line.charCodeAt(i + 2) !== 60) { endWord(i); i = heredoc(line, i + 2); continue; } // <<WORD … WORD
-    if (c === 60 && line.charCodeAt(i + 1) === 60) { flush(i); w += "<<<"; inW = true; i += 3; continue; } // <<< here-string: a redirect word
-    if (c === 59 || c === 124) { endSeg(i); i += line.charCodeAt(i + 1) === c || (c === 124 && line.charCodeAt(i + 1) === 38) ? 2 : 1; continue; } // ; ;; | || |&
-    if (c === 38) { // && and a lone & separate; 2>&1, &>, >&2 belong to a redirect
+    if (c === 92 && i + 1 < L) { if (keep) w += line.charAt(i + 1); inW = true; i += 2; continue; }
+    if (c === 32 || c === 9) { if (inW) { ws.push(w); w = ""; inW = false; } i++; continue; }
+    if (c === 60 && line.charCodeAt(i + 1) === 60 && line.charCodeAt(i + 2) !== 60) { if (inW) { ws.push(w); w = ""; inW = false; } i = heredoc(line, i + 2); continue; } // <<WORD … WORD
+    if (c === 60 && line.charCodeAt(i + 1) === 60) { if (keep) w += "<<<"; inW = true; i += 3; continue; } // <<< here-string: a redirect word
+    let sep = 0; // a separator's length: ; ;; | || |& && and a lone & (2>&1, &>, >&2 belong to a redirect: plain)
+    if (c === 59 || c === 124) sep = line.charCodeAt(i + 1) === c || (c === 124 && line.charCodeAt(i + 1) === 38) ? 2 : 1;
+    else if (c === 38) {
       const p = i > 0 ? line.charCodeAt(i - 1) : 0; const n = line.charCodeAt(i + 1);
-      if (n === 38) { endSeg(i); i += 2; continue; }
-      if (p === 62 || p === 60 || n === 62) { if (r0 < 0) r0 = i; inW = true; i++; continue; }
-      endSeg(i); i++; continue;
+      sep = n === 38 ? 2 : p === 62 || p === 60 || n === 62 ? 0 : 1;
     }
-    if (r0 < 0) r0 = i;
-    inW = true; i++;
+    if (sep) { if (inW) { ws.push(w); w = ""; inW = false; } i += sep; if (ws.length) return i; continue; }
+    // a plain run: this character and the next up to a quote, escape, blank, < ; | or &
+    const s = i; i++;
+    while (i < L) { const d = line.charCodeAt(i); if (d === 39 || d === 34 || d === 92 || d === 32 || d === 9 || d === 60 || d === 59 || d === 124 || d === 38) break; i++; }
+    if (keep) w += line.slice(s, i);
+    inW = true;
   }
-  endSeg(L);
+  if (inW) ws.push(w);
+  return L;
+}
+export function segments(line: string): string[][] {
+  const out: string[][] = []; let i = 0;
+  while (i < line.length) { const ws: string[] = []; i = nextSeg(line, i, ws, true); if (ws.length) out.push(ws); }
   return out;
 }
 // after "<<": skip "-", blanks and the delimiter word (quoted or not); then past its closing " WORD" token, or to the end
@@ -128,8 +136,8 @@ function bare(ws: string[]): string[] {
   for (let i = 0; i < ws.length; i++) {
     let w = ws[i] ?? "";
     if (isRedir(w)) { if (w.endsWith(">") || w.endsWith("<")) i++; continue; } // "> file": its target goes too; 2>&1, >/dev/null are whole
-    let a = 0; while (a < w.length && (w.charAt(a) === "(" || w.charAt(a) === "{")) a++;
-    let b = w.length; while (b > a && (w.charAt(b - 1) === ")" || w.charAt(b - 1) === "}")) b--;
+    let a = 0; while (a < w.length && (w.charCodeAt(a) === 40 || w.charCodeAt(a) === 123)) a++; // ( {
+    let b = w.length; while (b > a && (w.charCodeAt(b - 1) === 41 || w.charCodeAt(b - 1) === 125)) b--; // ) }
     if (a > 0 || b < w.length) w = w.slice(a, b);
     if (w) o.push(w);
   }
@@ -137,27 +145,27 @@ function bare(ws: string[]): string[] {
 }
 
 // ── word rules ──
-const WRAP = ["sudo", "env", "timeout", "nice", "ionice", "nohup", "time", "command", "exec", "caffeinate", "stdbuf", "rtk", "flock", "xargs"];
+const WRAP = new Set<string>(["sudo", "env", "timeout", "nice", "ionice", "nohup", "time", "command", "exec", "caffeinate", "stdbuf", "rtk", "flock", "xargs"]);
 // wrapper options that take a separate value (numeric values are skipped anyway)
 const WOPT: Record<string, string[]> = { sudo: ["-u", "-g", "-C", "-D"], env: ["-u", "-C", "-S"], timeout: ["-s", "-k", "--signal", "--kill-after"], ionice: ["-c", "-n", "-p"], nice: ["-n"],
   stdbuf: ["-i", "-o", "-e"], time: ["-f", "-o"], flock: ["-w", "-E", "--timeout", "--conflict-exit-code"], xargs: ["-I", "-n", "-P", "-L", "-d", "-a", "-E", "-s", "--max-args", "--max-procs", "--replace", "--delimiter"] };
-const RTK_SUB = ["proxy", "err", "summary", "test"]; // rtk subcommands that wrap a command
-const KEYW = ["do", "then", "else", "elif", "while", "until", "if", "!", "time"]; // a command follows
-const TRIV = ["cd", "pushd", "popd", "export", "source", ".", "set", "unset", "ulimit", "true", "false", "echo", "printf", "test", "[", "[[", "mkdir", "local", "read", "trap", "break", "continue",
+const RTK_SUB = new Set<string>(["proxy", "err", "summary", "test"]); // rtk subcommands that wrap a command
+const KEYW = new Set<string>(["do", "then", "else", "elif", "while", "until", "if", "!", "time"]); // a command follows
+const TRIV = new Set<string>(["cd", "pushd", "popd", "export", "source", ".", "set", "unset", "ulimit", "true", "false", "echo", "printf", "test", "[", "[[", "mkdir", "local", "read", "trap", "break", "continue",
   "for", "while", "until", "if", "then", "else", "elif", "do", "done", "fi", "case", "esac", "select", "function", "return", "exit", "shift", "declare", "typeset", "alias", ":",
-  "shopt", "setopt", "emulate", "builtin", "hash", "umask", "jobs", "disown", "{", "}", "(", ")"];
-const FILTER = ["cat", "grep", "rg", "sed", "head", "tail", "awk", "jq", "wc", "sort", "uniq", "tee", "less", "cut", "tr", "column"];
-const PM = ["npm", "pnpm", "yarn", "bun", "turbo", "nx"];
+  "shopt", "setopt", "emulate", "builtin", "hash", "umask", "jobs", "disown", "{", "}", "(", ")"]);
+const FILTER = new Set<string>(["cat", "grep", "rg", "sed", "head", "tail", "awk", "jq", "wc", "sort", "uniq", "tee", "less", "cut", "tr", "column"]);
+const PM = new Set<string>(["npm", "pnpm", "yarn", "bun", "turbo", "nx"]);
 const PM_OPT = ["-C", "--dir", "--filter", "-F", "--prefix", "--cwd", "--workspace", "--config"];
-const RUNNERS = ["npx", "pnpx", "bunx", "uvx"];
+const RUNNERS = new Set<string>(["npx", "pnpx", "bunx", "uvx"]);
 const RUN_OPT = ["-p", "--package", "--from", "--with", "--python"];
-const SUBCMD = ["poetry", "pipenv", "cargo", "go", "make", "just", "git", "docker", "kubectl", "mvn", "mvnw", "gradle", "gradlew", "dotnet", "terraform", "composer", "mix", "flutter", "deno", "scriptc", "tmux", "herdr", "agentglass",
-  "uv", "pip", "pip3", "bundle", "rake", "helm", "brew", "apt", "apt-get", "dnf", "yum", "next", "vite", "podman", "systemctl"];
+const SUBCMD = new Set<string>(["poetry", "pipenv", "cargo", "go", "make", "just", "git", "docker", "kubectl", "mvn", "mvnw", "gradle", "gradlew", "dotnet", "terraform", "composer", "mix", "flutter", "deno", "scriptc", "tmux", "herdr", "agentglass",
+  "uv", "pip", "pip3", "bundle", "rake", "helm", "brew", "apt", "apt-get", "dnf", "yum", "next", "vite", "podman", "systemctl"]);
 const SUB_OPT: Record<string, string[]> = { git: ["-C", "-c", "--git-dir", "--work-tree"], make: ["-C", "-f", "-I", "-l", "--directory", "--file"], docker: ["-H", "--context", "--host", "-c", "--log-level"],
   kubectl: ["-n", "--namespace", "--context", "--kubeconfig"], gh: ["-R", "--repo"], just: ["-f", "--justfile", "-d", "--working-directory"], mvn: ["-f", "-pl", "-P", "-s"], gradle: ["-p"], gradlew: ["-p"],
   tmux: ["-L", "-S", "-f"], uv: ["--directory", "--project"], cargo: ["-C", "--config"], brew: [], pip: ["-r"] };
-const SHELLS = ["sh", "bash", "zsh", "dash", "fish"];
-const INTERP = ["node", "tsx", "ts-node", "python", "python3", "ruby", "perl", "php", "sh", "bash", "zsh", "dash"];
+const SHELLS = new Set<string>(["sh", "bash", "zsh", "dash", "fish"]);
+const INTERP = new Set<string>(["node", "tsx", "ts-node", "python", "python3", "ruby", "perl", "php", "sh", "bash", "zsh", "dash"]);
 const INT_OPT = ["-r", "--require", "--import", "--loader", "-W", "-X", "-I", "--experimental-loader"];
 
 function base(p: string): string { const i = p.lastIndexOf("/"); return i >= 0 && i < p.length - 1 ? p.slice(i + 1) : p; }
@@ -185,13 +193,13 @@ function progAt(ws: string[]): number {
     const w = ws[i] ?? "";
     if (isAssign(w)) { i++; continue; }
     if (w === "for" || w === "case" || w === "select" || w === "function") return -1;
-    if (KEYW.indexOf(w) >= 0 || (w.startsWith("-") && w.length > 1)) { i++; continue; } // a stray option is no program
+    if (KEYW.has(w) || (w.startsWith("-") && w.length > 1)) { i++; continue; } // a stray option is no program
     const b = base(w);
-    if (WRAP.indexOf(b) >= 0) {
+    if (WRAP.has(b)) {
       i = skipOpts(ws, i + 1, WOPT[b] ?? []);
       while (i < ws.length && isNum(ws[i] ?? "")) i++; // timeout 600, nice 10
       if (b === "env") while (i < ws.length && isAssign(ws[i] ?? "")) i++;
-      if (b === "rtk" && i + 1 < ws.length && RTK_SUB.indexOf(ws[i] ?? "") >= 0) i++;
+      if (b === "rtk" && i + 1 < ws.length && RTK_SUB.has(ws[i] ?? "")) i++;
       if (b === "flock" && i < ws.length) i = skipOpts(ws, i + 1, []); // the lock file, then the command
       continue;
     }
@@ -214,8 +222,8 @@ function famAt(ws: string[], i: number, depth: number): FN {
   }
   if (at > 0 && raw.indexOf("/", at) < 0) return fn(cut(raw.startsWith("@") ? raw.slice(0, at) : base(raw.slice(0, at)))); // npx pkg@version, @scope/pkg@latest
   if (raw.startsWith("@") && raw.indexOf("/") > 0) return fn(cut(raw)); // a scoped package
-  const p = base(raw); if (!p || TRIV.indexOf(p) >= 0) return NONE;
-  if (PM.indexOf(p) >= 0) {
+  const p = base(raw); if (!p || TRIV.has(p)) return NONE;
+  if (PM.has(p)) {
     const j = skipOpts(ws, i + 1, PM_OPT); const a0 = ws[j] ?? "";
     if (!a0) return fn(p === "yarn" ? "yarn install" : p);
     if (a0 === "run" || a0 === "run-script") { const k = skipOpts(ws, j + 1, PM_OPT); const s = ws[k] ?? ""; return fn(s && isWord(s) ? p + " run " + s : p + " run"); }
@@ -225,7 +233,7 @@ function famAt(ws: string[], i: number, depth: number): FN {
     if (a0 === "i" || a0 === "ci" || a0 === "add" || a0 === "install") return fn(p + " install");
     return fn(isWord(a0) ? p + " " + a0 : p);
   }
-  if (RUNNERS.indexOf(p) >= 0) { const k = skipOpts(ws, i + 1, RUN_OPT); return k < ws.length ? famAt(ws, k, depth) : fn(p); }
+  if (RUNNERS.has(p)) { const k = skipOpts(ws, i + 1, RUN_OPT); return k < ws.length ? famAt(ws, k, depth) : fn(p); }
   if ((p === "poetry" || p === "pipenv" || p === "uv" || p === "bundle") && ws[skipOpts(ws, i + 1, SUB_OPT[p] ?? [])] === (p === "bundle" ? "exec" : "run")) {
     const k = skipOpts(ws, skipOpts(ws, i + 1, SUB_OPT[p] ?? []) + 1, RUN_OPT.concat(["--group", "--extra", "--env-file", "--directory", "--project"]));
     return k < ws.length ? famAt(ws, k, depth) : fn(p + " run");
@@ -236,19 +244,19 @@ function famAt(ws: string[], i: number, depth: number): FN {
     const k = skipOpts(ws, j + 1, []); const b = ws[k] ?? "";
     return fn(b && isWord(b) ? "gh " + a + " " + b : "gh " + a);
   }
-  if (SUBCMD.indexOf(p) >= 0) {
+  if (SUBCMD.has(p)) {
     const j = skipOpts(ws, i + 1, SUB_OPT[p] ?? []); const a = ws[j] ?? "";
     if (!a || !isWord(a)) return fn(p);
     if (p === "go" && a === "tool") { const t = ws[skipOpts(ws, j + 1, [])] ?? ""; return fn(t && isWord(base(t)) ? cut("go tool " + base(t)) : "go tool"); }
     return fn(cut(p + " " + a));
   }
-  if (INTERP.indexOf(p) >= 0 || p.startsWith("python3.")) {
+  if (INTERP.has(p) || p.startsWith("python3.")) {
     let j = i + 1;
     while (j < ws.length) {
       const w = ws[j] ?? "";
       if (w === "-") return fn(p);
       if (!w.startsWith("-") || w === "--") break;
-      const sh = SHELLS.indexOf(p) >= 0;
+      const sh = SHELLS.has(p);
       if (sh && !w.startsWith("--") && w.endsWith("c")) { // sh -c / bash -lc "<cmd>": the family of that command
         if (depth < 3 && j + 1 < ws.length) { const f = famLine(ws[j + 1] ?? "", depth + 1); if (f.name && f.name !== "sh") return f; }
         return fn(p);
@@ -262,14 +270,29 @@ function famAt(ws: string[], i: number, depth: number): FN {
   }
   return fn(cut(p));
 }
+// does the segment at i start with a plain trivial word (cd, export, echo …: famAt names no family whatever follows)?
+// Only a bare word ended by a blank, ; | or the line's end; keywords and trap go the full way. Most stored lines start
+// with "cd <dir> &&": that segment is skipped without building its words.
+const TRIV_MAX = ((): number => { let m = 0; for (const w of TRIV) m = Math.max(m, w.length); return m; })();
+function trivAt(line: string, i: number): boolean {
+  const L = line.length; while (i < L && isSp(line.charCodeAt(i))) i++;
+  const s = i;
+  while (i < L && i - s <= TRIV_MAX) { const c = line.charCodeAt(i); if (isSp(c) || c === 59 || c === 124) break; if (c === 39 || c === 34 || c === 92 || c === 38 || c === 60 || c === 62 || c === 40 || c === 41 || c === 123 || c === 125 || c === 36 || c === 96) return false; i++; } // ' " \ & < > ( ) { } $ `
+  if (i === s || i - s > TRIV_MAX) return false;
+  const w = line.slice(s, i);
+  return TRIV.has(w) && !KEYW.has(w) && w !== "trap";
+}
 // the chosen segment of a line: the first that runs a non-filter program, else the first filter; null = only trivial steps
 interface Pick { ws: string[]; i: number; f: FN }
 function pick(line: string, depth: number): Pick | null {
   let first: Pick | null = null;
-  for (const seg of segments(line)) {
+  let at = 0;
+  while (at < line.length) {
+    const seg: string[] = []; const tr = trivAt(line, at); at = nextSeg(line, at, seg, !tr); if (!seg.length) break;
+    if (tr) continue;
     const ws = bare(seg); const i = progAt(ws); const f = famAt(ws, i, depth);
     if (!f.name) continue;
-    if (FILTER.indexOf(f.name) >= 0) { if (!first) first = { ws, i, f }; continue; }
+    if (FILTER.has(f.name)) { if (!first) first = { ws, i, f }; continue; }
     return { ws, i, f };
   }
   return first;
@@ -398,11 +421,30 @@ export function toolFamily(tool: string): string { const s = mcpServer(tool); re
 const FAMS = { ids: new Map<string, number>(), names: [] as string[], kinds: [] as string[], heavy: [] as boolean[], generic: [] as boolean[] };
 export const FAM_STATS = { norm: 0 };
 let memo = new Float64Array(0); // DICT.cmd id → family id + 1 (0 = not computed)
-function famIdOf(f: Fam): number {
-  const k = f.name + "\t" + f.kind + "\t" + (f.heavy ? "1" : "0") + (f.generic ? "1" : "0");
+function famIdOf(f: Fam): number { return famIdFor(f.name, f.kind, f.heavy, f.generic); }
+export function famIdFor(name: string, kind: string, heavy: boolean, generic: boolean): number {
+  const k = name + "\t" + kind + "\t" + (heavy ? "1" : "0") + (generic ? "1" : "0");
   const hit = FAMS.ids.get(k); if (hit !== undefined) return hit;
-  FAMS.names.push(f.name); FAMS.kinds.push(f.kind); FAMS.heavy.push(f.heavy); FAMS.generic.push(f.generic);
+  FAMS.names.push(name); FAMS.kinds.push(kind); FAMS.heavy.push(heavy); FAMS.generic.push(generic);
   const id = FAMS.names.length - 1; FAMS.ids.set(k, id); return id;
+}
+// a command text's family id without interning the text (a scanned calls file, report.ts): memo by two 32-bit FNV-1a
+// hashes of the text in one 53-bit key, for one report (releaseTexts); a shared key across texts is ~1e-5 likely at 1M texts
+const TXT = { m: new Map<number, number>() };
+function fnv(s: string, h0: number): number { let h = h0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
+export function textFam(text: string): number {
+  if (!text) return -1;
+  const k = fnv(text, 2166136261) * 2097152 + (fnv(text, 3735928559) >>> 11);
+  const hit = TXT.m.get(k); if (hit !== undefined) return hit;
+  FAM_STATS.norm++;
+  const id = famIdOf(familyOf(text, waitCfg())); TXT.m.set(k, id); return id;
+}
+export function releaseTexts(): void { TXT.m = new Map<number, number>(); }
+// of two family ids (-1 none), the one a call with both commands counts as (rowFam): heavy first, then the kinds' order
+export function betterFam(best: number, id: number): number {
+  if (id < 0) return best; if (best < 0) return id;
+  const c = waitCfg();
+  return prio({ name: "", kind: famKind(id), heavy: famHeavy(id), generic: false }, c) < prio({ name: "", kind: famKind(best), heavy: famHeavy(best), generic: false }, c) ? id : best;
 }
 export function cmdFam(cmdId: number): number {
   if (cmdId < 0) return -1;
@@ -417,14 +459,9 @@ export function famKnown(cmdId: number): boolean { return cmdId < 0 || (cmdId < 
 // family id of row i of r; -1 = the row has no shell command (a non-shell tool: toolFamily / toolKind of its tool)
 export function rowFam(r: Rows, i: number): number {
   if (i < 0 || i >= r.n) return -1;
-  const e = i + 1 < r.n ? r.lo[i + 1] + 0 : r.nl; const c = waitCfg();
-  let best = -1; let bp = 0;
-  for (let k = r.lo[i] + 0; k < e; k++) {
-    const v = r.li[k] + 0; if (v % 4 !== KIND_CMD) continue;
-    const id = cmdFam((v - KIND_CMD) / 4); if (id < 0) continue;
-    const p = prio({ name: "", kind: famKind(id), heavy: famHeavy(id), generic: false }, c);
-    if (best < 0 || p < bp) { best = id; bp = p; }
-  }
+  const e = i + 1 < r.n ? r.lo[i + 1] + 0 : r.nl;
+  let best = -1;
+  for (let k = r.lo[i] + 0; k < e; k++) { const v = r.li[k] + 0; if (v % 4 === KIND_CMD) best = betterFam(best, cmdFam((v - KIND_CMD) / 4)); }
   return best;
 }
 function at<T>(a: T[], i: number, d: T): T { return i >= 0 && i < a.length ? a[i] ?? d : d; }
