@@ -144,7 +144,8 @@ const WOPT: Record<string, string[]> = { sudo: ["-u", "-g", "-C", "-D"], env: ["
 const RTK_SUB = ["proxy", "err", "summary", "test"]; // rtk subcommands that wrap a command
 const KEYW = ["do", "then", "else", "elif", "while", "until", "if", "!", "time"]; // a command follows
 const TRIV = ["cd", "pushd", "popd", "export", "source", ".", "set", "unset", "ulimit", "true", "false", "echo", "printf", "test", "[", "[[", "mkdir", "local", "read", "trap", "break", "continue",
-  "for", "while", "until", "if", "then", "else", "elif", "do", "done", "fi", "case", "esac", "select", "function", "return", "exit", "shift", "declare", "typeset", "alias", ":"];
+  "for", "while", "until", "if", "then", "else", "elif", "do", "done", "fi", "case", "esac", "select", "function", "return", "exit", "shift", "declare", "typeset", "alias", ":",
+  "shopt", "setopt", "emulate", "builtin", "hash", "umask", "jobs", "disown", "{", "}", "(", ")"];
 const FILTER = ["cat", "grep", "rg", "sed", "head", "tail", "awk", "jq", "wc", "sort", "uniq", "tee", "less", "cut", "tr", "column"];
 const PM = ["npm", "pnpm", "yarn", "bun", "turbo", "nx"];
 const PM_OPT = ["-C", "--dir", "--filter", "-F", "--prefix", "--cwd", "--workspace", "--config"];
@@ -184,7 +185,7 @@ function progAt(ws: string[]): number {
     const w = ws[i] ?? "";
     if (isAssign(w)) { i++; continue; }
     if (w === "for" || w === "case" || w === "select" || w === "function") return -1;
-    if (KEYW.indexOf(w) >= 0) { i++; continue; }
+    if (KEYW.indexOf(w) >= 0 || (w.startsWith("-") && w.length > 1)) { i++; continue; } // a stray option is no program
     const b = base(w);
     if (WRAP.indexOf(b) >= 0) {
       i = skipOpts(ws, i + 1, WOPT[b] ?? []);
@@ -206,6 +207,11 @@ function cut(s: string): string { return s.length > 40 ? s.slice(0, 40) : s; }
 function famAt(ws: string[], i: number, depth: number): FN {
   if (i < 0 || i >= ws.length) return NONE;
   const raw = ws[i] ?? ""; const at = raw.lastIndexOf("@");
+  if (raw === "trap") { // trap <action> <signals>: words past the signals are the next command (a script's lines joined)
+    let k = i + 2; while (k < ws.length && /^(SIG)?[A-Z0-9]+$/.test(ws[k] ?? "")) k++;
+    if (k < ws.length) { const rest = ws.slice(k); return famAt(rest, progAt(rest), depth); }
+    return NONE;
+  }
   if (at > 0 && raw.indexOf("/", at) < 0) return fn(cut(raw.startsWith("@") ? raw.slice(0, at) : base(raw.slice(0, at)))); // npx pkg@version, @scope/pkg@latest
   if (raw.startsWith("@") && raw.indexOf("/") > 0) return fn(cut(raw)); // a scoped package
   const p = base(raw); if (!p || TRIV.indexOf(p) >= 0) return NONE;

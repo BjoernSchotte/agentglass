@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Proc } from "../../model/types.ts";
 import { fxReset, fxSession, isoAt } from "../query/fixture.ts";
+import { allProcs } from "../../model/procs.ts";
 import { type Run, shellCmd, collectLive, heavyNow, famCounts, parseLoad } from "./live.ts";
 
 let bad = 0;
@@ -29,11 +30,12 @@ const b = fxSession("claude", "B", "/w/b", "", "claude-sonnet-4-5", [bash("b1", 
 const c = fxSession("claude", "C", "/w/c", "", "claude-sonnet-4-5", [bash("c1", "uv run pytest -q", 0)]); c.pid = 500;
 const d = fxSession("claude", "D", "/w/d", "", "claude-sonnet-4-5", []); d.pid = 700;
 const kids = new Map<number, Proc[]>();
-kids.set(100, [pr(200, 100, "02:10", 3000, "/usr/bin/zsh -c eval 'pnpm test' \\< /dev/null")]);
-kids.set(200, [pr(201, 200, "02:09", 900000, "node vitest")]);
-kids.set(300, [pr(400, 300, "00:40", 2000, "/bin/bash -c npx tsc"), pr(402, 300, "1:00:00", 50000, "node /x/mcp-server.js")]);
-kids.set(400, [pr(401, 400, "00:39", 600000, "node tsc")]);
-kids.set(700, [pr(800, 700, "00:05", 1000, "/bin/zsh -c eval 'git status'"), pr(810, 700, "7-22:03:19", 1000, "sh -c playwright-mcp"), pr(820, 700, "1-00:00:00", 1000, "sh -c pnpm test")]);
+const K = 1024; // Proc.rss is bytes
+kids.set(100, [pr(200, 100, "02:10", 3000 * K, "/usr/bin/zsh -c eval 'pnpm test' \\< /dev/null")]);
+kids.set(200, [pr(201, 200, "02:09", 900000 * K, "node vitest")]);
+kids.set(300, [pr(400, 300, "00:40", 2000 * K, "/bin/bash -c npx tsc"), pr(402, 300, "1:00:00", 50000 * K, "node /x/mcp-server.js")]);
+kids.set(400, [pr(401, 400, "00:39", 600000 * K, "node tsc")]);
+kids.set(700, [pr(800, 700, "00:05", 1000 * K, "/bin/zsh -c eval 'git status'"), pr(810, 700, "7-22:03:19", 1000, "sh -c playwright-mcp"), pr(820, 700, "1-00:00:00", 1000, "sh -c pnpm test")]);
 const now = Date.now();
 const lw = collectLive([a, b, c, d], kids, now);
 const rs = lw.running.slice().sort((x: Run, y: Run) => x.pid - y.pid);
@@ -41,7 +43,7 @@ function show(r: Run): string { return r.path.slice(r.path.lastIndexOf("/") + 1)
 eq("runs", String(rs.length), "4");
 eq("fallback run", rs[0] ? show(rs[0]) : "", "C.jsonl pytest test true rss-1 bgfalse age" + String(Math.floor((now - Date.parse(isoAt(0, 0, 0))) / 1000)));
 eq("claude run", rs[1] ? show(rs[1]) : "", "A.jsonl pnpm test test true rss903000 bgtrue age130");
-eq("codex-shaped run", rs[2] ? show(rs[2]) : "", "B.jsonl tsc typecheck true rss602000 bgfalse age40");
+eq("open call names the run, the tree its memory", rs[2] ? show(rs[2]) : "", "B.jsonl tsc typecheck true rss602000 bgfalse age" + String(Math.floor((now - Date.parse(isoAt(0, 0, 0))) / 1000)));
 eq("light run", rs[3] ? show(rs[3]) : "", "D.jsonl git status vcs false rss1000 bgtrue age5");
 eq("heavy now", String(heavyNow(lw, "", "").length), "3");
 eq("heavy now family", String(heavyNow(lw, "pnpm test", "").length), "1");
@@ -54,6 +56,20 @@ const f = fxSession("claude", "F", "/w/f", "", "claude-sonnet-4-5", []); f.pid =
 kids.set(900, [pr(901, 900, "00:10", 1000, "/bin/sh -c pnpm build")]);
 const sh = collectLive([e, f], kids, now);
 eq("shared root", sh.running.map((r: Run): string => r.family + " rss" + String(r.rssKb)).join(","), "pnpm lint rss-1");
+
+// Gemini runs a command inside a wrapper script (its lines are steps); a stray option is no program
+const gm = fxSession("gemini", "G", "/w/g", "", "gemini-2.5-flash", []); gm.pid = 1100;
+const gk = new Map<number, Proc[]>();
+gk.set(1100, [pr(1101, 1100, "00:20", 1000, "/bin/bash -c shopt -u promptvars nullglob extglob; _bgpids_file=/tmp/g/bgpids.tmp\n(\n  trap 'jobs -p > \"$_bgpids_file\"' EXIT\nnpm test\n)\n__code=$?\nexit $__code"), pr(1102, 1100, "00:10", 1000, "/bin/zsh -c -d -f pnpm lint")]);
+eq("gemini wrapper", collectLive([gm], gk, now).running.map((r: Run): string => r.family + "/" + r.kind).join(","), "npm test/test,pnpm lint/lint");
+
+// OpenCode runs `npm test` without a shell: npm's own `sh -c` is the shell found; the command is its ancestor below the agent
+const oc = fxSession("opencode", "O", "/w/o", "", "claude-sonnet-4-5", []); oc.pid = 1200;
+const ok2 = new Map<number, Proc[]>();
+const npmP = pr(1201, 1200, "00:30", 50000 * K, "npm test"); const shP = pr(1202, 1201, "00:30", 2000 * K, "sh -c sleep 300 && echo ok");
+ok2.set(1200, [npmP]); ok2.set(1201, [shP]); allProcs.set(1201, npmP); allProcs.set(1202, shP);
+eq("command without a shell", collectLive([oc], ok2, now).running.map((r: Run): string => r.family + " rss" + String(r.rssKb)).join(","), "npm test rss52000");
+allProcs.clear();
 
 // counts: by count, then name; ≤ 60 characters
 function run(fam: string): Run { return { path: "/p", h: "claude", family: fam, kind: "test", heavy: true, ageSec: 1, rssKb: 1, pid: 1, bg: false }; }

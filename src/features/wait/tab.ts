@@ -161,7 +161,7 @@ function nowLine(w: number): string {
 function progress(): string { const r = J.run; if (!r) return ""; const p = waitProgress(r); return " · " + spin() + " reading calls " + grp(p.i) + "/" + grp(p.n) + " sessions"; }
 interface Cols { name: number; kind: number; share: number; total: number; n: number; p50: number; p95: number; err: number; trend: number; peak: number }
 function cols(iw: number): Cols {
-  const kind = iw >= 100 ? 10 : 6; const c: Cols = { name: 0, kind, share: 6, total: 7, n: 6, p50: 7, p95: 7, err: 5, trend: 6, peak: 5 };
+  const kind = iw >= 100 ? 10 : 6; const c: Cols = { name: 0, kind, share: 6, total: 7, n: 7, p50: 7, p95: 7, err: 5, trend: 6, peak: 5 };
   c.name = Math.max(10, iw - 1 - kind - c.share - c.total - c.n - c.p50 - c.p95 - c.err - c.trend - c.peak);
   return c;
 }

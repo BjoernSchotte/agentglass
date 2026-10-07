@@ -21,7 +21,6 @@ export const IO = {
   toast: (msg: string): void => { say("warn", msg); },
 };
 const lastBell = new Map<string, number>(); // throttleKey → last bell/notification (shared throttle)
-const lastCmd = new Map<string, number>(); // host-wide rules: (rule, host) → last command
 // per session; a host-wide metric (contention) per (rule, host): three agents in contention give one notification
 export function throttleKey(r: Rule, s: Sess): string { return HOST_METRICS.indexOf(r.metric) >= 0 ? r.id + "\t@host" : s.path; }
 interface Job { argv: string[]; env: { [k: string]: string }; input: string }
@@ -88,7 +87,18 @@ function spawnJob(job: Job): string {
 export function lead(r: Rule, v: MVal): string { return v.hint === "likely" ? r.prefix.trimEnd() + " (likely) " : (v.hint && v.hint !== "herdr" ? v.hint + " " : "") + r.prefix; }
 // one transition: bell + desktop (fire/escalate, notify rules, not acked, not in --watch, throttled per session), the command
 // on every state in notify.on regardless of acknowledgement (in --watch only with --notify)
+// host-wide rules (contention): the sessions each rule fires on; outputs only when the first one fires (the host enters
+// the condition) and when the last one resolves — three agents in one contention give one notification
+const hostOn = new Map<string, string[]>();
+function hostGate(r: Rule, t: Trans): boolean {
+  const on = hostOn.get(r.id) ?? []; const i = on.indexOf(t.path); const was = on.length;
+  if (t.state === "resolve") { if (i >= 0) on.splice(i, 1); hostOn.set(r.id, on); return was > 0 && on.length === 0; }
+  if (i < 0) on.push(t.path);
+  hostOn.set(r.id, on);
+  return was === 0 || (t.state === "escalate" && i >= 0);
+}
 export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boolean, cmdOn: boolean, cfg: NotifyCfg, v: MVal, message: string, since: number): void {
+  if (HOST_METRICS.indexOf(r.metric) >= 0 && !hostGate(r, t)) return; // another session of this host already said it
   if (!inWatch && r.notify && !acked && (t.state === "fire" || t.state === "escalate")) {
     const tk = throttleKey(r, s); const last = lastBell.get(tk) ?? 0;
     if (t.at - last >= cfg.throttleSec * 1000) {
@@ -97,12 +107,9 @@ export function onTrans(s: Sess, r: Rule, t: Trans, acked: boolean, inWatch: boo
       if (cfg.desktop && process.env.AGENTGLASS_NOTIFY !== "0") IO.desk("agentglass", s.h + " · " + (base(s.cwd) || "?"), lead(r, v) + titleOf(s).slice(0, 120));
     }
   }
-  const host = HOST_METRICS.indexOf(r.metric) >= 0; const hk = r.id + "\t" + t.state;
-  if (host && cmdOn && t.at - (lastCmd.get(hk) ?? 0) < cfg.throttleSec * 1000) return; // the same host-wide transition from another session
-  if (host && cmdOn) lastCmd.set(hk, t.at);
   if (cmdOn && r.notify && cfg.command.length && cfg.on.indexOf(t.state) >= 0) {
     const why = runCommand(cfg, alertJson(s, r, t, message, since), cmdSubs(r, v, t, s));
     if (why) IO.toast("rules: " + why);
   }
 }
-export function forget(path: string): void { lastBell.delete(path); }
+export function forget(path: string): void { lastBell.delete(path); for (const on of hostOn.values()) { const i = on.indexOf(path); if (i >= 0) on.splice(i, 1); } }

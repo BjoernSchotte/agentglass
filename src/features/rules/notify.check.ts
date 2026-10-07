@@ -31,6 +31,12 @@ IO.bell = (): void => { /* quiet */ };
   const cv = absent(); cv.v = 3; cv.cmd = "pnpm test ×2, tsc";
   for (const id of ["h1", "h2", "h3"]) { const x = newSess("claude", id, "/h/" + id, false); onTrans(x, cr, { at: 5000000, path: x.path, rule: "contention", from: 0, to: 1, state: "fire", v: 3, thr: 3 }, false, false, false, defaultNotify(), cv, "3 heavy commands running", 0); }
   eq("contention: one bell for three sessions", String(bells), "1");
+  // a fourth session joins minutes later (past the throttle): still the same contention, no new notification
+  const x4 = newSess("claude", "h4", "/h/h4", false); onTrans(x4, cr, { at: 5000000 + 600000, path: x4.path, rule: "contention", from: 0, to: 1, state: "fire", v: 4, thr: 3 }, false, false, false, defaultNotify(), cv, "4 heavy", 0);
+  eq("contention: a later session joins quietly", String(bells), "1");
+  for (const id of ["h1", "h2", "h3", "h4"]) onTrans(newSess("claude", id, "/h/" + id, false), cr, { at: 5000000 + 700000, path: "/h/" + id, rule: "contention", from: 1, to: 0, state: "resolve", v: 1, thr: 3 }, false, false, false, defaultNotify(), cv, "resolved", 0);
+  const x5 = newSess("claude", "h5", "/h/h5", false); onTrans(x5, cr, { at: 5000000 + 800000, path: x5.path, rule: "contention", from: 0, to: 1, state: "fire", v: 3, thr: 3 }, false, false, false, defaultNotify(), cv, "again", 0);
+  eq("contention: after all resolved, a new one rings", String(bells), "2");
   eq("throttle key", throttleKey(cr, newSess("claude", "h9", "/h/h9", false)) + "|" + throttleKey(ap, s), "contention\t@host|" + s.path);
   IO.bell = (): void => { /* quiet */ };
 }

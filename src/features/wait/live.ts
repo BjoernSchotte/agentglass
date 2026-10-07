@@ -6,7 +6,7 @@
 // stored. Sessions whose shells cannot be seen (a shared daemon, no tree) count their open shell calls, without RSS.
 import { readWhole } from "../../util/fs.ts";
 import type { Proc, Sess } from "../../model/types.ts";
-import { rootOf } from "../../model/procs.ts";
+import { rootOf, allProcs } from "../../model/procs.ts";
 import { ledger } from "../usage/ledger.ts";
 import { norm } from "../usage/calls.ts";
 import { etimeSec, toolShells } from "../detect.ts";
@@ -71,11 +71,30 @@ interface FamMemo { family: string; kind: string; heavy: boolean }
 const memo = new Map<string, FamMemo>();
 function famOfArgs(args: string): FamMemo | null {
   const hit = memo.get(args); if (hit) return hit;
-  const cmd = norm(shellCmd(args)); if (!cmd) return null;
+  const cmd = norm(shellCmd(args).split("\n").join(" ; ")); if (!cmd) return null; // a script's lines are its steps (Gemini's wrapper)
   const f = familyOf(cmd, waitCfg()); const m: FamMemo = { family: f.name, kind: f.kind, heavy: f.heavy };
   if (memo.size >= 512) memo.clear();
   memo.set(args, m); return m;
 }
+// the process that runs the tool command a shell belongs to: its topmost ancestor below the agent (a process with a
+// harness, or the root). A harness that runs commands without a shell (OpenCode: `npm test` straight under the agent)
+// has the shell further down (npm's own `sh -c`): that ancestor's argv is the command
+function cmdProc(sh: Proc, root: number): Proc {
+  let c = sh;
+  for (let i = 0; i < 16; i++) { const par = allProcs.get(c.ppid); if (!par || par.pid === root || par.h) break; c = par; }
+  return c;
+}
+function famOfProc(p: Proc): FamMemo | null {
+  if (SHELL_RE.test(p.args)) return famOfArgs(p.args);
+  const hit = memo.get(p.args); if (hit) return hit;
+  const cmd = norm(p.args); if (!cmd) return null;
+  const f = familyOf(cmd, waitCfg()); const m: FamMemo = { family: f.name, kind: f.kind, heavy: f.heavy };
+  if (memo.size >= 512) memo.clear();
+  memo.set(p.args, m); return m;
+}
+const SHELL_RE = /^(\S*\/)?-?(sh|bash|zsh|fish|dash)( |$)/;
+function ageOf(p: Proc, now: number): number { return p.start > 0 ? Math.max(0, Math.floor((now - p.start) / 1000)) : etimeSec(p.etime); }
+// bytes resident in a process and its descendants (Proc.rss is bytes)
 function treeRss(p: Proc, kids: Map<number, Proc[]>): number {
   let n = 0; const st: Proc[] = [p];
   while (st.length) { const q = st.pop() as Proc; n += q.rss; for (const c of kids.get(q.pid) ?? []) st.push(c); }
@@ -95,18 +114,30 @@ export function collectLive(ss: Sess[], kids: Map<number, Proc[]>, now: number):
   for (const s of ss) { const r = rootOf(s.pid); const p = r ? r.pid : s.pid; rp.push(p); roots.set(p, (roots.get(p) ?? 0) + 1); }
   for (let k = 0; k < ss.length; k++) {
     const s = ss[k]; if (!s) continue; const p = (rp[k] ?? 0) + 0;
-    const shells = (roots.get(p) ?? 0) > 1 ? [] : toolShells(p, kids); // a root shared by sessions: whose shell is whose is unknown
-    let bg = -1; // -1 not asked yet, else 1 = no open shell call
-    for (const sh of shells) {
-      const age = sh.start > 0 ? Math.max(0, Math.floor((now - sh.start) / 1000)) : etimeSec(sh.etime);
-      if (age >= 86400) continue; // a day-old shell is a server the agent started, not a tool call
-      const f = famOfArgs(sh.args); if (!f) continue;
-      if (bg < 0) bg = openShell(s, now, null) ? 0 : 1;
-      lw.running.push({ path: s.path, h: s.h, family: f.family, kind: f.kind, heavy: f.heavy, ageSec: age, rssKb: treeRss(sh, kids), pid: sh.pid, bg: bg === 1 });
+    const shells: Proc[] = []; // a root shared by sessions (a daemon): whose shell is whose is unknown
+    if ((roots.get(p) ?? 0) <= 1) for (const sh of toolShells(p, kids)) {
+      const c = cmdProc(sh, p); if (ageOf(c, now) >= 86400) continue; // a day-old process is a server the agent started
+      let dup = false; for (const x of shells) if (x === c) dup = true;
+      if (!dup) shells.push(c);
     }
-    if (shells.length) continue;
     const open: { t: number; cmds: string[] }[] = []; openShell(s, now, open);
-    for (const c of open) { const f = callFamily(c.cmds.map((x: string): string => norm(x)), waitCfg()); lw.running.push({ path: s.path, h: s.h, family: f.name, kind: f.kind, heavy: f.heavy, ageSec: Math.floor((now - c.t) / 1000), rssKb: -1, pid: 0, bg: false }); }
+    if (open.length) { // the open calls name what runs (the transcript's command, not a harness's wrapper script); the tree adds memory
+      const runs: Run[] = [];
+      for (const c of open) { const f = callFamily(c.cmds.map((x: string): string => norm(x)), waitCfg()); runs.push({ path: s.path, h: s.h, family: f.name, kind: f.kind, heavy: f.heavy, ageSec: Math.floor((now - c.t) / 1000), rssKb: -1, pid: 0, bg: false }); }
+      runs.sort((x: Run, y: Run) => y.ageSec - x.ageSec);
+      for (const sh of shells) {
+        const f = famOfProc(sh); let to: Run | null = null;
+        for (const r of runs) if (f && r.family === f.family) { to = r; break; }
+        if (!to) to = runs[0] ?? null; // a wrapper the call runs in: the oldest call's
+        if (to) { to.rssKb = (to.rssKb < 0 ? 0 : to.rssKb) + Math.round(treeRss(sh, kids) / 1024); if (!to.pid) to.pid = sh.pid; }
+      }
+      for (const r of runs) lw.running.push(r);
+      continue;
+    }
+    for (const sh of shells) { // no open call: background runs, from the shells' argv
+      const f = famOfProc(sh); if (!f) continue;
+      lw.running.push({ path: s.path, h: s.h, family: f.family, kind: f.kind, heavy: f.heavy, ageSec: ageOf(sh, now), rssKb: Math.round(treeRss(sh, kids) / 1024), pid: sh.pid, bg: true });
+    }
   }
   return lw;
 }

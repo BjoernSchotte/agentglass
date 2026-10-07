@@ -285,6 +285,8 @@ pnpm build & pnpm test & wait	pnpm build	build
 test -f x && pnpm test	pnpm test	test
 [ -d node_modules ] || pnpm install	pnpm install	install
 [[ -n "$CI" ]] && pnpm test	pnpm test	test
+shopt -u promptvars nullglob; _f=/tmp/g/x.tmp ( trap 'jobs -p > "$_f"' EXIT npm test ) __code=$? exit $__code	npm test	test
+trap 'rm -f /tmp/x' EXIT INT	sh	other
 # trivial steps only
 echo done	sh	other
 export A=1; cd x	sh	other
