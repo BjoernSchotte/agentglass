@@ -3,7 +3,7 @@
 # leads to its session and turn, every span id to its call / request / subagent, with no warning: sh scripts/open-trace.test.sh
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d)
-trap 'rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 command -v python3 > /dev/null 2>&1 || { echo "open-trace: skipped (needs python3)"; exit 0; }
 # AGENTGLASS_BIN: a prebuilt binary (scripts/check.sh builds one for every test), else build one here
 if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi

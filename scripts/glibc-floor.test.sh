@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests for glibc-floor.sh with a fake objdump: sh scripts/glibc-floor.test.sh
 set -e
-here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0
 fake() { printf '#!/bin/sh\ncat <<EOT\n%s\nEOT\n' "$1" > "$t/objdump"; chmod 755 "$t/objdump"; }
 chk() { OBJDUMP="$t/objdump" sh "$here/glibc-floor.sh" /bin/true "$1" > "$t/out" 2>&1; }

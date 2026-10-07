@@ -126,8 +126,8 @@ start=$(date +%s)
 AGENTGLASS_BUILD_DATE=${AGENTGLASS_BUILD_DATE:-$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd 2>/dev/null || true)}
 export AGENTGLASS_BUILD_DATE; sh scripts/build-info.sh
 jobs=${CHECK_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}
-CHECK_OUT=$(mktemp -d); trap 'slot_drop; rm -rf "$CHECK_OUT"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
-LOCK_HELD=""
+CHECK_OUT=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; slot_drop; rm -rf "$CHECK_OUT"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; LOCK_HELD=""
 CHECK_SCRIPTC_FLAGS=${CHECK_SCRIPTC_FLAGS---optimization dev --strip}
 RELEASE_FLAGS="${SCRIPTC_FLAGS:-}"; CHECK_BIN_FLAGS="${SCRIPTC_FLAGS:-} ${CHECK_BIN_FLAGS-$CHECK_SCRIPTC_FLAGS}"
 SCRIPTC_FLAGS="${SCRIPTC_FLAGS:-} $CHECK_SCRIPTC_FLAGS" # the tests' own builds: build.sh honors SCRIPTC_FLAGS

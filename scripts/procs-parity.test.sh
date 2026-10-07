@@ -4,7 +4,7 @@
 # without AGENTGLASS_PROCS=ps: sh scripts/procs-parity.test.sh (uses AGENTGLASS_BIN)
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); t=$(cd "$t" && pwd -P)
-trap 'sh "$here/scripts/fixture-agents.sh" stop "$t/fx" > /dev/null 2>&1 || true; rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; sh "$here/scripts/fixture-agents.sh" stop "$t/fx" > /dev/null 2>&1 || true; rm -rf "$t"' EXIT
 fail=0
 sh "$here/scripts/fixture-agents.sh" start "$t/fx" --agents 3 --history 2 --background 0 > /dev/null
 h="$t/fx/home"; cl=$(head -n 1 "$t/fx/agents")

@@ -3,7 +3,7 @@
 # at most N holders at once, waiters wait (once-printed message naming the holders) and never fail, stale slots (dead
 # pid, reused pid) are reclaimed, suites holding suite slots while their builds wait for build slots never deadlock,
 # nested takes pass through, and CI turns the limit off unless set: sh scripts/check-lock.test.sh
-here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 # not the slots of the check.sh running this test, nor its settings
 unset CHECK_LOCK_SUITE_HELD CHECK_LOCK_IN_BUILD CHECK_LOCK_WAITS CHECK_LOCK_DIR CHECK_LOCK_WHO CHECK_LOCK_IMPL CHECK_MAX_SUITES CHECK_MAX_BUILDS
 fail=0; L="$here/check-lock.sh"

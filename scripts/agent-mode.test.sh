@@ -1,7 +1,7 @@
 #!/bin/sh
 # agent mode end to end: no TUI under a PTY, no prompts, query commands on a fake HOME (Claude + Codex in p1, Gemini in p2): sh scripts/agent-mode.test.sh
 set -e
-here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 # a stable version: a local build never counts as a downgrade
 # a private source copy (its build-info.ts) keeps src/ untouched while other builds run

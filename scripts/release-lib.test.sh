@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests for release-lib.sh in a throwaway git repo: sh scripts/release-lib.test.sh
 set -e
-here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")" && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 cd "$t" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false && git config tag.gpgsign false
 . "$here/release-lib.sh"
 # never reach GitHub from tests: a fake gh answers from $t/ghdata ("<sha>\t<merged PR> <PR author>\t<commit author login>")

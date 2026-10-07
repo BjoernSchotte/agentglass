@@ -3,7 +3,7 @@
 # --changed) over this repo's real jobs for typical changes, invariants over every job, and check.sh --changed
 # --dry-run end to end in a throwaway git copy (committed, uncommitted and untracked changes): sh scripts/check-changed.test.sh
 cd "$(dirname "$0")/.."
-here=$PWD; t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+here=$PWD; t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0
 bad() { echo "FAIL $*"; fail=1; }
 checks=$(find src -name '*.check.ts' | sort); tests=$(find scripts -name '*.test.sh' | sort)

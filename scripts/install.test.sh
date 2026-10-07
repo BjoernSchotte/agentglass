@@ -3,7 +3,7 @@
 set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR # hermetic: the fake HOME decides, not the caller's overrides
 export AGENTGLASS_AGENT=0 # human-mode behavior, also when the suite runs inside a coding agent
-here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap 'chmod -R u+w "$t"; rm -rf "$t"' EXIT
+here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; chmod -R u+w "$t"; rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 os=$(uname -s | tr 'A-Z' 'a-z'); case "$(uname -m)" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; esac
 asset="agentglass-$os-$arch.tar.gz"

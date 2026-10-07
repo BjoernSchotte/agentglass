@@ -99,7 +99,7 @@ case "${1:-}" in
       *) echo "check-lock.sh run: want suite or build, not '$k'" >&2; exit 2 ;;
     esac
     export CHECK_LOCK_SUITE_HELD CHECK_LOCK_IN_BUILD 2>/dev/null
-    trap 'slot_drop' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+    trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; slot_drop' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
     t0=$(date +%s); LOCK_WAITED=""; slot_take "$k" "$max"
     [ -z "$LOCK_WAITED" ] || [ -z "${CHECK_LOCK_WAITS:-}" ] || echo "$k $(($(date +%s) - t0))" >> "$CHECK_LOCK_WAITS"
     rc=0; "$@" 9>&- || rc=$? # the command does not inherit the lock: a daemon it leaves behind cannot hold the slot

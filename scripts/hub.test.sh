@@ -7,7 +7,7 @@ unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR AGENTGLASS_OTLP_DI
 export AGENTGLASS_AGENT=0
 command -v python3 > /dev/null || { echo "skipped: no python3"; exit 0; }
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; agent=""
-trap '{ [ -z "$srv" ] || kill $srv; [ -z "$agent" ] || kill $agent; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; { [ -z "$srv" ] || kill $srv; [ -z "$agent" ] || kill $agent; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
 . "$here/scripts/toolchain.sh"
 if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
 scriptc build ${CHECK_SCRIPTC_FLAGS:-} "$here/testdata/hub/read-driver.ts" -o "$t/read" > "$t/rbuild.log" 2>&1 || { cat "$t/rbuild.log"; exit 1; }

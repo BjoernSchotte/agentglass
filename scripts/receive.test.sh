@@ -5,7 +5,7 @@ set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR
 export AGENTGLASS_AGENT=0
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); srv=""; srv2=""
-trap '{ [ -z "$srv" ] || kill $srv; [ -z "$srv2" ] || kill $srv2; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; { [ -z "$srv" ] || kill $srv; [ -z "$srv2" ] || kill $srv2; wait; } 2>/dev/null || true; rm -rf "$t"' EXIT
 command -v python3 > /dev/null || { echo "skipped: no python3"; exit 0; }
 command -v curl > /dev/null || { echo "skipped: no curl"; exit 0; }
 if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
