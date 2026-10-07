@@ -296,7 +296,7 @@ function fleetWait(o: WaitOpts): void {
   process.exit(0);
 }
 
-addCmd({ cmd: "wait", usage: "agentglass wait [--since 7d] [--by family|kind|tool]", summary: "what agents wait on: wall time per command family / kind / tool, share of agent time, p50/p95, trend,\nheavy commands at the same time (history and now; --now, --check exits 3 at ≥ 3 heavy runs)",
+addCmd({ cmd: "wait", usage: "agentglass wait [--since 7d] [--by family|kind|tool]", summary: "what agents wait on (wall time per command family / kind / tool, share of agent time, p50/p95, trend;\nheavy commands at the same time, in history and now; --now, --check exits 3 at ≥ 3 heavy runs)",
   options: WAIT_OPTS, fields: WAIT_FIELDS, group: "cmd" }, "prices");
 H.cli.unshift((args: string[]): boolean => { // before cli.ts's flag handlers: `wait --json` is this command's flag
   if (args[0] !== "wait") return false;
