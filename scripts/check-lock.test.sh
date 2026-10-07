@@ -94,6 +94,18 @@ for r in 1 2 3 4 5; do
   done; wait
   [ "$(peak "$t/race/c$r")" = 1 ] && [ "$(wc -l < "$t/race/c$r/done")" -eq 6 ] || bad "reclaim race $r: peak $(peak "$t/race/c$r"), $(wc -l < "$t/race/c$r/done") of 6 done"
 done
+# a holder that frees its slot looks dead to a waiter that read it a moment before; under load (a slow ps) that waiter
+# must not remove the slot another took meanwhile: 12 waiters, 1 slot, short holds -> never 2 holders
+mkdir -p "$t/slow"; printf '#!/bin/sh\nsleep 0.0$(od -An -N1 -tu1 /dev/urandom | tr -d " " | cut -c1)\nexec %s "$@"\n' "$(command -v ps)" > "$t/slow/ps"
+chmod +x "$t/slow/ps"; d="$t/release/locks"; mkdir -p "$d"
+for r in 1 2 3; do
+  mkdir -p "$t/release/c$r"
+  for k in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    within 30 env -u CI PATH="$t/slow:$PATH" CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.01 CHECK_MAX_SUITES=1 sh "$L" run suite sh "$t/job.sh" "$t/release/c$r" 0.02 2>/dev/null &
+  done; wait
+  [ "$(peak "$t/release/c$r")" = 1 ] && [ "$(wc -l < "$t/release/c$r/done")" -eq 12 ] || bad "release race $r: peak $(peak "$t/release/c$r"), $(wc -l < "$t/release/c$r/done") of 12 done"
+done
+[ -z "$(ls -A "$d")" ] || bad "release race: left behind: $(ls -A "$d")"
 sleep 30 & live=$!
 for tk in "999999|Thu Jan  1 00:00:00 1970|wt-dead" "$live|Thu Jan  1 00:00:00 1970|wt-reused"; do
   ln -s "$tk" "$d/suite.1"
@@ -102,6 +114,11 @@ for tk in "999999|Thu Jan  1 00:00:00 1970|wt-dead" "$live|Thu Jan  1 00:00:00 1
   case "$(cat "$t/stale/n" 2>/dev/null)" in "${tk##*|}"|*"|${tk##*|}") bad "stale: ${tk##*|} still held";; *'|'*) ;; *) bad "stale: not taken: $(cat "$t/stale/n" 2>/dev/null)";; esac
   [ -z "$(ls -A "$d")" ] || bad "stale: left behind: $(ls -A "$d")"
 done
+# a reclaimer that died inside its guard leaves the guard: cleared, the stale slot still reclaimed
+ln -s "999999|Thu Jan  1 00:00:00 1970|wt-dead" "$d/suite.1"; ln -s "999998|Thu Jan  1 00:00:00 1970|reap" "$d/.reap.suite.1"
+within 3 env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 CHECK_MAX_SUITES=1 sh "$L" run suite true 2>/dev/null ||
+  bad "stale guard: the slot was never reclaimed"
+[ -z "$(ls -A "$d")" ] || bad "stale guard: left behind: $(ls -A "$d")"
 # ... but a live pid with its own start time holds
 ln -s "$live|$(LC_ALL=C ps -o lstart= -p $live | tr -s ' ' | sed 's/^ //;s/ $//')|wt-live" "$d/suite.1"
 within 1 env -u CI CHECK_LOCK_IMPL=link CHECK_LOCK_DIR="$d" CHECK_LOCK_POLL=0.1 CHECK_MAX_SUITES=1 sh "$L" run suite true 2>"$t/stale/err2"

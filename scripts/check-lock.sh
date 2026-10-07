@@ -44,23 +44,27 @@ slot_try() { # slot_try <slot> <token>: take that slot now, fail (1: it is held)
   # a slot the other implementation left (a file system that changed, CHECK_LOCK_IMPL): held while its holder lives,
   # else removed; never a slot neither can take
   if [ "$LOCK_IMPL" = flock ] && [ -L "$1" ]; then ! lock_alive "$(readlink "$1")" || return 1; rm -f "$1"; fi
-  if [ "$LOCK_IMPL" = link ] && [ -f "$1" ] && ! [ -L "$1" ]; then
-    ! { command -v flock >/dev/null 2>&1 && ! flock -n "$1" true 2>/dev/null; } || return 1; rm -f "$1"
-  fi
   if [ "$LOCK_IMPL" = flock ]; then # fd 9 holds it; >> does not truncate a holder's token
     { command exec 9>>"$1"; } 2>/dev/null || return 2 # (command: a failed exec must not end the shell)
     if flock -n 9; then printf '%s\n' "$2" > "$1"; LOCK_HELD=$1; return 0; fi
     exec 9>&-; return 1
   fi
   ln -s "$2" "$1" 2>/dev/null && { LOCK_HELD=$1; return 0; }
-  _lo=$(readlink "$1" 2>/dev/null) || return 1 # freed meanwhile: the next round takes it
-  ! lock_alive "$_lo" || return 1
-  # stale: move it aside (atomic: one reclaimer wins), delete it only if it is still the stale one; else it was
-  # reclaimed and taken by another meanwhile: put that one back (if a third took the slot in that instant, the put-back
-  # fails and that run has one extra holder: a bound of one, for one run, on macOS only)
-  _lg="$LOCK_DIR/.reap.$$"; rm -f "$_lg"; mv "$1" "$_lg" 2>/dev/null || return 1
-  _ln=$(readlink "$_lg" 2>/dev/null); rm -f "$_lg"
-  if [ "$_ln" != "$_lo" ]; then ln -s "$_ln" "$1" 2>/dev/null; return 1; fi
+  if [ -L "$1" ]; then _lo=$(readlink "$1" 2>/dev/null) || return 1; ! lock_alive "$_lo" || return 1
+  elif [ -f "$1" ]; then _lo="" # a flock slot: free unless flock says it is held
+    ! { command -v flock >/dev/null 2>&1 && ! flock -n "$1" true 2>/dev/null; } || return 1
+  else return 1; fi # freed meanwhile: the next round takes it
+  # stale: one reclaimer at a time, under a guard that names its holder (cleared when that holder died); under it the
+  # slot goes only if it still names the dead holder (a holder that just freed its slot looks dead too, and the slot
+  # may be another's by now)
+  _lg="$LOCK_DIR/.reap.${1##*/}"
+  if ! ln -s "$$|$(lock_start $$)|reap" "$_lg" 2>/dev/null; then
+    _lgh=$(readlink "$_lg" 2>/dev/null) && ! lock_alive "$_lgh" && [ "$(readlink "$_lg" 2>/dev/null)" = "$_lgh" ] && rm -f "$_lg"
+    return 1
+  fi
+  if [ -n "$_lo" ]; then [ "$(readlink "$1" 2>/dev/null)" != "$_lo" ] || rm -f "$1"
+  elif [ -f "$1" ] && ! [ -L "$1" ]; then rm -f "$1"; fi
+  rm -f "$_lg"
   ln -s "$2" "$1" 2>/dev/null && { LOCK_HELD=$1; return 0; }
   return 1
 }
