@@ -3,6 +3,7 @@
 // Metadata only; how a value is read from a session, day or call lives in eval.ts. Later specs register more keys.
 import { HARNESSES, harnessIds } from "../../harness/index.ts";
 import type { Attr, AType, Ent } from "./types.ts";
+import { ALL_KINDS } from "../wait/family.ts";
 
 const REG: Attr[] = [];
 const BY = new Map<string, Attr>(); // key and aliases, lowercase
@@ -94,6 +95,8 @@ r("tool", [], "call", "text", false, [], "", []);
 r("server", [], "call", "text", false, [], "", []);
 r("program", [], "call", "text", true, [], "", []);
 r("command", [], "call", "text", true, [], "", []);
+r("family", [], "call", "text", false, [], "", []); // agent-wait: the call's command family (non-shell tools: the tool, "mcp <server>")
+r("kind", [], "call", "enum", false, ALL_KINDS, "", []); // agent-wait: test, typecheck, lint, build, … (non-shell tools: user, agent, file, …)
 r("file", [], "call", "path", true, [], "", []);
 r("ext", [], "call", "text", true, [], "", []);
 r("status", [], "call", "enum", false, ["ok", "error", "unknown"], "", []);

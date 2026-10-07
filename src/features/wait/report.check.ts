@@ -116,6 +116,8 @@ setCallDaysForTest(0);
 const rb = full("cwd is /w/b");
 eq("filter b", rb.fams.map((w: WRow): string => w.key + " " + String(w.n)).join(","), "pnpm test 1");
 eq("filter b prev", rb.fams.map((w: WRow): string => String(w.prevN)).join(","), "1");
+const rk = full("kind is test");
+eq("filter kind", rk.fams.map((w: WRow): string => w.key + " " + String(w.n)).join(",") + " tools " + String(rk.tools.length), "pnpm test 4 tools 0");
 const rt = full("tool is AskUserQuestion");
 eq("filter tool", rt.fams.length + " " + rt.tools.map((w: WRow): string => w.key).join(","), "0 AskUserQuestion");
 // resumable: one session per step = one pass
