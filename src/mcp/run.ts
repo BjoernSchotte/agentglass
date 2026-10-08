@@ -9,14 +9,18 @@ import { realpathSync } from "node:fs";
 export const SESSION_VARS: string[] = ["CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "CODEX_THREAD_ID", "KIRO_SESSION_ID", "PI_SESSION_ID"];
 // progress: the progressToken as JSON text ("" = none); label: the heartbeat's message ("agentglass <cmd>")
 export interface Job { id: string; argv: string[]; keepSession: boolean; timeoutMs: number; progress: string; label: string }
-// code -1: no exit code (killed by a signal, or the binary could not be started: stderr says "spawn …")
-export interface Done { code: number; stdout: string; stderr: string; timedOut: boolean; cancelled: boolean; ms: number }
+// code -1: no exit code (killed by a signal, or the binary could not be started: stderr says "spawn …"); tooBig: the
+// child printed more than MAX_OUT and was killed (a wide page: many fields × a deep cursor)
+export interface Done { code: number; stdout: string; stderr: string; timedOut: boolean; cancelled: boolean; tooBig: boolean; ms: number }
+// what one child may print before it is killed: the server holds its output until the child ends (stderr: the tail)
+export const MAX_OUT = 32 * 1024 * 1024;
+const MAX_ERR = 64 * 1024;
 export interface RunCfg { bin: string; cwd: string; env: Record<string, string>; max: number; queueMax: number; beatMs: number }
 type Beat = (token: string, sec: number, label: string) => void;
 type Fin = (d: Done) => void;
 interface Wait { j: Job; beat: Beat; done: Fin }
 // one running child: its kill and its timers (handles kept to clear them; armed counts them in Runner.timers)
-interface Act { j: Job; kill: (sig: string) => void; pid: number; cancelled: boolean; timedOut: boolean; tmo: ReturnType<typeof setTimeout> | null; esc: ReturnType<typeof setTimeout> | null; beat: ReturnType<typeof setInterval> | null }
+interface Act { j: Job; kill: (sig: string) => void; pid: number; cancelled: boolean; timedOut: boolean; tooBig: boolean; tmo: ReturnType<typeof setTimeout> | null; esc: ReturnType<typeof setTimeout> | null; beat: ReturnType<typeof setInterval> | null }
 // timers: armed timers (timeouts, beats, kill escalations), so a check can assert 0 when idle
 export interface Runner { cfg: RunCfg; running: number; queued: number; timers: number; q: Wait[]; act: Act[] }
 export function newRunner(cfg: RunCfg): Runner { return { cfg, running: 0, queued: 0, timers: 0, q: [], act: [] }; }
@@ -58,15 +62,15 @@ function stop(r: Runner, a: Act): void {
 }
 function start(r: Runner, w: Wait): void {
   const j = w.j; const t0 = Date.now();
-  const out: Uint8Array[] = []; const err: Uint8Array[] = [];
+  const out: Uint8Array[] = []; const err: Uint8Array[] = []; let outN = 0; let errN = 0;
   let ended = false;
-  const a: Act = { j, kill: (sig: string): void => { /* replaced below */ }, pid: 0, cancelled: false, timedOut: false, tmo: null, esc: null, beat: null };
+  const a: Act = { j, kill: (sig: string): void => { /* replaced below */ }, pid: 0, cancelled: false, timedOut: false, tooBig: false, tmo: null, esc: null, beat: null };
   r.running++; r.act.push(a);
   const end = (code: number, spawnErr: string): void => {
     if (ended) return; ended = true;
     clear(r, a); r.running--;
     const i = r.act.indexOf(a); if (i >= 0) r.act.splice(i, 1);
-    if (!a.cancelled) w.done({ code, stdout: text(out), stderr: spawnErr || text(err), timedOut: a.timedOut, cancelled: false, ms: Date.now() - t0 });
+    if (!a.cancelled) w.done({ code, stdout: text(out), stderr: spawnErr || text(err), timedOut: a.timedOut, cancelled: false, tooBig: a.tooBig, ms: Date.now() - t0 });
     pump(r);
   };
   try {
@@ -77,8 +81,12 @@ function start(r: Runner, w: Wait): void {
     // pipes open would otherwise delay "close" past the kill)
     a.kill = (sig: string): void => { try { process.kill(-a.pid, sig); } catch (e) { try { ch.kill(sig); } catch (e2) { /* already gone */ } } };
     const so = ch.stdout; const se = ch.stderr;
-    if (so) so.on("data", (d: Uint8Array) => { out.push(d); });
-    if (se) se.on("data", (d: Uint8Array) => { err.push(d); });
+    if (so) so.on("data", (d: Uint8Array) => {
+      if (a.tooBig) return;
+      outN += d.length; if (outN <= MAX_OUT) { out.push(d); return; }
+      a.tooBig = true; out.length = 0; stop(r, a); // kept nothing: the answer is the too_large error
+    });
+    if (se) se.on("data", (d: Uint8Array) => { err.push(d); errN += d.length; while (errN > MAX_ERR && err.length > 1) errN -= (err.shift() as Uint8Array).length; });
     // "close" comes after all output (the probe saw "exit" first)
     ch.on("close", (code: number | null) => { end(code === null ? -1 : code, ""); });
     ch.on("error", (e: Error) => { end(-1, "spawn " + r.cfg.bin + ": " + String(e)); });

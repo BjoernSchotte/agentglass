@@ -209,7 +209,7 @@ Results:
   continues after the last row shown).
 - **Object tools**: the CLI's object plus `scope` (`session`: the `session <ref>` fields; `related`: `--json
   --related`, its `events` paged with `limit`/`cursor` and `next`). An object trimmed by the size cap carries
-  `truncated: [<array names>]`.
+  `truncated: [<array names>]` (an array one level down by its path, e.g. `files.onlyB` in `compare`).
 - `contention`: `{go: bool, heavyRunning: number, max: number, running: [{session, harness, family, kind, heavy,
   ageSec, rssMb}] (≤ 10, heavy and oldest first), load1, cpus, memAvailPct, advice: string, scope: "host"}`.
 - `waits`: `{period, agentTime, rows: [{key, kind, heavy, calls, totalMs, share, p50Ms, p95Ms, errors, trend, peak}],
@@ -222,7 +222,8 @@ Errors: an unknown tool is JSON-RPC `-32602`; anything else is a result with `is
 message, hint?}}` as text and `structuredContent`. Codes: the CLI's own (`usage`, `not_found`, `ambiguous`,
 `no_current_session`, `out_of_scope` …) and `invalid_arguments`, `timeout`, `busy` (2 calls running and 8 queued),
 `no_cli` (no agentglass beside the server), `contract` (an agentglass below contract 1), `no_project` (started in
-`$HOME` and the caller's project unknown), `bad_output`, `cli`.
+`$HOME` and the caller's project unknown), `too_large` (the CLI printed more than 32 MiB: fewer fields or an earlier
+page), `bad_output`, `cli`.
 
 Additive (keeps the number): a new tool, input property, output field or enum value. Breaking (bumps it): a tool or
 input renamed or removed, a type or meaning changed, a default that widens what is returned (scope, content).

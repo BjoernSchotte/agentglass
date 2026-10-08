@@ -196,11 +196,19 @@ eq "cancel: the child ran" "$([ "$sp" -gt 0 ] && echo yes)" yes
 eq "cancel: no response" "$(grep -c 'FAIL' "$t/x.out" || true) $(py "$t/x.out" "r(5)")" "0 None"
 eq "cancel: child gone" "$(kill -0 "$sp" 2>/dev/null && echo alive || echo gone)" gone
 eq "cancel: server still answers" "$(py "$t/x.out" "r(6)['error']['code']")" -32602
-{ init 2025-11-25; printf '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"fleet","arguments":{}}}\n{"sleep":400}\n{"close":true}\n'; } > "$t/y.jsonl"
+# (a second call with id 5 while 5 runs: -32600, the first call keeps running)
+{ init 2025-11-25; printf '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"fleet","arguments":{}}}\n{"sleep":400}\n'
+  printf '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"fleet","arguments":{}}}\n{"wait":5}\n{"close":true}\n'; } > "$t/y.jsonl"
 rm -f "$t/slow.pid"; run AGENTGLASS_MCP_BIN="$t/slow.sh" python3 "$t/client.py" --cwd "$p1" --timeout 30 -- agentglass-mcp < "$t/y.jsonl" > "$t/y.out" 2>&1 || true
 sp=$(cat "$t/slow.pid" 2>/dev/null || echo 0)
 eq "shutdown: exit 0 within 1.5 s" "$(py "$t/y.out" "[m for m in lines if isinstance(m, str) and m.startswith('EXIT')] == ['EXIT 0'] and next(t for t, m in ls if m == 'EXIT 0') - at('CLOSED') <= 1500")" True
+eq "duplicate id in flight" "$(py "$t/y.out" "r(5)['error']['code']")" -32600
 eq "shutdown: child gone" "$([ "$sp" -gt 0 ] && ! kill -0 "$sp" 2>/dev/null && echo gone)" gone
+# calls waiting for the project (a server in $HOME, its session lookup hangs): 8 wait, the 9th and later are busy
+{ init 2025-11-25; for i in 10 11 12 13 14 15 16 17 18 19; do printf '{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"sessions","arguments":{}}}\n' $i; done
+  printf '{"wait":19,"ms":3000}\n{"close":true}\n'; } > "$t/q.jsonl"
+run AGENTGLASS_MCP_BIN="$t/slow.sh" python3 "$t/client.py" --cwd "$h" --timeout 30 -- agentglass-mcp < "$t/q.jsonl" > "$t/q.out" 2>&1 || true
+eq "parked calls bounded" "$(py "$t/q.out" "[sc(i)['error']['code'] for i in (18, 19)], r(17)")" "(['busy', 'busy'], None)"
 # framing: a request split across writes, a UTF-8 character split, garbage, an oversize line
 { printf '{"raw":"{\\"jsonrpc\\":\\"2.0\\",\\"id\\":1,\\"met"}\n{"sleep":100}\n{"raw":"hod\\":\\"ping\\"}\\n"}\n{"wait":1}\n'
   printf '{"raw":"not json\\n"}\n{"raw":"[1,2]\\n"}\n'

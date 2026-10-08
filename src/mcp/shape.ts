@@ -54,28 +54,35 @@ export function capList(rows: Obj[], extra: Obj, maxBytes: number): { rows: Obj[
   }
   return { rows: out, truncated };
 }
-// the arrays an object result gives up first, then any other array; truncated: the names trimmed
+// the arrays an object result gives up first, then any other array; arrays one level down count too (compare's
+// files.onlyA/onlyB), named by their path. truncated: the names trimmed
 const TRIM = ["files", "tools", "errors", "repeats", "events", "programs", "models"];
+interface Slot { key: string; sub: string; len: number }
 export function capObject(v: Obj, maxBytes: number): Obj {
   if (blen(J(v)) <= maxBytes) return v;
   const c = copy(v); const trimmed: string[] = [];
   const budget = maxBytes - 200; // room for the truncated list
   for (let guard = 0; guard < 64; guard++) {
     let size = blen(J(c)); if (size <= budget) break;
-    // the largest array of the first group that has one (the TRIM names before any other array)
-    let best = ""; let bestLen = 0;
+    // the largest array of the first group that has one (under a TRIM name before any other)
+    let best: Slot = { key: "", sub: "", len: 0 };
     for (const pass of [0, 1]) {
       for (const k of Object.keys(c)) {
         if ((pass === 0) !== (TRIM.indexOf(k) >= 0)) continue;
-        const a = c[k]; if (!Array.isArray(a) || !(a as unknown[]).length) continue;
-        const l = blen(J(a)); if (l > bestLen) { best = k; bestLen = l; }
+        const x = c[k];
+        if (Array.isArray(x)) { const l = (x as unknown[]).length ? blen(J(x)) : 0; if (l > best.len) best = { key: k, sub: "", len: l }; continue; }
+        const o = obj(x); if (!o) continue;
+        for (const sk of Object.keys(o)) { const y = o[sk]; if (!Array.isArray(y) || !(y as unknown[]).length) continue; const l = blen(J(y)); if (l > best.len) best = { key: k, sub: sk, len: l }; }
       }
-      if (best) break;
+      if (best.key) break;
     }
-    if (!best) break;
-    const a = (c[best] as unknown[]).slice();
+    if (!best.key) break;
+    const holder: Obj = best.sub ? copy(obj(c[best.key]) ?? {}) : c; const at = best.sub || best.key;
+    const a = (holder[at] as unknown[]).slice();
     while (a.length && size > budget) { size -= blen(J(a[a.length - 1])) + 1; a.pop(); }
-    c[best] = a; if (trimmed.indexOf(best) < 0) trimmed.push(best);
+    holder[at] = a; if (best.sub) c[best.key] = holder;
+    const name = best.sub ? best.key + "." + best.sub : best.key;
+    if (trimmed.indexOf(name) < 0) trimmed.push(name);
   }
   if (trimmed.length) c["truncated"] = trimmed;
   return blen(J(c)) <= maxBytes ? c : stub(v);

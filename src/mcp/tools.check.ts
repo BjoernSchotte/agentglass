@@ -169,6 +169,11 @@ ok("list cap through shapeOk", capped.text.length <= 24000 && capped.obj["trunca
 const fat: Obj = { id: "s1", files: rows(500, (i: number): Obj => ({ path: "/w/p/file" + String(i) + ".ts", n: i })), tools: [{ name: "Bash" }] };
 const co = capObject(fat, 4000);
 ok("capObject trims files", J(co).length <= 4000 && J(co["truncated"]).indexOf("\"files\"") >= 0 && arr(co["tools"]).length === 1, J(co).slice(0, 120));
+// compare: the big arrays sit one level down (files.onlyA/onlyB); trimmed there instead of a stub for the whole result
+const onlyB: string[] = []; for (let i = 0; i < 400; i++) onlyB.push("/w/p/src/file-" + String(i) + ".ts");
+const cmpFat: Obj = { a: { n: 1 }, b: { n: 2 }, programs: [], files: { onlyA: [], onlyB }, both: 3 };
+const cc = capObject(cmpFat, 4000);
+ok("capObject trims nested arrays", J(cc).length <= 4000 && J(cc["truncated"]) === J(["files.onlyB"]) && arr((obj(cc["files"]) ?? {})["onlyB"]).length > 50 && (obj(cc["b"]) ?? {})["n"] === 2, J(cc).slice(0, 160));
 ok("capObject small unchanged", J(capObject({ id: "x", files: [1] }, 4000)) === J({ id: "x", files: [1] }), "");
 const one = capList([{ id: "huge", pad: "x".repeat(30000) }], { next: null, truncated: false, scope: "project" }, 24000);
 ok("a single huge row", J(one.rows) === J([{ id: "huge", truncated: true }]) && one.truncated, J(one.rows).slice(0, 100));

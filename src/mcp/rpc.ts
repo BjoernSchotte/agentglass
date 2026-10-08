@@ -61,7 +61,8 @@ function one(v: unknown): Msg {
   if (!o) return bad("", "not a JSON-RPC object");
   const idv = o["id"]; const hasId = idv !== undefined;
   let id = "";
-  if (hasId) { if (idv === null || typeof idv === "string" || typeof idv === "number") id = JSON.stringify(idv); else return bad("", "id must be a string or a number"); }
+  // MCP: an id is a string or a number, never null (base JSON-RPC allows null); 1e999 parses to Infinity, no id either
+  if (hasId) { if (typeof idv === "string" || (typeof idv === "number" && Number.isFinite(idv))) id = JSON.stringify(idv); else return bad("", "id must be a string or a number"); }
   if (o["jsonrpc"] !== "2.0") return bad(id, "jsonrpc must be \"2.0\"");
   const method = o["method"];
   if (method === undefined) return hasId && (o["result"] !== undefined || o["error"] !== undefined) ? { kind: "response", id, method: "", params: {}, why: "" } : bad(id, "no method");

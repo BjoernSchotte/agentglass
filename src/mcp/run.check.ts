@@ -1,7 +1,8 @@
 // agentglass — self-check for the MCP child runner (queue, timeout, cancel, progress, env, paths) with sh stub children:
 //   scriptc build src/mcp/run.check.ts -o rn && ./rn
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync, unlinkSync, mkdtempSync, symlinkSync, realpathSync, rmdirSync } from "node:fs";
+import { readFileSync, unlinkSync, mkdtempSync, realpathSync, rmdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { SESSION_VARS, newRunner, submit, cancel, killAll, childEnv, cliBin, childCwd, type Job, type Done, type Runner } from "./run.ts";
 
@@ -31,7 +32,7 @@ function fin(): void { pending--; if (pending === 0) summary(); }
   ok("cwd root", childCwd("/", "/home/u") === "", childCwd("/", "/home/u"));
   ok("cwd project", childCwd("/w/p", "/home/u") === "/w/p", childCwd("/w/p", "/home/u"));
   // $HOME through a symlink (macOS: mktemp's /var/… is /private/var/…, and process.cwd() reports the real path)
-  const d = mkdtempSync(tmpdir() + "/agmcp-"); const l = d + "-link"; symlinkSync(d, l);
+  const d = mkdtempSync(tmpdir() + "/agmcp-"); const l = d + "-link"; spawnSync("ln", ["-s", d, l]); // (scriptc has no symlinkSync)
   ok("cwd home via symlink", childCwd(realpathSync(d), l) === "" && childCwd(l, realpathSync(d)) === "", childCwd(realpathSync(d), l));
   ok("cwd project real", childCwd(l, "/home/u") === realpathSync(d), childCwd(l, "/home/u"));
   unlinkSync(l); rmdirSync(d);
@@ -62,6 +63,11 @@ function fin(): void { pending--; if (pending === 0) summary(); }
 {
   const r = rn(1, 1000); runners.push(r); const order: string[] = []; pending++;
   for (const id of ["f0", "f1", "f2", "f3", "f4"]) submit(r, job(id, "sleep 0.05", 5000, ""), noBeat, (d: Done) => { order.push(id); if (order.length === 5) { ok("fifo", order.join() === "f0,f1,f2,f3,f4", order.join()); fin(); } });
+}
+// a child printing more than MAX_OUT (32 MiB): killed at once, nothing kept, tooBig
+{
+  const r = rn(2, 1000); runners.push(r); pending++;
+  submit(r, job("big", "head -c 40000000 /dev/zero; sleep 5", 20000, ""), noBeat, (d: Done) => { ok("too big", d.tooBig && d.stdout === "" && !d.timedOut && d.ms < 3000, JSON.stringify({ tooBig: d.tooBig, n: d.stdout.length, ms: d.ms })); fin(); });
 }
 // 4: timeout: SIGTERM ignored → SIGKILL after 1 s
 {

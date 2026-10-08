@@ -9,7 +9,7 @@ import { type Obj, obj, str } from "../util/json.ts";
 import { newFramer, push, parse, ok, fail, note, newConn, answer, structured, type Msg } from "./rpc.ts";
 import { parseOpts, toolsList, plan, instructionsFor, type Call } from "./tools.ts";
 import { shapeExit, errorShaped, type Shaped } from "./shape.ts";
-import { SESSION_VARS, newRunner, submit, cancel, killAll, cliBin, childCwd, type Done } from "./run.ts";
+import { SESSION_VARS, MAX_OUT, newRunner, submit, cancel, killAll, cliBin, childCwd, type Done } from "./run.ts";
 
 const HELP = `agentglass-mcp — agentglass as MCP tools for coding agents (stdio; one server per agent session)
 
@@ -134,6 +134,7 @@ function run(id: string, c: Call, token: string, keep: boolean): void {
   const t0 = Date.now();
   const accepted = submit(R, { id, argv: c.argv, keepSession: keep, timeoutMs: o.timeoutMs, progress: token, label: c.heartbeat }, beat, (d: Done) => {
     log(c.tool + " exit " + String(d.code) + " " + String(Date.now() - t0) + " ms");
+    if (d.tooBig) { respond(id, errorShaped("too_large", "agentglass printed more than " + String(MAX_OUT / 1048576) + " MiB for this call", "ask for fewer fields, a shorter since or an earlier page")); return; }
     if (d.timedOut) { respond(id, errorShaped("timeout", "agentglass took longer than " + String(o.timeoutMs / 1000) + " s", "the first call after an install indexes all history: run agentglass once, then retry (or raise --timeout)")); return; }
     if (d.code === -1 && d.stderr.startsWith("spawn")) { respond(id, errorShaped("no_cli", d.stderr.slice(0, 300), "agentglass-mcp runs the agentglass beside it")); return; }
     // the process tree named no session (a sandbox without ps): once more with the env's session id
@@ -150,6 +151,8 @@ function onCall(m: Msg): void {
   if (!args) { send(fail(m.id, -32602, "Invalid params: arguments must be an object")); return; }
   const c = plan(name, args, o);
   if (c.err === "unknown tool") { send(fail(m.id, -32602, "Unknown tool: " + name.slice(0, 64))); return; }
+  // an id still in flight cannot name a second call: its response and a cancel would be ambiguous
+  if (inflight.has(m.id)) { send(fail(m.id, -32600, "Invalid Request: id " + m.id.slice(0, 64) + " is already in flight")); return; }
   inflight.add(m.id);
   if (c.err) { respond(m.id, errorShaped("invalid_arguments", c.err, "")); return; }
   const g = checkCli();
@@ -157,6 +160,7 @@ function onCall(m: Msg): void {
   const meta = obj(m.params["_meta"]); const pt = meta ? meta["progressToken"] : undefined;
   const token = typeof pt === "string" || typeof pt === "number" ? JSON.stringify(pt) : "";
   if (c.scoped && !allScope && !cwdState.ok) {
+    if (cwdState.parked.length >= 8) { respond(m.id, busy()); return; } // the runner's queue bound, also while the project resolves
     cwdState.parked.push({ id: m.id, c, token });
     if (!cwdState.busy) resolveCwd(false);
     return;
