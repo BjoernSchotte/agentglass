@@ -47,7 +47,7 @@ parallel (otlp-hub's mapping task waits for otlp-complete T4 and fleet T13).
 
 | Spec | What it adds | Depends on |
 |---|---|---|
-| mcp-server (spec in progress) | `agentglass mcp`: the agent-mode queries (self, sessions, errors, cost, triage, compare, related events, wait, fleet) as MCP tools over stdio | cli-agent-mode, agent-wait |
+| [mcp-server](mcp-server/spec.md) (implementation in progress) | `agentglass-mcp`, a small stdio MCP server (one per agent session, ~0.13 MB idle, a second binary in every archive): 11 read-only tools — the calling session, sessions, errors, cost, triage, compare, related events, `contention` ("start my tests now?"), wait history, fleet hosts, unpriced models — each one `agentglass` CLI child in agent mode; identity from the process tree, project scope, `--redact`, no transcript content without `--content`, size cap + cursor pagination, golden `tools/list` under the CLI contract; `agentglass mcp install` (prints; `--write` runs each harness's own `mcp add` with consent) and `mcp doctor` | cli-agent-mode (contract 1), agent-wait, filter-language, triage, session-compare, related-events, model-prices, fleet Part A; release packaging; no `VERSION` bump |
 | agent-wait follow-ups (in progress) | first open without blocking, per-day aggregates (≤ 300 ms), command families stored per call row, Codex yielded runs | agent-wait |
 
 ## Why this order
