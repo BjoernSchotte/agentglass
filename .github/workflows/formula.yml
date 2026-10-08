@@ -16,11 +16,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - name: render the formula from the last release's assets
+        id: render
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           TAG=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
           mkdir -p assets && gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D assets && sh scripts/verify-release-assets.sh assets
-          sh scripts/formula.sh assets "${TAG#v}" > agentglass.rb
           echo "$TAG" >> "$GITHUB_STEP_SUMMARY"
+          # the formula installs agentglass-mcp from every archive; a release from before it shipped cannot carry this
+          # formula (release-dry-run.yml proves it on freshly built archives instead) — once one has, this runs again
+          if ! tar -tzf assets/agentglass-linux-x64.tar.gz | grep -qx agentglass-mcp; then
+            echo "::notice::$TAG predates agentglass-mcp: skipped (release-dry-run.yml proves the formula on new archives)"
+            echo "skipped: $TAG predates agentglass-mcp; release-dry-run.yml proves the formula" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          sh scripts/formula.sh assets "${TAG#v}" > agentglass.rb
       - name: brew audit, install, test
+        if: steps.render.outputs.skip != '1'
         run: sh scripts/formula-proof.sh agentglass.rb
