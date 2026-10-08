@@ -416,7 +416,7 @@ The Wait tab (`5`) and `agentglass wait` sum the wall time of every tool call by
 `tsc`, `cargo build`, `gh run watch`, `sh check.sh` — and by non-shell tool (`AskUserQuestion`, `TaskOutput`, MCP
 servers), over a period and the period before it: share of agent time, calls, ≈ p50/p95, failure rate, trend. The
 header splits the agents' active time into tools (with polling: `sleep`, `gh run watch`, `TaskOutput`), questions to
-you and the model. Families come from the command lines agentglass already records, at read time (no re-index):
+you and the model. Families come from the command lines agentglass records, worked out while it indexes them:
 wrappers (`sudo`, `timeout 600`, `env A=1`, `rtk proxy`, `flock <lockfile>`) and steps such as `cd` or `export` are
 skipped, `cat x | python3 -` is `python3`, `npx tsc` is `tsc`, `uv run pytest` is `pytest`, `pnpm typecheck` keeps its
 script. Each family has a **kind** (`test typecheck lint build install ci wait vcs net other`); the first five are
@@ -428,7 +428,10 @@ script. Each family has a **kind** (`test typecheck lint build install ci wait v
 - Keys: `d` `w` `m` `a` period · `v` families / kinds / tools · `s` sort (total, count, p95, err, trend, peak) · `↵`
   the slowest calls (`↵` opens the session at the call) · `t` [triage](#triage) of that family · `f` filter the
   Sessions list to it · `/` filters the calls first (`repo is x`, `harness is codex`) · with fleet hosts `h` merged ↔
-  per host. The report runs only while the tab shows, in 20 ms slices.
+  per host. The report runs only while the tab shows, in 20 ms slices. It sums per-day digests the index keeps beside
+  each session's call rows (`~/.agentglass/cache/wait/`), so a period opens in a fraction of a second; a session
+  without one yet (right after an upgrade or a `wait` config edit) is worked out on the way ("computing 42%") or, in
+  the TUI, by a background job within the indexer's CPU budget.
 - `agentglass wait [--since 7d] [--by family|kind|tool] [--filter …] [--json]`, `--now` (the heavy commands running
   now, no history read), `--check [--kind test | --family f] [--max N]` (exit 3 at the limit), `--fleet` (every ssh
   host asked with `fleet pull --wait`: sums and histograms merge exactly, peaks and now stay per host). Inside an
@@ -454,10 +457,12 @@ script. Each family has a **kind** (`test typecheck lint build install ci wait v
 
   `match` is words: `*` is one word (`$1`…`$9` in `family`), a trailing `...` the rest, `*` inside a word a glob; rules
   go first, in order. `minSec`: heavy calls shorter than this do not count as overlapping.
-- Limits: tool time includes approval dialogs (no record separates them); background runs (`run_in_background`, Codex
-  commands that outlive their yield) end their call at launch and are not timed in history (they count live); a
-  command line is stored up to 200 characters, so a long `cd … && export … && pnpm test` may lose its last step
-  (family `sh`). `--redact` shows an interpreter + script family (`node gen.js`) as its program (`node`).
+- Limits: tool time includes approval dialogs (no record separates them); background runs (`run_in_background`)
+  end their call at launch and are not timed in history (they count live). A Codex command that outlives its yield
+  counts until it ends when it ends by itself within the agent's turn; one still running at the turn's end or stopped
+  with ^C (a dev server) keeps its yield's duration. A command line is stored up to 200 characters; when the cut hides
+  the step its family comes from (`cd … && export … && pnpm test`), that step is kept beside it as a family hint.
+  `--redact` shows an interpreter + script family (`node gen.js`) as its program (`node`).
 
 ## Git linkage
 

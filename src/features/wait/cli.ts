@@ -160,7 +160,7 @@ export function waitJson(rep: WaitReport, ov: GroupOverlap[], live: LiveWait | n
   };
 }
 // every session that can hold a row of either window, indexed to its end (cheap clauses of the filter pick them first);
-// a session with nothing new keeps its rows on disk: the report scans its calls file (report.ts)
+// a session with nothing new keeps its rows on disk: the report sums its digest (report.ts, digest.ts)
 export function indexFor(since: number, until: number, exprs: string[]): void {
   const cf = cliFilter(exprs, "", false, false, false);
   const from = since - (until - since) - 3600000;

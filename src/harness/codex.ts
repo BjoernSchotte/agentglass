@@ -9,7 +9,7 @@ import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { type Acc, L, bucket, tool, pend, tokens, reasoning, turn, skill, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
 import { MQ_TURN } from "../features/usage/facts.ts";
-import { done, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
+import { type Pend, done, extend, normFull, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import { rlWins } from "../features/usage/billing.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
@@ -140,6 +140,82 @@ function parentOf(path: string): Par | null {
   return pp ? PARENTS.get(pp) ?? null : null;
 }
 const SHELL = ["exec_command", "shell", "shell_command", "container.exec"];
+
+// ── runs that outlive their call (yields) ──
+// Codex answers a command after its yield time while it runs on. The JS `exec` tool's cell yields ("Script running with
+// cell ID n"; later `wait` calls on that cell) and a command inside a cell can outlive it (its output chunk names a
+// session_id); the older exec_command answers "Process running with session ID n" and write_stdin polls that session.
+// The call's row ends at the yield; these extend it (calls.ts extend) to the run's end: a CommandExecution item_completed
+// event (exact start, end and exit code) for a command started inside the call's span, the cell's completion seen by a
+// `wait`, or a write_stdin that saw the process exit. Only a run that ends by itself inside the turn that started it: one
+// still running when the turn ends, or stopped by a signal (^C written to it, an exit code ≥ 128), is a background
+// process the agent did not wait on (a dev server, a port-forward) and keeps its yield's duration, as Claude's
+// run_in_background calls do. Cell and session numbers start over in a resumed Codex: a number used again replaces the
+// old run. In memory only: a restart between yield and end keeps the yield's duration.
+interface Run { p: Pend; t0: number; end: number /* when its span closes (cell or call done), 0 = open */; cap: number /* its turn's end, 0 = running */; cell: string; sess: string; cmds: string[] }
+interface Yd { a: Acc; runs: Run[]; waits: Map<string, string> /* wait call → cell */; polls: Map<string, string> /* write_stdin call → session */; kills: Set<string> /* sessions sent a ^C */; last: number /* newest call start */ }
+const YIELDS = new Map<string, Yd>(); // by log path (a restarted entry is a new Acc: its state starts over)
+function ydOf(a: Acc): Yd {
+  let y = YIELDS.get(a.p);
+  if (!y || y.a !== a) { y = { a, runs: [], waits: new Map<string, string>(), polls: new Map<string, string>(), kills: new Set<string>(), last: 0 }; YIELDS.set(a.p, y); }
+  return y;
+}
+function addRun(y: Yd, r: Run): void {
+  const o: Run[] = []; for (const x of y.runs) if (!((r.cell && x.cell === r.cell) || (r.sess && x.sess === r.sess))) o.push(x); // a number used again: the old run is gone
+  o.push(r); if (o.length > 32) o.shift(); y.runs = o;
+}
+// the run ended by itself at t (failed when err): its call lasted until then, unless its turn was over by then
+function runTo(r: Run, t: number, err: boolean): void { if (!r.cap || t <= r.cap) extend(r.p, t - r.t0, err); }
+function signalled(code: number): boolean { return code >= 128 || code < 0; }
+// a turn ended (task_complete, turn_aborted): its runs count no further
+function turnEnd(a: Acc, t: number): void { const y = YIELDS.get(a.p); if (!y || y.a !== a) return; for (const r of y.runs) if (!r.cap) r.cap = t; }
+const ESC_SID = "session_id\\\":"; // a still-running process in a chunk (JSON text inside the output's JSON text)
+// a call's output: does its run go on? (p is done already)
+function yielded(a: Acc, p: Pend, l: string, t: number): void {
+  const h = l.slice(0, 1200); const cmds: string[] = []; if (p.cmd) for (const x of p.cmd.split("\n")) cmds.push(normFull(x));
+  const cell = /Script running with cell ID (\d+)/.exec(h); const proc = /Process running with session ID (\d+)/.exec(h);
+  if (cell || proc || (p.name === "exec" && l.indexOf(ESC_SID) >= 0)) {
+    addRun(ydOf(a), { p, t0: p.t, end: cell || proc ? 0 : t, cap: 0, cell: cell ? cell[1] ?? "" : "", sess: proc ? proc[1] ?? "" : "", cmds });
+  }
+}
+// a `wait` on a cell or a write_stdin poll answered
+function polled(a: Acc, p: Pend, id: string, l: string, t: number): void {
+  const y = YIELDS.get(a.p); if (!y || y.a !== a) return;
+  const h = l.slice(0, 1200);
+  const cell = y.waits.get(id);
+  if (cell !== undefined) {
+    y.waits.delete(id);
+    const m = /Script (completed|failed|error)/.exec(h); if (!m) return;
+    for (const r of y.runs) if (r.cell === cell && !r.end) { r.end = t; runTo(r, t, (m[1] ?? "") !== "completed"); }
+    return;
+  }
+  const sess = y.polls.get(id);
+  if (sess !== undefined) {
+    y.polls.delete(id);
+    const m = /Process exited with code (-?\d+)/.exec(h); if (!m) return;
+    const code = Number(m[1] ?? "0"); const killed = y.kills.has(sess) || signalled(code); y.kills.delete(sess);
+    for (const r of y.runs) if (r.sess === sess && !r.end) { r.end = t; if (!killed) runTo(r, t, code !== 0); }
+  }
+}
+// a command's end (item_completed of a CommandExecution): the run whose span holds its start, preferring the one that
+// names its command; none when a newer call started in between and the command is not the run's (it is that call's)
+function cmdDone(a: Acc, l: string): void {
+  const y = YIELDS.get(a.p); if (!y || y.a !== a || !y.runs.length) return;
+  const o = parseJson(l); const p = o ? obj(o["payload"]) : null; const it = p ? obj(p["item"]) : null;
+  if (!p || !it || str(it["type"]) !== "CommandExecution") return;
+  const s0 = num(p["started_at_ms"]); const s1 = num(p["completed_at_ms"]); if (s0 <= 0 || s1 < s0) return;
+  const c = normFull(argv(it["command"])); const ex = it["exit_code"]; const code = typeof ex === "number" ? ex : 0;
+  if (signalled(code)) return; const failed = code !== 0 || str(it["status"]) === "failed";
+  let best: Run | null = null; let named = false;
+  for (const r of y.runs) {
+    if (s0 < r.t0 - 1000 || (r.end && s0 > r.end + 1000)) continue;
+    const nm = c !== "" && r.cmds.indexOf(c) >= 0;
+    if (!best || (nm && !named) || (nm === named && r.t0 > best.t0)) { best = r; named = nm; }
+  }
+  if (!best || (!named && y.last > best.t0 && y.last <= s0)) return;
+  runTo(best, s1, failed);
+}
+
 function usage(a: Acc, l: string): void {
   const h = l.slice(0, 200); // cheap pre-filter: most bytes are tool outputs and messages we never parse
   const tc = h.indexOf("\"payload\":{\"type\":\"token_count\"") >= 0;
@@ -152,7 +228,12 @@ function usage(a: Acc, l: string): void {
     const tm = /"timestamp":"([^"]+)"/.exec(h); const t = tm ? isoMs(tm[1] ?? "") : 0;
     const codes = exitCodes(l);
     done(p, t > 0 && p.t > 0 ? t - p.t : -1, codexFailed(l, codes), l.length, id, codes);
+    if (t > 0 && p.t > 0) { if (p.name === "wait" || p.name === "write_stdin") polled(a, p, id, l, t); else yielded(a, p, l, t); }
     return;
+  }
+  if (h.indexOf("\"payload\":{\"type\":\"item_completed\"") >= 0) { if (YIELDS.size) cmdDone(a, l); return; }
+  if (YIELDS.size && (h.indexOf("\"payload\":{\"type\":\"task_complete\"") >= 0 || h.indexOf("\"payload\":{\"type\":\"turn_aborted\"") >= 0)) {
+    const tm = /"timestamp":"([^"]+)"/.exec(h); const t = tm ? isoMs(tm[1] ?? "") : 0; if (t > 0) turnEnd(a, t); // not return: the line is read on as before
   }
   if (h.indexOf("\"type\":\"response_item\"") >= 0 && h.indexOf("\"role\":\"user\"") >= 0) { // prompts (injected context is noise)
     const o = parseJson(l); if (!o) return;
@@ -185,6 +266,11 @@ function usage(a: Acc, l: string): void {
     if (t === "local_shell_call") { const act = obj(p["action"]); const c = argv(act ? act["command"] : null); pend(a, d, st, name, id, tms, iso, c, [c]); return; }
     if (t === "function_call") {
       const raw = str(p["arguments"]); const args = parseJson(raw);
+      if (args && (name === "wait" || name === "write_stdin")) { // a poll of a yielded run: which one
+        const y = ydOf(a); const k = name === "wait" ? args["cell_id"] : args["session_id"];
+        if (typeof k === "string" || typeof k === "number") (name === "wait" ? y.waits : y.polls).set(id, String(k));
+        if (name === "write_stdin" && str(args["chars"]).indexOf("\u0003") >= 0 && (typeof k === "string" || typeof k === "number")) y.kills.add(String(k)); // ^C: the agent stops it
+      } else if (YIELDS.has(a.p)) ydOf(a).last = tms;
       const c = args && SHELL.indexOf(name) >= 0 ? argv(args["cmd"] ?? args["command"]) : "";
       pend(a, d, st, name, id, tms, iso, c || toolArg(name, args, raw), c ? [c] : []);
       if (name === "apply_patch" && args) patchLines(a, d, name, str(args["input"]));
@@ -192,6 +278,7 @@ function usage(a: Acc, l: string): void {
     }
     if (name === "apply_patch") { pend(a, d, st, name, id, tms, iso, inp, []); patchLines(a, d, name, inp); return; }
     const cmds = execCmds(inp);
+    if (YIELDS.has(a.p)) ydOf(a).last = tms;
     pend(a, d, st, name, id, tms, iso, cmds.length ? cmds.join(" ; ") : inp, cmds);
     // newer Codex calls tools.apply_patch("*** Begin Patch\n…") from inside its JS `exec` tool: patches are escaped string literals
     let at = inp.indexOf("*** Begin Patch");

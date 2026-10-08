@@ -1,6 +1,7 @@
 # Agent wait — spec
 
-Status: draft (2026-10-07), decisions made under the user's 2026-10-05 delegation (see "Decisions").
+Status: implemented (#93), follow-ups (2026-10-08: digests, family hints, Codex yields, macOS argv) under the same
+delegation; decisions under the user's 2026-10-05 delegation (see "Decisions", 16–20 for the follow-ups).
 
 ## Goal
 Answer two questions for one machine and across a fleet, from data agentglass already records:
@@ -172,13 +173,33 @@ the stored `norm(cmd)` text (≤ 200 chars, one line).
 10. **Memo**: family names are interned in a dictionary of their own (`FAMS`, `src/features/wait/family.ts`; the
     persisted dictionaries in `src/features/usage/facts.ts:14` stay as they are); a `Float64Array` indexed by the
     command dictionary id (`DICT.cmd`) holds family id + 1 (0 = not computed), grown on demand. Each distinct command
-    text is normalised once per run; the config does not change while agentglass runs.
+    text is normalised once per run, while it is indexed (`calls.ts` `CMDS.booked`, inside the paced index slice); the
+    config does not change while agentglass runs.
+12. **Family hints** (Decision 16): a command longer than the stored 200 characters gets a hint when the cut changes
+    the segment its family comes from (`famHint`): that segment's text from the whole line (≤ 200 chars, `:` = only
+    trivial steps), stored right after the command's id in the call row (`rows.ts` `KIND_HINT`) and in the calls file
+    (`hm`, calls-file `FORMAT` 3). A row counts a hinted command by its hint. User rules apply to the hint as to any
+    stored text (a segment alone has the line's family: the pick is per segment).
 11. **`--redact`**: a `generic` family (interpreter + script name) shows as its program only; user-rule family names
     are user-chosen and shown as they are.
 
 ### 2. Period report (`src/features/wait/report.ts`)
 `waitReport(f: Compiled, since: number, until: number, cut: number): WaitReport`, resumable (`step(budgetMs)` a
 session at a time, as `callsIn`), one pass over the call rows of the window plus the previous window of equal length.
+
+**Digests** (Decision 17, `src/features/wait/digest.ts`, `cache/wait/<key>.json`): a session's rows summed per local
+day and family / tool (`n timed ms max err`, sparse histogram), the day's first and last call start, the merged length of
+its tool / user / polling spans and their overlap with the session's next day, its heavy spans ≥ `minSec`, and each
+command of its calls file's family. Written with the calls file at every save (one pass over the rows: the families were
+worked out while indexing), or worked out once from a calls file (the report, with a "computing n%" mark; a background
+job after the history index, ≤ 20 ms slices only while the process stays inside the indexer's budget). Valid for the
+calls file's offset and the family rules (`FAM_RULES`, held to `families.golden` by `family.check.ts`, and config.json
+`wait`). A session with a valid digest and no call clause in the filter is a fold over its days: a day wholly inside a
+window adds its sums; the union over kept days = Σ day unions − Σ overlaps of neighbouring days (exact while no day's
+spans reach a kept day beyond its neighbour); a day a window boundary cuts (`since` off a day start, the retention cut,
+the previous window's start) is read row by row — for the static part only that day of the previous window (its start
+moves with the clock), else the session. The slowest calls (drill-down) come from the rows read plus, on demand, the
+digest days whose longest call can beat the list.
 
 - Per family and per non-shell tool: `n`, `timed` (rows with `ms ≥ 0`), `ms` (sum), `max`, `hist[16]` (`hb()`),
   `err` (rows with `err = 1`), `agents` (distinct top-level sessions), `prevMs`, `prevN`; per kind the same sums.
@@ -312,12 +333,19 @@ Call attributes `family` (text, `is`/`~`/`is_one_of`) and `kind` (enum: the kind
 then sum wait time by family without parsing commands. Contention alerts already reach the logs stream (§5).
 
 ### Failure modes
-- **Background runs** (`run_in_background`, possibly Codex yielded sessions) end their call at launch: history
-  undercounts them (2,643 such calls in 30 days here). The call rows carry no background marker, so the view states
-  "background runs are not timed"; live they are counted (`bg`).
-- **Truncated commands**: the 200-char cut can hide the heavy part of a long chain (`cd x && export … && pnpm test`
-  past 200 chars → `cd`-only → `sh`). Measured share of shell rows whose stored text is exactly 200 chars: Task 0
-  records it; family `sh` rows are listed so the user sees the size of the gap.
+- **Background runs** (Claude `run_in_background`) end their call at launch: history undercounts them (2,643 such
+  calls in 30 days here). The call rows carry no background marker, so the view states "background runs are not timed";
+  live they are counted (`bg`). Codex answers a call after its yield time while the command runs on (a JS `exec` cell:
+  "Script running with cell ID n", then `wait` calls; a command inside a cell that outlives it; the older
+  `exec_command`: "Process running with session ID n", then `write_stdin` polls): the call extends to the run's end
+  (`item_completed` of its `CommandExecution`, the cell's completion, or a poll that saw the exit) when the run ends by
+  itself inside its turn (Decision 18); a run still going at the turn's end or stopped by a signal (^C, exit ≥ 128) is
+  a background process and keeps its yield's duration. In memory only: a restart between yield and end keeps the
+  yield's duration.
+- **Truncated commands**: the 200-char cut hid the family of 5.05 % of shell commands here (90 days, `cd x && export …
+  && pnpm test`, a filter before the program, a loop); family hints (§1.12) bring that to 0.29 % (a hint cut again at
+  200). Calls files of format 2 read on without hints unless a 200-char command in them may have lost its family
+  (`cutMayHide`): such a session indexes again, once.
 - **Approval time** inside tool time (history): labelled; live approval waits show in the "now" line via the
   existing approval alert.
 - **Retention**: a period beyond `filter.callDays` shows `guard: retention` and the covered part only.
@@ -335,7 +363,8 @@ the process scan) and reduced to a family; it is not stored.
 
 ## Interactions with other specs
 - **filter-language**: new call attributes `family`, `kind` (§8); the report uses `eachCall`/`callsIn` and the
-  `Compiled` filter. No change to cached data: **no `VERSION` bump**, no calls-file `FORMAT` change.
+  `Compiled` filter. No ledger `VERSION` bump; the calls file gains family hints (`FORMAT` 3, format 2 still reads,
+  §1.12) and digests sit beside the calls files (`cache/wait/`, swept with them).
 - **tui-footprint**: lazy rows only for the window, resumable slices, no work on hidden tabs; the live part is
   O(live shells) on the existing tick. Budgets in Testing.
 - **rules-config**: two metrics, one disabled built-in, the per-host notification throttle (§5).
@@ -374,6 +403,13 @@ the process scan) and reduced to a family; it is not stored.
 - Footprint (tui-footprint tooling, `scripts/footprint.sh`): Wait tab hidden → CPU and RSS within noise of main;
   tab visible, 7 days: first report ≤ 300 ms CPU in slices ≤ 20 ms, RSS + ≤ 15 MB; 90 days: ≤ 2 s CPU, RSS + ≤ 40 MB;
   live part ≤ 0.3 ms per tick with 36 fake agents (`scripts/fixture-agents.sh`).
+- Digests (`digest.check.ts`): seeded random sessions (calls across midnight, untimed, failed, questions, polling):
+  the report from digests (worked out, then stored, then the static part) equals the one read row by row — every
+  figure and the drill-down's slowest calls — for windows on and off a day start, the previous window starting
+  mid-day, a retention cut inside the window, session and day filters, and the clock moving the previous window's
+  start under a reused static part. Hints: `family.check.ts` (`famHint`, `cutMayHide`), `callcache.check.ts` (format 3
+  round trip, format-2 reading). Codex yields: `codex-yield.check.ts` (hand-written lines in both formats). After an
+  upgrade the background job works for ~2 min (digests) to ~8 min (with the format-2 re-index) at ≤ 20 % CPU.
 - Manual: the tab at 80, 120, 200 columns; `NO_COLOR`; light theme.
 
 ## Out of scope
@@ -448,11 +484,49 @@ Each: question · options · decision · why · cost if wrong.
     meta`. · **The last.** · Same privacy line as `process.executable.name` vs `agentglass.tool.command`. · If wrong:
     backends see `node` instead of `node build.js` without `--detail meta`.
 
+Follow-ups (2026-10-08, PR #93's review rulings; same delegation):
+
+16. **Commands cut at 200 characters** (5.05 % of shell commands lost their family here; budget ≤ 2 %) · (a) a
+    family / kind column per call row (cache bump, families frozen at index time: a config edit needs a re-index),
+    (b) store longer commands (every Stats command key, filter value and ledger day map changes; ledger bump, full
+    re-index), (c) a family hint per cut command, only where the cut changes the segment the family comes from. ·
+    **(c)**, calls-file `FORMAT` 3, no ledger `VERSION` bump; format-2 files read on unless a 200-char command in
+    them may have lost its family (`cutMayHide`): those sessions index again, once (1,180 of 3,877 here). · User rules
+    stay live (they see the hint's words), displayed texts stay as they are, 14k hints of 273k commands. · If wrong:
+    0.29 % of commands still lose their family (a hint cut again: long env assignments, nested `bash -lc "…"`); the
+    one-time re-index costs ~60 s of CPU in a first wide CLI run, ~8 min in the background in the TUI (paced).
+17. **Period sums** (7 days' first open 0.85 s, budget 300 ms) · (a) read every calls file (as before), (b) per-day
+    sums per session beside the calls files, (c) one combined file, (d) inside the ledger. · **(b)**. · Written when the
+    calls file is, nothing in memory while the tab is unused, a config edit re-derives only digests; a day sum is exact
+    for whole days, part days are read row by row, the tool union stays exact across midnight (neighbouring-day
+    overlaps). · If wrong: ~65 µs per digest read and decode (7 days ≈ 2,000 here), 4.8 MB on disk for 3,900
+    sessions; (c) would trade that for rewriting all at every save.
+18. **Codex runs after a yield** (history counted the yield, not the run) · (a) to the run's real end, (b) to the
+    agent's last poll, (c) to the real end when the run ends by itself inside its turn. · **(c)**. · Tests, builds and
+    applies the agent waited on end by themselves within the turn (all 554 old-format runs here); a dev server or
+    port-forward stopped with ^C or left running at the turn's end is not a wait — as Claude's `run_in_background`. ·
+    If wrong: a run that outlives its turn stays at its yield's duration; a server that exits by itself in the turn
+    counts in full.
+19. **A first open with no digests** (2.6 s for 7 days, in up to 190 ms slices) · (a) as before, (b) the report works
+    them out for its window with a progress mark, (c) also a background job. · **(b) + (c)**: "computing n%", a big calls
+    file read a member at a time (≤ ~30 ms a slice); the job runs in the TUI after the history index, ≤ 20 ms slices only
+    while the process stays under the indexer's budget (≤ 20 %), and also sends format-2 sessions that need hints to be
+    indexed again. · If wrong: the first ~2 minutes after an upgrade, a Wait open computes part of its window itself.
+20. **Claude's eval argv on macOS** · rule it from the source, or prove it on macOS. · **Both**: the command string is
+    built in platform-independent code (Windows aside); `live.check.ts` runs a real shell in that format and reads its
+    argv back through the OS process table on CI's macOS job. The parse now takes any shell word (Claude 2.1 escapes a
+    quote as `'"'"'`, which the old parser cut short on every OS). · If wrong: a background run on macOS shows its
+    shell's family instead of its command's.
+
 ## Open questions (technical verification during implementation)
 1. scriptc 0.1.7: `os.loadavg()` / `os.cpus()` available in the native and C backends? Fallback: `/proc/loadavg` on
-   Linux, `—` on macOS.
-2. Share of stored shell commands cut at 200 chars whose family falls back to `sh` (Task 0 measures on the isolated
-   index); if > 2 % of shell time, store a per-row family hint at the next planned `VERSION` bump.
-3. Codex `exec` with yielded long-running commands (`yield_time_ms`): does the call end at the yield? If so, mark it
-   like `run_in_background`.
-4. The Claude `eval '…'` argv format on macOS (zsh/bash) — same as Linux?
+   Linux, `—` on macOS. — Neither: the fallback (#93).
+2. Share of stored shell commands cut at 200 chars whose family falls back to `sh` — 5.05 % of shell commands lose
+   their family to the cut; family hints (Decision 16) leave 0.29 %.
+3. Codex `exec` with yielded long-running commands: the call ends at the yield; the run's end is in the log — Decision
+   18.
+4. The Claude `eval '…'` argv format on macOS — the same: Claude Code builds `… && eval <word> && pwd -P >| <file>` in
+   platform-independent code (only Windows differs) and runs it with the user's shell; the eval word is single-quoted
+   with `'"'"'` for a quote inside (2.1; older builds `'\''`), double-quoted or bare in edge cases. `live.ts` parses any
+   shell word; `live.check.ts` (an ffi check, so CI's macOS job runs it) starts a real zsh in that format and reads
+   its argv back from the OS process table.

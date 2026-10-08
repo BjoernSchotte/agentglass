@@ -4,7 +4,8 @@
 // now block stay per host: different machines do not contend (spec agent-wait §9, Decision 13).
 import { type Obj, obj, arr, str } from "../../util/json.ts";
 import { HB, pct } from "../usage/calls.ts";
-import type { WRow, WaitReport } from "./report.ts";
+import type { WRow, WaitReport, Cand } from "./report.ts";
+import { EMPTY } from "../query/eval.ts";
 
 function num(v: unknown): number { return typeof v === "number" ? v as number : 0; }
 function r4(x: number): number { return Math.round(x * 10000) / 10000; }
@@ -66,5 +67,6 @@ export function rowsOfObj(o: Obj, by: string): WRow[] {
 export function reportOfObj(o: Obj): WaitReport {
   const a = obj(o["agentTime"]) ?? {};
   return { since: 0, until: 0, prevSince: 0, days: 0, complete: o["previous"] !== null && o["previous"] !== undefined, fams: rowsOfObj(o, "family"), kinds: rowsOfObj(o, "kind"), tools: rowsOfObj(o, "tool"),
-    split: { activeMs: num(a["activeMs"]), toolMs: num(a["toolMs"]), userMs: num(a["userMs"]), pollMs: num(a["pollingMs"]), modelMs: num(a["modelMs"]) }, spans: [], sessions: 0, bgCalls: 0, done: true };
+    split: { activeMs: num(a["activeMs"]), toolMs: num(a["toolMs"]), userMs: num(a["userMs"]), pollMs: num(a["pollingMs"]), modelMs: num(a["modelMs"]) }, spans: [], sessions: 0, bgCalls: 0, done: true,
+    f: EMPTY, cut: 0, cands: new Map<string, Cand[]>() };
 }

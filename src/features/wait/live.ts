@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Collected on the watchdog's alarm tick (H.onWatch, 1.5 s while agents are live) from data the tick already has: each
 // watched session's outermost tool shells (detect.ts toolShells) and the children map (spec agent-wait §4). The command
-// comes from the shell's argv (Claude Code: eval '<cmd>', else the text after -c), reduced to its family; nothing is
+// comes from the shell's argv (Claude Code: … && eval <word>, else the text after -c), reduced to its family; nothing is
 // stored. Sessions whose shells cannot be seen (a shared daemon, no tree) count their open shell calls, without RSS.
 import { readWhole } from "../../util/fs.ts";
 import type { Proc, Sess } from "../../model/types.ts";
 import { rootOf, allProcs } from "../../model/procs.ts";
 import { ledger } from "../usage/ledger.ts";
-import { norm } from "../usage/calls.ts";
+import { normFull } from "../usage/calls.ts";
 import { etimeSec, toolShells } from "../detect.ts";
 import { familyOf, callFamily, waitCfg } from "./family.ts";
 
@@ -22,18 +22,35 @@ export const LIVE = { cur: emptyLive(), want: 0, ver: 0 };
 export function liveNow(now: number): LiveWait { return now - LIVE.cur.at < 5000 ? LIVE.cur : emptyLive(); }
 
 // ── argv ──
-// '…' with '\'' escapes, from i (just after the opening quote) → [text, index after the closing quote]
-function sq(a: string, i: number): string {
-  let o = "";
-  for (;;) {
-    const e = a.indexOf("'", i); if (e < 0) return o + a.slice(i);
-    o += a.slice(i, e);
-    if (a.startsWith("'\\''", e)) { o += "'"; i = e + 4; continue; }
-    return o;
+// one shell word from i on, quotes removed: '…' literal, "…" with \ escapes, bare characters with \ escapes, joined until
+// an unquoted blank. Claude Code quotes the eval word with '"'"' for a quote inside (older builds '\''): both are a
+// word of concatenated parts here.
+function word(a: string, i: number): string {
+  let o = ""; const L = a.length;
+  while (i < L) {
+    const c = a.charCodeAt(i);
+    if (c === 32 || c === 9 || c === 10) break;
+    if (c === 39) { const e = a.indexOf("'", i + 1); if (e < 0) return o + a.slice(i + 1); o += a.slice(i + 1, e); i = e + 1; continue; }
+    if (c === 34) {
+      let j = i + 1;
+      while (j < L) {
+        const d = a.charCodeAt(j);
+        if (d === 34) break;
+        if (d === 92 && j + 1 < L && "\"\\$`\n".indexOf(a.charAt(j + 1)) >= 0) { o += a.charAt(j + 1); j += 2; continue; }
+        o += a.charAt(j); j++;
+      }
+      i = j + 1; continue;
+    }
+    if (c === 92 && i + 1 < L) { o += a.charAt(i + 1); i += 2; continue; }
+    o += a.charAt(i); i++;
   }
+  return o;
 }
+// the command a tool shell runs, from its argv as one string: Claude Code's `… && eval <word> …` (the same on Linux and
+// macOS: only the shell differs), else the text after -c (combined flags too)
 export function shellCmd(args: string): string {
-  const ev = args.indexOf(" eval '"); if (ev >= 0) return sq(args, ev + 7);
+  let ev = args.indexOf(" && eval "); if (ev >= 0) return word(args, ev + 9);
+  ev = args.indexOf(" eval "); if (ev >= 0 && ev + 6 < args.length && "'\"".indexOf(args.charAt(ev + 6)) >= 0) return word(args, ev + 6);
   const ws = args.split(" "); let off = (ws[0] ?? "").length + 1;
   for (let k = 1; k < ws.length; k++) {
     const w = ws[k] ?? "";
@@ -71,7 +88,7 @@ interface FamMemo { family: string; kind: string; heavy: boolean }
 const memo = new Map<string, FamMemo>();
 function famOfArgs(args: string): FamMemo | null {
   const hit = memo.get(args); if (hit) return hit;
-  const cmd = norm(shellCmd(args).split("\n").join(" ; ")); if (!cmd) return null; // a script's lines are its steps (Gemini's wrapper)
+  const cmd = normFull(shellCmd(args).split("\n").join(" ; ")); if (!cmd) return null; // a script's lines are its steps (Gemini's wrapper)
   const f = familyOf(cmd, waitCfg()); const m: FamMemo = { family: f.name, kind: f.kind, heavy: f.heavy };
   if (memo.size >= 512) memo.clear();
   memo.set(args, m); return m;
@@ -87,7 +104,7 @@ function cmdProc(sh: Proc, root: number): Proc {
 function famOfProc(p: Proc): FamMemo | null {
   if (SHELL_RE.test(p.args)) return famOfArgs(p.args);
   const hit = memo.get(p.args); if (hit) return hit;
-  const cmd = norm(p.args); if (!cmd) return null;
+  const cmd = normFull(p.args); if (!cmd) return null;
   const f = familyOf(cmd, waitCfg()); const m: FamMemo = { family: f.name, kind: f.kind, heavy: f.heavy };
   if (memo.size >= 512) memo.clear();
   memo.set(p.args, m); return m;
@@ -123,7 +140,7 @@ export function collectLive(ss: Sess[], kids: Map<number, Proc[]>, now: number):
     const open: { t: number; cmds: string[] }[] = []; openShell(s, now, open);
     if (open.length) { // the open calls name what runs (the transcript's command, not a harness's wrapper script); the tree adds memory
       const runs: Run[] = [];
-      for (const c of open) { const f = callFamily(c.cmds.map((x: string): string => norm(x)), waitCfg()); runs.push({ path: s.path, h: s.h, family: f.name, kind: f.kind, heavy: f.heavy, ageSec: Math.floor((now - c.t) / 1000), rssKb: -1, pid: 0, bg: false }); }
+      for (const c of open) { const f = callFamily(c.cmds.map((x: string): string => normFull(x)), waitCfg()); runs.push({ path: s.path, h: s.h, family: f.name, kind: f.kind, heavy: f.heavy, ageSec: Math.floor((now - c.t) / 1000), rssKb: -1, pid: 0, bg: false }); }
       runs.sort((x: Run, y: Run) => y.ageSec - x.ageSec);
       for (const sh of shells) {
         const f = famOfProc(sh); let to: Run | null = null;

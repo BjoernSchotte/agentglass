@@ -1,7 +1,15 @@
 // agentglass — agent-wait live collection: shell argv parsing, heavy commands per watched session, subtree RSS, the
 // open-call fallback, host load parsing
+// check: ffi
 // SPDX-License-Identifier: Apache-2.0
+// The argv check runs a real shell in Claude Code's command format and reads it back through this OS's process table
+// (Linux /proc, macOS libproc in the ffi build): CI's macOS job proves the format parses there too.
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Proc } from "../../model/types.ts";
+import { OS } from "../../platform/index.ts";
 import { fxReset, fxSession, isoAt } from "../query/fixture.ts";
 import { allProcs } from "../../model/procs.ts";
 import { type Run, shellCmd, collectLive, heavyNow, famCounts, parseLoad } from "./live.ts";
@@ -19,6 +27,23 @@ eq("plain sh", shellCmd("/bin/sh"), "");
 eq("sh -c", shellCmd("/bin/sh -c npx tsc --noEmit"), "npx tsc --noEmit");
 eq("login shell", shellCmd("-zsh"), "");
 eq("bash -e -c", shellCmd("bash -e -c pnpm lint"), "pnpm lint");
+// Claude Code 2.1 quotes a ' inside the eval word as '"'"' (and adds < /dev/null only without an input redirect)
+eq("eval '\"'\"' quotes", shellCmd("/usr/bin/zsh -c source /h/s.sh 2>/dev/null || true && eval 'grep -n '\"'\"'a b'\"'\"' x | head -3' && pwd -P >| /tmp/c-cwd"), "grep -n 'a b' x | head -3");
+eq("eval word in double quotes", shellCmd("/bin/bash -c eval \"echo \\\"hi\\\" \\$HOME\" < /dev/null && pwd -P >| /tmp/c-cwd"), "echo \"hi\" $HOME");
+eq("eval bare word", shellCmd("/bin/zsh -c source /h/s.sh && eval ls\\ -la && pwd -P"), "ls -la");
+eq("eval with lines before it", shellCmd("/usr/bin/zsh -c source /h/s.sh 2>/dev/null || true && export A='1'\nexport B='2'\n: && setopt NO_EXTENDED_GLOB 2>/dev/null || true && eval 'pnpm test' < /dev/null && pwd -P >| /tmp/c-cwd"), "pnpm test");
+
+// a real shell in Claude Code's format, read back from the process table (the macOS CI job runs this in the ffi build)
+{
+  const sh = existsSync("/bin/zsh") ? "/bin/zsh" : "/bin/sh"; const cwdf = join(tmpdir(), "agentglass-live-check-" + String(process.pid) + "-cwd");
+  const cmd = "source /nonexistent/snapshot.sh 2>/dev/null || true && eval 'sleep 3 && echo '\"'\"'it is done'\"'\"'' < /dev/null && pwd -P >| " + cwdf;
+  const ch = spawn(sh, ["-c", cmd], { stdio: "ignore" }); const pid = ch.pid ?? 0;
+  let args = "";
+  for (let k = 0; k < 40 && !args; k++) { spawnSync("sleep", ["0.05"]); for (const r of OS.listProcs(new Set<number>([pid]), (c: string): boolean => true, true)) if (r.pid === pid) args = r.args; }
+  ch.kill("SIGKILL");
+  eq("real " + sh + ": argv read back (" + process.platform + ")", shellCmd(args), "sleep 3 && echo 'it is done'");
+  rmSync(cwdf, { force: true });
+}
 
 // three watched agents: a Claude-shaped shell with a node child, a -c shell, and one with no tree but an open call
 function bash(id: string, cmd: string, hh: number): string {

@@ -24,7 +24,8 @@ import { newRun } from "../triage/run.ts";
 import { openTriage } from "../triage/view.ts";
 import { addActions, keyAction, tabNamed } from "../palette/actions.ts";
 import { shownFam } from "./family.ts";
-import { type WRow, type WaitRun, type WaitReport, type SlowCall, newWaitRun, stepWait, waitResult, waitProgress, trendOf, shareOf } from "./report.ts";
+import { type WRow, type WaitRun, type WaitReport, type SlowCall, type Drill, newWaitRun, stepWait, waitResult, waitProgress, trendOf, shareOf, newDrill, stepDrill } from "./report.ts";
+import { BACKFILL } from "./backfill.ts";
 import type { GroupOverlap } from "./overlap.ts";
 import { type Run, LIVE, liveNow, heavyNow } from "./live.ts";
 import { maxOf, overlapFor, groupFor, rowsBy, hours, pctTxt, trendTxt, kindShort, whenTxt, splitTxt } from "./fmt.ts";
@@ -61,7 +62,7 @@ function work(f: Compiled): void {
     J.run = newWaitRun(f, sinceOf(WV.period), now + 1); J.key = k; J.ver = L.ver; J.at = now; J.cpu = 0; J.slice = 0;
   }
   const r = J.run; if (!r) return;
-  const t0 = Date.now(); const fin = stepWait(r, 20); const d = Date.now() - t0;
+  const t0 = Date.now(); const fin = stepWait(r, 15); const d = Date.now() - t0; // 15: a slice ends after the session it is in (≤ 20 ms)
   J.cpu += d; if (d > J.slice) J.slice = d;
   if (fin) { const rep = waitResult(r); J.rep = rep; J.run = null; J.ovF = overlapFor(rep, "family"); J.ovK = overlapFor(rep, "kind"); J.last = J.cpu; }
   S.dirty = true;
@@ -158,7 +159,8 @@ function nowLine(w: number): string {
   const pad = Math.max(2, w - vwidth(left) - width(host));
   return vwidth(left) + width(host) + 2 <= w ? left + " ".repeat(pad) + fg(C.sub) + host + RST : left;
 }
-function progress(): string { const r = J.run; if (!r) return ""; const p = waitProgress(r); return " · " + spin() + " reading calls " + grp(p.i) + "/" + grp(p.n) + " sessions"; }
+// "computing 42%": sessions done of the report's (a first report after an upgrade works out their digests on the way)
+function progress(): string { const r = J.run; if (!r) return ""; const p = waitProgress(r); return " · " + spin() + " computing " + String(p.n ? Math.floor((p.i * 100) / p.n) : 0) + "%"; }
 interface Cols { name: number; kind: number; share: number; total: number; n: number; p50: number; p95: number; err: number; trend: number; peak: number }
 function cols(iw: number): Cols {
   const kind = iw >= 100 ? 10 : 6; const c: Cols = { name: 0, kind, share: 6, total: 7, n: 7, p50: 7, p95: 7, err: 5, trend: 6, peak: 5 };
@@ -203,7 +205,7 @@ function renderList(): void {
   line(1, 2, iw, " " + chip(WV.period === "d", "d", "Today") + " " + chip(WV.period === "w", "w", "7 days") + " " + chip(WV.period === "m", "m", "30 days") + " " + chip(WV.period === "a", "a", "All") +
     fg(C.dim) + "  v " + RST + fg(C.text) + WV.view + RST + fg(C.dim) + "  s " + RST + fg(C.text) + (SORTS[WV.sort] ?? "total") + RST);
   const sp = rep ? splitTxt(rep) : ""; const vs = rep && !rep.complete ? " · no trend: the period before is past retention" : " · trend vs the " + periodName() + " before";
-  line(1, 3, iw, " " + (rep ? fg(C.sub) + sp + RST + (width(sp + vs) < iw - 1 ? fg(C.dim) + vs + RST : "") : fg(C.dim) + "reading call rows…" + RST));
+  line(1, 3, iw, " " + (rep ? fg(C.sub) + sp + RST + (width(sp + vs) < iw - 1 ? fg(C.dim) + vs + RST : "") : fg(C.dim) + "computing…" + RST));
   line(1, 4, iw, " " + nowLine(iw - 1));
   const c = cols(iw);
   line(1, 5, iw, " " + fg(C.dim) + fit(WV.view, c.name) + fit(" kind", c.kind) + rj("share", c.share) + rj("total", c.total) + rj("n", c.n) + rj("p50≈", c.p50) + rj("p95≈", c.p95) + rj("err", c.err) + rj("trend", c.trend) + rj("peak", c.peak) + RST);
@@ -233,19 +235,30 @@ function fleetNow(iw: number): string {
   return fg(C.sub) + fit("now on hosts: " + ps.join(" · "), iw - 2) + RST;
 }
 function emptyText(f: Compiled): string {
-  if (J.run) return "reading call rows…";
+  if (J.run) return "computing…";
   const v = WV.view === "tool" ? "non-shell tool calls" : "shell calls";
   return "no " + v + " in " + periodName() + (f !== EMPTY ? " matching the filter — / edits it" : "") + " — d/w/m/a switch the period, v the view";
 }
 const LY = { y0: 0, n: 0 };
-// ↵: the row's slowest calls (↵ there opens the session at that call)
+// ↵: the row's slowest calls (↵ there opens the session at that call). The days a digest summed are read for them on
+// demand, a slice per frame and tick (report.ts newDrill); the list shows what is known meanwhile.
+const DR = { d: null as Drill | null, key: "", rep: null as WaitReport | null, list: [] as SlowCall[], done: true };
+function drillFor(rep: WaitReport, w: WRow): void {
+  const k = WV.view + "\t" + w.key;
+  if (DR.d && DR.key === k && DR.rep === rep) return;
+  const members = WV.view === "kind" ? rep.fams.concat(rep.tools).filter((m: WRow): boolean => m.kind === w.key) : [w];
+  DR.d = newDrill(rep, w, members); DR.key = k; DR.rep = rep; DR.done = false; DR.list = DR.d.out;
+}
+function drillWork(): void { const d = DR.d; if (!d || DR.done) return; DR.done = stepDrill(d, 20); DR.list = d.out; S.dirty = true; }
+function slowList(): SlowCall[] { return DR.d && DR.rep === J.rep ? DR.list : []; }
 function renderDetail(): void {
   const W = S.W; const Ht = S.H; const iw = W - 2;
   const rep = J.rep; let w: WRow | null = null; if (rep) for (const x of rowsBy(rep, WV.view)) if (x.key === WV.detail) w = x;
+  if (rep && w) { drillFor(rep, w); drillWork(); }
   const name = w ? (WV.view === "family" ? shownFam(w.key, w.generic) : w.key) : WV.detail;
-  box(0, 1, W, Ht - 2, name, "slowest calls · " + periodName() + " · ↵ open · esc back", true);
-  const sl: SlowCall[] = w ? w.slow : [];
-  if (!sl.length) { line(1, 2, iw, " " + fg(C.dim) + "no timed calls" + RST); for (let y = 3; y < Ht - 2; y++) line(1, y, iw, ""); return; }
+  box(0, 1, W, Ht - 2, name + (DR.done ? "" : " · " + spin() + " reading calls"), "slowest calls · " + periodName() + " · ↵ open · esc back", true);
+  const sl: SlowCall[] = w ? slowList() : [];
+  if (!sl.length) { line(1, 2, iw, " " + fg(C.dim) + (DR.done ? "no timed calls" : "reading calls…") + RST); for (let y = 3; y < Ht - 2; y++) line(1, y, iw, ""); return; }
   WV.dsel = Math.max(0, Math.min(WV.dsel, sl.length - 1));
   const vis = Math.max(0, Ht - 4); if (WV.dsel < WV.dtop) WV.dtop = WV.dsel; if (WV.dsel >= WV.dtop + vis) WV.dtop = WV.dsel - vis + 1;
   DL.y0 = 2; DL.n = Math.min(vis, sl.length - WV.dtop);
@@ -281,7 +294,7 @@ function jump(x: SlowCall): void {
 function key(k: string): boolean {
   if (k === "d" || k === "w" || k === "m" || k === "a") { WV.period = k; WV.sel = 0; WV.top = 0; WV.selKey = ""; return true; }
   if (WV.detail) {
-    const rep = J.rep; let sl: SlowCall[] = []; if (rep) for (const x of rowsBy(rep, WV.view)) if (x.key === WV.detail) sl = x.slow;
+    const sl: SlowCall[] = slowList();
     if (k === "esc" || k === "bs" || k === "backspace" || k === "left") { WV.detail = ""; return true; }
     if (k === "up" || k === "k" || k === "wheelup") WV.dsel = Math.max(0, WV.dsel - 1);
     else if (k === "down" || k === "j" || k === "wheeldown") WV.dsel = Math.min(Math.max(0, sl.length - 1), WV.dsel + 1);
@@ -322,8 +335,9 @@ function mouse(x: number, y: number, dbl: boolean): void {
 export const WAIT_TAB: Tab = { name: "Wait", render: () => { if (WV.detail) renderDetail(); else renderList(); }, key, mouse };
 H.tabs.push(WAIT_TAB);
 function mine(): boolean { return S.mode === "list" && S.tab - 2 === H.tabs.indexOf(WAIT_TAB); }
-H.backlog.push(() => J.run !== null && mine()); // a report in slices: tick at the burst cadence until it is done
-H.onTick.push(() => { if (J.run && mine()) work(tabFilter("Wait", "stats")); }); // a slice per tick too, not only per frame (nothing while hidden)
+H.backlog.push(() => (J.run !== null || (!DR.done && WV.detail !== "")) && mine()); // a report or drill-down in slices: tick at the burst cadence until it is done
+H.onTick.push(() => { if (!mine()) return; if (J.run) work(tabFilter("Wait", "stats")); else if (WV.detail) drillWork(); }); // a slice per tick too, not only per frame (nothing while hidden)
+BACKFILL.busy = (): boolean => J.run !== null; // the report works out its window's digests itself
 H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || S.tab - 2 !== H.tabs.indexOf(WAIT_TAB)) return [];
   if (WV.detail) return [["↑↓", "call"], ["↵", "open at the call"], ["esc", "back"], ["d/w/m/a", "period"]];

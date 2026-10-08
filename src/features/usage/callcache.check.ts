@@ -3,10 +3,10 @@
 import { rmSync, writeFileSync, existsSync } from "node:fs";
 import { newAcc, bucket, tool, pend, file } from "./record.ts";
 import { type Call, MQ_MSG, DICT, nameOf, intern } from "./facts.ts";
-import { pathKey, encodeCalls, decodeCalls, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
+import { pathKey, encodeCalls, encodeCallsX, decodeCalls, scanCalls, scanCmds, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
 import { accOut, accIn } from "./codec.ts";
-import { callList, callAt, addId, KIND_CMD } from "./rows.ts";
-import { done } from "./calls.ts";
+import { callList, callAt, addId, rowIds, KIND_CMD, KIND_HINT } from "./rows.ts";
+import { done, CMDS } from "./calls.ts";
 import { intOf } from "../../util/config.ts";
 
 let bad = 0;
@@ -30,7 +30,8 @@ a.off = 901; ok("off mismatch → null", decodeCalls(body, "/s/x.jsonl", a) === 
 ok("foreign path → null", decodeCalls(body, "/s/y.jsonl", a) === null, "");
 ok("corrupt → null", decodeCalls(body.slice(0, 40), "/s/x.jsonl", a) === null && decodeCalls("", "/s/x.jsonl", a) === null, "");
 ok("ragged columns → null", decodeCalls(body.split("\"ms\":[-1,-1]").join("\"ms\":[-1]"), "/s/x.jsonl", a) === null, body.slice(-120));
-ok("other format → null", decodeCalls(body.split("{\"v\":2,").join("{\"v\":1,"), "/s/x.jsonl", a) === null, "");
+ok("other format → null", body.startsWith("{\"v\":3,") && decodeCalls(body.split("{\"v\":3,").join("{\"v\":1,"), "/s/x.jsonl", a) === null, body.slice(0, 12));
+ok("format 2 without long lines reads", decodeCalls(body.split("{\"v\":3,").join("{\"v\":2,"), "/s/x.jsonl", a) !== null, "");
 // compact: command and file text is a reference into the ledger's own day counters (same off), not a second copy
 ok("command text not stored twice", body.indexOf("npm test") < 0, body);
 const noDays = newAcc(); noDays.off = 900;
@@ -47,6 +48,34 @@ const brs: string[] = []; if (bk) for (const c of bk) { const fs: string[] = [];
 const B1 = String(Date.parse(iso1)); const B2 = String(Date.parse(iso2));
 ok("literal, delta t, cid prefix, files", brs.join(" ; ") === "Bash|?|git|git status+only in the row+only in the rows too+a literal sorted first|toolu_01abc|" + B1 + "|-1|-1| ; Edit|?|||toolu_01abd|" + B2 + "|-1|-1|/w/src/a.ts ; Read|?||||" + B2 + "|-1|-1| ; Grep|?|||toolu_01ab|" + B2 + "|-1|-1|", brs.join(" ; "));
 ok("literals front-coded, references for the rest", bb.indexOf("only in the row") >= 0 && bb.indexOf("\"s too\"") >= 0 && bb.indexOf("git status") < 0 && bb.indexOf("/w/src/a.ts") < 0, bb);
+// family hints of cut lines (wait/family.ts famHint; stubbed here): stored after their command, read back in place
+{
+  CMDS.hint = (full: string): string => full.indexOf("pnpm test") >= 0 ? "pnpm test" : "";
+  const h = newAcc(); h.off = 77; const hd = bucket(h, 0, iso);
+  const long = "cd /w/app && export X=" + "x".repeat(220) + " && pnpm test";
+  pend(h, hd, tool(h, hd, "Bash", "", MQ_MSG), "Bash", "h1", 0, iso, "", [long, "git status"]);
+  pend(h, hd, tool(h, hd, "Bash", "", MQ_MSG), "Bash", "h2", 0, iso, "", ["ls"]);
+  const cut = long.slice(0, 200);
+  ok("hint after its command", rowIds(h.rows, 0, KIND_CMD).length === 2 && rowIds(h.rows, 0, KIND_HINT).length === 1 && h.rows.li[2] % 4 === KIND_HINT, String(h.rows.nl));
+  const ex = encodeCallsX("/s/h.jsonl", h); const hb = ex.body;
+  ok("hm column", hb.indexOf("\"hm\":[[") >= 0, hb.slice(-160));
+  const hr = decodeCalls(hb, "/s/h.jsonl", h);
+  const hs: string[] = []; if (hr) for (let i = 0; i < hr.n; i++) { const xs: string[] = []; for (let k = hr.lo[i]; k < (i + 1 < hr.n ? hr.lo[i + 1] : hr.nl); k++) { const v = hr.li[k]; xs.push((v % 4 === KIND_HINT ? "hint:" : v % 4 === KIND_CMD ? "" : "p:") + (v % 4 === KIND_HINT || v % 4 === KIND_CMD ? nameOf(DICT.cmd, (v - (v % 4)) / 4) : "")); } hs.push(xs.filter((x: string): boolean => x !== "p:").join("+")); }
+  ok("hints round-trip", hs.join(" ; ") === cut + "+hint:pnpm test+git status ; ls", hs.join(" ; "));
+  const cl: string[] = []; for (const id of ex.cmds) cl.push(nameOf(DICT.cmd, id));
+  ok("command list in local order", cl.join("|") === cut + "|git status|pnpm test|ls", cl.join("|"));
+  const sc = scanCalls(hb, "/s/h.jsonl", h, true);
+  if (!sc) ok("scan", false, "null");
+  else { const s0: number[] = scanCmds(sc, 0); const s1: number[] = scanCmds(sc, 1); ok("scan: hint stands for its command", s0.join(",") === "2,1" && s1.join(",") === "3" && (sc.cmds[2] ?? "") === "pnpm test", JSON.stringify(sc.hm) + " " + s0.join(",")); }
+  const v2 = hb.split("{\"v\":3,").join("{\"v\":2,").split(",\"hm\":").join(",\"hx\":");
+  ok("format 2 with a 200-character line: index again", decodeCalls(v2, "/s/h.jsonl", h) === null && scanCalls(v2, "/s/h.jsonl", h, true) === null, "");
+  ok("format 2 scan without texts reads", scanCalls(v2, "/s/h.jsonl", h, false) !== null, "");
+  CMDS.mayHide = (cut: string): boolean => false; // the families decide no cut line hid one: read on
+  ok("format 2, no cut that matters: reads", decodeCalls(v2, "/s/h.jsonl", h) !== null && scanCalls(v2, "/s/h.jsonl", h, true) !== null, "");
+  CMDS.mayHide = (cut: string): boolean => true;
+  ok("hints misaligned → null", decodeCalls(hb.split("\"hm\":[[").join("\"hm\":[[7,"), "/s/h.jsonl", h) === null, "");
+  CMDS.hint = (full: string): string => "";
+}
 // retention
 const old = newAcc(); const od = bucket(old, Date.parse("2026-01-01T10:00:00Z"), ""); tool(old, od, "Bash", "", MQ_MSG);
 const nd = bucket(old, Date.parse("2026-10-01T10:00:00Z"), ""); tool(old, nd, "Read", "", MQ_MSG);
