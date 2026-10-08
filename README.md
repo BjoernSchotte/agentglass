@@ -35,6 +35,16 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
 | **Where the time went** | **What it costs** |
 | ![call graph](docs/screenshots/callgraph.png) | ![stats](docs/screenshots/stats.png) |
 
+## Contents
+
+- **Start:** [Quick install](#quick-install) · [Why it slaps](#why-it-slaps) · [More screens](#more-screens) · [Install](#install) · [Releases & channels](#releases--channels) · [Keys](#keys)
+- **Costs:** [Prices](#prices) · [Billing modes, projection, budget](#billing-modes-projection-budget)
+- **Explore:** [Repos](#repos) · [What do my agents wait on?](#what-do-my-agents-wait-on) · [Git linkage](#git-linkage) · [Filters](#filters) · [Triage](#triage) · [Compare](#compare) · [Related events](#related-events) · [Palette and links](#palette-and-links)
+- **Alerts:** [Alert rules](#alert-rules)
+- **Beyond one machine:** [Several machines (fleet)](#several-machines-fleet) · [Send to an OTLP backend](#send-to-an-otlp-backend) · [OTLP: several hosts](#otlp-several-hosts) · [`agentglass receive` hub](#otlp-a-hub-for-hosts-you-cannot-reach-agentglass-receive)
+- **Integrations:** [herdr](#herdr) · [Inside coding agents](#inside-coding-agents) · [MCP server](#mcp-server) · [Scriptable](#scriptable) · [Custom agent commands](#custom-agent-commands)
+- **Reference:** [Privacy mode](#privacy-mode) · [Tiny, fast, local](#tiny-fast-local) · [Supported harnesses](#supported-harnesses) · [Adding a harness](#adding-a-harness) · [Exit codes](#exit-codes) · [License](#license)
+
 ## Why it slaps
 
 - **Every agent, one screen.** Claude Code (`~/.claude`), Codex (`~/.codex`),
