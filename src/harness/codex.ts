@@ -152,7 +152,7 @@ const SHELL = ["exec_command", "shell", "shell_command", "container.exec"];
 // process the agent did not wait on (a dev server, a port-forward) and keeps its yield's duration, as Claude's
 // run_in_background calls do. Cell and session numbers start over in a resumed Codex: a number used again replaces the
 // old run. In memory only: a restart between yield and end keeps the yield's duration.
-interface Run { p: Pend; t0: number; end: number /* when its span closes (cell or call done), 0 = open */; cap: number /* its turn's end, 0 = running */; cell: string; sess: string; cmds: string[] }
+interface Run { p: Pend; t0: number; end: number /* when its span closes (cell or call done), 0 = open */; cell: string; sess: string; cmds: string[] }
 interface Yd { a: Acc; runs: Run[]; waits: Map<string, string> /* wait call → cell */; polls: Map<string, string> /* write_stdin call → session */; kills: Set<string> /* sessions sent a ^C */; last: number /* newest call start */ }
 const YIELDS = new Map<string, Yd>(); // by log path (a restarted entry is a new Acc: its state starts over)
 function ydOf(a: Acc): Yd {
@@ -164,18 +164,21 @@ function addRun(y: Yd, r: Run): void {
   const o: Run[] = []; for (const x of y.runs) if (!((r.cell && x.cell === r.cell) || (r.sess && x.sess === r.sess))) o.push(x); // a number used again: the old run is gone
   o.push(r); if (o.length > 32) o.shift(); y.runs = o;
 }
-// the run ended by itself at t (failed when err): its call lasted until then, unless its turn was over by then
-function runTo(r: Run, t: number, err: boolean): void { if (!r.cap || t <= r.cap) extend(r.p, t - r.t0, err); }
+// the run ended by itself at t (failed when err), inside its turn (a turn's end drops its runs): its call lasted until then
+function runTo(r: Run, t: number, err: boolean): void { extend(r.p, t - r.t0, err); }
 function signalled(code: number): boolean { return code >= 128 || code < 0; }
-// a turn ended (task_complete, turn_aborted): its runs count no further
-function turnEnd(a: Acc, t: number): void { const y = YIELDS.get(a.p); if (!y || y.a !== a) return; for (const r of y.runs) if (!r.cap) r.cap = t; }
+// a turn ended (task_complete, turn_aborted): its runs count no further. Their state goes (each run holds its call's rows
+// and day sums: a re-index of many logs kept them all in memory)
+function turnEnd(a: Acc): void { const y = YIELDS.get(a.p); if (y && y.a === a) YIELDS.delete(a.p); }
+// checks: logs with yield state held
+export function yieldsHeld(): number { return YIELDS.size; }
 const ESC_SID = "session_id\\\":"; // a still-running process in a chunk (JSON text inside the output's JSON text)
 // a call's output: does its run go on? (p is done already)
 function yielded(a: Acc, p: Pend, l: string, t: number): void {
   const h = l.slice(0, 1200); const cmds: string[] = []; if (p.cmd) for (const x of p.cmd.split("\n")) cmds.push(normFull(x));
   const cell = /Script running with cell ID (\d+)/.exec(h); const proc = /Process running with session ID (\d+)/.exec(h);
   if (cell || proc || (p.name === "exec" && l.indexOf(ESC_SID) >= 0)) {
-    addRun(ydOf(a), { p, t0: p.t, end: cell || proc ? 0 : t, cap: 0, cell: cell ? cell[1] ?? "" : "", sess: proc ? proc[1] ?? "" : "", cmds });
+    addRun(ydOf(a), { p, t0: p.t, end: cell || proc ? 0 : t, cell: cell ? cell[1] ?? "" : "", sess: proc ? proc[1] ?? "" : "", cmds });
   }
 }
 // a `wait` on a cell or a write_stdin poll answered
@@ -233,7 +236,7 @@ function usage(a: Acc, l: string): void {
   }
   if (h.indexOf("\"payload\":{\"type\":\"item_completed\"") >= 0) { if (YIELDS.size) cmdDone(a, l); return; }
   if (YIELDS.size && (h.indexOf("\"payload\":{\"type\":\"task_complete\"") >= 0 || h.indexOf("\"payload\":{\"type\":\"turn_aborted\"") >= 0)) {
-    const tm = /"timestamp":"([^"]+)"/.exec(h); const t = tm ? isoMs(tm[1] ?? "") : 0; if (t > 0) turnEnd(a, t); // not return: the line is read on as before
+    turnEnd(a); // not return: the line is read on as before
   }
   if (h.indexOf("\"type\":\"response_item\"") >= 0 && h.indexOf("\"role\":\"user\"") >= 0) { // prompts (injected context is noise)
     const o = parseJson(l); if (!o) return;

@@ -4,6 +4,7 @@
 // exec_command / write_stdin ones; commands are generic, no real session content.
 import { newAcc, heavy, spanMin } from "../features/usage/record.ts";
 import { harnessOf } from "./index.ts";
+import { yieldsHeld } from "./codex.ts";
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -80,6 +81,10 @@ for (const d of a.days.values()) { const st = heavy(d).tt.get("exec"); if (st) {
 eq("day sums of exec moved, not doubled", String(n) + " " + String(dn) + " " + String(ms) + " " + String(err), "7 7 " + String(395000 + 600 + 120000 + 400 + 31000 + 31000 + 60000) + " 1");
 let act = 0; for (const d of a.days.values()) act += spanMin(d.act);
 eq("active time covers the runs", String(act >= Math.floor((395000 + 120000 + 90000) / 60000)), "true");
+
+// a turn's end lets go of its runs (they hold the call's rows and day sums: a re-index of many logs must not keep them)
+ad.usage(a, ln(10700000, "event_msg", "{\"type\":\"task_complete\",\"turn_id\":\"tu2\"}"));
+eq("nothing held after the turn", String(yieldsHeld()), "0");
 
 console.log(bad ? bad + " failed" : "codex yields: all checks passed");
 if (bad) process.exit(1);
