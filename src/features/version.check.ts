@@ -1,6 +1,7 @@
 // agentglass — self-check for version parsing/ordering: sh scripts/check.sh
 // SPDX-License-Identifier: Apache-2.0
 import { parseVersion, compareVersions, parseDevTag, versionOfTag, installMethod, versionInfo, CONTRACT } from "./version.ts";
+import { CONTRACT as MCP_CONTRACT } from "../mcp/rpc.ts";
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 function cmp(a: string, b: string): number { const x = parseVersion(a); const y = parseVersion(b); return x && y ? compareVersions(x, y) : 99; }
@@ -26,5 +27,7 @@ ok("script marker for another path", installMethod("/usr/local/bin/agentglass", 
 ok("source", installMethod("/home/u/code/agentglass/agentglass", "local", "") === "source", "");
 // the CLI contract number (docs/cli-contract.md): an integer, in --version --json
 ok("contract", CONTRACT === 1 && versionInfo()["contract"] === 1, String(versionInfo()["contract"]));
+// agentglass-mcp's copy (src/mcp imports no feature module): one contract number for the CLI and MCP (spec Decision 9)
+ok("contract: agentglass-mcp's copy", MCP_CONTRACT === CONTRACT, String(MCP_CONTRACT));
 console.log(bad ? bad + " failed" : "version: all checks passed");
 process.exit(bad ? 1 : 0);
