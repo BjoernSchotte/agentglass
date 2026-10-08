@@ -100,7 +100,9 @@ function one(c: Conn, l: string): Reply { const m = parse(l, c.version)[0]; retu
   const caps = (res["capabilities"] ?? {}) as Obj; const tools = (caps["tools"] ?? {}) as Obj; const si = (res["serverInfo"] ?? {}) as Obj; const meta = (res["_meta"] ?? {}) as Obj;
   ok("initialize version", res["protocolVersion"] === "2025-06-18" && c.version === "2025-06-18" && c.init, i.lines.join());
   ok("initialize caps", tools["listChanged"] === false, JSON.stringify(caps));
-  ok("initialize serverInfo", si["name"] === "agentglass" && si["version"] === "9.9.9", JSON.stringify(si));
+  ok("initialize serverInfo", si["name"] === "agentglass" && si["title"] === "agentglass" && si["version"] === "9.9.9", JSON.stringify(si));
+  const old = newConn(); const io = one(old, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\"}}");
+  ok("2024-11-05: serverInfo without title", (io.lines[0] ?? "").indexOf("\"serverInfo\":{\"name\":\"agentglass\",\"version\":\"9.9.9\"}") > 0, io.lines.join());
   ok("initialize contract", meta["agentglass/contract"] === CONTRACT && CONTRACT === 1, JSON.stringify(meta));
   ok("initialize instructions", res["instructions"] === "instructions for project" && String(res["instructions"]).length <= 600, String(res["instructions"]));
   ok("client name", c.client === "gemini-cli", c.client);

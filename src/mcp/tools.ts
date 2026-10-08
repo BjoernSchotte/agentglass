@@ -139,15 +139,17 @@ function inputSchema(s: Spec): Obj {
 }
 export const TOOLS: ToolDef[] = SPECS.map((s: Spec): ToolDef => ({ name: s.name, title: s.title, description: s.desc, input: inputSchema(s), output: s.out }));
 const RO: Obj = { readOnlyHint: true, idempotentHint: true, openWorldHint: false };
-// title + annotations from 2025-03-26, outputSchema from 2025-06-18 (older clients may parse strictly)
+// annotations from 2025-03-26 (whose Tool has no title of its own: it goes in the annotations there); the tool's title
+// and outputSchema from 2025-06-18 (older clients may parse strictly)
 export function toolsList(version: string): Obj {
   const out: Obj[] = [];
   for (const t of TOOLS) {
     const o: Obj = { name: t.name };
-    if (annotated(version)) o["title"] = t.title;
+    if (structured(version)) o["title"] = t.title;
     o["description"] = t.description; o["inputSchema"] = t.input;
     if (structured(version)) o["outputSchema"] = t.output;
-    if (annotated(version)) o["annotations"] = RO;
+    if (structured(version)) o["annotations"] = RO;
+    else if (annotated(version)) { const an: Obj = { title: t.title }; for (const k of Object.keys(RO)) an[k] = RO[k]; o["annotations"] = an; }
     out.push(o);
   }
   return { tools: out };

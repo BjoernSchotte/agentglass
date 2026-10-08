@@ -28,6 +28,8 @@ function file(p: string): string { try { return readFileSync(p, "utf8"); } catch
 ok("golden 2025-11-25", g1 === file(G1).trimEnd(), "differs from " + G1 + " (MCP_GOLDEN_WRITE=1 rewrites it; a change is a contract change)");
 ok("golden 2024-11-05", g0 === file(G0).trimEnd(), "differs from " + G0);
 ok("2024-11-05: no outputSchema/title/annotations", g0.indexOf("\"outputSchema\"") < 0 && g0.indexOf("\"title\":") < 0 && g0.indexOf("\"annotations\"") < 0, "");
+const t0326 = obj(arr(toolsList("2025-03-26")["tools"])[0]) ?? {};
+ok("2025-03-26: title in the annotations (its Tool has none)", t0326["title"] === undefined && (obj(t0326["annotations"]) ?? {})["title"] === "Session" && (obj(t0326["annotations"]) ?? {})["readOnlyHint"] === true, J(t0326).slice(0, 200));
 ok("2025-03-26: annotations, no outputSchema", J(toolsList("2025-03-26")).indexOf("\"annotations\"") > 0 && J(toolsList("2025-03-26")).indexOf("\"outputSchema\"") < 0, "");
 ok("2025-11-25: outputSchema", g1.indexOf("\"outputSchema\"") > 0 && g1.indexOf("\"readOnlyHint\":true") > 0, "");
 ok("tools/list ≤ 9 KB", new TextEncoder().encode(g1).length <= 9216, String(new TextEncoder().encode(g1).length));

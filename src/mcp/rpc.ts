@@ -105,9 +105,11 @@ export function answer(c: Conn, m: Msg, toolsList: (version: string) => Obj, ins
     c.version = negotiate(str(m.params["protocolVersion"])); c.init = true;
     const ci = obj(m.params["clientInfo"]); c.client = ci ? str(ci["name"]) : "";
     const meta: Obj = {}; meta["agentglass/contract"] = c.contract;
+    // serverInfo.title: 2025-06-18 on (the test is structured(), which scriptc 0.1.7 cannot call here: SC1043)
+    const info: Obj = { name: "agentglass" }; if (c.version !== "2025-03-26" && c.version !== "2024-11-05") info["title"] = "agentglass"; info["version"] = serverVersion;
     return done([ok(m.id, {
       protocolVersion: c.version, capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "agentglass", title: "agentglass", version: serverVersion },
+      serverInfo: info,
       instructions: instructions(c), _meta: meta,
     })]);
   }
