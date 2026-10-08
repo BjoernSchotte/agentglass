@@ -70,6 +70,13 @@ const npmP = pr(1201, 1200, "00:30", 50000 * K, "npm test"); const shP = pr(1202
 ok2.set(1200, [npmP]); ok2.set(1201, [shP]); allProcs.set(1201, npmP); allProcs.set(1202, shP);
 eq("command without a shell", collectLive([oc], ok2, now).running.map((r: Run): string => r.family + " rss" + String(r.rssKb)).join(","), "npm test rss52000");
 allProcs.clear();
+// an agent with agentglass-mcp running a CLI child (which runs a shell) and its own pnpm test: only pnpm test is listed
+const mc = fxSession("claude", "M", "/w/m", "", "claude-sonnet-4-5", []); mc.pid = 1300;
+const mk = new Map<number, Proc[]>();
+mk.set(1300, [pr(1301, 1300, "10:00", 1000, "/opt/bin/agentglass-mcp"), pr(1310, 1300, "00:10", 1000, "/bin/zsh -c pnpm test")]);
+mk.set(1301, [pr(1302, 1301, "00:01", 1000, "agentglass session current --format json")]);
+mk.set(1302, [pr(1303, 1302, "00:01", 1000, "sh -c stty size < /dev/tty")]);
+eq("agentglass-mcp never a run", collectLive([mc], mk, now).running.map((r: Run): string => r.family).join(","), "pnpm test");
 
 // counts: by count, then name; ≤ 60 characters
 function run(fam: string): Run { return { path: "/p", h: "claude", family: fam, kind: "test", heavy: true, ageSec: 1, rssKb: 1, pid: 1, bg: false }; }

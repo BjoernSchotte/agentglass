@@ -8,10 +8,11 @@ import { OWN } from "../features/usage/owners.ts";
 import { currentSession, projectKey, realDir } from "../features/agentenv.ts";
 
 // code 0 found, 2 usage (prefix too short), 3 not found, 4 ambiguous (cands newest first); err/msg/hint for the CLI error
-export interface Found { s: Sess | null; code: number; cands: Sess[]; err: string; msg: string; hint: string }
+// via: how s was found — the current session's resolution ("env:<VAR>", "ancestor:pid N", both joined by "+"), else "ref"
+export interface Found { s: Sess | null; code: number; cands: Sess[]; err: string; msg: string; hint: string; via: string }
 export const MIN_PREFIX = 6;
-function found(s: Sess): Found { return { s, code: 0, cands: [], err: "", msg: "", hint: "" }; }
-function none(code: number, msg: string, hint: string): Found { return { s: null, code, cands: [], err: code === 2 ? "usage" : "not_found", msg, hint }; }
+function found(s: Sess, via = "ref"): Found { return { s, code: 0, cands: [], err: "", msg: "", hint: "", via }; }
+function none(code: number, msg: string, hint: string): Found { return { s: null, code, cands: [], err: code === 2 ? "usage" : "not_found", msg, hint, via: "" }; }
 // copies of one session (same harness and id: a Claude session under two project dirs, a project moved or copied with its
 // ~/.claude dir) stand for it as: the live copy (the one its process writes, procs.ts), then the one at home (owners.ts
 // OWN.home, the rule that books their shared messages), then the newest. Every copy shows the session's figures (ledger.ts)
@@ -30,7 +31,7 @@ function pick(ms: Sess[], ref: string): Found {
   const c = distinct(ms);
   if (c.length === 1) return found(c[0]);
   const refs: string[] = []; for (const x of c.slice(0, 5)) refs.push(x.h + ":" + x.id); // each resolves: twins are one session
-  return { s: null, code: 4, cands: c, err: "ambiguous", msg: "session reference " + ref + " is ambiguous (" + String(c.length) + " sessions)", hint: "use one of: " + refs.join(", ") + (c.length > 5 ? ", …" : "") };
+  return { s: null, code: 4, cands: c, err: "ambiguous", msg: "session reference " + ref + " is ambiguous (" + String(c.length) + " sessions)", hint: "use one of: " + refs.join(", ") + (c.length > 5 ? ", …" : ""), via: "" };
 }
 // matches of a reference: the ones in scope decide; only out-of-scope ones → not found without naming them (no ids leak)
 function among(ms: Sess[], ref: string, ok: (s: Sess) => boolean): Found {
@@ -71,7 +72,7 @@ export function lastSession(cwd: string, cur: Sess | null): Sess | null {
 export function resolveRef(ref: string, root: boolean, ok: (s: Sess) => boolean): Found {
   if (ref === "current" || ref === "parent") {
     const c = currentSession(root || ref === "parent");
-    if (c.s) return found(c.s);
+    if (c.s) return found(c.s, c.via);
     const f = none(3, "no current session" + (c.via ? " (" + c.via + ")" : ""), c.hint); f.err = c.code; return f;
   }
   if (ref === "last") {

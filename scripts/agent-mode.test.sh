@@ -80,6 +80,10 @@ cd "$p1"
 eq "session current" "$(agent session current --fields id,costUsd,errors | jq -c '[.id, (.errors | length), (.costUsd > 0)]')" "[\"$CL\",1,true]"
 eq "session current: one line" "$(agent session current --fields id | wc -l | tr -d ' ')" 1
 eq "session last" "$(agent session last --fields id | jq -r '.id')" "$CX"
+# via: how the session was resolved (agentglass-mcp and doctor show it)
+eq "session current: via env" "$(agent session current --fields via)" '{"via":"env:CLAUDE_CODE_SESSION_ID"}'
+eq "session <id>: via ref" "$(agent session "$CX" --fields via)" '{"via":"ref"}'
+eq "session last: via ref" "$(agent session last --fields via)" '{"via":"ref"}'
 set +e; agent session abcdef > /dev/null 2> "$t/e"; rc=$?; set -e
 eq "ambiguous prefix" "$rc|$(jq -r '.error.code' < "$t/e")" "4|ambiguous"
 set +e; agent session zzzzzz > /dev/null 2>&1; rc=$?; set -e

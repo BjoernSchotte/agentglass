@@ -5,6 +5,7 @@ import { newSess } from "../model/types.ts";
 import { sessions } from "../model/sessions.ts";
 import { S } from "../state.ts";
 import { H } from "../hooks.ts";
+import { toolShells } from "./detect.ts";
 import { type Obs, etimeSec, loopRun, pendingTool, toolCmds, approvalNote, approvalWait, stuckOf, alarmOf, approvalGuess, nextAlarm } from "./watchdog.ts";
 
 let bad = 0;
@@ -28,6 +29,13 @@ kids.set(3, [pr(4, 3, "12:00", "sleep 999")]);
 const cmds = toolCmds(1, kids);
 eq("cmds skip mcp", String(cmds.length), "1");
 eq("cmd name", cmds.length ? cmds[0].name : "", "sleep");
+// agentglass-mcp (spawned directly by the harness) and its agentglass child are never the agent's tool commands, even
+// when the child runs a shell itself (format.ts stty); the agent's own shell is
+const mk = new Map<number, Proc[]>();
+mk.set(100, [pr(200, 100, "10:00", "/opt/bin/agentglass-mcp"), pr(400, 100, "00:10", "/bin/zsh -c pnpm test")]);
+mk.set(200, [pr(300, 200, "00:01", "agentglass session current --format json")]);
+mk.set(300, [pr(310, 300, "00:01", "sh -c stty size < /dev/tty")]);
+eq("toolShells skip agentglass-mcp", toolShells(100, mk).map((p: Proc): string => String(p.pid)).join(","), "400");
 
 const now = 1000000000;
 const base: Obs = { now, mtime: now - 45000, busy: true, evs: [ev("user", "x"), call], cpu: flat(10, 0.2), cmds: [], subsActive: false };

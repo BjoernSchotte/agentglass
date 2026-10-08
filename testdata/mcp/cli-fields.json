@@ -135,7 +135,8 @@
   "files",
   "repeats",
   "subagents",
-  "costBasis"
+  "costBasis",
+  "via"
  ],
  "sessions": [
   "id",
