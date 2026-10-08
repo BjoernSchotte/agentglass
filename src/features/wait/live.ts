@@ -23,13 +23,13 @@ export function liveNow(now: number): LiveWait { return now - LIVE.cur.at < 5000
 
 // ── argv ──
 // one shell word from i on, quotes removed: '…' literal, "…" with \ escapes, bare characters with \ escapes, joined until
-// an unquoted blank. Claude Code quotes the eval word with '"'"' for a quote inside (older builds '\''): both are a
-// word of concatenated parts here.
+// an unquoted blank or operator (; & | < > ( )). Claude Code quotes the eval word with '"'"' for a quote inside (older
+// builds '\''): both are a word of concatenated parts here.
 function word(a: string, i: number): string {
   let o = ""; const L = a.length;
   while (i < L) {
     const c = a.charCodeAt(i);
-    if (c === 32 || c === 9 || c === 10) break;
+    if (c === 32 || c === 9 || c === 10 || ";&|<>()".indexOf(a.charAt(i)) >= 0) break;
     if (c === 39) { const e = a.indexOf("'", i + 1); if (e < 0) return o + a.slice(i + 1); o += a.slice(i + 1, e); i = e + 1; continue; }
     if (c === 34) {
       let j = i + 1;
@@ -46,10 +46,11 @@ function word(a: string, i: number): string {
   }
   return o;
 }
-// the command a tool shell runs, from its argv as one string: Claude Code's `… && eval <word> …` (the same on Linux and
-// macOS: only the shell differs), else the text after -c (combined flags too)
+// the command a tool shell runs, from its argv as one string: Claude Code's `… && eval <word> … && pwd -P …` (the same
+// on Linux and macOS: only the shell differs), else the text after -c (combined flags too; an eval in another
+// harness's -c text is part of its command)
 export function shellCmd(args: string): string {
-  let ev = args.indexOf(" && eval "); if (ev >= 0) return word(args, ev + 9);
+  let ev = args.indexOf(" && eval "); if (ev >= 0 && args.indexOf(" && pwd -P", ev) > 0) return word(args, ev + 9);
   ev = args.indexOf(" eval "); if (ev >= 0 && ev + 6 < args.length && "'\"".indexOf(args.charAt(ev + 6)) >= 0) return word(args, ev + 6);
   const ws = args.split(" "); let off = (ws[0] ?? "").length + 1;
   for (let k = 1; k < ws.length; k++) {

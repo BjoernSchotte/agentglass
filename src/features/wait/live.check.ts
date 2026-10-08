@@ -32,6 +32,10 @@ eq("eval '\"'\"' quotes", shellCmd("/usr/bin/zsh -c source /h/s.sh 2>/dev/null |
 eq("eval word in double quotes", shellCmd("/bin/bash -c eval \"echo \\\"hi\\\" \\$HOME\" < /dev/null && pwd -P >| /tmp/c-cwd"), "echo \"hi\" $HOME");
 eq("eval bare word", shellCmd("/bin/zsh -c source /h/s.sh && eval ls\\ -la && pwd -P"), "ls -la");
 eq("eval with lines before it", shellCmd("/usr/bin/zsh -c source /h/s.sh 2>/dev/null || true && export A='1'\nexport B='2'\n: && setopt NO_EXTENDED_GLOB 2>/dev/null || true && eval 'pnpm test' < /dev/null && pwd -P >| /tmp/c-cwd"), "pnpm test");
+// only Claude's wrapper (… && eval <word> … && pwd -P) is unwrapped: an eval inside another harness's -c text is the command's own
+eq("eval in a -c text", shellCmd("bash -c make all && eval foo"), "make all && eval foo");
+eq("eval word ends at an operator", shellCmd("/bin/zsh -c source /h/s.sh && eval 'pnpm test'</dev/null && pwd -P >| /tmp/c-cwd"), "pnpm test");
+eq("eval word, quote never closed", shellCmd("/bin/zsh -c source /h/s.sh && eval 'pnpm test && pwd -P"), "pnpm test && pwd -P");
 
 // a real shell in Claude Code's format, read back from the process table (the macOS CI job runs this in the ffi build)
 {
