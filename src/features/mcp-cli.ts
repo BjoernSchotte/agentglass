@@ -33,14 +33,14 @@ export function regs(bin: string, opts: string[], scope: string, which: string[]
     let argv: string[] = []; let print = "";
     const srv = [bin].concat(opts);
     if (h === "claude") argv = ["claude", "mcp", "add", "--scope", proj ? "project" : "user", "agentglass", "--"].concat(srv);
-    else if (h === "codex") {
+    else if (h === "codex") { // Codex registers servers per user only: --scope project cannot narrow it
       argv = ["codex", "mcp", "add", "agentglass", "--"].concat(srv);
-      print = line(argv) + "\nor in ~/.codex/config.toml:\n  [mcp_servers.agentglass]\n  command = " + JSON.stringify(bin) + "\n  args = [" + opts.map((o: string) => JSON.stringify(o)).join(", ") + "]";
+      print = line(argv) + (proj ? "  (Codex has no project scope: this is for every project)" : "") + "\nor in ~/.codex/config.toml:\n  [mcp_servers.agentglass]\n  command = " + JSON.stringify(bin) + "\n  args = [" + opts.map((o: string) => JSON.stringify(o)).join(", ") + "]";
     }
     // gemini's own flags end at "--": the server's options after it
     else if (h === "gemini") argv = ["gemini", "mcp", "add", "--scope", proj ? "project" : "user", "agentglass", bin].concat(opts.length ? ["--"].concat(opts) : []);
     else if (h === "pi") argv = ["pi", "mcp", "add"].concat(proj ? ["--local"] : [], ["agentglass", "--"], srv);
-    else if (h === "kiro") { argv = ["kiro-cli", "mcp", "add", "--name", "agentglass", "--scope", proj ? "workspace" : "global", "--command", bin]; for (const o of opts) argv.push("--args", o); }
+    else if (h === "kiro") { argv = ["kiro-cli", "mcp", "add", "--name", "agentglass", "--scope", proj ? "workspace" : "global", "--command", bin]; for (const o of opts) argv.push("--args=" + o); } // (attached: clap takes a value that starts with "-" only so)
     else print = "\"mcp\": {\"agentglass\": {\"type\": \"local\", \"command\": [" + srv.map((x: string) => JSON.stringify(x)).join(", ") + "], \"enabled\": true}}\nprint-only: add it to " + (proj ? "opencode.json in the project" : "~/.config/opencode/opencode.json");
     out.push({ harness: h, found, print: print || line(argv), argv });
   }

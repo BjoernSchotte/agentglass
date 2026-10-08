@@ -16,12 +16,13 @@ ok("claude user", J(one("claude", "user", o2).argv) === J(["claude", "mcp", "add
 ok("claude project", J(one("claude", "project", []).argv) === J(["claude", "mcp", "add", "--scope", "project", "agentglass", "--", "agentglass-mcp"]), J(one("claude", "project", []).argv));
 ok("claude print", one("claude", "user", o2).print === "claude mcp add --scope user agentglass -- agentglass-mcp --all-projects --content", one("claude", "user", o2).print);
 ok("codex", J(one("codex", "user", o2).argv) === J(["codex", "mcp", "add", "agentglass", "--", "agentglass-mcp", "--all-projects", "--content"]), J(one("codex", "user", o2).argv));
+ok("codex project scope: said to be per user", one("codex", "project", o2).print.indexOf("no project scope") > 0 && one("codex", "user", o2).print.indexOf("no project scope") < 0, one("codex", "project", o2).print);
 ok("codex print: the config.toml table", one("codex", "user", o2).print.indexOf("[mcp_servers.agentglass]\n  command = \"agentglass-mcp\"\n  args = [\"--all-projects\", \"--content\"]") > 0, one("codex", "user", o2).print);
 ok("gemini user", J(one("gemini", "user", []).argv) === J(["gemini", "mcp", "add", "--scope", "user", "agentglass", "agentglass-mcp"]), J(one("gemini", "user", []).argv));
 ok("gemini options after --", J(one("gemini", "project", ["--redact"]).argv) === J(["gemini", "mcp", "add", "--scope", "project", "agentglass", "agentglass-mcp", "--", "--redact"]), J(one("gemini", "project", ["--redact"]).argv));
 ok("pi user", J(one("pi", "user", []).argv) === J(["pi", "mcp", "add", "agentglass", "--", "agentglass-mcp"]), J(one("pi", "user", []).argv));
 ok("pi project", J(one("pi", "project", ["--redact"]).argv) === J(["pi", "mcp", "add", "--local", "agentglass", "--", "agentglass-mcp", "--redact"]), J(one("pi", "project", ["--redact"]).argv));
-ok("kiro global", J(one("kiro", "user", ["--redact"]).argv) === J(["kiro-cli", "mcp", "add", "--name", "agentglass", "--scope", "global", "--command", "agentglass-mcp", "--args", "--redact"]), J(one("kiro", "user", ["--redact"]).argv));
+ok("kiro global", J(one("kiro", "user", ["--redact"]).argv) === J(["kiro-cli", "mcp", "add", "--name", "agentglass", "--scope", "global", "--command", "agentglass-mcp", "--args=--redact"]), J(one("kiro", "user", ["--redact"]).argv));
 ok("kiro workspace", J(one("kiro", "project", []).argv) === J(["kiro-cli", "mcp", "add", "--name", "agentglass", "--scope", "workspace", "--command", "agentglass-mcp"]), J(one("kiro", "project", []).argv));
 const oc = one("opencode", "user", o2);
 ok("opencode print-only", oc.argv.length === 0 && oc.print.indexOf("\"mcp\": {\"agentglass\": {\"type\": \"local\", \"command\": [\"agentglass-mcp\", \"--all-projects\", \"--content\"], \"enabled\": true}}") >= 0 && oc.print.indexOf("~/.config/opencode/opencode.json") >= 0, oc.print);
