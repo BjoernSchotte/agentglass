@@ -69,6 +69,7 @@ import "./features/prices.ts";
 import "./features/update.ts";
 import "./features/otlp/export.ts";
 import "./features/fleet/cli.ts";
+import "./features/mcp-cli.ts";
 import "./features/fleet/tui.ts";
 import "./features/hub/receive.ts";
 

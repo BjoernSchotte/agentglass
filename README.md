@@ -1345,6 +1345,60 @@ For your `CLAUDE.md` / `AGENTS.md`:
 
 > Run `agentglass session current` to see this session's cost and failed tool calls.
 
+## MCP server
+
+`agentglass-mcp` gives coding agents agentglass as native [MCP](https://modelcontextprotocol.io) tools, so they find
+it without a `CLAUDE.md` paragraph: names, descriptions and JSON schemas come with every session. It is a small
+stdio server, one per agent session, that holds nothing: each tool call runs one `agentglass` CLI child in agent
+mode and returns its JSON (~0.5–1 s warm). Idle it uses ~0.3 MB of private memory and no CPU. It ships beside
+`agentglass` in every archive, `install.sh` and the Homebrew formula.
+
+```sh
+agentglass mcp install             # prints the registration for each agent on PATH (nothing changes)
+agentglass mcp install --write     # runs each agent's own `mcp add` (asks y/N per agent; --yes without a terminal)
+agentglass mcp doctor              # starts agentglass-mcp as an agent would: versions, tools, "current", time
+```
+
+`install` prints `claude mcp add --scope user agentglass -- agentglass-mcp`, `codex mcp add …` (and the
+`config.toml` table), `gemini mcp add …`, `pi mcp add …`, `kiro-cli mcp add …`, and for OpenCode the `opencode.json`
+snippet to paste (print-only). `--scope project` registers for this project only. agentglass never edits an agent's
+config file itself.
+
+| tool | answers |
+|---|---|
+| `session` | one session: cost, tokens, models, tools, errors, files; no `ref` = the calling session |
+| `sessions` | this project's sessions, newest first (`since`, `live`, `harness`, `filter`, `limit`, `cursor`, `fields`) |
+| `errors` | failed tool calls, newest first; with `ref`, that session's |
+| `cost` | today / 7 days / month and the budget, or rows `by` day, model, harness, project, session |
+| `triage` | what stands out in a selection (failing or slow calls, expensive sessions) |
+| `compare` | two sessions, or two groups of sessions (filter expressions `a`, `b`) |
+| `related` | what every agent in the project did around an event, conflicts flagged |
+| `contention` | "start my tests now?": heavy commands other agents run on this machine, `go` true/false |
+| `waits` | where agent time goes: wall time per command family, kind or tool |
+| `fleet` | the fleet's hosts (`configured: false` without a fleet) |
+| `prices` | models without a price (why a cost is `null`) |
+
+**Which session is "current"**: the agent process that started the server, found through the process tree (the
+server drops session-id variables from the environment: a nested agent inherits its parent's id, and a long-lived
+server's id goes stale after `/clear`). `session` reports `via` (`ancestor:pid N`, or `env:<VAR>` where no process
+list is readable).
+
+**Privacy**, as for agent mode: the agent sees its own project only, `--redact` applies to every answer, and
+transcript content (tool results, later prompts, assistant text, thinking, subagent task prompts) stays out unless
+the server runs with `--content`. Titles, tool names, command lines and file paths are kept (the CLI shows them in
+agent mode too). Answers go to the agent's model provider.
+
+Server options go in the registered command (`agentglass mcp install` passes them through): `--all-projects`,
+`--content`, `--redact`, `--max-bytes N` (answer size cap, default 24000; longer lists page with `cursor`),
+`--timeout S` (per call, default 50), `--log` (diagnostics on stderr). The first call after an install indexes all
+history and can take minutes: run `agentglass` once first.
+
+| host | status |
+|---|---|
+| Gemini CLI, pi | verified (isolated config, `gemini mcp list` / `pi mcp list`) |
+| Claude Code, Codex, Kiro CLI | expected to work (stdio, `mcp add`); not run in tests |
+| OpenCode | should work, unverified (`opencode mcp list` does not run without a terminal) |
+
 ## Custom agent commands
 
 If your agents run through wrappers (custom settings, profiles, proxies), point agentglass at
