@@ -17,8 +17,11 @@ export const CACHE_DIR = cacheDir();
 export const CALLS_DIR = join(CACHE_DIR, "calls");
 const FORMAT = 3; // 3: family hints of cut command lines (hm); 2: command/file texts as references into the ledger day counters (else front-coded), delta call times, call id prefix
 // A format-2 file reads on (it has no hints) unless a command text in it is 200 characters long and the cut may have
-// changed its family (calls.ts CMDS.mayHide): its hint is not in the file, so that session indexes again (once)
+// changed its family (calls.ts CMDS.mayHide): its hint is not in the file, so that session indexes again (once). The
+// same for a Codex session that used exec / exec_command: a build before format 3 ended a yielded run at its yield
+// (harness/codex.ts), in its rows and in the ledger's day sums alike.
 const CUT = 200;
+const YIELDING = ["exec", "exec_command"];
 
 // two 32-bit FNV-1a hashes with different offset bases, 16 hex chars (scriptc has no node:crypto, no toString(16))
 function fnv(s: string, h0: number): number { let h = h0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
@@ -197,6 +200,7 @@ function readCF(body: string, lite: boolean, texts: boolean): CF | null { const 
 // a file of a format this build reads, for this path at this offset, with its hints aligned to its commands
 function fits(o: CF, path: string, a: Acc): boolean {
   if ((o.v !== FORMAT && o.v !== 2) || o.path !== path || o.off !== a.off) return false;
+  if (o.v === 2) for (const t of o.tool) if (YIELDING.indexOf(t) >= 0) return false;
   if (o.hm.length === 0) return true;
   if (o.hm.length !== o.cm.length) return false;
   for (let i = 0; i < o.hm.length; i++) { const h = o.hm[i] ?? []; if (h.length && h.length !== (o.cm[i] ?? []).length) return false; }

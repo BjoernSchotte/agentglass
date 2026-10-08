@@ -76,6 +76,17 @@ ok("literals front-coded, references for the rest", bb.indexOf("only in the row"
   ok("hints misaligned → null", decodeCalls(hb.split("\"hm\":[[").join("\"hm\":[[7,"), "/s/h.jsonl", h) === null, "");
   CMDS.hint = (full: string): string => "";
 }
+// a format-2 file of a Codex session that used exec / exec_command (calls a yield may have cut short, harness/codex.ts):
+// it indexes again, once (its rows and day sums would keep the yield's duration); other format-2 files read on
+{
+  const x = newAcc(); x.off = 9; const xd = bucket(x, 0, iso);
+  pend(x, xd, tool(x, xd, "exec", "", MQ_MSG), "exec", "call_1", 0, iso, "", ["pnpm test"]);
+  const x2 = encodeCalls("/s/x.jsonl", x).split("{\"v\":3,").join("{\"v\":2,");
+  ok("format 2 with Codex exec calls: index again", decodeCalls(x2, "/s/x.jsonl", x) === null && scanCalls(x2, "/s/x.jsonl", x, false) === null, "");
+  ok("format 3 with Codex exec calls reads", decodeCalls(encodeCalls("/s/x.jsonl", x), "/s/x.jsonl", x) !== null, "");
+  const g = encodeCalls("/s/b.jsonl", b).split("{\"v\":3,").join("{\"v\":2,");
+  ok("format 2 without them reads", decodeCalls(g, "/s/b.jsonl", b) !== null && scanCalls(g, "/s/b.jsonl", b, false) !== null, "");
+}
 // retention
 const old = newAcc(); const od = bucket(old, Date.parse("2026-01-01T10:00:00Z"), ""); tool(old, od, "Bash", "", MQ_MSG);
 const nd = bucket(old, Date.parse("2026-10-01T10:00:00Z"), ""); tool(old, nd, "Read", "", MQ_MSG);
