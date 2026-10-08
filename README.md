@@ -91,6 +91,21 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
   3 s later). In tmux the title alone decides.
 - **First-class in herdr.** Agents in [herdr](#herdr) panes get send, jump, resume in a new tab, the approval `◆` from
   herdr's own `blocked` state, exact process ↔ session links, herdr's state in the row and grouping by herdr workspace.
+- **See what your agents wait on.** The **Wait** tab (`5`) and `agentglass wait` rank command families (`pnpm test`,
+  `tsc`, `cargo build`, `gh run watch` …) by the agent time they eat, show when heavy commands ran at the same time
+  and slowed each other down, and can alert on contention. `agentglass wait --check` lets an agent ask "should I start
+  my test run now?". See [What do my agents wait on?](#what-do-my-agents-wait-on)
+- **Several machines, one view.** [Fleet](#several-machines-fleet) pulls other hosts' sessions over SSH (a
+  forced-command key keeps it read-only) with exact cross-host totals; hosts you can't reach send OpenTelemetry to an
+  [`agentglass receive`](#otlp-a-hub-for-hosts-you-cannot-reach-agentglass-receive) hub.
+- **OpenTelemetry out.** Sessions export as GenAI traces plus a live state/alert log stream to any OTLP backend, with
+  TLS/mTLS and redaction at the source. See [Send to an OTLP backend](#send-to-an-otlp-backend).
+- **Your agents can ask it, too.** Inside a coding agent the CLI answers in JSON, and `agentglass-mcp` exposes it as
+  an MCP server — own session, recent errors, cost, triage, related events, wait — read-only and scoped to the
+  agent's project. `agentglass mcp install` prints the setup for Claude Code, Codex, Gemini CLI, OpenCode, pi and
+  Kiro. See [MCP server](#mcp-server).
+- **Prices you control.** Unpriced models (gateway, new or internal ones) get a price or an alias with `$` in Stats or
+  `agentglass prices`, and the whole history re-prices in under a second. See [Prices](#prices).
 - **It spots stuck agents.** Tool-call loops, stalled runs, commands running for 10+ minutes and
   silent CPU burners get a red `⚠` with the reason.
 - **Your own alarms.** `~/.agentglass/rules.json` tunes or disables those detectors and adds rules: session cost,
@@ -127,12 +142,14 @@ Every screen in this README and the launch video was recorded this way.
 
 ## Tiny, fast, local
 
-- **~1.5 MB native binary**, starts instantly, zero runtime dependencies. It's TypeScript
+- **One native binary** (~15 MB, a 7 MB download), starts instantly, zero runtime dependencies. It's TypeScript
   compiled to native code with [scriptc](https://github.com/vercel-labs/scriptc), with no Node,
   no Bun and no `node_modules` at runtime.
-- **Local only.** It reads the agents' own session logs from disk and never phones home. The
-  exceptions are explicit: an opt-in community price list (see [Prices](#prices)), and
-  `agentglass update`, which asks GitHub for releases only when you run it.
+- **Local only.** It reads the agents' own session logs from disk and never phones home. Everything that
+  touches the network is opt-in and explicit: the community price list (see [Prices](#prices)),
+  `agentglass update` (asks GitHub for releases only when you run it), [fleet](#several-machines-fleet) (SSH to
+  hosts you list), [OTLP export](#send-to-an-otlp-backend) to a backend you configure, and
+  [`agentglass receive`](#otlp-a-hub-for-hosts-you-cannot-reach-agentglass-receive) (listens on loopback unless told otherwise).
 - **Nothing to set up.** It works with whatever is already in your home directory. Usage indexing
   is incremental and cached in `~/.agentglass/cache`, so restarts pick up where they left off —
   one-shot commands (`--json`, `cost`, `sessions`, …) too: the next run reads only what was written
