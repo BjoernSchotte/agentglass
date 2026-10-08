@@ -215,7 +215,7 @@ interface ErrItem { s: Sess; tool: string; t: number; ts: string; ms: number; id
 // for older days or without rows, the ledger's recent failures (last 10 per tool per day); source says which were read
 export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope, cf: CliFilter): { rows: Obj[]; source: string } {
   let ss: Sess[] = [];
-  if (ref) { const f = resolveOrFail(ref, false, sc); ss = [f].concat(kidsOf(f)); }
+  if (ref) { const f = resolveOrFail(ref, false, sc).s; ss = [f].concat(kidsOf(f)); }
   else for (const s of sessions.values()) if (s.mtime >= sinceMs && visible(s, sc)) ss.push(s);
   const fam = new Set<string>();
   for (const s of ss) {
@@ -360,7 +360,8 @@ export function qopts(cmd: string, args: string[], allowed: string[], refOk: boo
 // --filter / --pinned with --harness (and --live) as clauses; a bad expression exits 2 with a caret
 export function qfilter(o: QOpts): CliFilter { return cliFilter(o.filters, o.harness, o.live, o.pinned, false); }
 // a reference that must resolve (exit 2/3/4 otherwise); an id outside the agent-mode scope is not found (current/parent are the agent's own)
-function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
+interface Resolved { s: Sess; via: string }
+function resolveOrFail(ref: string, root: boolean, sc: Scope): Resolved {
   const f: Found = resolveRef(ref, root, (x: Sess): boolean => visible(x, sc));
   if (!f.s) {
     if (f.code === 4) cliError("ambiguous", f.msg, "candidates: " + f.cands.slice(0, 5).map((c: Sess) => c.h + ":" + c.id).join(", ") + (f.cands.length > 5 ? ", …" : ""), 4);
@@ -368,7 +369,7 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Sess {
   }
   const s = f.s as Sess;
   if (ref !== "current" && ref !== "parent" && !visible(s, sc)) cliError("out_of_scope", "session " + s.id + " belongs to another project", "use --all-projects", 3);
-  return s;
+  return { s, via: f.via };
 }
 export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
 export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]); // --by model: where each model's price comes from, alias-priced (≈)
@@ -385,15 +386,17 @@ export function printEnvelope(rows: Obj[], source: string, sc: Scope, f: Fmt, ta
 
 const ERR_FIELDS = ["ts", "harness", "session", "tool", "arg", "text", "durationMs"];
 const SESS_FIELDS = JSON_FIELDS.concat(["project"]);
-// tools and subagents become lists here (the --json counts are their lengths' sums / lengths)
-const SESSION_FIELDS = JSON_FIELDS.filter((f: string) => f !== "tools" && f !== "subagents").concat(["turns", "wallMs", "activeMs", "models", "tools", "errors", "files", "repeats", "subagents", "costBasis"]);
+// tools and subagents become lists here (the --json counts are their lengths' sums / lengths); via: how the session was
+// resolved (current: "env:<VAR>", "ancestor:pid N" or both joined by "+"; any other ref: "ref")
+const SESSION_FIELDS = JSON_FIELDS.filter((f: string) => f !== "tools" && f !== "subagents").concat(["turns", "wallMs", "activeMs", "models", "tools", "errors", "files", "repeats", "subagents", "costBasis", "via"]);
 const LIST_COLS = ["updated", "harness", "title", "project", "costUsd", "tools", "status"];
 function session(args: string[]): void {
   const o = qopts("session", args, ["--root"], true);
   const sc = agentScope(args);
   discover();
-  const s = resolveOrFail(o.ref || (agentHost().on ? "current" : "last"), o.root, sc);
-  out(formatRows([sessionObj(s)], o.f, true, [], SESSION_FIELDS.concat(MUX_FLAT), false));
+  const r = resolveOrFail(o.ref || (agentHost().on ? "current" : "last"), o.root, sc);
+  const so = sessionObj(r.s); so["via"] = r.via;
+  out(formatRows([so], o.f, true, [], SESSION_FIELDS.concat(MUX_FLAT), false));
 }
 function list(args: string[]): void {
   const o = qopts("sessions", args, ["--since", "--cwd", "--limit", "--live", "--subagents", "--harness", "--filter", "--pinned"], false);

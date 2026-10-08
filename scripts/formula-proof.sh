@@ -4,7 +4,8 @@
 # <assets dir>: install from these local archives instead of the release (release-dry-run.yml: nothing is published yet);
 # the audit still reads the formula as it would ship.
 # It goes into a local clone of the real tap, so its conflict with agentglass-dev resolves, then: brew audit --strict,
-# install, test, and agentglass-receive-tls --version when the formula installed it. Leaves nothing installed.
+# install, test, agentglass-mcp --version, and agentglass-receive-tls --version when the formula installed it. Leaves
+# nothing installed.
 # `--except=version`: the url interpolates #{version} (the tap's update-formula.yml, the fallback, only swaps the version
 # line and the checksums), which strict audit calls redundant; every other check stays on.
 set -e
@@ -37,5 +38,6 @@ fi
 brew install --formula "$tap/agentglass"
 brew test "$tap/agentglass"
 "$(brew --prefix)/bin/agentglass" --version
+"$(brew --prefix)/bin/agentglass-mcp" --version
 if [ -x "$(brew --prefix)/bin/agentglass-receive-tls" ]; then "$(brew --prefix)/bin/agentglass-receive-tls" --version; fi
 echo "formula-proof: audit, install and test passed"

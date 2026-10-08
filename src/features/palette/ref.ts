@@ -217,7 +217,7 @@ export function resolve(r: Ref): Target {
   if (r.harness && f.code === 3) { // <harness>:<prefix> (findSession takes exact ids there): the id prefix within that harness
     const ms: Sess[] = []; for (const s of sessions.values()) if (s.h === r.harness && s.id.startsWith(r.sess)) ms.push(s);
     const ds = distinct(ms); // twins of one session are one: the copy that stands for it (sessref.ts owns)
-    if (ds.length === 1) f = { s: ds[0], code: 0, cands: [], err: "", msg: "", hint: "" };
+    if (ds.length === 1) f = { s: ds[0], code: 0, cands: [], err: "", msg: "", hint: "", via: "ref" };
     else if (ds.length > 1) return miss(4, "session reference " + r.harness + ":" + r.sess + " is ambiguous (" + String(ds.length) + " sessions)", ds);
   }
   if (f.code === 4) return miss(4, f.msg, f.cands);

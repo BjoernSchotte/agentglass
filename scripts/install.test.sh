@@ -60,6 +60,13 @@ must --prefix "$t/p6" --version 2026.9.6
 eq "tls binary installed" "$("$t/p6/agentglass-receive-tls" 2>/dev/null)" tls
 must --prefix "$t/p6" --version 2026.9.1
 eq "tls binary kept by an archive without it" "$("$t/p6/agentglass-receive-tls" 2>/dev/null)" tls
+# agentglass-mcp ships in the archive: installed next to agentglass; an archive without it (older releases) keeps it
+d="$t/dl/v2026.9.7"; mkdir -p "$d/x"; printf '#!/bin/sh\necho 2026.9.7\n' > "$d/x/agentglass"; printf '#!/bin/sh\necho 2026.9.7\n' > "$d/x/agentglass-mcp"; chmod 755 "$d/x/"*
+tar -czf "$d/$asset" -C "$d/x" agentglass agentglass-mcp; rm -rf "$d/x"; (cd "$d" && $H "$asset" > SHA256SUMS)
+must --prefix "$t/p7" --version 2026.9.7
+eq "agentglass-mcp installed" "$("$t/p7/agentglass-mcp" 2>/dev/null)" 2026.9.7
+must --prefix "$t/p7" --version 2026.9.1
+eq "agentglass-mcp kept by an archive without it" "$("$t/p7/agentglass-mcp" 2>/dev/null)" 2026.9.7
 # a download cut off mid-script runs nothing
 lines=$(wc -l < "$here/install.sh")
 for pct in 25 50 75 90 95; do

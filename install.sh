@@ -69,6 +69,12 @@ prefix=$(cd "$prefix" && pwd -P)   # physical path: agentglass compares it with 
 new="$prefix/.agentglass.new.$$"
 cp "$tmp/x/agentglass" "$new" 2>/dev/null || die "cannot write to $prefix — choose another --prefix"
 mv -f "$new" "$prefix/agentglass" || { rm -f "$new"; die "cannot write to $prefix — choose another --prefix"; }
+# the MCP server from the same (verified) archive, next to agentglass (agentglass mcp install registers it); an older
+# release without it leaves an installed one alone
+if tar -xzf "$tmp/$asset" -C "$tmp/x" agentglass-mcp 2>/dev/null && [ -f "$tmp/x/agentglass-mcp" ]; then
+  chmod 755 "$tmp/x/agentglass-mcp"
+  cp "$tmp/x/agentglass-mcp" "$new" 2>/dev/null && mv -f "$new" "$prefix/agentglass-mcp" || { rm -f "$new"; echo "note: agentglass-mcp not installed (the MCP server: agentglass mcp install)"; }
+fi
 # the optional HTTPS receiver from the same (verified) archive: next to agentglass, where `agentglass receive --tls-cert` looks
 if tar -xzf "$tmp/$asset" -C "$tmp/x" agentglass-receive-tls 2>/dev/null && [ -f "$tmp/x/agentglass-receive-tls" ]; then
   chmod 755 "$tmp/x/agentglass-receive-tls"

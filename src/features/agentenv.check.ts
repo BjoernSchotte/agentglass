@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Proc, Sess } from "../model/types.ts";
 import { newSess } from "../model/types.ts";
+import { SESSION_VARS as MCP_VARS } from "../mcp/run.ts";
 import { sessions } from "../model/sessions.ts";
-import { type AgentHost, detectHost, ancestry, currentFrom, parseDur, setHost, interactive, markerHarnesses, innerHost } from "./agentenv.ts";
+import { type AgentHost, SESSION_VARS, detectHost, ancestry, currentFrom, parseDur, setHost, interactive, markerHarnesses, innerHost } from "./agentenv.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -87,6 +88,9 @@ eq("bad", String(parseDur("x")), "-1");
 eq("no unit", String(parseDur("30")), "-1");
 setHost({ on: true, harness: "", session: "", via: "flag" });
 eq("agent: never interactive", String(interactive()), "false");
+// agentglass-mcp drops these from its children's env: its copy (src/mcp/run.ts, no feature imports) must stay equal
+eq("session vars", JSON.stringify(SESSION_VARS), JSON.stringify(["CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "CODEX_THREAD_ID", "KIRO_SESSION_ID", "PI_SESSION_ID"]));
+eq("session vars: the MCP copy", JSON.stringify(MCP_VARS), JSON.stringify(SESSION_VARS));
 
 console.log(bad ? bad + " failed" : "agentenv: all checks passed");
 if (bad) process.exit(1);

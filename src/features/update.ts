@@ -153,7 +153,8 @@ async function update(args: string[]): Promise<number> {
       return fail("downloaded binary failed its self-check (expected " + tv + " " + tch + ") — nothing changed", 1);
     try { copyFileSync(exe, exe + ".prev"); renameSync(cand, exe); }
     catch (e) { return fail("cannot replace " + exe + ": " + String(e), 1); }
-    updateTls(arc, x, exe);
+    updateSibling(arc, x, exe, "agentglass-mcp", true, "");
+    updateSibling(arc, x, exe, "agentglass-receive-tls", false, "built-in HTTPS off; use tailscale serve or a TLS proxy");
     if (!o.tag) try { setConfig("update", "channel", tch); } catch (e) { errLine("agentglass update", "config", "channel not saved: " + (e instanceof Error ? e.message : String(e)), ""); } // --tag is one-off: the saved channel stays
     rewriteInstallJson(exe, tch, tv);
     say(o, "updated " + BUILD.version + " → " + tv + " (" + tch + ")", { updated: true, from: BUILD.version, to: tv, channel: tch, tag: target.tag });
@@ -161,22 +162,23 @@ async function update(args: string[]): Promise<number> {
   } finally { rmrf(work); }
 }
 
-// the optional HTTPS receiver ships in the same archive (otlp-hub 11.4): replaced next to agentglass when the archive
-// has it, so `agentglass receive --tls-cert` never runs an older one
-// (an archive without it — its C build failed for this target — removes the old one: receive refuses a binary of
-// another version anyway)
-function updateTls(arc: string, x: string, exe: string): void {
-  const dst = join(dirname(exe), "agentglass-receive-tls");
-  try { execFileSync("tar", ["-xzf", arc, "-C", x, "agentglass-receive-tls"], { stdio: "ignore" }); }
+// the siblings that ship in the same archive, replaced next to agentglass so they never run an older version:
+// agentglass-mcp (the MCP server; an archive without it — an older release — keeps the installed one, which agents
+// have registered) and the optional HTTPS receiver (otlp-hub 11.4; an archive without it — its C build failed for this
+// target — removes the old one: receive refuses a binary of another version anyway)
+function updateSibling(arc: string, x: string, exe: string, name: string, keepOld: boolean, gone: string): void {
+  const dst = join(dirname(exe), name);
+  try { execFileSync("tar", ["-xzf", arc, "-C", x, name], { stdio: "ignore" }); }
   catch (e) {
     try { lstatSync(dst); } catch (e2) { return; } // none installed
-    try { unlinkSync(dst); errLine("agentglass update", "partial", "this release has no agentglass-receive-tls for this platform: the old one is removed (built-in HTTPS off; use tailscale serve or a TLS proxy)", ""); }
-    catch (e3) { errLine("agentglass update", "partial", "agentglass-receive-tls of the previous version left in place: " + (e3 instanceof Error ? e3.message : String(e3)), "remove it: rm " + dst); }
+    if (keepOld) { errLine("agentglass update", "partial", "this release has no " + name + ": the old one is kept", ""); return; }
+    try { unlinkSync(dst); errLine("agentglass update", "partial", "this release has no " + name + " for this platform: the old one is removed (" + gone + ")", ""); }
+    catch (e3) { errLine("agentglass update", "partial", name + " of the previous version left in place: " + (e3 instanceof Error ? e3.message : String(e3)), "remove it: rm " + dst); }
     return;
   }
-  const c = join(x, "agentglass-receive-tls");
+  const c = join(x, name);
   try { chmodSync(c, 0o755); renameSync(c, dst); }
-  catch (e) { errLine("agentglass update", "partial", "agentglass-receive-tls not updated: " + (e instanceof Error ? e.message : String(e)), ""); }
+  catch (e) { errLine("agentglass update", "partial", name + " not updated: " + (e instanceof Error ? e.message : String(e)), ""); }
 }
 // first in line: the generic CLI handler would take `update --json` for a --json snapshot
 H.cli.unshift((args: string[]): boolean => {

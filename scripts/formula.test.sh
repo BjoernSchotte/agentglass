@@ -10,8 +10,8 @@ if command -v sha256sum > /dev/null 2>&1; then H="sha256sum"; else H="shasum -a 
 assets() {
   d=$1; shift; mkdir -p "$d/x"
   for p in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-    rm -f "$d/x/"*; printf '#!/bin/sh\necho 2026.10.8 %s\n' "$p" > "$d/x/agentglass"; f="agentglass"
-    case " $* " in *" $p "*) printf '#!/bin/sh\necho 2026.10.8\n' > "$d/x/agentglass-receive-tls"; f="agentglass agentglass-receive-tls" ;; esac
+    rm -f "$d/x/"*; printf '#!/bin/sh\necho 2026.10.8 %s\n' "$p" > "$d/x/agentglass"; printf '#!/bin/sh\necho 2026.10.8\n' > "$d/x/agentglass-mcp"; f="agentglass agentglass-mcp"
+    case " $* " in *" $p "*) printf '#!/bin/sh\necho 2026.10.8\n' > "$d/x/agentglass-receive-tls"; f="$f agentglass-receive-tls" ;; esac
     tar -czf "$d/agentglass-$p.tar.gz" -C "$d/x" $f
   done
   rm -rf "$d/x"; (cd "$d" && $H agentglass-*.tar.gz | sort -k2 > SHA256SUMS)
@@ -30,6 +30,8 @@ has "installs agentglass" "$f" 'bin.install "agentglass"'
 has "installs the tls binary where shipped" "$f" 'bin.install "agentglass-receive-tls" if File.exist?("agentglass-receive-tls")'
 has "tests the tls binary when installed" "$f" '#{bin}/agentglass-receive-tls --version'
 has "conflict with the dev channel" "$f" 'conflicts_with "agentglass-dev"'
+has "installs agentglass-mcp" "$f" '    bin.install "agentglass-mcp"'
+has "tests agentglass-mcp" "$f" 'assert_match version.to_s, shell_output("#{bin}/agentglass-mcp --version")'
 eq "stderr lists the archives with tls" "$(cat "$t/err")" "formula.sh: agentglass-receive-tls in: darwin-arm64 linux-arm64 linux-x64"
 if command -v ruby > /dev/null 2>&1; then echo "$f" > "$t/agentglass.rb"; ruby -c "$t/agentglass.rb" > /dev/null 2>&1 || { echo "FAIL ruby syntax: $(ruby -c "$t/agentglass.rb" 2>&1)"; fail=1; }; fi
 # no archive with tls: the guarded line stays (the formula does not depend on which targets built it)
@@ -43,5 +45,9 @@ has "missing checksum named" "$o" "no checksum for agentglass-linux-arm64.tar.gz
 assets "$t/c"; mkdir -p "$t/c/x"; printf x > "$t/c/x/other"; tar -czf "$t/c/agentglass-darwin-x64.tar.gz" -C "$t/c/x" other; (cd "$t/c" && $H agentglass-*.tar.gz | sort -k2 > SHA256SUMS)
 o=$(sh "$here/scripts/formula.sh" "$t/c" 2026.10.8 2>&1 > /dev/null) && { echo "FAIL an archive without agentglass accepted"; fail=1; }
 has "archive without agentglass named" "$o" "agentglass-darwin-x64.tar.gz has no agentglass"
+# agentglass-mcp is not optional (unlike the TLS receiver): an archive without it is refused
+assets "$t/d"; mkdir -p "$t/d/x"; printf x > "$t/d/x/agentglass"; tar -czf "$t/d/agentglass-linux-arm64.tar.gz" -C "$t/d/x" agentglass; (cd "$t/d" && $H agentglass-*.tar.gz | sort -k2 > SHA256SUMS)
+o=$(sh "$here/scripts/formula.sh" "$t/d" 2026.10.8 2>&1 > /dev/null) && { echo "FAIL an archive without agentglass-mcp accepted"; fail=1; }
+has "archive without agentglass-mcp named" "$o" "agentglass-linux-arm64.tar.gz has no agentglass-mcp"
 [ $fail = 0 ] && echo "formula: all tests passed"
 exit $fail

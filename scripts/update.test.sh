@@ -16,8 +16,9 @@ build 2026.9.1 stable 1111111111111111111111111111111111111111 "$t/old" & b1=$!
 build 2026.9.2 stable 2222222222222222222222222222222222222222 "$t/new" & b2=$!
 wait $b1 || exit 1; wait $b2 || exit 1
 fake() { printf '#!/bin/sh\nif [ "$2" = --json ]; then echo '"'"'{"version":"%s","channel":"%s"}'"'"'; else echo %s; fi\n' "$1" "$2" "$1" > "$3"; chmod 755 "$3"; }
-rel() { # rel <tag> <binary> <version> <channel> [corrupt]
-  d="$t/dl/$1"; mkdir -p "$d/x"; cp "$2" "$d/x/agentglass"; tar -czf "$d/$asset" -C "$d/x" agentglass; rm -rf "$d/x"
+rel() { # rel <tag> <binary> <version> <channel> [corrupt] [agentglass-mcp binary]
+  d="$t/dl/$1"; mkdir -p "$d/x"; cp "$2" "$d/x/agentglass"; f=agentglass; if [ -n "${6:-}" ]; then cp "$6" "$d/x/agentglass-mcp"; f="agentglass agentglass-mcp"; fi
+  tar -czf "$d/$asset" -C "$d/x" $f; rm -rf "$d/x"
   (cd "$d" && $H "$asset" > SHA256SUMS); [ "${5:-}" = corrupt ] && echo x >> "$d/$asset"
   printf '{"schema":"agentglass.build-metadata/v1","version":"%s","channel":"%s","tag":"%s"}\n' "$3" "$4" "$1" > "$d/build-metadata.json"
 }
@@ -30,7 +31,8 @@ rel v2026.9.2 "$t/new" 2026.9.2 stable
 rel v2026.9.1 "$t/old" 2026.9.1 stable
 rel v2026.9.3 "$t/new" 2026.9.3 stable corrupt
 fake 2026.9.9 stable "$t/liar"; rel v2026.9.4 "$t/liar" 2026.9.4 stable
-fake 2026.9.1-dev.20260930.3+a1b2c3d4 dev "$t/devbin"; rel dev-20260930.3.1-a1b2c3d4 "$t/devbin" 2026.9.1-dev.20260930.3+a1b2c3d4 dev
+fake 2026.9.1-dev.20260930.3+a1b2c3d4 dev "$t/devbin"; printf '#!/bin/sh\necho mcp-dev\n' > "$t/devmcp"; chmod 755 "$t/devmcp"
+rel dev-20260930.3.1-a1b2c3d4 "$t/devbin" 2026.9.1-dev.20260930.3+a1b2c3d4 dev "" "$t/devmcp"
 api "$t/good.json" v2026.9.2:false v2026.9.1:false dev-20260930.3.1-a1b2c3d4:true
 api "$t/corrupt.json" v2026.9.3:false
 api "$t/liar.json" v2026.9.4:false
@@ -45,10 +47,14 @@ eq "dry-run exit" "$(code ag good.json --dry-run --json)" 0
 grep -q '"tag":"v2026.9.2"' "$t/out" || { echo "FAIL dry-run target: $(cat "$t/out")"; fail=1; }
 eq "dry-run leaves binary" "$(v)" "2026.9.1"
 printf '#!/bin/sh\necho 2026.9.1\n' > "$t/bin/agentglass-receive-tls"; chmod 755 "$t/bin/agentglass-receive-tls" # the old version's HTTPS receiver
+printf '#!/bin/sh\necho mcp-old\n' > "$t/bin/agentglass-mcp"; chmod 755 "$t/bin/agentglass-mcp" # and MCP server
 eq "update exit" "$(code ag good.json)" 0
 eq "updated" "$(v)" "2026.9.2"
 [ ! -e "$t/bin/agentglass-receive-tls" ] || { echo "FAIL a release without agentglass-receive-tls left the old one"; fail=1; }
 grep -q "old one is removed" "$t/out" || { echo "FAIL no note about the removed agentglass-receive-tls: $(cat "$t/out")"; fail=1; }
+# an archive without agentglass-mcp (older releases) keeps the installed one: agents registered it, and it still works
+eq "agentglass-mcp kept" "$("$t/bin/agentglass-mcp")" mcp-old
+grep -q "this release has no agentglass-mcp: the old one is kept" "$t/out" || { echo "FAIL no note about the kept agentglass-mcp: $(cat "$t/out")"; fail=1; }
 eq "prev kept" "$("$t/bin/agentglass.prev" --version)" "2026.9.1"
 grep -q '"channel": *"stable"' "$t/home/.agentglass/config.json" || { echo "FAIL channel persisted: $(cat "$t/home/.agentglass/config.json" 2>&1)"; fail=1; }
 grep -q '"version":"2026.9.2"' "$t/home/.agentglass/install.json" || { echo "FAIL install.json version"; fail=1; }
@@ -70,6 +76,7 @@ grep -qi "downgrade" "$t/out" || { echo "FAIL downgrade message: $(cat "$t/out")
 eq "downgrade unchanged" "$(v)" "2026.9.2"
 eq "downgrade with --yes" "$(code ag good.json --channel dev --yes)" 0
 eq "on dev" "$(v)" "2026.9.1-dev.20260930.3+a1b2c3d4"
+eq "agentglass-mcp replaced with agentglass" "$("$t/bin/agentglass-mcp")" mcp-dev
 grep -q '"channel": *"dev"' "$t/home/.agentglass/config.json" || { echo "FAIL dev channel persisted"; fail=1; }
 mkdir -p "$t/Cellar/agentglass/2026.9.1/bin"; cp "$t/old" "$t/Cellar/agentglass/2026.9.1/bin/agentglass"
 eq "brew refused" "$(code env HOME="$t/home" AGENTGLASS_RELEASES_API="file://$t/good.json" "$t/Cellar/agentglass/2026.9.1/bin/agentglass" update)" 2
