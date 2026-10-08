@@ -9,57 +9,24 @@ on:
 permissions: { contents: read }
 concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
 jobs:
-  check:
-    # every check and test, and the release build + smoke test, on both OSes, split across shards balanced by
-    # scripts/check-plan.mjs (scripts/check.sh CHECK_SHARD)
-    name: check ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.shards }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15 # a hung test fails fast instead of holding the runner for 6 h (a cold shard takes ~2 min)
-    strategy:
-      fail-fast: false
-      matrix: # macOS: 3 shards, not 4 — macOS runners are scarce (5 per account) and shared by every open PR
-        include:
-          - { os: ubuntu-24.04, shard: 1, shards: 4 }
-          - { os: ubuntu-24.04, shard: 2, shards: 4 }
-          - { os: ubuntu-24.04, shard: 3, shards: 4 }
-          - { os: ubuntu-24.04, shard: 4, shards: 4 }
-          - { os: macos-14, shard: 1, shards: 3 }
-          - { os: macos-14, shard: 2, shards: 3 }
-          - { os: macos-14, shard: 3, shards: 3 }
+  diag:
+    name: rev97 item6 macos diag
+    runs-on: macos-14
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - id: scriptc
         uses: ./.github/actions/scriptc
-        with: { lane: "${{ matrix.shard }}of${{ matrix.shards }}" }
-      - run: sh scripts/check.sh
-        env: { CHECK_SHARD: "${{ matrix.shard }}/${{ matrix.shards }}", CHECK_RELEASE_OUT: agentglass, SCRIPTC_CACHE_MAX_MB: "4096" }
-      - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
-  # the macOS x64 release is built with scriptc's C backend (no LLVM helper there): build it here too, so a construct
-  # only that backend rejects fails the PR, not the release (2026.10.3: a Record<string, RegExp> lookup)
-  cbackend:
-    name: build --backend c
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: scriptc
-        uses: ./.github/actions/scriptc
-        with: { lane: "cbackend" }
-      - run: sh build.sh && ./agentglass --version && AGENTGLASS_AGENT=0 HOME="$RUNNER_TEMP" ./agentglass --json --filter 'cost > $0.50 and tokens > 40k' > /dev/null
-        env: { SCRIPTC_FLAGS: "--backend c" }
-      # agentglass-receive-tls is C-backend only (https.createServer): built and smoke-tested over TLS here on every PR
-      - run: sh scripts/build-tls.sh
-      - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
-  # one status for the whole run: green only when every shard on both OSes and the C-backend build passed
-  ci:
-    if: ${{ always() }}
-    needs: [check, cbackend]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - run: test "${{ needs.check.result }}" = success && test "${{ needs.cbackend.result }}" = success
+        with: { lane: "1of3" }
+      - name: fixed build
+        run: AGENTGLASS_OUT="$RUNNER_TEMP/ag" sh build.sh
+      - name: wait + parity, fixed (twice)
+        run: |
+          for k in 1 2; do AGENTGLASS_BIN="$RUNNER_TEMP/ag" sh scripts/wait.test.sh; AGENTGLASS_BIN="$RUNNER_TEMP/ag" sh scripts/procs-parity.test.sh; done
+          echo "TMPDIR=$TMPDIR"; d=$(mktemp -d); echo "mktemp: $d real: $(cd $d && pwd -P)"
+      - name: unfixed build (procs.ts of the PR head)
+        run: git show origin/perf/wait-followups:src/model/procs.ts > src/model/procs.ts && AGENTGLASS_OUT="$RUNNER_TEMP/ag0" sh build.sh
+      - name: wait + parity, unfixed (expected to fail)
+        continue-on-error: true
+        run: AGENTGLASS_BIN="$RUNNER_TEMP/ag0" sh scripts/procs-parity.test.sh; AGENTGLASS_BIN="$RUNNER_TEMP/ag0" sh scripts/wait.test.sh
