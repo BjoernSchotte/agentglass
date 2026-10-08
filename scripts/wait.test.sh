@@ -99,10 +99,9 @@ i=0; while [ $i -lt 40 ] && ! grep -q '"kind":"alert"' "$t/watch.jsonl" 2> /dev/
 kill "$wp" 2> /dev/null || true; wait "$wp" 2> /dev/null || true
 now=$(env -i HOME="$fx/home" PATH="$PATH" AGENTGLASS_CACHE_DIR="$t/cache2" AGENTGLASS_CONFIG="$t/config.json" AGENTGLASS_RULES="$t/rules.json" AGENTGLASS_RUN_DIR="$t/run" \
   AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 AGENTGLASS_AGENT=0 AGENTGLASS_HERDR=off "$t/ag" wait --now --json 2> /dev/null || true)
-# (≥ 2 of the 3: on macOS CI one fixture agent's tree is not linked to its session)
-eq "now: heavy" "$(printf '%s' "$now" | jq -r '.now.heavyRunning >= 2')" true
+eq "now: heavy" "$(printf '%s' "$now" | jq -r '.now.heavyRunning')" 3
 grep -q '"kind":"alert"' "$t/watch.jsonl" || { echo "watch saw: $(grep -c . "$t/watch.jsonl") lines, kinds $(jq -r .kind "$t/watch.jsonl" | sort | uniq -c | tr '\n' ' ')"; ps -axo pid=,ppid=,args= | grep -F "$fx" | grep -v grep | head -n 12; }
 sh "$here/scripts/fixture-agents.sh" stop "$fx" > /dev/null
-eq "watch: contention alert" "$(grep '"kind":"alert"' "$t/watch.jsonl" | head -n 1 | jq -r '.text | test("^[23] heavy: slow suite ×[23]$")')" true
+eq "watch: contention alert" "$(grep '"kind":"alert"' "$t/watch.jsonl" | head -n 1 | jq -r '.text | test("^3 heavy: slow suite ×3$")')" true
 [ $fail = 0 ] && echo "wait: all checks passed"
 exit $fail

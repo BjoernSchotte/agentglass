@@ -1,5 +1,6 @@
 // agentglass — harness processes (via the platform adapter, their multiplexer panes via src/mux/) and their link to sessions
 // SPDX-License-Identifier: Apache-2.0
+import { realpathSync } from "node:fs";
 import { base } from "../util/json.ts";
 import { WAKE_ALL, WAKE_H, WAKE_DIRS } from "../util/fs.ts";
 import { OS } from "../platform/index.ts";
@@ -181,7 +182,8 @@ export function refreshSlow(): void {
   let sig = ""; for (const [k, v] of f.cwd) sig += String(k) + "=" + v + "\n"; for (const [k, v] of f.open) sig += v + "<" + String(k) + "\n";
   cwdByPid.clear(); filePid.clear();
   for (const [k, v] of f.cwd) cwdByPid.set(k, v);
-  for (const [k, v] of f.open) filePid.set(k, v);
+  const lr = logicalRoots();
+  for (const [k, v] of f.open) filePid.set(logicalPath(k, lr), v);
   // multiplexer panes (tmux, herdr): each adapter decides when to read them again (a new agent, 30 s, forced by actions)
   // (a one-shot command's only pass reads everything at once)
   muxRefresh(muxProcs(), Date.now(), S.cli && !SLOW.ran, knownPid); SLOW.ran = true;
@@ -190,6 +192,21 @@ export function refreshSlow(): void {
   if (sig !== SLOW.sig) { SLOW.sig = sig; linkSessions(); lastLink = linkSig(); } // cwds or open transcripts moved: link again
 }
 const SLOW = { sig: "", ran: false };
+// the kernel names an open file by its real path, sessions are keyed by the path under their harness's root as configured
+// (HOME, CODEX_HOME): a root reached through a symlink (macOS /var → /private/var, a moved home) is mapped back. Pairs
+// [real + "/", root + "/"] of the open-file harnesses' roots whose real path differs (a few realpath calls per slow job)
+function logicalRoots(): [string, string][] {
+  const o: [string, string][] = [];
+  for (const ad of HARNESSES) if (ad.liveFile) for (const r of ad.roots()) {
+    let real = ""; try { real = realpathSync(r); } catch (e) { real = ""; }
+    if (real && real !== r) o.push([real + "/", r + "/"]);
+  }
+  return o;
+}
+function logicalPath(p: string, roots: [string, string][]): string {
+  for (const [real, root] of roots) if (p.startsWith(real)) return root + p.slice(real.length);
+  return p;
+}
 // every agent process (nested ones too: a pane's foreground process may be a wrapper's child) with its tty and root
 export function muxProcs(): MuxProc[] {
   const out: MuxProc[] = [];
