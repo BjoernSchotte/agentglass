@@ -173,8 +173,9 @@ agent host (claude, codex, gemini, pi, opencode, kiro)
    - From `2025-06-18` on: `outputSchema` per tool and `structuredContent` per result, plus the same JSON as one text
      block (the spec's backwards-compatibility rule).
    - Before `2025-06-18`: the text block only.
-   - `title` and `annotations` (`readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false`) on every
-     tool from `2025-03-26` on.
+   - `annotations` (`readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false`) on every tool from
+     `2025-03-26` on; the tool's `title` (and `serverInfo.title`) from `2025-06-18` on, under `2025-03-26` as
+     `annotations.title` (that revision's Tool has no `title`; review ruling).
    - JSON-RPC batches (a line that is a JSON array) only under `2025-03-26`; otherwise `-32600`.
 5. **Cancellation:** `notifications/cancelled {requestId}` kills that call's child (or drops it from the queue). No
    response is sent for it. An unknown or finished id is ignored.
