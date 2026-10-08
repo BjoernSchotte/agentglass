@@ -2,6 +2,21 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.11
+
+### Features
+
+- **mcp:** agentglass-mcp stdio MCP server, mcp install and doctor (#96) (da8df49, [#96](https://github.com/BjoernSchotte/agentglass/pull/96))
+
+### Performance
+
+- **wait:** day digests, family hints for cut commands, Codex runs after a yield, eval argv on macOS (#97) (b34a90b, [#97](https://github.com/BjoernSchotte/agentglass/pull/97))
+
+### Docs
+
+- **specs:** mcp-server — agentglass-mcp stdio MCP server, spec and plan (#95) (8228c41, [#95](https://github.com/BjoernSchotte/agentglass/pull/95))
+- **roadmap:** Round 1 and 2 shipped (versions per spec); Round 3: mcp-server, agent-wait follow-ups (#94) (6703a9e, [#94](https://github.com/BjoernSchotte/agentglass/pull/94))
+
 ## 2026.10.10
 
 ### Features
