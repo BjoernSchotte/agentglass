@@ -345,7 +345,8 @@ then sum wait time by family without parsing commands. Contention alerts already
 - **Truncated commands**: the 200-char cut hid the family of 5.05 % of shell commands here (90 days, `cd x && export …
   && pnpm test`, a filter before the program, a loop); family hints (§1.12) bring that to 0.29 % (a hint cut again at
   200). Calls files of format 2 read on without hints unless a 200-char command in them may have lost its family
-  (`cutMayHide`): such a session indexes again, once.
+  (`cutMayHide`) or the session is a Codex one with `exec` / `exec_command` calls (a build before format 3 ended their
+  yielded runs at the yield, Decision 18): such a session indexes again, once.
 - **Approval time** inside tool time (history): labelled; live approval waits show in the "now" line via the
   existing approval alert.
 - **Retention**: a period beyond `filter.callDays` shows `guard: retention` and the covered part only.
@@ -506,7 +507,9 @@ Follow-ups (2026-10-08, PR #93's review rulings; same delegation):
     applies the agent waited on end by themselves within the turn (all 554 old-format runs here); a dev server or
     port-forward stopped with ^C or left running at the turn's end is not a wait — as Claude's `run_in_background`. ·
     If wrong: a run that outlives its turn stays at its yield's duration; a server that exits by itself in the turn
-    counts in full.
+    counts in full. Upgrade: a format-2 calls file with `exec` / `exec_command` calls indexes again (45 Codex sessions
+    beyond the cut ones here, 3.3 GB of logs; else their history would keep the yield's durations beside re-indexed
+    sessions').
 19. **A first open with no digests** (2.6 s for 7 days, in up to 190 ms slices) · (a) as before, (b) the report works
     them out for its window with a progress mark, (c) also a background job. · **(b) + (c)**: "computing n%", a big calls
     file read a member at a time (≤ ~30 ms a slice); the job runs in the TUI after the history index, ≤ 20 ms slices only
