@@ -3,9 +3,9 @@
 // An adapter's usage(a, line) turns one transcript line into calls of bucket → tool/pend/lines/file/tokens;
 // its result lines close a pending call with done() from calls.ts. Everything else (budgets, caching, stats) is the ledger's.
 import { resolve, cost, stripTiers } from "./pricing.ts";
-import { type TS, type Cnt, type Pend, newTS, cnt, norm, program, argSummary, patchFiles } from "./calls.ts";
+import { type TS, type Cnt, type Pend, newTS, cnt, normFull, program, argSummary, patchFiles, CMDS } from "./calls.ts";
 import { DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
-import { type Rows, newRows, push, addId, KIND_PROG, KIND_CMD, KIND_FILE } from "./rows.ts";
+import { type Rows, newRows, push, addId, addCmd, KIND_PROG, KIND_FILE } from "./rows.ts";
 import { numAt } from "../../util/text.ts";
 import { own } from "../../util/own.ts";
 export { dayKey };
@@ -220,10 +220,13 @@ function cmdOf(cmds: string[]): string { const c = cmds.length === 1 ? cmds[0] ?
 export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number, ts: string, arg: string, cmds: string[]): void {
   const sh: Cnt[] = []; const row = newest(a); const r = a.rows;
   for (const c of cmds) {
-    const n = norm(c); if (!n) continue;
-    const pg = program(n);
+    const f = normFull(c); if (!f) continue;
+    const n = f.length > 200 ? f.slice(0, 200) : f; const pg = program(n);
     const h = heavy(d); sh.push(cnt(h.prog, name + "\t" + pg)); sh.push(cnt(h.cmds, name + "\t" + n));
-    if (row >= 0) { addId(r, row, KIND_PROG, intern(DICT.prog, pg)); addId(r, row, KIND_CMD, intern(DICT.cmd, n)); }
+    if (row < 0) continue;
+    addId(r, row, KIND_PROG, intern(DICT.prog, pg));
+    const ci = intern(DICT.cmd, n); const ht = f.length > 200 ? CMDS.hint(f) : ""; const hi = ht ? intern(DICT.cmd, ht) : -1;
+    addCmd(r, row, ci, hi); CMDS.booked(ci); if (hi >= 0) CMDS.booked(hi);
   }
   if (row >= 0) r.cid[row] = id;
   if (!id) return;

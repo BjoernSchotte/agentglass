@@ -18,6 +18,9 @@ const ll = cursor("[[1,2],[],[3]]"); eq("lists", JSON.stringify(numLists(ll)), "
 const ss = cursor('["a","b\\"c"]'); eq("strs", strs(ss).join("|"), 'a|b"c');
 for (const b of ["[1,]", "[1 2]", '[1,"x"]', "[", "[-]"]) { const c = cursor(b); nums(c); eq("bad nums " + b, String(c.ok), "false"); }
 eq("num", String(num(cursor("42"))), "42");
+eq("num integers in place", [num(cursor("-17")), num(cursor("1791356400000")), num(cursor("0")), num(cursor("999999999999999"))].join(","), "-17,1791356400000,0,999999999999999");
+eq("num long or not integer", [num(cursor("12345678901234567")), num(cursor("1.5")), num(cursor("2e3")), num(cursor("-0.25"))].join(","), "12345678901234568,1.5,2000,-0.25");
+{ const b = cursor("12-3"); num(b); eq("num stray sign is not a number", String(b.ok), "false"); }
 // skip any value, then go on
 const o = cursor('{"x":{"a":[1,{"b":null}],"c":"}"},"y":true,"z":7}');
 eat(o, 123); str(o); eat(o, 58); skip(o); eat(o, 44); str(o); eat(o, 58); skip(o); eat(o, 44); eq("after skips", str(o), "z"); eat(o, 58);

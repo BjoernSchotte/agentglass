@@ -7,6 +7,9 @@
 import type { Call } from "./facts.ts";
 
 export const KIND_PROG = 0; export const KIND_CMD = 1; export const KIND_FILE = 2;
+// a command line's family hint (wait/family.ts famHint: the text its family comes from when the stored line was cut at 200
+// characters), right after that command's own id; read by the families alone
+export const KIND_HINT = 3;
 // t = call time (epoch ms); tool/model = DICT ids (-1 none); mq = MQ_*; ms = duration (-1 untimed); err = -1 no result yet,
 // 0 ok, 1 failed; out = result bytes; cid = the harness call id ("" none). n rows, nl ids in use (capacity = array lengths)
 export interface Rows {
@@ -40,6 +43,16 @@ export function addId(r: Rows, i: number, kind: number, id: number): void {
   for (let k = r.lo[i] + 0; k < r.nl; k++) if (r.li[k] === v) return;
   if (r.nl >= r.li.length) r.li = grown(r.li, Math.max(8, r.li.length * 2));
   r.li[r.nl] = v; r.nl++;
+}
+// a command line for the newest row, with its family hint right after it (hint < 0: none); a command the row has already
+// adds nothing (nor its hint)
+export function addCmd(r: Rows, i: number, cmd: number, hint: number): void {
+  if (i < 0 || i !== r.n - 1 || cmd < 0) return;
+  const v = cmd * 4 + KIND_CMD;
+  for (let k = r.lo[i] + 0; k < r.nl; k++) if (r.li[k] === v) return;
+  if (r.nl + 2 > r.li.length) r.li = grown(r.li, Math.max(8, r.li.length * 2));
+  r.li[r.nl] = v; r.nl++;
+  if (hint >= 0) { r.li[r.nl] = hint * 4 + KIND_HINT; r.nl++; }
 }
 // row i's ids of one kind, in the order they were added (allocates; only for readers that ask)
 export function rowIds(r: Rows, i: number, kind: number): number[] {

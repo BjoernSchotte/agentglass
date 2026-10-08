@@ -3,15 +3,17 @@
 // Pure word rules (spec agent-wait §1), no regular expressions on user input: wrappers (sudo, timeout 600, rtk proxy,
 // flock <file>) and env assignments are skipped, trivial steps (cd, export, echo) never name a family, filters (cat, grep,
 // jq) only when nothing else ran, package-manager scripts and runners (npx, uv run, python -m) name what they run. User
-// rules from config.json "wait.families" (word patterns) go first. Families are computed at read time from the call rows'
-// command ids and memoised per id (each distinct command text is normalised once per run; the config is read once).
+// rules from config.json "wait.families" (word patterns) go first. A row's family comes from its command ids, memoised per
+// id: worked out as indexing books each command (calls.ts CMDS), or at read time for rows read back from disk (each
+// distinct command text is normalised once per run; the config is read once). A command cut at 200 characters may
+// carry a family hint (famHint).
 import { obj, str, arr } from "../../util/json.ts";
 import { rawSection } from "../../util/config.ts";
 import { say } from "../../state.ts";
 import { REDACT } from "../redact-on.ts";
 import { DICT, nameOf } from "../usage/facts.ts";
-import { type Rows, KIND_CMD } from "../usage/rows.ts";
-import { mcpServer } from "../usage/calls.ts";
+import { type Rows, KIND_CMD, KIND_HINT } from "../usage/rows.ts";
+import { mcpServer, CMDS } from "../usage/calls.ts";
 
 export interface Fam { name: string; kind: string; heavy: boolean; generic: boolean }
 export const SHELL_KINDS = ["test", "typecheck", "lint", "build", "install", "ci", "wait", "vcs", "net", "other"];
@@ -19,6 +21,10 @@ export const TOOL_KINDS = ["user", "wait", "agent", "web", "mcp", "file", "other
 // every kind once (filter enum): shell kinds, then the tool kinds not already there
 export const ALL_KINDS: string[] = SHELL_KINDS.concat(TOOL_KINDS.filter((k: string) => SHELL_KINDS.indexOf(k) < 0));
 export const DEF_HEAVY = ["test", "typecheck", "lint", "build", "install"];
+// the built-in rules' version: stored day sums (digest.ts) count as missing under another. Bump it with every change of
+// families.golden; family.check.ts holds the table to GOLDEN_SIG (a hash of its text) so a change cannot slip by
+export const FAM_RULES = 1;
+export const GOLDEN_SIG = "1:2682726982";
 // one user rule: pattern words ("*" one word, captured as $1…; a trailing "..." the rest; "*" inside a word a glob)
 export interface FamRule { words: string[]; rest: boolean; family: string; kind: string; heavy: number /* -1 unset, 0, 1 */ }
 export interface WaitCfg { rules: FamRule[]; heavyKinds: string[]; minSec: number; diags: string[] }
@@ -282,22 +288,63 @@ function trivAt(line: string, i: number): boolean {
   const w = line.slice(s, i);
   return TRIV.has(w) && !KEYW.has(w) && w !== "trap";
 }
-// the chosen segment of a line: the first that runs a non-filter program, else the first filter; null = only trivial steps
-interface Pick { ws: string[]; i: number; f: FN }
+// the chosen segment of a line: the first that runs a non-filter program, else the first filter; null = only trivial steps.
+// s, e: where it is in the line
+interface Pick { ws: string[]; i: number; f: FN; s: number; e: number }
 function pick(line: string, depth: number): Pick | null {
   let first: Pick | null = null;
   let at = 0;
   while (at < line.length) {
-    const seg: string[] = []; const tr = trivAt(line, at); at = nextSeg(line, at, seg, !tr); if (!seg.length) break;
+    const seg: string[] = []; const tr = trivAt(line, at); const s = at; at = nextSeg(line, at, seg, !tr); if (!seg.length) break;
     if (tr) continue;
     const ws = bare(seg); const i = progAt(ws); const f = famAt(ws, i, depth);
     if (!f.name) continue;
-    if (FILTER.has(f.name)) { if (!first) first = { ws, i, f }; continue; }
-    return { ws, i, f };
+    if (FILTER.has(f.name)) { if (!first) first = { ws, i, f, s, e: at }; continue; }
+    return { ws, i, f, s, e: at };
   }
   return first;
 }
 function famLine(line: string, depth: number): FN { const p = pick(line, depth); return p ? p.f : fn("sh"); }
+
+// The family hint of a shell command line longer than the stored 200 characters (calls.ts norm): the segment its family
+// comes from, taken from the whole line (≤ 200 characters; ":" = only trivial steps), or "" when the stored text names
+// the same segment and family. record.ts keeps it beside the cut text (rows.ts KIND_HINT), so a chain whose heavy step lies
+// past the cut (cd … && export … && pnpm test) keeps its family. A segment alone gives the line's family: the pick is per
+// segment and user rules see only its words. Decided by the built-in rules (user rules may change after indexing).
+export function famHint(full: string): string {
+  if (full.length <= 200) return "";
+  const pf = pick(full, 0); const pc = pick(full.slice(0, 200), 0);
+  if (!pf) return pc ? ":" : "";
+  if (pc && pc.s === pf.s && pc.f.name === pf.f.name) return "";
+  const t = full.slice(pf.s, pf.e).trim();
+  return t.length > 200 ? t.slice(0, 200) : t;
+}
+
+// a stored line cut at 200 characters (no hint: written before hints existed): could the cut have changed its family?
+// Not when it comes from a program other than a filter in a segment wholly inside the cut, or one the cut ends in a
+// heredoc body of (its words lie before), nor when the segment runs into the cut but its family stays the same without
+// its last word (the one the cut may have split), with another one there, and with more words after it: the words that
+// decide lie before the cut (famHint would add no hint either)
+const OTHER = "zz";
+export function cutMayHide(cut: string): boolean {
+  const p = pick(cut, 0); if (!p || FILTER.has(p.f.name)) return true;
+  if (p.e < cut.length || inHeredoc(cut, p.s)) return false;
+  const ws = p.ws; const n = p.f.name; if (ws.length - 1 <= p.i) return true; // the program word itself may be cut
+  const head = ws.slice(0, ws.length - 1);
+  return famAt(head, p.i, 0).name !== n || famAt(head.concat([OTHER]), p.i, 0).name !== n || famAt(ws.concat([OTHER, OTHER]), p.i, 0).name !== n;
+}
+// does the line end inside a heredoc body opened at or after i (outside quotes)?
+function inHeredoc(line: string, i: number): boolean {
+  const L = line.length;
+  while (i < L) {
+    const c = line.charCodeAt(i);
+    if (c === 39 || c === 34) { const e = line.indexOf(line.charAt(i), i + 1); if (e < 0) return false; i = e + 1; continue; }
+    if (c === 92) { i += 2; continue; }
+    if (c === 60 && line.charCodeAt(i + 1) === 60 && line.charCodeAt(i + 2) !== 60) { const e = heredoc(line, i + 2); if (e >= L) return true; i = e; continue; }
+    i++;
+  }
+  return false;
+}
 
 // ── kinds ──
 // [kind, words]: a word matches a family token exactly or one part of it (split at : . / _ -); "a b" words match the
@@ -457,11 +504,16 @@ export function cmdFam(cmdId: number): number {
 // is the family of this command id worked out already (no normalisation on the next rowFam)?
 export function famKnown(cmdId: number): boolean { return cmdId < 0 || (cmdId < memo.length && memo[cmdId] > 0); }
 // family id of row i of r; -1 = the row has no shell command (a non-shell tool: toolFamily / toolKind of its tool)
+// (a command followed by its hint counts by the hint: famHint)
 export function rowFam(r: Rows, i: number): number {
   if (i < 0 || i >= r.n) return -1;
   const e = i + 1 < r.n ? r.lo[i + 1] + 0 : r.nl;
   let best = -1;
-  for (let k = r.lo[i] + 0; k < e; k++) { const v = r.li[k] + 0; if (v % 4 === KIND_CMD) best = betterFam(best, cmdFam((v - KIND_CMD) / 4)); }
+  for (let k = r.lo[i] + 0; k < e; k++) {
+    const v = r.li[k] + 0; if (v % 4 !== KIND_CMD) continue;
+    const h = k + 1 < e ? r.li[k + 1] + 0 : -1;
+    best = betterFam(best, cmdFam(h >= 0 && h % 4 === KIND_HINT ? (h - KIND_HINT) / 4 : (v - KIND_CMD) / 4));
+  }
   return best;
 }
 function at<T>(a: T[], i: number, d: T): T { return i >= 0 && i < a.length ? a[i] ?? d : d; }
@@ -476,3 +528,7 @@ export function famLabel(id: number): string { return shownFam(famName(id), famG
 // a row's family and kind as text (non-shell rows: the tool's)
 export function rowFamName(r: Rows, i: number): string { const f = rowFam(r, i); return f >= 0 ? famName(f) : toolFamily(nameOf(DICT.tool, r.tool[i] + 0)); }
 export function rowKind(r: Rows, i: number): string { const f = rowFam(r, i); return f >= 0 ? famKind(f) : toolKind(nameOf(DICT.tool, r.tool[i] + 0)); }
+// indexing books commands through these (calls.ts CMDS): the hint beside a cut line, the family of each stored text
+CMDS.hint = famHint;
+CMDS.booked = (id: number): void => { cmdFam(id); };
+CMDS.mayHide = cutMayHide;

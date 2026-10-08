@@ -90,11 +90,36 @@ export function done(p: Pend, ms: number, err: boolean, out: number, id: string,
   }
 }
 function numAt0(a: number[], i: number): number { let v = 0; for (const x of a.slice(i, i + 1)) v = x; return v; }
+// a finished call whose run went on after its result (a Codex yield, harness/codex.ts): its duration grows to ms — the
+// row, the day's sums and histogram (moved, not counted twice), the active time — and it failed when err. Never shrinks.
+export function extend(p: Pend, ms: number, err: boolean): void {
+  if (p.t <= 0 || ms >= 86400000) return;
+  const old = p.end > 0 ? p.end - p.t : -1;
+  const rw = p.rows; const i = p.ri; const st = p.st;
+  const row = !!rw && i >= 0 && i < rw.n && (rw.cid[i] ?? "") === p.id; // still its row (a prune since moves rows of done calls)
+  if (err && rw && row && rw.err[i] !== 1) { rw.err[i] = 1; st.err = st.err + 1; }
+  if (ms <= old) return;
+  if (rw && row) rw.ms[i] = ms;
+  if (old >= 0) { const b0 = hb(old); st.hist[b0] = Math.max(0, (st.hist[b0] ?? 0) - 1); st.ms = st.ms - old; } else st.dn = st.dn + 1;
+  const b = hb(ms); st.hist[b] = (st.hist[b] ?? 0) + 1; st.ms = st.ms + ms; if (ms > st.max) st.max = ms;
+  const sl: Rec[] = []; for (const r of st.slow) if (r.id !== p.id || r.t !== p.t) sl.push(r); // this call's old entry goes
+  sl.push({ t: p.t, ms, id: own(p.id), ts: p.ts, arg: p.arg }); sl.sort((x, y) => y.ms - x.ms);
+  st.slow = sl.slice(0, KEEP);
+  p.sp.push(p.t); p.sp.push(p.t + ms); p.end = p.t + ms;
+}
 
 // ── shell commands ──────────────────────────────────────────────────────────
 const WRAP = ["sudo", "env", "timeout", "nice", "nohup", "time", "command", "exec", "caffeinate", "do", "then", "else", "!"];
 const SKIP = ["cd", "pushd", "export", "source", ".", "set", "unset", "ulimit", "true", "for", "while", "until", "if", "done", "fi", "esac"];
-export function norm(cmd: string): string { return clean(cmd).replace(/\s+/g, " ").trim().slice(0, 200); }
+export function norm(cmd: string): string { return normFull(cmd).slice(0, 200); }
+// one line, whitespace collapsed, not cut (norm keeps the first 200 characters of it)
+export function normFull(cmd: string): string { return clean(cmd).replace(/\s+/g, " ").trim(); }
+// what indexing asks the command families (wait/family.ts sets these): hint = the family hint of a line longer than norm
+// keeps (famHint, "" none), booked = a stored command id, its family worked out now (inside the paced index slice, so a
+// first Wait report finds them done)
+// mayHide = could a stored 200-character text have lost its family to the cut (callcache.ts: a format-2 file, which has no
+// hints, reads on when none of its texts could)
+export const CMDS = { hint: (full: string): string => "", booked: (id: number): void => {}, mayHide: (cut: string): boolean => true };
 // program = first real command of the chain: env assignments, wrappers (sudo, env, timeout N, …) and cd/export steps skipped
 export function program(cmd: string): string {
   let first = "";

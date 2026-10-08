@@ -16,7 +16,7 @@ import { repriceAll, PRICED } from "./repricer.ts";
 import { isKiroLog } from "../../harness/kiro.ts";
 import { VERSION, OWN_FIX, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { type Head, readCache, writeCache, isTmpOf } from "./cachefile.ts";
-import { CACHE_DIR, CALLS_DIR, callCutoff, pathKey, prune, saveCallsTo, loadCallsFrom, sweepCalls } from "./callcache.ts";
+import { CACHE_DIR, CALLS_DIR, CALLS, callCutoff, pathKey, prune, saveCallsX, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
 // Every run reads a session's calls file only when something asks for its rows (ledger.ts callsOf) or right before the
@@ -94,9 +94,11 @@ function saveCalls(): void {
     const a = ledger.get(s.path); if (!a || a.off <= 0) continue;
     keys.add(pathKey(s.path));
     const pr = prune(a, cut);
-    if ((pr || written.get(s.path) !== a.off) && saveCallsTo(CALLS_DIR, s.path, a)) written.set(s.path, a.off);
+    if (!pr && written.get(s.path) === a.off) continue;
+    const cmds = saveCallsX(CALLS_DIR, s.path, a); if (!cmds) continue;
+    written.set(s.path, a.off); CALLS.saved(s.path, a, cmds);
   }
-  sweepCalls(CALLS_DIR, keys);
+  sweepCalls(CALLS_DIR, keys); CALLS.swept(keys);
 }
 let savedIdx = -1; let lastSave = 0;
 function save(): void {
@@ -112,7 +114,8 @@ function save(): void {
 }
 
 LAZY.rows = (path: string, a: Acc): boolean => {
-  const rows = loadCallsFrom(CALLS_DIR, path, a); if (!rows) return false;
+  const rows = loadCallsFrom(CALLS_DIR, path, a);
+  if (!rows) { written.delete(path); return false; } // stale or of an older format: the session indexes again, and its next save must write the file
   a.rows = rows; a.lastCall = rows.n - 1; written.set(path, a.off); return true;
 };
 // head and tail memos live in the session's ledger entry (reset with it when the log is rewritten); never under --redact,

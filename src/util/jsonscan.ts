@@ -17,6 +17,15 @@ export function peekIs(c: Cur, ch: number): boolean { ws(c); return c.i < c.s.le
 function fail<T>(c: Cur, v: T): T { c.ok = false; return v; }
 export function num(c: Cur): number {
   ws(c); const s = c.s; const st = c.i; let i = st;
+  // an integer of ≤ 15 digits (call times, durations, ids: nearly every number in these files): its digits summed in
+  // place, no slice and no Number() per number
+  let j = i; const neg = j < s.length && s.charCodeAt(j) === 45; if (neg) j++;
+  const d0 = j; let acc = 0;
+  while (j < s.length) { const ch = s.charCodeAt(j); if (ch < 48 || ch > 57) break; acc = acc * 10 + (ch - 48); j++; }
+  if (j > d0 && j - d0 <= 15) {
+    const ch = j < s.length ? s.charCodeAt(j) : 0;
+    if (ch !== 46 && ch !== 101 && ch !== 69 && ch !== 43 && ch !== 45) { c.i = j; return neg ? -acc : acc; }
+  }
   while (i < s.length) {
     const ch = s.charCodeAt(i);
     if ((ch >= 48 && ch <= 57) || ch === 45 || ch === 43 || ch === 46 || ch === 101 || ch === 69) i++; else break;
