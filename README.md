@@ -1395,8 +1395,9 @@ history and can take minutes: run `agentglass` once first.
 
 | host | status |
 |---|---|
-| Gemini CLI, pi | verified (isolated config, `gemini mcp list` / `pi mcp list`) |
-| Claude Code, Codex, Kiro CLI | expected to work (stdio, `mcp add`); not run in tests |
+| Gemini CLI 0.63, pi 0.99 | verified: `mcp list` connects (11 tools), live sessions call `session`, `errors`, `waits`, `contention` |
+| Codex | expected to work: it starts stdio servers in the project with a reduced environment (agentglass-mcp forces agent mode in its children) |
+| Claude Code, Kiro CLI | expected to work (stdio, `mcp add`); not run in tests |
 | OpenCode | should work, unverified (`opencode mcp list` does not run without a terminal) |
 
 ## Custom agent commands

@@ -92,7 +92,11 @@ agentglass session <ref> --fields <f,…> --format json|csv
 second project directory): the copy written last wins.
 
 Fields: the `--json` fields above (`id`, `harness`, `title`, `cwd`, `live`, `pid`, `status`, `costUsd`, `attention`,
-`stuck`, `alerts`, `mux`).
+`stuck`, `alerts`, `mux`), and:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `via` | string | how the session was found: `ref` for an id, prefix, `<harness>:<id>` or `last`; for `current`/`parent` `env:<VAR>` (a session-id variable), `ancestor:pid N` (the agent process above), or both joined by `+` |
 
 Exit 0 found, 2 usage error (prefix too short), 3 no such session, 4 ambiguous prefix (the candidates on stderr).
 
@@ -176,6 +180,52 @@ The command (an argv, no shell) gets one alert as a JSON line on stdin, with at 
 The command's environment is reduced to `PATH`, `HOME`, locale, desktop-bus and proxy variables plus
 `AGENTGLASS_RULE`, `AGENTGLASS_SEVERITY`, `AGENTGLASS_STATE`, `AGENTGLASS_SESSION`, `AGENTGLASS_HARNESS`,
 `AGENTGLASS_VALUE`; it is killed after 10 s.
+
+## MCP server (`agentglass-mcp`)
+
+`agentglass-mcp` is a stdio MCP server (newline-delimited JSON-RPC 2.0, protocol versions `2025-11-25`, `2025-06-18`,
+`2025-03-26`, `2024-11-05`). Its tools are part of this contract under the same number: `initialize` returns
+`_meta["agentglass/contract"]` (= `contract` above). Each call runs one agentglass CLI child in agent mode, so its
+numbers are the CLI's. From `2025-06-18` on a result carries `structuredContent` (and the same JSON as its one text
+block); before, the text block only. `testdata/mcp/tools-<version>.json` hold the exact `tools/list` results.
+
+| Tool | Input (all optional unless noted) |
+|---|---|
+| `session` | `ref` string (default `current`), `root` bool, `fields` array of `session` fields |
+| `sessions` | `since` string (`24h`), `live` bool, `harness` enum (`claude codex fx pi opencode kiro gemini`), `filter` string, `limit` integer 1–100 (20), `cursor` string, `fields` array of `sessions` fields |
+| `errors` | `ref` string, `since` string (`24h`), `filter` string, `limit` integer 1–100 (20), `cursor` string |
+| `cost` | `since` string, `by` enum (`day model harness project session`), `filter` string |
+| `triage` | `preset` enum (`errors slow long expensive failing period`), `select` string, `baseline` enum (`rest previous`), `entity` enum (`call session`), `days` integer 1–90 (7), `limit` integer 1–50 (10) |
+| `compare` | `sessions` array (two refs), or `a` string and `b` string (filter expressions); `filter` string, `subagents` bool (true) |
+| `related` | `ref` string (`current`), `event` string, `at` string (ISO time), `minutes` integer 1–60 (10), `limit` integer 1–200 (50), `cursor` string |
+| `contention` | `kind` enum (`test typecheck lint build install ci`), `family` string, `max` integer 1–32 (3) |
+| `waits` | `since` string (`7d`), `by` enum (`family kind tool`), `filter` string, `limit` integer 1–50 (15) |
+| `fleet` | none |
+| `prices` | `unpriced` bool (true), `model` string |
+
+Results:
+- **List tools** (`sessions`, `errors`): `{rows: [...], next: string|null, truncated: bool, scope: "project"|"all"}`.
+  `next` is an opaque cursor for the following page; `truncated` is true when the size cap dropped rows (then `next`
+  continues after the last row shown).
+- **Object tools**: the CLI's object plus `scope` (`session`: the `session <ref>` fields; `related`: `--json
+  --related`, its `events` paged with `limit`/`cursor` and `next`). An object trimmed by the size cap carries
+  `truncated: [<array names>]`.
+- `contention`: `{go: bool, heavyRunning: number, max: number, running: [{session, harness, family, kind, heavy,
+  ageSec, rssMb}] (≤ 10, heavy and oldest first), load1, cpus, memAvailPct, advice: string, scope: "host"}`.
+- `waits`: `{period, agentTime, rows: [{key, kind, heavy, calls, totalMs, share, p50Ms, p95Ms, errors, trend, peak}],
+  guard, scope}`. `fleet`: `fleet status --json` plus `configured: true`, or `{hosts: [], configured: false}`.
+  `prices`: `{models: [{model, source, price, unpricedTokens, estimated}]}`.
+- Without the server option `--content`, content is left out: `errors` rows have no `text`, `session.errors[]` no
+  `text`, `related` events and anchor of kinds `prompt`, `agent`, `assistant`, `thinking` no `text`.
+
+Errors: an unknown tool is JSON-RPC `-32602`; anything else is a result with `isError: true` and `{"error": {code,
+message, hint?}}` as text and `structuredContent`. Codes: the CLI's own (`usage`, `not_found`, `ambiguous`,
+`no_current_session`, `out_of_scope` …) and `invalid_arguments`, `timeout`, `busy` (2 calls running and 8 queued),
+`no_cli` (no agentglass beside the server), `contract` (an agentglass below contract 1), `no_project` (started in
+`$HOME` and the caller's project unknown), `bad_output`, `cli`.
+
+Additive (keeps the number): a new tool, input property, output field or enum value. Breaking (bumps it): a tool or
+input renamed or removed, a type or meaning changed, a default that widens what is returned (scope, content).
 
 ## Environment
 

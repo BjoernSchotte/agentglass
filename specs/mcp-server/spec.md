@@ -1,6 +1,6 @@
 # MCP server — spec
 
-Status: **draft** (2026-10-08), decisions made under the user's 2026-10-05 delegation (see "Decisions").
+Status: **implemented** (2026-10-08; open questions answered at the end), decisions made under the user's 2026-10-05 delegation (see "Decisions").
 Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 2 (after 2026.10.4). Builds on cli-agent-mode (contract 1),
 agent-wait, filter-language, triage, session-compare, related-events, honest-costs, model-prices and fleet.
 
@@ -599,3 +599,22 @@ Each: question · options · decision · why · cost if wrong.
    wrote, so retries make progress? Measure with an empty `AGENTGLASS_CACHE_DIR` and `--timeout 5`.
 5. **`structuredContent` in each host:** which hosts pass `structuredContent` rather than the text block to the
    model (it affects only token cost, not correctness). Record per host in the README table.
+
+### Answers (implementation, 2026-10-08)
+1. **Claude registry `/clear`:** yes. `scripts/mcp.test.sh` rewrites a fake agent's `~/.claude/sessions/<pid>.json` from
+   session A to B between two calls of the same process: `session {}` returns A, then B.
+2. **Codex** (source, `codex-rs/rmcp-client`): a stdio server gets only `HOME LOGNAME PATH SHELL USER LANG LC_ALL
+   TERM TMPDIR TZ` plus the server's configured `env_vars`/`env` (`DEFAULT_ENV_VARS`, `create_env_for_mcp_server`),
+   its cwd is the server config's `cwd` or else Codex's own working directory (`LocalStdioServerLauncher`,
+   `runtime_context.local_process_cwd()`), in a new process group; the parent stays the codex process. No `CODEX_*`
+   marker reaches the server: `AGENTGLASS_AGENT=1` in the children covers it, and the cwd is the project.
+3. **OpenCode 2.0.19:** still unverified. `opencode mcp list` with isolated `XDG_*` dirs and no TTY exits 125
+   without output and starts its own `opencode serve --service` daemon (killed after the probe). README: "should
+   work, unverified".
+4. **Cold cache under a timeout:** a child killed during a cold index keeps nothing (`cost` with an empty cache and
+   `--timeout 5`: four calls, each `timeout`, the cache stays at 1 KB), so retries make no progress. `sessions` (24 h)
+   answers within 5 s on a cold cache. The `timeout` hint and the README say: run `agentglass` once first.
+5. **`structuredContent`:** pi 0.99.2 (code mode, the default exposure) hands the model `structuredContent` (its
+   generated code read `s.structuredContent ?? s`); Gemini CLI 0.63.0 showed the model the JSON object. Both answered
+   correctly in live sessions (session, errors, waits, contention; `scope: project`, contention `host`).
+

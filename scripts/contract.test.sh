@@ -6,7 +6,9 @@ set -e
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 command -v python3 > /dev/null 2>&1 || { echo "contract: skipped (needs python3)"; exit 0; }
-if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag"; else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
+if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/ag" # agentglass-mcp is small: built here (the MCP section)
+  ( cd "$here" && . ./scripts/toolchain.sh && { [ -f src/build-info.ts ] || sh scripts/build-info.sh; } && scriptc build ${SCRIPTC_FLAGS:-} src/mcp/main.ts -o "$t/agentglass-mcp" ) > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }
+else AGENTGLASS_OUT="$t/ag" sh "$here/build.sh" > "$t/build.log" 2>&1 || { cat "$t/build.log"; exit 1; }; fi
 h="$t/h"; p1="$h/w/p1"; p2="$h/w/p2"; mkdir -p "$p1/.git" "$p2/.git"
 A=abcdef01-0000-4000-8000-000000000001; B=abcdef02-0000-4000-8000-000000000002
 day=$(date -u +%Y-%m-%d)
@@ -79,6 +81,8 @@ eq "session types" "$(types "$t/s.json" "$SF")" ok
 eq "session full ref with copies" "$(run session "claude:$B" --fields cwd --format csv | tail -n +2)" "$p2"
 eq "session full id with copies" "$(run session "$B" --fields cwd --format csv | tail -n +2)" "$p2"
 eq "session help" "$(helped session "$FL")" ok
+eq "session via" "$(run session "claude:$A" --fields via --format json)" '{"via":"ref"}'
+eq "session help via" "$(helped session via)" ok
 set +e
 run session zzzzzzzz > /dev/null 2>&1; eq "session not found" $? 3
 run session abcdef0 > /dev/null 2>&1; eq "session ambiguous prefix" $? 4
@@ -117,6 +121,36 @@ run open zzzzzzzz --new-instance > /dev/null 2>&1; eq "open not found" $? 3
 run open abcdef0 > /dev/null 2>&1; eq "open ambiguous" $? 4
 run open "agentglass://nope" > /dev/null 2>&1; eq "open malformed" $? 2
 set -e
+
+# the MCP server: every tool and input property of the doc's table, with its type, in tools/list (and nothing more);
+# initialize carries the contract number
+cat > "$t/mcp.py" << 'PY'
+import json, re, subprocess, sys
+doc, srv, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+sec = open(doc, encoding="utf-8").read().split("## MCP server", 1)[1].split("\n## ", 1)[0]
+rows = [l for l in sec.splitlines() if l.startswith("| `")]
+want = {}
+for l in rows:
+    cells = [c.strip() for c in l.strip("|").split("|")]
+    tool = cells[0].strip("`"); want[tool] = {}
+    for name, ty in re.findall(r"`(\w+)` (string|bool|integer|enum|array)", cells[1]): want[tool][name] = ty
+p = subprocess.run([srv], input=(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "contract", "version": "1"}}}) + "\n"
+    + json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}) + "\n").encode(), capture_output=True, cwd=cwd, timeout=30)
+msgs = {m["id"]: m for m in map(json.loads, p.stdout.decode().splitlines())}
+bad = []
+if msgs[1]["result"]["_meta"]["agentglass/contract"] != int(sys.argv[4]): bad.append("contract in initialize")
+got = {t["name"]: t["inputSchema"]["properties"] for t in msgs[2]["result"]["tools"]}
+TY = {"string": "string", "bool": "boolean", "integer": "integer", "enum": "string", "array": "array"}
+if sorted(got) != sorted(want): bad.append("tools: doc %s, server %s" % (sorted(want), sorted(got)))
+for tool, props in want.items():
+    have = got.get(tool, {})
+    if sorted(have) != sorted(props): bad.append("%s inputs: doc %s, server %s" % (tool, sorted(props), sorted(have)))
+    for n, ty in props.items():
+        if n in have and have[n].get("type") != TY[ty]: bad.append("%s.%s: doc %s, server %s" % (tool, n, ty, have[n].get("type")))
+        if n in have and ty == "enum" and "enum" not in have[n]: bad.append("%s.%s: not an enum" % (tool, n))
+print("; ".join(bad) or "ok")
+PY
+eq "mcp tools = the doc" "$(env -i HOME="$h" PATH="$PATH" AGENTGLASS_MCP_BIN="$t/ag" python3 "$t/mcp.py" "$here/docs/cli-contract.md" "$t/agentglass-mcp" "$p1" "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["contract"])' "$t/v.json")")" ok
 
 # the notify command's alert JSON: the listed fields (rules check accepts the documented shape)
 printf '{"notify":{"command":["/bin/cat"],"on":["fire","escalate"]}}' > "$t/rules.json"; chmod 600 "$t/rules.json"
