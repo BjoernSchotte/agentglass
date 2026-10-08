@@ -60,15 +60,13 @@ export function avgTail(a: number[], n: number): number {
 }
 const SHELLS = ["sh", "bash", "zsh", "fish", "dash"];
 function isShell(p: Proc): boolean { return SHELLS.indexOf(base(p.args.split(" ")[0] ?? "").replace(/^-/, "")) >= 0; }
-// an MCP server (agentglass-mcp, playwright-mcp, node /x/mcp-server.js): what it runs is its own work, not the agent's
-const INTERP = ["node", "bun", "deno", "python", "python3", "npx", "uvx"];
-function isMcp(p: Proc): boolean {
-  const w = p.args.split(" "); const b0 = base(w[0] ?? "");
-  return b0.indexOf("mcp") >= 0 || (INTERP.indexOf(b0) >= 0 && base(w[1] ?? "").indexOf("mcp") >= 0);
-}
+// agentglass-mcp (our own MCP server): its agentglass CLI children answer its tool calls and are never the agent's
+// commands. Other MCP servers stay walked: a shell one of them runs (a GitHub server's git clone) is work for the agent
+const OWN_MCP = "agentglass-mcp";
+function isOwnMcp(p: Proc): boolean { return base(p.args.split(" ")[0] ?? "") === OWN_MCP; }
 export interface Cmd { age: number; name: string }
 // tool commands run by the agent = its outermost descendant shells (MCP servers & co are spawned directly, not via a
-// shell; a shell below an MCP server, e.g. one agentglass-mcp's CLI child runs, is the server's and not counted)
+// shell; a shell one of them runs is counted, except below agentglass-mcp, whose subtree is skipped)
 // memo per children map (a new map = the process table changed): the watchdog's look and the live wait collection walk
 // each agent's tree once per change, not twice per tick
 const TS = { kids: new Map<number, Proc[]>(), m: new Map<number, Proc[]>() };
@@ -81,7 +79,7 @@ export function toolShells(root: number, kids: Map<number, Proc[]>): Proc[] {
     const pid = stack.pop() as number;
     for (const c of kids.get(pid) ?? []) {
       if (isShell(c)) out.push(c);
-      else if (!isMcp(c)) stack.push(c.pid);
+      else if (!isOwnMcp(c)) stack.push(c.pid);
     }
   }
   TS.m.set(root, out);

@@ -36,6 +36,13 @@ mk.set(100, [pr(200, 100, "10:00", "/opt/bin/agentglass-mcp"), pr(400, 100, "00:
 mk.set(200, [pr(300, 200, "00:01", "agentglass session current --format json")]);
 mk.set(300, [pr(310, 300, "00:01", "sh -c stty size < /dev/tty")]);
 eq("toolShells skip agentglass-mcp", toolShells(100, mk).map((p: Proc): string => String(p.pid)).join(","), "400");
+// a third-party MCP server's shells run on the agent's behalf: listed (only agentglass-mcp's subtree is skipped)
+const mo = new Map<number, Proc[]>(); // (a new map: toolShells memoizes per map)
+mo.set(500, [pr(600, 500, "10:00", "/usr/local/bin/github-mcp-server stdio"), pr(610, 500, "10:00", "node /x/mcp-server.js"), pr(620, 500, "10:00", "/x/agentglass-mcp-old/bin/tool")]);
+mo.set(600, [pr(700, 600, "00:03", "/bin/sh -c git clone x")]);
+mo.set(610, [pr(710, 610, "00:02", "bash -c pnpm test")]);
+mo.set(620, [pr(720, 620, "00:01", "sh -c make")]);
+eq("toolShells walk other mcp servers", toolShells(500, mo).map((p: Proc): string => String(p.pid)).sort().join(","), "700,710,720");
 
 const now = 1000000000;
 const base: Obs = { now, mtime: now - 45000, busy: true, evs: [ev("user", "x"), call], cpu: flat(10, 0.2), cmds: [], subsActive: false };

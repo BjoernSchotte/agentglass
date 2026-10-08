@@ -1,7 +1,8 @@
 // agentglass — self-check for the MCP child runner (queue, timeout, cancel, progress, env, paths) with sh stub children:
 //   scriptc build src/mcp/run.check.ts -o rn && ./rn
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync, unlinkSync } from "node:fs";
+import { readFileSync, unlinkSync, mkdtempSync, symlinkSync, realpathSync, rmdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { SESSION_VARS, newRunner, submit, cancel, killAll, childEnv, cliBin, childCwd, type Job, type Done, type Runner } from "./run.ts";
 
 let bad = 0;
@@ -29,6 +30,11 @@ function fin(): void { pending--; if (pending === 0) summary(); }
   ok("cwd home/", childCwd("/home/u/", "/home/u") === "", childCwd("/home/u/", "/home/u"));
   ok("cwd root", childCwd("/", "/home/u") === "", childCwd("/", "/home/u"));
   ok("cwd project", childCwd("/w/p", "/home/u") === "/w/p", childCwd("/w/p", "/home/u"));
+  // $HOME through a symlink (macOS: mktemp's /var/… is /private/var/…, and process.cwd() reports the real path)
+  const d = mkdtempSync(tmpdir() + "/agmcp-"); const l = d + "-link"; symlinkSync(d, l);
+  ok("cwd home via symlink", childCwd(realpathSync(d), l) === "" && childCwd(l, realpathSync(d)) === "", childCwd(realpathSync(d), l));
+  ok("cwd project real", childCwd(l, "/home/u") === realpathSync(d), childCwd(l, "/home/u"));
+  unlinkSync(l); rmdirSync(d);
   ok("bin sibling", cliBin("/opt/x/agentglass-mcp", {}) === "/opt/x/agentglass", cliBin("/opt/x/agentglass-mcp", {}));
   ok("bin env", cliBin("/opt/x/agentglass-mcp", { AGENTGLASS_MCP_BIN: "/t/stub" }) === "/t/stub", cliBin("/opt/x/agentglass-mcp", { AGENTGLASS_MCP_BIN: "/t/stub" }));
 }

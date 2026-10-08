@@ -3,6 +3,7 @@
 // No timer is armed while nothing runs: an idle server costs no CPU.
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 
 // a copy of agentenv.ts SESSION_VARS (src/mcp imports no feature module; agentenv.check.ts pins both lists)
 export const SESSION_VARS: string[] = ["CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "CODEX_THREAD_ID", "KIRO_SESSION_ID", "PI_SESSION_ID"];
@@ -37,9 +38,10 @@ export function cliBin(execPath: string, env: Record<string, string>): string {
   const i = execPath.lastIndexOf("/");
   return (i >= 0 ? execPath.slice(0, i + 1) : "") + "agentglass";
 }
-// "" when the server was started in $HOME or / (no project there: main.ts resolves the calling session's cwd once)
+// "" when the server was started in $HOME or / (no project there: main.ts resolves the calling session's cwd once).
+// Both compared as real paths: process.cwd() is one, $HOME may not be (macOS: /var/… is /private/var/…)
 export function childCwd(cwd: string, home: string): string {
-  const t = (p: string): string => (p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p);
+  const t = (p: string): string => { let r = p; try { r = p ? realpathSync(p) : p; } catch (e) { r = p; } return r.length > 1 && r.endsWith("/") ? r.slice(0, -1) : r; };
   const c = t(cwd);
   return c === "/" || c === "" || c === t(home) ? "" : c;
 }

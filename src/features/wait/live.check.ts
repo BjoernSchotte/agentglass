@@ -77,6 +77,11 @@ mk.set(1300, [pr(1301, 1300, "10:00", 1000, "/opt/bin/agentglass-mcp"), pr(1310,
 mk.set(1301, [pr(1302, 1301, "00:01", 1000, "agentglass session current --format json")]);
 mk.set(1302, [pr(1303, 1302, "00:01", 1000, "sh -c stty size < /dev/tty")]);
 eq("agentglass-mcp never a run", collectLive([mc], mk, now).running.map((r: Run): string => r.family).join(","), "pnpm test");
+// a third-party MCP server that runs a test for the agent: a real run (only agentglass-mcp's subtree is skipped)
+const mo = new Map<number, Proc[]>(); // (a new map: toolShells memoizes per map)
+mo.set(1300, [pr(1320, 1300, "10:00", 1000, "node /x/mcp-server.js")]);
+mo.set(1320, [pr(1321, 1320, "00:10", 1000, "/bin/sh -c pnpm test")]);
+eq("other mcp server's run listed", collectLive([mc], mo, now).running.map((r: Run): string => r.family).join(","), "pnpm test");
 
 // counts: by count, then name; ≤ 60 characters
 function run(fam: string): Run { return { path: "/p", h: "claude", family: fam, kind: "test", heavy: true, ageSec: 1, rssKb: 1, pid: 1, bg: false }; }

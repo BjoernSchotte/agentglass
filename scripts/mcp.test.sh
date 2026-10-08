@@ -219,7 +219,8 @@ pids="$!"
 n=0; while [ ! -s "$t/slow.pid" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
 run AGENTGLASS_AGENT=0 "$t/bin/agentglass" wait --now --json > "$t/now.json" 2>&1 || true
 fams=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" ".join(sorted(r["family"] for r in d["now"]["running"])))' "$t/now.json" 2>/dev/null || cat "$t/now.json")
-eq "wait --now: the agent's shell" "$(case " $fams " in *" sleep "*) echo listed;; *) echo "missing in: $fams";; esac)" listed
+# (no `case` inside $( ): macOS bash 3.2 as /bin/sh cannot parse its ")" patterns there)
+eq "wait --now: the agent's shell (in: $fams)" "$(printf '%s\n' $fams | grep -cx sleep || true)" 1
 eq "wait --now: no agentglass or stub" "$(printf '%s\n' $fams | grep -cE '^(agentglass|slow|python)' || true)" 0
 wait $pids 2>/dev/null || true; pids=""
 
