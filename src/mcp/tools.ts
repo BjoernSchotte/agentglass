@@ -1,4 +1,4 @@
-// agentglass-mcp — the 11 read-only tools: schemas (tools/list), input validation and the argv of the one agentglass CLI
+// agentglass-mcp — the 12 read-only tools: schemas (tools/list), input validation and the argv of the one agentglass CLI
 // child each call runs. One property table per tool feeds both the JSON Schema and the validator, so they cannot differ.
 // Values reach argv only through this mapping: refs and ids by pattern, filters as --flag=value, never a shell.
 // SPDX-License-Identifier: Apache-2.0
@@ -101,6 +101,10 @@ const SPECS: Spec[] = [
   { name: "related", title: "Related events",
     desc: "What all agents in this project did within N minutes of an event (default: this session's latest); conflicting writes flagged.",
     props: [REF(""), P("event", "str", "ref", 0, 128, [], "", "a tool call id"), P("at", "str", "at", 0, 40, [], "", "ISO time"), P("minutes", "int", "", 1, 60, [], "10", ""), LIMIT(200, 50), CURSOR],
+    out: OBJ({ events: T("array"), next: TN("string") }) },
+  { name: "events", title: "Events",
+    desc: "A session's events by kind (prompt, shell:test, mcp:<server>, skill:load, error …), filtered as in the TUI; hidden runs as gaps.",
+    props: [REF(""), P("filter", "str", "expr", 0, 512, [], "", "event.kind is skill"), LIMIT(200, 50), CURSOR],
     out: OBJ({ events: T("array"), next: TN("string") }) },
   { name: "contention", title: "Contention",
     desc: "Before running tests, builds, type checks, lint or installs: are other agents on this machine already running heavy commands? Returns go=false with what is running.",
@@ -276,6 +280,9 @@ export function plan(name: string, raw: Obj, o: Opts): Call {
   } else if (name === "related") {
     page(50); // events are paged here: the CLI returns them all
     g = ["--json", "--related", S(a, "ref") || "current"].concat(S(a, "event") ? ["--event", S(a, "event")] : [], S(a, "at") ? ["--at", S(a, "at")] : [], ["--minutes", String(I(a, "minutes", 10))]);
+  } else if (name === "events") {
+    page(50); // events are paged here: the CLI returns them all (text only with the server's --content)
+    g = ["events", S(a, "ref") || "current", "--json"].concat(filter("filter", "--filter"), o.content ? ["--content"] : []);
   } else if (name === "contention") {
     if (S(a, "kind") && S(a, "family")) return failed(name, "give kind or family, not both");
     c.scoped = false; // machine resources are shared across projects: host-wide, as `wait --now` is

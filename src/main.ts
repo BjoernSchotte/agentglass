@@ -40,6 +40,7 @@ import "./features/cost-cli.ts";
 import "./features/wait/cli.ts";
 import "./features/prices-cli.ts";
 import "./features/queries.ts";
+import "./features/events-cli.ts"; // agentglass events <ref>: a session's events by kind
 import "./features/themes.ts";
 import "./features/ticker.ts";
 import "./features/watchdog.ts";

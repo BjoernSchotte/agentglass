@@ -151,6 +151,31 @@ rows only. Inside an agent, history is the current project (`scope.project`); `n
 Exit 0; `--check`: 3 when the heavy commands running now (of `--family` / `--kind`) reach `--max` (default: the
 `contention` rule's threshold, 3), else 0; 2 on a usage error.
 
+## `agentglass events [<ref>]` — one session's events by kind
+
+```
+agentglass events <ref> [--filter '<expr>' | --preset all|skills|mcp|shell|errors|prompts] [--limit N] [--content] --json
+```
+
+The session's events (its whole log) filtered like the TUI's event views (`K`, `/`: the same keys `event.kind`,
+`mcp.server`, `shell.family` and call clauses, the same presets). `<ref>` as for `session`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `session` | object | `{harness, id, title}` |
+| `filter` | string\|null | the expression applied (a preset's too), null = none |
+| `matched` | number | events the filter shows |
+| `total` | number | events in the log |
+| `events` | array | in log order: an event `{i, ts, kind, kinds, tool, id, target, text, link}` or a run of hidden ones `{gap, kinds}` (`kinds`: family → count) |
+
+`kinds` of an event: one or more of `prompt`, `prompt:agent`, `reply`, `reply:thinking`, `shell:<wait kind>`, `edit`,
+`read`, `read:search`, `web`, `mcp:<server>`, `subagent`, `skill:load`, `skill:unload`, `approval`, `meta`,
+`meta:compact`, `other`, plus `error` on a failed call and its result. `target` holds no content (a shell call's
+family, a file tool's path, an MCP tool's name); `text` is null without `--content`. `--watch` lines carry the same
+`kinds` array.
+
+Exit 0, 2 usage error (a bad expression: the caret on stderr), 3 no such session, 4 ambiguous prefix.
+
 ## `agentglass open <ref>`
 
 ```
@@ -198,6 +223,7 @@ block); before, the text block only. `testdata/mcp/tools-<version>.json` hold th
 | `triage` | `preset` enum (`errors slow long expensive failing period`), `select` string, `baseline` enum (`rest previous`), `entity` enum (`call session`), `days` integer 1–90 (7), `limit` integer 1–50 (10) |
 | `compare` | `sessions` array (two refs), or `a` string and `b` string (filter expressions); `filter` string, `subagents` bool (true) |
 | `related` | `ref` string (`current`), `event` string, `at` string (ISO time), `minutes` integer 1–60 (10), `limit` integer 1–200 (50), `cursor` string |
+| `events` | `ref` string (`current`), `filter` string, `limit` integer 1–200 (50), `cursor` string |
 | `contention` | `kind` enum (`test typecheck lint build install ci`), `family` string, `max` integer 1–32 (3) |
 | `waits` | `since` string (`7d`), `by` enum (`family kind tool`), `filter` string, `limit` integer 1–50 (15) |
 | `fleet` | none |
@@ -208,7 +234,8 @@ Results:
   `next` is an opaque cursor for the following page; `truncated` is true when the size cap dropped rows (then `next`
   continues after the last row shown).
 - **Object tools**: the CLI's object plus `scope` (`session`: the `session <ref>` fields; `related`: `--json
-  --related`, its `events` paged with `limit`/`cursor` and `next`). An object trimmed by the size cap carries
+  --related`, its `events` paged with `limit`/`cursor` and `next`; `events`: `agentglass events --json`, paged the
+  same way). An object trimmed by the size cap carries
   `truncated: [<array names>]` (an array one level down by its path, e.g. `files.onlyB` in `compare`).
 - `contention`: `{go: bool, heavyRunning: number, max: number, running: [{session, harness, family, kind, heavy,
   ageSec, rssMb}] (≤ 10, heavy and oldest first), load1, cpus, memAvailPct, advice: string, scope: "host"}`.
@@ -216,7 +243,8 @@ Results:
   guard, scope}`. `fleet`: `fleet status --json` plus `configured: true`, or `{hosts: [], configured: false}`.
   `prices`: `{models: [{model, source, price, unpricedTokens, estimated}]}`.
 - Without the server option `--content`, content is left out: `errors` rows have no `text`, `session.errors[]` no
-  `text`, `related` events and anchor of kinds `prompt`, `agent`, `assistant`, `thinking` no `text`.
+  `text`, `related` events and anchor of kinds `prompt`, `agent`, `assistant`, `thinking` no `text`, `events` events
+  no `text`.
 
 Errors: an unknown tool is JSON-RPC `-32602`; anything else is a result with `isError: true` and `{"error": {code,
 message, hint?}}` as text and `structuredContent`. Codes: the CLI's own (`usage`, `not_found`, `ambiguous`,

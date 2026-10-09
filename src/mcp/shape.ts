@@ -34,6 +34,7 @@ export function stripContent(tool: string, v: Obj): Obj {
     const an = obj(v["anchor"]); if (an && byKind(an)) c["anchor"] = without(an, "text");
     return c;
   }
+  if (tool === "events" && v["events"] !== undefined) { const c = copy(v); c["events"] = noText(v["events"], all); return c; }
   return v; // compare, triage: aggregates only
 }
 
@@ -136,14 +137,14 @@ export function shapeOk(c: Call, stdout: string, scope: string, o: Opts): Shaped
   if (t === "fleet") { const f = copy(x); f["configured"] = true; return done(capObject(f, o.maxBytes)); }
   if (t === "prices") return done(capObject({ models: objs(x["models"]).filter((m: Obj) => !c.model || str(m["model"]) === c.model).map((m: Obj) => pick(m, PRICE_ROW)) }, o.maxBytes));
   const r = copy(x);
-  if (t === "related") { // events paged here (the CLI returns the whole window)
+  if (t === "related" || t === "events") { // events paged here (the CLI returns the whole window / session)
     const ev = objs(x["events"]);
     r["events"] = ev.slice(c.offset, c.offset + c.limit);
     r["next"] = ev.length > c.offset + c.limit ? encodeCursor(c.offset + c.limit) : null;
   }
   if (r["scope"] === undefined || typeof r["scope"] !== "string") r["scope"] = scope;
   const capped = capObject(r, o.maxBytes);
-  if (t === "related" && names(capped["truncated"]).indexOf("events") >= 0) capped["next"] = encodeCursor(c.offset + arr(capped["events"]).length);
+  if ((t === "related" || t === "events") && names(capped["truncated"]).indexOf("events") >= 0) capped["next"] = encodeCursor(c.offset + arr(capped["events"]).length);
   return done(capped);
 }
 // the CLI's error line ({"error":{code,message,hint}} on stderr in agent mode): the last line that parses
