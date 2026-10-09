@@ -378,6 +378,12 @@ and deep links that carry the filter.
   for event kinds is owned by the shared layer; debug registers values and adds no attribute of its own for steps.
   The session attributes of §8.3 stay.
 - `marksOf` is lazy: no marks are computed until a view or a filter asks (budgets of §8.4).
+- **Names fixed by skill-usage (§5, §5a there):** the filter key is `event.kind` (the old `event` key stays as an alias;
+  `kind` belongs to agent-wait), with `mcp.server` and `shell.family`. Mark kinds are namespaced `family:name`; a family
+  name matches all its kinds. The one view-filter controller is `src/ui/evfilter.ts`, with these keys in every event
+  view: `K` chips, `i` solo on the cursor's kind, `!` invert, `/` expression, `]`/`[` next match. The debug panel uses
+  it as view `debug`. `Mark` has `anchor`, `seq` and a per-family `gen(s)`, as asked. Hidden events become gap lines,
+  and time axes stay true.
 
 ### 7. CLI: `agentglass debug`
 ```

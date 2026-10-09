@@ -10,7 +10,7 @@
 
 **Spec:** [spec.md](spec.md) — read it first, including "Today", "Decisions" and "Open questions"; this plan argues from it.
 
-**Round:** Round 3 (after 2026.10.10). Shares `src/model/marks.ts` (marks and event kinds) with skill-usage: if that layer is not on `main` when Task 6 starts, Task 6 creates it to the shape agreed in both specs (spec §6.1), and skill-usage then builds on it. Needs filter-language, rules-config, agent-wait (families), honest-costs (`Day.hc`, billing), cli-agent-mode, command-palette (links, `applyTarget`), mcp-server (merged). Bumps the ledger `VERSION` once (Task 3).
+**Round:** Round 3 (after 2026.10.10). Shares `src/model/marks.ts` (marks and event kinds) with skill-usage: if that layer is not on `main` when Task 6 starts, Task 6 creates it to the shape agreed in both specs (spec §6.1), and skill-usage then builds on it. The event-kind taxonomy, the `event.kind` filter key and the view-filter controller (`src/ui/evfilter.ts`: chips `K`, presets, solo `i`, invert `!`, gap lines, `f=` links) are skill-usage plan Tasks E1–E2. If those are not merged when Task 6 starts, Task 6 implements E1–E2 to skill-usage spec §5a first. Needs filter-language, rules-config, agent-wait (families), honest-costs (`Day.hc`, billing), cli-agent-mode, command-palette (links, `applyTarget`), mcp-server (merged). Bumps the ledger `VERSION` once (Task 3).
 
 ## Global Constraints
 
