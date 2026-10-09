@@ -8,7 +8,9 @@ import { DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
 import { type Rows, newRows, push, addId, addCmd, KIND_PROG, KIND_FILE } from "./rows.ts";
 import { numAt } from "../../util/text.ts";
 import { own } from "../../util/own.ts";
+import { type SkLoad, type SkRead, newLoad, growLoad, attribute, saRow, skillPath, SA_LU, SA_LM, SA_LC, SK_CAP, LISTING } from "./skillrec.ts";
 export { dayKey };
+export type { SkLoad };
 
 // one local day of one session; unk = tokens whose price is unknown (um: per model), uc = credits without a rate (kiro); turns = human prompts
 // tt = per tool; prog/cmds/files are keyed "<tool>\t<program | command line | path>"; skills "<command | model>\t<skill name>"
@@ -18,9 +20,12 @@ export { dayKey };
 //   (usd -1 = unpriced): what reprice() re-prices in place when a price changes; harness-reported costs and kiro credits stay out
 // act = active minutes, flat sorted merged [s0,e0,s1,e1,…] local minutes of the day (e exclusive, ≤ ACT_MAX intervals)
 // hx = the heavy part (heavy()); hv = that part as the cache stored it (JSON text), until something asks for it
+// sa = per-skill tokens "<skill>\t<provider>\t<model>" → 16 slots (skillrec.ts SA_*): loads by trigger, load/carry/tail
+//   tokens per bucket, harness-priced $ (rows whose provider starts with "=": never re-priced)
 export interface Day {
   tools: number; hx: Heavy | null; hv: string; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
   um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>; act: number[]; tp: Map<string, number[]>;
+  sa: Map<string, number[]>;
 }
 // per tool, per program, per command line, per file: ~90 % of the ledger cache. A run that never looks at them (cost,
 // --json) reads them back as text and writes that text out again; heavy() decodes a day's on first use (HEAVY: codec.ts)
@@ -70,6 +75,9 @@ export interface Acc {
   mo: Map<string, number>; mv: string; // messages (and prompts) this log owns → their order key (owners.ts); mv = mo as stored, until decoded
   mc: Map<string, string>; // copies this log skipped → the path that owned them then
   xs: Set<string>; // other sessions its lines name as their source (a Claude continuation's session_id): they may own its messages
+  // skills (skillrec.ts): every load in load order; requests booked; human prompts (turns, also a subagent's own); the
+  // previous request's context; the newest listing's skill names; SKILL.md reads waiting for their output (not persisted)
+  sk: SkLoad[]; rq: number; tq: number; lastCtx: number; lst: string[]; skr: Map<string, SkRead>;
 }
 // one scraped git reference: k = commit (v = sha as printed) | pr | issue | link (v = canonical URL; link = a commit URL) |
 // gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
@@ -94,7 +102,8 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Map<string, number>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", rows: newRows(), lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [],
-    p: "", ro: false, mo: new Map<string, number>(), mv: "", mc: new Map<string, string>(), xs: new Set<string>() };
+    p: "", ro: false, mo: new Map<string, number>(), mv: "", mc: new Map<string, string>(), xs: new Set<string>(),
+    sk: [], rq: 0, tq: 0, lastCtx: 0, lst: [], skr: new Map<string, SkRead>() };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -105,7 +114,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
   return { tools: 0, hx: newHeavy(), hv: "", skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
-    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>() };
+    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>(), sa: new Map<string, number[]>() };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
 // tsIso/tsMs: the time of the last bucket() call, for the call rows tool() appends (0 = none: Date.now() fallback)
@@ -259,7 +268,13 @@ export function file(a: Acc, d: Day, name: string, path: string, add: number, de
   if (i >= 0 && nameOf(DICT.tool, a.rows.tool[i] + 0) === name) addId(a.rows, i, KIND_FILE, intern(DICT.file, path));
 }
 // human prompts (what the transcript shows as user events), on the local day of the prompt; root sessions only
-export function turn(a: Acc, ms: number, iso: string, n: number): void { if (n > 0 && !a.sub) { const d = bucket(a, ms, iso); d.turns = d.turns + n; } }
+// every prompt also numbers the log's turns (a.tq, a subagent's too: skill tail carry) and ends its skills' loading turn
+export function turn(a: Acc, ms: number, iso: string, n: number): void {
+  if (n <= 0) return;
+  if (a.sk.length) { const t = ms > 0 ? ms : isoMs(iso); for (const l of a.sk) if (l.tu === a.tq && l.te === 0) l.te = t > 0 ? t : 1; }
+  a.tq = a.tq + n;
+  if (!a.sub) { const d = bucket(a, ms, iso); d.turns = d.turns + n; }
+}
 export function skill(d: Day, source: string, name: string): void { if (name) cnt(d.skills, source + "\t" + name); }
 export interface SkillUse { name: string; source: string; n: number }
 // skill uses over the given local days (null = all), most used first
@@ -317,12 +332,14 @@ export function credits(a: Acc, d: Day, n: number): void { a.uc = a.uc + n; d.uc
 // the harness reports its own cost (OpenCode, pi): booked as is, never re-priced; usd <= 0 = unknown (0 for models it has no price for) → priced like tokens()
 export function usageExact(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number, prov = ""): void {
   if (usd <= 0) { tokens(a, d, model, nIn, nOut, nCr, w5, w1, prov); return; }
+  skillReq(a, d, model, prov, nIn, nOut, nCr, w5, w1, usd);
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   addCost(a, d, usd, prov, model);
   const f = bookTap; if (f) f({ model, nIn, nOut, cr: nCr, cw: w5 + w1, w1, cost: usd, unk: 0, exact: true, prov, src: "harness", est: false, day: tsDay, hr: tsHour });
 }
 export function tokens(a: Acc, d: Day, model: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, prov = ""): void {
+  skillReq(a, d, model, prov, nIn, nOut, nCr, w5, w1, 0);
   count(a, d, nIn, nOut, nCr, w5, w1);
   modelTok(d, model, nIn, nOut, nCr, w5 + w1);
   const usd = tableTok(a, d, model, prov, nIn, nOut, nCr, w5, w1);
@@ -423,4 +440,107 @@ export function modelUses(a: Acc, days: string[] | null): ModelUse[] {
 // every file an apply_patch-style patch touches: lines and per-file counts
 export function patchLines(a: Acc, d: Day, name: string, patch: string): void {
   for (const f of patchFiles(patch)) { lines(a, d, f.add, f.del); file(a, d, name, f.p, f.add, f.del); }
+}
+
+// ── skills (skill-usage spec §3; the engine is skillrec.ts) ──
+// one request's tokens to the skills in context: a request with context tokens counts (an output-only booking, a Claude
+// message's later lines, is none); with no load in the log only the counters move
+function skillReq(a: Acc, d: Day, model: string, prov: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number): void {
+  const ctx = nIn + nCr + w5 + w1; if (ctx <= 0) return;
+  if (a.sk.length) {
+    let w: number[] = [1, 1, 1, 1, 1];
+    if (usd > 0) { const r = resolve(model, prov); if (r) w = [cost(r.p, 1e6, 0, 0, 0, 0), cost(r.p, 0, 0, 1e6, 0, 0), cost(r.p, 0, 0, 0, 1e6, 0), cost(r.p, 0, 0, 0, 0, 1e6), cost(r.p, 0, 1e6, 0, 0, 0)]; }
+    attribute(a.sk, d.sa, mkey(model), prov, [nIn, nCr, w5, w1], nOut, ctx, a.lastCtx, a.tq, tsMs, usd, w);
+  }
+  a.rq = a.rq + 1; a.lastCtx = ctx;
+}
+// the transcript line being booked, for SkLoad.off/len: the ledger sets acc/base and either the chunk's bytes and the
+// line's index (file sources: the offset is found only when a load asks) or, for record sources, the chunk's end
+export const SKLN = { acc: null as Acc | null, base: 0, end: 0, buf: null as Uint8Array | null, i: -1, si: 0, sp: 0 };
+// [start, end) of the current line in source units, or [-1, -1] when no ledger read of this Acc is going on
+export function lineSpan(a: Acc): number[] {
+  if (SKLN.acc !== a) return [-1, -1];
+  const b = SKLN.buf;
+  if (!b) return [SKLN.base, SKLN.end];
+  if (SKLN.i < SKLN.si) { SKLN.si = 0; SKLN.sp = 0; }
+  let pos = SKLN.sp;
+  for (let k = SKLN.si; k < SKLN.i; k++) { while (pos < b.length && b[pos] !== 10) pos++; pos++; }
+  SKLN.si = SKLN.i; SKLN.sp = pos;
+  let e = pos; while (e < b.length && b[e] !== 10) e++;
+  return [SKLN.base + pos, SKLN.base + e];
+}
+// where the current line is in the log (source units), -1 outside a ledger read: adapters keep it for a load's trigger line
+export function lineAt(a: Acc): number { return lineSpan(a)[0] ?? -1; }
+// a skill's text entered the context: a new load record (text "" with known false = size unknown). off = the trigger
+// line's start (lineAt() at the command / tool call; -1 = this line), rec = a database record id. Books the day's load
+// count. The caller skips copied lines (owned()). Returns the record (callers flag stub)
+export function skillLoad(a: Acc, name: string, trig: string, ms: number, iso: string, text: string, known: boolean, dir: string, est: boolean, off = -1, rec = ""): SkLoad {
+  const sp = lineSpan(a); const o = off >= 0 ? off : sp[0] ?? -1; const e = sp[1] ?? -1;
+  const t = ms > 0 ? ms : isoMs(iso);
+  const l = newLoad(name, trig, t, text, known, dir, est, a.tq, a.rq, o, o >= 0 && e > o ? e - o : 0, rec);
+  if (trig === "user" || trig === "model") for (const x of a.sk) if (x.name === name && x.why === "compact") { l.rel = true; break; }
+  const d = bucket(a, t, iso);
+  const r = saRow(d.sa, l.name, "", "");
+  const slot = trig === "user" ? SA_LU : trig === "model" ? SA_LM : SA_LC;
+  r[slot] = (r[slot] ?? 0) + 1;
+  a.sk.push(l);
+  if (a.sk.length > SK_CAP) skillFold(a);
+  return l;
+}
+// more text of the newest pending/open load of this name (a text over several lines, a second partial read)
+export function skillGrow(a: Acc, name: string, text: string): boolean {
+  for (let i = a.sk.length - 1; i >= 0; i--) {
+    const l = a.sk[i]; if (!l || l.name !== name || l.end !== 0) continue;
+    growLoad(l, text, lineSpan(a)[1] ?? -1);
+    return true;
+  }
+  return false;
+}
+// every load in context ends (a compaction marker, a /clear): why = compact | clear
+export function skillUnload(a: Acc, ms: number, why: string): void {
+  for (const l of a.sk) if (l.end === 0) { l.end = ms > 0 ? ms : 1; l.why = why; }
+}
+// a new skill listing replaces the open one (why = relist); names = the skills it lists (kept for "listed, never loaded")
+export function skillListing(a: Acc, ms: number, iso: string, text: string, names: string[]): void {
+  const t = ms > 0 ? ms : isoMs(iso);
+  for (const l of a.sk) if (l.end === 0 && l.name === LISTING) { l.end = t > 0 ? t : 1; l.why = "relist"; }
+  skillLoad(a, LISTING, "listing", t, iso, text, true, "", false);
+  const keep: string[] = []; for (const n of names) if (n && keep.length < SK_CAP && keep.indexOf(n) < 0) keep.push(own(n));
+  a.lst = keep;
+}
+// a SKILL.md read (spec §2): the call side remembers the path; the output side loads it as a model load
+export function skillRead(a: Acc, callId: string, path: string): void {
+  if (!callId || !skillPath(path)) return;
+  if (a.skr.size > 64) a.skr.clear(); // outputs that never came
+  a.skr.set(own(callId), { path: own(path), off: lineAt(a), tu: a.tq });
+}
+export function skillReadDone(a: Acc, d: Day, callId: string, ms: number, iso: string, out: string, cut: boolean): void {
+  const r = a.skr.get(callId); if (!r) return;
+  a.skr.delete(callId);
+  const name = skillPath(r.path); if (!name) return;
+  const dir = r.path.slice(0, r.path.lastIndexOf("/"));
+  for (let i = a.sk.length - 1; i >= 0; i--) { // the same skill in this turn: a tool load being sent (part of it), or a read of the same file (grown)
+    const l = a.sk[i]; if (!l || l.name !== name || l.end !== 0 || l.tu !== a.tq) continue;
+    if (!l.rd && l.pend) return; // the harness's skill tool loaded it right before this read
+    if (l.rd && l.dir === dir) { skillGrow(a, name, out); l.est = true; return; }
+  }
+  skillLoad(a, name, "model", ms, iso, out, true, dir, cut, r.off).rd = true;
+  skill(d, "model", name);
+}
+// the cap: the oldest ended load folds into its name's summary record (n > 1: counts and tokens kept, times dropped); a
+// name's first summary is made from its two oldest ended loads. Nothing foldable (all open): the log keeps them all
+function skillFold(a: Acc): void {
+  for (let i = 0; i < a.sk.length; i++) {
+    const x = a.sk[i] as SkLoad; if (x.end === 0 || x.n > 1) continue;
+    let into = -1;
+    for (let j = 0; j < a.sk.length; j++) { const f = a.sk[j] as SkLoad; if (j !== i && f.name === x.name && f.n > 1) { into = j; break; } }
+    if (into < 0) for (let j = i + 1; j < a.sk.length; j++) { const f = a.sk[j] as SkLoad; if (f.name === x.name && f.end !== 0 && f.n === 1) { into = j; break; } }
+    if (into < 0) continue;
+    const f = a.sk[into] as SkLoad;
+    if (f.n === 1) { f.t = 0; f.te = 0; f.off = -1; f.len = 0; f.rec = ""; f.stub = false; f.rel = false; }
+    f.n = f.n + x.n; f.nq = f.nq + x.nq; f.short = f.short + x.short; f.hu = f.hu + x.hu; f.ht = f.ht + x.ht;
+    for (let k = 0; k < 4; k++) { f.lt[k] = (f.lt[k] ?? 0) + (x.lt[k] ?? 0); f.ct[k] = (f.ct[k] ?? 0) + (x.ct[k] ?? 0); f.tt[k] = (f.tt[k] ?? 0) + (x.tt[k] ?? 0); f.hb[k] = (f.hb[k] ?? 0) + (x.hb[k] ?? 0); }
+    a.sk.splice(i, 1);
+    return;
+  }
 }
