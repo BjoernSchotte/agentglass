@@ -10,8 +10,9 @@ team **which skills to change** and why, with evidence: skills carried far beyon
 skills the user keeps invoking by hand that the model never picks, skills loaded twice in one context, skills whose
 new version made sessions more expensive, skills installed but never used.
 
-Skill names and sizes are shown and exported; **skill text never leaves the machine** (no `--content` in this spec,
-see Privacy).
+Skill details, including the loaded text, are shown by default on the user's own machine. They are hidden only when the
+user chooses it (`--redact`, `skills.hide`). Paths that send data elsewhere (OTLP, fleet, hub, MCP) send names and
+sizes, and send text only with their existing content opt-in (see Privacy).
 
 ## Why (user value)
 - A skill is a prompt the developer (or a team) wrote and shipped to every session. It is the one part of the context
@@ -122,9 +123,9 @@ Other harnesses (90 days, same scripts; M8):
 | Σ carry ÷ Σ load (tokens) | **92×** (356M vs 3.9M) | — | — | — |
 | skills' share of the session's cached input p50 / p90 / max | 4.4 % / 15.3 % / 34.9 % | 17.7 % / 34.5 % / 70 % | — | — |
 | sessions with a reload | 41 | 0 | 0 | 0 |
-| logs with a compaction | 107 of 314 (34 %) | 0 | — | — |
+| logs with a compaction | 96 of 314 (31 %) | 0 (a `$set` message rewrite seen 100×: Open question 4) | 0 | 0 |
 | per-request usage | `token_count.last_token_usage` per response | per message | per message | per message |
-| listing in context | developer message, ~22 000 chars, ~69 skills | — | — | — |
+| listing in context | developer message `## Skills`, p50 7 100 chars / 9 skills, max 22 000 / 54 | — | — | — |
 
 - **Codex loads skills by reading SKILL.md with shell commands**, never through `$name` here: agentglass counts 0
   today. 29 % of rollouts load skills, carry is 92× load and up to 35 % of a session's cached input. → SKILL.md-read
@@ -132,7 +133,7 @@ Other harnesses (90 days, same scripts; M8):
 - **Gemini sessions are short and skill-heavy**: skills are 18 % of cached input at the median (`using-superpowers`
   loaded in 54 of 93 sessions). Per-session carry is small in $ but the share is the largest. → the panel shows share as
   well as $ (6.6 `share` column).
-- **Codex compacts often** (34 % of rollouts), so `compact` unloads and A4 matter there most.
+- **Codex compacts often** (31 % of rollouts), so `compact` unloads and A4 matter there most.
 
 ## Design
 
@@ -170,7 +171,7 @@ Other harnesses (90 days, same scripts; M8):
 | harness | user trigger | model trigger | text visible | size source | usage | unload markers | tier |
 |---|---|---|---|---|---|---|---|
 | Claude | `<command-name>/x` + isMeta `Base directory for this skill:` line, same `promptId`, no `sourceToolUseID` | `Skill` tool_use + isMeta line(s) with `sourceToolUseID` = that tool_use id (text may span several isMeta lines: summed); a stub line `(Re-invocation of …` = stub load; after a compaction `{"type":"attachment","attachment":{"type":"invoked_skills","skills":[{name, content}]}}` = one `compact` load per entry (content capped at 20 000 chars, M5: tier ≈ when exactly 20 000) | yes, the isMeta line's text / the attachment's `content` | text | per request (`requestId`, else `message.id`) | `{"type":"system","subtype":"compact_boundary"}`; `/clear` = new log (session end) | exact |
-| Codex | user message text starting `<skill>` (a `$name` mention; 0 seen in 90 days) | **a read of `…/<name>/SKILL.md`** by a shell call (`cat`, `sed -n`, `nl`, `head`, `rg` on that path; M8: 946 reads in 90 of 314 rollouts) — today not detected at all | yes, the call output (cut by Codex's output limit: tier ≈ when the truncation marker is present) | text | per response `token_count` with `last_token_usage` (M8) | `compacted` item, `context_compacted` event (34 % of rollouts, M8) | exact, ≈ when cut |
+| Codex | user message text starting `<skill>` (a `$name` mention; 0 seen in 90 days) | **a read of `…/<name>/SKILL.md`** by a shell call (`cat`, `sed -n`, `nl`, `head`, `rg` on that path; M8: 946 reads in 90 of 314 rollouts) — today not detected at all | yes, the call output (cut by Codex's output limit: tier ≈ when the truncation marker is present) | text | per request `token_count` with `last_token_usage`, logged twice: the second has the same `total_tokens` and books nothing (the existing delta logic) (M8) | `compacted` item, `context_compacted` event (31 % of rollouts, M8) | exact, ≈ when cut |
 | pi | `<skill name=… location=…>` user message (`/skill:name`) | a `read` tool call of `…/<name>/SKILL.md` (seen once) | yes (block / read result) | text | per message | `compaction` entry | exact |
 | OpenCode | `{"type":"skill"}` row / `skill` part | `skill` tool call (input `{id}` 2.x, `{name}` 1.x) | yes, the tool part's output (M8: 358–2 164 chars) | text | per message | `compaction` part / message | exact |
 | Gemini | — | `activate_skill` call | yes, the functionResponse output (M8: p50 3 424 chars) | text | per message | none seen (0 of 93 sessions); implicit drop | exact |
@@ -188,7 +189,7 @@ a second load. This fixes Codex skill counts (today 0 of 314 rollouts; M8: 90) a
 `Day.skills` too.
 
 **Listing per harness.** Claude: `skill_listing` attachment (M7). Codex: the `<skills_instructions>` / `## Skills` part
-of the developer message (M8: ~22 000 chars, ~69 skills, repeated with each turn context it is sent in) — the open
+of the developer message (M8: p50 7 100 chars / 9 skills, max 22 000 / 54) — the open
 `(listing)` load is replaced (`why = relist`) when a new developer message carries it again. Gemini, OpenCode, pi:
 none found; the inventory (§8) is their A6 source.
 
@@ -272,6 +273,7 @@ export interface SkLoad {
   ct: number[];    // carry tokens [in, cacheRead, write5m, write1h]
   tt: number[];    // of which tail [in, cacheRead, write5m, write1h]
   hu: number;      // harness-priced $ share (load + carry), never re-priced
+  off: number; len: number; rec: string; // where the text is: byte offset + length of the load line(s) in the log; rec = record id for a database source; never the text
   mdl: string; prov: string; // model + provider of the load request (the per-day rows below hold the split by model)
 }
 ```
@@ -293,7 +295,7 @@ export interface SkLoad {
 - Hot path: `tokens()`/`usageExact()` add one branch `if (a.sk.length)` and, when loads are open, one loop over `A`
   (open loads, ≤ a handful). Lines that are no skill line are rejected by `indexOf` pre-filters as today.
 
-### 5. Shared session marks and event kinds (with debug-episodes)
+### 5. Shared session marks (with debug-episodes)
 A harness-neutral, view-neutral layer the TUI views, `--json`, the MCP server and a later web UI read the same way.
 debug-episodes (merged, `specs/debug-episodes/spec.md` §6.1, Decision 14) registers on it; this section is the
 agreed shape, including the two fields debug-episodes asked for (`anchor`, `seq`) and `gen`.
@@ -305,34 +307,117 @@ export interface Mark { kind: string; t0: number; t1: number; seq: number; turn:
 export interface MarkKind { kind: string /* family */; glyph: string; color: () => string; of: (s: Sess) => Mark[]; gen: (s: Sess) => number /* 0 = none */ }
 export function registerMarks(k: MarkKind): void;                       // a family registered twice replaces the first
 export function marksOf(s: Sess, kinds: string[] | null): Mark[];       // lazy; memo per (s.id, s.size, Σ gen); "skill" matches "skill:*"
-export function kindsOf(s: Sess): Map<string, number>;                  // event kinds present (built-in + marks) → count, for chips
-export function evKind(e: Ev): string;                                  // built-in kind of a transcript event (below)
 ```
+Kinds of ordinary events (prompts, calls, results …) live beside it in `src/model/kinds.ts` (§5a.2):
+`evKinds(s, i): number` (an interned kind-set id for event `i`), `kindSet(id): string[]`, `kindsOf(s): Map<string,
+number>` (kinds present → count, marks included). `anchor` is `""` when neither a call id nor a time is known.
 Skills register family `skill` (glyph `✧`, cyan, `gen` = 0): one `skill:load` span per load (`t0` = load, `t1` = end,
 `-1` while open), `sub` = trigger, `tok`/`usd` = load + carry, `label` = name, `anchor` = the load line's call id when
-it came from a tool call (`Skill`, `activate_skill`, `skill`, a SKILL.md read), else `ts=<iso>`; `ref = "sk<i>"`.
+it came from a tool call (`Skill`, `activate_skill`, `skill`, a SKILL.md read), else `ts=<iso>`; `ref = "sk<i>"`; and
+one `skill:unload` point per ended load (`sub` = `why`).
 
-**Event kinds** (one taxonomy for every timeline and event view, debug-episodes §6.1): built-in kinds from `Ev.kind`
-and the tool name — `ev:user`, `ev:assistant`, `ev:thinking`, `ev:tool`, `ev:result`, `ev:error` (a failed result),
-`ev:meta`, `mcp:<server>` (an MCP tool call or result) — plus every registered mark kind (`skill:load`,
-`debug:probe` …). Owned here:
-- **Filter attribute**: the existing `event` key (entity `event`, `src/features/query/attrs.ts:106`; `kind` is taken
-  by agent-wait's call kinds) gets a dynamic enum: its old values stay (`user` = `ev:user` …), plus every kind above
-  and every family name (a family matches all its kinds): `event is skill`, `event is_not ev:thinking`,
-  `event is_one_of debug, ev:error`. It selects which events and marks a timeline view shows; on the session list it
-  means "has an event/mark of that kind" (lifted like call clauses). `--watch --filter "event is skill"` streams only
-  skill events (6.13).
-- **Kind chips**: key **`K`** in the transcript (also during replay), the call graph and related events (free in all
-  three modes on `bda9190`): a one-line chip bar of the kinds present (`kindsOf`), family first, with counts;
-  `←`/`→` move, `␣` toggle one kind, `f` toggle a whole family, presets `1` all, `2` marks only (skills + debug), `3`
-  errors only, `4` hide thinking; `↵` applies (the chip state becomes an `event` clause shown in the view's filter line,
-  editable with `/`), `esc` cancels. Help section `event kinds` (ctx transcript, call graph, related).
-- **Gap markers**: hidden events collapse into one dim line per run, `┄ 12 hidden · tool 9 · thinking 3 ┄`; `↵` on it
-  shows them once (the filter stays).
-- **Deep links**: `canonicalUrl` (`src/features/palette/ref.ts:233`) gains an optional `kinds=<k1,k2>` fragment
-  parameter, and `applyTarget` restores the chip state from it, so a shared link opens the same filtered view.
-- **Navigation**: in the transcript `]` / `[` go to the next / previous **shown** mark (any family). debug-episodes
-  binds `]`/`[` inside its own view (another mode, no clash).
+### 5a. Event kinds and view filtering (one mechanism for every event view)
+The user's requirement (binding, 2026-10-09): in every event view the user can show "only skill usage", "only MCP
+calls", only shell, only file edits, only errors, only subagents, only user prompts, and any combination, the same way
+everywhere. This section is that one mechanism. debug-episodes (§6.1 there) registers its `debug:*` kinds on it and
+adds no filter of its own.
+
+**5a.1 Views it applies to.** Transcript (incl. replay `P`), call graph `c` (flame + tree), related events `r`, the
+Wait tab's timeline view, the session preview's recent-events lines, and the debug-episodes panel. One controller
+(`src/ui/evfilter.ts`) holds the state; every view asks it `shown(s, i): boolean` per event and `marks(s)` per mark,
+and renders hidden runs its own way (5a.5).
+
+**5a.2 Taxonomy** (`src/model/kinds.ts`, harness-neutral; an event has **one or more** kinds):
+
+| family | kinds | from |
+|---|---|---|
+| `prompt` | `prompt` (human), `prompt:agent` (peer/notification/sub-agent prompt) | `classifyUser` (parsing-fixes) |
+| `reply` | `reply`, `reply:thinking` | assistant text / thinking events |
+| `shell` | `shell:<wait kind>` (`shell:test`, `shell:build`, `shell:vcs`, `shell:install`, … — agent-wait `SHELL_KINDS`) | shell calls; the family's kind from `rowFam`/`textFam` (`src/features/wait/family.ts:482-515`) |
+| `edit` | `edit` | file-writing tools (`Edit`, `Write`, `MultiEdit`, `apply_patch`, `write_file`, `replace`, pi/OpenCode `edit`/`write`; list in `kinds.ts`, checked against each adapter) |
+| `read` | `read`, `read:search` (grep/glob/list) | file-reading tools (`toolKind` = `file`, minus `edit`) |
+| `web` | `web` | `toolKind` = `web` |
+| `mcp` | `mcp:<server>` | `mcp__<server>__…` (`mcpServer`) |
+| `subagent` | `subagent` | `toolKind` = `agent` calls and their results; subagent rows in the call graph |
+| `skill` | `skill:load`, `skill:unload` | §5 marks |
+| `debug` | `debug:episode`, `debug:probe`, … | debug-episodes |
+| `error` | `error` (a flag kind) | a failed result, plus its call (paired by id) |
+| `approval` | `approval` | a call that waited for the user (`toolKind` = `user`, approval waits of the watchdog) |
+| `meta` | `meta`, `meta:compact` | meta events; compaction markers |
+
+A result carries its call's kinds (paired by `Ev.id`), so "only shell:test" shows the call and its output. `error` is
+added on top of the call's own kinds: `shell:test` + `error` for a failing test run. Unknown tools → `other`.
+
+**5a.3 Filter language.** New keys (entity `event`, multi, dynamic enum from `kindsOf`): `event.kind` (alias `kind` is
+**not** used: agent-wait owns `kind`), `mcp.server` (the server of an `mcp:*` event), `shell.family` (the agent-wait
+family name, `shell.family is "pnpm test"`). The existing `event` key stays as an alias of `event.kind` with its old
+values mapped (`user` → `prompt`, `assistant` → `reply`, `thinking` → `reply:thinking`, `tool`/`result` → any call
+kind, `meta`, `live`, `exit`, `alert` unchanged), so old filters and pins keep working. A family name matches all its
+kinds (`event.kind is shell` = every `shell:*`). Examples: `event.kind is skill`, `event.kind is_one_of mcp, error`,
+`mcp.server is github`, `event.kind is shell and shell.family ~ test`, `not event.kind is reply:thinking`. On the
+session list, `event.*` clauses lift like call clauses ("has such an event"); in an event view they select events.
+Completion, error carets and pins come from the filter-language UI (`src/features/query/ui.ts`) unchanged.
+
+**5a.4 Controls** (the same in every view of 5a.1; keys checked free on `bda9190` in transcript, call graph, related,
+Wait timeline: `K`, `i`, `!`, `L` unbound; `/` unbound in transcript/call graph/Wait, related's `/` filter becomes this
+one):
+- **`K` chip bar**: one line, families present in this session with counts (`prompt 12 · reply 40 · shell 31 · edit 9 ·
+  mcp 6 · skill 3 · error 4`); `←`/`→` move, `␣` show/hide the family, `↵` on a family opens its kinds
+  (`shell:test 8 · shell:vcs 5 …`), `!` invert, `1`–`6` presets, `L` link (5a.6), `esc` close. Changes apply live.
+- **Presets**: `1` all · `2` skills only (`skill`) · `3` MCP only (`mcp`) · `4` shell only · `5` errors + causes
+  (`error` events, their calls, and the `reply` immediately before each call) · `6` my prompts + outcomes (`prompt`,
+  final `reply` of each turn, `error`). Also in the palette as "Show only skills", "Show only MCP calls", "Show only
+  errors and their causes", "Show only shell", "Show only file edits", "Show only my prompts", "Show all events".
+- **`i` solo the cursor's kind** (outside the chip bar): show only events with the most specific kind of the event under
+  the cursor (`mcp:github`, `shell:test`, `skill:load`); `i` again widens to its family; a third `i` clears.
+- **`!` invert** the current kind filter (outside the chip bar too).
+- **`/` full expression**, scoped to the view: the filter-language input with completion and carets; the chip state is
+  shown as its clause (`event.kind is_one_of skill, mcp`), so chips and text are one state. `p` inside the input pins
+  it like the list's pins (filter-language), which then apply to every view.
+- **`]` / `[`** next / previous **match** (shown event with a kind the filter selects; with no filter: next mark).
+- Footer (80 columns): `K kinds · i solo · ! invert · / filter · ] [ next match` when no filter; with one:
+  `skill only · 3 of 412 · ] [ next · K edit · esc clear`.
+
+**5a.5 What filtering does visually.**
+- **List views** (transcript, replay, related, preview): each run of hidden events becomes one dim line
+  `┄ 37 hidden · reply 20 · shell 12 · read 5 ┄`; `↵` on it expands that run once. Nothing vanishes silently.
+- **Time views** (call graph flame chart, Wait timeline): the time axis stays true. Hidden spans are not drawn, their
+  time stays empty, and a dim `┄n` tick marks where hidden spans lie on each lane. Nothing is re-spaced, and turn
+  boundaries and the axis labels stay. The tree view collapses hidden calls into `┄ n hidden` rows.
+- **Match count**: header right `3 of 412 events` (the view's loaded events; `of ≥412` while a long session still
+  loads lazily).
+- **Empty state**: `no skill events in this session — esc clears the filter, K changes it` (the kinds named are the
+  active filter's).
+- **Replay** plays only shown events, with real time gaps (its speed setting unchanged); hidden runs show as a gap line.
+
+**5a.6 Persistence and links.**
+- Per view (transcript, call graph, related, Wait timeline, preview) the last kind filter is remembered in
+  `~/.agentglass/run/viewfilters.json` (0600, written on change, debounced 1 s; `filter.remember: false` disables, like
+  pins). It restores on the next open of that view.
+- **`L` link**: one switch, "same filter in all views". On: every view shares one state (changing it in one view
+  changes all); off: per view. Remembered too.
+- **Deep links**: `canonicalUrl` (`src/features/palette/ref.ts:233`) gains `f=<url-encoded expression>` (the full
+  clause text, chips included). `applyTarget` restores it in the target view, and `agentglass open <link>` from the
+  CLI does the same. The MCP and a later web UI take the same string. Example:
+  `agentglass://open/claude/<id>#call=toolu_1&view=transcript&f=event.kind%20is%20skill`.
+
+**5a.7 CLI and MCP parity.**
+- `--watch --filter "event.kind is skill"` streams only those events (each JSONL event gains `kinds: [...]`).
+- New `agentglass events <ref> [--filter …] [--json] [--limit n] [--content]`: a one-shot listing of a session's
+  events with kinds, time, tool, target and match count (`{matched, total, events: [...]}`), the same `shown()`
+  semantics, gap runs as `{gap: n, kinds: {…}}` entries. Text needs `--content`, like `--watch`.
+- MCP: new tool `events` `{ref, filter, limit, cursor}` → the same JSON. It sends no text without the server's
+  `--content` (mcp-server's rule).
+
+**5a.8 Discoverability.** Footer hints (5a.4), a `?` help section `event kinds` in each view's context, palette
+entries (5a.4), README section "Filtering events", and the empty-state text naming the keys.
+
+**5a.9 Performance.** Kinds are computed from what the view already holds: `s.evs`, the call rows (for shell families
+and errors) and `marksOf`. No log is re-read. `kindsOf(s)` and the per-event kind lists are memoized per
+`(s.id, s.size, Σ gen)`: one small `Uint16Array` of kind-set ids per loaded event plus an interned kind-set table, so a
+50 000-event transcript costs ~100 KB. Filtering one view is a linear pass over that array. The chip bar recounts only
+on change. Budgets of tui-footprint hold; Task E3 measures a filtered 50k-event transcript (frame ≤ 16 ms on this
+machine).
 
 ### 6. Surfaces
 Every surface reads either `Acc.sk` (per session) or `Day.sa` (per period) through one read module,
@@ -348,7 +433,8 @@ trigger, sessions, load/carry/tail tokens and $, size p50, hashes, tier), `price
 existing `skill: x` meta / tool line): `✧ brainstorming · user · 4.1k tok · in context 31 req · $0.42 (tail $0.35)`;
 at an unload: `✧ brainstorming out (compacted)`. Keys in transcript mode: **`]` / `[`** next / previous mark (any
 kind, §5; free in transcript mode: used only in detail mode and the call graph). `↵` on a skill line opens the detail
-view with the load record (trigger, turn, time, bytes, S, tier, hash, dir key, load/carry/tail per bucket, model).
+view with the load record (trigger, turn, time, bytes, S, tier, hash, base dir, load/carry/tail per bucket, model);
+**`v` view skill** shows the loaded text (Privacy; hidden per `skills.hide` / `--redact`).
 Help section `skills` (ctx `transcript`).
 
 **6.2 Call graph `c`.** Flame chart: a thin `✧` tick on the turn row at the load time, a dim band from load to
@@ -381,7 +467,7 @@ rows).
   ```
   `share` = the skill's tokens ÷ the cached + input tokens of the sessions it was loaded in. Sort `s` (cost, loads,
   tail, size, share, $/sess), `↵` = sessions that loaded it (the session list filtered with `skill is
-  <name>`), `a` = advice for the selected skill (§8), `esc` back. 80 columns: drop `load`, `/`, `⚙` first, then `tail`.
+  <name>`), `a` = advice for the selected skill (§8), `v` = view skill (the newest load's text), `esc` back. 80 columns: drop `load`, `/`, `⚙` first, then `tail`.
   The existing `✧ skills` group of the top-tools list stays (counts); its `↵` now opens this panel at that skill
   (replaces "no per-skill drill-down", `stats.ts:463`).
 - Help section `stats` gets `S skills: loads, carry, $ per skill`.
@@ -429,9 +515,10 @@ Where-clauses accept the `skill.*` keys (6.11).
 **6.13 `--json` / `--watch`.**
 - `--json` sessions: `skills` keeps its shape and gains fields per entry (additive, the existing contract
   `{name, source, n}` stays): `{name, source, n, loads, tokens: {load, carry, tail}, costUsd, carryUsd, tailUsd, size,
-  tier, hash, scope}` (one entry per (name, source) as today; tokens/$ split by the loads of that source). New field
-  `skillLoads` behind `--fields skillLoads` (not in the default field set, footprint): `[{name, trigger, at, turn,
-  bytes, size, end, why, reloadedAfterCompact, requests, tokens: {…}, costUsd, tier, hash, scope}]`.
+  tier, hash, scope, dir}` (one entry per (name, source) as today; tokens/$ split by the loads of that source). New
+  field `skillLoads` behind `--fields skillLoads` (not in the default field set, footprint): `[{name, trigger, at, turn,
+  bytes, size, end, why, reloadedAfterCompact, requests, tokens: {…}, costUsd, tier, hash, scope, dir}]`, plus `text`
+  with `--content`. `skills.hide` / `--redact` apply.
 - `--watch`: a `skill` event per load `{type:"skill", name, trigger, size, tier, …}` and `skill_end` per unload, in
   the stream order of the transcript events.
 
@@ -439,6 +526,8 @@ Where-clauses accept the `skill.*` keys (6.11).
 attributes `gen_ai.skill.name`, `agentglass.skill.trigger`, `agentglass.skill.size_tokens`, `agentglass.skill.hash`,
 `agentglass.skill.scope`, `agentglass.skill.tier`; an unload adds `gen_ai.skill.unload` (`agentglass.skill.reason`).
 Session-level span attributes on the session root: `agentglass.skill.cost_usd` (Σ), `agentglass.skill.carry_tokens`.
+With the export's `--content`: `agentglass.skill.text` on the load event (cut to `contentMax`). `skills.hide` applies
+(`omit`: no event; `name`: fake name; `content`: no text even with `--content`).
 Existing `gen_ai.skill.name` on tool spans and the turn root stays (otlp-export §table, line 182/189). The hub maps the
 events back into `skills[]` (replaces `skills: []`, `hub/map.ts:262`), so hub-fed fleet rows get skills too.
 
@@ -449,7 +538,8 @@ kept) and `SessRow.s.skills` (6.13). The fleet view's Stats/Skills panel sums ac
 `host` column when more than one host is shown. Portfolio drift (§8 A10) reads `hash` per host.
 
 **6.16 MCP server.** New tool `skills`: input `{ref?, period?: "today"|"7d"|"30d"|"all", repo?, name?, advise?: bool}`;
-output `{rows: SkillRow[], loads?: LoadRow[] (when ref given), advice?: Advice[], scope}`. "Which skills cost the most
+output `{rows: SkillRow[], loads?: LoadRow[] (when ref given), advice?: Advice[], scope}`; `text` per load only when the
+server runs with `--content`. "Which skills cost the most
 in this repo this week?" and "what did my skills cost in this session?". Registered in `SPECS` (`src/mcp/tools.ts:76`)
 with the field list `SKILL_FIELDS`.
 
@@ -513,16 +603,71 @@ invocation` flag. Never the description text. Listing cost ≈ `Σ ceil(descByte
 - **Old cache**: `VERSION` bump → full re-index on first start (one-time, progress shown as today).
 
 ### Privacy
-- Skill **text** is read to measure and hash it, then dropped: never stored, cached, logged, exported, sent to OTLP,
-  fleet, the hub or MCP. This spec adds no `--content` path for skill text (Decision 8).
-- Exported: name, trigger, times, sizes (bytes, tokens), hash (16 hex, one-way), scope, directory **key** (local only:
-  `--json` prints `scope`, never the path).
-- `--redact`: a skill name that is not in the built-in allowlist (skills bundled with a harness: Claude Code's bundled
-  skills, Codex's `skill-creator`/`skill-installer`, and the agentglass own docs' examples) is replaced by a stable fake
-  of the same length through the same scrubber as subagent names (`src/features/redact.ts:139-163`, `fakeAgent`); a
-  `plugin:name` is faked as a whole. Hashes stay (they reveal nothing and keep A5/A10 working on a redacted fleet).
-  Filters on `skill is <fake>` work through the `EXACT` prefix rule.
-- Fleet reports and OTLP use the same redaction when the host runs with `--redact` / `privacy` on (fleet Hello.redact).
+User decision (binding, 2026-10-09, Decision 8): many skills are community skills, and own and community skills cannot
+be told apart reliably. So skill details are **shown by default** on the user's own machine and hidden only when the
+user chooses it. Paths that send data to other machines keep their existing opt-in rules.
+
+**What is never done:** skill text is never written to the ledger cache, the call-row files, digests, logs or any other
+agentglass file. The ledger keeps only where to find it: `SkLoad.off` (the byte offset of the load line in the log, or
+the record id for a database source like OpenCode) and `SkLoad.len`. The text is read from the transcript when a view
+asks for it, as transcript content already is.
+
+**Local surfaces (default: everything the transcript has).**
+- TUI: names, trigger, sizes, hash, base directory, and the **skill text**. Ways to view it:
+  - **"view skill"**: `v` on a skill line in the transcript, or on a row of the Stats skills panel (the newest load of
+    the period). It opens a detail pane with the trigger, turn, time, base directory, size, tier, hash and the loaded
+    text: the SKILL.md body as injected, syntax-highlighted as markdown.
+  - The transcript's skill meta event carries the text in `Ev.full`, like any tool result, so `↵`/detail shows it too.
+- CLI text output and the user's own `--json`:
+  - `agentglass skills show <name | session-ref#sk<i>>` prints the text by default.
+  - `skills --session ref --json` includes `text` per load by default.
+  - `--json` session lists (`agentglass --json`) carry names, sizes, hash, scope and `dir`, but no text: that is a
+    footprint choice (lists of thousands of sessions), not a privacy one. `--fields skillLoads` with `--content` adds
+    the text.
+- Filters may match the text: `skill.text ~ "TDD"` is a `content`-like key with ops `~`/`!~` only.
+
+**User-chosen hiding** (applied on every surface, local and outward, before anything is shown, filtered or sent):
+- (a) **`--redact`** (screencasts): every skill name that is not bundled with a harness gets a stable fake of the same
+  length. This uses the subagent-name scrubber (`src/features/redact.ts:139-163`); a `plugin:name` is faked as a
+  whole. Bundled names stay: the `BUILTIN_SKILLS` list, with a comment naming the source of each name. Text is hidden
+  (`view skill` shows `text hidden (--redact)`). The base directory is faked like a cwd. Hashes and sizes stay. Filters
+  on a fake work through the `EXACT` prefix rule, as for every redacted value.
+- (b) **`skills.hide` in `~/.agentglass/config.json`**: a list of rules applied in order, first match wins:
+  ```json
+  { "skills": { "hide": [
+      { "match": "acme-*", "mode": "name" },
+      { "match": "secret-review", "mode": "omit" },
+      { "match": "*:internal-*", "mode": "content" },
+      "legacy-skill"
+  ] } }
+  ```
+  - `match`: a glob over the skill name (`*`, `?`; case-sensitive; `plugin:` prefixes included). A bare string is
+    `{match, mode: "content"}`.
+  - The three modes:
+    - `content`: name and numbers shown, text hidden everywhere (`view skill`: `text hidden by skills.hide`).
+    - `name`: as `content`, and the name is faked as under `--redact`, on every surface, including outward paths and
+      `--json`.
+    - `omit`: the skill disappears from per-skill surfaces: no rows, marks, transcript markers, filters, advice, OTLP
+      events or fleet rows. Its tokens and dollars are still counted in one row `(hidden) n skills` per table, so
+      totals stay true and sessions still sum to their cost.
+  - Invalid entries are ignored with one startup toast that names the entry (rules-config pattern). The rules are read
+    once per config change.
+  - The API is `skillVis(name): { mode: "show" | "content" | "name" | "omit"; shown: string }` in
+    `src/features/skills/vis.ts`. Every surface goes through it: a check enumerates the surfaces and fails if one
+    bypasses it (plan Task P2).
+- `--redact` and `skills.hide` combine: the stricter mode wins per skill.
+
+**Outward paths** (defaults, then the opt-in that adds more). `skills.hide` and `--redact` apply first on every one:
+
+| path | default | content only with | why |
+|---|---|---|---|
+| OTLP export / `--watch --otlp` | names, trigger, sizes, hash, scope, tier, $ | the export's existing `--content` (otlp-complete: prompt/answer/tool text only with `--content`) | an export goes to another system; skill text is prompt content, so it follows the same rule as prompts |
+| fleet serve / pull / snapshot to other hosts | names, sizes, hash, scope, $ per session and day (`DayRow.sa`, `skills[]`) | never (no fleet path carries transcript content; remote transcripts are not viewable, `remoteOnly`) | fleet carries aggregates by design (fleet spec); adding text would make it a transcript copy service |
+| hub (`agentglass receive`, Collector files) | what the OTLP sender sent | the sender's `--content` | the hub stores what hosts send; it adds nothing |
+| MCP tools (`skills`, `events`, `session`) | names, sizes, hash, $ | the MCP server's `--content` (mcp-server: no transcript content without it) | an agent calling the tools may forward their output to a model provider; text stays opt-in as for all transcript content |
+
+Names count as default-shareable on all outward paths because they already are today (`gen_ai.skill.name` in OTLP,
+`skills[]` in fleet reports). A user who considers a name sensitive sets `skills.hide` `name` or `omit` for it.
 
 ## Interactions with other specs
 - **parsing-fixes**: owns detection counts (`Day.skills`) and `classifyUser` (turns); this spec adds timing, size,
@@ -549,12 +694,22 @@ invocation` flag. Never the description text. Listing cost ≈ `Σ ceil(descByte
 - Goldens: `agentglass skills` text (80 and 120 columns), `skills --json`, `skills advise`, `--json` session `skills`
   entries, the transcript lines, the Stats panel render, OTLP span events — all from the fixtures.
 - Codec round-trip of `Acc.sk` + `Day.sa`; VERSION bump re-index.
-- Redaction: no fixture skill name or text substring in any `--redact` output; hash unchanged.
+- Redaction and hiding: no fixture skill name (except built-ins) and no text marker in any `--redact` output, hash
+  unchanged. For each `skills.hide` mode, a listed fixture skill is hidden as the mode says on **every** surface:
+  transcript, `view skill`, Stats panel, preview, Repos, triage, compare, filters, rules messages, `--json`, `--watch`,
+  `events`, `skills`/`skills show`, OTLP, fleet report, MCP. One shell test walks them all (plan Task P2), and a check
+  fails when a surface module renders skill names without `skillVis` (a list of surface entry points kept in
+  `vis.check.ts`).
+- Default visibility: with no hiding configured, `view skill` and `skills show` print the fixture text; OTLP, fleet and
+  MCP outputs do not contain it unless their `--content` is set.
+- Event-kind filter: taxonomy per harness fixture (each event's kind set), presets, solo, invert, gap lines, true time
+  axis (span x-positions identical with and without a filter), match counts, deep-link round trip
+  (`canonicalUrl` → `applyTarget` → same clause), `events --json` and `--watch` parity with the TUI's `shown()` on the
+  same fixture, legacy `event is user` filters unchanged.
 - Real-life (read-only, isolated cache): `agentglass skills --check` passes over this machine's logs; totals vs M-figures.
 
 ## Out of scope
 - Editing skills, auto-applying advice, generating SKILL.md splits.
-- Exporting skill text (`--content`) — a later spec if asked.
 - Skill detection for Kiro and fx (no evidence in their logs).
 - Per-skill outcome causality (A9 is correlation, phase B).
 - Instructions files (CLAUDE.md, AGENTS.md) and MCP tool listings as "carried context" — same algorithm would apply;
@@ -592,9 +747,15 @@ Format: question · options considered · decision · why · cost if wrong.
    not parsed (size still booked); A6 falls back to the inventory.
 7. **Subagents** · (a) own contexts, own loads, (b) inherit the parent's open skills · (a) · a subagent's context starts
    fresh (M: 21 subagent logs loaded skills themselves); inheriting would double-count · none.
-8. **Skill text export** · (a) never, (b) `--content` like transcripts · (a) in this spec · skills are team IP; names,
-   sizes and hashes answer every question in this spec · a team that wants text-level diffs gets them from git, not from
-   agentglass.
+8. **Skill details: shown or hidden by default** (user decision 2026-10-09, binding) · (a) hide text, export only names
+   and sizes (the first draft), (b) show everything locally by default; hide by the user's choice (`--redact`,
+   `skills.hide` with modes `content` / `name` / `omit`); outward paths keep their opt-in rules · (b) · **the user's
+   reasoning**: many skills are community skills, and own and community skills cannot be told apart reliably, so a
+   default that hides everything would mostly hide public text and take away the most useful drill-down ("what did it
+   actually load?"). The people who need protection can say so per name or pattern. Text is still never copied into
+   agentglass's own files (it is read from the transcript on demand), and OTLP, fleet, hub and MCP send text only with
+   their existing `--content` opt-in · a user who never configures `skills.hide` and shares a screen or a `skills show`
+   output shows a private skill's text; `--redact` (meant for screencasts) and the README's privacy note cover this.
 9. **Data placement** · (a) `Acc.sk` + `Day.sa` in the ledger light part, (b) heavy part, (c) a sidecar per session like
    call rows · (a) · small (KBs per machine), needed by Stats and `--json` without decoding heavy maps · if loads grow far
    beyond M4 (hundreds per session) the 400-load cap folds them.
@@ -625,7 +786,24 @@ Format: question · options considered · decision · why · cost if wrong.
     every skill on this machine (946 reads, 90 rollouts) and agentglass shows 0 Codex skills today; the text is in the
     context exactly like a tool-loaded skill · a SKILL.md read for editing it (a developer working on a skill) counts as a
     load; acceptable — it is in the context and costs the same; the panel's trigger column shows `⚙`.
-20. **Roadmap placement** · Round 3 (the brief named Round 2, which is shipped) · current round · none.
+20. **One event-kind filter for every event view** (user requirement 2026-10-09) · (a) one controller + one taxonomy +
+    filter-language keys, shared by transcript, replay, call graph, related, Wait timeline, preview and the debug
+    panel, (b) per-view filters · (a) · the same keys, presets, links and `--watch`/`events`/MCP semantics everywhere; a
+    later web UI reproduces a view from one string (`f=` in the link); debug-episodes registers kinds and builds no
+    filter · the controller is a dependency of several views, so it is built early (plan wave 1–2).
+21. **Kind filter key name** · (a) `event.kind` (+ `mcp.server`, `shell.family`), the old `event` key as an alias, (b)
+    `kind`, (c) `mark` · (a) · `kind` is taken by agent-wait's call kinds; `mark` would not cover ordinary events;
+    keeping `event` working protects existing filters and pins · two names for one thing (documented as alias).
+22. **Hidden events in time views** · (a) leave their time empty and tick it (`┄n`), (b) re-space the axis · (a) · a
+    re-spaced axis lies about durations, which is exactly what the call graph and Wait timeline are for · empty-looking
+    stretches when the filter is narrow; the tick and the match count explain them.
+23. **Mark shape amendments from debug-episodes** (`anchor`, `seq`, `gen`, `family:name` kinds) · accepted as asked ·
+    `ev` indexes only the loaded tail, Kiro has no times, debug marks change with disk state at the same log size, and
+    chips need families · none; all additive.
+24. **`omit` mode keeps totals** · (a) a `(hidden) n skills` row, (b) drop the tokens · (a) · a table whose rows do not
+    sum to the session's cost looks like a bug and breaks the §3.8 invariants checks · the count of hidden skills is
+    visible (not their names).
+25. **Roadmap placement** · Round 3 (the brief named Round 2, which is shipped) · current round · none.
 
 ## Open questions (to verify during implementation)
 1. Claude re-injection shape beyond `invoked_skills` (does `/resume` re-inject too?): `grep -c '"type":"invoked_skills"'`
@@ -635,9 +813,14 @@ Format: question · options considered · decision · why · cost if wrong.
    the PR.
 3. Codex listing entry format inside `<skills_instructions>` (Task 0 Step 4, names only): the parser takes the name of
    each entry; if the format is not one entry per line, book the size only.
-4. Gemini `/compress`: which marker does the session JSON carry? None → implicit drop only.
-5. Claude `/clear`: verify that it starts a new log (new session id) in the current Claude Code version; if it continues
-   the same log, treat the `/clear` command line as an unload (`why = clear`).
+4. Gemini: no compaction marker was seen, but a `{"$set":{"messages":…}}` record rewrote history 100× (M8). Find out
+   whether it is `/compress`, rewind or a plain save (Gemini CLI source, `npx opensrc`). If it shrinks the context, it is
+   an unload (`why = compact`). Otherwise the implicit drop covers it.
+5. Claude `/clear`: measured, it starts a new log with a new session id and the `/clear` command near the top (39 of 41).
+   Nothing is left to verify; Task 4a keeps a fixture for it. Bundled Claude skills (`update-config`, `claude-api`, …)
+   have no `Base directory` header: model loads still pair by `sourceToolUseID`, but a **user**-invoked bundled skill is
+   not detectable. Task 0 checks whether its command line + isMeta pair has another marker; if not, it stays a known gap
+   (README).
 6. Codex: is the `<skills_instructions>` developer message re-sent with every turn context, or only logged again? The
    requests' usage decides it (a re-sent listing is in context once, not N times): book it as one open `(listing)` load
    that a new copy replaces (`relist`), never as N concurrent loads.

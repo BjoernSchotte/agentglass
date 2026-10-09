@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Per session, a timeline of skill loads (trigger, turn, time, size) and the tokens and dollars each skill was responsible for (load + carry, tail carry), shown on every surface (transcript, call graph, replay, related, Wait timeline, Stats, preview, Repos, triage, compare, filters, rules, `--json`/`--watch`, OTLP, fleet, MCP, `agentglass skills`), plus evidence-based advice (`agentglass skills advise`).
+**Goal:** Per session, a timeline of skill loads (trigger, turn, time, size) and the tokens and dollars each skill was responsible for (load + carry, tail carry), shown on every surface (transcript, call graph, replay, related, Wait timeline, Stats, preview, Repos, triage, compare, filters, rules, `--json`/`--watch`, OTLP, fleet, MCP, `agentglass skills`), plus evidence-based advice (`agentglass skills advise`), skill text on demand (`view skill`, hidden by the user's `skills.hide` / `--redact`), and one event-kind filter for every event view (transcript, replay, call graph, related, Wait timeline, preview; `events`, `--watch`, MCP).
 
 **Architecture:** Adapters report loads and unloads to `record.ts` (`skillLoad`, `skillUnload`); the existing booking path (`tokens()`/`usageExact()`) attributes each request's tokens to the open loads (spec §3), into `Acc.sk` (timeline) and `Day.sa` (per-day per-skill buckets), both in the ledger's light part (one `VERSION` bump). A pure read model (`src/features/skills/model.ts`) prices and aggregates for every surface; a harness-neutral marks layer (`src/model/marks.ts`, shared with debug-episodes) feeds the timeline views. Advice is pure (`advise.ts`) over the read model plus a read-only inventory scan.
 
@@ -17,7 +17,9 @@
 - Build `./build.sh`; tests `sh scripts/check.sh` (after each edit `sh scripts/check.sh --changed`); a task is done only when both pass. Single check: `scriptc build <f> -o ~/.cache/agentglass-agents/<you>/x && AGENTGLASS_NOTIFY=0 AGENTGLASS_REDACT=1 AGENTGLASS_REDACT_KEEP=keepme ~/.cache/agentglass-agents/<you>/x`. Builds, caches and binaries under `~/.cache/agentglass-agents/<you>/`, never `/tmp` (RAM tmpfs).
 - Any live run of `agentglass` uses the full isolation set inline (zsh does not word-split `$VAR`): `AGENTGLASS_AGENT=0 AGENTGLASS_CACHE_DIR=$S/cache AGENTGLASS_CONFIG=$S/config.json AGENTGLASS_RULES=$S/rules.json AGENTGLASS_RUN_DIR=$S/run AGENTGLASS_PALETTE_FILE=$S/palette.json AGENTGLASS_THEME_FILE=$S/theme AGENTGLASS_PRICES=$S/prices.json AGENTGLASS_OTLP_DIR=$S/otlp AGENTGLASS_FLEET_DIR=$S/fleet AGENTGLASS_HUB_DIR=$S/hub` (`$S` = your scratch dir, `mkdir -p $S/run && chmod 700 $S/run`); `ls ~/.agentglass` before and after.
 - scriptc 0.1.7: nominal typing (pass fields, not foreign interfaces); out-of-range array reads trap (`numAt`, bounds checks, `+ 0` on typed-array reads in comparisons, SC1090); no `Record<string, RegExp>` (C backend); SC2003 (no zero-parameter arrow for an optional interface member); no crypto (hash = the FNV pair of `callcache.ts pathKey`); no `n.toString(16)`; no map callbacks on typed arrays.
-- **Skill text is never stored**: adapters pass it to `skillLoad()`, which measures and hashes it and keeps neither the string nor a slice. Review Focus 1.
+- **Skill text is never written to an agentglass file** (ledger, call rows, digests, logs, run state): `skillLoad()` measures and hashes it and keeps only `off`/`len`/`rec` (where it is in the log). It is shown by default on local surfaces (read on demand, `skillText()`), hidden per `skillVis()` (`--redact`, `skills.hide`), and sent outward only with that path's `--content` (spec Privacy). Review Focus 1.
+- **Every skill name or text a surface prints goes through `skillVis()`** (Task P1); Task P2 proves it per surface.
+- **Event filtering never re-reads a log**: it works on `s.evs`, the call rows and `marksOf` (spec §5a.9).
 - **Invariants** (spec §3.8) are enforced in `record.ts` by construction and asserted by `skillCheck()` (Task 5) in every attribution check.
 - `--json` contract: existing `skills[]` entries keep `name`, `source`, `n` with the same values; fields are only added. Exception, intended: Codex (and any harness) sessions gain `model` entries for SKILL.md reads (spec Decision 19); list it in the PR. `tokens`, `costUsd` per session unchanged (skill $ is a share of them, never added).
 - `VERSION` (`src/features/usage/codec.ts:13`) bumps **once**, in Task 3, to the next free number at implementation time.
@@ -28,7 +30,9 @@
 
 ## Review Focus
 
-1. **Skill text leaking** into a kept structure: serialize `accOut` of a fixture Acc, every `--json`/`--watch`/OTLP/fleet/MCP output of the fixtures and grep for the fixture text marker `LOREMSKILLTEXT` → none. Task 2, 6, 12, 13 checks.
+1. **Skill text where it must not be**: `accOut` of a fixture Acc, the calls/digest files, and the OTLP/fleet/MCP outputs without `--content` contain no `LOREMSKILLTEXT`. Local `view skill` / `skills show` **do** contain it by default, and do not under `--redact` or a `skills.hide` `content`/`name`/`omit` rule. Tasks 2, 6, 6b, 12, 13, P2.
+6. **Hiding bypass**: a surface that prints a skill name without `skillVis()` (Task P1's list of entry points + Task P2's walk over every surface).
+7. **Event-kind filter honesty**: no hidden event vanishes without a gap line; flame-chart x-positions identical with and without a filter; `events --json` / `--watch` / TUI `shown()` agree on one fixture. Tasks E2–E5.
 2. **Over-attribution**: Σ skill tokens per request and bucket ≤ the request's bucket, with 3 open skills, a request smaller than Σ S, a reload while open, and harness-priced cost shares ≤ the request's `usd`. Task 2 check + `skills --check` on real logs (Task 16).
 3. **Unload correctness**: compaction markers per harness end every open load; implicit drop fires only with both conditions; `/clear` (new log) leaves the old log's loads open but without further carry. Task 2 + Task 4a/b/c checks.
 4. **Redaction**: no user skill name in `--redact` outputs (fake of equal length, stable), built-in names kept, hashes kept. Task 6 check.
@@ -71,13 +75,103 @@ export function nextMark(s: Sess, fromEv: number, dir: number, kinds: string[] |
 
 ---
 
-### Task 1b: Event kinds — filter values, chips `K`, gap markers, deep links (after Task 1; parallel with wave 3)
+### Task E1: Event-kind taxonomy and filter keys (after Task 1; wave 2, parallel with Task 3)
 
-**Files:** Modify `src/model/marks.ts` (`evKind`, `kindsOf`), `src/features/query/attrs.ts:106` (`event` gets `enumFn: "evkind"`), `src/features/query/eval.ts` (event clauses over kinds + families; legacy values `user` … map to `ev:user` …), `src/ui/transcript.ts` (hidden runs → gap line), `src/features/callgraph/view.ts`, `src/features/related/view.ts` (honor the clause), `src/features/palette/ref.ts:233` + `open.ts` (`kinds=` fragment); Create `src/ui/chips.ts` (the chip bar, one implementation for all three views), `src/ui/chips.check.ts`, `src/model/kinds.check.ts`.
+**Files:** Create `src/model/kinds.ts`, `src/model/kinds.check.ts`; Modify `src/features/query/attrs.ts:106` (`event` becomes an alias of the new `event.kind`; register `mcp.server`, `shell.family`; `enumFn: "evkind"`), `src/features/query/eval.ts` (event clauses over kind sets; family match; legacy value map), `src/features/query/parse.ts` (completion of kinds present in the current view's session, else all registered).
 
-- [ ] **Step 1: Failing checks**: `evKind` for user/assistant/thinking/tool/result/failed result/meta/`mcp__srv__x` → `ev:user` … `ev:error`, `mcp:srv`; `kindsOf` counts built-ins + registered marks; `event is skill` matches a Sess with a `skill:load` mark and not one without; `event is user` (legacy) still matches as before (the existing query checks stay green); chip bar render at 80 columns (golden), `␣`/`f`/presets 1–4/`↵` produce the expected clause text; transcript with `event is_not ev:thinking` shows `┄ 3 hidden · thinking 3 ┄` lines; `canonicalUrl(…, kinds)` → `…#call=c1&kinds=skill,debug` and `applyTarget` restores the clause.
+**Interfaces — Produces:**
+```ts
+export function evKinds(s: Sess, i: number): number;     // interned kind-set id of s.evs[i] (memo Uint16Array per (s.id, s.size, Σ gen))
+export function kindSet(id: number): string[];           // e.g. ["shell:test", "error"]
+export function kindsOf(s: Sess): Map<string, number>;   // kinds present (events + marks) → count
+export function kindMatch(kinds: string[], want: string): boolean; // "shell" matches "shell:test"; exact otherwise
+export const LEGACY_EVENT: Map<string, string[]>;        // user → [prompt], assistant → [reply], thinking → [reply:thinking], tool/result → call kinds, meta/live/exit/alert as is
+```
+Taxonomy exactly as spec §5a.2; edit-tool list `T_EDIT` per harness, checked against each adapter's tool names in the check.
+
+- [ ] **Step 1: Failing check** `kinds.check.ts`: one synthetic session per harness (Claude, Codex, Gemini, OpenCode, pi; built with each adapter's `parse()` over fixture lines) → each event's kind set as a golden (`kinds.golden`): prompt, prompt:agent, reply, reply:thinking, shell:test (+ error on a failing run, also on its result), shell:vcs, edit, read, read:search, web, mcp:github, subagent, skill:load (from a registered fake mark family), meta:compact, approval. `kindsOf` counts. `kindMatch("shell:test","shell")` true, `("mcp:github","mcp:git")` false. Query checks: `event.kind is skill` matches only the session with a skill mark; `mcp.server is github`; `shell.family ~ test`; `event is user` (legacy) gives the same result as before on the existing `query/eval.check.ts` fixtures (that check stays unchanged and green).
+- [ ] **Step 2: Run** `scriptc build src/model/kinds.check.ts -o ~/.cache/agentglass-agents/<you>/kd && ~/.cache/agentglass-agents/<you>/kd` → FAIL.
+- [ ] **Step 3: Implement.** Shell kinds via `rowFam`/`textFam` on the call's row (rows looked up by call id through `Rows.cid`); no log reads.
+- [ ] **Step 4: Run** → PASS; `sh scripts/check.sh --changed`.
+- [ ] **Step 5: Commit** `feat(model): harness-neutral event kinds and event.kind filter keys`.
+
+---
+
+### Task E2: View-filter controller — state, presets, solo, invert, persistence, link, deep links (after E1)
+
+**Files:** Create `src/ui/evfilter.ts`, `src/ui/evfilter.check.ts`, `src/ui/chips.ts`, `src/ui/chips.check.ts`, `chips-80.golden`; Modify `src/features/palette/ref.ts:233` + `src/features/palette/open.ts` (`f=` fragment, `view=`), `src/features/palette/view.ts` / `H.dynActions` (entries "Show only skills" …), help sections.
+
+**Interfaces — Produces:**
+```ts
+export interface VF { expr: string; compiled: Compiled | null; err: string; inv: boolean; solo: string /* "" none */; preset: number }
+export function vfOf(view: string): VF;                         // per view, or the shared one when linked
+export function vfSet(view: string, expr: string): void;        // parses with the filter language; err keeps the old filter + caret
+export function shown(view: string, s: Sess, i: number): boolean;
+export function shownMark(view: string, m: Mark): boolean;
+export function runs(view: string, s: Sess, from: number, to: number): { i: number; hidden: number; kinds: Map<string, number> }[]; // gap runs
+export function matchCount(view: string, s: Sess): { shown: number; total: number };
+export function nextMatch(view: string, s: Sess, fromEv: number, dir: number): number;
+export function solo(view: string, s: Sess, i: number): void;   // i: kind → family → clear (spec 5a.4)
+export function invert(view: string): void;
+export const PRESETS: { key: string; name: string; expr: string }[]; // 1 all, 2 skills, 3 MCP, 4 shell, 5 errors + causes, 6 prompts + outcomes
+export function linked(): boolean; export function setLinked(on: boolean): void;
+export function chipBar(view: string, s: Sess, w: number): string;   // one line, ≤ w cells
+export function chipKey(view: string, s: Sess, k: string): boolean; // ←→ ␣ ↵ ! 1–6 L esc
+```
+Persistence `~/.agentglass/run/viewfilters.json` (0600, debounced 1 s; `filter.remember: false` → none). "errors + causes" = `error` events, their calls (pair by id), and the `reply` just before each call: a computed set, not a plain clause (`PRESETS[4].expr` is `event.kind is error` plus the `causes` flag the controller applies).
+
+- [ ] **Step 1: Failing checks**: on a fixture session: each preset's shown set; `solo` cycle on an `mcp:github` event (kind → family `mcp` → clear); `invert` of `event.kind is skill` shows everything else; `runs` produce one gap per hidden run with kind counts; `matchCount`; `nextMatch` both directions and at the ends (-1); a bad expression keeps the previous filter and sets `err` with the caret column; linked on → `vfSet("transcript")` changes `vfOf("callgraph")`; persistence round trip through a temp run dir (and none with `filter.remember: false`); `canonicalUrl(s, "call", "c1", {view: "transcript", f: "event.kind is skill"})` → `…#call=c1&view=transcript&f=event.kind%20is%20skill` and `applyTarget` restores it; chip bar at 80 columns (golden), keys `␣`/`!`/`1`–`6`/`L`/`esc`; palette lists the seven "Show only …" entries.
 - [ ] **Step 2–4:** FAIL → implement → PASS; `sh scripts/check.sh --changed`.
-- [ ] **Step 5: Commit** `feat(views): one event-kind taxonomy, kind chips, gap markers, links with kinds`.
+- [ ] **Step 5: Commit** `feat(ui): one event-kind filter controller with chips, presets, solo, invert, links`.
+
+---
+
+### Task E3: List views — transcript, replay, related, preview (after E2)
+
+**Files:** Modify `src/ui/transcript.ts` (gap lines, header match count, empty state), `src/input.ts:92-111` (transcript keys `K` `i` `!` `/` `]` `[` → controller; check `/` and `K` are free first), `src/features/replay.ts` (plays shown events only, gap lines), `src/features/related/view.ts` (its `/` filter becomes the controller's view `related`; kinds `k` cycle maps onto presets), the preview's recent-events lines (`src/ui/list.ts` / preview section), `src/ui/footer.ts` (hints, spec 5a.4), help sections; Tests `src/ui/transcript.check.ts`, `src/features/related/view.check.ts`.
+
+- [ ] **Step 1: Failing checks**: transcript with `event.kind is skill` renders the skill lines, `┄ n hidden · reply … ┄` lines between, header `2 of 37 events`; `↵` on a gap expands it once; empty state text for a session without skills names `esc` and `K`; replay steps only through shown events; related view honors the same clause; footer hint text at 80 columns (golden). Performance (`// check: timing`): `shown` + `runs` over a synthetic 50 000-event session ≤ 16 ms per frame at -O2.
+- [ ] **Step 2–4:** FAIL → implement → PASS.
+- [ ] **Step 5: Commit** `feat(views): event-kind filtering in transcript, replay, related and preview`.
+
+### Task E4: Time views — call graph and Wait timeline (after E2; parallel with E3)
+
+**Files:** Modify `src/features/callgraph/view.ts`, `src/features/callgraph/model.ts` (hidden spans → `┄n` ticks per lane; tree `┄ n hidden` rows), `src/features/wait/tab.ts` (timeline view), keys `K` `i` `!` `/` `]` `[` in both; Tests `callgraph/view.check.ts`, `wait/tab.check.ts`.
+
+- [ ] **Step 1: Failing checks**: with and without `event.kind is shell` the x-position of every shown span is identical (true axis); hidden spans produce ticks with counts; the tree collapses hidden calls; Wait timeline lanes likewise; `]` jumps to the next shown span.
+- [ ] **Step 2–4, 5:** commit `feat(views): event-kind filtering in the call graph and the Wait timeline`.
+
+### Task E5: CLI and MCP parity — `agentglass events`, `--watch` kinds, MCP `events` (after E2)
+
+**Files:** Create `src/features/events-cli.ts`, `scripts/events.test.sh`, `events.golden`; Modify `src/features/cli.ts` (`addCmd` `events`, `--watch` events gain `kinds`), `src/features/clihelp.ts:103`, `src/mcp/tools.ts` (tool `events`), `src/mcp/tools.check.ts` (golden `tools/list` updated under the CLI contract).
+
+- [ ] **Step 1: Failing test**: on the fixture HOME, `agentglass events <ref> --filter "event.kind is_one_of skill, error" --json` equals the TUI controller's `shown()` set on the same session (the test builds a tiny check binary that prints the controller's indexes); gap entries `{gap, kinds}`; no text without `--content`; `--watch --from 0 --filter "event.kind is skill"` prints only skill events, each with `kinds`; MCP `events` returns the same JSON, paginated by `cursor`.
+- [ ] **Step 2–4, 5:** commit `feat(cli,mcp): events with kind filters, --watch kinds`.
+
+---
+
+### Task P1: Skill visibility — `skillVis`, `skills.hide`, redaction (wave 1, parallel with Tasks 1 and 2)
+
+**Files:** Create `src/features/skills/vis.ts`, `src/features/skills/vis.check.ts`; Modify `src/features/redact.ts` (`fakeSkill`, `BUILTIN_SKILLS` with a source comment per name), the config reader (`skills.hide` schema, one startup toast per invalid entry), `README.md` privacy note later in Task 15.
+
+**Interfaces — Produces:**
+```ts
+export interface Vis { mode: string /* show | content | name | omit */; shown: string /* the name to print */ }
+export function skillVis(name: string): Vis;          // --redact and skills.hide combined, stricter wins; memo per config generation
+export function textShown(name: string, outward: boolean, content: boolean): boolean; // local default true; outward only with that path's --content; never for mode != show
+export function hideRules(): { match: string; mode: string }[]; // parsed, validated (glob: * ? only)
+export const VIS_SURFACES: string[];                  // surface entry points that must call skillVis (Task P2 walks them)
+```
+
+- [ ] **Step 1: Failing check**: rule parsing (bare string → content; bad mode → ignored + toast text; first match wins; `*:internal-*` matches `acme:internal-x`); `--redact` fakes non-built-in names with a stable same-length fake and keeps built-ins; stricter of redact and a `content` rule; `textShown` table for local/outward × `--content` × each mode.
+- [ ] **Step 2–4:** FAIL → implement → PASS. **Step 5: Commit** `feat(skills): skill visibility rules (skills.hide, --redact)`.
+
+### Task P2: Hidden skills on every surface (after Tasks 6, 6b, 8, 9, 10, 11, 12, 13, E3, E5)
+
+**Files:** Create `scripts/skills-hide.test.sh`; Modify `src/features/skills/vis.check.ts` (entry-point list complete).
+
+- [ ] **Step 1: Test**: fixture HOME with skills `pub` (no rule), `acme-x` (`name`), `secret` (`omit`), `notes` (`content`). For each surface (spec Testing list), run the CLI form (`skills`, `skills show`, `skills --session --json`, `--json --fields skillLoads --content`, `--watch`, `events --content`, `export --otlp` to a file sink with `--content`, `fleet pull` from a local `fleet serve`, MCP `skills`/`events` via the stdio test client, `rules check` message render) and the TUI renders through their check binaries (transcript, view skill, Stats panel, preview, Repos, triage, compare). Assert: `acme-x` never appears and its fake does; `secret` appears nowhere, and the `(hidden) 1 skills` row carries its tokens; `notes` text marker never appears; `pub` text appears locally and in outward outputs only with `--content`.
+- [ ] **Step 2:** fix every surface the test catches; **Step 3: Commit** `test(skills): hidden skills stay hidden on every surface`.
 
 ---
 
@@ -90,6 +184,7 @@ export function nextMark(s: Sess, fromEv: number, dir: number, kinds: string[] |
 - `export function skillLoad(a: Acc, name: string, trig: string /* user | model | compact | listing */, ms: number, iso: string, text: string, dir: string, est: boolean): void` — `text` may be `""` (size unknown → `bytes = -1, S = -1`); `est` forces tier ≈ (truncated text). Books `Day.sa[..][SA_LU|LM|LC]` on the load's day. Ignored when `owned()` said copied (the caller checks).
 - `export function skillUnload(a: Acc, ms: number, why: string): void` — ends every open load.
 - `export function skillHash(text: string): string` — 16 hex (FNV pair).
+- `skillLoad` also takes `off: number, len: number, rec: string` (the load line's byte offset and length in the log, or the record id for a database source), stored on `SkLoad`; the adapters pass the line's offset (the usage reader knows it: `a.off` before the line + the line's start).
 - `export function skillReq(a: Acc, d: Day, model: string, prov: string, b: number[] /* [in, cr, w5, w1] remaining, mutated */, usd: number, ms: number): void` — called from `tokens()` and `usageExact()` **before** the tap, only when `nIn + nCr + w5 + w1 > 0`; implements §3.2–3.4 (implicit drop first, then carries oldest-first, then pending loads), books `Acc.sk[i].lt/ct/tt/nq/hu` and `Day.sa`, updates `a.rq`, `a.lastCtx`.
 - `turn()` increments `a.tq` by `n` (also for `a.sub`: a subagent's prompts number its own turns but book no `Day.turns`) and sets `te` on loads of the closed turn.
 - `export function skillPath(path: string): string` — the skill name for a path `…/skills/<dir>/SKILL.md` (plugin
@@ -225,15 +320,22 @@ export function sizeFill(rows: LoadRow[]): void;          // a "?" load gets the
 
 ### Task 6: CLI `agentglass skills`, `--json`, `--watch`, redaction (after Tasks 5 and 7)
 
-**Files:** Create `src/features/skills/cli.ts`, `scripts/skills.test.sh`, `src/features/skills/skills.golden`, `skills-80.golden`, `skills-json.golden`; Modify `src/features/cli.ts:69,108,121,196` (skills entries + `skillLoads` field), `src/features/clihelp.ts:103`, the `--watch` emitter (skill / skill_end events), `src/features/redact.ts` (`fakeSkill`, built-in allowlist).
+**Files:** Create `src/features/skills/cli.ts`, `scripts/skills.test.sh`, `src/features/skills/skills.golden`, `skills-80.golden`, `skills-json.golden`; Modify `src/features/cli.ts:69,108,121,196` (skills entries + `skillLoads` field), `src/features/clihelp.ts:103`, the `--watch` emitter (skill / skill_end events), and every printed name through `skillVis()` (Task P1).
 
-**Behavior:** spec 6.13, 6.17, Privacy. `agentglass skills` text table (6.6 layout; ≤ 80 columns drops columns in the spec's order), `--json` = `{period, rows: SkillRow[], advice: Advice[] (top 3), tier notes}`; `--session ref` = timeline; `--check` = `skillCheck` over the ledger, exit 3 on violations, prints them. `--json` session entries gain the fields of 6.13; `--fields skillLoads`. Redaction: `fakeSkill(name)` through the subagent scrubber (`redact.ts:139-163`), allowlist `BUILTIN_SKILLS` (harness-bundled names; document the source of each list in a comment).
+**Behavior:** spec 6.13, 6.17, Privacy. `agentglass skills` text table (6.6 layout; ≤ 80 columns drops columns in the spec's order), `--json` = `{period, rows: SkillRow[], advice: Advice[] (top 3), tier notes}`; `--session ref` = timeline; `--check` = `skillCheck` over the ledger, exit 3 on violations, prints them. `--json` session entries gain the fields of 6.13; `--fields skillLoads`. Names through `skillVis()`; `skills.hide` `omit` rows fold into `(hidden) n skills`.
 
 - [ ] **Step 1: Failing test** `scripts/skills.test.sh`: a fixture HOME (`scripts/fixture-agents.sh` pattern) with the Task 4 fixtures; run with the isolation set: `agentglass skills` → `diff` vs `skills.golden`; `COLUMNS=80` → `skills-80.golden`; `skills --json | jq -S .` → `skills-json.golden`; `--json` session: `jq '.[0].skills[0] | keys'` contains `name,source,n,costUsd,carryUsd,tier`; `skills --check` exit 0; `--redact skills --json` has no fixture name except built-ins and no `LOREMSKILLTEXT`; `--watch --from 0` stream contains `"type":"skill"` lines in order.
 - [ ] **Step 2–4:** FAIL → implement → PASS; `sh scripts/check.sh --changed`.
 - [ ] **Step 5: Commit** `feat(skills): agentglass skills, --json skill fields, --watch events, redaction`.
 
 ---
+
+### Task 6b: View skill — text on demand (after Tasks 4a–c and P1; parallel with 6)
+
+**Files:** Create `src/features/skills/text.ts` (`skillText(s: Sess, l: SkLoad): string` — reads `len` bytes at `off` through the harness `source` (file or DB record `rec`), extracts the text the adapter measured, re-hashes and returns `""` when the hash differs (log rewritten)), `text.check.ts`; Modify `src/ui/detail.ts` (a "view skill" pane: trigger, turn, time, base dir, size, tier, hash, markdown-highlighted text), transcript key `v` on a skill line, Stats panel `v`, `src/features/skills/cli.ts` (`skills show <name | ref#sk<i>>`, `--json` `text`), all through `skillVis`/`textShown`.
+
+- [ ] **Step 1: Failing check**: on each harness fixture `skillText` returns the fixture text (marker present) and `""` after the fixture log is modified at that offset; view-skill render golden; `skills show alpha` prints it; under `--redact` and a `content` rule it prints `text hidden (…)`.
+- [ ] **Step 2–4, 5:** commit `feat(skills): view skill text on demand`.
 
 ### Task 7: Advice engine A1–A6 + inventory (after Task 5; parallel with 8–12)
 
@@ -264,9 +366,9 @@ export function adviseCfg(): AdviseCfg;                    // config "skills.adv
 
 ---
 
-### Task 9: Timeline views — transcript, call graph, replay, related, Wait timeline (after Tasks 1b and 5; parallel)
+### Task 9: Timeline views — transcript, call graph, replay, related, Wait timeline (after Tasks E3, E4 and 5; parallel)
 
-**Files:** Modify `src/ui/transcript.ts` (meta lines at loads/unloads), `src/input.ts:92-111` (`]`/`[` via `nextMark`), `src/ui/detail.ts` (load detail), `src/features/callgraph/model.ts` + `view.ts` (skill lane, tree rows), `src/features/replay.ts` (status line), `src/features/related/build.ts` (kind `skill`), `src/features/wait/tab.ts` (timeline ticks); Create `src/features/skills/marks.ts` (registers kind `skill`), checks beside each modified view (`callgraph/model.check.ts`, `related/build.check.ts`, `ui/transcript.check.ts`).
+**Files:** Modify `src/ui/transcript.ts` (meta lines at loads/unloads; `]`/`[` come from Task E3), `src/ui/detail.ts` (load detail), `src/features/callgraph/model.ts` + `view.ts` (skill lane, tree rows), `src/features/replay.ts` (status line), `src/features/related/build.ts` (kind `skill`), `src/features/wait/tab.ts` (timeline ticks); Create `src/features/skills/marks.ts` (registers kind `skill`), checks beside each modified view (`callgraph/model.check.ts`, `related/build.check.ts`, `ui/transcript.check.ts`).
 
 - [ ] **Step 1: Failing checks**: transcript of the Claude fixture shows `✧ alpha · user · 1.0k tok …` at the load index and `✧ alpha out (compacted)` at the boundary; `]` from event 0 lands on the load; call graph model has a skill lane with a band [load, compact]; related rows include a `skill` row only with kinds = all; Wait timeline lane tick at the load minute.
 - [ ] **Step 2–4:** FAIL → implement → PASS. **Step 5: Commit** `feat(views): skill marks in transcript, call graph, replay, related and wait timeline`.
@@ -295,7 +397,7 @@ export function adviseCfg(): AdviseCfg;                    // config "skills.adv
 
 **Files:** Modify `src/features/otlp/build.ts:150-190` (span events per load/unload on the turn root, session attributes), `src/features/otlp/types.ts` (event list already exists on spans), `src/features/otlp/encode.ts:169` (unchanged encoder, verify), `src/features/hub/map.ts:262` (events → `skills[]`); Tests `otlp/build.check.ts`, `hub/map.check.ts`.
 
-- [ ] **Step 1: Failing check**: the Claude fixture exports `gen_ai.skill.load` events with `gen_ai.skill.name`, `agentglass.skill.trigger`, `size_tokens`, `hash`, `scope`, `tier`; `gen_ai.skill.unload` with `reason = compact`; no `LOREMSKILLTEXT` in the payload; `--redact` fakes the name; hub map turns them into `skills[{name, source, n, …}]` equal to the local `--json` entry (minus $ fields the hub cannot price → `null`).
+- [ ] **Step 1: Failing check**: the Claude fixture exports `gen_ai.skill.load` events with `gen_ai.skill.name`, `agentglass.skill.trigger`, `size_tokens`, `hash`, `scope`, `tier`; `gen_ai.skill.unload` with `reason = compact`; no `LOREMSKILLTEXT` in the payload without `--content`, present with it (and absent for a `skills.hide` `content` rule); `--redact` fakes the name; hub map turns them into `skills[{name, source, n, …}]` equal to the local `--json` entry (minus $ fields the hub cannot price → `null`).
 - [ ] **Step 2–4, 5:** commit `feat(otlp): skill load/unload span events; hub fills skills`.
 
 ---
@@ -319,7 +421,7 @@ export function adviseCfg(): AdviseCfg;                    // config "skills.adv
 
 ### Task 15: Docs
 
-**Files:** `README.md` (Supported harnesses: skill notes per harness incl. tier, and the Codex note at line ~1492 rewritten: Codex skills are counted from `$name` mentions **and** from the agent reading a `SKILL.md`; a "Skills: what they cost" highlight; `agentglass skills` in the CLI list; keys `S`, `]`/`[`), `specs/ROADMAP.md` (status), help text already done per task.
+**Files:** `README.md` (a "Filtering events" section: kinds, `K`, presets, solo `i`, invert `!`, `/`, links; a privacy note: skill text shows locally by default, `skills.hide` modes, what each outward path sends; Supported harnesses: skill notes per harness incl. tier, and the Codex note at line ~1492 rewritten: Codex skills are counted from `$name` mentions **and** from the agent reading a `SKILL.md`; a "Skills: what they cost" highlight; `agentglass skills` in the CLI list; keys `S`, `]`/`[`), `specs/ROADMAP.md` (status), help text already done per task.
 
 - [ ] Write; `sh scripts/check.sh` (help/README contract checks); commit `docs: skill usage`.
 
@@ -333,11 +435,13 @@ export function adviseCfg(): AdviseCfg;                    // config "skills.adv
 | wave | tasks | why |
 |---|---|---|
 | 0 | 0 | rulings drive fixtures |
-| 1 | 1 ∥ 2 | marks module is independent of the engine |
-| 2 | 3 | codec needs the engine's fields |
-| 3 | 1b ∥ 4a ∥ 4b ∥ 4c ∥ 5 | separate files; 4a–c and 5 use only Task 2's API, 1b only Task 1's |
-| 4 | 7 ∥ 8 ∥ 9 ∥ 10 ∥ 11 ∥ 12 | separate files; all read Task 5's model (9 also needs 1b, 12 also needs 4a–c); 9 and 10 both touch `query/` only if 1b is not merged — merge 1b first |
-| 5 | 6 | wires advice (7) into the CLI and `--json` |
+| 1 | 1 ∥ 2 ∥ P1 | marks, attribution engine and visibility rules are independent |
+| 2 | 3 ∥ E1 | codec needs Task 2; the kind taxonomy needs Task 1 |
+| 3 | E2 ∥ 4a ∥ 4b ∥ 4c ∥ 5 | the filter controller needs E1; adapters and the read model need Task 2 |
+| 4 | E3 ∥ E4 ∥ E5 ∥ 6b ∥ 7 ∥ 8 ∥ 10 ∥ 11 ∥ 12 | separate files; E3–E5 need E2; 6b needs 4a–c and P1; 7, 8, 10, 11 need 5; 12 needs 4a–c |
+| 5 | 9 ∥ 6 | 9 needs E3/E4 (it adds skill marks to the filtered views); 6 wires advice (7) into the CLI |
 | 6 | 13 | needs the `--json` skill entries (6) |
-| 7 | 14 ∥ 15 | phase B advice; docs |
+| 7 | P2 ∥ 14 ∥ 15 | P2 walks every surface; phase B advice; docs |
 | 8 | 16 | verification |
+
+The event-kind tasks (E1–E5) are early on purpose: debug-episodes' plan (its Task 6) builds on the same controller and taxonomy. Whichever plan reaches it first implements E1/E2 to spec §5/§5a, and the other only registers kinds.
