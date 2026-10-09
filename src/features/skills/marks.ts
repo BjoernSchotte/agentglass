@@ -46,7 +46,7 @@ registerMarks({ kind: "skill", glyph: "✧", color: (): string => fg(C.cyan), of
 // the TUI's events follow skills.hide / --redact like its skill lines (transcript, detail, search, copy, call graph,
 // related, replay): first, on the real text, before the redaction hook scrubs it. Only when something is hidden (a hook in
 // H.events means rewritten events to related/build.ts); --watch applies the rules per line itself
-H.tui.unshift((): void => { if (VIS.redact || hideRules().length) H.events.unshift(hideEvents); });
+H.start.unshift((): void => { if (VIS.redact || hideRules().length) H.events.unshift(hideEvents); });
 
 // the load row behind a skill mark (sk<i>: load i of the session's log, or of a copy with a load at that time); null: not
 // a skill mark, or the load is gone. Kept per (session, ref, times): the transcript asks every frame
