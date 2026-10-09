@@ -20,7 +20,7 @@ import { type Acc, lastDays, startOfDay } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows } from "./model.ts";
 import { type Advice, advise, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
-import { inventory } from "./inventory.ts";
+import { type InvSkill, inventory } from "./inventory.ts";
 import { skillVis } from "./vis.ts";
 import { shownText } from "./text.ts";
 
@@ -153,7 +153,7 @@ function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advic
     for (let i = 0; i < r.n; i++) { const t = r.t[i] + 0; if (t >= t0 && t < t1) { n++; if (r.err[i] + 0 > 0) e++; } }
     return { n, err: e };
   };
-  return visAdvice(advise(rows, loads, { days: periodLen(o.period), listed, requests: reqs }, inventory(repos), adviseCfg(), calls));
+  return visAdvice(advise(rows, loads, { days: periodLen(o.period), listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !o.harness || x.harness === o.harness), adviseCfg(), calls));
 }
 function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
 function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }

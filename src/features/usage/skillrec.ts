@@ -64,7 +64,7 @@ export function scopeOf(dir: string): string {
   if (d.startsWith("bundled:") || d.indexOf("/skills/.system/") >= 0) return "builtin";
   if (d.indexOf("/plugins/") >= 0) return "plugin";
   const h = HOME.split("\\").join("/");
-  for (const u of ["/.claude/skills/", "/.codex/skills/", "/.agents/skills/", "/.gemini/skills/", "/.pi/agent/skills/", "/.config/opencode/skill"]) {
+  for (const u of ["/.claude/skills/", "/.codex/skills/", "/.agents/skills/", "/.gemini/skills/", "/.pi/agent/skills/", "/.pi/skills/", "/.config/opencode/skill", "/.opencode/skill"]) {
     const i = d.indexOf(u);
     if (i >= 0) return d.slice(0, i) === h ? "user" : "project";
   }
