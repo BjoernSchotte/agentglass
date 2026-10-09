@@ -6,7 +6,7 @@
 import { type Obj, parse, str } from "../../util/json.ts";
 import { execCmds } from "../usage/calls.ts";
 import { skillPath, skillReadCmd } from "../usage/skillrec.ts";
-import { skillVis, hideRules, textHiddenWhy, HIDDEN } from "./vis.ts";
+import { type HideRule, skillVis, hideRules, textHiddenWhy, globMatch, HIDDEN } from "./vis.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
 export function callSkill(tool: string, args: string): string {
@@ -18,13 +18,9 @@ export function callSkill(tool: string, args: string): string {
   return "";
 }
 
-// real name → what the stream prints instead (the fake, or "(hidden)" for omit), for every hidden name seen so far
+// short forms of hidden names the stream met (a plugin skill's directory in its SKILL.md path) → what it prints instead;
+// full names are matched against the rules at render time (scrub), so a glob rule hides a name before any load of it
 const SCRUB = new Map<string, string>();
-let seeded = false;
-function seed(): void { // rules without a glob name their skills already: titles are scrubbed before the first load is seen
-  if (seeded) return; seeded = true;
-  for (const r of hideRules()) if (r.match.indexOf("*") < 0 && r.match.indexOf("?") < 0) note(r.match);
-}
 // remember a skill name the stream met; true when the skill is hidden in any way (its text must not show)
 export function note(name: string): boolean {
   if (!name) return false;
@@ -37,11 +33,35 @@ export function note(name: string): boolean {
   return v.mode !== "show";
 }
 function word(c: string): boolean { return /[A-Za-z0-9_-]/.test(c); }
-// the text with every hidden name (as a whole word) replaced
+function nameCh(c: string): boolean { return /[A-Za-z0-9_:-]/.test(c); }
+// what a word of the text prints as when a skills.hide rule hides it (name: the fake, omit: "(hidden)"); "" = shown as is.
+// The rules alone decide (--redact's own scrubber fakes the names it knows: here every word would be a "user skill")
+function ruled(w: string, rules: HideRule[]): string {
+  for (const r of rules) {
+    if (!globMatch(r.match, w)) continue;
+    if (r.mode !== "name" && r.mode !== "omit") return "";
+    const v = skillVis(w); return v.mode === "omit" ? HIDDEN : v.shown;
+  }
+  return "";
+}
+// the text with every hidden name (as a whole word) replaced: each name-like word against the rules, then the short forms
 export function scrub(t: string): string {
-  seed();
-  if (!SCRUB.size || !t) return t;
+  if (!t) return t;
   let o = t;
+  const rules = hideRules();
+  if (rules.length) {
+    let r = ""; let i = 0; let last = 0;
+    while (i < o.length) {
+      if (!nameCh(o.charAt(i))) { i++; continue; }
+      let e = i; while (e < o.length && nameCh(o.charAt(e))) e++;
+      let w = o.slice(i, e); while (w.endsWith(":")) w = w.slice(0, -1); // "deploy:" in prose
+      const rep = w.length >= 2 ? ruled(w, rules) : "";
+      if (rep) { r += o.slice(last, i) + rep; last = i + w.length; }
+      i = e;
+    }
+    o = r + o.slice(last);
+  }
+  if (!SCRUB.size) return o;
   for (const [real, rep] of SCRUB) {
     let at = o.indexOf(real); if (at < 0) continue;
     let r = ""; let last = 0;

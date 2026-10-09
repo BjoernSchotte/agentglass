@@ -81,6 +81,15 @@ has "--watch kind filter: loads" "$(cat "$t/watchk")" '"kinds":["skill:load"]'; 
 r=$(cat "$t/watchh"); hasnt "--watch hide name" "$r" "beta"; hasnt "--watch hide omit" "$r" "delta"; hasnt "--watch hide text" "$r" "LOREMSKILLTEXT"
 hasnt "--watch hide text (2nd part)" "$r" "MORELOREMTEXT"; has "--watch hide result" "$r" "(text hidden by skills.hide)"; has "--watch keeps content-mode name" "$r" "alpha"
 
+# a glob rule hides a matching name in every --watch line from the first one, before (or without) any load of the skill
+G=91ab0000-0000-4000-8000-000000000001; mkdir -p "$h/.claude/projects/-w-glob"
+{ printf '{"type":"user","sessionId":"%s","cwd":"/w/glob","timestamp":"2026-10-01T11:00:00.000Z","message":{"role":"user","content":"run acme:internal-deploy on staging"}}\n' "$G"
+  printf '{"type":"assistant","sessionId":"%s","cwd":"/w/glob","timestamp":"2026-10-01T11:00:01.000Z","message":{"id":"mg1","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"acme:internal-deploy is not loaded"}],"usage":{"input_tokens":10,"output_tokens":5}}}\n' "$G"; } > "$h/.claude/projects/-w-glob/$G.jsonl"
+printf '{"skills":{"hide":[{"match":"*:internal-*","mode":"name"},{"match":"acme:sec*","mode":"omit"}]}}\n' > "$t/glob.json"
+(CFG="$t/glob.json" run --watch --from-start --for 3s > "$t/watchg" 2> /dev/null) || true
+r=$(grep "$G" "$t/watchg" || true); has "--watch glob: the session's lines" "$r" "$G"; hasnt "--watch glob rule hides from the first line" "$r" "internal-deploy"
+rm -rf "$h/.claude/projects/-w-glob"
+
 has "advise runs" "$(run skills advise --period all)" "no advice in the history"
 # usage
 eq "bad period" "$(run skills --period 3w > /dev/null 2>&1 && echo 0 || echo $?)" 2
