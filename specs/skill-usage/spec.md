@@ -529,7 +529,11 @@ Session-level span attributes on the session root: `agentglass.skill.cost_usd` (
 With the export's `--content`: `agentglass.skill.text` on the load event (cut to `contentMax`). `skills.hide` applies
 (`omit`: no event; `name`: fake name; `content`: no text even with `--content`).
 Existing `gen_ai.skill.name` on tool spans and the turn root stays (otlp-export §table, line 182/189). The hub maps the
-events back into `skills[]` (replaces `skills: []`, `hub/map.ts:262`), so hub-fed fleet rows get skills too.
+events back into `skills[]` (replaces `skills: []`, `hub/map.ts:262`), so hub-fed fleet rows get skills too. Their
+tokens and $ ride on an `agentglass.skill.usage` event per (skill, source) on the turn root whenever they changed: the
+session's `--json` entry so far (`agentglass.skill.uses`, `.loads`, `.load_tokens`, `.carry_tokens`, `.tail_tokens`,
+`.cost_usd`, `.carry_usd`, `.tail_usd`; names through `skillVis`, `omit` skills none); the hub keeps the newest per entry
+(review ruling: exact, and a re-sent turn counts nothing twice).
 
 **6.15 Fleet.** Exact merge: skills are attributed on the host that owns the log, inside the booking path, so a message
 the fleet merge drops (owned elsewhere, fleet spec 13) never carried a skill share on the dropping host — the sums are

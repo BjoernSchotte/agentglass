@@ -23,8 +23,10 @@ export interface SessAgg {
   live: LiveRow | null; alerts: Map<string, Obj>; native: boolean; // native: rebuilt from Claude Code's own api_request records
   sk: Map<string, SkAgg>; // skill loads by "<name>\t<source>" from the turn roots' gen_ai.skill.load events (skill-usage 6.14)
 }
-// one skill and source of a session: loads, and the newest load's size, tier, hash, scope
-interface SkAgg { name: string; source: string; n: number; at: number; size: number; tier: string; hash: string; scope: string; stub: boolean }
+// one skill and source of a session: loads, and the newest load's size, tier, hash, scope; u = the sender's figures from
+// its newest agentglass.skill.usage event (at uAt): [uses, loads, load, carry, tail tokens, $, carry $, tail $]; [] = none
+interface SkAgg { name: string; source: string; n: number; at: number; size: number; tier: string; hash: string; scope: string; stub: boolean; u: number[]; uAt: number }
+const SK_USAGE = ["agentglass.skill.uses", "agentglass.skill.loads", "agentglass.skill.load_tokens", "agentglass.skill.carry_tokens", "agentglass.skill.tail_tokens", "agentglass.skill.cost_usd", "agentglass.skill.carry_usd", "agentglass.skill.tail_usd"];
 export interface HostAgg {
   name: string; hostId: string; hostName: string; version: string; os: string; redact: boolean; exact: boolean;
   sess: Map<string, SessAgg>; seen: Map<string, number>; newest: number; beat: number; reqIds: Set<string>; respIds: Set<string>;
@@ -126,16 +128,28 @@ function chat(h: HostAgg, x: SessAgg, m: Attrs, end: number, inclusive: boolean,
   const req = s(m, "agentglass.request.id"); if (req) h.reqIds.add(req);
 }
 
-// a turn root's (or a subagent piece's) skill load events → the session's skills[] entries: a user load is a "command" use,
-// a model load a "model" use (re-injections and the listing have no entry, as in --json); names arrive as the sender
-// showed them (skills.hide, --redact applied there); tokens and $ are not in the events: the entry has them null
+// a turn root's (or a subagent piece's) skill events → the session's skills[] entries: a user load is a "command" use, a
+// model load a "model" use (re-injections and the listing have no entry, as in --json); names arrive as the sender showed
+// them (skills.hide, --redact applied there). Tokens and $ come from the sender's agentglass.skill.usage events (its
+// --json entry so far, the newest wins); a sender without them leaves them null
+function skAgg(x: SessAgg, name: string, src: string): SkAgg {
+  const k = name + "\t" + src; let g = x.sk.get(k);
+  if (!g) { g = { name, source: src, n: 0, at: -1, size: -1, tier: "", hash: "", scope: "", stub: true, u: [], uAt: -1 }; x.sk.set(k, g); }
+  return g;
+}
 function skillEvents(x: SessAgg, evs: unknown): void {
   for (const e of arr(evs)) {
-    const o = obj(e); if (!o || str(o["name"]) !== "gen_ai.skill.load") continue;
-    const m = attrMap(o["attributes"]); const name = s(m, "gen_ai.skill.name"); const tr = s(m, "agentglass.skill.trigger");
-    if (!name || (tr !== "user" && tr !== "model")) continue;
-    const src = tr === "user" ? "command" : "model"; const k = name + "\t" + src; const t = nsMs(o["timeUnixNano"]);
-    let g = x.sk.get(k); if (!g) { g = { name, source: src, n: 0, at: -1, size: -1, tier: "", hash: "", scope: "", stub: true }; x.sk.set(k, g); }
+    const o = obj(e); if (!o) continue;
+    const en = str(o["name"]); if (en !== "gen_ai.skill.load" && en !== "agentglass.skill.usage") continue;
+    const m = attrMap(o["attributes"]); const name = s(m, "gen_ai.skill.name"); const t = nsMs(o["timeUnixNano"]); if (!name) continue;
+    if (en === "agentglass.skill.usage") {
+      const src = s(m, "agentglass.skill.source"); if (src !== "command" && src !== "model") continue;
+      const g = skAgg(x, name, src); if (t < g.uAt) continue;
+      g.uAt = t; g.u = SK_USAGE.map((k: string) => n(m, k));
+      continue;
+    }
+    const tr = s(m, "agentglass.skill.trigger"); if (tr !== "user" && tr !== "model") continue;
+    const g = skAgg(x, name, tr === "user" ? "command" : "model");
     g.n++;
     const stub = b(m, "agentglass.skill.stub"); // a re-invocation stub is no version of the text: the newest real load wins
     if ((t >= g.at && (!stub || g.stub)) || (g.stub && !stub)) { g.at = t; g.stub = stub; g.size = m.n.has("agentglass.skill.size_tokens") ? n(m, "agentglass.skill.size_tokens") : -1; g.tier = s(m, "agentglass.skill.tier"); g.hash = s(m, "agentglass.skill.hash"); g.scope = s(m, "agentglass.skill.scope"); }
@@ -143,8 +157,14 @@ function skillEvents(x: SessAgg, evs: unknown): void {
 }
 function skillsOf(x: SessAgg): Obj[] {
   const gs: SkAgg[] = []; for (const g of x.sk.values()) gs.push(g);
-  gs.sort((p: SkAgg, q: SkAgg) => q.n - p.n || (p.name < q.name ? -1 : p.name > q.name ? 1 : p.source < q.source ? -1 : 1)); // the --json order: most used first
-  return gs.map((g: SkAgg): Obj => ({ name: g.name, source: g.source, n: g.n, loads: g.n, tokens: null, costUsd: null, carryUsd: null, tailUsd: null, size: g.size >= 0 ? g.size : null, tier: g.tier || null, hash: g.hash || null, scope: g.scope || null, dir: null }));
+  const uses = (g: SkAgg): number => g.u.length ? g.u[0] ?? 0 : g.n;
+  gs.sort((p: SkAgg, q: SkAgg) => uses(q) - uses(p) || (p.name < q.name ? -1 : p.name > q.name ? 1 : p.source < q.source ? -1 : 1)); // the --json order: most used first
+  return gs.map((g: SkAgg): Obj => {
+    const u = g.u; const has = u.length === SK_USAGE.length;
+    return { name: g.name, source: g.source, n: uses(g), loads: has ? u[1] ?? 0 : g.n, tokens: has ? { load: u[2] ?? 0, carry: u[3] ?? 0, tail: u[4] ?? 0 } : null,
+      costUsd: has ? u[5] ?? 0 : null, carryUsd: has ? u[6] ?? 0 : null, tailUsd: has ? u[7] ?? 0 : null,
+      size: g.size >= 0 ? g.size : null, tier: g.tier || null, hash: g.hash || null, scope: g.scope || null, dir: null };
+  });
 }
 function spans(a: Agg, rs: Obj, label: Label | null): void {
   const r = obj(rs["resource"]); const rm = attrMap(r ? r["attributes"] : []);

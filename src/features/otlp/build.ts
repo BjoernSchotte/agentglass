@@ -4,13 +4,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
 import { display } from "../../hooks.ts";
-import { parse as parseJson } from "../../util/json.ts";
+import { parse as parseJson, obj, str } from "../../util/json.ts";
 import { loadHead, titleOf } from "../../model/sessions.ts";
 import { identSync } from "../query/project.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
 import { type Acc, type Booking, type SkLoad, newAcc, setBookTap } from "../usage/record.ts";
 import { SKCAP, type SkCap, skillHash, LISTING } from "../usage/skillrec.ts";
 import { skillLoads } from "../skills/model.ts";
+import { skillsJson } from "../skills/json.ts";
 import { skillVis, textShown, textHiddenWhy, listingShown } from "../skills/vis.ts";
 import { callSkill, note } from "../skills/watchvis.ts";
 import { setCallTap, program, norm, mcpServer } from "../usage/calls.ts";
@@ -48,6 +49,7 @@ export interface SessB {
   tail: Ev[]; ver: string; // recent root events (busy()), harness version
   kiro: KTurn[];
   skq: Map<string, SkQ[]>; skWait: SkQ[]; // skill events per turn key; those of lines before any turn (the next turn's root takes them)
+  skSig: Map<string, string>; // per "<skill>\t<source>" the figures its last agentglass.skill.usage event sent
 }
 const WIN = 1048576;
 
@@ -58,7 +60,7 @@ function newSide(s: Sess, top: boolean): Side {
 }
 export function newSessB(root: Sess, subs: Sess[]): SessB {
   const sd: Side[] = []; for (const c of subs) sd.push(newSide(c, false));
-  return { root, subs: sd, side: newSide(root, true), cur: newCursor(), R: rootKey(root.h, root.id), open: null, done: [], tsN: new Map<string, number>(), tail: [], ver: "", kiro: [], skq: new Map<string, SkQ[]>(), skWait: [] };
+  return { root, subs: sd, side: newSide(root, true), cur: newCursor(), R: rootKey(root.h, root.id), open: null, done: [], tsN: new Map<string, number>(), tail: [], ver: "", kiro: [], skq: new Map<string, SkQ[]>(), skWait: [], skSig: new Map<string, string>() };
 }
 // push and hand back the stored element: scriptc 0.1.7 may store a copy of a freshly built object, so later writes go
 // through the array's element (the call graph keeps indexes for the same reason)
@@ -217,7 +219,19 @@ function skillEvents(b: SessB, tr: XTurn, o: BuildOpts): void {
   const as: Acc[] = [b.side.acc]; for (const sd of b.subs) as.push(sd.acc);
   for (const r of skillLoads(as, as.map((a: Acc) => ""))) { n++; usd += r.usd; carry += r.carry; }
   if (n) { const rt = tr.spans[0]; rt.attrs.push(attrD("agentglass.skill.cost_usd", Math.round(usd * 1e6) / 1e6)); rt.attrs.push(attrI("agentglass.skill.carry_tokens", carry)); }
+  // per skill and source the session's --json skills[] entry so far (names through skillVis, omitted skills left out), on
+  // the root when its figures changed: the hub fills skills[] with them, tokens and $ as this host counted them (the
+  // newest event per entry wins)
+  for (const e of skillsJson(as)) {
+    const tk = obj(e["tokens"]); const nm = str(e["name"]); const src = str(e["source"]);
+    const f = [num(e["n"]), num(e["loads"]), tk ? num(tk["load"]) : 0, tk ? num(tk["carry"]) : 0, tk ? num(tk["tail"]) : 0, num(e["costUsd"]), num(e["carryUsd"]), num(e["tailUsd"])];
+    const k = nm + "\t" + src; const sig = f.join(","); if (b.skSig.get(k) === sig) continue; b.skSig.set(k, sig);
+    tr.spans[0].events.push({ name: "agentglass.skill.usage", t: tr.t1, attrs: [attrS("gen_ai.skill.name", nm), attrS("agentglass.skill.source", src),
+      attrI("agentglass.skill.uses", f[0] ?? 0), attrI("agentglass.skill.loads", f[1] ?? 0), attrI("agentglass.skill.load_tokens", f[2] ?? 0), attrI("agentglass.skill.carry_tokens", f[3] ?? 0),
+      attrI("agentglass.skill.tail_tokens", f[4] ?? 0), attrD("agentglass.skill.cost_usd", f[5] ?? 0), attrD("agentglass.skill.carry_usd", f[6] ?? 0), attrD("agentglass.skill.tail_usd", f[7] ?? 0)] });
+  }
 }
+function num(v: unknown): number { return typeof v === "number" ? v as number : 0; }
 // fx: "turn complete · Ns" is logged at the turn's end, its events share one timestamp: the turn started N s earlier
 function fxStart(tr: XTurn, e: Ev): void {
   const m = /· ([\d.]+)s/.exec(e.text); const d = m ? Number(m[1] ?? "0") * 1000 : 0;
