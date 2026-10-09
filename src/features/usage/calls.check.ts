@@ -13,6 +13,7 @@ eq("for loop", program("for i in 1 2; do tmux send-keys -t x; done"), "tmux");
 eq("only cd", program("cd /tmp"), "cd");
 eq("argv -lc", argv(["bash", "-lc", "ls -la"]), "ls -la");
 eq("argv join", argv(["rg", "-n", "x"]), "rg -n x");
+eq("exec wrapper, JSON-style keys", execCmds("const r = await tools.exec_command({\"cmd\":\"sed -n '1,9p' a.md\",\"workdir\":\"/w\"});").join("|"), "sed -n '1,9p' a.md");
 eq("exec wrapper", execCmds("const r = await Promise.allSettled([tools.exec_command({cmd:\"cat \\\"a b\\\"\",max_output_tokens:1}), tools.exec_command({workdir:\"/w\", cmd:'ls'})]);").join("|"), "cat \"a b\"|ls");
 const raw = "{\"payload\":{\"type\":\"custom_tool_call_output\",\"output\":[{\"type\":\"input_text\",\"text\":\"{\\\"exit_code\\\":0,\\\"output\\\":\\\"x \\\\\\\"exit_code\\\\\\\":9\\\"}\\n{\\\"exit_code\\\":2}\"}]}}";
 eq("exit codes (nested output ignored)", exitCodes(raw).join(","), "0,2");
