@@ -46,6 +46,7 @@ setVis(parseHide([{ match: "notes", mode: "content" }, { match: "secret", mode: 
 const f = skillVis("my-team-skill").shown;
 ok("redact fakes", f !== "my-team-skill" && f.length === "my-team-skill".length && f === fakeSkill("my-team-skill"));
 eq("redact stable", skillVis("my-team-skill").shown, f);
+eq("redact: a fake stays itself (scrubbed call text)", skillVis(f).shown, f);
 ok("redact plugin whole", skillVis("acme:deploy").shown.length === 11 && skillVis("acme:deploy").shown.indexOf("acme") < 0);
 eq("redact builtin", skillVis("claude-api").mode + "|" + skillVis("claude-api").shown, "content|claude-api");
 eq("redact listing", skillVis("(listing)").shown, "(listing)");
