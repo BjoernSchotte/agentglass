@@ -71,8 +71,9 @@ setVis(parseHide([{ match: "*:internal-*", mode: "omit" }, { match: "acme-*", mo
 const ti = scrub("/acme:internal-x fix the second bug");
 eq("glob omit: a title before any load", ti, "/(hidden) fix the second bug");
 const tn = scrub("<command-name>/acme-tool</command-name> then $acme-other, /skill:acme-pi and ~/.pi/skills/acme-dir/SKILL.md; acme-prose stays");
-ok("glob name: references faked, prose kept " + tn, ["acme-tool", "acme-other", "acme-pi", "acme-dir"].every((n: string) => tn.indexOf(n) < 0) && tn.indexOf("acme-prose stays") > 0 && tn.indexOf("/SKILL.md") > 0);
+ok("glob name: references and prose faked " + tn, ["acme-tool", "acme-other", "acme-pi", "acme-dir", "acme-prose"].every((n: string) => tn.indexOf(n) < 0) && tn.indexOf(" stays") > 0 && tn.indexOf("/SKILL.md") > 0);
 eq("a * rule hides no prose", scrub("fix the build at 10:30"), "fix the build at 10:30");
+eq("a specific glob hides prose mentions too", scrub("first load the acme-later skill"), "first load the " + skillVis("acme-later").shown + " skill");
 // a listing names and describes every skill: hidden ones (any mode but show) leave it
 setVis(parseHide([{ match: "sec*", mode: "omit" }, { match: "acme-x", mode: "name" }, "notes"]).rules, false);
 eq("listing without hidden skills", listingShown("- pub: shown\n  more of pub\n- secret: s\n  more of secret\n- acme-x: a\n- notes: n\n- p:pub2: shown too"), "- pub: shown\n  more of pub\n- p:pub2: shown too\n(3 hidden by skills.hide)");
