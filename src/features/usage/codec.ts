@@ -112,29 +112,31 @@ function pairsIn(v: unknown): Map<string, string> { const m = new Map<string, st
 // "model\tprovider"), each load an index into them: a few JSON nodes per log however many loads (a parse tree per field
 // and load cost more than the loads). No text, ever
 const TRIGS = ["user", "model", "compact", "listing"]; const WHYS = ["", "compact", "clear", "drop", "relist"];
-const SKW = 41; // [nm, trig, t, tu, te, rq0, bytes, S, dr, end, why, flags, short, nq, hu, ht, off, len, n, pg, hl, h, r, mp, 0, lt×4, ct×4, tt×4, hb×4]
+const SKW = 41; // [nm, trig, t, tu, te, rq0, bytes, S, dr, end, why, flags, short, nq, hu, ht, off, len, n, pg, hl, h, r, mp, cid, lt×4, ct×4, tt×4, hb×4]
 function idxOf(tab: string[], m: Map<string, number>, v: string): number { let i = m.get(v); if (i === undefined) { i = tab.length; tab.push(v); m.set(v, i); } return i; }
 function skOut(sk: SkLoad[]): Obj {
   const nm: string[] = []; const nmI = new Map<string, number>(); const dr: string[] = []; const drI = new Map<string, number>();
   const hs: string[] = []; const hsI = new Map<string, number>(); const rs: string[] = []; const rsI = new Map<string, number>(); const mp: string[] = []; const mpI = new Map<string, number>();
+  const cs: string[] = [""]; const csI = new Map<string, number>(); csI.set("", 0); // call ids: index 0 = none (older rows hold 0 there)
   const x: number[] = [];
   for (const l of sk) {
     const f = (l.rel ? 1 : 0) + (l.stub ? 2 : 0) + (l.pend ? 4 : 0) + (l.est ? 8 : 0) + (l.rd ? 16 : 0);
     const row = [idxOf(nm, nmI, l.name), TRIGS.indexOf(l.trig), l.t, l.tu, l.te, l.rq0, l.bytes, l.S, idxOf(dr, drI, l.dir), l.end, WHYS.indexOf(l.why), f, l.short, l.nq, l.hu, l.ht, l.off, l.len, l.n, l.pg, l.hl,
-      idxOf(hs, hsI, l.hash), idxOf(rs, rsI, l.rec), idxOf(mp, mpI, l.mdl + "\t" + l.prov), 0];
+      idxOf(hs, hsI, l.hash), idxOf(rs, rsI, l.rec), idxOf(mp, mpI, l.mdl + "\t" + l.prov), idxOf(cs, csI, l.cid)];
     for (const v of row) x.push(v);
     for (let k = 0; k < 4; k++) x.push(l.lt[k] ?? 0);
     for (let k = 0; k < 4; k++) x.push(l.ct[k] ?? 0);
     for (let k = 0; k < 4; k++) x.push(l.tt[k] ?? 0);
     for (let k = 0; k < 4; k++) x.push(l.hb[k] ?? 0);
   }
-  return { nm, dr, h: hs, r: rs, mp, x };
+  const o: Obj = { nm, dr, h: hs, r: rs, mp, x }; if (cs.length > 1) o["c"] = cs;
+  return o;
 }
 // a pre-release VERSION 19 cache stored the loads as columns: that log re-indexes (cache.ts)
 export function skStale(o: Obj): boolean { const s = obj(o["sk"]); return s !== null && s["x"] === undefined; }
 function skIn(v: unknown): SkLoad[] {
   const out: SkLoad[] = []; const o = obj(v); if (!o) return out;
-  const nm = poolIn(o["nm"]); const dr = poolIn(o["dr"]); const hs = poolIn(o["h"]); const rs = strsIn(o["r"]); const mp = poolIn(o["mp"]); const x = nums(o["x"]);
+  const nm = poolIn(o["nm"]); const dr = poolIn(o["dr"]); const hs = poolIn(o["h"]); const rs = strsIn(o["r"]); const mp = poolIn(o["mp"]); const x = nums(o["x"]); const cs = strsIn(o["c"]);
   const four = (i: number): number[] => [at(x, i), at(x, i + 1), at(x, i + 2), at(x, i + 3)];
   for (let i = 0; i + SKW <= x.length && out.length < 2000; i += SKW) {
     const name = nm[at(x, i)] ?? ""; if (!name) continue;
@@ -144,7 +146,7 @@ function skIn(v: unknown): SkLoad[] {
       dir, scope: pooled(scopeOf(dir)), end: at(x, i + 9), why: WHYS[at(x, i + 10)] ?? "", rel: (fl & 1) !== 0, stub: (fl & 2) !== 0, pend: (fl & 4) !== 0, short: at(x, i + 12), nq: at(x, i + 13),
       lt: four(i + 25), ct: four(i + 29), tt: four(i + 33), hb, hu: at(x, i + 14), hl: at(x, i + 20), ht: at(x, i + 15), off: at(x, i + 16), len: at(x, i + 17), rec: rs[at(x, i + 22)] ?? "",
       mdl: pooled(tab >= 0 ? m.slice(0, tab) : m), prov: pooled(tab >= 0 ? m.slice(tab + 1) : ""), est: (fl & 8) !== 0, n: Math.max(1, at(x, i + 18)), rd: (fl & 16) !== 0,
-      h1: hexNum(hash.slice(0, 8), FNV1), h2: hexNum(hash.slice(8, 16), FNV2), pg: at(x, i + 19) });
+      h1: hexNum(hash.slice(0, 8), FNV1), h2: hexNum(hash.slice(8, 16), FNV2), pg: at(x, i + 19), cid: cs[at(x, i + 24)] ?? "" });
   }
   return out;
 }

@@ -530,7 +530,7 @@ export function skillReadDone(a: Acc, d: Day, callId: string, ms: number, iso: s
     if (!l.rd && l.pend) return; // the harness's skill tool loaded it right before this read
     if (l.rd && l.dir === dir) { skillGrow(a, name, out); l.est = true; return; }
   }
-  skillLoad(a, name, "model", ms, iso, out, true, dir, cut, r.off).rd = true;
+  const l = skillLoad(a, name, "model", ms, iso, out, true, dir, cut, r.off); l.rd = true; l.cid = own(callId);
   skill(d, "model", name);
 }
 // a harness skill tool's call (Claude Skill): its text comes on a later line (skillCallText), loaded as a model load
@@ -550,7 +550,7 @@ export function skillCallText(a: Acc, callId: string, ms: number, iso: string, t
     return true;
   }
   e.tu = -1;
-  skillLoad(a, e.path, "model", ms, iso, text, true, dir, false, e.off).stub = stub;
+  const l = skillLoad(a, e.path, "model", ms, iso, text, true, dir, false, e.off); l.stub = stub; l.cid = own(callId);
   return true;
 }
 // the cap: the oldest ended load folds into its name's summary record (n > 1: counts and tokens kept, times dropped); a
@@ -563,7 +563,7 @@ function skillFold(a: Acc): void {
     if (into < 0) for (let j = i + 1; j < a.sk.length; j++) { const f = a.sk[j] as SkLoad; if (f.name === x.name && f.end !== 0 && f.n === 1) { into = j; break; } }
     if (into < 0) continue;
     const f = a.sk[into] as SkLoad;
-    if (f.n === 1) { f.t = 0; f.te = 0; f.off = -1; f.len = 0; f.rec = ""; f.stub = false; f.rel = false; }
+    if (f.n === 1) { f.t = 0; f.te = 0; f.off = -1; f.len = 0; f.rec = ""; f.stub = false; f.rel = false; f.cid = ""; }
     f.n = f.n + x.n; f.nq = f.nq + x.nq; f.short = f.short + x.short; f.hu = f.hu + x.hu; f.hl = f.hl + x.hl; f.ht = f.ht + x.ht;
     if (f.hb === NO_HB && x.hb !== NO_HB) f.hb = [0, 0, 0, 0];
     for (let k = 0; k < 4; k++) { f.lt[k] = (f.lt[k] ?? 0) + (x.lt[k] ?? 0); f.ct[k] = (f.ct[k] ?? 0) + (x.ct[k] ?? 0); f.tt[k] = (f.tt[k] ?? 0) + (x.tt[k] ?? 0); if (f.hb !== NO_HB) f.hb[k] = (f.hb[k] ?? 0) + (x.hb[k] ?? 0); }
