@@ -11,8 +11,9 @@ import { query, q, sqliteBin } from "../util/sqlite.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { say } from "../state.ts";
-import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, reasoning, turn, skill, nlines, num, patchLines } from "../features/usage/record.ts";
+import { type Acc, type Day, bucket, tool, pend, file, lines as addLines, usageExact, reasoning, turn, skill, nlines, num, patchLines, skillLoad, skillUnload, skillRead, skillReadDone } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
+import { outDir } from "../features/usage/skillrec.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, Live, SessionSource } from "./types.ts";
 import { toolArg, blockText, prompts } from "./common.ts";
@@ -350,7 +351,13 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
     done(p, t0 > 0 && t1 >= t0 ? t1 - t0 : -1, status === "error" || (codes.length > 0 && codes[0] !== 0), body.length, id, codes);
   }
   if (!inp) return;
-  if (name === "skill") { skill(d, "model", str(inp["id"]) || str(inp["name"])); return; } // 2.x {id}, 1.x {name}
+  const fin = status === "completed" || status === "error"; // a part is written again as it runs: its text once, at the end
+  if (name === "skill") { // 2.x {id}, 1.x {name}; the skill's text is the tool's output (none: size unknown)
+    const sn = str(inp["id"]) || str(inp["name"]); skill(d, "model", sn);
+    if (fin) { const out = st ? (typeof st["output"] === "string" ? str(st["output"]) : blockText(st["content"])) : ""; skillLoad(a, sn, "model", t1 > 0 ? t1 : t0, "", out, out !== "" && status === "completed", outDir(out, sn), false); }
+    return;
+  }
+  if (name === "read" && fin && status === "completed") { skillRead(a, id, str(inp["filePath"]) || str(inp["path"])); if (a.skr.has(id)) skillReadDone(a, d, id, t1 > 0 ? t1 : t0, "", st ? (typeof st["output"] === "string" ? str(st["output"]) : blockText(st["content"])) : "", false); }
   const path = str(inp["filePath"]) || str(inp["path"]);
   let add = 0; let del = 0;
   if (name === "edit") { add = nlines(str(inp["newString"])); del = nlines(str(inp["oldString"])); }
@@ -363,21 +370,29 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
 function usage(a: Acc, l: string): void {
   if (l.startsWith("{\"v1\":")) {
     const usr = !a.sub && l.indexOf("\"role\":\"user\"") >= 0 && l.indexOf("\"type\":\"text\"") >= 0;
-    if (!usr && l.indexOf("\"type\":\"step-finish\"") < 0 && l.indexOf("\"type\":\"tool\"") < 0) return;
+    if (!usr && l.indexOf("\"type\":\"step-finish\"") < 0 && l.indexOf("\"type\":\"tool\"") < 0 && l.indexOf("\"type\":\"compaction\"") < 0) return;
     const o = parseJson(l); if (!o || o["copied"] === 1) return; // a fork's copied history is not this session's work
     const p = obj(o["part"]); if (!p) return;
     if (usr && str(o["role"]) === "user" && str(p["type"]) === "text") { turn(a, tm(p, "start") || num(o["t"]), "", prompts(parse, o)); return; }
     const t = num(o["t"]); const d = bucket(a, t, "");
     const pt = str(p["type"]);
+    if (pt === "compaction") { skillUnload(a, t, "compact"); return; }
     if (pt === "step-finish") book(a, d, str(o["model"]), obj(p["tokens"]), num(p["cost"]), str(o["prov"]));
     else if (pt === "tool") { const st = obj(p["state"]); useTool(a, d, str(p["tool"]) || "tool", str(p["callID"]), st, tm(st, "start"), tm(st, "end"), str(o["model"])); }
     return;
   }
   // a skill row is a user activation (the session's skill endpoint, a /skill or mention); the model loads skills with its skill tool
-  if (l.startsWith("{\"type\":\"skill\"")) { const o = parseJson(l); if (o && o["copied"] !== 1) skill(bucket(a, tm(o, "created"), ""), "command", str(o["skill"]) || str(o["name"])); return; }
+  if (l.startsWith("{\"type\":\"skill\"")) {
+    const o = parseJson(l); if (!o || o["copied"] === 1) return;
+    const sn = str(o["skill"]) || str(o["name"]); const t = tm(o, "created"); const txt = str(o["content"]) || str(o["text"]);
+    skill(bucket(a, t, ""), "command", sn);
+    skillLoad(a, sn, "user", t, "", txt, txt !== "", "", false);
+    return;
+  }
   if (l.startsWith("{\"type\":\"user\"")) { if (a.sub) return; const o = parseJson(l); const n = o && o["copied"] !== 1 ? prompts(parse, o) : 0; if (o && n) turn(a, tm(o, "created"), "", n); return; }
   if (!l.startsWith("{\"type\":\"assistant\"") && !l.startsWith("{\"type\":\"compaction\"")) return;
   const o = parseJson(l); if (!o || o["copied"] === 1) return;
+  if (str(o["type"]) === "compaction" && str(o["status"]) !== "running") skillUnload(a, tm(o, "created"), "compact"); // before its own usage
   const d = bucket(a, tm(o, "created"), "");
   const m = obj(o["model"]);
   book(a, d, m ? str(m["id"]) : "", obj(o["tokens"]), num(o["cost"]), m ? str(m["providerID"]) : "");

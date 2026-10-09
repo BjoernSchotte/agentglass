@@ -154,7 +154,7 @@ export function argv(v: unknown): string {
 // commands inside Codex's JS `exec` wrapper: tools.exec_command({cmd:"…"}) — string literals, JSON-decodable when double-quoted
 export function execCmds(src: string): string[] {
   const out: string[] = [];
-  for (const m of src.matchAll(/exec_command\(\s*\{[^}]*?\bcmd\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g)) {
+  for (const m of src.matchAll(/exec_command\(\s*\{[^}]*?(?:\bcmd|"cmd"|'cmd')\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g)) { // cmd: or a JSON-style "cmd":
     const lit = m[1] ?? "";
     let s = lit.slice(1, -1);
     if (lit.startsWith("\"")) { try { const v: unknown = JSON.parse(lit); if (typeof v === "string") s = v; } catch (e) { /* keep raw */ } }

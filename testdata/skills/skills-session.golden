@@ -1,0 +1,7 @@
+sk0  09:00  · (listing) · 200 tok · 5 req · $0.00 (tail $0.00) · out (compacted)
+sk1  09:00  / alpha · 1.0k tok · 4 req · $0.00 · out (compacted)
+sk2  09:00  ⚙ beta · 2.0k tok · 1 req · $0.01 · out (compacted)
+sk3  09:00  ⚙ beta (stub) · 15 tok · 0 req · $0.00 · out (compacted)
+sk4  09:00  ⚙ delta · 500 tok · 0 req · $0.00 · out (compacted)
+sk5  09:00  ↻ alpha · 1.0k tok · 1 req · $0.00 · in context
+sk6  09:00  / gamma · 10 tok · 0 req · $0.00 · in context

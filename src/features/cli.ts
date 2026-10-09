@@ -4,7 +4,7 @@ import { writeSync } from "node:fs";
 import { H, complete, screenOut, display } from "../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, titleOf, activity, probeLive } from "../model/sessions.ts";
 import { refreshProcs, refreshSlow } from "../model/procs.ts";
-import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf, window } from "../harness/index.ts";
+import { HARNESSES, harnessIds, isHarness, parseEvents, sourceOf, epochOf, window, harnessOf } from "../harness/index.ts";
 import { type Obj, base } from "../util/json.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
@@ -16,7 +16,11 @@ import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { paneOfPid } from "../mux/index.ts";
 import { accsOf } from "./usage/ledger.ts";
-import { type SkillUse, skillUsesOf } from "./usage/record.ts";
+import { type Acc, type SkLoad, newAcc } from "./usage/record.ts";
+import { newRows } from "./usage/rows.ts";
+import { skillVis } from "./skills/vis.ts";
+import { skillsJson, skillLoadsJson } from "./skills/json.ts";
+import { callVis, note, scrub } from "./skills/watchvis.ts";
 import { estTopOf } from "./usage/costs.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
@@ -28,7 +32,7 @@ import { saveVcs } from "./vcs/enrich.ts";
 import { labelOf } from "../model/project.ts";
 import { keyShown, reposCli } from "./repos/cli.ts";
 import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchTrack, cliWatchEvent, cliWatchEv, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
-import { livePid, evxOf } from "./query/eval.ts";
+import { type EvX, livePid, evxOf } from "./query/eval.ts";
 import { type Alert, stateOf, render, severityOf, flags } from "./rules/engine.ts";
 import type { AlertT } from "./otlp/logs.ts";
 import { rules } from "./rules/state.ts";
@@ -56,6 +60,7 @@ const NOTIFY_OPT = opt("--notify", "", "--watch: also run rules.json's notify co
 const REPOS_OPT = opt("--repos", "", "--json: one object per project instead of sessions (worktrees and clones of one remote merge)", "", []);
 const DAYS_OPT = opt("--days", "N", "--repos: the last N days (default 7, 0 = all history); day clauses of --filter narrow it", "7", []);
 const FOR_OPT = opt("--for", "<dur>", "--watch: stop after this long (30s, 5m, 1h)", "", []);
+const CONTENT_OPT = opt("--content", "", "--json --fields skillLoads: also each load's skill text (hidden by --redact and skills.hide)", "", []);
 const OTLP_OPT = opt("--otlp", "<url>", "--watch: also send each finished turn to this OTLP/HTTP endpoint, plus a logs stream of live state (heartbeat, session state, turn.open, alerts) to its /v1/logs (--since, --filter, --pinned, --harness, --content, --detail, --no-subagents, --native, --compression, --batch as for export; the filter is judged again on every poll; JSONL lines then only with --jsonl)", "", []);
 const NOLOGS_OPT = opt("--no-logs", "", "--watch --otlp: send no logs stream (also otlp.logs: false)", "", []);
 const JSONL_OPT = opt("--jsonl", "", "--watch --otlp: also print the JSONL event lines", "", []);
@@ -72,7 +77,7 @@ function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.ar
 addCmd(cmd("", "agentglass", "interactive TUI", [], []));
 addCmd(cmd("--theme", "agentglass --theme <name>", "TUI with a color theme", [], []));
 addCmd(cmd("--redact", "agentglass --redact", "privacy mode for screencasts: fake titles/projects/content, scrubbed names\n(also AGENTGLASS_REDACT=1; combinable with --json / --watch)", [], []));
-addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, REPOS_OPT, DAYS_OPT, RELATED_OPT, EVENT_OPT, AT_OPT, MINUTES_OPT, GIT_OPT, ALLP_OPT, PONLY_OPT], JSON_FIELDS));
+addCmd(cmd("--json", "agentglass --json [opts]", "print a JSON snapshot of sessions (newest first) and exit", [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FILTER_OPT, PINNED_OPT, FORMAT_OPT, FIELDS_OPT, REPOS_OPT, DAYS_OPT, RELATED_OPT, EVENT_OPT, AT_OPT, MINUTES_OPT, GIT_OPT, ALLP_OPT, PONLY_OPT, CONTENT_OPT], JSON_FIELDS));
 addCmd(cmd("--watch", "agentglass --watch [opts]", "stream new events of all agents as JSONL (tail -f for every session)", [LIVE_OPT, HARNESS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, NOALERTS_OPT, NOTIFY_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT, NOLOGS_OPT], []));
 addCmd(cmd("cost", "agentglass cost [--json] [--check]", "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget)", [HARNESS_OPT], []));
 addCmd(cmd("prices", "agentglass prices [--unpriced]", "model prices: list/set/alias/unset; every model seen with its price and source\n(user, alias, gateway, community, built-in, harness, unpriced)\n(--since today|<n>d|YYYY-MM-DD, --json; --unpriced exits 4 when a model has no price; see agentglass prices --help)", [], []));
@@ -105,7 +110,8 @@ function usage(): string {
 
 --json fields: id harness title cwd branch remote model path updated bytes live pid status mux{kind,pane,workspace,tab,status} parent kind subagents twins
   activity tokens{in,out,cacheRead,cacheWrite} costUsd costEstimatedUsd billing{mode,plan,source} unpricedTokens unpricedCredits
-  tools linesAdded linesRemoved attention stuck skills[{name,source,n}] repo{key,label,kind,worktree,top,remote}
+  tools linesAdded linesRemoved attention stuck skills[{name,source,n,loads,tokens,costUsd,carryUsd,tailUsd,size,tier,hash,scope,dir}]
+  repo{key,label,kind,worktree,top,remote}
   alerts[{rule,severity,value,unit,threshold,since,message,labels,acked}] (live sessions; durations s, ratios 0–1, USD)
   git{commits[{sha,branch,subject,at,how,counted,status,merge,add,del}],produced,prs[{url,number,how}],issues[],links[{url,how}],
   costPerCommit,noReflog} (null = no git worktree; how = observed ✓ | reflog ≈ | shared — only observed is counted;
@@ -118,13 +124,15 @@ function usage(): string {
   a resume elsewhere copies its log): they carry the same tokens and cost, each message once — count one row per
   harness:id, or sum agentglass cost; at most one of them is live; billing.mode = api|plan|metered|gateway|unknown,
   source = session|process|config — config = assumed from the current config files;
-  skills source = command: a slash command / $mention, model: the agent chose it;
+  skills source = command: a slash command / $mention, model: the agent chose it (or read its SKILL.md); tokens{load,carry,tail} and $
+  of those loads (agentglass skills --help); --fields skillLoads adds the session's load timeline (its text with --content);
   repo = the project: worktrees and clones of one remote share key, kind = git|gitdir|path|none, null = no cwd known)
 --watch lines: {ts,harness,session,title,project,parent,kind,kinds,tool,id,text}; kind = user|assistant|thinking|tool|result|meta,
   kinds = the event kinds the TUI filters on (prompt, reply, shell:test, edit, mcp:<server>, skill:load, error …),
   plus live|exit when an agent process appears or disappears, and alert (rules.json transitions: an alert object
   {rule,severity,state,value,threshold,labels}; state = fire|escalate|deescalate|resolve; off with --no-alerts);
   id = the tool call id on tool|result lines (what --related --event and open <ref>#call= take), else null
+  skill|skill_end lines: a skill entered or left a context, with skill{name,trigger,size,tier,hash,scope,why}
 
 filter: key op value [and …]; op = is = is_not != is_one_of is_not_one_of ~ !~ > >= < <=; not / - negates; bare words
   search title, path, id; --json lists sessions with a matching call, day or event; --watch filters events
@@ -190,14 +198,15 @@ function wanted(s: Sess, o: Opts): boolean { const cf = o.cf; return (!cf || cli
 export { usage };
 // the --json fields of one session (key order is the output order)
 export function jsonSess(s: Sess): Obj {
+  const skills = skillsJson(accsOf(s)); // first: a hidden skill's name is scrubbed from the title too
   return {
-    id: s.id, harness: s.h, title: titleOf(s), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: display("path", s.path, s),
+    id: s.id, harness: s.h, title: scrub(titleOf(s)), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: display("path", s.path, s),
     updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status, mux: muxJson(s),
     parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, twins: s.twins, activity: activity(s),
     tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
     costUsd: s.cost < 0 ? null : s.cost, costEstimatedUsd: Math.round(estTopOf(accsOf(s)).usd * 1e6) / 1e6, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
     unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills: skillUsesOf(accsOf(s), null), repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
+    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills, repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
   };
 }
 // mux: the live agent's multiplexer pane (a subagent: its parent's); labels are user text, hidden under --redact
@@ -215,6 +224,7 @@ function repoJ(s: Sess): Obj | null {
 }
 // table columns of a session list (project = the cwd's last part)
 export const TABLE_COLS = ["updated", "harness", "title", "cwd", "costUsd", "tools", "status"];
+function sessByRef(id: string): Sess | null { const i = id.indexOf(":"); for (const x of sessions.values()) if (x.h === id.slice(0, i) && x.id === id.slice(i + 1)) return x; return null; }
 export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
 
 function snapshot(o: Opts): void {
@@ -228,9 +238,14 @@ function snapshot(o: Opts): void {
   // everything indexed first (git: each worktree's peers too), then the rows: the git attribution is built once, not
   // again for every session that changed the picture
   for (const s of sel) { loadHead(s); loadTail(s, true); complete(s); for (const c of s.subs) complete(c); peers(s); }
-  for (const s of sel) res.push(jsonSess(s));
+  const loadsF = o.f.fields.indexOf("skillLoads") >= 0; const content = process.argv.indexOf("--content") >= 0;
+  for (const s of sel) {
+    const r = jsonSess(s);
+    if (loadsF) { const as: Acc[] = []; const ids: string[] = []; const add = (x: Sess): void => { for (const a of accsOf(x)) { as.push(a); ids.push(x.h + ":" + x.id); } for (const c of x.subs) add(c); }; add(s); r["skillLoads"] = skillLoadsJson(s, as, ids, content, sessByRef); }
+    res.push(r);
+  }
   if (o.git) saveVcs(); // closed sessions' git log results: the next run reads them instead of spawning
-  out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS.concat(MUX_FLAT), o.json));
+  out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS.concat(MUX_FLAT, ["skillLoads"]), o.json));
   if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run
   process.exit(0);
 }
@@ -242,13 +257,14 @@ function oneLine(t: string): string {
 }
 function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string, id: string, kinds: string[]): void {
   const w: WEv = {
-    ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd),
-    parent: s.parent ? s.parent : null, kind, kinds, tool: tool === null ? null : display("tool", tool, s), id: id ? id : null, text: oneLine(text),
+    ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: scrub(titleOf(s)), project: base(s.cwd),
+    parent: s.parent ? s.parent : null, kind, kinds, tool: tool === null ? null : display("tool", tool, s), id: id ? id : null, text: scrub(oneLine(text)),
   };
   out(JSON.stringify(w));
   lastOut = Date.now();
 }
-// a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run
+// a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run. A call that loads a
+// hidden skill (skills.hide, --redact) shows as callVis says: dropped, its name faked, its result's text hidden
 const calls = new Map<string, string[]>();
 function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const i = e.text.indexOf("\u0000");
@@ -260,9 +276,49 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const x = evxOf(e, call, null); // its kinds (a result: its call's, plus error when it failed)
   if (cf && !cliWatchEv(cf, s, x)) return;
   const id = e.kind === "tool" || e.kind === "result" ? e.id : "";
-  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts, id, x.kinds); return; }
-  emit(s, "tool", tool, args, e.ts, id, x.kinds);
+  const cv = callVis(e.kind === "tool" ? tool : pc ? pc[0] ?? "" : "", e.kind === "tool" ? args : pc ? pc[1] ?? "" : "");
+  if (cv.drop) return;
+  if (e.kind !== "tool") { emit(s, e.kind, null, cv.hide || e.text, e.ts, id, x.kinds); return; }
+  emit(s, "tool", tool, cv.args, e.ts, id, x.kinds);
 }
+
+// skill loads in the stream: each watched log's new lines also go through its harness's usage() into a small per-log
+// record (only lines that can start, carry or end a load); new loads print as kind "skill", ended ones as "skill_end"
+interface WSk { name: string; trigger: string; size: number; tier: string; hash: string; scope: string; why: string }
+interface WSkEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: null; id: string | null; text: string; skill: WSk }
+// a skill line as the event-kind filter sees it (event.kind is skill / skill:load / skill:unload)
+function skX(kind: string): EvX { return { raw: kind, kinds: [kind === "skill" ? "skill:load" : "skill:unload"], tool: "", args: "", server: "", fam: "", err: 0 }; }
+const WSKILL = new Map<string, Acc>(); // log → its record
+const SK_MARKS = ["kill", "SKILL.md", "ompact", "<command-name>", "<skills_instructions>"];
+const WENDED = new Set<string>(); // "<log>\t<load index>" of unloads already printed
+// the skill lines one log line makes (printed after that line's events; the names they load are noted first, so the
+// line's own events and titles already hide them)
+function skillWatch(s: Sess, l: string, show: boolean, cf: CliFilter | null): WSkEv[] {
+  const outL: WSkEv[] = [];
+  let a = WSKILL.get(s.path);
+  if (!a) { if (WSKILL.size > 2000) WSKILL.clear(); a = newAcc(); a.ro = true; a.sub = s.parent !== ""; WSKILL.set(s.path, a); }
+  let hit = a.skr.size > 0 || a.pk !== ""; if (!hit) for (const m of SK_MARKS) if (l.indexOf(m) >= 0) { hit = true; break; }
+  if (!hit) return outL;
+  const n0 = a.sk.length;
+  harnessOf(s.h).usage(a, l);
+  a.days.clear(); a.rows = newRows(); // only the skill state is kept
+  for (let i = 0; i < a.sk.length; i++) {
+    const x = a.sk[i] as SkLoad;
+    const isNew = i >= n0; const k = s.path + "\t" + String(i); const isEnd = x.end !== 0 && !WENDED.has(k);
+    if (!isNew && !isEnd) continue;
+    if (isEnd) { if (WENDED.size > 100000) WENDED.clear(); WENDED.add(k); }
+    note(x.name);
+    const v = skillVis(x.name); if (!show || v.mode === "omit") continue;
+    const sk: WSk = { name: v.shown, trigger: x.trig, size: x.S, tier: x.S < 0 ? "?" : x.est ? "≈" : "exact", hash: x.hash, scope: x.scope, why: x.why };
+    if (isNew && (!cf || cliWatchEv(cf, s, skX("skill")))) outL.push(wsk(s, "skill", x.t, sk, v.shown + " loaded (" + x.trig + ")"));
+    if (isEnd && (!cf || cliWatchEv(cf, s, skX("skill_end")))) outL.push(wsk(s, "skill_end", x.end, sk, v.shown + " out (" + x.why + ")"));
+  }
+  return outL;
+}
+function wsk(s: Sess, kind: string, t: number, sk: WSk, text: string): WSkEv {
+  return { ts: t > 1 ? new Date(t).toISOString() : new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind, kinds: skX(kind).kinds, tool: null, id: null, text, skill: sk };
+}
+function printSk(ws: WSkEv[]): void { for (let i = 0; i < ws.length; i++) { const w = ws[i] as WSkEv; w.title = scrub(w.title); out(JSON.stringify(w)); lastOut = Date.now(); } }
 
 const IDLE_MS = 10000;
 // JSONL lines go to stdout unless a sink takes the stream (then only with --jsonl)
@@ -318,11 +374,12 @@ export function watch(o: Opts, sink: Sink | null): void {
         while (r.next <= p && p + w < size && w < window(src, 67108864)) { w *= 4; r = src.lines(s, p, Math.min(size, p + w)); }
         if (r.next <= p) { if (p + w < size) { p = src.align(s, p + w); off.set(s.path, p); continue; } break; } // a partial last line: next poll
         p = r.next; off.set(s.path, p);
-        const evs: Ev[] = [];
-        for (const l of r.lines) parseEvents(s.h, l, evs, s);
+        const per: Ev[][] = [];
+        for (const l of r.lines) { const evs: Ev[] = []; parseEvents(s.h, l, evs, s); per.push(evs); }
         // judged again on what these lines brought (an agent's log follows it to another cwd): none of a session the filter
-        // no longer takes is printed
-        if (lines && (!o.cf || cliWatchSession(o.cf, s)) && visible(s, o.sc)) for (const e of evs) emitEv(s, e, o.cf);
+        // no longer takes is printed. Skill loads and unloads go out right after the events of the line that made them
+        const show = lines && (!o.cf || cliWatchSession(o.cf, s)) && visible(s, o.sc);
+        for (let k = 0; k < r.lines.length; k++) { const ws = skillWatch(s, r.lines[k] ?? "", show, o.cf); if (show) for (const e of per[k] ?? []) emitEv(s, e, o.cf); printSk(ws); }
       }
     }
   };

@@ -8,7 +8,7 @@ import { HOME, readText, listDir, listDirCached } from "../util/fs.ts";
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, isoMs, modelTok, addCost, credits } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, turn, nlines, num, isoMs, modelTok, addCost, credits, skillUnload } from "../features/usage/record.ts";
 import { MQ_SESS } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import { kiroRate } from "../features/usage/pricing.ts";
@@ -113,6 +113,7 @@ function usage(a: Acc, l: string): void {
     const o = a.sub ? null : parseJson(l); const n = o ? prompts(parse, o) : 0; if (o && n) turn(a, turnMs(a), "", n);
     return;
   }
+  if (l.indexOf("\"kind\":\"Compaction\"") >= 0) { if (a.sk.length) skillUnload(a, turnMs(a), "compact"); return; } // no skill loads in Kiro logs: kept for one API
   const isAsst = l.indexOf("\"kind\":\"AssistantMessage\"") >= 0;
   const isRes = l.indexOf("\"kind\":\"ToolResults\"") >= 0;
   if (!isAsst && !isRes) return;

@@ -9,7 +9,7 @@ import { TERM } from "../../term.ts";
 import { sessions, SG } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
-import { type Acc, L, newAcc, startOfDay, flushSpans, packAcc } from "./record.ts";
+import { type Acc, L, newAcc, startOfDay, flushSpans, packAcc, SKLN } from "./record.ts";
 import { type Rows, newRows } from "./rows.ts";
 import { scrape } from "./vcs.ts";
 import { OWN, reconcile, release } from "./owners.ts";
@@ -86,7 +86,9 @@ function step(s: Sess, a: Acc): number {
   if (src !== FILE_SOURCE) { // record-cursor source (database rows): whole records, no byte skipping
     const r = src.lines(s, a.off, Math.min(s.size, a.off + window(src, CHUNK)));
     const ad = harnessOf(s.h);
+    SKLN.acc = a; SKLN.base = a.off; SKLN.end = r.next; SKLN.buf = null; // a skill load's place: this chunk of records
     for (const l of r.lines) { ad.usage(a, l); scrape(a, l); }
+    SKLN.acc = null;
     flushSpans(a); // the last result of the chunk: no later line of this session books its span
     const used = r.next - a.off; a.off = r.next;
     if (used <= 0) a.stall = s.size;
@@ -104,10 +106,12 @@ function step(s: Sess, a: Acc): number {
   }
   const ls = new TextDecoder("utf-8").decode(b.subarray(0, z + 1)).split("\n");
   const ad = harnessOf(s.h);
+  SKLN.acc = a; SKLN.base = a.off; SKLN.buf = b; SKLN.si = 0; SKLN.sp = 0; // a skill load's place: found from the line index on demand
   for (let i = a.skip ? 1 : 0; i < ls.length; i++) {
-    const l = ls[i] ?? "";
+    const l = ls[i] ?? ""; SKLN.i = i;
     ad.usage(a, l); scrape(a, l); // after usage(): the calls this line closed name the command behind its output
   }
+  SKLN.acc = null; SKLN.buf = null;
   flushSpans(a);
   a.skip = false;
   a.off += z + 1;

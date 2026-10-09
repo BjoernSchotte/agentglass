@@ -53,6 +53,7 @@ export const H = {
   display: [] as ((kind: string, text: string, s: Sess | null) => string)[], // display-time rewrite of text that bypasses parseEvents (stats "tool:<name>"/"cmd"/"prog"/"file", process "args"/"cwd")
   realCwd: [] as ((s: Sess) => string)[], // the session's real cwd when H.meta replaced s.cwd for display (redact); "" = not replaced
   realMeta: [] as ((s: Sess) => RealMeta | null)[], // the real title/prompt/cwd/branch/name when H.meta replaced them (redact); null = not replaced
+  fakeSkill: [] as ((name: string) => string)[], // redact.ts: a user skill name → its stable fake (skills/vis.ts; a plain fallback without it)
   screenFilter: [] as ((s: string) => string)[], // every chunk written to the terminal (TUI frame chunks, CLI output lines); must keep visible widths
   listFilter: [] as (() => ((s: Sess) => boolean) | null)[], // once per buildView: the predicate of an active filter (null = none); a top-level session stays when every predicate passes for it or one of its subagents, matching subagents are expanded, the others hidden
   input: [] as ((action: string, ev: string, text: string) => boolean)[], // the input line of S.inputAction: ev change | enter | esc | tab; enter → true keeps it open
