@@ -165,7 +165,7 @@ export function skillCheck(as: Acc[], ids: string[]): string[] {
     const a = as[k] as Acc; const sid = ids[k] ?? String(k);
     let tok = 0; let hu = 0;
     for (let i = 0; i < a.sk.length; i++) {
-      const l = a.sk[i] as SkLoad; const at = sid + "#sk" + String(i) + " (" + l.name + ")";
+      const l = a.sk[i] as SkLoad; const v = skillVis(l.name); const at = sid + "#sk" + String(i) + " (" + (v.mode === "omit" ? HIDDEN : v.shown) + ")";
       let neg = l.short < 0 || l.nq < 0 || l.hu < 0;
       for (let j = 0; j < 4; j++) { const lt = l.lt[j] ?? 0; const ct = l.ct[j] ?? 0; const tt = l.tt[j] ?? 0; if (lt < 0 || ct < 0 || tt < 0 || tt > lt + ct) neg = true; }
       if (neg) out.push(at + ": negative or inconsistent token slots");

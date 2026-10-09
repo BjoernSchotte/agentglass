@@ -89,6 +89,11 @@ let tot0 = 0; for (const r of rows) tot0 += r.load + r.carry; let tot1 = 0; for 
 ok("hidden row keeps totals", vr.hidden === 2 && vr.rows.length === 2 && tot0 === tot1 && vr.rows.some((r) => r.name === "(hidden)"), vr.rows.map((r) => r.name).join(","));
 ok("name mode fakes", !vr.rows.some((r) => r.name === "alpha") && vr.rows.some((r) => r.name.length === 5 && r.name !== "(hidden)"), vr.rows.map((r) => r.name).join(","));
 ok("omitted loads leave the timeline", visLoads(skillLoads(as, ids)).length === 2, "");
+setVis(parseHide([{ match: "x", mode: "name" }]).rules, false);
+const vn = skillCheck([br], ["broken"]).join("; ");
+ok("skillCheck names through skillVis", vn.indexOf("(x)") < 0 && vn.indexOf("broken#sk0 (") >= 0, vn);
+setVis(parseHide([{ match: "x", mode: "omit" }]).rules, false);
+ok("skillCheck omit", skillCheck([br], ["broken"]).join("; ").indexOf("broken#sk0 ((hidden))") >= 0, skillCheck([br], ["broken"]).join("; "));
 setVis([], false);
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
