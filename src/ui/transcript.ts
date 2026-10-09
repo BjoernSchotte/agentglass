@@ -78,7 +78,8 @@ export function renderTranscript(): void {
     }
     t.focusTs = ""; t.focusText = "";
   }
-  if (t.follow) { t.scroll = maxScroll; t.cur = n - 1; }
+  if (t.follow) { t.scroll = maxScroll; t.cur = t.items.length ? numAt(t.items, t.items.length - 1, n - 1) : n - 1; }
+  else if (t.items.length && t.cur >= 0) t.cur = stopOf(t, t.cur); // a hidden event's stop is its gap line
   t.scroll = Math.max(0, Math.min(t.scroll, maxScroll));
   const live = s.pid || (s.depth === 1 && subActive(s)) ? " · " + spin() + " live" : "";
   const subs = s.subs.length ? " · ⑂ " + activeSubs(s) + "/" + s.subs.length + " (n)" : "";
@@ -145,6 +146,12 @@ export function moveCur(t: TV, d: number, vh: number): void {
   t.follow = false;
   scrollTo(t, vh);
   if (d > 0 && (it ? t.cur === numAt(it, it.length - 1, 0) : t.cur === n - 1)) t.follow = true;
+}
+// the stop holding event i: the last stop at or before it
+export function stopOf(t: TV, i: number): number {
+  let lo = 0; let hi = t.items.length - 1; let p = 0;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (numAt(t.items, mid, 0) <= i) { p = mid; lo = mid + 1; } else hi = mid - 1; }
+  return numAt(t.items, p, i);
 }
 // scroll so the cursor's lines are in sight
 export function scrollTo(t: TV, vh: number): void {
