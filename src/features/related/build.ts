@@ -16,6 +16,7 @@ import { ms } from "../callgraph/model.ts";
 import { type RelEv, type RelSt, type Spawn, newSt, row, toRelShown, markConflicts } from "./model.ts";
 import { readReflog, isNew, worktreeGitdirs } from "../vcs/reflog.ts";
 import { REDACT } from "../redact-on.ts";
+import { marksOf } from "../../model/marks.ts";
 
 export const CAP_BYTES = 16777216; // read budget per build
 export const MAX_CANDS = 40;
@@ -156,6 +157,18 @@ function extras(b: Build): void {
     const s = sessions.get(tr.path);
     b.all.push(row(tr.at, new Date(tr.at).toISOString(), tr.path, s ? s.h : "", s ? b.tops.get(tr.path) ?? "" : "", "alert", "", tr.rule + " alert (" + severityOf(tr.to) + (tr.state === "escalate" ? ", escalated" : "") + ")", b.anchor.sess === tr.path));
   }
+  for (const p of b.cands) { const s = sessions.get(p); if (s) for (const r of skillRows(s, b.t0, b.t1, s.path === b.anchor.sess, topOf(s))) { const k = p + "\u0001skill\u0001" + r.text + "\u0001" + String(r.t); if (!b.st.seen.has(k)) { b.st.seen.add(k); b.all.push(r); } } }
+}
+// skill-usage §6.4: a session's skill loads in [t0, t1] as rows of kind skill, from its ledger record (no log read; marks
+// leave the listing and omitted skills out, a name rule shows its fake)
+export function skillRows(s: Sess, t0: number, t1: number, self: boolean, top: string): RelEv[] {
+  const o: RelEv[] = [];
+  for (const m of marksOf(s, ["skill:load"])) {
+    if (m.t0 < t0 || m.t0 > t1) continue;
+    const r = row(m.t0, new Date(m.t0).toISOString(), s.path, s.h, top, "skill", "", "✧ " + m.label + " loaded (" + m.sub + ")", self);
+    r.evKind = "meta"; o.push(r);
+  }
+  return o;
 }
 function reflogRows(b: Build): void {
   b.refl = [];

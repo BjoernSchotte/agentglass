@@ -4,7 +4,7 @@
 // two single sessions' call rows. Every sorted table: |Δ share| desc, then nA + nB desc, then label asc.
 import { sessions } from "../../model/sessions.ts";
 import { home } from "../../util/text.ts";
-import { ledger } from "../usage/ledger.ts";
+import { ledger, copyKey } from "../usage/ledger.ts";
 import { type Cnt, HB, pct, mcpServer } from "../usage/calls.ts";
 import type { Rows } from "../usage/rows.ts";
 import { dayKey, heavy } from "../usage/record.ts";
@@ -15,6 +15,8 @@ import { real } from "../../model/project.ts";
 import { realCwd } from "../../hooks.ts";
 import { score } from "../triage/score.ts";
 import type { Cmp, Side } from "./metrics.ts";
+import { skillTable } from "../skills/model.ts";
+import { skillVis, HIDDEN } from "../skills/vis.ts";
 
 const EPS = 1e-9;
 function tie(da: number, db: number, na: number, nb: number, la: string, lb: string): number {
@@ -143,6 +145,39 @@ export function modelRows(c: Cmp): { rows: ModelRow[]; limited: boolean } {
   const rows = [...by.values()].filter((r: ModelRow) => r.model !== "unknown" || r.callsA + r.callsB + r.tokA + r.tokB > 0);
   rows.sort((x: ModelRow, y: ModelRow) => (y.costA + y.costB) - (x.costA + x.costB) || (x.model < y.model ? -1 : x.model > y.model ? 1 : 0));
   return { rows, limited: c.a.limited || c.b.limited };
+}
+
+// ── skills (skill-usage §6.10): per skill its loads, $ and $ per session that loaded it, on each side's counted
+// session-days (Day.sa); omitted skills fold into one "(hidden)" row; ● = the share of sessions loading it differs ──
+export interface SkillCmpRow { name: string; loadsA: number; loadsB: number; usdA: number; usdB: number; sessA: number; sessB: number; unkA: boolean; unkB: boolean; chi2: number; sig: boolean }
+interface SkSide { loads: number; usd: number; unk: boolean; sess: Set<string> }
+export const SIG_SESS = 20; // sessions per group before χ² marks a skill row
+function skSide(sd: Side): Map<string, SkSide> {
+  const m = new Map<string, SkSide>(); const t = sd.t;
+  for (const p of t.paths) {
+    const a = ledger.get(p); const ds = t.pdays.get(p); if (!a || !ds || !a.sk.length) continue;
+    const s = sessions.get(p); const sid = s ? copyKey(s) : p;
+    for (const r of skillTable([a], [sid], ds, "cost")) {
+      const v = skillVis(r.name); const k = v.mode === "omit" ? HIDDEN : v.shown;
+      let x = m.get(k); if (!x) { x = { loads: 0, usd: 0, unk: false, sess: new Set<string>() }; m.set(k, x); }
+      x.loads += r.loadsUser + r.loadsModel + r.loadsCompact; x.usd += r.usd; if (r.unpriced || r.tier === "?") x.unk = true; x.sess.add(sid);
+    }
+  }
+  return m;
+}
+export function skillCmpRows(c: Cmp): { rows: SkillCmpRow[]; significance: boolean } {
+  const ma = skSide(c.a); const mb = skSide(c.b);
+  const NA = c.a.t.skeys.size; const NB = c.b.t.skeys.size; const sigOn = NA >= SIG_SESS && NB >= SIG_SESS;
+  const keys: string[] = []; for (const k of ma.keys()) keys.push(k); for (const k of mb.keys()) if (!ma.has(k)) keys.push(k);
+  const rows: SkillCmpRow[] = [];
+  for (const k of keys) {
+    const a = ma.get(k); const b = mb.get(k); const sA = a ? a.sess.size : 0; const sB = b ? b.sess.size : 0;
+    const sc = sigOn && k !== HIDDEN ? score(sB, NB, sA, NA) : null;
+    rows.push({ name: k, loadsA: a ? a.loads : 0, loadsB: b ? b.loads : 0, usdA: a ? a.usd : 0, usdB: b ? b.usd : 0, sessA: sA, sessB: sB, unkA: a ? a.unk : false, unkB: b ? b.unk : false, chi2: sc ? sc.chi2 : -1, sig: sc ? sc.sig : false });
+  }
+  // by $ on both sides, the hidden row last
+  rows.sort((x: SkillCmpRow, y: SkillCmpRow) => (x.name === HIDDEN ? 1 : 0) - (y.name === HIDDEN ? 1 : 0) || (y.usdA + y.usdB) - (x.usdA + x.usdB) || (y.loadsA + y.loadsB) - (x.loadsA + x.loadsB) || (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+  return { rows, significance: sigOn };
 }
 
 // ── timeline: calls per 5-minute slot since each single session's start (hourly from the buckets past call retention) ──

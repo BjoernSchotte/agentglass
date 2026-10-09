@@ -9,7 +9,7 @@ import { type Day, L, heavy } from "../usage/record.ts";
 import { type Dict, DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
 import { type Cnt, type TS, HB, EDGE, newCnt, hb, pct, mcpServer } from "../usage/calls.ts";
-import { type Compiled, sessMatches, dayMatches, callsIn, weekdayOf, livePid } from "./eval.ts";
+import { type Compiled, sessMatches, dayMatches, callsIn, weekdayOf, livePid, skillsAt } from "./eval.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { repoShown } from "./project.ts";
 import { titleOf, working } from "../../model/sessions.ts";
@@ -18,7 +18,7 @@ export type Weight = "count" | "cost" | "tokens" | "duration";
 export interface Bin { n: number; w: number; err: number; hist: number[] /* HB buckets, durations of timed rows (call entity) */; max: number }
 export interface Dist { dim: string; total: number; wTotal: number; vals: Map<string, Bin>; path: "rows" | "buckets"; unpriced: number /* sessions with unknown cost, weight 0 */ }
 // buckets count program/command/file per occurrence, not per call, and know no per-call model/status/duration: rows only
-export const ROW_DIMS: string[] = ["model", "status", "duration", "out", "program", "command", "file", "ext"];
+export const ROW_DIMS: string[] = ["model", "status", "duration", "out", "program", "command", "file", "ext", "skill"];
 export interface ToolT { n: number; err: number; dn: number; ms: number; max: number; hist: number[]; out: number }
 export interface Totals {
   sessions: number; subs: number; subsCost: number; subsUnk: number;   // top-level sessions with activity; subagent sessions, their cost and unpriced tokens
@@ -69,6 +69,7 @@ export function sessDim(dim: string, s: Sess): string[] {
     case "state": return [stateOf(s)];
     case "hour": return [startOf(s).hour];
     case "weekday": return [startOf(s).wd];
+    case "skill": return skillsAt(s, -1); // skill-usage §6.9: the session's skills
   }
   for (const d of DIMS) if (d.dim === dim) { const f = d.f; return f(s); }
   return [];
@@ -76,7 +77,7 @@ export function sessDim(dim: string, s: Sess): string[] {
 function uniq(xs: string[]): string[] { const o: string[] = []; for (const x of xs) if (o.indexOf(x) < 0) o.push(x); return o; }
 function dictNames(d: { ids: Map<string, number>; names: string[] }, xs: number[]): string[] { const o: string[] = []; for (const x of xs) o.push(nameOf(d, x)); return o; }
 // the dimensions callDim answers per row; any other falls back to the session's value
-const CALL_LEVEL = ["tool", "server", "program", "command", "file", "ext", "status", "duration", "out", "model", "hour", "day", "weekday"];
+const CALL_LEVEL = ["tool", "server", "program", "command", "file", "ext", "status", "duration", "out", "model", "hour", "day", "weekday", "skill"];
 // a call attribute as dimension values (multi-valued attributes: each distinct value)
 export function callDim(dim: string, s: Sess, r: Rows, i: number): string[] {
   switch (dim) {
@@ -93,6 +94,7 @@ export function callDim(dim: string, s: Sess, r: Rows, i: number): string[] {
     case "hour": return [String(localOf(r.t[i]).hour)];
     case "day": return [localOf(r.t[i]).day];
     case "weekday": return [WD[localOf(r.t[i]).wd] ?? ""];
+    case "skill": return skillsAt(s, r.t[i] + 0); // the skills in context when the call ran
   }
   return sessDim(dim, s);
 }
@@ -236,7 +238,7 @@ function rowsSess(j: AggJob, s: Sess): void {
     if (r.ms[ri] > 0) dur += r.ms[ri];
     const dk = localOf(r.t[ri]).day; if (dks.indexOf(dk) < 0) dks.push(dk);
     for (let i = 0; i < dims.length; i++) {
-      const dim = dims[i] ?? ""; if (dim === "hour" || dim === "weekday") continue;
+      const dim = dims[i] ?? ""; if (dim === "hour" || dim === "weekday" || dim === "skill") continue; // per session, not per row
       const into = vals[i] ?? []; for (const v of callDim(dim, s, r, ri)) if (into.indexOf(v) < 0) into.push(v);
     }
   });
@@ -246,7 +248,7 @@ function rowsSess(j: AggJob, s: Sess): void {
   if (weight === "cost" || weight === "tokens") { w = 0; if (a) for (const dk of dks) { const d = a.days.get(dk); if (!d) continue; if (weight === "cost") { w += d.cost; if (unpricedDay(d)) unp = true; } else w += dayTok(d); } }
   else if (weight === "duration") w = dur;
   const vss: string[][] = [];
-  for (let i = 0; i < j.out.length; i++) { const dim = dims[i] ?? ""; vss.push(dim === "hour" || dim === "weekday" ? sessDim(dim, s) : (vals[i] ?? [])); }
+  for (let i = 0; i < j.out.length; i++) { const dim = dims[i] ?? ""; vss.push(dim === "hour" || dim === "weekday" || dim === "skill" ? sessDim(dim, s) : (vals[i] ?? [])); }
   sessInto(j, s, vss, w, err, unp);
 }
 

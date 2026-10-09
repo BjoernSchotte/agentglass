@@ -1,6 +1,6 @@
 // agentglass — filter language: shared types (clauses, attributes, values, errors)
 // SPDX-License-Identifier: Apache-2.0
-export type Ent = "session" | "day" | "call" | "event";
+export type Ent = "session" | "day" | "call" | "event" | "skill";
 export type AType = "enum" | "text" | "path" | "bool" | "usd" | "tok" | "num" | "ratio" | "dur" | "size" | "date";
 // op ∈ is | is_not | is_one_of | is_not_one_of | ~ | !~ | > | >= | < | <=  (= and != are parsed and printed as is / is_not)
 // neg: "not"/"-" before a numeric comparison (not cost > 2 also matches unknown cost); every other negation folds into the inverse op

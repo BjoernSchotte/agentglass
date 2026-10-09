@@ -50,7 +50,8 @@ export function parseHide(raw: unknown): { rules: HideRule[]; bad: string[] } {
 }
 
 // VIS.redact: --redact (checks flip it); rules: null = not read yet (read once: the config is read once per run)
-export const VIS = { redact: REDACT, rules: null as HideRule[] | null };
+// gen: bumped whenever the rules change (a memo over shown names keys on it)
+export const VIS = { redact: REDACT, rules: null as HideRule[] | null, gen: 0 };
 const memo = new Map<string, Vis>();
 export function hideRules(): HideRule[] {
   let r = VIS.rules;
@@ -58,7 +59,7 @@ export function hideRules(): HideRule[] {
   return r;
 }
 // checks: replace the rules (and the redact switch) and forget what was decided
-export function setVis(rules: HideRule[], redact: boolean): void { VIS.rules = rules; VIS.redact = redact; memo.clear(); }
+export function setVis(rules: HideRule[], redact: boolean): void { VIS.rules = rules; VIS.redact = redact; memo.clear(); VIS.gen++; }
 
 // a name's fake: redact.ts's (stable, scrubbed from screen text too) when the binary has it, else letters from its hash
 function fakeOf(name: string): string {
@@ -92,4 +93,6 @@ export function textHiddenWhy(name: string): string {
 }
 
 // modules that print skill names or text: each must call skillVis (vis.check.ts reads them); later surfaces add theirs
-export const VIS_SURFACES: string[] = ["src/features/skills/cli.ts", "src/features/skills/advise.ts", "src/features/skills/text.ts", "src/features/skills/model.ts", "src/features/skills/json.ts", "src/features/skills/watchvis.ts", "src/features/skills/marks.ts", "src/features/cli.ts"];
+export const VIS_SURFACES: string[] = ["src/features/skills/cli.ts", "src/features/skills/advise.ts", "src/features/skills/text.ts", "src/features/skills/model.ts", "src/features/skills/json.ts", "src/features/skills/watchvis.ts", "src/features/skills/marks.ts", "src/features/cli.ts",
+  "src/features/query/eval.ts", "src/features/compare/sections.ts", "src/features/repos/tab.ts", "src/features/skills/panel.ts", "src/features/skills/view.ts", "src/features/usage/stats.ts",
+  "src/features/wait/tab.ts"];

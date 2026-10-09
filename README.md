@@ -86,6 +86,13 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
   for slash-command uses, `⚙` for ones the agent chose, `/3 ⚙5` for both); `↵` drills into one: p50/p95/max
   duration, calls over time, top shell programs and command lines, most-changed files, the slowest
   calls and latest errors — `↵` on one opens its session at that call.
+  `S` opens the **skills panel**: per skill its loads, sessions, size, load / carry / tail tokens, share of the context
+  and $ for the period and filter (`↵` the sessions that loaded it, `a` advice, `v` the text it loaded, `s` sort; `S`
+  on a Repos project: that project's skills). A `✧` row under today's hour bars marks skill loads. In a transcript
+  each load is a line (`✧ brainstorming · user · 4.1K tok · in context 31 req · $0.42 (tail $0.35)`, and
+  `✧ … out (compacted)` when it leaves the context); `]` / `[` jump between them, `v` shows the loaded text. The call
+  graph draws a lane per skill in context under the turns, related events (`k` all kinds) list skill loads, replay
+  names the skills in context, compare (`C`) has a skills section and triage a `skill` dimension.
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
   Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux.
@@ -552,7 +559,9 @@ harness is pi, day >= -7d               duration > 30s                       con
   content worktree project.kind session mux workspace` (`session is claude:3f2a9c`: a run and its subagents; `mux is
   herdr`: the live agent's multiplexer, tmux | herdr | none; `workspace is webapp`: its herdr workspace), day `day weekday
   day.cost day.tokens day.tools`, call `tool server program command family kind file ext status duration out hour`,
-  event `event.kind mcp.server shell.family` and the older `event` (see [Filtering events](#filtering-events)). `family` is the call's command family (`pnpm test`, `tsc`; other tools: the tool) and `kind`
+  event `event.kind mcp.server shell.family` and the older `event` (see [Filtering events](#filtering-events)), skill
+  `skill skill.trigger skill.loads skill.cost skill.carry skill.tail skill.size skill.scope` (one row per session and
+  skill: `skill is brainstorming and skill.cost > $1` = brainstorming alone cost more than $1 in that session). `family` is the call's command family (`pnpm test`, `tsc`; other tools: the tool) and `kind`
   its kind (`test typecheck lint build install ci wait vcs net other`, tools `user agent web mcp file`), as
   `agentglass wait` groups them: `kind is lint` in Stats drills into lint runs. On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
   "has a day matching all of them". `model` of a call is the model of the message that issued it (Codex: per turn;

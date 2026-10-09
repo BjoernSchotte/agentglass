@@ -1,6 +1,7 @@
 // agentglass — call-graph model: session events → turn / tool / subagent spans, lanes, aggregates (pure, no UI)
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev } from "../../model/types.ts";
+import type { Mark } from "../../model/marks.ts";
 import { newCursor, feed } from "./turns.ts";
 
 export const K_TURN = 0; export const K_TOOL = 1; export const K_AGENT = 2;
@@ -154,6 +155,36 @@ function lanes(out: Span[]): Span[][] {
 }
 function numOf(a: number[], i: number): number { let v = 0; for (const x of a.slice(i, i + 1)) v = x; return v; }
 
+// ── skill lanes (skill-usage §6.2): each load a band from load to unload (open: to end) on lanes under the turns, one lane
+// per concurrently open skill, at most max; the loads that find no lane are counted in more ──
+export interface Band { t0: number; t1: number; label: string; open: boolean; ref: string }
+export function skillLanes(marks: Mark[], end: number, max: number): { lanes: Band[][]; more: number } {
+  const lanes: Band[][] = []; const ends: number[] = []; let more = 0;
+  for (const m of marks) {
+    if (m.kind !== "skill:load" || m.t0 <= 0) continue;
+    const t1 = m.t1 > 0 ? Math.max(m.t0, m.t1) : Math.max(m.t0, end);
+    let l = 0; while (l < ends.length && numOf(ends, l) > m.t0) l++;
+    if (l >= max) { more++; continue; }
+    if (l === ends.length) { ends.push(0); lanes.push([]); }
+    ends[l] = t1;
+    for (const r of lanes.slice(l, l + 1)) r.push({ t0: m.t0, t1, label: m.label, open: m.t1 < 0, ref: m.ref });
+  }
+  return { lanes, more };
+}
+// the call tree's skills row: per skill its loads (count) and time in context (total, max); kids by name
+export const SKILL_ROW = "✧ skills";
+export function skillAgg(marks: Mark[], end: number): Agg | null {
+  const top: Agg = { name: SKILL_ROW, total: 0, self: 0, count: 0, max: -1, err: 0, best: -1, agent: false, kids: [] };
+  for (const m of marks) {
+    if (m.kind !== "skill:load" || m.t0 <= 0) continue;
+    const d = Math.max(0, (m.t1 > 0 ? m.t1 : Math.max(m.t0, end)) - m.t0);
+    let ki = -1; for (let i = 0; i < top.kids.length; i++) if (top.kids[i].name === "✧ " + m.label) ki = i;
+    if (ki < 0) { ki = top.kids.length; top.kids.push({ name: "✧ " + m.label, total: 0, self: 0, count: 0, max: -1, err: 0, best: -1, agent: false, kids: [] }); }
+    for (const a of [top, top.kids[ki]]) { a.total = a.total + d; a.self = a.self + d; a.count++; if (d > a.max) a.max = d; }
+  }
+  return top.count ? top : null;
+}
+
 // ── aggregates ──────────────────────────────────────────────────────────────
 export interface Agg { name: string; total: number; self: number; count: number; max: number; err: number; best: number; agent: boolean; kids: Agg[] }
 function aggAdd(list: Agg[], name: string, agent: boolean, s: Span, i: number, self: number): Agg {
@@ -195,6 +226,7 @@ export function sortAggs(list: Agg[], by: number): void {
   const key = (a: Agg): number => by === 0 ? a.total : by === 1 ? a.self : by === 2 ? a.count : by === 3 ? a.total / Math.max(1, a.count) : by === 4 ? a.max : a.err;
   if (by === 6) list.sort((a, b) => a.name.localeCompare(b.name));
   else list.sort((a, b) => key(b) - key(a) || b.total - a.total);
+  const k = list.findIndex((a: Agg) => a.name === SKILL_ROW); if (k >= 0) { const x = list.splice(k, 1); for (const a of x) list.push(a); } // skills after the calls
   const h = list.findIndex((a: Agg) => a.name.startsWith("┄")); if (h >= 0) { const x = list.splice(h, 1); for (const a of x) list.push(a); } // hidden calls last
   for (const a of list) sortAggs(a.kids, by);
 }

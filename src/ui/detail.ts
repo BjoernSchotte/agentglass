@@ -9,6 +9,7 @@ import { link, fileUrl } from "../util/hyper.ts";
 import type { Ev } from "../model/types.ts";
 import { S, type TV, type DV } from "../state.ts";
 import { titleOf } from "../model/sessions.ts";
+import { H } from "../hooks.ts";
 import { C, HL, CSI, RST, fg } from "./theme.ts";
 import { put, box, scrollbar } from "./screen.ts";
 import { type Seg, langOf, looksYaml, segPush, hlLine, highlight, wrapSegs } from "./highlight.ts";
@@ -269,6 +270,7 @@ function buildDetail(t: TV, idx: number, w: number): DV {
   }
   const files = filesOf(texts, t.s.cwd);
   const head: string[] = []; const fileRow: number[] = [];
+  for (const f of H.detailHead) for (const l of f(t.s, t.evs, idx, w)) head.push(l); // a feature's record of this event (a skill load)
   if (files.length) {
     head.push(fg(C.purple) + CSI + "1m" + "FILES" + RST + fg(C.dim) + "   1-9 / click open in $PAGER · e edit · tab select" + RST);
     for (let i = 0; i < files.length; i++) {

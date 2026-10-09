@@ -10,7 +10,7 @@ import { type Day, L, todayKey, dayKey, startOfDay, heavy } from "../usage/recor
 import { DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
-import { accOf, ledger, callsOf, unread, LGEN } from "../usage/ledger.ts";
+import { accOf, accsOf, ledger, callsOf, unread, LGEN } from "../usage/ledger.ts";
 import type { Acc } from "../usage/record.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
@@ -22,6 +22,9 @@ import { kindMatch, toolKinds, evKindList, shellFam, serverOf, LEGACY_EVENT } fr
 import { marksOf } from "../../model/marks.ts";
 import { toolName, toolArg } from "../callgraph/model.ts";
 import type { Ev } from "../../model/types.ts";
+import { type LoadRow, skillLoads } from "../skills/model.ts";
+import { skillVis, VIS } from "../skills/vis.ts";
+import { LISTING } from "../usage/skillrec.ts";
 export { callCutoff };
 
 // events: an event view's own filter (ui/evfilter.ts) and `agentglass events`: every clause per event
@@ -57,8 +60,9 @@ export interface Compiled {
   rowx: ((s: Sess, r: Rows, i: number) => boolean)[]; // per-row tests of session attributes a call refines (model): rows only, never lifted alone
   needsCalls: boolean;    // any call clause or row refinement: totals and aggregates must read call rows
   dimmed: Clause[];       // clauses that do not apply in this ctx (procs: all but harness/repo/cwd/live)
+  skill: ((r: SkQ) => boolean)[]; // skill clauses, all on one session × skill row (also folded into sess: "has such a skill")
 }
-export const EMPTY: Compiled = { key: "", cs: [], sess: [], day: [], call: [], event: [], ev: [], evLift: false, content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [] };
+export const EMPTY: Compiled = { key: "", cs: [], sess: [], day: [], call: [], event: [], ev: [], evLift: false, content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [], skill: [] };
 
 // later specs add attributes: register(attr) for the metadata + extend() for behaviour
 export interface Ext { sess: ((s: Sess) => Val) | null; resolve: ((v: string) => { v: string; err: string }) | null }
@@ -303,7 +307,7 @@ function knownDays(): string[] {
   return [...set];
 }
 export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr | null } {
-  const f: Compiled = { key: "", cs, sess: [], day: [], call: [], event: [], ev: [], evLift: false, content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [] };
+  const f: Compiled = { key: "", cs, sess: [], day: [], call: [], event: [], ev: [], evLift: false, content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [], skill: [] };
   const parts: string[] = []; const dateCs: ((dk: string) => boolean)[] = [];
   for (const c of cs) {
     const a = attrOf(c.key);
@@ -316,6 +320,8 @@ export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr
     if (ctx === "events" && a.ent === "call" && WATCH_CALL.indexOf(a.key) < 0 && a.key !== "status") return { f: null, err: { msg: a.key + " is not known per event in an event view; use it on the session list or with --json", col: 0 } };
     if (ctx === "events" && a.ent === "day") return { f: null, err: { msg: a.key + " applies to the session list and Stats, not to an event view", col: 0 } };
     if (ctx === "stats" && a.ent === "event") return { f: null, err: { msg: a.key + " selects events: use it on the session list, in an event view (transcript, call graph: K or /), --watch or agentglass events", col: 0 } };
+    if (a.ent === "skill" && ctx === "watch" && a.key !== "skill" && a.key !== "skill.trigger") return { f: null, err: { msg: "--watch: " + a.key + " is known only after the session's requests (load + carry); --watch matches skill and skill.trigger on load lines — use " + a.key + " with --json", col: 0 } };
+    if (a.ent === "skill" && ctx === "events") return { f: null, err: { msg: a.key + " selects sessions by their skills: use it on the session list, Stats or --json; in an event view event.kind is skill shows the loads", col: 0 } };
     const r = resolveVals(a, c); if (r.err) return { f: null, err: { msg: r.err, col: 0 } };
     parts.push(printClause({ key: c.key, op: c.op, vals: r.vals, neg: c.neg, pinned: false }));
     if (a.key === "content") { f.content.push(c); continue; }
@@ -323,6 +329,11 @@ export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr
     // the legacy values of event / event.kind name raw event kinds: marked so they never meet a kind of the same name
     const legacy = key === "event";
     const m = matcher(a, c, key === "event.kind" || legacy ? r.vals.map((v: string): string => rawValue(legacy, v.toLowerCase()) ? RAWP + v.toLowerCase() : v) : r.vals);
+    if (a.ent === "skill") {
+      if (ctx === "watch") { f.ev.push((s: Sess, x: EvX) => x.tool.startsWith(SKILL_EV) && m(key === "skill" ? skillNames(x.tool.slice(SKILL_EV.length)) : V([x.args]))); continue; }
+      f.skill.push((q: SkQ) => m(skillVal(key, q)));
+      continue;
+    }
     if (a.ent === "event") {
       const p = evPred(key, m);
       f.ev.push(p); f.event.push((s: Sess, kind: string, tool: string, args: string) => p(s, evxRaw(kind, tool, args)));
@@ -347,6 +358,7 @@ export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr
     }
     f.sess.push((s: Sess) => m(sessVal(key, s)));
   }
+  if (f.skill.length) { const ps = f.skill; f.sess.push((s: Sess) => { for (const q of skillRows(s)) if (skillOk(ps, q)) return true; return false; }); }
   if (dateCs.length) { const ks: string[] = []; for (const dk of knownDays()) { let ok = true; for (const p of dateCs) if (!p(dk)) { ok = false; break; } if (ok) ks.push(dk); } f.dayKeys = ks.sort(); }
   f.key = parts.join(" and ");
   return { f, err: null };
@@ -380,6 +392,75 @@ function eventVal(key: string, tool: string, args: string): Val {
   if (key === "ext") return V([extOf(p)]);
   return V([]);
 }
+
+// ── skill rows (spec §6.11): one per session × skill name, from the session's load timeline (its copies, not its subagents) ──
+// trigs = the triggers of its loads; cost/carry/tail = $ (-1 unknown: a load without a size or a price); size = S of the
+// newest load (-1 unknown); omitted skills (skills.hide omit) have no row
+export interface SkQ { name: string; shown: string; trigs: string[]; loads: number; cost: number; carry: number; tail: number; size: number; scope: string }
+// a --watch skill line as an event (cli.ts): tool = SKILL_EV + the real name, args = the trigger
+export const SKILL_EV = "\u0003skill:";
+function skillNames(name: string): Val { const v = skillVis(name); const a = name.toLowerCase(); const b = v.shown.toLowerCase(); return V(a === b ? [a] : [a, EXACT + b]); }
+export function skillVal(key: string, q: SkQ): Val {
+  switch (key) {
+    case "skill": { const a = q.name.toLowerCase(); const b = q.shown.toLowerCase(); return V(a === b ? [a] : [a, EXACT + b]); }
+    case "skill.trigger": return V(q.trigs);
+    case "skill.loads": return N(q.loads);
+    case "skill.cost": return q.cost < 0 ? UNK : N(q.cost);
+    case "skill.carry": return q.carry < 0 ? UNK : N(q.carry);
+    case "skill.tail": return q.tail < 0 ? UNK : N(q.tail);
+    case "skill.size": return q.size < 0 ? UNK : N(q.size);
+    case "skill.scope": return V([q.scope || "?"]);
+  }
+  return V([]);
+}
+export function skillOk(ps: ((r: SkQ) => boolean)[], q: SkQ): boolean { for (const p of ps) if (!p(q)) return false; return true; }
+// the rows of loads (any sessions' LoadRows): grouped by name in first-load order, hidden ones left out
+export function skillRowsFrom(ls: LoadRow[]): SkQ[] {
+  const out: SkQ[] = []; const at = new Map<string, number>(); const newest = new Map<string, number>();
+  for (const l of ls) {
+    const v = skillVis(l.name); if (v.mode === "omit") continue;
+    let i = at.get(l.name) ?? -1;
+    if (i < 0) { i = out.length; at.set(l.name, i); out.push({ name: l.name, shown: v.shown, trigs: [], loads: 0, cost: 0, carry: 0, tail: 0, size: -1, scope: "" }); }
+    const q = out[i];
+    if (q.trigs.indexOf(l.trig) < 0) q.trigs.push(l.trig);
+    q.loads += Math.max(1, l.n);
+    const unk = l.unpriced || l.tier === "?";
+    if (unk || q.cost < 0) { q.cost = -1; q.carry = -1; q.tail = -1; } else { q.cost += l.usd; q.carry += l.carryUsd; q.tail += l.tailUsd; }
+    if (l.t >= (newest.get(l.name) ?? -1)) { newest.set(l.name, l.t); q.size = l.size; q.scope = l.scope; }
+  }
+  return out;
+}
+// per session path, kept while its ledger entries (objects, offsets) and the price generation stay
+interface SkMemo { as: Acc[]; offs: number[]; gen: number; vis: number; rows: SkQ[] }
+const skMemo = new Map<string, SkMemo>();
+export function skillRows(s: Sess): SkQ[] {
+  if (s.host) return [];
+  const as = accsOf(s); const m = skMemo.get(s.path);
+  if (m && m.gen === LGEN.reapply && m.vis === VIS.gen && m.as.length === as.length) {
+    let same = true; for (let i = 0; i < as.length; i++) if (m.as[i] !== as[i] || numAt0(m.offs, i) !== as[i].off) { same = false; break; }
+    if (same) return m.rows;
+  }
+  let any = false; for (const a of as) if (a.sk.length) { any = true; break; }
+  const ids: string[] = []; for (let i = 0; i < as.length; i++) ids.push("");
+  const rows = any ? skillRowsFrom(skillLoads(as, ids)) : [];
+  const offs: number[] = []; for (const a of as) offs.push(a.off);
+  if (skMemo.size > 20000) skMemo.clear();
+  skMemo.set(s.path, { as, offs, gen: LGEN.reapply, vis: VIS.gen, rows });
+  return rows;
+}
+function numAt0(a: number[], i: number): number { return i >= 0 && i < a.length ? a[i] + 0 : -1; }
+// triage's skill dimension: the shown names of the session's skills (at < 0), or of those in context at time at (a call's
+// start: loaded at or before it and not yet unloaded); the listing is in nearly every context and says nothing here
+export function skillsAt(s: Sess, at: number): string[] {
+  const o: string[] = []; if (s.host) return o;
+  for (const a of accsOf(s)) for (const l of a.sk) {
+    if (l.name === LISTING || (at >= 0 && (l.t > at || (l.end > 0 && l.end <= at)))) continue;
+    const v = skillVis(l.name); if (v.mode !== "omit" && o.indexOf(v.shown) < 0) o.push(v.shown);
+  }
+  return o;
+}
+// the rows of a filter's skill clauses a surface shows (the Stats skills panel: only matching names); all without such clauses
+export function skillRowMatches(f: Compiled, q: SkQ): boolean { return skillOk(f.skill, q); }
 
 // ── evaluation with lifting ──
 function all1(ps: ((s: Sess) => boolean)[], s: Sess): boolean { for (const p of ps) if (!p(s)) return false; return true; }

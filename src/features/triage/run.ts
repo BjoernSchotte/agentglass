@@ -76,8 +76,8 @@ export function newRun(origin: string, entity: "call" | "session", scope: Clause
   return { entity, scope, sel, slow: false, preset: 0, base: "rest", group: [], days, weight: "count", under: false, origin, dropped: [] };
 }
 
-const CALL_DIMS = ["tool", "server", "program", "ext", "model", "repo", "harness", "agent", "hour", "weekday", "branch", "status", "file"];
-const SESS_DIMS = ["harness", "repo", "model", "agent", "branch", "tool", "program", "ext", "weekday", "hour", "state", "subagent"];
+const CALL_DIMS = ["tool", "server", "program", "ext", "model", "repo", "harness", "agent", "hour", "weekday", "branch", "status", "file", "skill"];
+const SESS_DIMS = ["harness", "repo", "model", "agent", "branch", "tool", "program", "ext", "weekday", "hour", "state", "subagent", "skill"];
 export function dimsFor(r: Run): string[] { return r.entity === "call" ? CALL_DIMS : SESS_DIMS; }
 // the values an equality clause of the selection fixes, "attr\tvalue" lowercased. Against the rest or the previous period
 // their rows only restate the selection (`tool is Bash` → "tool Bash 100% vs 0%", `status is error` → status 100%), so they
@@ -107,7 +107,7 @@ function F(cs: Clause[]): Compiled { if (!cs.length) return EMPTY; const r = com
 // (all their tools, programs, …), not only by the rows that made them match
 function within(f: Compiled, sel: Compiled, days: string[]): Compiled {
   const sess = f.sess.concat([(s: Sess): boolean => matchSession(sel, s, days)]);
-  return { key: f.key + " ∧ ⊂[" + sel.key + "@" + days.join(",") + "]", cs: f.cs, sess, day: f.day, call: f.call, event: f.event, ev: f.ev, evLift: f.evLift, content: f.content, dayKeys: f.dayKeys, rowx: f.rowx, needsCalls: f.needsCalls, dimmed: f.dimmed };
+  return { key: f.key + " ∧ ⊂[" + sel.key + "@" + days.join(",") + "]", cs: f.cs, sess, day: f.day, call: f.call, event: f.event, ev: f.ev, evLift: f.evLift, content: f.content, dayKeys: f.dayKeys, rowx: f.rowx, needsCalls: f.needsCalls, dimmed: f.dimmed, skill: f.skill };
 }
 function groupJob(r: Run, scopeF: Compiled, cs: Clause[], days: string[], dims: string[]): AggJob {
   if (!cs.length) return aggJob(scopeF, r.entity, days, dims, r.weight, null);
