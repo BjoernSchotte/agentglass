@@ -2,7 +2,7 @@
 // under a byte and time budget (spec related-events 2–3); nothing is persisted
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
-import { realCwd, display, evFakes, evHooked } from "../../hooks.ts";
+import { realCwd, display, evFakes, evHooked, evRewrote } from "../../hooks.ts";
 import { sessions, parentOf, loadHead } from "../../model/sessions.ts";
 import { harnessOf, sourceOf, window, parseRaw, hookedCopy } from "../../harness/index.ts";
 import { seekTime } from "../../harness/source.ts";
@@ -135,11 +135,11 @@ export function startBuild(anchor: Sess, evs: Ev[], i: number, minutes: number, 
   const id: Ident | null = identSync(anchor);
   const top = topOf(anchor);
   const b = newBuild(anchorRow(anchor, evs[i], t, top), id, id ? display("repo", labelOf(id), anchor) : "", c.scope, t0, t1, conflictMinutes * 60000, c.paths, c.more);
-  // the open transcript already holds the window when it reaches back past t0: no re-read. Not under --redact: its events
-  // are the fakes, and files and commands must be matched on the real ones (skills.hide only drops skill loads and fakes
-  // hidden skill names: the transcript's events serve)
+  // the open transcript already holds the window when it reaches back past t0: no re-read. Not when its events were
+  // rewritten: under --redact they are the fakes, and under skills.hide one may name a hidden skill's fake (a path, a
+  // command) where another session's real event names the skill — files and commands are matched on the real ones
   let first = 0; for (const x of evs) { first = ms(x.ts); if (first) break; }
-  if (first && first <= t0 && !evFakes()) {
+  if (first && first <= t0 && !evFakes() && !evRewrote(anchor)) {
     b.tops.set(anchor.path, top); b.st.last = 0;
     toRelShown(evs, evs, false, anchor.path, anchor.h, realCwd(anchor), top, aliasOf(realCwd(anchor), top), true, t0, t1, b.st, b.all);
     b.last.set(anchor.path, b.st.last); b.cur.set(anchor.path, anchor.size); b.end.set(anchor.path, anchor.size);

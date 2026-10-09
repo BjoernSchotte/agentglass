@@ -4,7 +4,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, listingShown, VIS_SURFACES, VIS_SOURCES, VIS_DATA, SKILL_DATA_RE, type HideRule } from "./vis.ts";
 import { fakeSkill } from "../redact.ts";
 import { callSkill, callVis, scrub, hideEvents } from "./watchvis.ts";
-import type { Ev } from "../../model/types.ts";
+import { type Ev, newSess } from "../../model/types.ts";
+import { titleOf } from "../../model/sessions.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -100,6 +101,23 @@ eq("listing without hidden skills", listingShown("- pub: shown\n  more of pub\n-
   setVis([], false);
   const free: Ev[] = [E("tool", "Skill\u0000secret", "c9", "")]; hideEvents(null, free, 0);
   eq("events: no rules, no change", free.map((e: Ev): string => e.text).join(""), "Skill\u0000secret");
+  // a "*" rule hides a prose word only once it is known as a skill: the batch's loads are noted first, so a prompt that
+  // names one before its load is scrubbed too; OpenCode's "skill: <name>" meta event is a load (omit drops it)
+  setVis(parseHide([{ match: "*", mode: "omit" }]).rules, false);
+  const wk: Ev[] = [E("user", "fix it, maybe with zeta-sk", "", ""), E("meta", "skill: oc-sk", "", ""), E("user", "then oc-sk again", "", ""), E("tool", "Skill\u0000zeta-sk", "w1", "")];
+  hideEvents(null, wk, 0);
+  eq("* omit: prose before the load, meta load dropped", wk.map((e: Ev): string => e.kind + " " + e.text).join(" | "), "user fix it, maybe with (hidden) | user then (hidden) again");
+  setVis(parseHide([{ match: "oc-*", mode: "name" }]).rules, false);
+  const om: Ev[] = [E("meta", "skill: oc-sk", "", "")]; hideEvents(null, om, 0);
+  eq("name: OpenCode's meta load shows the fake", om.map((e: Ev): string => e.text).join(""), "skill: " + skillVis("oc-sk").shown);
+}
+// titles (titleOf, every surface) are scrubbed like event texts: a harness's own title too
+{
+  setVis(parseHide([{ match: "acme-*", mode: "name" }]).rules, false);
+  const ts0 = newSess("claude", "t1", "/nonexistent/t1.jsonl", false); ts0.title = "review acme-x output";
+  eq("title scrubbed", titleOf(ts0), "review " + skillVis("acme-x").shown + " output");
+  setVis([], false);
+  eq("no rules: title as is", titleOf(ts0), "review acme-x output");
 }
 setVis([], false);
 

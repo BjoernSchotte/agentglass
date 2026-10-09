@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, parse, str } from "../../util/json.ts";
 import { execCmds } from "../usage/calls.ts";
-import { skillPath, skillReadCmd } from "../usage/skillrec.ts";
+import { skillPath, skillReadCmd, fnvFeed, FNV1 } from "../usage/skillrec.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { H } from "../../hooks.ts";
 import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN, VIS } from "./vis.ts";
@@ -98,35 +98,70 @@ export function callVis(tool: string, args: string): { drop: boolean; args: stri
   return { drop: false, args: tool === "Skill" || tool === "activate_skill" ? v.shown : scrub(args), hide: v.mode === "show" ? "" : "(" + textHiddenWhy(n) + ")" };
 }
 
+// the skills a session's ledger knows it loaded, names not yet noted only (features/skills/marks.ts sets it): a broad glob
+// rule ("*", "a*") hides a prose word only once it is known as a skill, and a title or prompt may name one long before
+// the load is read
+export const KNOWN = { of: (s: Sess): string[] => [] };
+let weakGen = -1; let weakOn = false;
+function known(s: Sess | null): void {
+  if (weakGen !== VIS.gen) { weakGen = VIS.gen; weakOn = hideRules().some((r: HideRule) => (r.mode === "name" || r.mode === "omit") && /[*?]/.test(r.match) && r.match.replace(/[*?]/g, "").length < 3); }
+  if (s && weakOn) for (const n of KNOWN.of(s)) note(n);
+}
+// OpenCode logs a skill the user activates as a meta event "skill: <name>" (harness/opencode.ts): a load like a Skill call
+function metaSkill(e: Ev): string { return e.kind === "meta" && e.text.startsWith("skill: ") ? e.text.slice(7).trim() : ""; }
+function callOf(e: Ev): string[] { const j = e.text.indexOf("\u0000"); return j >= 0 ? [e.text.slice(0, j), e.text.slice(j + 1)] : [e.text, ""]; }
+
 // the TUI's events (H.events, features/skills/marks.ts) under the same rules: a call loading an omitted skill and its result
 // leave the list, a name rule's call shows the fake, a hidden skill's result shows why instead of its text, and hidden
-// names are scrubbed from every other text; results find their call by id across reads (bounded). Free without rules
+// names are scrubbed from every other text; results find their call by id across reads (bounded). Free without rules.
+// The batch's loads are noted first: a prompt naming a skill before its load is scrubbed too
 const EVC = new Map<string, string[]>();
+// sessions with a call's text rewritten (a path or command naming a hidden skill): related/build.ts matches files and
+// commands on their real events. A dropped load is no row on either side
+const REWROTE = new Set<string>(); let rwGen = -1;
 export function hideEvents(s: Sess | null, evs: Ev[], from: number): void {
   if (!VIS.redact && !hideRules().length) return;
-  const p = s ? s.path : ""; let w = from;
+  const p = s ? s.path : ""; let w = from; let rw = false;
+  if (rwGen !== VIS.gen) { rwGen = VIS.gen; REWROTE.clear(); }
+  known(s);
   for (let i = from; i < evs.length; i++) {
     const e = evs[i]; if (!e) continue;
+    if (e.kind === "tool") { const c = callOf(e); note(callSkill(c[0] ?? "", c[1] ?? "")); } else note(metaSkill(e));
+  }
+  for (let i = from; i < evs.length; i++) {
+    const e = evs[i]; if (!e) continue;
+    const sm = metaSkill(e);
+    if (sm) {
+      const v = skillVis(sm); if (v.mode === "omit") continue;
+      if (v.shown !== sm) e.text = "skill: " + v.shown;
+      evs[w] = e; w++; continue;
+    }
     let tool = ""; let args = "";
     if (e.kind === "tool") {
-      const j = e.text.indexOf("\u0000"); tool = j >= 0 ? e.text.slice(0, j) : e.text; args = j >= 0 ? e.text.slice(j + 1) : "";
+      const c = callOf(e); tool = c[0] ?? ""; args = c[1] ?? "";
       if (e.id) { if (EVC.size > 20000) EVC.clear(); EVC.set(p + "\t" + e.id, [tool, args]); }
     } else if (e.kind === "result" && e.id) { const pc = EVC.get(p + "\t" + e.id); if (pc) { tool = pc[0] ?? ""; args = pc[1] ?? ""; } }
     const cv = tool ? callVis(tool, args) : { drop: false, args, hide: "" };
     if (cv.drop) continue;
+    const t0 = e.text; const f0 = e.full;
     if (e.kind === "tool") e.text = tool + (e.text.indexOf("\u0000") >= 0 ? "\u0000" + scrub(cv.args) : "");
     else if (cv.hide) { e.text = cv.hide; e.full = ""; } // the result of a call that loaded a hidden skill: its text
     else e.text = scrub(e.text);
     if (e.full && !e.full.startsWith("@file:") && e.full.length < 1048576) e.full = scrub(e.full);
+    if (e.kind === "tool" && (e.text !== t0 || e.full !== f0)) rw = true;
     evs[w] = e; w++;
   }
   if (w < evs.length) evs.splice(w, evs.length - w);
+  if (rw && p) REWROTE.add(p);
 }
 // every reader of events follows skills.hide / --redact like the skill lines do: the TUI (transcript, detail, search, copy,
 // call graph, related, replay), events, session, errors, related, OTLP and MCP (through the CLI). First, on the real text,
 // before the redaction hook scrubs it; free without rules (hideEvents returns at once). --watch applies callVis per line
-// on top (idempotent: a fake stays itself)
+// on top (idempotent: a fake stays itself). Titles (titleOf, every surface) are scrubbed the same way
 export function hiding(): boolean { return VIS.redact || hideRules().length > 0; }
 H.events.unshift(hideEvents);
 H.hides.push(hiding);
-H.memoKey.push((): string => (VIS.redact ? "R" : "") + hideRules().map((r: HideRule): string => r.match + "=" + r.mode).join("\n"));
+H.rewrote.push((s: Sess): boolean => REWROTE.has(s.path));
+H.titles.push((t: string, s: Sess): string => { if (!hiding()) return t; known(s); return scrub(t); });
+// the hiding rules a memo was kept under, as a hash (the ledger keeps one per session: no rule text, a few bytes)
+H.memoKey.push((): string => { if (!VIS.redact && !hideRules().length) return ""; return String(fnvFeed(FNV1, (VIS.redact ? "R" : "") + hideRules().map((r: HideRule): string => r.match + "=" + r.mode).join("\n"))); });

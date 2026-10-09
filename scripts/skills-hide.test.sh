@@ -82,7 +82,8 @@ r=$(run session "claude:$A"); hidden "session" "$r"
 r=$(run sessions --since 30d); hidden "sessions" "$r"
 r=$(run errors --since 30d); hidden "errors" "$r"; has "errors: the Bash failure" "$r" "git status"
 r=$(run --json --related "claude:$A" --minutes 240); hidden "--json --related" "$r"; has "--json --related: rows" "$r" "\"events\""
-r=$(run compare "claude:$A" "claude:$B" --json); hidden "compare" "$r"
+r=$(run compare "claude:$A" "claude:$B" --json); hidden "compare --json" "$r"; has "compare --json: skills" "$r" "\"skills\":[{"; has "compare --json: fake" "$r" "\"skill\":\"$fake\""; has "compare --json: (hidden) row" "$r" "\"skill\":\"(hidden)\",\"a\":{\"loads\":1,"
+r=$(run compare "claude:$A" "claude:$B"); hidden "compare" "$r"; has "compare: skills section" "$r" "loads A"; has "compare: fake" "$r" "$fake"; has "compare: (hidden) row" "$r" "(hidden)"
 r=$(run triage --entity session --select "skill is $fake" --json); hidden "triage" "$r"
 r=$(run cost --json); hidden "cost" "$r"
 
@@ -123,10 +124,15 @@ r=$(run --json --fields id,title,activity); hidden "memo: --json title, activity
 r=$(run sessions --since 30d); hidden "memo: sessions" "$r"
 rm -f "$d/$C.jsonl"
 
+# ── a "*" rule hides every skill: the prompt names acme-x before its load (title, events, sessions) ──
+printf '{"skills":{"hide":[{"match":"*","mode":"omit"}]}}\n' > "$t/star.json"
+for c in "events claude:$A --content --json" "session claude:$A" "sessions --since 30d" "--json" "skills --period all"; do r=$(CFG=star run $c); hidden "* omit: $c" "$r"; for w in pub notes PUBSKILLTEXT; do hasnt "* omit: $c" "$r" "$w"; done; done
+
 # ── without rules nothing is hidden locally ──
 r=$(CFG=none run skills --period all); for n in pub acme-x secret notes; do has "no rules: skills $n" "$r" "$n"; done; hasnt "no rules: no (hidden) row" "$r" "(hidden)"
 has "no rules: skills show text" "$(CFG=none run skills show acme-x --period all)" "ACMESKILLTEXT"
 r=$(CFG=none run events "claude:$A" --content --json); has "no rules: events name" "$r" "acme-x"; has "no rules: events read text" "$r" "SECRETSKILLTEXT"
+r=$(CFG=none run compare "claude:$A" "claude:$B" --json); for n in pub acme-x secret notes; do has "no rules: compare $n" "$r" "\"skill\":\"$n\""; done; hasnt "no rules: compare (hidden)" "$r" "(hidden)"
 
 # ── --redact: no user skill name, no text ──
 r=$(RED=1 CFG=none run skills --period all --json); for n in pub acme-x secret notes; do hasnt "--redact skills $n" "$r" "\"name\":\"$n\""; done; hasnt "--redact skills text" "$r" "SKILLTEXT"

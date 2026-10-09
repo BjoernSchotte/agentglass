@@ -53,8 +53,11 @@ export const H = {
   events: [] as ((s: Sess | null, evs: Ev[], from: number) => void)[], // after parseEvents appended evs[from..]; may rewrite them in place
   // what the events hooks do, for code that matches files and commands on the real events and shows the hooked ones
   // (related/build.ts): fakes = redact.ts fakes content (--redact); hides = some hook drops or rewrites events now
-  // (skills.hide / --redact over skill loads). A hook's presence says neither: the skill hook is always registered
+  // (skills.hide / --redact over skill loads); rewrote = a hook rewrote a call of this session (its files, its command). A hook's
+  // presence says none of them: the skill hook is always registered
   fakes: [] as (() => boolean)[],
+  rewrote: [] as ((s: Sess) => boolean)[],
+  titles: [] as ((t: string, s: Sess) => string)[], // the shown title (titleOf): skills.hide scrubs the names of hidden skills
   // what makes the head/tail memos (sessions.ts) differ besides the log: the events hooks' rules (skills.hide), joined;
   // a memo kept under other rules is read again, so it never shows what the current rules hide
   memoKey: [] as (() => string)[],
@@ -94,6 +97,7 @@ export function viewOf(name: string): View | null { for (const v of H.views) if 
 export function sawAgent(name: string): void { if (name) for (const f of H.agents) f(name); }
 export function evFakes(): boolean { for (const f of H.fakes) if (f()) return true; return false; }
 export function evHooked(): boolean { if (evFakes()) return true; for (const f of H.hides) if (f()) return true; return false; }
+export function evRewrote(s: Sess): boolean { for (const f of H.rewrote) if (f(s)) return true; return false; }
 export function memoKey(): string { let k = ""; for (const f of H.memoKey) k += f(); return k; }
 export function applyMeta(s: Sess): void { for (const f of H.meta) f(s); }
 export function display(kind: string, text: string, s: Sess | null): string { let t = text; for (const f of H.display) t = f(kind, t, s); return t; }

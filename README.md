@@ -560,6 +560,9 @@ rows, logs): it keeps where the text is in the log and reads it when a view asks
 their own opt-in for text: OTLP export and `--watch --otlp` send names, trigger, sizes, hash, scope and $, the text only
 with `--content`; fleet reports carry names, sizes, hash and $, never text; the hub stores what the sender sent; the MCP
 server's `skills` / `events` tools return text only when the server runs with `--content`.
+The names of skills hidden with `name` or `omit` are also replaced in titles, prompts and event text. A rule with fewer
+than 3 literal characters (`*`, `a*`) replaces a word only where it is written as a skill reference (`/x`, `$x`,
+`/skill:x`, `skills/x/`, `p:x`) or once agentglass knows it as a loaded skill, so plain prose keeps its words.
 
 ## Git linkage
 
@@ -753,7 +756,8 @@ B, side by side with Δ (B − A, more cost, errors or duration red) and B/A.
   Kiro record no durations: `n/a`), lines, files, models, subagents. `tab` cycles the detail sections: tools (MCP
   servers fold with `␣`, `●` = share differs, χ² ≥ 6.63, from 50 calls per group), programs, commands, files (only in
   A, only in B, in both; paths relative to the repo when both sides share one), models (tokens and cost from the
-  per-model day buckets, calls from the call rows) and, for two sessions, a timeline of calls since each start.
+  per-model day buckets, calls from the call rows), skills (loads, $ and $ per session that loaded it on each side;
+  `skills.hide` applies, omitted skills in one `(hidden)` row) and, for two sessions, a timeline of calls since each start.
 - `↵` on a tool opens the Stats drill-down for side A (`[`) or B (`]`), on a file `$PAGER`; `o` / `1` / `2` open a
   session's transcript; `t` runs triage with A as the selection and B as its baseline (`+` / `-` there edit group A).
   Below 100 columns the B/A column goes, below 80 the Δ column.
@@ -765,7 +769,8 @@ agentglass compare --a 'day >= -13d and day < -6d' --b 'day >= -6d' --filter 're
 agentglass compare last current                                  # inside an agent: this run vs the one before (JSON, this project)
 ```
 In `--json`, `metrics.cost` is the total and `costByMode` its split by billing mode (`api` is real spend, the rest
-list-price estimates; `billing` names the one mode or `"mixed"`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an id prefix under 6 characters
+list-price estimates; `billing` names the one mode or `"mixed"`); `skills[]` is the skills section (`skill`, per side
+`loads`, `usd`, `sessions`; `chi2`); unknown values (unpriced cost, untimed calls) are `null`. A bad expression, an id prefix under 6 characters
 or A = B exits 2, an unknown session 3, an ambiguous prefix 4 (the candidates are listed; [exit codes](#exit-codes)).
 
 ## Related events

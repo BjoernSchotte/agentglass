@@ -177,6 +177,20 @@ if (!bs) { bad++; console.log("FAIL skills.hide: no build"); } else {
   eq("skills.hide: commit subjects kept", bs.rows.filter((r: RelEv) => r.kind === "commit" && r.sess !== "").map((r: RelEv) => r.text).join(" | "), "3f2a91c fix login redirect | 3f2a91c fix login redirect");
   eq("skills.hide: no row of the omitted skill", bs.rows.filter((r: RelEv) => (r.text + r.evText).indexOf("secret") >= 0 || (r.text + r.evText).indexOf("SECRETSKILLTEXT") >= 0).length + "", "0");
 }
+// a name rule rewrites a path naming the skill in the anchor's transcript: its log is read, the conflict is found on the
+// real file, the rows show the fake
+reset();
+setVis([{ match: "acme-*", mode: "name" }], false);
+const ae = (dt: number, id: string): string => call(dt, id, "Edit", "{\"file_path\":\"" + D + "/proj/src/acme-x.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}");
+const na = sess("na", D + "/proj", [user(-700000, "early"), user(0, "mid"), ae(1000, "e1")], true);
+sess("nb", D + "/proj", [user(500, "b"), ae(60000, "e2")], true);
+const nEvs = evsOf(na);
+const bn = startBuild(na, nEvs, 1, 10, 10);
+if (!bn) { bad++; console.log("FAIL skills.hide name: no build"); } else {
+  run(bn);
+  eq("skills.hide name: conflict on the real file", bn.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.mark + ":" + (r.files[0]?.rel ?? "")).join(" "), "conflict:src/acme-x.ts conflict:src/acme-x.ts");
+  eq("skills.hide name: no row shows the name", String(bn.rows.filter((r: RelEv) => (r.text + r.evText).indexOf("acme-x") >= 0).length), "0");
+}
 setVis([], false);
 // a cwd behind a symlink (macOS /tmp → /private/tmp, a linked ~/code): the identity's top is the real path, the agent
 // logs the linked one; files still map to the project (rel), not to absolute paths outside it

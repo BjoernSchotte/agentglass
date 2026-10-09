@@ -165,6 +165,9 @@ export function loadHead(s: Sess): void {
     parseEvents(s.h, l, evs, s);
     if (!hp) for (const e of evs) if (e.kind === "user") { hp = firstLine(e.text, 200); if (!s.prompt) s.prompt = hp; break; }
   }
+  // the head's loads are noted now: its prompt and title without the names of hidden skills (skills.hide) — what a memo
+  // replay (keyed on the rules) restores, when nothing of this run has seen those loads
+  if (H.titles.length) { if (s.prompt === hp) s.prompt = titleShown(hp, s); hp = titleShown(hp, s); if (s.title) s.title = titleShown(s.title, s); }
   const f: string[] = []; const f1 = fieldsOf(s);
   // what the read changed, and the log's own cwd, branch and model even when this run knew them before the read (the
   // project cache, an earlier read): a run replaying the memo knows them only from here
@@ -206,7 +209,9 @@ export function loadTail(s: Sess, lite = false): void {
   const last = s.evs.length ? s.evs[s.evs.length - 1] : null; const hs = ad.headState;
   TAILS.put(s, { size: s.size, t: mtimeOf(s), x: hs ? hs(s) : "", v: memoKey(), ev: last ? { kind: last.kind, text: last.text, ts: last.ts, id: last.id, full: "" } : null, f });
 }
-export function titleOf(s: Sess): string { return titleFrom(s, s.title, s.prompt); }
+export function titleOf(s: Sess): string { return titleShown(titleFrom(s, s.title, s.prompt), s); }
+// a title or prompt as surfaces may show it (skills.hide scrubs the names of hidden skills; H.titles)
+function titleShown(t: string, s: Sess): string { let o = t; for (const f of H.titles) o = f(o, s); return o; }
 // the title from these title/prompt values (realMeta()'s under --redact: what filters match)
 export function titleFrom(s: Sess, title: string, prompt: string): string {
   if (title) return title; // an H.meta override wins over the harness's out-of-band title
