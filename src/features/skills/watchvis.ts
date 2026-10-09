@@ -7,6 +7,7 @@ import { type Obj, parse, str } from "../../util/json.ts";
 import { execCmds } from "../usage/calls.ts";
 import { skillPath, skillReadCmd } from "../usage/skillrec.ts";
 import type { Ev, Sess } from "../../model/types.ts";
+import { H } from "../../hooks.ts";
 import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN, VIS } from "./vis.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
@@ -119,3 +120,11 @@ export function hideEvents(s: Sess | null, evs: Ev[], from: number): void {
   }
   if (w < evs.length) evs.splice(w, evs.length - w);
 }
+// every reader of events follows skills.hide / --redact like the skill lines do: the TUI (transcript, detail, search, copy,
+// call graph, related, replay), events, session, errors, related, OTLP and MCP (through the CLI). First, on the real text,
+// before the redaction hook scrubs it; free without rules (hideEvents returns at once). --watch applies callVis per line
+// on top (idempotent: a fake stays itself)
+export function hiding(): boolean { return VIS.redact || hideRules().length > 0; }
+H.events.unshift(hideEvents);
+H.hides.push(hiding);
+H.memoKey.push((): string => (VIS.redact ? "R" : "") + hideRules().map((r: HideRule): string => r.match + "=" + r.mode).join("\n"));

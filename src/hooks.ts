@@ -51,6 +51,14 @@ export const H = {
   meta: [] as ((s: Sess) => void)[], // after log parsing / process linking (re)set a session's title, cwd, branch or name; may override them
   agents: [] as ((name: string) => void)[], // a harness parsed a call that ran a subagent by name (Gemini: a tool named after it, invoke_agent's agent_name), before its events and ledger rows
   events: [] as ((s: Sess | null, evs: Ev[], from: number) => void)[], // after parseEvents appended evs[from..]; may rewrite them in place
+  // what the events hooks do, for code that matches files and commands on the real events and shows the hooked ones
+  // (related/build.ts): fakes = redact.ts fakes content (--redact); hides = some hook drops or rewrites events now
+  // (skills.hide / --redact over skill loads). A hook's presence says neither: the skill hook is always registered
+  fakes: [] as (() => boolean)[],
+  // what makes the head/tail memos (sessions.ts) differ besides the log: the events hooks' rules (skills.hide), joined;
+  // a memo kept under other rules is read again, so it never shows what the current rules hide
+  memoKey: [] as (() => string)[],
+  hides: [] as (() => boolean)[],
   display: [] as ((kind: string, text: string, s: Sess | null) => string)[], // display-time rewrite of text that bypasses parseEvents (stats "tool:<name>"/"cmd"/"prog"/"file", process "args"/"cwd")
   realCwd: [] as ((s: Sess) => string)[], // the session's real cwd when H.meta replaced s.cwd for display (redact); "" = not replaced
   realMeta: [] as ((s: Sess) => RealMeta | null)[], // the real title/prompt/cwd/branch/name when H.meta replaced them (redact); null = not replaced
@@ -84,6 +92,9 @@ export function remoteRows(): Sess[] { if (!H.remoteRows.length) return []; let 
 export function tabAt(i: number): Tab | null { return i >= 0 && i < H.tabs.length ? H.tabs[i] : null; }
 export function viewOf(name: string): View | null { for (const v of H.views) if (v.name === name) return v; return null; }
 export function sawAgent(name: string): void { if (name) for (const f of H.agents) f(name); }
+export function evFakes(): boolean { for (const f of H.fakes) if (f()) return true; return false; }
+export function evHooked(): boolean { if (evFakes()) return true; for (const f of H.hides) if (f()) return true; return false; }
+export function memoKey(): string { let k = ""; for (const f of H.memoKey) k += f(); return k; }
 export function applyMeta(s: Sess): void { for (const f of H.meta) f(s); }
 export function display(kind: string, text: string, s: Sess | null): string { let t = text; for (const f of H.display) t = f(kind, t, s); return t; }
 export function armed(): boolean { for (const f of H.fastArmed) if (f()) return true; return false; }
