@@ -8,7 +8,7 @@ import { sessions, titleOf } from "../../model/sessions.ts";
 import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
-import { ledger, accOf, accsOf, pending, copyKey } from "./ledger.ts";
+import { ledger, accOf, accsOf, pending, copyKey, LGEN } from "./ledger.ts";
 import { type Acc, type Day, type RlWin, L, todayKey, lastDays, startOfDay, skillUsesOf, newDay, heavy } from "./record.ts";
 import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
@@ -31,7 +31,7 @@ import { setLocal } from "../query/scope.ts";
 import { tabFilter, chips, contentOk, callsChip, timeStep, rowsLater, rowsDeferred, rowsFill, fillChip, fillEmpty } from "../query/ui.ts";
 import { matchSession } from "../query/eval.ts";
 import { LISTING } from "./skillrec.ts";
-import { skillVis, HIDDEN } from "../skills/vis.ts";
+import { skillVis, HIDDEN, VIS } from "../skills/vis.ts";
 import { skillLoads } from "../skills/model.ts";
 import { type PanelScope, openSkillsPanel } from "../skills/panel.ts";
 
@@ -792,7 +792,8 @@ H.previewSections.push((s: Sess, w: number): string[] => {
 const SKP = new Map<string, string>();
 function skillLine(s: Sess, as: Acc[], w: number): string {
   let off = 0; for (const a of as) off += a.off + a.sk.length;
-  const mk = s.path + "\t" + String(off) + "\t" + String(L.ver) + "\t" + String(w); const hit = SKP.get(mk); if (hit !== undefined) return hit;
+  // kept while the session's logs did not grow and prices did not change (L.ver moves with every other session's booking)
+  const mk = s.path + "\t" + String(off) + "\t" + String(LGEN.reapply) + "\t" + String(VIS.gen) + "\t" + String(w); const hit = SKP.get(mk); if (hit !== undefined) return hit;
   const ids: string[] = []; for (let i = 0; i < as.length; i++) ids.push("");
   const by = new Map<string, number[]>(); let tok = 0; let carry = 0;
   for (const l of skillLoads(as, ids)) {
