@@ -80,7 +80,7 @@ ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan =
   ok("no sk/sa/ls keys without skills", zs.indexOf("\"sk\"") < 0 && zs.indexOf("\"sa\"") < 0 && zs.indexOf("\"ls\"") < 0, zs.slice(0, 300));
   // compact: one number array and string tables per log; a listing is one string, shared by the logs that list the same
   const sko = (parse(js2) ?? {})["sk"] as Obj; const keys = Object.keys(sko).sort().join(",");
-  ok("sk layout", keys === "dr,h,mp,nm,r,x", keys);
+  ok("sk layout", keys === "dr,h,mp,nm,r,x" || keys === "c,dr,h,mp,nm,r,x", keys);
   const y2 = accIn(parse(js2) ?? {}); ok("listing shared", y2.lst === y.lst, "");
   ok("pre-release columns re-index", skStale(parse("{\"sk\":{\"nm\":[\"a\"],\"i\":[0]}}") ?? {}) && !skStale(parse(js2) ?? {}) && !skStale(parse(zs) ?? {}), "");
 }

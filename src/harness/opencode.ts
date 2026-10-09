@@ -7,6 +7,7 @@ import { statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readText } from "../util/fs.ts";
+import { own } from "../util/own.ts";
 import { query, q, sqliteBin } from "../util/sqlite.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
@@ -354,7 +355,7 @@ function useTool(a: Acc, d: Day, name: string, id: string, st: Obj | null, t0: n
   const fin = status === "completed" || status === "error"; // a part is written again as it runs: its text once, at the end
   if (name === "skill") { // 2.x {id}, 1.x {name}; the skill's text is the tool's output (none: size unknown)
     const sn = str(inp["id"]) || str(inp["name"]); skill(d, "model", sn);
-    if (fin) { const out = st ? (typeof st["output"] === "string" ? str(st["output"]) : blockText(st["content"])) : ""; skillLoad(a, sn, "model", t1 > 0 ? t1 : t0, "", out, out !== "" && status === "completed", outDir(out, sn), false); }
+    if (fin) { const out = st ? (typeof st["output"] === "string" ? str(st["output"]) : blockText(st["content"])) : ""; skillLoad(a, sn, "model", t1 > 0 ? t1 : t0, "", out, out !== "" && status === "completed", outDir(out, sn), false).cid = own(id); }
     return;
   }
   if (name === "read" && fin && status === "completed") { skillRead(a, id, str(inp["filePath"]) || str(inp["path"])); if (a.skr.has(id)) skillReadDone(a, d, id, t1 > 0 ? t1 : t0, "", st ? (typeof st["output"] === "string" ? str(st["output"]) : blockText(st["content"])) : "", false); }

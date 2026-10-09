@@ -19,7 +19,7 @@ export interface SkLoad {
   end: number; why: string; rel: boolean; stub: boolean; pend: boolean; short: number;
   nq: number; lt: number[]; ct: number[]; tt: number[]; hb: number[]; hu: number; hl: number; ht: number;
   off: number; len: number; rec: string; mdl: string; prov: string; est: boolean; n: number; rd: boolean;
-  h1: number; h2: number; pg: number;
+  h1: number; h2: number; pg: number; cid: string; // cid = the tool call that loaded it (Skill, activate_skill, skill, a SKILL.md read), "" none
 }
 // a SKILL.md read waiting for its output (by call id, not persisted): the path, the call line's place in the log, its turn
 export interface SkRead { path: string; off: number; tu: number }
@@ -168,7 +168,7 @@ export function newLoad(name: string, trig: string, ms: number, text: string, kn
   if (SKCAP.on && known) SKCAP.out.push({ name: own(name), parts: [text] });
   return { name: pooled(name), trig: pooled(trig), t: ms, tu, te: 0, rq0, bytes, S: sizeEst(bytes), hash: known ? pooled(hashHex(h1, h2)) : "", dir: pooled(dir), scope: pooled(scopeOf(dir)),
     end: 0, why: "", rel: false, stub: false, pend: true, short: 0, nq: 0, lt: [0, 0, 0, 0], ct: [0, 0, 0, 0], tt: [0, 0, 0, 0], hb: NO_HB, hu: 0, hl: 0, ht: 0,
-    off, len, rec: own(rec), mdl: "", prov: "", est, n: 1, rd: false, h1, h2, pg: 0 };
+    off, len, rec: own(rec), mdl: "", prov: "", est, n: 1, rd: false, h1, h2, pg: 0, cid: "" };
 }
 // more text of the same load (a skill text over several lines, a second partial read): bytes, hash and size grow; once the
 // load was sent the extra tokens go out with the next request (pg)
