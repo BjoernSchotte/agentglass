@@ -86,10 +86,14 @@ export function renderTranscript(): void {
   const name = s.depth === 1 ? "↳ " + s.kind + (s.name ? " " + s.name : "") + ": " + titleOf(s) : titleOf(s);
   const mc = vfActive(VIEW) ? matchCount(VIEW, s, t.evs) : null;
   const partial = t.evs.length > 0 && t.evs[0].kind === "meta" && t.evs[0].text.startsWith("showing "); // the tail (or a link's window) of a longer log
-  const info = (mc ? String(mc.shown) + " of " + (partial ? "≥" : "") + String(Math.max(0, mc.total - (partial ? 1 : 0))) + " events · " : "") +
+  const cnt = mc ? String(mc.shown) + " of " + (partial ? "≥" : "") + String(Math.max(0, mc.total - (partial ? 1 : 0))) + " events" : "";
+  const info = (cnt ? cnt + " · " : "") +
     (s.depth === 1 ? "u parent · n next · " : "") + home(s.cwd) + subs + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%");
+  // a long title leaves the header no room: with a filter on, the match count keeps its place (the title is cut first)
+  const room = W - 4 - width(cnt) - 4;
+  const title = cnt && width(name) + 2 > room ? fit(name, Math.max(8, room - 2)) : name;
   // OSC 8 terminals: the short id links to the session (Y copies the event's link); styled info is cut by box()
-  box(0, 1, W, H - 2, name, hyperOn() ? clean(info) + " · " + fg(C.dim) + link(sessUrl(s.h, s.id), s.id.slice(0, 8)) + RST : info, true);
+  box(0, 1, W, H - 2, title, hyperOn() ? clean(info) + " · " + fg(C.dim) + link(sessUrl(s.h, s.id), s.id.slice(0, 8)) + RST : info, true);
   const empty = mc !== null && mc.shown === 0 && !t.xr.length ? fg(C.dim) + vfEmpty(VIEW) + RST : "";
   for (let r = 0; r < vh; r++) {
     const li = t.scroll + r - (empty ? 1 : 0);

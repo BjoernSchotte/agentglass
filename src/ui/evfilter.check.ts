@@ -45,6 +45,11 @@ eq("no filter", on("transcript"), "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16");
 const want = ["0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16", "14,15", "4,5", "2,3,9,10", "1,2,3", "0,2,3,11,12,16"];
 for (let i = 0; i < PRESETS.length; i++) { preset("transcript", i); eq("preset " + (PRESETS[i]?.name ?? ""), on("transcript"), want[i] ?? ""); }
 eq("preset label", label("transcript"), "my prompts + outcomes");
+// errors + causes where the agent logs only thinking before the failing call (Gemini)
+const gmS: Sess = newSess("gemini", "evf-test-g", "/k/evf-test-g.json", false); gmS.size = 1;
+for (const e of [ev("user", "build it", 0, ""), ev("thinking", "run the check", 1, ""), ev("tool", "run_shell_command\u0000node -e x", 2, "g1"), ev("result", "[error] Exit Code: 3", 3, "g1")]) gmS.evs.push(e);
+preset("transcript", 4); { const m = mask("transcript", gmS, gmS.evs); const o: string[] = []; for (let i = 0; i < gmS.evs.length; i++) if (m[i] + 0 === 1) o.push(String(i)); eq("causes: thinking before the call", o.join(","), "1,2,3"); }
+preset("transcript", 5);
 // solo on the mcp:github event: the kind, then its family, then nothing
 vfClear("transcript");
 eq("solo kind", solo("transcript", s, s.evs, 4), "mcp:github"); eq("solo kind shows", on("transcript"), "4,5"); eq("solo label", label("transcript"), "mcp:github only");

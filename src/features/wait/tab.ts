@@ -49,7 +49,7 @@ const WV = { period: "w", view: "family", sort: 0, sel: 0, top: 0, selKey: "", d
 // run: the report being computed; rep: the last finished one (shown meanwhile when only the ledger moved); key: what it
 // was computed for (period, filter, day); fixed: a check's report (never recomputed)
 const J = { run: null as WaitRun | null, rep: null as WaitReport | null, key: "", at: 0, ver: -1, ovF: [] as GroupOverlap[], ovK: [] as GroupOverlap[], fixed: false, cpu: 0, slice: 0, last: 0 };
-export function waitState(): { period: string; view: string; sort: string; detail: string } { return { period: WV.period, view: WV.view, sort: SORTS[WV.sort] ?? "total", detail: WV.detail }; }
+export function waitState(): { period: string; view: string; sort: string; detail: string; sel: number } { return { period: WV.period, view: WV.view, sort: SORTS[WV.sort] ?? "total", detail: WV.detail, sel: WV.sel }; }
 // checks: a fixed report (null: compute again on the next render)
 export function setWaitForTest(rep: WaitReport | null): void {
   J.run = null; J.rep = rep; J.fixed = rep !== null; J.key = ""; J.at = 0;
@@ -351,7 +351,8 @@ function key(k: string): boolean {
   const rs = rows(); const n = rs.length; const page = Math.max(1, LY.n - 1);
   const cw = rs[WV.sel];
   const fk = filterKey(VIEW, k, rowKinds, cw ? waitRowX(cw, WV.view).kinds : [], (d: number): number => vfActive(VIEW) && WV.sel + d >= 0 && WV.sel + d < n ? WV.sel + d : -1);
-  if (fk >= -1) { if (fk >= 0) WV.sel = fk; else { WV.sel = 0; WV.top = 0; } WV.selKey = fk >= 0 ? rs[fk]?.key ?? "" : ""; return true; }
+  // ] [ move to the next shown row; any other filter key keeps the selected row (by key) while the filter still shows it
+  if (fk >= -1) { if (fk >= 0) { WV.sel = fk; WV.selKey = rs[fk]?.key ?? ""; } return true; }
   if (k === "up" || k === "k" || k === "wheelup") WV.sel = Math.max(0, WV.sel - 1);
   else if (k === "down" || k === "j" || k === "wheeldown") WV.sel = Math.min(Math.max(0, n - 1), WV.sel + 1);
   else if (k === "pgup") WV.sel = Math.max(0, WV.sel - page);

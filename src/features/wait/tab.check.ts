@@ -75,6 +75,10 @@ eq("filter: hidden rows counted", String(ft.indexOf("rows hidden ·") >= 0), "tr
 eq("filter: count line", String(ft.indexOf("1 of 4 rows") >= 0), "true");
 eq("filter fits 80", String(fd.over), "0");
 WAIT_TAB.key("esc"); eq("esc clears the kind filter", vfOf("wait").expr, "");
+WAIT_TAB.key("down"); const sk0 = waitState().sel;
+WAIT_TAB.key("]"); eq("] without a filter keeps the row", String(waitState().sel), String(sk0));
+WAIT_TAB.key("K"); WAIT_TAB.key("right"); WAIT_TAB.key("esc"); eq("the chip bar keeps the row", String(waitState().sel), String(sk0));
+WAIT_TAB.key("g");
 WAIT_TAB.key("i"); eq("i solos the selected row's kind", String(vfOf("wait").expr.startsWith("event.kind is shell:")), "true");
 vfClear("wait");
 // work: none while hidden, one step per render while a report runs

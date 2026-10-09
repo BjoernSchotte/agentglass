@@ -190,12 +190,12 @@ function evalOne(f: Compiled, s: Sess, evs: Ev[], i: number, id: number, calls: 
   for (const p of f.ev) if (!p(s, x)) return false;
   return true;
 }
-// errors + causes: every shown failing call also shows the reply the agent wrote right before it (its reasoning), in
-// the same turn
+// errors + causes: every shown failing call also shows the reply the agent wrote right before it (its reasoning: text,
+// or thinking where the harness logs only that, e.g. Gemini), in the same turn
 function causes(evs: Ev[], ids: Int32Array, m: Uint8Array): void {
   for (let i = 0; i < evs.length; i++) {
     if (m[i] + 0 !== 1 || evs[i].kind !== "tool" || kindSet(ids[i] + 0).indexOf("error") < 0) continue;
-    for (let j = i - 1; j >= 0; j--) { const k = evs[j].kind; if (k === "user") break; if (k === "assistant") { m[j] = 1; break; } }
+    for (let j = i - 1; j >= 0; j--) { const k = evs[j].kind; if (k === "user") break; if (k === "assistant" || k === "thinking") { m[j] = 1; break; } }
   }
 }
 // prompts + outcomes: the last reply of each turn (before the next prompt, or the end)
@@ -427,8 +427,8 @@ export function flush(force: boolean): boolean {
   if (!VF_STORE.path && secureDir(RUN_DIR, myUid(), (x: string) => OS.fileInfo(x), true)) return false; // an unsafe run dir: not written
   try {
     const tmp = p + "." + String(process.pid) + ".tmp";
-    const fd = openSync(tmp, "w"); writeSync(fd, txt + "\n"); closeSync(fd);
-    chmodSync(tmp, 0o600); renameSync(tmp, p); ST.saved = txt; return true;
+    const fd = openSync(tmp, "w"); chmodSync(tmp, 0o600); // before any byte is written
+    writeSync(fd, txt + "\n"); closeSync(fd); renameSync(tmp, p); ST.saved = txt; return true;
   } catch (e) { return false; }
 }
 // checks: forget the state (a fresh run)

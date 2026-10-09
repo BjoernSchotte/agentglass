@@ -61,6 +61,9 @@ eq("gap before", body[0] ?? "", "┄ 19 hidden · shell 12 · reply 6 · error 2
 ok("skill call shown", (body[1] ?? "").indexOf("⚒ Skill(brainstorming)") >= 0);
 eq("gap after", body[body.length - 1] ?? "", "┄ 3 hidden · read 2 · reply 1 ┄");
 ok("header count", (rows[1] ?? "").indexOf("2 of 24 events") >= 0);
+s.title = "a prompt long enough to fill the whole header line of the transcript box at eighty columns and more"; rows = render();
+ok("header count beside a long title: " + (rows[1] ?? ""), (rows[1] ?? "").indexOf("2 of 24 events") >= 0 && (rows[1] ?? "").indexOf("a prompt long") >= 0);
+s.title = "";
 // the cursor stops on the gap line, ↵ shows that run once, the filter stays
 tv.follow = false; moveCur(tv, -100, S.H - 4);
 eq("cursor on the first gap", String(tv.cur), "0");
