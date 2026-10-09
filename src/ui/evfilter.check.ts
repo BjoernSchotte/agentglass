@@ -10,6 +10,7 @@ import { ESC_RE, width } from "../util/text.ts";
 import { type Gap, PRESETS, VF_STORE, vfOf, vfSet, vfClear, preset, solo, invert, mask, shown, runs, gapText, matchCount, nextMatch, linked, setLinked,
   chipBar, chipKey, openBar, barOpen, viewKey, label, emptyText, flush, resetForTest, test } from "./evfilter.ts";
 import { evxOf } from "../features/query/eval.ts";
+import { kindsIn } from "../model/kinds.ts";
 import { parseRef, canonicalUrl } from "../features/palette/ref.ts";
 import { applyTarget } from "../features/palette/open.ts";
 import "../features/evkinds.ts";
@@ -119,27 +120,27 @@ eq("old links unchanged", parseRef("agentglass://open/claude/evf-test-1#call=too
 
 // the chip bar at 80 columns (golden), and its keys
 resetForTest(); vfClear("transcript");
-S.W = 80; openBar("transcript");
+S.W = 80; const KM = kindsIn(s, s.evs); openBar("transcript", (): Map<string, number> => KM);
 const lines: string[] = [];
 // in the golden: > before the cursor's chip, ~ before a hidden one
-const snap = (what: string): void => { lines.push(what + "\t" + chipBar("transcript", s, s.evs, 78).split("\u001b[7m").join(">").split("\u001b[9m").join("~").replace(ESC_RE, "")); };
+const snap = (what: string): void => { lines.push(what + "\t" + chipBar("transcript", KM, 78).split("\u001b[7m").join(">").split("\u001b[9m").join("~").replace(ESC_RE, "")); };
 snap("open");
-const narrow = (what: string): void => { lines.push(what + "\t" + chipBar("transcript", s, s.evs, 36).split("\u001b[7m").join(">").split("\u001b[9m").join("~").replace(ESC_RE, "")); };
-narrow("narrow first"); for (let k = 0; k < 5; k++) chipKey("transcript", s, s.evs, "right"); narrow("narrow sixth");
-ok("narrow fits 36", width(chipBar("transcript", s, s.evs, 36).replace(ESC_RE, "")) <= 36);
-chipKey("transcript", s, s.evs, "home");
-ok("bar fits 78", width(chipBar("transcript", s, s.evs, 78).replace(ESC_RE, "")) <= 78);
-chipKey("transcript", s, s.evs, "right"); chipKey("transcript", s, s.evs, " "); snap("reply hidden");
+const narrow = (what: string): void => { lines.push(what + "\t" + chipBar("transcript", KM, 36).split("\u001b[7m").join(">").split("\u001b[9m").join("~").replace(ESC_RE, "")); };
+narrow("narrow first"); for (let k = 0; k < 5; k++) chipKey("transcript", KM, "right"); narrow("narrow sixth");
+ok("narrow fits 36", width(chipBar("transcript", KM, 36).replace(ESC_RE, "")) <= 36);
+chipKey("transcript", KM, "home");
+ok("bar fits 78", width(chipBar("transcript", KM, 78).replace(ESC_RE, "")) <= 78);
+chipKey("transcript", KM, "right"); chipKey("transcript", KM, " "); snap("reply hidden");
 eq("␣ writes the chips' clause", vfOf("transcript").expr, "event.kind is_one_of prompt shell edit mcp skill error");
-chipKey("transcript", s, s.evs, " "); eq("␣ again: all", vfOf("transcript").expr, "");
-chipKey("transcript", s, s.evs, "right"); chipKey("transcript", s, s.evs, "enter"); snap("shell kinds");
-chipKey("transcript", s, s.evs, " "); eq("one kind off keeps its siblings", vfOf("transcript").expr, "event.kind is_one_of prompt reply shell:vcs edit mcp skill error");
-chipKey("transcript", s, s.evs, " "); eq("all its kinds again: the family", vfOf("transcript").expr, "");
-chipKey("transcript", s, s.evs, "esc"); ok("esc leaves the kinds level first", barOpen("transcript"));
-chipKey("transcript", s, s.evs, "!"); eq("! inverts", label("transcript"), "not all events");
-chipKey("transcript", s, s.evs, "2"); eq("2 skills", on("transcript"), "14,15");
-chipKey("transcript", s, s.evs, "L"); ok("L links", linked()); chipKey("transcript", s, s.evs, "L");
-chipKey("transcript", s, s.evs, "esc"); ok("esc closes", !barOpen("transcript"));
+chipKey("transcript", KM, " "); eq("␣ again: all", vfOf("transcript").expr, "");
+chipKey("transcript", KM, "right"); chipKey("transcript", KM, "enter"); snap("shell kinds");
+chipKey("transcript", KM, " "); eq("one kind off keeps its siblings", vfOf("transcript").expr, "event.kind is_one_of prompt reply shell:vcs edit mcp skill error");
+chipKey("transcript", KM, " "); eq("all its kinds again: the family", vfOf("transcript").expr, "");
+chipKey("transcript", KM, "esc"); ok("esc leaves the kinds level first", barOpen("transcript"));
+chipKey("transcript", KM, "!"); eq("! inverts", label("transcript"), "not all events");
+chipKey("transcript", KM, "2"); eq("2 skills", on("transcript"), "14,15");
+chipKey("transcript", KM, "L"); ok("L links", linked()); chipKey("transcript", KM, "L");
+chipKey("transcript", KM, "esc"); ok("esc closes", !barOpen("transcript"));
 const GP = (process.env.AGENTGLASS_SRC || "src") + "/ui/chips-80.golden";
 if (process.env.GOLDEN_WRITE === "1") { writeFileSync(GP, lines.join("\n") + "\n"); console.log("chips-80.golden written: review it"); process.exit(1); }
 const gw = readFileSync(GP, "utf8").split("\n").filter((l: string) => l.length > 0);
@@ -147,7 +148,7 @@ for (let i = 0; i < Math.max(gw.length, lines.length); i++) eq("chips golden " +
 
 // the view keys: K opens, i solos, ! inverts, ] [ move, esc clears (handled), other keys pass (-2)
 vfClear("transcript");
-eq("K", String(viewKey("transcript", s, s.evs, 0, "K")), "-1"); chipKey("transcript", s, s.evs, "esc");
+eq("K", String(viewKey("transcript", s, s.evs, 0, "K")), "-1"); chipKey("transcript", KM, "esc");
 eq("i", String(viewKey("transcript", s, s.evs, 14, "i")), "-1"); eq("i solo", vfOf("transcript").expr, "event.kind is skill:load");
 eq("]", String(viewKey("transcript", s, s.evs, 0, "]")), "14");
 eq("esc clears", String(viewKey("transcript", s, s.evs, 0, "esc")), "-1"); eq("cleared", vfOf("transcript").expr, "");

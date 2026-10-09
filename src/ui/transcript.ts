@@ -10,6 +10,11 @@ import { titleOf, parentOf, subActive, activeSubs, restat } from "../model/sessi
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, spin, scrollbar } from "./screen.ts";
 import { link, hyperOn, sessUrl } from "../util/hyper.ts";
+import { kindsIn, kindIds, kindVer } from "../model/kinds.ts";
+import { setCount, mask as vfMask, fstate, active as vfActive, runs as vfRuns, gapText, matchCount, emptyText as vfEmpty, barOpen, chipBar } from "./evfilter.ts";
+
+const VIEW = "transcript";
+setCount(VIEW, (): string => { const t = S.tv; if (!t) return ""; const c = matchCount(VIEW, t.s, t.evs); return String(c.shown) + " of " + String(c.total); });
 
 export function evLines(e: Ev, w: number, expand: boolean, out: string[]): void {
   const tsx = e.ts.length >= 16 ? localHM(e.ts) : "";
@@ -59,17 +64,17 @@ export function renderTranscript(): void {
   const W = S.W; const H = S.H;
   const iw = W - 4;
   const n = shown(t);
-  if (t.lw !== iw || t.ln !== n || t.lexp !== t.expand) {
-    const out: string[] = []; const le: number[] = []; const ls: number[] = [];
-    for (let i = 0; i < n; i++) { ls.push(out.length); evLines(t.evs[i], iw - 1, t.expand, out); while (le.length < out.length) le.push(i); }
-    t.lines = out; t.lineEv = le; t.lineStart = ls; t.lw = iw; t.ln = n; t.lexp = t.expand;
-  }
-  const vh = H - 4;
+  layout(t, iw, n);
+  const bar = barOpen(VIEW);
+  const vh = H - 4 - (bar ? 1 : 0); // the chip bar takes the last row
   const maxScroll = Math.max(0, t.lines.length - vh);
   if (t.focusTs || t.focusText) { // opened from a preview row: put the cursor on that event
     for (let i = n - 1; i >= 0; i--) {
       const e = t.evs[i];
-      if (e.kind === t.focusKind && (e.ts === t.focusTs || (t.focusTs === "" && e.id !== "")) && (e.text === t.focusText || (e.id !== "" && e.id === t.focusText))) { t.cur = i; t.follow = false; t.scroll = Math.max(0, numAt(t.lineStart, i, 0) - Math.floor(vh / 3)); break; }
+      if (e.kind === t.focusKind && (e.ts === t.focusTs || (t.focusTs === "" && e.id !== "")) && (e.text === t.focusText || (e.id !== "" && e.id === t.focusText))) {
+        if (expandAt(t, i)) layout(t, iw, n); // the event the link or row named is shown, whatever the filter hides
+        t.cur = i; t.follow = false; t.scroll = Math.max(0, numAt(t.lineStart, i, 0) - Math.floor(vh / 3)); break;
+      }
     }
     t.focusTs = ""; t.focusText = "";
   }
@@ -78,34 +83,81 @@ export function renderTranscript(): void {
   const live = s.pid || (s.depth === 1 && subActive(s)) ? " · " + spin() + " live" : "";
   const subs = s.subs.length ? " · ⑂ " + activeSubs(s) + "/" + s.subs.length + " (n)" : "";
   const name = s.depth === 1 ? "↳ " + s.kind + (s.name ? " " + s.name : "") + ": " + titleOf(s) : titleOf(s);
-  const info = (s.depth === 1 ? "u parent · n next · " : "") + home(s.cwd) + subs + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%");
+  const mc = vfActive(VIEW) ? matchCount(VIEW, s, t.evs) : null;
+  const partial = t.evs.length > 0 && t.evs[0].kind === "meta" && t.evs[0].text.startsWith("showing "); // the tail (or a link's window) of a longer log
+  const info = (mc ? String(mc.shown) + " of " + (partial ? "≥" : "") + String(Math.max(0, mc.total - (partial ? 1 : 0))) + " events · " : "") +
+    (s.depth === 1 ? "u parent · n next · " : "") + home(s.cwd) + subs + live + " · " + (t.follow ? "follow" : Math.round((t.scroll / Math.max(1, maxScroll)) * 100) + "%");
   // OSC 8 terminals: the short id links to the session (Y copies the event's link); styled info is cut by box()
   box(0, 1, W, H - 2, name, hyperOn() ? clean(info) + " · " + fg(C.dim) + link(sessUrl(s.h, s.id), s.id.slice(0, 8)) + RST : info, true);
+  const empty = mc !== null && mc.shown === 0 && !t.xr.length ? fg(C.dim) + vfEmpty(VIEW) + RST : "";
   for (let r = 0; r < vh; r++) {
-    const li = t.scroll + r;
-    const l = li < t.lines.length ? t.lines[li] : "";
-    const on = li < t.lines.length && numAt(t.lineEv, li, -1) === t.cur;
+    const li = t.scroll + r - (empty ? 1 : 0);
+    const l = r === 0 && empty ? empty : li >= 0 && li < t.lines.length ? t.lines[li] : "";
+    const on = li >= 0 && li < t.lines.length && numAt(t.lineEv, li, -1) === t.cur && !(r === 0 && empty);
     const f = fitStyled(l, iw - 1);
     put(1, 2 + r, (on ? fg(C.accent) + "▌" + RST : " ") + f + fillTo(f, iw - 1) + "  ");
   }
+  if (bar) { const b = fitStyled(chipBar(VIEW, kindsIn(s, t.evs), iw - 1), iw - 1); put(1, 2 + vh, " " + bg(C.sel) + b + fillTo(b, iw - 1) + RST + "  "); }
   scrollbar(t.lines.length, vh, t.scroll, maxScroll);
 }
+// the lines of the first n events at width iw: every event, or (a kind filter on) the shown ones and one dim gap line per
+// run of hidden events (cursor stops: t.items); laid out again when the width, count, expansion or filter changed
+export function layout(t: TV, iw: number, n: number): void {
+  const act = vfActive(VIEW);
+  const st = act ? fstate(VIEW) : "";
+  if ((t.fk.split("\u0001")[0] ?? "") !== st) t.xr = []; // another filter: the runs ↵ opened close again
+  const fk = act ? st + "\u0001" + String(kindIds(t.s, t.evs).length) + ":" + String(kindVer(t.evs)) + "\u0001" + t.xr.join(",") : "";
+  if (t.lw === iw && t.ln === n && t.lexp === t.expand && t.fk === fk) return;
+  const out: string[] = []; const le: number[] = []; const ls: number[] = []; const it: number[] = [];
+  const m = act ? vfMask(VIEW, t.s, t.evs) : null;
+  for (let i = 0; i < n;) {
+    if (!m || m[i] + 0 === 1 || inX(t, i)) { ls.push(out.length); it.push(i); evLines(t.evs[i], iw - 1, t.expand, out); while (le.length < out.length) le.push(i); i++; continue; }
+    let j = i; while (j < n && m[j] + 0 === 0 && !inX(t, j)) j++;
+    const g = vfRuns(VIEW, t.s, t.evs, i, j)[0];
+    const gl = out.length; out.push(fg(C.dim) + "  " + (g ? gapText(g, iw - 4) : "┄ " + String(j - i) + " hidden ┄") + RST); le.push(i); it.push(i);
+    for (let k = i; k < j; k++) ls.push(gl);
+    i = j;
+  }
+  t.lines = out; t.lineEv = le; t.lineStart = ls; t.items = it; t.lw = iw; t.ln = n; t.lexp = t.expand; t.fk = fk;
+}
+function inX(t: TV, i: number): boolean { for (let k = 0; k + 1 < t.xr.length; k += 2) if (i >= numAt(t.xr, k, 0) && i < numAt(t.xr, k + 1, 0)) return true; return false; }
+// ↵ on a gap line (the cursor on a hidden event): that run shows until the filter changes; false = the event is shown
+export function expandAt(t: TV, i: number): boolean {
+  if (!vfActive(VIEW) || i < 0 || i >= t.evs.length || inX(t, i)) return false;
+  const m = vfMask(VIEW, t.s, t.evs); if (m[i] + 0 === 1) return false;
+  let a = i; while (a > 0 && m[a - 1] + 0 === 0 && !inX(t, a - 1)) a--;
+  let b = i; while (b < t.evs.length && m[b] + 0 === 0 && !inX(t, b)) b++;
+  t.xr.push(a); t.xr.push(b); t.lw = -1;
+  return true;
+}
+// the cursor d stops on (a stop: a shown event or a gap line; t.items, every event without a filter)
 export function moveCur(t: TV, d: number, vh: number): void {
   const n = shown(t);
   if (!n) return;
-  t.cur = Math.max(0, Math.min(n - 1, (t.cur < 0 ? n - 1 : t.cur) + d));
+  const it = t.items.length ? t.items : null;
+  if (!it) t.cur = Math.max(0, Math.min(n - 1, (t.cur < 0 ? n - 1 : t.cur) + d));
+  else {
+    let p = it.length - 1; // the stop holding the cursor: the last at or before it
+    if (t.cur >= 0) { let lo = 0; let hi = it.length - 1; p = 0; while (lo <= hi) { const mid = (lo + hi) >> 1; if (numAt(it, mid, 0) <= t.cur) { p = mid; lo = mid + 1; } else hi = mid - 1; } }
+    p = Math.max(0, Math.min(it.length - 1, p + (t.cur < 0 ? 0 : d)));
+    t.cur = numAt(it, p, 0);
+  }
   t.follow = false;
+  scrollTo(t, vh);
+  if (d > 0 && (it ? t.cur === numAt(it, it.length - 1, 0) : t.cur === n - 1)) t.follow = true;
+}
+// scroll so the cursor's lines are in sight
+export function scrollTo(t: TV, vh: number): void {
   const s0 = numAt(t.lineStart, t.cur, 0);
-  const e0 = numAt(t.lineStart, t.cur + 1, t.lines.length);
+  let e0 = t.lines.length; for (let i = t.cur + 1; i < t.lineStart.length; i++) { const v = numAt(t.lineStart, i, 0); if (v > s0) { e0 = v; break; } }
   if (s0 < t.scroll) t.scroll = s0;
   else if (e0 > t.scroll + vh) t.scroll = Math.min(s0, e0 - vh);
-  if (d > 0 && t.cur === n - 1) t.follow = true;
 }
 export function openTranscript(s: Sess): void { if (remoteOnly(s, "the transcript")) return; openTranscriptAt(s, -1); }
 // cursor ≥ 0 (a link to an event older than the tail): read from just before it, then skip to the tail; G/follow still
 // go to the live end
 export function openTranscriptAt(s: Sess, cursor: number): TV {
-  const t: TV = { s, evs: [], off: 0, ep: s.ep, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: cursor };
+  const t: TV = { s, evs: [], off: 0, ep: s.ep, scroll: 0, follow: true, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: cursor, items: [], xr: [], fk: "" };
   tvStart(t);
   S.tv = t;
   S.mode = "transcript";

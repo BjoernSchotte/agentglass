@@ -31,11 +31,12 @@ export type Ctx = "list" | "stats" | "json" | "watch" | "procs" | "events";
 // err = 1 failed, 0 ok, -1 unknown (a call before its result)
 export interface EvX { raw: string; kinds: string[]; tool: string; args: string; server: string; fam: string; err: number }
 // an event (and its paired call for a result, null otherwise / unknown) as EvX; kinds = its kinds when the caller holds them
-export function evxOf(e: Ev, call: Ev | null, kinds: string[] | null): EvX {
+// (need: bits of what to fill beyond kinds — 2 the MCP server, 4 the shell family; 7 = everything)
+export function evxOf(e: Ev, call: Ev | null, kinds: string[] | null, need: number = 7): EvX {
   const c = e.kind === "tool" ? e : call;
   const tool = c ? toolName(c) : ""; const args = c ? toolArg(c) : "";
   const ks = kinds ?? evKindList(e, call);
-  return { raw: e.kind, kinds: ks, tool, args, server: c ? serverOf(tool, args).toLowerCase() : "", fam: c ? shellFam(tool, args).toLowerCase() : "", err: ks.indexOf("error") >= 0 ? 1 : e.kind === "result" ? 0 : -1 };
+  return { raw: e.kind, kinds: ks, tool, args, server: c && (need & 2) ? serverOf(tool, args).toLowerCase() : "", fam: c && (need & 4) ? shellFam(tool, args).toLowerCase() : "", err: ks.indexOf("error") >= 0 ? 1 : e.kind === "result" ? 0 : -1 };
 }
 // what the old (s, kind, tool, args) event predicates know: no result text, so no error flag
 function evxRaw(kind: string, tool: string, args: string): EvX {

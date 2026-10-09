@@ -40,6 +40,12 @@ export interface VF { expr: string; f: Compiled | null; err: string; errCol: num
 function newVF(): VF { return { expr: "", f: null, err: "", errCol: -1, inv: false, solo: "", preset: -1, flag: "", ver: 0 }; }
 const ST = { per: new Map<string, VF>(), shared: newVF(), link: false, loaded: false, ver: 0, dirty: 0, saved: "" };
 export const VF_STORE = { path: "", remember: true }; // checks point the file elsewhere
+// the match count each view shows in the footer ("3 of 412"), registered by the view
+interface VCount { view: string; f: () => string }
+const COUNTS: VCount[] = [];
+export function setCount(view: string, f: () => string): void { for (const c of COUNTS) if (c.view === view) { c.f = f; return; } COUNTS.push({ view, f }); }
+export function hasCount(view: string): boolean { for (const c of COUNTS) if (c.view === view) return true; return false; }
+export function countText(view: string): string { for (const c of COUNTS) if (c.view === view) { const f = c.f; return f(); } return ""; }
 
 export function linked(): boolean { load(); return ST.link; }
 export function setLinked(on: boolean): void {
@@ -93,9 +99,12 @@ export function invert(view: string): void { setInv(view, !vfOf(view).inv); }
 export function preset(view: string, i: number): void { const p = PRESETS[i]; if (!p) return; setInv(view, false); setExpr(view, p.expr, i, p.flag, ""); }
 // i: the most specific kind of event i → its family → no filter (a solo of another kind starts over at that kind)
 export function solo(view: string, s: Sess, evs: Ev[], i: number): string {
-  const v = vfOf(view);
   if (i < 0 || i >= evs.length) return "";
-  const k = specific(kindSet(kindIds(s, evs)[i] + 0));
+  return soloKinds(view, kindSet(kindIds(s, evs)[i] + 0));
+}
+export function soloKinds(view: string, kinds: string[]): string {
+  const v = vfOf(view);
+  const k = specific(kinds);
   if (!k) return "";
   const fam = famOf(k);
   const want = v.solo !== k && v.solo !== fam ? k : v.solo === k && k !== fam ? fam : "";
@@ -124,6 +133,8 @@ const RAWS = ["user", "assistant", "thinking", "tool", "result", "meta"];
 interface MaskMemo { view: string; evs: Ev[]; n: number; kv: number; key: string; m: Uint8Array; shown: number }
 const MASKS: MaskMemo[] = []; const MASK_MAX = 12;
 export const MASK_STATS = { built: 0 };
+// the filter's state in one string: a layout over it is stale when it changes
+export function fstate(view: string): string { return stateKey(view); }
 function stateKey(view: string): string { const v = vfOf(view); return String(ST.link) + "|" + v.expr + "|" + String(v.inv) + "|" + v.flag + "|" + (pinnedEv().length ? pinnedEv().map(printClause).join(" and ") : ""); }
 // 1 = shown, per event of evs (index i = evs[i]); no filter: all shown
 export function mask(view: string, s: Sess, evs: Ev[]): Uint8Array {
@@ -135,17 +146,23 @@ export function mask(view: string, s: Sess, evs: Ev[]): Uint8Array {
   if (!f) { if (!v.inv) for (let i = 0; i < n; i++) m[i] = 1; }
   else {
     const fast = kindOnly(f); const per = new Map<number, number>();
-    const calls = new Map<string, number>();
+    const need = needs(f); const calls = new Map<string, number>(); const byText = new Map<string, number>();
     for (let i = 0; i < n; i++) {
       const e = evs[i]; const id = ids[i] + 0;
       if (e.kind === "tool" && e.id) calls.set(e.id, i);
       let hit = false;
-      if (fast) {
+      if (fast || (e.kind !== "tool" && e.kind !== "result")) { // decided by its kinds and raw kind alone: once per pair
         const ri = RAWS.indexOf(e.kind); const k = id * 8 + (ri < 0 ? 7 : ri);
         const c = per.get(k);
         if (c !== undefined) hit = c === 1;
-        else { hit = evalOne(f, s, evs, i, id, calls); per.set(k, hit ? 1 : 0); }
-      } else hit = evalOne(f, s, evs, i, id, calls);
+        else { hit = evalOne(f, s, evs, i, id, calls, need); per.set(k, hit ? 1 : 0); }
+      } else { // a call or result: also by its call's text (repeated commands are judged once)
+        const ri = RAWS.indexOf(e.kind); let ct = e.text;
+        if (e.kind === "result") { const j = e.id ? calls.get(e.id) : undefined; ct = j !== undefined && j + 0 < n ? evs[j + 0].text : ""; }
+        const k = String(id * 8 + ri) + "\t" + ct; const c = byText.get(k);
+        if (c !== undefined) hit = c === 1;
+        else { hit = evalOne(f, s, evs, i, id, calls, need); if (byText.size < 100000) byText.set(k, hit ? 1 : 0); }
+      }
       if (hit) m[i] = 1;
     }
     if (v.flag === "causes") causes(evs, ids, m);
@@ -158,10 +175,17 @@ export function mask(view: string, s: Sess, evs: Ev[]): Uint8Array {
   MASKS.push({ view, evs, n, kv, key, m, shown: sh });
   return m;
 }
-function evalOne(f: Compiled, s: Sess, evs: Ev[], i: number, id: number, calls: Map<string, number>): boolean {
+// which per-event values the filter reads beyond kinds: 1 the call's name and arguments, 2 its MCP server, 4 its shell family
+function needs(f: Compiled): number {
+  let n = 0;
+  for (const c of f.cs) { const a = attrOf(c.key); if (!a) continue; if (a.key === "mcp.server") n |= 3; else if (a.key === "shell.family") n |= 5; else if (a.ent === "call") n |= 1; }
+  return n;
+}
+function evalOne(f: Compiled, s: Sess, evs: Ev[], i: number, id: number, calls: Map<string, number>, need: number): boolean {
   const e = evs[i]; let call: Ev | null = null;
   if (e.kind === "result" && e.id) { const j = calls.get(e.id); if (j !== undefined && j + 0 < evs.length) call = evs[j + 0]; }
-  const x = evxOf(e, call, kindSet(id));
+  const ks = kindSet(id);
+  const x: EvX = need === 0 ? { raw: e.kind, kinds: ks, tool: "", args: "", server: "", fam: "", err: ks.indexOf("error") >= 0 ? 1 : e.kind === "result" ? 0 : -1 } : evxOf(e, call, ks, need);
   for (const p of f.ev) if (!p(s, x)) return false;
   return true;
 }
@@ -194,16 +218,27 @@ export function matchCount(view: string, s: Sess, evs: Ev[]): { shown: number; t
 export interface Gap { i: number; hidden: number; kinds: Map<string, number> }
 export function runs(view: string, s: Sess, evs: Ev[], from: number, to: number): Gap[] {
   const m = mask(view, s, evs); const ids = kindIds(s, evs); const out: Gap[] = [];
-  let cur: Gap | null = null;
+  let cur: Gap | null = null; let per = new Map<number, number>(); // kind-set id → events of the current run
+  const close = (): void => { const g = cur; if (!g) return; for (const [id, n] of per) for (const f of famsOfSet(id)) g.kinds.set(f, (g.kinds.get(f) ?? 0) + n); cur = null; per = new Map<number, number>(); };
   for (let i = Math.max(0, from); i < Math.min(to, evs.length); i++) {
-    if (m[i] + 0 === 1) { cur = null; continue; }
+    if (m[i] + 0 === 1) { close(); continue; }
     if (!cur) { cur = { i, hidden: 0, kinds: new Map<string, number>() }; out.push(cur); }
     cur.hidden++;
-    const fams: string[] = []; for (const k of kindSet(ids[i] + 0)) { const f = famOf(k); if (fams.indexOf(f) < 0) fams.push(f); }
-    if (!fams.length) fams.push("other");
-    for (const f of fams) cur.kinds.set(f, (cur.kinds.get(f) ?? 0) + 1);
+    const id = ids[i] + 0; per.set(id, (per.get(id) ?? 0) + 1);
   }
+  close();
   return out;
+}
+// the families of a kind set (each once; none = other), per set
+interface FamSet { id: number; fs: string[] }
+const FAMSETS: FamSet[] = [];
+function famsOfSet(id: number): string[] {
+  if (id >= 0 && id < FAMSETS.length && FAMSETS[id].id === id) return FAMSETS[id].fs;
+  while (FAMSETS.length <= id) FAMSETS.push({ id: -1, fs: [] });
+  const fs: string[] = []; for (const k of kindSet(id)) { const f = famOf(k); if (fs.indexOf(f) < 0) fs.push(f); }
+  if (!fs.length) fs.push("other");
+  FAMSETS[id] = { id, fs };
+  return fs;
 }
 // "┄ 37 hidden · reply 20 · shell 12 · read 5 ┄" (families most first, as many as fit w)
 export function gapText(g: Gap, w: number): string {
@@ -236,18 +271,23 @@ export function label(view: string): string {
   return (v.inv ? "not " : "") + l;
 }
 // the empty state: "no skill events in this session — esc clears the filter, K changes it"
-export function emptyText(view: string): string {
+export function emptyText(view: string, where: string = "session"): string {
   const v = vfOf(view);
   const m = /^event\.kind is(?:_one_of)? (.+)$/.exec(v.expr);
   const what = v.inv ? "events outside " + (m ? m[1] ?? "" : "the filter") : m ? (m[1] ?? "").split(" ").join(" or ") : "matching";
-  return "no " + what + " events in this session — esc clears the filter, K changes it";
+  return "no " + what + " events in this " + where + " — esc clears the filter, K changes it";
 }
 
 // ── the chip bar (K) ──
-const BAR = { view: "", open: false, cur: 0, fam: "" };
+// kinds: the counts of the kinds in the view (events, related rows, Wait rows) while the bar is open
+const BAR = { view: "", open: false, cur: 0, fam: "", kinds: (): Map<string, number> => new Map<string, number>() };
 export function barOpen(view: string): boolean { return BAR.open && BAR.view === view; }
-export function openBar(view: string): void { BAR.view = view; BAR.open = true; BAR.cur = 0; BAR.fam = ""; }
+export function openBar(view: string, kinds: () => Map<string, number>): void { BAR.view = view; BAR.open = true; BAR.cur = 0; BAR.fam = ""; BAR.kinds = kinds; }
 export function closeBar(): void { BAR.open = false; BAR.fam = ""; }
+export function barView(): string { return BAR.open ? BAR.view : ""; }
+export function barKinds(): Map<string, number> { const f = BAR.kinds; return f(); }
+// the footer while the bar is open: only its keys (ui/footer.ts)
+export function barHints(): string[][] { return [["←→", "move"], ["␣", "show/hide"], ["↵", BAR.fam ? "—" : "kinds"], ["!", "invert"], ["1-6", "presets"], ["L", "link"], ["esc", BAR.fam ? "families" : "close"]]; }
 // the kinds the expression shows when it is a plain chip clause (event.kind is / is_one_of …), null = everything, [] = the
 // expression is something else (typed)
 function chipSel(v: VF): string[] | null {
@@ -257,19 +297,19 @@ function chipSel(v: VF): string[] | null {
   return c.vals.slice();
 }
 function chipOn(sel: string[] | null, k: string): boolean { if (!sel) return true; for (const x of sel) if (x === k || (x.indexOf(":") < 0 && famOf(k) === x)) return true; return false; }
-function chipsOf(view: string, s: Sess, evs: Ev[]): Chip[] {
-  const m = kindsIn(s, evs); const sel = chipSel(vfOf(view)); const o: Chip[] = [];
+function chipsOf(view: string, m: Map<string, number>): Chip[] {
+  const sel = chipSel(vfOf(view)); const o: Chip[] = [];
   const names = BAR.fam ? kindsOfFam(m, BAR.fam) : famsIn(m);
   for (const k of names) o.push({ name: k, n: m.get(k) ?? 0, on: sel !== null && !sel.length ? false : chipOn(sel, k) });
   return o;
 }
-export function chipBar(view: string, s: Sess, evs: Ev[], w: number): string {
-  const cs = chipsOf(view, s, evs); BAR.cur = Math.max(0, Math.min(BAR.cur, cs.length - 1));
+export function chipBar(view: string, m: Map<string, number>, w: number): string {
+  const cs = chipsOf(view, m); BAR.cur = Math.max(0, Math.min(BAR.cur, cs.length - 1));
   return chipLine(cs, BAR.cur, w, BAR.fam, vfOf(view).inv);
 }
 // ␣ on a chip: show / hide that family (or kind); the expression becomes the chips' clause
-function toggle(view: string, s: Sess, evs: Ev[], k: string): void {
-  const m = kindsIn(s, evs); const fams = famsIn(m); const v = vfOf(view);
+function toggle(view: string, m: Map<string, number>, k: string): void {
+  const fams = famsIn(m); const v = vfOf(view);
   let sel = chipSel(v);
   if (sel !== null && !sel.length) { say("info", "the typed filter was replaced by the chips"); sel = null; }
   const cur: string[] = sel ? sel.slice() : fams.slice();
@@ -289,43 +329,49 @@ function toggle(view: string, s: Sess, evs: Ev[], k: string): void {
   if (!next.length) { say("info", "at least one kind stays shown — ! inverts the filter"); return; }
   let all = true; for (const f of fams) if (next.indexOf(f) < 0) all = false;
   if (all) setInv(view, false);
-  setExpr(view, all ? "" : next.length === 1 ? "event.kind is " + next[0] : "event.kind is_one_of " + next.join(", "), -1, "", "");
+  setExpr(view, all ? "" : next.length === 1 ? "event.kind is " + next[0] : "event.kind is_one_of " + next.join(" "), -1, "", "");
 }
 // a key while the bar is open: true = taken (every key is, but ? and ctrl-c)
-export function chipKey(view: string, s: Sess, evs: Ev[], k: string): boolean {
+export function chipKey(view: string, m: Map<string, number>, k: string): boolean {
   if (k === "?" || k === "ctrl-c") return false;
-  const cs = chipsOf(view, s, evs);
-  if (k === "esc" || k === "K" || k === "q") { if (BAR.fam && k === "esc") { BAR.cur = Math.max(0, famsIn(kindsIn(s, evs)).indexOf(BAR.fam)); BAR.fam = ""; } else closeBar(); return true; }
+  const cs = chipsOf(view, m);
+  if (k === "esc" || k === "K" || k === "q") { if (BAR.fam && k === "esc") { BAR.cur = Math.max(0, famsIn(m).indexOf(BAR.fam)); BAR.fam = ""; } else closeBar(); return true; }
   if (k === "left" || k === "h") BAR.cur = Math.max(0, BAR.cur - 1);
   else if (k === "right" || k === "l") BAR.cur = Math.min(Math.max(0, cs.length - 1), BAR.cur + 1);
   else if (k === "home" || k === "g") BAR.cur = 0;
   else if (k === "end" || k === "G") BAR.cur = Math.max(0, cs.length - 1);
-  else if (k === " ") { const c = cs[BAR.cur]; if (c) toggle(view, s, evs, c.name); }
-  else if (k === "enter" || k === "down") { const c = cs[BAR.cur]; if (c && !BAR.fam && kindsOfFam(kindsIn(s, evs), c.name).length) { BAR.fam = c.name; BAR.cur = 0; } else if (c && k === "enter" && !BAR.fam) say("info", c.name + " has no kinds below it"); }
-  else if (k === "up" || k === "backspace" || k === "bs") { if (BAR.fam) { BAR.cur = Math.max(0, famsIn(kindsIn(s, evs)).indexOf(BAR.fam)); BAR.fam = ""; } }
+  else if (k === " ") { const c = cs[BAR.cur]; if (c) toggle(view, m, c.name); }
+  else if (k === "enter" || k === "down") { const c = cs[BAR.cur]; if (c && !BAR.fam && kindsOfFam(m, c.name).length) { BAR.fam = c.name; BAR.cur = 0; } else if (c && k === "enter" && !BAR.fam) say("info", c.name + " has no kinds below it"); }
+  else if (k === "up" || k === "backspace" || k === "bs") { if (BAR.fam) { BAR.cur = Math.max(0, famsIn(m).indexOf(BAR.fam)); BAR.fam = ""; } }
   else if (k === "!") invert(view);
   else if (k === "L") { setLinked(!linked()); say("info", linked() ? "one filter in all event views (L again: per view)" : "a filter per view"); }
-  else if (k.length === 1 && k >= "1" && k <= "6") { preset(view, Number(k) - 1); say("info", PRESETS[Number(k) - 1]?.name ?? ""); }
+  else if (k.length === 1 && "123456".indexOf(k) >= 0) { preset(view, Number(k) - 1); say("info", PRESETS[Number(k) - 1]?.name ?? ""); }
   return true;
 }
 
 // ── keys shared by every event view ──
-// K chips, i solo (on event cur), ! invert, ] [ next / previous match, esc clear (when a filter is on), / the expression,
-// L link. Returns the new cursor (an event index) for ] [, -1 = handled without a move, -2 = not a filter key
-export function viewKey(view: string, s: Sess, evs: Ev[], cur: number, k: string): number {
-  if (barOpen(view)) return chipKey(view, s, evs, k) ? -1 : -2;
-  if (k === "K") { openBar(view); return -1; }
-  if (k === "i") { const w = solo(view, s, evs, cur); say("info", w ? "only " + w + " — i again widens, a third time clears" : "all events"); return -1; }
+// K chips (kinds: the view's kind counts), i solo (cur: the kinds under the cursor), ! invert, ] [ next / previous match
+// (next(dir): the view's next matching position), esc clear (when a filter is on), / the expression, L link.
+// Returns next()'s position for ] [, -1 = handled without a move, -2 = not a filter key
+export function filterKey(view: string, k: string, kinds: () => Map<string, number>, cur: string[], next: (dir: number) => number): number {
+  if (barOpen(view)) return chipKey(view, kinds(), k) ? -1 : -2;
+  if (k === "K") { openBar(view, kinds); return -1; }
+  if (k === "i") { const w = soloKinds(view, cur); say("info", w ? "only " + w + " — i again widens, a third time clears" : "all events"); return -1; }
   if (k === "!") { invert(view); say("info", vfOf(view).inv ? "inverted: " + label(view) : label(view)); return -1; }
   if (k === "L") { setLinked(!linked()); say("info", linked() ? "one filter in all event views (L again: per view)" : "a filter per view"); return -1; }
   if (k === "/") { openInput(view); return -1; }
   if (k === "]" || k === "[") {
-    const d = k === "]" ? 1 : -1; const j = nextMatch(view, s, evs, cur, d);
+    const d = k === "]" ? 1 : -1; const j = next(d);
     if (j < 0) say("info", active(view) ? "no " + (d > 0 ? "later" : "earlier") + " match" : "no " + (d > 0 ? "later" : "earlier") + " mark — K filters events, then ] [ step through them");
     return j < 0 ? -1 : j;
   }
   if (k === "esc" && (vfOf(view).expr || vfOf(view).inv)) { vfClear(view); say("info", "event filter cleared — esc again goes back"); return -1; }
   return -2;
+}
+// filterKey over an events array (transcript, call graph): cur = the cursor's event
+export function viewKey(view: string, s: Sess, evs: Ev[], cur: number, k: string): number {
+  const ck = cur >= 0 && cur < evs.length ? kindSet(kindIds(s, evs)[cur] + 0) : [];
+  return filterKey(view, k, (): Map<string, number> => kindsIn(s, evs), ck, (d: number): number => nextMatch(view, s, evs, cur, d));
 }
 // the expression input (/): completion and carets from the filter language, the chips' clause as the starting text
 export const INPUT = { view: "", kinds: [] as string[] };

@@ -8,7 +8,7 @@ import { EVK } from "./query/attrs.ts";
 import { cycleNext, exprErr, newCyc } from "./query/ui.ts";
 import { addClause } from "./query/scope.ts";
 import { parse } from "./query/parse.ts";
-import { INPUT, PRESETS, vfOf, vfSet, preset, flush, label } from "../ui/evfilter.ts";
+import { INPUT, PRESETS, hasCount, countText, vfOf, vfSet, preset, flush, label, active, barView, barKinds, closeBar, chipKey } from "../ui/evfilter.ts";
 import { restore } from "./palette/actions.ts";
 
 // the event view a palette origin (or the current screen) is in: "" none
@@ -42,6 +42,22 @@ H.input.push((action: string, ev: string, text: string): boolean => {
   return false;
 });
 H.onTick.push(() => { flush(false); });
+// the chip bar is modal: every key goes to it (? shows help, ctrl-k the palette) while its view is on screen
+H.modal.push((mode: string, k: string): boolean => {
+  const v = barView(); if (!v) return false;
+  if (k === "ctrl-k") { closeBar(); return false; }
+  if (viewOfCtx(mode, S.fview, S.tab) !== v) { if (mode !== "help" && mode !== "input" && mode !== "palette" && mode !== "confirm") closeBar(); return false; }
+  return chipKey(v, barKinds(), k);
+});
+// footer: the chip bar's keys while it is open; with a filter its label, count and the keys to step, edit and clear it;
+// without one, how to start (K, /, i, !, ] [)
+H.footerHints.push((mode: string): string[][] => {
+  const v = viewOfCtx(mode, S.fview, S.tab); if (!v || (mode === "list" && !hasCount(v))) return [];
+  if (barView() === v) return []; // ui/footer.ts shows the bar's own keys only
+  if (active(v)) { const c = countText(v); return [[label(v), c, "1"], ["]/[", "next", "1"], ["K", "edit", "1"], ["esc", "clear"]]; }
+  if (mode === "view") return v === "callgraph" ? [["K", "kinds", "3"], ["/", "filter", "3"]] : []; // their own keys fill 80 columns: related shows / filter itself, the rest is in ?
+  return [["K", "kinds", "1"], ["i", "solo", "3"], ["!", "invert", "3"], ["/", "filter", "2"], ["]/[", "next match", "3"]];
+});
 H.onQuit.push(() => { flush(true); });
 
 // ── palette: the presets and file edits, in any event view ──
