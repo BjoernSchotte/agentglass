@@ -1,0 +1,61 @@
+claude	0	user		prompt
+claude	1	thinking		reply:thinking
+claude	2	assistant		reply
+claude	3	tool	Bash	error,shell:test
+claude	4	result		error,shell:test
+claude	5	tool	Bash	shell:vcs
+claude	6	result		shell:vcs
+claude	7	tool	Edit	edit
+claude	8	result		edit
+claude	9	tool	Read	read
+claude	10	result		read
+claude	11	tool	Grep	read:search
+claude	12	result		read:search
+claude	13	tool	WebFetch	web
+claude	14	result		web
+claude	15	tool	mcp__github__get_issue	mcp:github
+claude	16	result		mcp:github
+claude	17	tool	Task	subagent
+claude	18	result		subagent
+claude	19	tool	Skill	skill:load
+claude	20	result		skill:load
+claude	21	tool	AskUserQuestion	approval
+claude	22	result		approval,skill:unload
+claude	23	assistant		reply
+codex	0	user		prompt
+codex	1	tool	shell	shell:build
+codex	2	result		shell:build
+codex	3	tool	apply_patch	edit
+codex	4	result		edit
+codex	5	meta		meta:compact
+codex	6	assistant		reply
+pi	0	tool	bash	shell:install
+pi	1	result		shell:install
+pi	2	tool	edit	edit
+pi	3	result		edit
+pi	4	tool	write	edit
+pi	5	result		edit
+pi	6	tool	read	read
+pi	7	result		read
+gemini	0	tool	write_file	edit
+gemini	1	result		edit
+gemini	2	tool	replace	edit
+gemini	3	result		edit
+gemini	4	tool	read_file	read
+gemini	5	result		read
+gemini	6	tool	run_shell_command	error,shell:typecheck
+gemini	7	result		error,shell:typecheck
+gemini	8	tool	google_web_search	web
+gemini	9	result		web
+gemini	10	tool	activate_skill	skill:load
+gemini	11	result		skill:load
+gemini	12	tool	list_directory	read:search
+opencode	0	tool	edit	edit
+opencode	1	tool	write	edit
+opencode	2	tool	bash	shell:test
+opencode	3	result		shell:test
+opencode	4	tool	skill	skill:load
+opencode	5	meta		skill:load
+opencode	6	meta		meta:compact
+opencode	7	meta		prompt:agent
+opencode	8	tool	patch	edit

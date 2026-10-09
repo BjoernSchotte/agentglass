@@ -90,7 +90,9 @@ eq("watch program from args", String(ev3), "true");
 const al = (src: string): string => { const ps = parse(src); if (ps.err) return "err"; const r = compile(ps.cs, "watch"); if (r.err || !r.f) return "err"; let k = true; if (c1) for (const q of r.f.event) if (!q(c1, "alert", "", "")) k = false; return String(k); };
 eq("watch alert lines", [al("event is alert"), al("event is tool"), al("tool is Bash"), al("event is_not tool"), al("harness is claude")].join(","), "true,false,false,true,true");
 const p = compile(parse("harness is pi and cost > 2").cs, "procs"); eq("procs dims", p.f ? p.f.dimmed.map(printClause).join("|") : "", "cost > 2");
-eq("event outside watch", compile(parse("event is tool").cs, "list").err ? "err" : "ok", "err");
+// skill-usage §5a.3: on the session list event clauses lift ("has such an event"); Stats has no events to select
+eq("event on the list lifts", compile(parse("event is tool").cs, "list").err ? "err" : "ok", "ok");
+eq("event in stats", compile(parse("event is tool").cs, "stats").err ? "err" : "ok", "err");
 // units
 eq("units", [numOf("tok", "40k"), numOf("tok", "1.5M"), numOf("size", "100KB"), numOf("size", "1MB"), numOf("dur", "500ms"), numOf("dur", "2m"), numOf("dur", "1h"), numOf("ratio", "20%"), numOf("usd", "$0.50")].join(","), "40000,1500000,102400,1048576,500,120000,3600000,0.2,0.5");
 eq("weekdayOf", [weekdayOf("2026-10-03"), weekdayOf("2024-02-29"), weekdayOf("2000-01-01")].join(","), "6,4,6");

@@ -107,7 +107,7 @@ function F(cs: Clause[]): Compiled { if (!cs.length) return EMPTY; const r = com
 // (all their tools, programs, …), not only by the rows that made them match
 function within(f: Compiled, sel: Compiled, days: string[]): Compiled {
   const sess = f.sess.concat([(s: Sess): boolean => matchSession(sel, s, days)]);
-  return { key: f.key + " ∧ ⊂[" + sel.key + "@" + days.join(",") + "]", cs: f.cs, sess, day: f.day, call: f.call, event: f.event, content: f.content, dayKeys: f.dayKeys, rowx: f.rowx, needsCalls: f.needsCalls, dimmed: f.dimmed };
+  return { key: f.key + " ∧ ⊂[" + sel.key + "@" + days.join(",") + "]", cs: f.cs, sess, day: f.day, call: f.call, event: f.event, ev: f.ev, evLift: f.evLift, content: f.content, dayKeys: f.dayKeys, rowx: f.rowx, needsCalls: f.needsCalls, dimmed: f.dimmed };
 }
 function groupJob(r: Run, scopeF: Compiled, cs: Clause[], days: string[], dims: string[]): AggJob {
   if (!cs.length) return aggJob(scopeF, r.entity, days, dims, r.weight, null);
