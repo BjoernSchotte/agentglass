@@ -18,8 +18,10 @@ export interface NotifyCfg { bell: boolean; desktop: boolean; throttleSec: numbe
 export interface RuleSet { rules: Rule[]; notify: NotifyCfg; diags: Diag[]; syntax: string /* "" or the JSON error */; cmdAt: number[] /* [line, col] of notify.command */ }
 
 // ── metric catalog (spec §2) ──
-export const METRICS: string[] = ["turn_done", "approval_wait", "repeat_run", "command_age", "stalled", "spinning", "session_cost", "session_tokens", "tool_calls", "tool_errors", "tool_error_rate", "contention", "contention_family"];
-const UNITS = ["duration", "duration", "count", "duration", "duration", "duration", "usd", "count", "count", "count", "ratio", "count", "count"];
+export const METRICS: string[] = ["turn_done", "approval_wait", "repeat_run", "command_age", "stalled", "spinning", "session_cost", "session_tokens", "tool_calls", "tool_errors", "tool_error_rate", "contention", "contention_family", "skill_reloads", "skill_carry_usd", "skill_context_share"];
+const UNITS = ["duration", "duration", "count", "duration", "duration", "duration", "usd", "count", "count", "count", "ratio", "count", "count", "count", "usd", "ratio"];
+// skill-usage 6.12: from the session's skill loads in the ledger ({skill}: the skill the value is about)
+export const SKILL_METRICS = ["skill_reloads", "skill_carry_usd", "skill_context_share"];
 // agent-wait: heavy commands running on this host (one value for every session running one); notified once per (rule, host)
 export const HOST_METRICS = ["contention", "contention_family"];
 export const CALL_METRICS = ["repeat_run", "tool_calls", "tool_errors", "tool_error_rate"];
@@ -43,6 +45,8 @@ const DEFMSG: Record<string, string> = {
   tool_calls: "{value} calls (threshold {threshold})", tool_errors: "{value} failed calls (threshold {threshold})",
   tool_error_rate: "error rate {value} (threshold {threshold})",
   contention: "{value} heavy commands running: {cmd}", contention_family: "{value} of the same heavy command running: {cmd}",
+  skill_reloads: "{skill} loaded {value}× in one context", skill_carry_usd: "{skill} carried {value} (threshold {threshold})",
+  skill_context_share: "skills fill {value} of the context (threshold {threshold})",
 };
 export const STATES = ["fire", "escalate", "deescalate", "resolve"];
 const OPS = [">", ">=", "<", "<="];
@@ -174,9 +178,11 @@ export function builtins(): Rule[] {
     mk("long-cmd", "command_age", ">", -1, 600, "none", false, "{cmd} running {value}", "long cmd", "[long-cmd] "),
     mk("stalled", "stalled", ">", -1, 480, "none", false, "no log activity {value}, cpu {cpu}%", "stalled", "[stalled] "),
     mk("spinning", "spinning", ">", -1, 180, "none", false, "cpu > {cpu}% for 3m while the log is silent {value}", "spinning", "[spinning] "),
-    contention(),
+    contention(), skillReload(),
   ];
 }
+// skill-usage 6.12: a skill loaded again while a copy of it is still in context; off until enabled ({"rules": [{"id": "skill-reload", "enabled": true}]})
+function skillReload(): Rule { const r = mk("skill-reload", "skill_reloads", ">=", 2, -1, "none", true, "{skill} loaded {value}× in one context", "skill reload", "[skill-reload] "); r.enabled = false; return r; }
 // agent-wait: ≥ 3 heavy commands on this host for 30 s; off until enabled ({"rules": [{"id": "contention", "enabled": true}]})
 function contention(): Rule { const r = mk("contention", "contention", ">=", 3, -1, "none", true, "{value} heavy commands running: {cmd}", "contention", "[contention] "); r.forSec = 30; r.enabled = false; return r; }
 export function defaultNotify(): NotifyCfg { return { bell: true, desktop: true, throttleSec: 30, command: [], on: ["fire", "escalate"] }; }

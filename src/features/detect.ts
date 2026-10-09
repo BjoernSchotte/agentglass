@@ -105,9 +105,9 @@ function dur(sec: number): string { return ago(Date.now() - sec * 1000); }
 // a metric's value for a rule: v -1 = absent (its preconditions do not hold, the rule cannot fire); lv: the level the agent
 // itself asserts (1: Gemini's approval title), whatever the threshold; at: recorded time of the newest record behind v;
 // hint: a guess appended to the alert's message ("approval?": approvalGuess)
-export interface MVal { v: number; tool: string; cmd: string; cpu: string; at: number; lv: number; hint: string }
-export function absent(): MVal { return { v: -1, tool: "", cmd: "", cpu: "", at: 0, lv: 0, hint: "" }; }
-function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal { return { v, tool, cmd, cpu, at, lv: 0, hint: "" }; }
+export interface MVal { v: number; tool: string; cmd: string; cpu: string; at: number; lv: number; hint: string; skill: string } // skill: the skill metrics' {skill} (shown name)
+export function absent(): MVal { return { v: -1, tool: "", cmd: "", cpu: "", at: 0, lv: 0, hint: "", skill: "" }; }
+function mv(v: number, tool: string, cmd: string, cpu: string, at: number): MVal { return { v, tool, cmd, cpu, at, lv: 0, hint: "", skill: "" }; }
 const SAMPLE_SEC = 1.5; // CPU sample cadence while an agent is live (sched.ts ALARM)
 // seconds a tool call has been open (or, likely, one Gemini has not logged yet: unlogged) while the tree is quiet (avg over samples
 // < cpuBelow) and no tool command started within graceSec after it; the agent's own approval title (Gemini logs the call only once it ran) asserts it at once

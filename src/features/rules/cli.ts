@@ -78,6 +78,7 @@ const EXAMPLES = [
   '{"id":"bash-repeats","metric":"repeat_run","where":"tool is Bash","degraded":5,"enabled":false}',
   '{"id":"waiting-codex","metric":"turn_done","where":"harness is codex","degraded":"5m","ack":"look","enabled":false}',
   '{"id":"same-heavy-command","metric":"contention_family","degraded":2,"for":"30s","enabled":false}',
+  '{"id":"fat-skill","metric":"skill_carry_usd","op":">","degraded":0.5,"message":"{skill} carried {value}","enabled":false}',
 ];
 export function defaultsText(examples: boolean): string {
   const rows: string[] = []; for (const r of builtins()) rows.push(ruleJson(r));

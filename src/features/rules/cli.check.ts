@@ -15,7 +15,7 @@ function ev(kind: string, text: string): Ev { return { kind, text, ts: "", id: "
 
 const e = checkText('{"rules":[\n {"id":"x","metric":"nope","degraded":1},\n {"id":"y","metric":"session_cost","degraded":1,"colour":1}\n]}', true, true);
 eq("error + warning: exit 2", String(e.code), "2");
-eq("error line", e.lines.filter((l: string) => l.startsWith("rules.json:")).join(" | "), "rules.json:2:21: x: unknown metric \"nope\"; one of turn_done, approval_wait, repeat_run, command_age, stalled, spinning, session_cost, session_tokens, tool_calls, tool_errors, tool_error_rate, contention, contention_family — rule disabled | rules.json:3:49: y: warning: unknown field \"colour\" (ignored)");
+eq("error line", e.lines.filter((l: string) => l.startsWith("rules.json:")).join(" | "), "rules.json:2:21: x: unknown metric \"nope\"; one of turn_done, approval_wait, repeat_run, command_age, stalled, spinning, session_cost, session_tokens, tool_calls, tool_errors, tool_error_rate, contention, contention_family, skill_reloads, skill_carry_usd, skill_context_share — rule disabled | rules.json:3:49: y: warning: unknown field \"colour\" (ignored)");
 eq("json diags", e.json.diagnostics.map((d) => d.severity).join(","), "error,warning");
 eq("warnings only: exit 1", String(checkText('{"rules":[{"id":"y","metric":"session_cost","degraded":1,"colour":1}]}', true, true).code), "1");
 eq("clean: exit 0", String(checkText('{"rules":[{"id":"approval","critical":"2m"}]}', true, true).code), "0");
@@ -39,7 +39,7 @@ const sig = (rs: typeof b): string => rs.rules.map((r) => [r.id, r.metric, r.op,
 eq("defaults round-trip", sig(d), sig(b));
 const x = loadRules(defaultsText(true), true);
 eq("examples: no diags", x.diags.map((y) => y.msg).join("|"), "");
-eq("examples: disabled", x.rules.filter((r) => !r.enabled).length + " of " + String(x.rules.length), "7 of 13");
+eq("examples: disabled", x.rules.filter((r) => !r.enabled).length + " of " + String(x.rules.length), "9 of 15");
 
 // --watch: a synthetic stalled session gives one critical fire on the first step
 const s = newSess("claude", "st1", "/fx/st1.jsonl", false);

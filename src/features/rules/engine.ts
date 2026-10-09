@@ -96,11 +96,11 @@ export function fmtVal(unit: string, v: number): string {
   if (unit === "ratio") return (v * 100).toFixed(0) + "%";
   return String(Math.round(v));
 }
-// placeholder values of an alert: {value} {threshold} {severity} {rule} {tool} {title} {project} {harness} {cpu} {cmd}
+// placeholder values of an alert: {value} {threshold} {severity} {rule} {tool} {title} {project} {harness} {cpu} {cmd} {skill}
 export function placeholders(r: Rule, v: MVal, level: number, s: Sess): Map<string, string> {
   const u = unitOf(r.metric); const m = new Map<string, string>();
   m.set("value", v.v < 0 ? "" : fmtVal(u, v.v)); m.set("threshold", fmtVal(u, thrOf(r, level || 1))); m.set("severity", severityOf(level));
-  m.set("rule", r.id); m.set("tool", v.tool); m.set("cmd", v.cmd); m.set("cpu", v.cpu);
+  m.set("rule", r.id); m.set("tool", v.tool); m.set("cmd", v.cmd); m.set("cpu", v.cpu); m.set("skill", v.skill);
   m.set("title", titleOf(s)); m.set("project", base(s.cwd)); m.set("harness", s.h);
   return m;
 }

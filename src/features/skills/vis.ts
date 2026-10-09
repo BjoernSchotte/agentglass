@@ -92,4 +92,4 @@ export function textHiddenWhy(name: string): string {
 }
 
 // modules that print skill names or text: each must call skillVis (vis.check.ts reads them); later surfaces add theirs
-export const VIS_SURFACES: string[] = ["src/features/skills/cli.ts", "src/features/skills/advise.ts", "src/features/skills/text.ts", "src/features/skills/model.ts", "src/features/skills/json.ts", "src/features/skills/watchvis.ts", "src/features/skills/marks.ts", "src/features/cli.ts"];
+export const VIS_SURFACES: string[] = ["src/features/skills/cli.ts", "src/features/skills/advise.ts", "src/features/skills/text.ts", "src/features/skills/model.ts", "src/features/skills/json.ts", "src/features/skills/watchvis.ts", "src/features/skills/marks.ts", "src/features/cli.ts", "src/features/rules/metrics.ts"];

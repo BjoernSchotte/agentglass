@@ -6,7 +6,10 @@ import { type Call, DICT, intern } from "../usage/facts.ts";
 import { rowsFrom, newRows } from "../usage/rows.ts";
 import { type Obs, type MVal, approvalWait, commandAge, stalledFor, spinningFor, repeatRun } from "../detect.ts";
 import { type Rule, loadRules } from "./config.ts";
-import { metricOf, procMetric, sessMetric } from "./metrics.ts";
+import { metricOf, procMetric, sessMetric, skillMetric } from "./metrics.ts";
+import { render } from "./engine.ts";
+import { type Acc, newAcc, bucket, tokens, turn, skillLoad, skillUnload } from "../usage/record.ts";
+import { setVis } from "../skills/vis.ts";
 import { type Run, LIVE } from "../wait/live.ts";
 
 let bad = 0;
@@ -118,6 +121,47 @@ eq("memo one entry", String(memo.size) + " " + v(a1), "1 2.5");
   eq("{cmd} family", val(rf, 0).cmd, "pnpm test ×2");
   LIVE.cur = { at: now - 60000, load1: -1, cpus: 8, memAvailPct: -1, running: LIVE.cur.running };
   eq("stale look: absent", v(val(rc, 0)), "absent");
+}
+// skill-usage 6.12: reloads while a copy is in context, carry $ per skill, the open skills' share of the context
+{
+  setVis([], false);
+  const T = "LOREMSKILLTEXT" + "x".repeat(3586); const iso = "2026-10-01T09:00:00.000Z"; const M = "claude-sonnet-4-5";
+  const mk = (compactFirst: boolean): Acc => {
+    const a = newAcc(); const d = bucket(a, 0, iso);
+    turn(a, 0, iso, 1); tokens(a, d, M, 0, 10, 0, 20000, 0);
+    skillLoad(a, "alpha", "user", 1000, iso, T, true, "/h/.claude/skills/alpha", false);
+    tokens(a, d, M, 0, 10, 20000, 1500, 0);
+    if (compactFirst) skillUnload(a, 1500, "compact");
+    skillLoad(a, "alpha", "model", 2000, iso, T, true, "/h/.claude/skills/alpha", false);
+    skillLoad(a, "beta", "model", 2100, iso, T, true, "/h/.claude/skills/beta", false);
+    tokens(a, d, M, 0, 10, 21500, 3000, 0);
+    turn(a, 0, iso, 1);
+    for (let i = 0; i < 3; i++) tokens(a, d, M, 0, 10, 24500, 100, 0);
+    return a;
+  };
+  const twice = mk(false); const after = mk(true);
+  const rv = (m: MVal): string => v(m) + (m.skill ? " " + m.skill : "");
+  eq("skill_reloads: loaded twice while in context", rv(skillMetric("skill_reloads", [twice])), "2 alpha");
+  eq("skill_reloads: the first was compacted before", rv(skillMetric("skill_reloads", [after])), "1 beta");
+  eq("skill_reloads: no loads", v(skillMetric("skill_reloads", [newAcc()])), "absent");
+  const cu = skillMetric("skill_carry_usd", [twice]);
+  eq("skill_carry_usd: the most carried skill", cu.skill + " " + String(cu.v > 0), "alpha true");
+  const sh = skillMetric("skill_context_share", [twice]); const shv = sh.v;
+  eq("skill_context_share in (0, 1]", String(shv > 0 && shv <= 1) + " " + String(Math.round(shv * 1000) / 1000 === Math.round(Math.min(1, 3000 / 24600) * 1000) / 1000), "true true");
+  setVis([{ match: "alpha", mode: "omit" }], false);
+  eq("omit: alpha never names an alert", rv(skillMetric("skill_reloads", [twice])), "1 beta");
+  setVis([{ match: "alpha", mode: "name" }], false);
+  const fk = skillMetric("skill_reloads", [twice]).skill;
+  eq("name rule: the fake, same length", String(fk !== "alpha" && fk.length === 5), "true");
+  setVis([], false);
+  // the built-in: off; enabled it fires degraded with its message
+  const def = loadRules("{}", true).rules.filter((r: Rule) => r.id === "skill-reload")[0];
+  eq("skill-reload built-in", def ? def.metric + " " + def.op + " " + String(def.deg) + " " + String(def.enabled) : "", "skill_reloads >= 2 false");
+  const en = loadRules('{"rules":[{"id":"skill-reload","enabled":true}]}', true).rules.filter((r: Rule) => r.id === "skill-reload")[0];
+  const s0 = newSess("claude", "s", "/x/s.jsonl", false); s0.cwd = "/x";
+  const mv = skillMetric("skill_reloads", [twice]);
+  eq("enabled: degraded message", en ? String(en.enabled) + " " + String(mv.v >= en.deg) + " " + render(en, mv, 1, s0) : "", "true true alpha loaded 2× in one context");
+  eq("unknown session: absent", v(sessMetric(rule('{"id":"r","metric":"skill_reloads","degraded":2}'), s0)), "absent");
 }
 console.log(bad ? bad + " failed" : "rules metrics: all checks passed");
 if (bad) process.exit(1);
