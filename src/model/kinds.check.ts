@@ -8,6 +8,8 @@ import { kindIds, kindSet, kindsOf, kindsIn, kindMatch, evKinds, famsIn, kindsOf
 import { parseEvents } from "../harness/index.ts";
 import { parse } from "../features/query/parse.ts";
 import { type EvX, compile, evxOf, EMPTY, matchSession } from "../features/query/eval.ts";
+import { localOf } from "../features/usage/facts.ts";
+function localDay(t: number): string { return localOf(t).day; }
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -161,6 +163,9 @@ ok("watch shim sees kinds of (tool, args)", wb);
 // the session list lifts event clauses: only the session with a skill mark has a skill event
 const lf = compile(parse("event.kind is skill").cs, "list").f ?? EMPTY;
 eq("list lifts event.kind is skill", all.map((x: Sess) => matchSession(lf, x, null) ? x.h : "").filter((h: string) => h !== "").join(","), "claude");
+// like a call clause, the event must lie on a selected day: none on a day the session has no events
+eq("lifted event outside the days", String(matchSession(lf, all[0], ["1999-01-01"])), "false");
+eq("lifted event on its day", String(matchSession(lf, all[0], [localDay(T + 18000)])), "true");
 
 // a failure the harness flags without saying so in the output text is an error too (the call rows count it as one)
 function sessOfLines(h: string, lines: string[]): Sess {

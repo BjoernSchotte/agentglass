@@ -433,17 +433,22 @@ export function rowsPending(f: Compiled, s: Sess): boolean {
   const a = ledger.get(s.path); return !!a && rowsMayMatch(a.days, callCutoff(), NO_DAYS, true);
 }
 // list / json: the session has an event that passes every event clause — a call row (its tool, shell family and
-// status), a mark (skill loads, debug episodes) or a prompt / reply (any turn) — the logs are not read for it
-function evLifted(f: Compiled, s: Sess, a: Acc): boolean {
+// status), a mark (skill loads, debug episodes) or a prompt / reply (any turn) — the logs are not read for it. Like a
+// call clause, the event must lie on a day the selection and the day clauses keep (ds / any: matchSession's days)
+function evLifted(f: Compiled, s: Sess, a: Acc, ds: Set<string>, any: boolean): boolean {
   const ok = (x: EvX): boolean => { for (const p of f.ev) if (!p(s, x)) return false; return true; };
-  let turns = 0; for (const d of a.days.values()) turns += d.turns;
-  if (turns > 0 || s.outTok > 0) {
+  const free = any && !f.day.length; // no day restriction: undated events count too
+  const dayOk = (dk: string): boolean => { if (!any && !ds.has(dk)) return false; if (!f.day.length) return true; const d = a.days.get(dk); return !!d && dayMatches(f, s, dk, d); };
+  const atOk = (t: number): boolean => t > 0 ? dayOk(localOf(t).day) : free;
+  let turns = 0; for (const [dk, d] of a.days) if (dayOk(dk)) turns += d.turns;
+  if (turns > 0 || (free && s.outTok > 0)) {
     if (ok({ raw: "user", kinds: ["prompt"], tool: "", args: "", server: "", fam: "", err: -1 })) return true;
     if (ok({ raw: "assistant", kinds: ["reply"], tool: "", args: "", server: "", fam: "", err: -1 })) return true;
   }
-  for (const m of marksOf(s, null)) if (ok({ raw: "meta", kinds: [m.kind], tool: "", args: "", server: "", fam: "", err: -1 })) return true;
-  const r = callsOf(s);
+  for (const m of marksOf(s, null)) if (atOk(m.t0) && ok({ raw: "meta", kinds: [m.kind], tool: "", args: "", server: "", fam: "", err: -1 })) return true;
+  const r = callsOf(s); const cut = callCutoff();
   for (let i = r.n - 1; i >= 0; i--) {
+    const t = r.t[i] + 0; if (t < cut || !atOk(t)) continue;
     const tool = nameOf(DICT.tool, r.tool[i] + 0); const fi = rowFam(r, i);
     const ks = fi >= 0 ? ["shell:" + famKind(fi)] : toolKinds(tool, "");
     const e = r.err[i] + 0; if (e === 1) ks.push("error");
@@ -456,7 +461,7 @@ export function matchSession(f: Compiled, s: Sess, days: string[] | null): boole
   if (!f.call.length && !f.day.length && !f.evLift) return true;
   if (s.host) return false; // a remote row (fleet): its calls and days are not here (and it never gets a ledger entry)
   const a = accOf(s); const any = days === null; const ds = new Set<string>(days ?? []);
-  if (f.evLift && !evLifted(f, s, a)) return false;
+  if (f.evLift && !evLifted(f, s, a, ds, any)) return false;
   if (!f.call.length && !f.day.length) return true;
   if (f.call.length) {
     const cut = callCutoff(); if (!rowsMayMatch(a.days, cut, ds, any)) return false;
