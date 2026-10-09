@@ -160,13 +160,20 @@ function val(x: Attr): string {
   return "{\"arrayValue\":{\"values\":[" + x.a.map((v: string) => "{\"stringValue\":" + JSON.stringify(v) + "}").join(",") + "]}}";
 }
 export function attrsJson(a: Attr[]): string { return "[" + a.map((x: Attr) => "{\"key\":" + JSON.stringify(x.k) + ",\"value\":" + val(x) + "}").join(",") + "]"; }
+// an event's attributes as a span's go out (rename, drop, the --redact scrub); a skill's loaded text only with --content,
+// cut to contentMax
+function eventAttrs(a: Attr[], c: OtlpCfg): Attr[] {
+  const o: Attr[] = [];
+  for (const x of a) { if (x.k !== "agentglass.skill.text") { o.push(x); continue; } if (c.content) o.push(attrS(x.k, cut(x.s, c.contentMax))); }
+  return tables(o, c);
+}
 function spanJson(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): string {
   let s = "{\"traceId\":\"" + t.traceId + "\",\"spanId\":\"" + sp.spanId + "\"";
   if (sp.parentId) s += ",\"parentSpanId\":\"" + sp.parentId + "\"";
   s += ",\"name\":" + JSON.stringify(REDACT ? scrubText(sp.name) : sp.name) + ",\"kind\":" + String(sp.kind);
   s += ",\"startTimeUnixNano\":\"" + nanos(sp.t0) + "\",\"endTimeUnixNano\":\"" + nanos(Math.max(sp.t0, sp.t1)) + "\"";
   s += ",\"attributes\":" + attrsJson(spanAttrs(t, sp, c, vcs));
-  if (sp.events.length) s += ",\"events\":[" + sp.events.map((e) => "{\"timeUnixNano\":\"" + nanos(e.t) + "\",\"name\":" + JSON.stringify(e.name) + ",\"attributes\":" + attrsJson(e.attrs) + "}").join(",") + "]";
+  if (sp.events.length) s += ",\"events\":[" + sp.events.map((e) => "{\"timeUnixNano\":\"" + nanos(e.t) + "\",\"name\":" + JSON.stringify(e.name) + ",\"attributes\":" + attrsJson(eventAttrs(e.attrs, c)) + "}").join(",") + "]";
   if (sp.err) s += ",\"status\":{\"code\":2" + (c.content && sp.errMsg ? ",\"message\":" + JSON.stringify(cut(REDACT ? scrubText(sp.errMsg) : sp.errMsg, c.contentMax)) : "") + "}";
   return s + "}";
 }

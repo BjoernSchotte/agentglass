@@ -8,7 +8,10 @@ import { parse as parseJson } from "../../util/json.ts";
 import { loadHead, titleOf } from "../../model/sessions.ts";
 import { identSync } from "../query/project.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
-import { type Acc, type Booking, newAcc, setBookTap } from "../usage/record.ts";
+import { type Acc, type Booking, type SkLoad, newAcc, setBookTap } from "../usage/record.ts";
+import { SKCAP, type SkCap, skillHash } from "../usage/skillrec.ts";
+import { skillLoads } from "../skills/model.ts";
+import { skillVis, textShown } from "../skills/vis.ts";
 import { setCallTap, program, norm, mcpServer } from "../usage/calls.ts";
 import { familyOf, waitCfg } from "../wait/family.ts";
 import { ledger } from "../usage/ledger.ts";
@@ -19,7 +22,7 @@ import { type TurnCursor, newCursor, feed, closeQuiet } from "../callgraph/turns
 import { catOf, toolName, toolArg, isErr, ms } from "../callgraph/model.ts";
 import { type ReqState, type Req, newReqState, requestOf, providerOf } from "./requests.ts";
 import { rootKey, traceId, rootSpanId, chatSpanId, toolSpanId, agentSpanId } from "./ids.ts";
-import { type XSpan, type XTurn, newSpan, agentName } from "./types.ts";
+import { type XSpan, type XTurn, type Attr, newSpan, agentName, attrS, attrI, attrD, attrB } from "./types.ts";
 
 export interface BuildOpts { now: number; quietMs: number; content: boolean; subagents: boolean }
 interface CallRec { ms: number; err: boolean; codes: number[]; name: string }
@@ -32,24 +35,29 @@ export interface Side {
   lineTurn: string; lineAt: number; // where this line's first span went (a request's chat goes before the calls it issued)
   pieces: Map<string, XSpan>; // subagents: their invoke_agent span per hosting turn key
   first: number; // subagents: first event time (spawn host)
+  skN: number; skOpen: number[]; caps: SkCap[]; // skill loads (acc.sk) already queued, those of them still in context; their texts (--content only)
 }
+// a skill load or unload waiting for its turn's end (the load's size is known after its load request): the side, the
+// load's index in its acc.sk, the span the event goes on, unload = the end of a load
+interface SkQ { sd: Side; i: number; sp: XSpan; unload: boolean; name: string }
 export interface SessB {
   root: Sess; subs: Side[]; side: Side; cur: TurnCursor; R: string;
   open: XTurn | null; done: XTurn[]; // the turn being built; turns closed but not yet returned
   tsN: Map<string, number>; // turn keys: ordinal per first timestamp
   tail: Ev[]; ver: string; // recent root events (busy()), harness version
   kiro: KTurn[];
+  skq: Map<string, SkQ[]>; skWait: SkQ[]; // skill events per turn key; those of lines before any turn (the next turn's root takes them)
 }
 const WIN = 1048576;
 
 function newSide(s: Sess, top: boolean): Side {
   const a = newAcc(); a.sub = !top; a.p = s.path; a.ro = true; // its path: a Codex fork finds its parent's calls; ro: claims nothing
   const la = ledger.get(s.path); if (la) for (const [k, v] of la.mc) a.mc.set(k, v); // copies another log owns: no request of this one
-  return { s, at: 0, ep: epochOf(s), acc: a, rq: newReqState(), top, last: 0, mark: 0, pend: new Map<string, XSpan>(), anon: [], chats: new Map<string, XSpan>(), lastChat: null, outBuf: "", lineTurn: "", lineAt: -1, pieces: new Map<string, XSpan>(), first: 0 };
+  return { s, at: 0, ep: epochOf(s), acc: a, rq: newReqState(), top, last: 0, mark: 0, pend: new Map<string, XSpan>(), anon: [], chats: new Map<string, XSpan>(), lastChat: null, outBuf: "", lineTurn: "", lineAt: -1, pieces: new Map<string, XSpan>(), first: 0, skN: 0, skOpen: [], caps: [] };
 }
 export function newSessB(root: Sess, subs: Sess[]): SessB {
   const sd: Side[] = []; for (const c of subs) sd.push(newSide(c, false));
-  return { root, subs: sd, side: newSide(root, true), cur: newCursor(), R: rootKey(root.h, root.id), open: null, done: [], tsN: new Map<string, number>(), tail: [], ver: "", kiro: [] };
+  return { root, subs: sd, side: newSide(root, true), cur: newCursor(), R: rootKey(root.h, root.id), open: null, done: [], tsN: new Map<string, number>(), tail: [], ver: "", kiro: [], skq: new Map<string, SkQ[]>(), skWait: [] };
 }
 // push and hand back the stored element: scriptc 0.1.7 may store a copy of a freshly built object, so later writes go
 // through the array's element (the call graph keeps indexes for the same reason)
@@ -70,6 +78,7 @@ function startTurn(b: SessB, e: Ev, t: number): XTurn {
   const tr: XTurn = { h: r.h, rootId: r.id, path: r.path, key: k, index: b.cur.n, traceId: traceId(b.R, k), t0: t, t1: t, closed: false, closedBy: "", compacted: false, ver: b.ver, cwd: r.cwd, branch: r.branch, remote: r.remote, spans: [], fx: [], fxOn: false, title: titleNow(r), repoKey: repoKeyOf(r) };
   const root = newSpan("invoke_agent", "invoke_agent " + agentName(r.h), rootSpanId(b.R, k), "", t, r.id);
   tr.spans.push(root);
+  if (b.skWait.length) { const q: SkQ[] = []; for (const x of b.skWait) q.push({ sd: x.sd, i: x.i, sp: tr.spans[0], unload: x.unload, name: x.name }); b.skq.set(k, q); b.skWait = []; }
   const sd = b.side; sd.chats = new Map<string, XSpan>(); sd.lastChat = null; sd.outBuf = "";
   return tr;
 }
@@ -123,7 +132,9 @@ function line(b: SessB, sd: Side, l: string, o: BuildOpts): void {
   const rs0 = a.rs;
   setBookTap((x: Booking) => { bs.push(x); });
   setCallTap((id: string, d: number, err: boolean, codes: number[], name: string) => { calls.set(id, { ms: d, err, codes, name: display("tool", name, null) }); }); // the name as the events show it (--redact)
-  try { harnessOf(h).usage(a, l); } finally { setBookTap(null); setCallTap(null); }
+  const capOn = SKCAP.on; const capOut = SKCAP.out;
+  if (o.content) { SKCAP.on = true; SKCAP.out = sd.caps; } // the texts this line loads (export --content only; never kept past the turn's end)
+  try { harnessOf(h).usage(a, l); } finally { setBookTap(null); setCallTap(null); SKCAP.on = capOn; SKCAP.out = capOut; }
   const q0 = requestOf(h, null, l, sd.rq); const q = q0 && a.mc.has(q0.key) ? null : q0;
   if (sd.top && !b.ver) { const m = /"(?:cli_)?version":"([^"]+)"/.exec(l.slice(0, 2000)); if (m && (h === "claude" || h === "codex")) b.ver = m[1] ?? ""; }
   const evs: Ev[] = [];
@@ -149,10 +160,62 @@ function line(b: SessB, sd: Side, l: string, o: BuildOpts): void {
   }
   if (!tr && !sd.top) tr = hostTurn(b, sd.last);
   if (tr && (q || bs.length > 0 || a.rs > rs0)) request(b, sd, tr, q, bs, a.rs - rs0, o);
+  if (a.sk.length !== sd.skN || sd.skOpen.length) skillMarks(b, sd, tr);
   if (sd.top && b.open && l.indexOf("Base directory for this skill:") >= 0 && l.indexOf("\"isMeta\":true") >= 0) { // a slash command's skill (parsing-fixes L6)
     const rt = b.open.spans[0]; const m = /^\/([^\s]+)/.exec(rt.input);
-    if (m) rt.skill = m[1] ?? "";
+    if (m) rt.skill = shownSkill(m[1] ?? "");
   }
+}
+// a skill name as an export may send it (skills.hide, --redact): "" = hidden (omit)
+function shownSkill(n: string): string { if (!n) return ""; const v = skillVis(n); return v.mode === "omit" ? "" : v.shown; }
+// skill-usage 6.14: the line's new loads and the loads it ended, queued on the turn they happened in (the root span, a
+// subagent's piece); a line before any turn waits for the next one. Hidden (omit) skills make no event
+function skillMarks(b: SessB, sd: Side, tr0: XTurn | null): void {
+  const a = sd.acc;
+  const tr = tr0 ?? (sd.top ? b.open : hostTurn(b, sd.last));
+  const sp = tr ? parentOf(b, sd, tr, sd.last) : null;
+  const q = (i: number, unload: boolean): void => {
+    const l = a.sk[i]; if (!l || skillVis(l.name).mode === "omit") return;
+    const x: SkQ = { sd, i, sp: sp ?? newSpan("invoke_agent", "", "", "", 0, ""), unload, name: l.name };
+    if (!tr) { b.skWait.push(x); return; }
+    const v = b.skq.get(tr.key); if (v) v.push(x); else b.skq.set(tr.key, [x]);
+  };
+  const still: number[] = [];
+  for (let k = 0; k < sd.skOpen.length; k++) { const i = (sd.skOpen[k] ?? -1) + 0; const l = i >= 0 ? a.sk[i] : undefined; if (!l) continue; if (l.end !== 0) q(i, true); else still.push(i); }
+  if (a.sk.length < sd.skN) sd.skN = a.sk.length; // the cap folded old ended loads: indexes shift (rare)
+  for (let i = sd.skN; i < a.sk.length; i++) { const l = a.sk[i] as SkLoad; q(i, false); if (l.end === 0) still.push(i); else q(i, true); }
+  sd.skN = a.sk.length; sd.skOpen = still;
+  if (sd.caps.length > 64) sd.caps.splice(0, sd.caps.length - 64); // texts of loads that never reach a turn
+}
+function tierOf(l: SkLoad): string { return l.S < 0 ? "?" : l.est ? "≈" : "exact"; }
+// a turn's skill events (its loads' sizes are settled by now), and the session's skill totals so far on its root
+function skillEvents(b: SessB, tr: XTurn, o: BuildOpts): void {
+  const qs = b.skq.get(tr.key) ?? []; b.skq.delete(tr.key);
+  for (const x of qs) {
+    const l = x.sd.acc.sk[x.i]; if (!l || l.name !== x.name) continue;
+    const v = skillVis(l.name); if (v.mode === "omit") continue;
+    const at: Attr[] = [attrS("gen_ai.skill.name", v.shown)];
+    if (x.unload) {
+      at.push(attrS("agentglass.skill.reason", l.why || "end")); if (l.hash) at.push(attrS("agentglass.skill.hash", l.hash));
+      x.sp.events.push({ name: "gen_ai.skill.unload", t: l.end > 1 ? l.end : tr.t1, attrs: at });
+      continue;
+    }
+    at.push(attrS("agentglass.skill.trigger", l.trig));
+    if (l.S >= 0) at.push(attrI("agentglass.skill.size_tokens", l.S));
+    if (l.hash) at.push(attrS("agentglass.skill.hash", l.hash));
+    at.push(attrS("agentglass.skill.scope", l.scope || "?")); at.push(attrS("agentglass.skill.tier", tierOf(l)));
+    if (l.rel) at.push(attrB("agentglass.skill.reloaded_after_compact", true));
+    if (l.stub) at.push(attrB("agentglass.skill.stub", true));
+    if (o.content && textShown(l.name, true, true)) {
+      const caps = x.sd.caps;
+      for (let k = 0; k < caps.length; k++) { const c = caps[k] as SkCap; if (c.name !== l.name) continue; const t = c.parts.join(""); if (skillHash(t) !== l.hash) continue; at.push(attrS("agentglass.skill.text", cut(t, CMAX))); caps.splice(k, 1); break; }
+    }
+    x.sp.events.push({ name: "gen_ai.skill.load", t: l.t > 0 ? l.t : x.sp.t0, attrs: at });
+  }
+  let usd = 0; let carry = 0; let n = 0;
+  const as: Acc[] = [b.side.acc]; for (const sd of b.subs) as.push(sd.acc);
+  for (const r of skillLoads(as, as.map((a: Acc) => ""))) { n++; usd += r.usd; carry += r.carry; }
+  if (n) { const rt = tr.spans[0]; rt.attrs.push(attrD("agentglass.skill.cost_usd", Math.round(usd * 1e6) / 1e6)); rt.attrs.push(attrI("agentglass.skill.carry_tokens", carry)); }
 }
 // fx: "turn complete · Ns" is logged at the turn's end, its events share one timestamp: the turn started N s earlier
 function fxStart(tr: XTurn, e: Ev): void {
@@ -166,7 +229,7 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
   if (t && (par.t1 < t || !par.t0)) { if (!par.t0) par.t0 = t; par.t1 = Math.max(par.t1, t); }
   if (e.kind === "user") {
     if (!par.input) par.input = cut(e.text, CMAX);
-    if (sd.top && b.root.h === "pi" && par === tr.spans[0]) { const m = /^\/skill:(\S+)/.exec(e.text); if (m) par.skill = m[1] ?? ""; } // pi's expanded /skill:name prompt (the adapter shows it as typed)
+    if (sd.top && b.root.h === "pi" && par === tr.spans[0]) { const m = /^\/skill:(\S+)/.exec(e.text); if (m) par.skill = shownSkill(m[1] ?? ""); } // pi's expanded /skill:name prompt (the adapter shows it as typed)
     sd.mark = t; return;
   }
   if (e.kind === "assistant") { sd.outBuf = cut(sd.outBuf ? sd.outBuf + "\n" + e.text : e.text, CMAX); par.output = cut(e.text, CMAX); return; }
@@ -184,7 +247,7 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
       const fm = familyOf(n0, waitCfg()); sp.fam = fm.name; sp.fkind = fm.kind; sp.fgen = fm.generic;
     }
     if (cat === 1 || cat === 2) sp.target = targetOf(name, arg, e.full);
-    if (name === "Skill" || name === "activate_skill") { const m = /"(?:skill|name)":"([^"]+)"/.exec(e.full); sp.skill = m ? m[1] ?? "" : arg; }
+    if (name === "Skill" || name === "activate_skill") { const m = /"(?:skill|name)":"([^"]+)"/.exec(e.full); sp.skill = shownSkill(m ? m[1] ?? "" : arg); }
     if (o.content) sp.args = cut(e.full || arg, CMAX);
     if (sd.lineTurn !== tr.key || sd.lineAt < 0) { sd.lineTurn = tr.key; sd.lineAt = tr.spans.length; }
     const sx = add(tr, sp);
@@ -273,7 +336,7 @@ function closeTurn(b: SessB, tr: XTurn, by: string, o: BuildOpts): void {
   if (by === "aborted") tr.spans[0].err = "cancelled";
   b.done.push(tr);
 }
-function finalize(b: SessB, tr: XTurn): void {
+function finalize(b: SessB, tr: XTurn, o: BuildOpts): void {
   const root = tr.spans[0];
   if (b.root.h === "kiro") kiroTimes(b, tr);
   if (b.root.h === "kiro" || b.root.h === "fx") turnChat(b, tr);
@@ -290,6 +353,7 @@ function finalize(b: SessB, tr: XTurn): void {
     if (p.op !== "invoke_agent") continue;
     for (const c of tr.spans) if (c.op === "chat" && c.parentId === p.spanId && c.model) { if (p.models.indexOf(c.model) < 0) p.models.push(c.model); p.model = c.model; }
   }
+  skillEvents(b, tr, o);
   skew(tr);
   root.t0 = Math.min(root.t0, tr.t0); root.t1 = Math.max(root.t1, tr.t1); tr.t0 = root.t0; tr.t1 = root.t1;
 }
@@ -343,7 +407,7 @@ function skew(tr: XTurn): void {
 function readSide(b: SessB, sd: Side, o: BuildOpts): void {
   const src = sourceOf(sd.s.h); const st = src.stat(sd.s); if (!st) return;
   const ep = epochOf(sd.s);
-  if (st.size < sd.at || ep !== sd.ep) { const n = newSide(sd.s, sd.top); sd.at = 0; sd.ep = ep; sd.acc = n.acc; sd.rq = n.rq; sd.pend = n.pend; sd.anon = []; sd.chats = n.chats; sd.lastChat = null; sd.pieces = n.pieces; sd.last = 0; sd.mark = 0; }
+  if (st.size < sd.at || ep !== sd.ep) { const n = newSide(sd.s, sd.top); sd.at = 0; sd.ep = ep; sd.acc = n.acc; sd.rq = n.rq; sd.pend = n.pend; sd.anon = []; sd.chats = n.chats; sd.lastChat = null; sd.pieces = n.pieces; sd.last = 0; sd.mark = 0; sd.skN = 0; sd.skOpen = []; sd.caps = []; }
   const win = window(src, WIN);
   while (sd.at < st.size) {
     const r = src.lines(sd.s, sd.at, Math.min(st.size, sd.at + win));
@@ -376,7 +440,7 @@ export function advance(b: SessB, o: BuildOpts): XTurn[] {
     }
   }
   const out = b.done; b.done = [];
-  for (const tr of out) finalize(b, tr);
+  for (const tr of out) finalize(b, tr, o);
   if (b.root.h === "fx" && out.length) { // fx keeps session totals only: they ride on the newest turn's chat span (usage never sits on invoke_agent);
     // the exporter turns them into the growth since its last accepted export (export.ts fxDelta)
     const t = fxTotals(b.root); const lt = out[out.length - 1]; const r = fxChat(lt);
