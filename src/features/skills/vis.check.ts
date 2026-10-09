@@ -73,6 +73,11 @@ eq("glob omit: a title before any load", ti, "/(hidden) fix the second bug");
 const tn = scrub("<command-name>/acme-tool</command-name> then $acme-other, /skill:acme-pi and ~/.pi/skills/acme-dir/SKILL.md; acme-prose stays");
 ok("glob name: references and prose faked " + tn, ["acme-tool", "acme-other", "acme-pi", "acme-dir", "acme-prose"].every((n: string) => tn.indexOf(n) < 0) && tn.indexOf(" stays") > 0 && tn.indexOf("/SKILL.md") > 0);
 eq("a * rule hides no prose", scrub("fix the build at 10:30"), "fix the build at 10:30");
+{ // a "*" omit rule (hide every skill): the reference goes, the title's other words stay
+  setVis(parseHide([{ match: "*", mode: "omit" }]).rules, false);
+  eq("* omit: title keeps its words", scrub("run /deploy then fix the second bug in app.js at 10:30"), "run /(hidden) then fix the second bug in app.js at 10:30");
+  setVis(parseHide([{ match: "*:internal-*", mode: "omit" }, { match: "acme-*", mode: "name" }, { match: "*", mode: "content" }]).rules, false);
+}
 eq("a specific glob hides prose mentions too", scrub("first load the acme-later skill"), "first load the " + skillVis("acme-later").shown + " skill");
 // a listing names and describes every skill: hidden ones (any mode but show) leave it
 setVis(parseHide([{ match: "sec*", mode: "omit" }, { match: "acme-x", mode: "name" }, "notes"]).rules, false);

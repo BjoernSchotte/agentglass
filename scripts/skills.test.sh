@@ -70,6 +70,8 @@ printf '{"skills":{"hide":[{"match":"alph*","mode":"omit"}]}}\n' > "$t/hideg.jso
 (CFG="$t/hideg.json" run --watch --from-start --for 3s > "$t/watchgo" 2> /dev/null) || true
 hasnt "--watch glob omit: no name in any line" "$(cat "$t/watchgo")" "alpha"; has "--watch glob omit: lines" "$(cat "$t/watchgo")" "\"title\""
 hasnt "--json glob omit: no name in title or activity" "$(CFG="$t/hideg.json" run --json --fields id,title,activity)" "alpha"
+printf '{"skills":{"hide":[{"match":"*","mode":"omit"}]}}\n' > "$t/hideall.json"
+has "a * omit rule: titles keep their words" "$(CFG="$t/hideall.json" run --json --fields id,title)" "start the fixture"
 
 # --watch: skill and skill_end lines in stream order
 run --watch --from-start --for 3s > "$t/watch" 2> /dev/null || true
