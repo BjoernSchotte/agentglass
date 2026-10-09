@@ -397,6 +397,13 @@ export function restoreHost(a: Agg, key: string, r: HostReport, x: HostExtra): v
       g.unk = dr.unk; g.tools = dr.tools; g.turns = dr.turns; g.calls = dr.calls; g.errors = dr.errors; ss.errors += dr.errors;
     }
     let j = 0; for (const row of om.get(sr.key) ?? []) ss.own.set("restored:" + String(j++), row);
+    for (const v of arr(o["skills"])) { // skills[] as reported: later events add to it (their figures are the session's so far)
+      const e = obj(v); if (!e) continue; const name = str(e["name"]); const src = str(e["source"]); if (!name || (src !== "command" && src !== "model")) continue;
+      const g = skAgg(ss, name, src); g.n = numOf(e["loads"]) || numOf(e["n"]); g.at = 0; g.stub = false;
+      g.size = typeof e["size"] === "number" ? e["size"] as number : -1; g.tier = str(e["tier"]); g.hash = str(e["hash"]); g.scope = str(e["scope"]);
+      const tk = obj(e["tokens"]);
+      if (tk) { g.u = [numOf(e["n"]), numOf(e["loads"]), numOf(tk["load"]), numOf(tk["carry"]), numOf(tk["tail"]), numOf(e["costUsd"]), numOf(e["carryUsd"]), numOf(e["tailUsd"])]; g.uAt = 0; }
+    }
   }
   // sessions outside the window: their ownership-only rows
   for (const ow of r.owned) {

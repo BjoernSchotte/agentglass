@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { newAcc } from "../usage/record.ts";
 import { claude } from "../../harness/claude.ts";
 import { skillsJson } from "../skills/json.ts";
-import { newAgg, ingestLine, reportsOf } from "../hub/map.ts";
+import { newAgg, ingestLine, reportsOf, restoreHost, extraOf } from "../hub/map.ts";
 import { type Obj, obj, arr } from "../../util/json.ts";
 import { REDACT } from "../redact-on.ts";
 import { scrubText } from "../redact.ts";
@@ -75,6 +75,10 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
   // a re-sent turn (an export retried) counts nothing twice: the usage event is the session's figures so far
   ingestLine(g, encodeRequest(ts.slice(ts.length - 1), cfgFrom({})), null);
   const again: Obj[] = []; for (const r of reportsOf(g, Date.parse("2026-10-02T00:00:00.000Z"), true, 3650).values()) for (const x of r.sessions) for (const v of arr(x.s["skills"])) { const o = obj(v); if (o) again.push(o); }
+  // the hub's saved state (a fleet viewer's next run starts from it): skills[] survive the restore, figures and all
+  const g2 = newAgg(); for (const [k, r] of reportsOf(g, Date.parse("2026-10-02T00:00:00.000Z"), true, 3650)) restoreHost(g2, k, r, extraOf(g, k));
+  const back: Obj[] = []; for (const r of reportsOf(g2, Date.parse("2026-10-02T00:00:00.000Z"), true, 3650).values()) for (const x of r.sessions) for (const v of arr(x.s["skills"])) { const o = obj(v); if (o) back.push(o); }
+  eq("hub: skills[] after a restore", back.map((o: Obj) => figs(o, false) + pick(o, false)).sort().join(" "), hub.map((o: Obj) => figs(o, false) + pick(o, false)).sort().join(" "));
   eq("hub: a re-sent turn", again.map((o: Obj) => figs(o, false)).sort().join(" "), hub.map((o: Obj) => figs(o, false)).sort().join(" "));
   hub = [];
 }
