@@ -9,7 +9,7 @@ import { own } from "../../util/own.ts";
 // te = end of its loading turn (0 open); rq0 = requests booked before it; S = size in tokens (bounded by the growth at its
 // load request, §3.2); pend = not sent yet; short = tokens it could not get (requests smaller than Σ S); nq = requests
 // carried; lt/ct/tt = load / carry / tail tokens [in, cacheRead, write5m, write1h]; hb = of lt+ct the tokens of
-// harness-priced requests (never re-priced), hu/ht = their $ share (all / tail); off/len = where the text is in the log
+// harness-priced requests (never re-priced), hu/hl/ht = their $ share (all / of it load / tail); off/len = where the text is in the log
 // (source cursor units: bytes, or records), rec = a database record id; mdl/prov = model + provider of the load request;
 // est = size ≈ (cut, assembled from parts); n = loads this record stands for (> 1: older ended loads folded, the cap);
 // rd = loaded by reading its SKILL.md; h1/h2 = the text's running FNV pair (hash = its hex), pg = tokens grown after the load request, not sent yet
@@ -17,7 +17,7 @@ export interface SkLoad {
   name: string; trig: string; t: number; tu: number; te: number; rq0: number;
   bytes: number; S: number; hash: string; dir: string; scope: string;
   end: number; why: string; rel: boolean; stub: boolean; pend: boolean; short: number;
-  nq: number; lt: number[]; ct: number[]; tt: number[]; hb: number[]; hu: number; ht: number;
+  nq: number; lt: number[]; ct: number[]; tt: number[]; hb: number[]; hu: number; hl: number; ht: number;
   off: number; len: number; rec: string; mdl: string; prov: string; est: boolean; n: number; rd: boolean;
   h1: number; h2: number; pg: number;
 }
@@ -28,7 +28,8 @@ export const SKILL_BPT = 3.6; // UTF-8 bytes per token (spec Decision 2; Open qu
 export const SK_CAP = 400; // loads kept per log; beyond, the oldest ended loads fold per name
 export const LISTING = "(listing)";
 // Day.sa slots: loads by trigger, then [in, cacheRead, write5m, write1h] of load, carry and tail, then harness-priced $
-export const SA_LU = 0; export const SA_LM = 1; export const SA_LC = 2; export const SA_L = 3; export const SA_C = 7; export const SA_T = 11; export const SA_HU = 15; export const SA_N = 16;
+// (all, of it the load part, the tail part)
+export const SA_LU = 0; export const SA_LM = 1; export const SA_LC = 2; export const SA_L = 3; export const SA_C = 7; export const SA_T = 11; export const SA_HU = 15; export const SA_HL = 16; export const SA_HT = 17; export const SA_N = 18;
 export const HP = "="; // provider prefix of a Day.sa row booked from harness-priced requests: its $ is SA_HU, never re-priced
 
 // UTF-8 byte length (no encoder needed)
@@ -123,7 +124,7 @@ export function newLoad(name: string, trig: string, ms: number, text: string, kn
   const h1 = known ? fnvFeed(FNV1, text) : FNV1; const h2 = known ? fnvFeed(FNV2, text) : FNV2;
   const bytes = known ? utf8Len(text) : -1;
   return { name: own(name), trig: own(trig), t: ms, tu, te: 0, rq0, bytes, S: sizeEst(bytes), hash: known ? hashHex(h1, h2) : "", dir: own(dir), scope: own(scopeOf(dir)),
-    end: 0, why: "", rel: false, stub: false, pend: true, short: 0, nq: 0, lt: [0, 0, 0, 0], ct: [0, 0, 0, 0], tt: [0, 0, 0, 0], hb: [0, 0, 0, 0], hu: 0, ht: 0,
+    end: 0, why: "", rel: false, stub: false, pend: true, short: 0, nq: 0, lt: [0, 0, 0, 0], ct: [0, 0, 0, 0], tt: [0, 0, 0, 0], hb: [0, 0, 0, 0], hu: 0, hl: 0, ht: 0,
     off, len, rec: own(rec), mdl: "", prov: "", est, n: 1, rd: false, h1, h2, pg: 0 };
 }
 // more text of the same load (a skill text over several lines, a second partial read): bytes, hash and size grow; once the
@@ -169,8 +170,8 @@ function book(l: SkLoad, g: number[], slot: number, tail: boolean, row: number[]
   addTo(l.hb, 0, g);
   let wl = 0; for (let i = 0; i < 4; i++) wl += (g[i] ?? 0) * (w[i] ?? 1);
   const u = wReq > 0 ? usd * wl / wReq : 0;
-  l.hu = l.hu + u; if (tail) l.ht = l.ht + u;
-  row[SA_HU] = (row[SA_HU] ?? 0) + u;
+  l.hu = l.hu + u; if (tail) l.ht = l.ht + u; if (slot === SA_L) l.hl = l.hl + u;
+  row[SA_HU] = (row[SA_HU] ?? 0) + u; if (tail) row[SA_HT] = (row[SA_HT] ?? 0) + u; if (slot === SA_L) row[SA_HL] = (row[SA_HL] ?? 0) + u;
 }
 
 // one request: b = its [in, cacheRead, write5m, write1h] (mutated: what is left after the skills), nOut its output,

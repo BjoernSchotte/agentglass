@@ -102,17 +102,17 @@ const TRIGS = ["user", "model", "compact", "listing"]; const WHYS = ["", "compac
 function idxOf(tab: string[], m: Map<string, number>, v: string): number { let i = m.get(v); if (i === undefined) { i = tab.length; tab.push(v); m.set(v, i); } return i; }
 function skOut(sk: SkLoad[]): Obj {
   const nm: string[] = []; const nmI = new Map<string, number>(); const dr: string[] = []; const drI = new Map<string, number>();
-  const c: number[][] = []; for (let k = 0; k < 20; k++) c.push([]);
+  const c: number[][] = []; for (let k = 0; k < 21; k++) c.push([]);
   const flat: number[][] = [[], [], [], []]; const h: string[] = []; const rec: string[] = []; const mp: string[] = [];
   for (const l of sk) {
     const f = (l.rel ? 1 : 0) + (l.stub ? 2 : 0) + (l.pend ? 4 : 0) + (l.est ? 8 : 0) + (l.rd ? 16 : 0);
-    const row = [idxOf(nm, nmI, l.name), TRIGS.indexOf(l.trig), l.t, l.tu, l.te, l.rq0, l.bytes, l.S, idxOf(dr, drI, l.dir), l.end, WHYS.indexOf(l.why), f, l.short, l.nq, l.hu, l.ht, l.off, l.len, l.n, l.pg];
-    for (let k = 0; k < 20; k++) (c[k] as number[]).push(row[k] ?? 0);
+    const row = [idxOf(nm, nmI, l.name), TRIGS.indexOf(l.trig), l.t, l.tu, l.te, l.rq0, l.bytes, l.S, idxOf(dr, drI, l.dir), l.end, WHYS.indexOf(l.why), f, l.short, l.nq, l.hu, l.ht, l.off, l.len, l.n, l.pg, l.hl];
+    for (let k = 0; k < 21; k++) (c[k] as number[]).push(row[k] ?? 0);
     for (let k = 0; k < 4; k++) { (flat[0] as number[]).push(l.lt[k] ?? 0); (flat[1] as number[]).push(l.ct[k] ?? 0); (flat[2] as number[]).push(l.tt[k] ?? 0); (flat[3] as number[]).push(l.hb[k] ?? 0); }
     h.push(l.hash); rec.push(l.rec); mp.push(l.mdl + "\t" + l.prov);
   }
   return { nm, dr, i: c[0] ?? [], g: c[1] ?? [], t: c[2] ?? [], tu: c[3] ?? [], te: c[4] ?? [], q: c[5] ?? [], b: c[6] ?? [], s: c[7] ?? [], d: c[8] ?? [],
-    e: c[9] ?? [], w: c[10] ?? [], f: c[11] ?? [], sh: c[12] ?? [], nq: c[13] ?? [], hu: c[14] ?? [], ht: c[15] ?? [], o: c[16] ?? [], l: c[17] ?? [], n: c[18] ?? [], pg: c[19] ?? [],
+    e: c[9] ?? [], w: c[10] ?? [], f: c[11] ?? [], sh: c[12] ?? [], nq: c[13] ?? [], hu: c[14] ?? [], ht: c[15] ?? [], o: c[16] ?? [], l: c[17] ?? [], n: c[18] ?? [], pg: c[19] ?? [], hl: c[20] ?? [],
     lt: flat[0] ?? [], ct: flat[1] ?? [], tt: flat[2] ?? [], hb: flat[3] ?? [], h, r: rec, mp };
 }
 function skIn(v: unknown): SkLoad[] {
@@ -120,7 +120,7 @@ function skIn(v: unknown): SkLoad[] {
   const nm = strsIn(o["nm"]); const dr = strsIn(o["dr"]); const ix = nums(o["i"]); const h = strsIn(o["h"]); const rec = strsIn(o["r"]); const mp = strsIn(o["mp"]);
   const col = (k: string): number[] => nums(o[k]);
   const g = col("g"); const t = col("t"); const tu = col("tu"); const te = col("te"); const q = col("q"); const b = col("b"); const S = col("s"); const d = col("d");
-  const e = col("e"); const w = col("w"); const f = col("f"); const sh = col("sh"); const nq = col("nq"); const hu = col("hu"); const ht = col("ht"); const off = col("o"); const len = col("l"); const n = col("n"); const pg = col("pg");
+  const e = col("e"); const w = col("w"); const f = col("f"); const sh = col("sh"); const nq = col("nq"); const hu = col("hu"); const ht = col("ht"); const off = col("o"); const len = col("l"); const n = col("n"); const pg = col("pg"); const hl = col("hl");
   const lt = col("lt"); const ct = col("ct"); const tt = col("tt"); const hb = col("hb");
   const four = (x: number[], i: number): number[] => [at(x, i * 4), at(x, i * 4 + 1), at(x, i * 4 + 2), at(x, i * 4 + 3)];
   for (let i = 0; i < ix.length && i < 2000; i++) {
@@ -128,7 +128,7 @@ function skIn(v: unknown): SkLoad[] {
     const fl = at(f, i); const hash = h[i] ?? ""; const m = mp[i] ?? ""; const tab = m.indexOf("\t");
     out.push({ name, trig: TRIGS[at(g, i)] ?? "model", t: at(t, i), tu: at(tu, i), te: at(te, i), rq0: at(q, i), bytes: at(b, i), S: at(S, i), hash,
       dir: dr[at(d, i)] ?? "", scope: "", end: at(e, i), why: WHYS[at(w, i)] ?? "", rel: (fl & 1) !== 0, stub: (fl & 2) !== 0, pend: (fl & 4) !== 0, short: at(sh, i), nq: at(nq, i),
-      lt: four(lt, i), ct: four(ct, i), tt: four(tt, i), hb: four(hb, i), hu: at(hu, i), ht: at(ht, i), off: at(off, i), len: at(len, i), rec: rec[i] ?? "",
+      lt: four(lt, i), ct: four(ct, i), tt: four(tt, i), hb: four(hb, i), hu: at(hu, i), hl: at(hl, i), ht: at(ht, i), off: at(off, i), len: at(len, i), rec: rec[i] ?? "",
       mdl: own(tab >= 0 ? m.slice(0, tab) : m), prov: own(tab >= 0 ? m.slice(tab + 1) : ""), est: (fl & 8) !== 0, n: Math.max(1, at(n, i)), rd: (fl & 16) !== 0,
       h1: hexNum(hash.slice(0, 8), FNV1), h2: hexNum(hash.slice(8, 16), FNV2), pg: at(pg, i) });
   }

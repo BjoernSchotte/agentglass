@@ -66,7 +66,7 @@ ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan =
   const y = accIn(parse(js2) ?? {});
   ok("no skill text in the cache", js2.indexOf("LOREMSKILLTEXT") < 0, "");
   const strip = (l: SkLoad): string =>
-    [l.name, l.trig, l.t, l.tu, l.te, l.rq0, l.bytes, l.S, l.hash, l.dir, l.scope, l.end, l.why, l.rel, l.stub, l.pend, l.short, l.nq, l.lt.join("/"), l.ct.join("/"), l.tt.join("/"), l.hb.join("/"), l.hu, l.ht, l.off, l.len, l.rec, l.mdl, l.prov, l.est, l.n, l.rd, l.h1, l.h2, l.pg].join("|");
+    [l.name, l.trig, l.t, l.tu, l.te, l.rq0, l.bytes, l.S, l.hash, l.dir, l.scope, l.end, l.why, l.rel, l.stub, l.pend, l.short, l.nq, l.lt.join("/"), l.ct.join("/"), l.tt.join("/"), l.hb.join("/"), l.hu, l.hl, l.ht, l.off, l.len, l.rec, l.mdl, l.prov, l.est, l.n, l.rd, l.h1, l.h2, l.pg].join("|");
   ok("loads round trip", y.sk.length === x.sk.length && y.sk.length === 5 && y.sk.map(strip).join("\n") === x.sk.map(strip).join("\n"), y.sk.map(strip).join("\n") + "\n---\n" + x.sk.map(strip).join("\n"));
   ok("load states", x.sk.map((l) => (l.end === 0 ? (l.pend ? "pend" : "open") : l.why) + (l.S < 0 ? "?" : "")).join(",") === "compact,compact,compact?,drop,pend", x.sk.map((l) => l.why).join(","));
   ok("scope", y.sk.length > 1 && (y.sk[1] as SkLoad).scope === "plugin", "");

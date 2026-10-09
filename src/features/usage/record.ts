@@ -20,7 +20,7 @@ export type { SkLoad };
 //   (usd -1 = unpriced): what reprice() re-prices in place when a price changes; harness-reported costs and kiro credits stay out
 // act = active minutes, flat sorted merged [s0,e0,s1,e1,…] local minutes of the day (e exclusive, ≤ ACT_MAX intervals)
 // hx = the heavy part (heavy()); hv = that part as the cache stored it (JSON text), until something asks for it
-// sa = per-skill tokens "<skill>\t<provider>\t<model>" → 16 slots (skillrec.ts SA_*): loads by trigger, load/carry/tail
+// sa = per-skill tokens "<skill>\t<provider>\t<model as booked>" → 18 slots (skillrec.ts SA_*): loads by trigger, load/carry/tail
 //   tokens per bucket, harness-priced $ (rows whose provider starts with "=": never re-priced)
 export interface Day {
   tools: number; hx: Heavy | null; hv: string; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
@@ -450,7 +450,7 @@ function skillReq(a: Acc, d: Day, model: string, prov: string, nIn: number, nOut
   if (a.sk.length) {
     let w: number[] = [1, 1, 1, 1, 1];
     if (usd > 0) { const r = resolve(model, prov); if (r) w = [cost(r.p, 1e6, 0, 0, 0, 0), cost(r.p, 0, 0, 1e6, 0, 0), cost(r.p, 0, 0, 0, 1e6, 0), cost(r.p, 0, 0, 0, 0, 1e6), cost(r.p, 0, 1e6, 0, 0, 0)]; }
-    attribute(a.sk, d.sa, mkey(model), prov, [nIn, nCr, w5, w1], nOut, ctx, a.lastCtx, a.tq, tsMs, usd, w);
+    attribute(a.sk, d.sa, model, prov, [nIn, nCr, w5, w1], nOut, ctx, a.lastCtx, a.tq, tsMs, usd, w);
   }
   a.rq = a.rq + 1; a.lastCtx = ctx;
 }
@@ -557,7 +557,7 @@ function skillFold(a: Acc): void {
     if (into < 0) continue;
     const f = a.sk[into] as SkLoad;
     if (f.n === 1) { f.t = 0; f.te = 0; f.off = -1; f.len = 0; f.rec = ""; f.stub = false; f.rel = false; }
-    f.n = f.n + x.n; f.nq = f.nq + x.nq; f.short = f.short + x.short; f.hu = f.hu + x.hu; f.ht = f.ht + x.ht;
+    f.n = f.n + x.n; f.nq = f.nq + x.nq; f.short = f.short + x.short; f.hu = f.hu + x.hu; f.hl = f.hl + x.hl; f.ht = f.ht + x.ht;
     for (let k = 0; k < 4; k++) { f.lt[k] = (f.lt[k] ?? 0) + (x.lt[k] ?? 0); f.ct[k] = (f.ct[k] ?? 0) + (x.ct[k] ?? 0); f.tt[k] = (f.tt[k] ?? 0) + (x.tt[k] ?? 0); f.hb[k] = (f.hb[k] ?? 0) + (x.hb[k] ?? 0); }
     a.sk.splice(i, 1);
     return;
