@@ -65,6 +65,11 @@ hasnt "--json no text" "$(run --json --fields id,skillLoads)" "LOREMSKILLTEXT"
 printf '{"skills":{"hide":[{"match":"alpha","mode":"name"}]}}\n' > "$t/hidea.json"
 r=$(CFG="$t/hidea.json" run --json --fields id,title,skills); hasnt "--json hide name in title and skills" "$r" "alpha"; has "--json title kept" "$r" "/skill:"
 has "--json skillLoads --content" "$(run --json --fields id,skillLoads --content)" "LOREMSKILLTEXT"
+# a glob rule hides a name in titles and activity before any load of it was seen (the --watch stream's first lines)
+printf '{"skills":{"hide":[{"match":"alph*","mode":"omit"}]}}\n' > "$t/hideg.json"
+(CFG="$t/hideg.json" run --watch --from-start --for 3s > "$t/watchg" 2> /dev/null) || true
+hasnt "--watch glob omit: no name in any line" "$(cat "$t/watchg")" "alpha"; has "--watch glob omit: lines" "$(cat "$t/watchg")" "\"title\""
+hasnt "--json glob omit: no name in title or activity" "$(CFG="$t/hideg.json" run --json --fields id,title,activity)" "alpha"
 
 # --watch: skill and skill_end lines in stream order
 run --watch --from-start --for 3s > "$t/watch" 2> /dev/null || true
