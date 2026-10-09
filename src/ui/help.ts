@@ -39,6 +39,8 @@ export const HELP: HelpSec[] = [
     ["wheel", "scroll list / transcript / details"], ["click", "select row · click again (or double-click) to open"],
     ["click preview row", "jump to that event / subagent"], ["click footer hint", "press that key"], ["right-click", "back"], ["click tab", "switch view"] ] },
 ];
+// a section's ctx may name several views ("transcript|call graph"): it is current in each
+function ctxIn(secCtx: string, ctx: string): boolean { return secCtx !== "" && ctx !== "" && secCtx.split("|").indexOf(ctx) >= 0; }
 // a feature tab can name itself as ctx to get its section highlighted
 function helpContext(): string {
   const pm = S.prevMode;
@@ -51,7 +53,7 @@ function helpContext(): string {
   return t >= 0 && t < H.tabs.length ? H.tabs[t].name : "";
 }
 function helpLines(sec: HelpSec, w: number, ctx: string): string[] {
-  const on = sec.ctx !== "" && sec.ctx === ctx;
+  const on = ctxIn(sec.ctx, ctx);
   const out: string[] = [];
   out.push((on ? fg(C.accent) + CSI + "1m" + "▍" : fg(C.sub) + CSI + "1m" + " ") + fit(sec.name.toUpperCase() + (on ? "  · current view" : ""), w - 1) + RST);
   const kw = Math.min(18, Math.floor(w * 0.4));
@@ -74,7 +76,7 @@ export function helpLayout(W: number): { left: string[]; right: string[]; w: num
   for (let i = 0; i < blocks.length; i++) {
     const tgt = two && left.length >= total / 2 ? right : left;
     const sc = secs[i]; const b = blocks[i] ?? [];
-    if (sc && ctx !== "" && sc.ctx === ctx && end === 0) { at = tgt.length; end = at + b.length - 2; } // its last key (the block ends in a blank line)
+    if (sc && ctxIn(sc.ctx, ctx) && end === 0) { at = tgt.length; end = at + b.length - 2; } // its last key (the block ends in a blank line)
     for (const l of b) tgt.push(l);
   }
   return { left, right, w, cw1, two, at, end };

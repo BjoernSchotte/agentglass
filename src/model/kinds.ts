@@ -131,7 +131,7 @@ function withKind(id: number, k: string): number {
 // ── per events array: kind-set ids, extended as it grows ──
 // base = the events' own kinds; out = base plus the marks anchored on them (skill:load on a Skill call …), redone when the
 // marks or the events changed; calls = tool call id → its event (results pair by it); gen = the marks array laid in
-interface KMemo { s: Sess; evs: Ev[]; n: number; base: Int32Array; calls: Map<string, number>; marks: Mark[] | null; out: Int32Array; outN: number }
+interface KMemo { s: Sess; evs: Ev[]; n: number; base: Int32Array; calls: Map<string, number>; marks: Mark[] | null; out: Int32Array; outN: number; ver: number }
 const MEMO: KMemo[] = []; const MEMO_MAX = 8;
 export const KIND_STATS = { built: 0, events: 0 };
 function grow(a: Int32Array, n: number): Int32Array { if (n <= a.length) return a; const b = new Int32Array(Math.max(n, a.length * 2, 256)); b.set(a); return b; }
@@ -150,7 +150,7 @@ function memoOf(s: Sess, evs: Ev[]): KMemo {
     const m = MEMO[i];
     if (m.evs === evs) { if (m.s !== s || evs.length < m.n) { MEMO.splice(i, 1); break; } return m; } // a reused array: start over
   }
-  const m: KMemo = { s, evs, n: 0, base: new Int32Array(0), calls: new Map<string, number>(), marks: null, out: new Int32Array(0), outN: -1 };
+  const m: KMemo = { s, evs, n: 0, base: new Int32Array(0), calls: new Map<string, number>(), marks: null, out: new Int32Array(0), outN: -1, ver: 0 };
   if (MEMO.length >= MEMO_MAX) MEMO.shift();
   MEMO.push(m);
   return m;
@@ -174,13 +174,15 @@ export function kindIds(s: Sess, evs: Ev[]): Int32Array {
   }
   const mk = marksOf(s, null);
   if (m.outN !== m.n || m.marks !== mk) {
-    KIND_STATS.built++;
+    KIND_STATS.built++; m.ver = KIND_STATS.built;
     m.out = grow(m.out, m.n); m.out.set(m.base.subarray(0, m.n));
     for (const x of mk) { const j = anchorIn(evs, x, m.calls); if (j >= 0 && j < m.n) m.out[j] = withKind(m.out[j] + 0, x.kind); }
     m.marks = mk; m.outN = m.n;
   }
   return m.out;
 }
+// changes whenever kindIds(…, evs) rewrote its ids (new events, other marks): a memo over them keys on it (-1 none yet)
+export function kindVer(evs: Ev[]): number { for (const m of MEMO) if (m.evs === evs) return m.ver; return -1; }
 // spec §5a: the kind set of s.evs[i]
 export function evKinds(s: Sess, i: number): number { if (i < 0 || i >= s.evs.length) return 0; return kindIds(s, s.evs)[i] + 0; }
 // kinds present in evs (marks included) → events carrying them, families counted too ("shell" = every shell:* event)

@@ -52,6 +52,7 @@ import "./features/wait/tab.ts"; // the 5th tab, after Repos
 import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
 import "./features/vcs/view.ts";
 import "./features/query/ui.ts";
+import "./features/evkinds.ts"; // the event-kind filter of every event view: input, palette, help, saving
 import "./features/callgraph/view.ts";
 import "./features/related/view.ts"; // after the call graph: its view lets r fall through to here
 import "./features/palette/actions.ts";

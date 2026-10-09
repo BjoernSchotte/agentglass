@@ -9,6 +9,8 @@ import { H, screenOut, startTui, display } from "../../hooks.ts";
 import { OS } from "../../platform/index.ts";
 import { scan, buildView, loadHead, loadTail, titleOf, parentOf, expanded, collapsed } from "../../model/sessions.ts";
 import { openTranscriptAt } from "../../ui/transcript.ts";
+import { vfSet } from "../../ui/evfilter.ts";
+import { openGraph } from "../callgraph/view.ts";
 import { type Obj, str } from "../../util/json.ts";
 import { type Ref, type Target, SELF, parseRef, resolve, canonicalUrl } from "./ref.ts";
 import { resolveRef } from "../../model/sessref.ts";
@@ -35,13 +37,19 @@ export function selectRow(s: Sess): boolean {
 }
 // the link's view: its row selected, its transcript open (from the start cursor when the event is older than the tail)
 // with the cursor on the event
+// (view / f: that view's event filter set first — a bad expression is said and left out — and the call graph opened over
+// the transcript for view=callgraph)
 export function applyTarget(t: Target): void {
   const s = t.s; if (!s) return;
   S.mode = "list"; S.prevMode = "list"; S.tv = null; S.dv = null; S.fview = "";
   selectRow(s);
+  const view = t.view || "transcript";
+  let warn = t.warn;
+  if (t.f) { const e = vfSet(view, t.f); if (e) warn = (warn ? warn + " · " : "") + "the link's filter was not applied: " + e; }
   const tv = openTranscriptAt(s, t.cursor);
   if (t.kind) { tv.focusKind = t.kind; tv.focusTs = t.ts; tv.focusText = t.text; }
-  if (t.warn) say("warn", t.warn);
+  if (view === "callgraph") openGraph(s);
+  if (warn) say("warn", warn);
 }
 // the resolution as JSON (--print, pipes, agent mode)
 export function targetObj(t: Target, r: Ref): Obj {
@@ -49,7 +57,7 @@ export function targetObj(t: Target, r: Ref): Obj {
   return {
     harness: s.h, id: s.id, path: display("path", s.path, s), title: titleOf(s), cwd: s.cwd,
     anchor: t.kind ? { kind: t.kind, turn: t.turn >= 0 ? t.turn : null, ts: t.ts || null, callId: t.kind === "tool" || t.kind === "result" ? t.id || null : null } : null,
-    url: canonicalUrl(s, t.ukey, t.uval),
+    url: canonicalUrl(s, t.ukey, t.uval, t.view, t.f),
   };
 }
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
@@ -103,7 +111,7 @@ H.cli.unshift((args: string[]): boolean => {
     const f = resolveRef(r.sess, false, (x: Sess): boolean => !!x);
     if (!f.s) cliError(f.err || "not_found", f.msg, f.hint, f.code || 3);
     const s = f.s as Sess; r.harness = s.h; r.sess = s.id;
-    o.ref = canonicalUrl(s, r.akey, r.akey === "turn" && r.ak ? r.aval + "~" + String(r.ak) : r.aval);
+    o.ref = canonicalUrl(s, r.akey, r.akey === "turn" && r.ak ? r.aval + "~" + String(r.ak) : r.aval, r.view, r.f);
     S.cli = false;
   }
   const tty = process.stdout.isTTY === true;
@@ -114,7 +122,7 @@ H.cli.unshift((args: string[]): boolean => {
     if (!t.s) failTarget(t);
     const s = t.s as Sess; loadHead(s); loadTail(s); // title, cwd and branch come from the log
     if (t.warn) errLine("agentglass", "warning", t.warn, "");
-    out(o.printUrl ? canonicalUrl(t.s as Sess, t.ukey, t.uval) : JSON.stringify(targetObj(t, r)));
+    out(o.printUrl ? canonicalUrl(t.s as Sess, t.ukey, t.uval, t.view, t.f) : JSON.stringify(targetObj(t, r)));
     process.exit(0);
   }
   if (o.newInstance || !singleInstance() || !handOff(o.ref)) ownTui(r);
