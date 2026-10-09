@@ -82,6 +82,11 @@ hasnt "--watch skill lines carry no text" "$(grep '"kind":"skill' "$t/watch")" "
 run --watch --from-start --for 3s --filter "event.kind is skill" > "$t/watchk" 2> /dev/null || true
 eq "--watch kind filter: only skill kinds" "$(grep -vc '"kinds":\["skill:' "$t/watchk")" 0 # skill lines, and Skill calls (kind skill:load)
 has "--watch kind filter: loads" "$(cat "$t/watchk")" '"kinds":["skill:load"]'; has "--watch kind filter: unloads" "$(cat "$t/watchk")" '"kinds":["skill:unload"]'
+# --watch with skill keys: only the load lines of that skill (skill.cost is refused: known only after the requests)
+run --watch --from-start --for 3s --filter "skill is alpha" > "$t/watchs" 2> /dev/null || true
+eq "--watch skill is: only alpha's lines" "$(grep -vc '"name":"alpha"' "$t/watchs")" 0
+has "--watch skill is: its load" "$(cat "$t/watchs")" '"kind":"skill"'
+r=$(run --watch --from-start --for 1s --filter "skill.cost > 1" 2>&1 || true); has "--watch refuses skill.cost" "$r" "known only after"
 # --watch under skills.hide: the calls that load a hidden skill (Skill, Read/read of a SKILL.md, a Codex sed) show the fake
 # name or nothing (omit), and their results no text
 (CFG="$t/hide.json" run --watch --from-start --for 3s > "$t/watchh" 2> /dev/null) || true

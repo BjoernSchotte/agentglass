@@ -19,7 +19,7 @@ import { callDays, callCutoff } from "../usage/callcache.ts";
 import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
 import { attrOf, keys, aliases, opsOf, enumValues, EVK } from "./attrs.ts";
-import { type Ctx, type Compiled, type RowMemo, EMPTY, compile, matchSession, matchSessionMemo, sessMatches, rowsPending, beyondRetention, oldestDay, numOf } from "./eval.ts";
+import { type Ctx, type Compiled, type RowMemo, EMPTY, compile, matchSession, matchSessionMemo, sessMatches, rowsPending, beyondRetention, oldestDay, numOf, skillRows } from "./eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, restoredToast, initPins, configStore, hiddenByPins, onScopeChange, pinToast } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
 import { repoOf, repoShown } from "./project.ts";
@@ -341,7 +341,8 @@ function frequent(key: string): string[] {
       else if (key === "program") for (const [k, c] of heavy(d).prog) bump(m, REDACT ? display("prog", k.slice(k.indexOf("\t") + 1), null) : k.slice(k.indexOf("\t") + 1), c.n); // --redact: the shown fakes, never a real name
       else for (const k of heavy(d).files.keys()) { const p = k.slice(k.indexOf("\t") + 1); const b = p.slice(p.lastIndexOf("/") + 1); const i = b.lastIndexOf("."); if (i > 0) bump(m, b.slice(i + 1).toLowerCase(), 1); }
     }
-  } else if (key === "model") { for (const n of DICT.model.names) bump(m, n, 1); for (const s of sessions.values()) bump(m, s.model, 1); }
+  } else if (key === "skill") { for (const s of sessions.values()) for (const q of skillRows(s)) bump(m, q.shown, q.loads); } // shown names (fakes under --redact / name rules), never an omitted one
+  else if (key === "model") { for (const n of DICT.model.names) bump(m, n, 1); for (const s of sessions.values()) bump(m, s.model, 1); }
   else if (key === "session") { for (const s of sessions.values()) if (!s.parent) bump(m, s.h + ":" + s.id, Math.max(s.last, s.mtime)); } // newest first
   // --redact: the shown (fake) repo labels and branches, which match their own sessions too: no real name on the input line
   else for (const s of sessions.values()) bump(m, key === "repo" ? (REDACT ? repoShown(s) : repoOf(s)) : key === "branch" ? s.branch : key === "agent" ? s.kind : "", 1);

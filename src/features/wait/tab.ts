@@ -26,7 +26,11 @@ import { addActions, keyAction, tabNamed } from "../palette/actions.ts";
 import { shownFam } from "./family.ts";
 import { type WRow, type WaitRun, type WaitReport, type SlowCall, type Drill, newWaitRun, stepWait, waitResult, waitProgress, trendOf, shareOf, newDrill, stepDrill } from "./report.ts";
 import { BACKFILL } from "./backfill.ts";
-import type { GroupOverlap } from "./overlap.ts";
+import { type GroupOverlap, bucketFor } from "./overlap.ts";
+import { ledger } from "../usage/ledger.ts";
+import { LISTING } from "../usage/skillrec.ts";
+import { sessMatches } from "../query/eval.ts";
+import { skillVis } from "../skills/vis.ts";
 import { type Run, LIVE, liveNow, heavyNow } from "./live.ts";
 import { maxOf, overlapFor, groupFor, rowsBy, hours, pctTxt, trendTxt, kindShort, whenTxt, splitTxt } from "./fmt.ts";
 import type { Obj } from "../../util/json.ts";
@@ -220,6 +224,40 @@ function rowText(w: WRow, c: Cols, rep: WaitReport, ov: GroupOverlap[], on: bool
     fg(tr === null ? C.dim : tr > 0.1 ? C.yellow : tr < -0.1 ? C.green : C.sub) + rj(trendTxt(tr), c.trend) + RST + b +
     fg(g && g.peak > 1 ? C.text : C.dim) + rj(g && g.peak > 1 ? String(g.peak) : "·", c.peak) + RST;
 }
+// ── skill loads on the period's timeline (skill-usage §6.5): per bucket of the report's sparkline (since … until, its
+// bucket size) the loads of the sessions the Wait filter keeps; a row of ✧ under the sparkline, aligned with it ──
+const SKT = { key: "", ver: -1, at: 0, n: [] as number[], total: 0 };
+export function skillBuckets(since: number, until: number, bucketMs: number, f: Compiled): number[] {
+  const nb = bucketMs > 0 && until > since ? Math.ceil((until - since) / bucketMs) : 0; const o: number[] = []; for (let i = 0; i < nb; i++) o.push(0);
+  for (const s of sessions.values()) {
+    const a = ledger.get(s.path); if (!a || !a.sk.length || (f !== EMPTY && !sessMatches(f, s))) continue;
+    for (const l of a.sk) {
+      if (l.name === LISTING || l.t < since || l.t >= until || skillVis(l.name).mode === "omit") continue;
+      const k = Math.floor((l.t - since) / bucketMs); if (k >= 0 && k < nb) o[k] = (o[k] ?? 0) + 1;
+    }
+  }
+  return o;
+}
+// the tick row over w cells (each cell the buckets the sparkline puts there): ✧ where a skill was loaded
+export function skillTicks(vs: number[], w: number): string {
+  if (!vs.length || w <= 0) return "";
+  const n = Math.min(w, vs.length); let o = "";
+  for (let c = 0; c < n; c++) {
+    const a = Math.floor((c * vs.length) / n); const b = Math.max(a + 1, Math.floor(((c + 1) * vs.length) / n)); let m = 0;
+    for (let i = a; i < b; i++) m += vs[i] ?? 0;
+    o += m >= 5 ? fg(C.cyan) + CSI + "1m✧" + RST : m > 0 ? fg(C.cyan) + "✧" + RST : " ";
+  }
+  return o;
+}
+function skillRow(rep: WaitReport, cells: number, iw: number): string {
+  const f = tabFilter("Wait", "stats"); const k = String(rep.since) + "|" + String(rep.until) + "|" + f.key;
+  const now = Date.now(); // the ledger moves on every booking while agents run: recount at most every 2 s then
+  if (SKT.key !== k || (SKT.ver !== L.ver && now - SKT.at >= 2000)) { SKT.key = k; SKT.ver = L.ver; SKT.at = now; SKT.n = skillBuckets(rep.since, rep.until, bucketFor(rep.days), f); let n = 0; for (let i = 0; i < SKT.n.length; i++) n += SKT.n[i] ?? 0; SKT.total = n; }
+  if (!SKT.total) return "";
+  const tail = "  ✧ " + grp(SKT.total) + (SKT.total === 1 ? " skill load" : " skill loads");
+  const w = cells > 0 ? cells : Math.max(0, Math.min(SKT.n.length, iw - 2 - width(tail)));
+  return skillTicks(SKT.n, w) + fg(C.dim) + tail + RST;
+}
 // the selection's overlap figures and its timeline
 function bottom(w: WRow | null, rep: WaitReport, ov: GroupOverlap[], iw: number): string[] {
   if (!w) return ["", ""];
@@ -250,7 +288,7 @@ function renderList(): void {
   line(1, 4, iw, barOpen(VIEW) ? " " + chipBar(VIEW, rowKinds(), iw - 1) : vfActive(VIEW) ? " " + fg(C.accent) + vfLabel(VIEW) + RST + fg(C.dim) + " · " + String(WF.shown) + " of " + String(WF.shown + WF.hidden) + " rows · ] [ next · K edit · esc clears" + RST : " " + nowLine(iw - 1));
   const c = cols(iw);
   line(1, 5, iw, " " + fg(C.dim) + fit(WV.view, c.name) + fit(" kind", c.kind) + rj("share", c.share) + rj("total", c.total) + rj("n", c.n) + rj("p50≈", c.p50) + rj("p95≈", c.p95) + rj("err", c.err) + rj("trend", c.trend) + rj("peak", c.peak) + RST);
-  const rs = rows0; const y0 = 6; const vis = Math.max(0, Ht - 2 - y0 - 2) - (WF.hidden > 0 ? 1 : 0); // a line for the hidden rows
+  const rs = rows0; const y0 = 6; const vis = Math.max(0, Ht - 2 - y0 - 3) - (WF.hidden > 0 ? 1 : 0); // a line for the hidden rows; 3 below: figures, sparkline, skill loads
   if (WV.selKey) for (let i = 0; i < rs.length; i++) if (rs[i]?.key === WV.selKey) { WV.sel = i; break; }
   WV.sel = Math.max(0, Math.min(WV.sel, rs.length - 1)); WV.selKey = rs[WV.sel]?.key ?? "";
   if (WV.sel < WV.top) WV.top = WV.sel;
@@ -267,8 +305,12 @@ function renderList(): void {
     line(1, y0 + i, iw, (on ? bg(C.sel) : "") + rowText(w, c, rep, ov, on, fl && WV.hosts !== "merged" ? FX.hostOf[FX.rows.indexOf(w)] ?? "" : ""));
   }
   const bl = rep && !fl ? bottom(rs[WV.sel] ?? null, rep, ov, iw) : fl ? [fg(C.dim) + "── fleet: sums and histograms over the hosts; peaks and overlap stay per host (h: per host)" + RST, fleetNow(iw)] : ["", ""];
-  line(1, Ht - 4, iw, " " + (bl[0] ?? "")); line(1, Ht - 3, iw, " " + (bl[1] ?? ""));
+  // the skill row lines up under the sparkline when one shows (same cells), else spans the line on its own
+  const spark = sparkCells(bl[1] ?? "");
+  line(1, Ht - 5, iw, " " + (bl[0] ?? "")); line(1, Ht - 4, iw, " " + (bl[1] ?? "")); line(1, Ht - 3, iw, rep && !fl ? " " + skillRow(rep, spark, iw) : "");
 }
+// the sparkline's cell count at the start of a bottom line (its bars, before the tail)
+function sparkCells(l: string): number { const t = l.replace(/\x1b\[[0-9;]*m/g, ""); let n = 0; for (const ch of t) { if ("▁▂▃▄▅▆▇█".indexOf(ch) < 0) break; n++; } return n; }
 // one now summary per remote host (its report's now block and age)
 function fleetNow(iw: number): string {
   const ps: string[] = [];
@@ -400,7 +442,8 @@ H.helpSections.push({ name: "wait", ctx: "Wait", keys: [["d w m a", "period: tod
   ["", "  call ran beside another; slower when overlapped is a correlation, not a cause"],
   ["", "now = heavy commands running on this machine (age, RSS) · contention alert: rules.json id contention (off by default)"],
   ["", "tool time includes approval dialogs; background runs end at launch and are not timed"],
-  ["K  i  !  ] [", "event kinds: only some rows (shell:test, mcp, error …); the hidden ones are counted below the table"]] });
+  ["K  i  !  ] [", "event kinds: only some rows (shell:test, mcp, error …); the hidden ones are counted below the table"],
+  ["", "✧ row under the sparkline: skill loads in the period's sessions, in the sparkline's time buckets (bold from 5)"]] });
 function waitTab(): number { return 2 + H.tabs.indexOf(WAIT_TAB); }
 addActions([
   { id: "wait.open", title: "Wait: what agents wait on (tab)", group: "Wait", keys: "5", when: (c: Ctx): boolean => c.mode === "list", run: (): void => { S.mode = "list"; S.tab = waitTab(); } },

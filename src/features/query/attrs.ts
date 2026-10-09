@@ -118,3 +118,16 @@ r("event.kind", [], "event", "enum", true, RAW_EVENT, "evkind", []);
 r("event", [], "event", "enum", true, RAW_EVENT, "evkind", []);
 r("mcp.server", [], "event", "text", false, [], "", []); // the server of an mcp:* event
 r("shell.family", [], "event", "text", false, [], "", []); // a shell call's agent-wait family ("pnpm test")
+// skill-usage §6.11: one row per session × skill name; every skill.* clause of a filter tests the same row (lifted like
+// call rows: `skill is x and skill.cost > $1` = x alone cost more than $1 in that session); hidden skills (skills.hide
+// omit) have no row, a name-mode skill also matches its fake
+export const SKILL_TRIGGERS = ["user", "model", "compact", "listing"];
+export const SKILL_SCOPES = ["user", "project", "plugin", "builtin", "?"];
+r("skill", [], "skill", "text", false, [], "", []);
+r("skill.trigger", [], "skill", "enum", true, SKILL_TRIGGERS, "", []); // any of the session's loads of that skill
+r("skill.loads", [], "skill", "num", false, [], "", []);
+r("skill.cost", [], "skill", "usd", false, [], "", []); // load + carry $ (unknown when a load has no size or no price)
+r("skill.carry", [], "skill", "usd", false, [], "", []);
+r("skill.tail", [], "skill", "usd", false, [], "", []); // carry after the turn that loaded it
+r("skill.size", [], "skill", "tok", false, [], "", []); // of the newest load
+r("skill.scope", [], "skill", "enum", false, SKILL_SCOPES, "", []);

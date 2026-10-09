@@ -170,6 +170,7 @@ const skillMemo = new Map<string, string>(); const skillUsed = new Set<string>()
 export function fakeSkill(real: string): string {
   if (!real || BUILTIN_SKILLS.has(real)) return real;
   const hit = skillMemo.get(real); if (hit !== undefined) return hit;
+  if (skillUsed.has(real)) return real; // already a fake: text the scrubber rewrote (a --watch call line) keeps it, not a fake of it
   const n = real.length; const k = real.toLowerCase();
   const free = (c: string): boolean => c !== k && !skillUsed.has(c) && !BUILTIN_SKILLS.has(c);
   let out = "";

@@ -10,7 +10,10 @@ import { titleOf, subActive, current } from "../../model/sessions.ts";
 import { openDetail } from "../../ui/detail.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
-import { type Graph, type Agg, type Summary, type Src, type Span, K_TURN, K_AGENT, CATS, SORTS, HIDDEN_ROW, buildGraph, aggregate, sortAggs, summary, dur } from "./model.ts";
+import { type Graph, type Agg, type Summary, type Src, type Span, type Band, K_TURN, K_AGENT, CATS, SORTS, HIDDEN_ROW, SKILL_ROW, buildGraph, aggregate, sortAggs, summary, dur, skillLanes, skillAgg } from "./model.ts";
+import { type Mark, marksOf } from "../../model/marks.ts";
+import { loadOf } from "../skills/marks.ts";
+import { openSkillView } from "../skills/view.ts";
 import { kindIds, kindSet, kindsIn } from "../../model/kinds.ts";
 import { famOf } from "../../model/marks.ts";
 import { mask as vfMask, test as vfTest, active as vfActive, fstate, filterKey, barOpen, chipBar, setCount, emptyText as vfEmpty } from "../../ui/evfilter.ts";
@@ -30,7 +33,9 @@ const G = {
   backMode: "list" as Mode, backTv: null as TV | null, inDetail: false,
   tsort: 0, tsel: 0, ttop: 0, topen: new Set<string>(), flat: [] as Agg[], lvl: [] as number[],
   hitY: [] as number[], hitX0: [] as number[], hitX1: [] as number[], hitI: [] as number[],
+  sk: [] as Band[][], skMore: 0, skMarks: [] as Mark[], skY: [] as number[], skX0: [] as number[], skX1: [] as number[], skRef: [] as string[], // skill lanes, their hit boxes
 };
+const SK_LANES = 3;
 
 // ── loading: the same bounded tail the transcript reads (last 6 MB), one TV per session so ↵ can drill into it ──
 function loadTV(s: Sess): TV {
@@ -105,6 +110,7 @@ function rebuild(): void {
   const srcs: Src[] = [];
   for (let k = 0; k < G.tvs.length; k++) { const t = G.tvs[k]; srcs.push({ evs: t.evs, live: subActive(t.s), kind: t.s.kind, spawn: G.spawn[k] ?? "" }); }
   G.g = buildGraph(srcs, Date.now()); HID.key = "-";
+  const r = G.root; G.skMarks = r ? marksOf(r, ["skill:load"]) : []; const sl = skillLanes(G.skMarks, G.g.t1, SK_LANES); G.sk = sl.lanes; G.skMore = sl.more;
   aggs();
   G.sum = summary(G.g);
   G.sel = -1;
@@ -123,6 +129,7 @@ function aggs(): void {
     ks.sort((x: string, y: string): number => (fm.get(y) ?? 0) - (fm.get(x) ?? 0) || (x < y ? -1 : 1));
     a.name = "┄ " + String(a.count) + " hidden" + ks.slice(0, 3).map((k: string): string => " · " + k + " " + String(fm.get(k) ?? 0)).join("");
   }
+  const sa = skShown() ? skillAgg(G.skMarks, G.g.t1) : null; if (sa) G.aggs.push(sa); // in-context time per skill, after the calls
   sortAggs(G.aggs, G.tsort);
   G.aggKey = HID.key;
 }
@@ -292,6 +299,7 @@ function drawRow(r: number, y: number, grid: string[]): void {
     const t = k > 1 ? "┄" + String(k) : "┄";
     for (let j = 0; j < t.length && c + j < n; j++) if (j === 0 || ch[c + j] === " " || ch[c + j] === "┊") { ch[c + j] = t.charAt(j); fs[c + j] = C.dim; bs[c + j] = C.panel; }
   }
+  if (r === 0 && skShown()) for (const m of G.skMarks) { const c = Math.floor((m.t0 - G.v0) / dt); if (c >= 0 && c < n && (ch[c] === " " || ch[c] === "┊")) { ch[c] = "✧"; fs[c] = C.cyan; } } // a skill loaded here (the turn keeps its colour and its label)
   put(1, y, runs(ch, fs, bs));
 }
 function ruler(y: number): string[] {
@@ -349,16 +357,50 @@ function tabsLine(y: number): void {
   for (let c = 0; c < CATS.length; c++) l += fg(catCol(c)) + "■ " + RST + fg(C.sub) + (CATS[c] ?? "") + "  " + RST;
   put(1, y, fitStyled(l, S.W - 2));
 }
+// ── skills (skill-usage §6.2): a ✧ tick on the turns row at each load, and a lane per concurrently open skill under the
+// turns with a band from load to unload; the kind filter keeps them while it shows skill:load ──
+function skShown(): boolean { const r = G.root; return !!r && G.skMarks.length > 0 && (!vfActive(VIEW) || vfTest(VIEW, r, { raw: "meta", kinds: ["skill:load"], tool: "", args: "", server: "", fam: "", err: -1 })); }
+// the drawn rows: graph rows (≥ 0) with the skill lanes (-1 - lane) after the turns' rows
+function dispRows(): number[] {
+  const o: number[] = []; let k = 0;
+  for (let ri = 0; ri < G.g.rows.length; ri++) { const row = rowOf(ri); if (row.length && row[0].depth === 0) k = ri + 1; }
+  for (let ri = 0; ri < G.g.rows.length; ri++) { if (ri === k && skShown()) for (let l = 0; l < G.sk.length; l++) o.push(-1 - l); o.push(ri); }
+  if (k >= G.g.rows.length && skShown()) for (let l = 0; l < G.sk.length; l++) o.push(-1 - l);
+  return o;
+}
+function drawLane(l: number, y: number, grid: string[]): void {
+  const n = cols(); const dt = G.vw / n;
+  const ch: string[] = []; const fs: string[] = []; const bs: string[] = [];
+  for (let c = 0; c < n; c++) { ch.push(grid[c] ?? " "); fs.push(C.line); bs.push(C.panel); }
+  const none: Band[] = []; const lane = l >= 0 && l < G.sk.length ? G.sk[l] ?? none : none;
+  for (const b of lane) {
+    const a = Math.floor((b.t0 - G.v0) / dt); const z = Math.floor((b.t1 - G.v0) / dt);
+    if (z < 0 || a >= n) continue;
+    for (let c = Math.max(0, a); c <= Math.min(n - 1, z); c++) { ch[c] = c === a ? "✧" : c === z && !b.open ? "┤" : "─"; fs[c] = C.cyan; }
+    const t = narrow(" " + b.label); const x0 = Math.max(0, a) + 1;
+    if (z - x0 >= 3) for (let j = 0; j < t.length && x0 + j < Math.min(n, z); j++) { ch[x0 + j] = t[j] ?? " "; fs[x0 + j] = C.cyan; }
+    G.skY.push(y); G.skX0.push(1 + Math.max(0, a)); G.skX1.push(1 + Math.min(n - 1, Math.max(a, z))); G.skRef.push(b.ref);
+  }
+  if (l === G.sk.length - 1 && G.skMore > 0) { const t = " +" + String(G.skMore); for (let j = 0; j < t.length; j++) { const c = n - t.length + j; if (c >= 0) { ch[c] = t.charAt(j); fs[c] = C.dim; } } }
+  put(1, y, runs(ch, fs, bs));
+}
+function skillAt(ref: string): void {
+  const r = G.root; if (!r) return;
+  for (const m of G.skMarks) if (m.ref === ref) { const x = loadOf(r, m); if (x) openSkillView(r, x); return; }
+}
 function renderFlame(): void {
   const Ht = S.H; const y0 = 5; const rh = Math.max(1, Ht - 9);
   G.hitY.length = 0; G.hitX0.length = 0; G.hitX1.length = 0; G.hitI.length = 0;
+  G.skY.length = 0; G.skX0.length = 0; G.skX1.length = 0; G.skRef.length = 0;
   const grid = ruler(4);
   const s = spanAt(G.sel);
-  if (s) { if (s.row < G.rtop) G.rtop = s.row; else if (s.row >= G.rtop + rh) G.rtop = s.row - rh + 1; }
-  G.rtop = Math.max(0, Math.min(G.rtop, G.g.rows.length - rh));
+  const disp = dispRows(); const di = s ? disp.indexOf(s.row) : -1;
+  if (di >= 0) { if (di < G.rtop) G.rtop = di; else if (di >= G.rtop + rh) G.rtop = di - rh + 1; }
+  G.rtop = Math.max(0, Math.min(G.rtop, disp.length - rh));
   for (let r = 0; r < rh; r++) {
-    const ri = G.rtop + r;
-    if (ri < G.g.rows.length) drawRow(ri, y0 + r, grid);
+    const d = G.rtop + r < disp.length ? numAt(disp, G.rtop + r, 0) : -1000000;
+    if (d >= 0) drawRow(d, y0 + r, grid);
+    else if (d > -1000000) drawLane(-1 - d, y0 + r, grid);
     else put(1, y0 + r, fg(C.line) + grid.join("") + RST);
   }
   if (!G.g.spans.length) put(3, y0 + 1, fg(C.dim) + "no turns or tool calls yet" + RST);
@@ -401,7 +443,7 @@ function renderTree(): void {
     const pct = (a.total / wall) * 100;
     let l = (on ? fg(C.accent) + "▌" : " ") + RST + fg(col) + (a.agent ? B : "") + fit(clean(nm), nw - 1) + RST +
       num(dur(a.total), C.text) + num(dur(a.self), C.sub) + num(String(a.count), C.text) + num(dur(a.total / Math.max(1, a.count)), C.sub) + num(dur(a.max), C.sub) +
-      num(pct.toFixed(pct < 10 ? 1 : 0) + "%", C.sub) + num(a.err ? String(a.err) : "–", a.err ? C.red : C.dim);
+      num(a.name.startsWith("✧") ? "–" : pct.toFixed(pct < 10 ? 1 : 0) + "%", C.sub) + num(a.err ? String(a.err) : "–", a.err ? C.red : C.dim); // skills: time in context overlaps, no share of wall
     l = fitStyled(l, w);
     put(1, 5 + r, (on ? bg(C.sel) : "") + l + (on ? bg(C.sel) : "") + fillTo(l, w) + RST);
   }
@@ -429,6 +471,10 @@ H.views.push({ name: NAME, render });
 H.onTick.push(refresh);
 function treeEnter(): void {
   const a = G.tsel >= 0 && G.tsel < G.flat.length ? G.flat[G.tsel] : null;
+  if (a && a.name.startsWith("✧ ") && a.name !== SKILL_ROW) { // a skill: its newest load in view skill
+    let ref = ""; let t = -1; for (const m of G.skMarks) if ("✧ " + m.label === a.name && m.t0 > t) { t = m.t0; ref = m.ref; }
+    if (ref) skillAt(ref); return;
+  }
   if (!a || a.best < 0) return;
   G.sel = a.best; G.tab = 0;
   const s = spanAt(a.best);
@@ -496,6 +542,7 @@ H.mouse.push((mode: string, b: number, x: number, y: number, press: boolean): bo
     if (y >= 5 && i < G.flat.length) { if (i === G.tsel) treeEnter(); else G.tsel = i; }
     return true;
   }
+  for (let j = 0; j < G.skRef.length; j++) if (numAt(G.skY, j, -1) === y && x >= numAt(G.skX0, j, 0) && x <= numAt(G.skX1, j, -1)) { skillAt(G.skRef[j] ?? ""); return true; } // a skill band: view skill
   for (let j = G.hitI.length - 1; j >= 0; j--) {
     if (numAt(G.hitY, j, -1) !== y || x < numAt(G.hitX0, j, 0) || x > numAt(G.hitX1, j, -1)) continue;
     const i = numAt(G.hitI, j, -1);
@@ -515,4 +562,5 @@ H.helpSections.push({ name: NAME, ctx: NAME, keys: [
   ["←  →", "pan"], ["+  -  wheel", "zoom (around the selection / the mouse)"], ["0", "fit everything"],
   ["↑  ↓", "row above / below (turn › tool › subagent › …)"], ["h l  [ ]", "previous / next span on the row ([ ] with a kind filter: the previous / next shown span)"],
   ["K  i  !  /", "event kinds: hidden spans leave their time empty with a dim ┄n tick, the tree folds them into one ┄ n hidden row"],
+  ["✧", "skills: a tick on the turns row at each load; under the turns one lane per skill in context (load → unload, click: view skill); tree: ✧ skills = time in context (↵ view skill)"],
   ["↵  click again", "event detail of that call (esc comes back)"], ["s  ␣", "call tree: sort column · expand a subagent"], ["esc  q  right-click", "back"] ] });
