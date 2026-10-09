@@ -23,7 +23,7 @@ export function skillsJson(as: Acc[]): Obj[] {
       if (l.name !== u.name || l.trig !== trigOf(u.source)) continue;
       n += l.n; ld += l.load; cr += l.carry; tl += l.tail; usd += l.usd; cu += l.carryUsd; tu += l.tailUsd;
       if (l.tier === "≈") est = true; if (l.tier === "?") unk = true;
-      if (!newest || l.t >= newest.t) newest = l;
+      if (!newest || (l.t >= newest.t && !l.stub) || newest.stub) newest = l; // a re-invocation stub is no version of the text
     }
     const nl = newest as LoadRow | null;
     out.push({ name: v.shown, source: u.source, n: u.n, loads: n, tokens: { load: ld, carry: cr, tail: tl }, costUsd: round(usd), carryUsd: round(cu), tailUsd: round(tu),

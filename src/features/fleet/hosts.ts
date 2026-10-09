@@ -244,30 +244,34 @@ LOCAL_SKILLS.acc = (p: string): Acc | null => ledger.get(p) ?? null; // a correc
 // a log's top-level session id (subagents and copies count under it)
 function topId(path: string): string { let s = sessions.get(path); if (!s) return path; for (let g = 0; s.parent && g < 8; g++) { const up = sessions.get(s.parent); if (!up) break; s = up; } return s.h + ":" + s.id; }
 // the hosts' skill entries: this machine (its ledger and the merge's corrections: copies another host owns, out), each
-// exact host's merge entries (x), and a host without day rows (or before the first merge) its sessions' skills[] updated
-// since the first of `days`
+// exact host's merge entries (x), and the sessions' skills[] updated since the first of `days` where no day rows carry
+// them (a host without day rows, before the first merge, a hub-fed session: its $ unknown)
 export function skillSets(hs: RemoteHost[], x: Exact | null, localName: string, days: string[] | null): HostSet[] {
-  const local: HostSet = { host: localName, accs: [], ids: [], sess: [] };
+  const local: HostSet = { host: localName, accs: [], ids: [], sess: [], info: [] };
   for (const [p, a] of ledger) { local.accs.push(a); local.ids.push(topId(p)); }
   const sets: HostSet[] = [local]; const by = new Map<string, HostSet>();
   if (x) for (const e of x.accs) {
     if (!e.host) { local.accs.push(e.a); local.ids.push(topId(e.key)); continue; }
-    let g = by.get(e.host); if (!g) { g = { host: e.host, accs: [], ids: [], sess: [] }; by.set(e.host, g); sets.push(g); }
+    let g = by.get(e.host); if (!g) { g = { host: e.host, accs: [], ids: [], sess: [], info: [] }; by.set(e.host, g); sets.push(g); }
     g.accs.push(e.a); g.ids.push(e.key);
   }
   const from = days && days.length ? Date.parse(days.slice().sort()[0] + "T00:00:00") : 0;
   for (const rh of hs) {
-    const r = rh.report; if (!r || (r.exact && x)) continue;
-    const g: HostSet = { host: rh.cfg.name, accs: [], ids: [], sess: [] };
-    for (const sr of r.sessions) { const u = Date.parse(str(sr.s["updated"])); if (!from || u >= from) g.sess.push(sr.s); }
-    if (g.sess.length) sets.push(g);
+    const r = rh.report; if (!r) continue;
+    const merged = r.exact && x !== null; const g0 = by.get(rh.cfg.name); const g: HostSet = g0 ? g0 : { host: rh.cfg.name, accs: [], ids: [], sess: [], info: [] };
+    for (const sr of r.sessions) {
+      const u = Date.parse(str(sr.s["updated"])); if (from && u < from) continue;
+      if (merged) { let sa = false; for (const d of sr.days ?? []) if (d.sa.length) sa = true; if (sa) g.info.push(sr.s); if (sa || !arr(sr.s["skills"]).length) continue; } // its day rows carry its skills (a hub-fed session has only skills[])
+      g.sess.push(sr.s);
+    }
+    if (!g0 && g.sess.length) sets.push(g);
   }
   return sets;
 }
 // every host's skill versions (A10): this machine's loads, the hosts' sessions' skills[] entries (newest hash per session)
 export function skillHashes(hs: RemoteHost[], localName: string): HostHash[] {
   const o: HostHash[] = [];
-  for (const a of ledger.values()) for (const l of a.sk) { if (!l.hash || l.trig === "listing") continue; const v = skillVis(l.name); if (v.mode !== "omit") o.push({ host: localName, name: v.shown, hash: l.hash, at: l.t }); }
+  for (const a of ledger.values()) for (const l of a.sk) { if (!l.hash || l.trig === "listing" || l.stub) continue; const v = skillVis(l.name); if (v.mode !== "omit") o.push({ host: localName, name: v.shown, hash: l.hash, at: l.t }); }
   for (const rh of hs) {
     const r = rh.report; if (!r) continue;
     for (const sr of r.sessions) { const at = Date.parse(str(sr.s["updated"])); for (const v of arr(sr.s["skills"])) { const e = obj(v); if (!e) continue; const h = str(e["hash"]); const n = str(e["name"]); if (h && n) o.push({ host: rh.cfg.name, name: n, hash: h, at }); } }

@@ -13,7 +13,8 @@ export const SKILL_FLEET = { on: (): boolean => false, rows: (days: string[] | n
 
 // one host's entries: Accs with their session ids (copies and subagents share their session's id), or (Part A) the
 // --json session objects whose skills[] entries are summed
-export interface HostSet { host: string; accs: Acc[]; ids: string[]; sess: Obj[] }
+// info: sessions whose skills[] only fill in what a merge entry cannot know (size, versions, scope: it has no load records)
+export interface HostSet { host: string; accs: Acc[]; ids: string[]; sess: Obj[]; info: Obj[] }
 function num(v: unknown): number { return typeof v === "number" ? v as number : 0; }
 // Part A: per name over the sessions' skills[] entries (each already hidden/faked as its host shows it)
 function fromJson(ss: Obj[]): SkillRow[] {
@@ -34,7 +35,7 @@ function fromJson(ss: Obj[]): SkillRow[] {
     if (str(e["scope"])) r.scope = str(e["scope"]);
   }
   const out: SkillRow[] = [];
-  for (const r of m.values()) { r.perSess = r.sessions > 0 ? r.usd / r.sessions : 0; out.push(r); }
+  for (const r of m.values()) { r.perSess = r.sessions > 0 ? r.usd / r.sessions : 0; if (r.unpriced && r.usd === 0) r.tier = "?"; out.push(r); } // no $ sent (a hub-fed host): $ ?
   return out;
 }
 // the rows of every host: each host's table (this machine's names through skillVis; a remote host's names as it sent
@@ -43,8 +44,12 @@ export function hostRows(sets: HostSet[], days: string[] | null, by: string): Ho
   const out: HostRow[] = [];
   for (const hs of sets) {
     let rows = hs.accs.length ? skillTable(hs.accs, hs.ids, days, by) : [];
+    if (hs.info.length && rows.length) { const ref = fromJson(hs.info); for (const r of rows) { if (r.sizeP50 > 0 || r.hashes.length) continue; for (const x of ref) if (x.name === r.name) { r.sizeP50 = x.sizeP50; r.hashes = x.hashes; r.scope = x.scope; } } }
     if (hs.sess.length) rows = sortRows(rows.concat(fromJson(hs.sess)), by);
-    for (const r of visRows(rows).rows) out.push({ host: hs.host, row: r });
+    for (const r of visRows(rows).rows) {
+      if (r.loadsUser + r.loadsModel + r.loadsCompact <= 0 && Math.abs(r.load + r.carry) < 0.5 && Math.abs(r.usd) < 1e-9) continue; // all of it went to another host's copy
+      out.push({ host: hs.host, row: r });
+    }
   }
   return out;
 }

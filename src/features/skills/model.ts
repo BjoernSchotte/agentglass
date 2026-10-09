@@ -111,7 +111,7 @@ export function skillTable(as: Acc[], ids: string[], days: string[] | null, by: 
       const g = aggOf(l.name); const r = g.row;
       if (l.S >= 0) g.sizes.push(l.S);
       const tr = tierOf(l); if (g.tiers.indexOf(tr) < 0) g.tiers.push(tr);
-      if (l.hash && r.hashes.indexOf(l.hash) < 0) r.hashes.push(l.hash);
+      if (l.hash && !l.stub && r.hashes.indexOf(l.hash) < 0) r.hashes.push(l.hash); // a re-invocation stub is no version
       if (!r.scope || r.scope === "?") r.scope = l.scope;
     }
   }

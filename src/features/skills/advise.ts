@@ -112,7 +112,7 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
     // A5 version changed: consecutive hashes (by first load) with enough sessions each
     if (r.hashes.length > 1) {
       const hs: Ver[] = [];
-      for (const l of ls) { if (!l.hash) continue; let e: Ver | null = null; for (const x of hs) if (x.h === l.hash) e = x; if (!e) { e = { h: l.hash, t: l.t, ls: [] }; hs.push(e); } e.ls.push(l); if (l.t > 0 && l.t < e.t) e.t = l.t; }
+      for (const l of ls) { if (!l.hash || l.stub) continue; let e: Ver | null = null; for (const x of hs) if (x.h === l.hash) e = x; if (!e) { e = { h: l.hash, t: l.t, ls: [] }; hs.push(e); } e.ls.push(l); if (l.t > 0 && l.t < e.t) e.t = l.t; } // a re-invocation stub has its own text: no version
       hs.sort((x, y) => x.t - y.t);
       for (let i = 1; i < hs.length; i++) {
         const a = hs[i - 1] as Ver; const b = hs[i] as Ver;
