@@ -32,6 +32,7 @@ grep -q '"tools":\[{"tool":"Bash","a":{"n":2,"err":0,' "$T/c.json" || { echo "FA
 grep -q '"programs":\[{"program":"npm","a":{"n":2,"err":0},"b":{"n":3,"err":0}}\]' "$T/c.json" || { echo "FAIL programs"; cat "$T/c.json"; exit 1; }
 grep -q '"files":{"onlyA":\[\],"onlyB":\[\],"both":\[\]}' "$T/c.json" || { echo "FAIL files"; cat "$T/c.json"; exit 1; }
 grep -q '"subagents":true' "$T/c.json" || { echo "FAIL subagents flag"; cat "$T/c.json"; exit 1; }
+grep -q '"skills":\[\]' "$T/c.json" || { echo "FAIL skills (none loaded: [])"; cat "$T/c.json"; exit 1; }
 ag compare claude:aaaaaa11 aaaaaa22 --no-subagents --json | grep -q '"subagents":false' || { echo "FAIL --no-subagents"; exit 1; }
 set +e; err=$(ag compare aaaaaa aaaaaa22 2>&1); rc=$?; set -e
 [ $rc = 4 ] && echo "$err" | grep -q 'is ambiguous: claude:aaaaaa11, claude:aaaaaa22' || { echo "FAIL ambiguous rc=$rc $err"; exit 1; }
