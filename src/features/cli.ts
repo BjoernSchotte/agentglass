@@ -32,7 +32,7 @@ import { saveVcs } from "./vcs/enrich.ts";
 import { labelOf } from "../model/project.ts";
 import { keyShown, reposCli } from "./repos/cli.ts";
 import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchTrack, cliWatchEvent, cliWatchEv, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
-import { type EvX, livePid, evxOf } from "./query/eval.ts";
+import { type EvX, livePid, evxOf, SKILL_EV } from "./query/eval.ts";
 import { type Alert, stateOf, render, severityOf, flags } from "./rules/engine.ts";
 import type { AlertT } from "./otlp/logs.ts";
 import { rules } from "./rules/state.ts";
@@ -287,7 +287,8 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
 interface WSk { name: string; trigger: string; size: number; tier: string; hash: string; scope: string; why: string }
 interface WSkEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: null; id: string | null; text: string; skill: WSk }
 // a skill line as the event-kind filter sees it (event.kind is skill / skill:load / skill:unload)
-function skX(kind: string): EvX { return { raw: kind, kinds: [kind === "skill" ? "skill:load" : "skill:unload"], tool: "", args: "", server: "", fam: "", err: 0 }; }
+// (tool = SKILL_EV + the real name, args = the trigger: the skill and skill.trigger keys match on it)
+function skX(kind: string, name: string, trig: string): EvX { return { raw: kind, kinds: [kind === "skill" ? "skill:load" : "skill:unload"], tool: SKILL_EV + name, args: trig, server: "", fam: "", err: 0 }; }
 const WSKILL = new Map<string, Acc>(); // log → its record
 const SK_MARKS = ["kill", "SKILL.md", "ompact", "<command-name>", "<skills_instructions>"];
 const WENDED = new Set<string>(); // "<log>\t<load index>" of unloads already printed
@@ -310,13 +311,13 @@ function skillWatch(s: Sess, l: string, show: boolean, cf: CliFilter | null): WS
     note(x.name);
     const v = skillVis(x.name); if (!show || v.mode === "omit") continue;
     const sk: WSk = { name: v.shown, trigger: x.trig, size: x.S, tier: x.S < 0 ? "?" : x.est ? "≈" : "exact", hash: x.hash, scope: x.scope, why: x.why };
-    if (isNew && (!cf || cliWatchEv(cf, s, skX("skill")))) outL.push(wsk(s, "skill", x.t, sk, v.shown + " loaded (" + x.trig + ")"));
-    if (isEnd && (!cf || cliWatchEv(cf, s, skX("skill_end")))) outL.push(wsk(s, "skill_end", x.end, sk, v.shown + " out (" + x.why + ")"));
+    if (isNew && (!cf || cliWatchEv(cf, s, skX("skill", x.name, x.trig)))) outL.push(wsk(s, "skill", x.t, sk, v.shown + " loaded (" + x.trig + ")"));
+    if (isEnd && (!cf || cliWatchEv(cf, s, skX("skill_end", x.name, x.trig)))) outL.push(wsk(s, "skill_end", x.end, sk, v.shown + " out (" + x.why + ")"));
   }
   return outL;
 }
 function wsk(s: Sess, kind: string, t: number, sk: WSk, text: string): WSkEv {
-  return { ts: t > 1 ? new Date(t).toISOString() : new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind, kinds: skX(kind).kinds, tool: null, id: null, text, skill: sk };
+  return { ts: t > 1 ? new Date(t).toISOString() : new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind, kinds: [kind === "skill" ? "skill:load" : "skill:unload"], tool: null, id: null, text, skill: sk };
 }
 function printSk(ws: WSkEv[]): void { for (let i = 0; i < ws.length; i++) { const w = ws[i] as WSkEv; w.title = scrub(w.title); out(JSON.stringify(w)); lastOut = Date.now(); } }
 

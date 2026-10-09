@@ -68,11 +68,11 @@ eq("callVis shown skill", callVis("Skill", "pub").hide, "");
 ok("scrub whole words only", scrub("use acme-x now; acme-xy stays").indexOf("acme-xy stays") > 0 && scrub("use acme-x now").indexOf("acme-x ") < 0);
 setVis([], false);
 
-// every surface module that exists calls skillVis or textShown
+// every surface module that exists calls skillVis or textShown (or the read model's visRows / visLoads, which do)
 for (const f2 of VIS_SURFACES) {
   if (!existsSync(f2)) continue;
   const t = readFileSync(f2, "utf-8");
-  ok("surface uses skillVis: " + f2, t.indexOf("skillVis(") >= 0 || t.indexOf("textShown(") >= 0);
+  ok("surface uses skillVis: " + f2, t.indexOf("skillVis(") >= 0 || t.indexOf("textShown(") >= 0 || t.indexOf("visRows(") >= 0 || t.indexOf("visLoads(") >= 0);
 }
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }

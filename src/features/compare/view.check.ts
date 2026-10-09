@@ -33,7 +33,7 @@ if (!st) { bad++; console.log("FAIL no compare state"); } else {
   eq("tabs fit at 80", has(compareLines(st, 80, 24), " time ") ? "ok" : compareLines(st, 80, 24)[1] ?? "", "ok");
   // the status flags (counting, subagents, live, side) never squeeze the tabs: every tab stays on the line at 80 columns
   st.sec = 1; const L80 = compareLines(st, 80, 24); st.sec = 0;
-  eq("all tabs at 80 with flags", /\bsum\b.*\btools\b.*\bprogs\b.*\bcmds\b.*\bfiles\b.*\bmodels\b.*\btime\b/.test(L80[1] ?? "") ? "ok" : L80[1] ?? "", "ok");
+  eq("all tabs at 80 with flags", /\bsum\b.*\btools\b.*\bprogs\b.*\bcmds\b.*\bfiles\b.*\bmodels\b.*\bskills\b.*\btime\b/.test(L80[1] ?? "") ? "ok" : L80[1] ?? "", "ok");
   eq("share headers whole at 80", !has(L80, "share…") && has(L80, "% A") ? "ok" : L80[3] ?? "", "ok");
   eq("flags still shown", has(L80, "subagents incl.") && has(L80, "↵ side B") ? "ok" : L80.slice(0, 3).join("\n"), "ok");
   // tables at 80 columns: names get the room (share gauges go first); paths keep their file name
@@ -65,6 +65,7 @@ if (!st) { bad++; console.log("FAIL no compare state"); } else {
   eq("file lists", has(Lf, "only in A (1)") && has(Lf, "src/a.ts") && has(Lf, "only in B (1)") && has(Lf, "in both (1)") ? "ok" : Lf.join("\n"), "ok");
   onInput("enter"); eq("enter on a missing file", S.toast.indexOf("not found:") === 0 ? "ok" : S.toast, "ok");
   onInput("tab"); eq("tab → models", has(compareLines(st, 120, 40), "claude-opus-4-5") ? "ok" : "no", "ok");
+  onInput("tab"); eq("tab → skills (none loaded here)", has(compareLines(st, 120, 40), "no skills loaded on either side") ? "ok" : compareLines(st, 120, 40).join("\n"), "ok");
   onInput("tab"); eq("tab → timeline", has(compareLines(st, 120, 40), "since each session's start") ? "ok" : compareLines(st, 120, 40).join("\n"), "ok");
   onInput("tab"); eq("tab wraps", String(st.sec), "0");
   onInput("2"); eq("2 opens B's transcript", S.mode + " " + (S.tv ? S.tv.s.id : ""), "transcript b1");

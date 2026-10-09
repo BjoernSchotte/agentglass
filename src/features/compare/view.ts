@@ -18,6 +18,7 @@ import { grp, kfmt, money } from "../usage/costs.ts";
 import type { Bill } from "../usage/billing.ts";
 import { statsDrill, statsTabIndex } from "../usage/stats.ts";
 import { callDays } from "../usage/callcache.ts";
+import { HIDDEN } from "../skills/vis.ts";
 import type { Clause } from "../query/types.ts";
 import { print, printClause } from "../query/parse.ts";
 import { callCutoff } from "../query/eval.ts";
@@ -26,25 +27,26 @@ import { cycleNext, exprErr, newCyc } from "../query/ui.ts";
 import { shown, newRun } from "../triage/run.ts";
 import { openTriage, onInclude } from "../triage/view.ts";
 import { type Group, type Cmp, type CmpJob, type Metric, NOSUB, groupOfExpr, groupClauses, cmpJob, cmpStep, cmpProgress, cmpCached, cmpKey, costCell } from "./metrics.ts";
-import { type ToolRow, type CntRow, type FileRow, type ModelRow, toolRows, cntRows, fileLists, modelRows, timeline } from "./sections.ts";
+import { type ToolRow, type CntRow, type FileRow, type ModelRow, type SkillCmpRow, SIG_SESS, toolRows, cntRows, fileLists, modelRows, skillCmpRows, timeline } from "./sections.ts";
 
 export const CV_NAME = "compare";
 export interface CState {
-  A: Group; B: Group; subs: boolean; sec: number /* 0 summary, 1 tools, 2 programs, 3 commands, 4 files, 5 models, 6 timeline */; sel: number; top: number;
+  A: Group; B: Group; subs: boolean; sec: number /* 0 summary, 1 tools, 2 programs, 3 commands, 4 files, 5 models, 6 skills, 7 timeline */; sel: number; top: number;
   side: number /* 0 = A ([), 1 = B (]) */; open: Set<string>; note: string; origin: string /* "Sessions" | "Stats" */; scope: Clause[]; cmp: Cmp | null;
 }
 export const CV: { st: CState | null } = { st: null };
-const SECS = ["summary", "tools", "programs", "commands", "files", "models", "timeline"];
-const SECS_N = ["sum", "tools", "progs", "cmds", "files", "models", "time"]; // below 110 columns
+const SECS = ["summary", "tools", "programs", "commands", "files", "models", "skills", "timeline"];
+const SECS_N = ["sum", "tools", "progs", "cmds", "files", "models", "skills", "time"]; // below 110 columns
 function secName(i: number, W: number): string { return (W >= 110 ? SECS[i] : SECS_N[i]) ?? ""; }
 
 // ── state beside CState: the count in flight and the rows of the shown section ──
 interface Item { kind: string /* metric | tool | cnt | file | head | model | spark */; i: number; key: string }
-const V = { job: null as CmpJob | null, stale: true, at: 0, dur: 0 /* ms the last count took */, ver: -1, inTx: false, items: [] as Item[], tools: [] as ToolRow[], cnts: [] as CntRow[], files: [] as FileRow[], models: [] as ModelRow[], rowY0: 0, rowN: 0, sig: false, root: "", limited: false };
+const V = { job: null as CmpJob | null, stale: true, at: 0, dur: 0 /* ms the last count took */, ver: -1, inTx: false, items: [] as Item[], tools: [] as ToolRow[], cnts: [] as CntRow[], files: [] as FileRow[], models: [] as ModelRow[], skills: [] as SkillCmpRow[], rowY0: 0, rowN: 0, sig: false, root: "", limited: false };
 const SLICE_FRAME = 15; const SLICE = 40; const GAP = 10;
+const TL = 7; // the timeline section (two single sessions only)
 function hasTimeline(st: CState): boolean { return !!st.A.single && !!st.B.single; }
 function key(st: CState): string { return cmpKey(st.A, st.B, st.scope, st.subs, null); }
-function changed(st: CState): void { V.stale = true; V.job = null; S.dirty = true; if (st.sec === 6 && !hasTimeline(st)) st.sec = 0; }
+function changed(st: CState): void { V.stale = true; V.job = null; S.dirty = true; if (st.sec === TL && !hasTimeline(st)) st.sec = 0; }
 // recount when the groups changed or the ledger moved (every 2 s while live or indexing, every 10 s otherwise, and never
 // sooner than 3× the last count took: big call-row groups do not count back to back); until a count finishes the previous
 // comparison stays on screen
@@ -92,7 +94,7 @@ function header(st: CState, W: number): string {
 function tabsLine(st: CState, W: number): string {
   let l = "";
   for (let i = 0; i < SECS.length; i++) {
-    if (i === 6 && !hasTimeline(st)) continue;
+    if (i === TL && !hasTimeline(st)) continue;
     l += (i === st.sec ? bg(C.accent) + fg("20;20;24") + CSI + "1m" : fg(C.sub)) + " " + secName(i, W) + " " + RST + " ";
   }
   return " " + line(l, W - 2) + " ";
@@ -181,6 +183,17 @@ function modelLine(r: ModelRow, W: number, on: boolean, limited: boolean, billA:
     fg(C.yellow) + rp(cost(r.costA, r.unkA, billA), 12) + rp(cost(r.costB, r.unkB, billB), 12) + RST + b;
   return line(l, W) + RST;
 }
+// skills: loads, $ and $ per session that loaded it on each side (skill-usage §6.10); narrow drops $/sess first
+function skillCols(W: number): { nw: number; per: boolean } { const per = W - 2 - 64 >= 12; return { nw: Math.max(12, Math.min(30, W - 2 - (per ? 64 : 42))), per }; }
+function skillHead(W: number): string { const c = skillCols(W); return fg(C.dim) + line(" " + fit("skill", c.nw) + rp("loads A", 8) + rp("loads B", 8) + rp("$ A", 12) + rp("$ B", 12) + (c.per ? rp("$/sess A", 11) + rp("$/sess B", 11) : "") + "  ", W) + RST; }
+function skillLine(r: SkillCmpRow, W: number, on: boolean, billA: Bill | "", billB: Bill | ""): string {
+  const b = on ? bg(C.sel) : ""; const c = skillCols(W);
+  const usd = (v: number, unk: boolean, bill: Bill | ""): string => unk ? (v > 0 ? money(v, bill) + " +?" : "$ ?") : v > 0 ? money(v, bill) : "–";
+  const per = (v: number, n: number, bill: Bill | ""): string => n > 0 && v > 0 ? money(v / n, bill) : "–";
+  const l = b + " " + fg(r.name === HIDDEN ? C.dim : C.cyan) + (on ? CSI + "1m" : "") + fit(r.name, c.nw) + RST + b + fg(C.text) + rp(r.loadsA ? grp(r.loadsA) : "–", 8) + rp(r.loadsB ? grp(r.loadsB) : "–", 8) + RST + b +
+    fg(C.yellow) + rp(usd(r.usdA, r.unkA, billA), 12) + rp(usd(r.usdB, r.unkB, billB), 12) + RST + b + (c.per ? fg(C.sub) + rp(per(r.usdA, r.sessA, billA), 11) + rp(per(r.usdB, r.sessB, billB), 11) + RST + b : "") + " " + (r.sig ? fg(C.accent) + "●" + RST + b : " ");
+  return line(l, W) + RST;
+}
 const BLK = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 // slots merged per column (per slots each)
 function merge(vals: number[], n: number, per: number): number[] { const o: number[] = []; for (let i = 0; i < n; i += per) { let v = 0; for (let k = i; k < i + per && k < vals.length; k++) v += vals[k] ?? 0; o.push(v); } return o; }
@@ -203,6 +216,7 @@ function itemsOf(st: CState, c: Cmp): Item[] {
     return o;
   }
   if (st.sec === 5) { const m = modelRows(c); V.models = m.rows; V.limited = m.limited; for (let i = 0; i < m.rows.length; i++) o.push({ kind: "model", i, key: m.rows[i].model }); return o; }
+  if (st.sec === 6) { const k = skillCmpRows(c); V.skills = k.rows; V.sig = k.significance; for (let i = 0; i < k.rows.length; i++) o.push({ kind: "skill", i, key: k.rows[i].name }); return o; }
   return o;
 }
 function pickable(it: Item): boolean { return it.kind !== "head"; }
@@ -213,6 +227,7 @@ function itemLine(st: CState, it: Item, on: boolean, W: number): string {
   if (it.kind === "cnt") return cntLine(V.cnts[it.i], tableCols(W, false), st.sec === 2 ? "prog" : "cmd", on, W);
   if (it.kind === "file") return fileLine(V.files[it.i], W, on);
   if (it.kind === "model" && c) return modelLine(V.models[it.i], W, on, V.limited, c.a.bill, c.b.bill);
+  if (it.kind === "skill" && c) return skillLine(V.skills[it.i], W, on, c.a.bill, c.b.bill);
   if (it.kind === "head") return " " + fg(C.accent) + CSI + "1m" + line(it.key, W - 2) + RST + " ";
   return "";
 }
@@ -239,7 +254,8 @@ function build(st: CState, W: number, Ht: number, sync: boolean): string[] {
   else if (st.sec === 2 || st.sec === 3) { out.push(tableHead(tableCols(W, false), st.sec === 2 ? "program" : "command", W)); if (!V.sig && V.cnts.length) ban.push(fg(C.dim) + "small samples, no significance" + RST); }
   else if (st.sec === 4) { const pw = Math.max(10, W - 2 - 34); out.push(fg(C.dim) + line("   " + fit(V.root ? "path (in " + home(display("cwd", V.root, null)) + ")" : "path", pw - 2) + " " + fit("A edits  ±", 16) + " " + fit("B edits  ±", 16), W) + RST); }
   else if (st.sec === 5) { const nw = Math.max(12, Math.min(30, W - 2 - 60)); out.push(fg(C.dim) + line(" " + fit("model", nw) + rp("calls A", 8) + rp("calls B", 8) + rp("tokens A", 10) + rp("tokens B", 10) + rp("cost A", 12) + rp("cost B", 12), W) + RST); if (V.limited) ban.push(fg(C.dim) + "calls: call rows are kept " + String(callDays()) + " days, older calls are not counted — tokens and cost cover all history" + RST); }
-  if (st.sec === 6) {
+  else if (st.sec === 6) { out.push(skillHead(W)); if (V.items.length) ban.push(fg(C.dim) + (V.sig ? "● the share of sessions loading it differs (χ² ≥ 6.63, p < 0.01) · " : "small samples, no significance (χ² needs ≥ " + String(SIG_SESS) + " sessions per group) · ") + "$/sess = per session that loaded it" + RST); }
+  if (st.sec === TL) {
     const tl = timeline(c);
     if (!tl) out.push(" " + fg(C.sub) + "no timeline: a session has no start time" + RST);
     else {
@@ -252,7 +268,7 @@ function build(st: CState, W: number, Ht: number, sync: boolean): string[] {
       out.push(fg(C.dim) + line(" A " + fmtMs(tl.a.length * tl.slot) + " · B " + fmtMs(tl.b.length * tl.slot) + " of activity", W) + RST);
     }
   } else if (!V.items.length) {
-    out.push(""); out.push(" " + fg(C.sub) + (st.sec === 4 ? "no files changed on either side" : st.sec === 0 ? "" : "nothing on either side") + RST);
+    out.push(""); out.push(" " + fg(C.sub) + (st.sec === 4 ? "no files changed on either side" : st.sec === 6 ? "no skills loaded on either side" : st.sec === 0 ? "" : "nothing on either side") + RST);
   } else {
     const room = Math.max(1, n - out.length - ban.length);
     st.sel = Math.max(0, Math.min(st.sel, V.items.length - 1));
@@ -340,7 +356,7 @@ onInclude("Compare", (cl: Clause): string => {
   return "group A: + " + shownClause(cl);
 });
 function cycle(st: CState, d: number): void {
-  const n = hasTimeline(st) ? 7 : 6;
+  const n = hasTimeline(st) ? SECS.length : SECS.length - 1;
   st.sec = (st.sec + d + n) % n; st.sel = 0; st.top = 0; S.dirty = true;
 }
 // an MCP server row (or one of its tools): want 1 open, 0 close (the cursor goes to the server), -1 flip
@@ -394,7 +410,7 @@ H.mouse.push((mode: string, b: number, x: number, y: number, press: boolean): bo
   if (b === 64 || b === 65) { keyView(st, b === 64 ? "wheelup" : "wheeldown"); return true; }
   if (!press || b !== 0) return b === 0 && press;
   if (y === 2) { // the section tabs
-    let cx = 1; for (let i = 0; i < SECS.length; i++) { if (i === 6 && !hasTimeline(st)) continue; const w = width(secName(i, S.W)) + 2; if (x >= cx && x < cx + w) { st.sec = i; st.sel = 0; st.top = 0; } cx += w + 1; }
+    let cx = 1; for (let i = 0; i < SECS.length; i++) { if (i === TL && !hasTimeline(st)) continue; const w = width(secName(i, S.W)) + 2; if (x >= cx && x < cx + w) { st.sec = i; st.sel = 0; st.top = 0; } cx += w + 1; }
     return true;
   }
   const i = st.top + (y - 1 - V.rowY0);
@@ -439,7 +455,7 @@ H.footerHints.push((mode: string): string[][] => {
 });
 H.helpSections.push({ name: "compare", ctx: CV_NAME, keys: [
   ["m  C", "Sessions: mark A / B · compare (marks, mark vs selected, or the previous run of the repo)"], ["C", "Stats: this period vs the previous one"],
-  ["tab  ⇧tab", "section: summary, tools, programs, commands, files, models, timeline (two sessions)"], ["↑↓ jk", "select a row"],
+  ["tab  ⇧tab", "section: summary, tools, programs, commands, files, models, skills, timeline (two sessions)"], ["↑↓ jk", "select a row"],
   ["↵", "tools: Stats drill-down (tool or MCP server) for the side · files: open in $PAGER"], ["[  ]", "side for ↵ and o: A / B"], ["␣  → ←", "fold / unfold an MCP server"],
   ["o  1  2", "transcript of the side's / A's / B's session (single sessions)"], ["a  b", "edit group A / B (filter grammar, tab completes)"],
   ["x", "swap A and B"], ["S", "subagents in / out of both groups"], ["t", "triage: what is different about A vs B"], ["esc", "back"],

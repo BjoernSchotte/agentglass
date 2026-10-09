@@ -15,7 +15,7 @@ import { put, box, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { harnessOf, isHarness } from "../../harness/index.ts";
 import { ledger, pending as pendingBytes } from "../usage/ledger.ts";
-import { type Acc, todayKey, lastDays, spanMin, startOfDay, heavy } from "../usage/record.ts";
+import { type Acc, L, todayKey, lastDays, spanMin, startOfDay, heavy } from "../usage/record.ts";
 import type { Cnt } from "../usage/calls.ts";
 import { kfmt, grp, money, split, single } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
@@ -25,6 +25,8 @@ import { identOf, identSync } from "../query/project.ts";
 import { openGraph } from "../callgraph/view.ts";
 import { type RepoAgg, type HarnessAgg, type BranchAgg, type FileAgg, repoAgg, repoFill, relFile, errPct, allDays, topFiles } from "./agg.ts";
 import { perCommit, openGit } from "../vcs/view.ts";
+import { skillTable, visRows } from "../skills/model.ts";
+import { LISTING } from "../usage/skillrec.ts";
 export { topFiles };
 
 // ── pure helpers (checks) ──
@@ -88,6 +90,24 @@ export function topErrTools(r: RepoAgg, n: number): [string, Cnt][] {
   const xs: [string, Cnt][] = [...r.tools.entries()];
   xs.sort((x: [string, Cnt], y: [string, Cnt]) => y[1].err - x[1].err || y[1].n - x[1].n || (x[0] < y[0] ? -1 : 1));
   return xs.slice(0, n);
+}
+
+// the skills column (skill-usage §6.8): the period's top skill by $ in the project's sessions (and their subagents without
+// a cwd of their own, as the aggregation books them) and how many more; the listing is in nearly every context: left out
+export function repoSkills(r: RepoAgg): { top: string; more: number } {
+  const as: Acc[] = []; const ids: string[] = [];
+  const add = (x: Sess, id: string): void => { const a = ledger.get(x.path); if (a && a.sk.length) { as.push(a); ids.push(id); } };
+  for (const p of r.paths) { const s = sessions.get(p); if (!s) continue; add(s, s.path); for (const k of s.subs) if (!k.cwd) add(k, s.path); }
+  const rows = visRows(skillTable(as, ids, r.days, "cost")).rows.filter((x) => x.name !== LISTING);
+  return { top: rows.length ? rows[0].name : "", more: Math.max(0, rows.length - 1) };
+}
+const skMemo = new Map<string, string>();
+function skillsCell(r: RepoAgg, w: number): string {
+  const k = r.key + "\t" + String(L.ver) + "\t" + r.days.join(",") + "\t" + String(w); const hit = skMemo.get(k); if (hit !== undefined) return hit;
+  const x = repoSkills(r); const more = x.more ? " +" + String(x.more) : "";
+  const c = x.top ? fg(C.cyan) + fit(clean(x.top), Math.max(1, Math.min(width(clean(x.top)), w - 1 - width(more)))) + RST + fg(C.dim) + more + RST : fg(C.dim) + "·" + RST;
+  if (skMemo.size > 500) skMemo.clear();
+  skMemo.set(k, c); return c;
 }
 
 // ── state ──
@@ -175,9 +195,10 @@ function renderList(): void {
   // columns: repo | sess live | cost | active | err% | harness mix | files | last
   const wide = iw >= 78; const mixW = iw >= 70 ? 8 : 0; const mkW = iw >= 86 ? 5 : 0;
   const cS = 5; const cL = wide ? 5 : 0; const cC = 11; const cG = iw >= 92 ? 8 : 0; const cA = 7; const cE = 6; const cF = wide ? 6 : 0; const cT = 5;
-  const fixed = cS + cL + cC + cG + cA + cE + (mixW ? mixW + 2 : 0) + mkW + cF + cT;
+  const cK = iw >= 116 ? 18 : 0; // skills: the wide layout only (≥ 120 columns)
+  const fixed = cS + cL + cC + cG + cA + cE + (mixW ? mixW + 2 : 0) + mkW + cF + cT + (cK ? cK + 2 : 0);
   const rw = Math.max(10, iw - 1 - fixed);
-  const hdr = fg(C.dim) + " " + fit("repo", rw) + rj("sess", cS) + (cL ? rj("live", cL) : "") + rj("cost", cC) + (cG ? rj("commits", cG) : "") + rj("active", cA) + rj("err%", cE) + (mixW ? "  " + fit("harness mix", mixW + mkW) : "") + (cF ? rj("files", cF) : "") + rj("last", cT) + RST;
+  const hdr = fg(C.dim) + " " + fit("repo", rw) + rj("sess", cS) + (cL ? rj("live", cL) : "") + rj("cost", cC) + (cG ? rj("commits", cG) : "") + rj("active", cA) + rj("err%", cE) + (mixW ? "  " + fit("harness mix", mixW + mkW) : "") + (cF ? rj("files", cF) : "") + rj("last", cT) + (cK ? "  " + fit("skills", cK) : "") + RST;
   line(1, 3, W - 2, " " + hdr);
   const y0 = 4; const vis = Math.max(0, Ht - 2 - y0);
   if (RV.selKey) for (let i = 0; i < rs.length; i++) if (rs[i]?.key === RV.selKey) { RV.sel = i; break; } // rows reorder as projects resolve: the cursor stays on its project
@@ -202,7 +223,7 @@ function renderList(): void {
     const s = (on ? fg(C.accent) + "▌" + RST + b : " ") + fitStyled(lab, rw) + fillTo(fitStyled(lab, rw), rw) + b +
       fg(C.text) + rj(String(r.sessions), cS) + RST + b + (cL ? (r.live ? fg(C.green) : fg(C.dim)) + rj(r.live ? String(r.live) : "·", cL) + RST + b : "") +
       rjs(costCell(r, split(r.modes, true)), cC) + b + (cG ? (r.commits ? fg(C.green) : fg(C.dim)) + rj(r.commits ? grp(r.commits) : "·", cG) + RST + b : "") + fg(C.text) + rj(r.activeMin > 0 ? hm(r.activeMin) : "·", cA) + RST + b + errCell(r.err, r.calls, cE) + b + mt +
-      (cF ? fg(C.sub) + rj(nf ? grp(nf) : "·", cF) + RST + b : "") + fg(C.dim) + rj(r.last > 0 ? ago(r.last) : "", cT) + RST;
+      (cF ? fg(C.sub) + rj(nf ? grp(nf) : "·", cF) + RST + b : "") + fg(C.dim) + rj(r.last > 0 ? ago(r.last) : "", cT) + RST + (cK ? "  " + b + skillsCell(r, cK) + b : "");
     line(1, y0 + i, W - 2, b + s + b);
   }
 }
