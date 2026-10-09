@@ -6,17 +6,15 @@ import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 import { own } from "../../util/own.ts";
 import { moOut } from "./owners.ts";
 import { newRows } from "./rows.ts";
-import type { SkRead } from "./skillrec.ts";
+import { type SkLoad, type SkRead, SA_N, hexNum, scopeOf, FNV1, FNV2 } from "./skillrec.ts";
 // every string read back is own()ed: the parser hands escaped strings (each key "<tool>\t<…>") over with up to 64 KB of
 // spare capacity, and the loaded ledger lives for the whole run
 
 // bump when log parsing or bucketing changes: stale caches are dropped, not reused
-export const VERSION = 18; // 18: Claude typed prompts (no session_id) follow the session_id of the lines before them, and a background continuation ("sessionKind":"bg") loses ties: a v17 cache loads, but its continuations and the sessions they name re-index (OWN_FIX); 17: Day.tp per-hour priced-token rows (model-prices): caches load across price changes and re-price in place, gemini keys carry their tier tags; 16: a Claude twin under the project dir its cwd names owns the shared messages, not the first path (OWN.home); v15 caches gave a copy's project the tokens and re-index; 15: cross-file ownership of Claude messages and prompts (Acc.mo as text "mo", Acc.mc, Acc.xs): a fork's, continuation's, second project dir's or forked subagent's copies book nothing, and a forked Codex rollout's copied parent calls and token totals are not its own; v14 caches double count them and re-index; 14: Claude messages booked at their final output_tokens (Acc.ids → booked output_tokens, persisted as io; a message's first, thinking line under-counts it): v12/v13 caches re-index; 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
+export const VERSION = 19; // 19: skill loads + per-skill day buckets (Acc.sk "sk", Day.sa "sa", skill-usage): the loads need the skill text, which only a re-read sees, so older caches re-index; 18: Claude typed prompts (no session_id) follow the session_id of the lines before them, and a background continuation ("sessionKind":"bg") loses ties: a v17 cache loads, but its continuations and the sessions they name re-index (OWN_FIX); 17: Day.tp per-hour priced-token rows (model-prices): caches load across price changes and re-price in place, gemini keys carry their tier tags; 16: a Claude twin under the project dir its cwd names owns the shared messages, not the first path (OWN.home); v15 caches gave a copy's project the tokens and re-index; 15: cross-file ownership of Claude messages and prompts (Acc.mo as text "mo", Acc.mc, Acc.xs): a fork's, continuation's, second project dir's or forked subagent's copies book nothing, and a forked Codex rollout's copied parent calls and token totals are not its own; v14 caches double count them and re-index; 14: Claude messages booked at their final output_tokens (Acc.ids → booked output_tokens, persisted as io; a message's first, thinking line under-counts it): v12/v13 caches re-index; 13: a day's tool/program/command/file maps as one JSON text "hv", decoded on first use, and the head/tail memos Acc.hd/tl (perf-baseline): a v12 build would read those maps as empty; 12: Gemini calls failed by exit code/response error, their call rows' model, pi /skill uses (harness-correctness); 11: Acc.vcs git refs (git-linkage); 10: Acc.rs reasoning tokens (otlp-export); 9: Day.act active intervals (repo-view), Acc.al; 8: per-call rows (cache/calls/<key>.json, filter-language), Acc.t0; 7: honest-costs day/acc fields after parsing-fixes' 6 — unk = unpriced tokens only, um/uc/cp/hc/mt per day, uc/bill/plan/bs per session; 6: Claude fallback iterations booked per attempt; Day.skills + Day.turns + Acc.pk (parsing-fixes); 5: Acc.ep (source cursor epoch); pi MCP/nested/subagent stats; 4: kiro end_timestamp parsed as ISO (re-dates already booked turns); 3: per-harness running state as x/xM
 
-// older caches re-index (v12/v13 under-count Claude output, v14 double counts copied Claude messages); dayIn still reads v12's inline heavy maps
-// v17: readable; cache.ts re-indexes only the Claude logs whose prompt ownership it may have booked wrong
-export const OWN_FIX = 17;
-export function readable(v: number): boolean { return v === VERSION || v === OWN_FIX; }
+// older caches re-index (v18 and before hold no skill loads); dayIn still reads v12's inline heavy maps
+export function readable(v: number): boolean { return v === VERSION; }
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 function strsIn(v: unknown): string[] { const out: string[] = []; for (const x of arr(v)) out.push(own(str(x))); return out; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
@@ -68,8 +66,10 @@ function heavyOf(o: Obj): Heavy {
 }
 HEAVY.decode = heavyIn; HEAVY.encode = heavyOut;
 function dayOut(d: Day): Obj {
-  return { t: d.tools, hv: d.hx ? heavyOut(d.hx) : d.hv, k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del,
+  const o: Obj = { t: d.tools, hv: d.hx ? heavyOut(d.hx) : d.hv, k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del,
     um: numMapOut(d.um), uc: d.uc, cp: numMapOut(d.cp), hc: d.hc, mt: rowsOut(d.mt), ak: d.act, tp: rowsOut(d.tp) };
+  if (d.sa.size) o["sa"] = rowsOut(d.sa);
+  return o;
 }
 // a stored interval list: even length, bounded, sorted pairs (anything else is dropped rather than trusted)
 function actIn(v: unknown): number[] {
@@ -82,7 +82,7 @@ function dayIn(o: Obj): Day {
   const hc = padTo(nums(o["hc"]), 24);
   const hv = str(o["hv"]);
   return { tools: num(o["t"]), hx: hv ? null : heavyOf(o), hv: own(hv), skills: cntsIn(o["k"]), turns: num(o["tu"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
-    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6), sa: new Map<string, number[]>() };
+    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6), sa: rowsIn(o["sa"], SA_N) };
 }
 // git refs as [k, v, t, how, br, subj, call, ts] tuples
 function refsOut(rs: VRef[]): unknown[][] { const out: unknown[][] = []; for (const r of rs) out.push([r.k, r.v, r.t, r.how, r.br, r.subj, r.call, r.ts]); return out; }
@@ -97,18 +97,60 @@ function refsIn(v: unknown): VRef[] {
 }
 function pairsOut(m: Map<string, string>): string[][] { const out: string[][] = []; for (const [k, v] of m) out.push([k, v]); return out; }
 function pairsIn(v: unknown): Map<string, string> { const m = new Map<string, string>(); for (const x of arr(v)) { const t = arr(x); if (t.length !== 2) continue; const k = str(t[0]); if (k) m.set(own(k), own(str(t[1]))); } return m; }
+// skill loads as columns (one array per field; names and directories as tables, each load an index): no text, ever
+const TRIGS = ["user", "model", "compact", "listing"]; const WHYS = ["", "compact", "clear", "drop", "relist"];
+function idxOf(tab: string[], m: Map<string, number>, v: string): number { let i = m.get(v); if (i === undefined) { i = tab.length; tab.push(v); m.set(v, i); } return i; }
+function skOut(sk: SkLoad[]): Obj {
+  const nm: string[] = []; const nmI = new Map<string, number>(); const dr: string[] = []; const drI = new Map<string, number>();
+  const c: number[][] = []; for (let k = 0; k < 20; k++) c.push([]);
+  const flat: number[][] = [[], [], [], []]; const h: string[] = []; const rec: string[] = []; const mp: string[] = [];
+  for (const l of sk) {
+    const f = (l.rel ? 1 : 0) + (l.stub ? 2 : 0) + (l.pend ? 4 : 0) + (l.est ? 8 : 0) + (l.rd ? 16 : 0);
+    const row = [idxOf(nm, nmI, l.name), TRIGS.indexOf(l.trig), l.t, l.tu, l.te, l.rq0, l.bytes, l.S, idxOf(dr, drI, l.dir), l.end, WHYS.indexOf(l.why), f, l.short, l.nq, l.hu, l.ht, l.off, l.len, l.n, l.pg];
+    for (let k = 0; k < 20; k++) (c[k] as number[]).push(row[k] ?? 0);
+    for (let k = 0; k < 4; k++) { (flat[0] as number[]).push(l.lt[k] ?? 0); (flat[1] as number[]).push(l.ct[k] ?? 0); (flat[2] as number[]).push(l.tt[k] ?? 0); (flat[3] as number[]).push(l.hb[k] ?? 0); }
+    h.push(l.hash); rec.push(l.rec); mp.push(l.mdl + "\t" + l.prov);
+  }
+  return { nm, dr, i: c[0] ?? [], g: c[1] ?? [], t: c[2] ?? [], tu: c[3] ?? [], te: c[4] ?? [], q: c[5] ?? [], b: c[6] ?? [], s: c[7] ?? [], d: c[8] ?? [],
+    e: c[9] ?? [], w: c[10] ?? [], f: c[11] ?? [], sh: c[12] ?? [], nq: c[13] ?? [], hu: c[14] ?? [], ht: c[15] ?? [], o: c[16] ?? [], l: c[17] ?? [], n: c[18] ?? [], pg: c[19] ?? [],
+    lt: flat[0] ?? [], ct: flat[1] ?? [], tt: flat[2] ?? [], hb: flat[3] ?? [], h, r: rec, mp };
+}
+function skIn(v: unknown): SkLoad[] {
+  const out: SkLoad[] = []; const o = obj(v); if (!o) return out;
+  const nm = strsIn(o["nm"]); const dr = strsIn(o["dr"]); const ix = nums(o["i"]); const h = strsIn(o["h"]); const rec = strsIn(o["r"]); const mp = strsIn(o["mp"]);
+  const col = (k: string): number[] => nums(o[k]);
+  const g = col("g"); const t = col("t"); const tu = col("tu"); const te = col("te"); const q = col("q"); const b = col("b"); const S = col("s"); const d = col("d");
+  const e = col("e"); const w = col("w"); const f = col("f"); const sh = col("sh"); const nq = col("nq"); const hu = col("hu"); const ht = col("ht"); const off = col("o"); const len = col("l"); const n = col("n"); const pg = col("pg");
+  const lt = col("lt"); const ct = col("ct"); const tt = col("tt"); const hb = col("hb");
+  const four = (x: number[], i: number): number[] => [at(x, i * 4), at(x, i * 4 + 1), at(x, i * 4 + 2), at(x, i * 4 + 3)];
+  for (let i = 0; i < ix.length && i < 2000; i++) {
+    const name = nm[at(ix, i)] ?? ""; if (!name) continue;
+    const fl = at(f, i); const hash = h[i] ?? ""; const m = mp[i] ?? ""; const tab = m.indexOf("\t");
+    out.push({ name, trig: TRIGS[at(g, i)] ?? "model", t: at(t, i), tu: at(tu, i), te: at(te, i), rq0: at(q, i), bytes: at(b, i), S: at(S, i), hash,
+      dir: dr[at(d, i)] ?? "", scope: "", end: at(e, i), why: WHYS[at(w, i)] ?? "", rel: (fl & 1) !== 0, stub: (fl & 2) !== 0, pend: (fl & 4) !== 0, short: at(sh, i), nq: at(nq, i),
+      lt: four(lt, i), ct: four(ct, i), tt: four(tt, i), hb: four(hb, i), hu: at(hu, i), ht: at(ht, i), off: at(off, i), len: at(len, i), rec: rec[i] ?? "",
+      mdl: own(tab >= 0 ? m.slice(0, tab) : m), prov: own(tab >= 0 ? m.slice(tab + 1) : ""), est: (fl & 8) !== 0, n: Math.max(1, at(n, i)), rd: (fl & 16) !== 0,
+      h1: hexNum(hash.slice(0, 8), FNV1), h2: hexNum(hash.slice(8, 16), FNV2), pg: at(pg, i) });
+  }
+  for (const l of out) l.scope = own(scopeOf(l.dir));
+  return out;
+}
 // keepIds: claude dedupe only needs the ids near the resume offset
 export function accOut(a: Acc, keepIds = 64): Obj {
   const days: Obj = {};
   for (const k of [...a.days.keys()]) { const d = a.days.get(k); if (d) days[k] = dayOut(d); }
-  return {
+  const o: Obj = {
     off: a.off, skip: a.skip, ep: a.ep, model: a.model, ids: [...a.ids.keys()].slice(-keepIds), io: [...a.ids.values()].slice(-keepIds), x: a.x, xM: a.xM, pk: a.pk,
     t: [a.inTok, a.outTok, a.cr, a.cw, a.cost, a.unk, a.tools, a.add, a.del, a.uc, a.rs], bill: a.bill, plan: a.plan, bs: a.billSrc, t0: a.t0, al: a.al, days, v: refsOut(a.vcs), hd: a.hd, tl: a.tl,
     mo: a.mv || moOut(a.mo), mc: pairsOut(a.mc), xs: [...a.xs],
+    sq: [a.rq, a.tq, a.lastCtx],
   };
+  if (a.lst.length) o["ls"] = a.lst;
+  if (a.sk.length) o["sk"] = skOut(a.sk); // sessions without skills grow by nothing but sq
+  return o;
 }
 export function accIn(o: Obj): Acc {
-  const t = nums(o["t"]);
+  const t = nums(o["t"]); const sq = nums(o["sq"]);
   const ids = new Map<string, number>(); const io = nums(o["io"]);
   arr(o["ids"]).forEach((x: unknown, i: number) => { ids.set(own(str(x)), at(io, i)); });
   const days = new Map<string, Day>();
@@ -119,6 +161,6 @@ export function accIn(o: Obj): Acc {
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
     bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), rows: newRows(), lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
     p: "", ro: false, mo: new Map<string, number>(), mv: own(str(o["mo"])), mc: pairsIn(o["mc"]), xs: new Set<string>(strsIn(o["xs"])),
-    sk: [], rq: 0, tq: 0, lastCtx: 0, lst: [], skr: new Map<string, SkRead>(),
+    sk: skIn(o["sk"]), rq: at(sq, 0), tq: at(sq, 1), lastCtx: at(sq, 2), lst: strsIn(o["ls"]), skr: new Map<string, SkRead>(),
   };
 }

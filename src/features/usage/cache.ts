@@ -1,7 +1,7 @@
 // agentglass — persists the usage ledger to ~/.agentglass/cache so a restart resumes at the last byte instead of re-indexing every log
 // SPDX-License-Identifier: Apache-2.0
 import { statSync, existsSync, unlinkSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { readText, listDir } from "../../util/fs.ts";
 import { H } from "../../hooks.ts";
@@ -14,7 +14,7 @@ import { ROWS } from "./facts.ts";
 import { pricesSig, kiroRate } from "./pricing.ts";
 import { repriceAll, PRICED } from "./repricer.ts";
 import { isKiroLog } from "../../harness/kiro.ts";
-import { VERSION, OWN_FIX, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
+import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
 import { type Head, readCache, writeCache, isTmpOf } from "./cachefile.ts";
 import { CACHE_DIR, CALLS_DIR, CALLS, callCutoff, pathKey, prune, saveCallsX, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
@@ -38,8 +38,7 @@ function load(): void {
   // (an unreadable one, e.g. of another VERSION, does not hide a readable FILE)
   let old = false;
   if (mtime(OLD) > mtime(FILE)) { prices = loadOld(); old = ledger.size > 0; if (old) L.idx++; } // the next save writes FILE and drops OLD
-  if (!old) readCache(FILE, (h: Head): boolean => { if (!readable(h.v)) return false; hv = h.v; prices = h.prices; kiroOff = h.kiro !== kiroRate(); rlIn(h.rl); return true; }, install);
-  if (hv === OWN_FIX) ownFix();
+  if (!old) readCache(FILE, (h: Head): boolean => { if (!readable(h.v)) return false; prices = h.prices; kiroOff = h.kiro !== kiroRate(); rlIn(h.rl); return true; }, install);
   sweepTmp();
   if (!ledger.size) return;
   if (prices !== pricesSig()) repriceAll(); // saved under other prices: re-price in place (no log is read again)
@@ -50,17 +49,6 @@ function load(): void {
 function sweepTmp(): void {
   const now = Date.now();
   for (const n of listDir(DIR)) if (isTmpOf(FILE, n) && now - mtime(join(DIR, n)) > 60000) { try { unlinkSync(join(DIR, n)); } catch (e) { /* gone already */ } }
-}
-// a v17 cache: a Claude background continuation could hold the original's typed prompts (claude.ts copied: they carry no
-// session_id, and ties went by path). The logs that name another session (Acc.xs) and the sessions they name re-index;
-// everything else loads as it is
-let hv = 0;
-function ownFix(): void {
-  const named = new Set<string>(); const drop: string[] = [];
-  for (const [p, a] of ledger) if (a.xs.size) { drop.push(p); for (const x of a.xs) named.add(x + ".jsonl"); }
-  for (const p of ledger.keys()) if (named.has(basename(p))) drop.push(p);
-  for (const p of drop) { ledger.delete(p); unread.delete(p); written.delete(p); }
-  if (drop.length) L.idx++;
 }
 // one session of a readable cache; a line the reader could not use was skipped: that session alone re-indexes
 let kiroOff = false; // kiro credits are priced at booking, not per row: under another rate those sessions re-index
@@ -77,7 +65,6 @@ function loadOld(): string {
   const root = parse(readText(OLD, 0, size).trim());
   const v = root ? num(root["v"]) : 0;
   if (!root || !readable(v)) return ""; // another format: re-index from scratch
-  hv = v;
   rlIn(obj(root["rl"]));
   const ss = obj(root["sessions"]);
   if (!ss) return "";

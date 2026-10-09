@@ -48,6 +48,12 @@ export function fnvFeed(h0: number, s: string): number { let h = h0; for (let i 
 const HEX = "0123456789abcdef";
 function hex8(n: number): string { let o = ""; for (let i = 28; i >= 0; i -= 4) o += HEX.charAt((n >>> i) & 15); return o; }
 export function hashHex(h1: number, h2: number): string { return hex8(h1) + hex8(h2); }
+// 8 hex chars back to the number (a pending load's running hash after a restart); bad input → def (the offset basis)
+export function hexNum(s: string, def: number): number {
+  if (s.length !== 8) return def;
+  let n = 0; for (let i = 0; i < 8; i++) { const v = HEX.indexOf(s.charAt(i)); if (v < 0) return def; n = n * 16 + v; }
+  return n;
+}
 export function skillHash(text: string): string { return hashHex(fnvFeed(FNV1, text), fnvFeed(FNV2, text)); }
 
 // where a skill lives, from its base directory: user | project | plugin | builtin | ?
