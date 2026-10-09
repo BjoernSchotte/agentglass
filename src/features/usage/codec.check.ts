@@ -1,6 +1,6 @@
 // agentglass — self-check for the ledger cache codec (round trip of billing/unpriced fields): scriptc build src/features/usage/codec.check.ts -o cc && ./cc
 // SPDX-License-Identifier: Apache-2.0
-import { accOut, accIn, VERSION, readable, rlOut, rlIn } from "./codec.ts";
+import { accOut, accIn, VERSION, readable, rlOut, rlIn, skStale } from "./codec.ts";
 import { newAcc, bucket, tokens, usageExact, credits, reasoning, L, tool, pend, file, heavy, turn, skillLoad, skillUnload, skillListing } from "./record.ts";
 import { type Obj, parse } from "../../util/json.ts";
 import { moIn } from "./owners.ts";
@@ -78,6 +78,11 @@ ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan =
   const z = newAcc(); tokens(z, bucket(z, 0, si), "claude-sonnet-4-5", 1, 1, 0, 0, 0);
   const zs = JSON.stringify(accOut(z, 64));
   ok("no sk/sa/ls keys without skills", zs.indexOf("\"sk\"") < 0 && zs.indexOf("\"sa\"") < 0 && zs.indexOf("\"ls\"") < 0, zs.slice(0, 300));
+  // compact: one number array and string tables per log; a listing is one string, shared by the logs that list the same
+  const sko = (parse(js2) ?? {})["sk"] as Obj; const keys = Object.keys(sko).sort().join(",");
+  ok("sk layout", keys === "dr,h,mp,nm,r,x", keys);
+  const y2 = accIn(parse(js2) ?? {}); ok("listing shared", y2.lst === y.lst, "");
+  ok("pre-release columns re-index", skStale(parse("{\"sk\":{\"nm\":[\"a\"],\"i\":[0]}}") ?? {}) && !skStale(parse(js2) ?? {}) && !skStale(parse(zs) ?? {}), "");
 }
 // an older 9-element t: uc defaults to 0
 const old: Obj = {}; for (const k of Object.keys(o)) old[k] = o[k];

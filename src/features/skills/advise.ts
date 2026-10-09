@@ -8,7 +8,7 @@ import { say } from "../../state.ts";
 import { type SkillRow, type LoadRow, p50 } from "./model.ts";
 import type { InvSkill } from "./inventory.ts";
 import { skillVis } from "./vis.ts";
-import { LISTING, SKILL_BPT } from "../usage/skillrec.ts";
+import { LISTING, SKILL_BPT, CLAUDE_BPT, GEMINI_BPT } from "../usage/skillrec.ts";
 
 // severity = $ at stake per 30 days (for ordering); sessions = up to 10 session ids the evidence comes from
 export interface Advice { id: string; skill: string; severity: number; evidence: string[]; suggestion: string; sessions: string[] }
@@ -135,7 +135,7 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
   }
   for (const s of inv) {
     if (loaded.has(s.name) || told.has(s.name) || s.manual) continue; told.add(s.name);
-    const t = Math.ceil(s.descBytes / SKILL_BPT);
+    const t = Math.ceil(s.descBytes / (s.harness === "claude" ? CLAUDE_BPT : s.harness === "gemini" ? GEMINI_BPT : SKILL_BPT)); // the harness's current models' tokenizer
     out.push({ id: "A6", skill: s.name, severity: 0, evidence: ["installed (" + s.harness + ", " + s.scope + "), never loaded in " + String(ctx.days) + " days; its description ≈ " + tok(t) + " tok per request, ≈ " + tok(t * ctx.requests) + " tok in the period"],
       suggestion: "uninstall or disable it if you do not use it: its description rides along on every request", sessions: [] });
   }

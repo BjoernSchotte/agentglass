@@ -14,7 +14,7 @@ import { ROWS } from "./facts.ts";
 import { pricesSig, kiroRate } from "./pricing.ts";
 import { repriceAll, PRICED } from "./repricer.ts";
 import { isKiroLog } from "../../harness/kiro.ts";
-import { VERSION, readable, num, accOut, accIn, rlOut, rlIn } from "./codec.ts";
+import { VERSION, readable, num, accOut, accIn, rlOut, rlIn, skStale } from "./codec.ts";
 import { type Head, readCache, writeCache, isTmpOf } from "./cachefile.ts";
 import { CACHE_DIR, CALLS_DIR, CALLS, callCutoff, pathKey, prune, saveCallsX, loadCallsFrom, sweepCalls } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
@@ -54,6 +54,7 @@ function sweepTmp(): void {
 let kiroOff = false; // kiro credits are priced at booking, not per row: under another rate those sessions re-index
 function install(path: string, o: Obj): void {
   if (kiroOff && isKiroLog(path)) return;
+  if (skStale(o)) return; // skill loads in a pre-release layout: re-index this log
   const a = accIn(o);
   if (!ROWS.on) { ledger.set(path, a); return; } // no rows built (checks): the day buckets alone are consistent with off
   ledger.set(path, a); written.set(path, a.off); unread.add(path); // its calls file, as is, until asked for or it grows

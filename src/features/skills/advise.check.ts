@@ -71,7 +71,8 @@ ok("inventory", inv.map((s: InvSkill) => s.name + ":" + String(s.descBytes) + ":
 const listed = new Map<string, number>(); listed.set("used", 4); listed.set("ghost", 4);
 const a6 = advise([row("used", { m: 1 }), row("(listing)", { c: 4, usd: 2 })], [ld("used", "s1", "model", D, {})], { days: 30, listed, requests: 100 }, inv, C, none);
 ok("A6", ids(a6) === "A6:ghost,A6:unused", ids(a6));
-ok("A6 inventory tokens", a6.length === 2 && ((a6[1] as Advice).evidence[0] ?? "").indexOf("≈ 100 tok per request, ≈ 10.0k tok") >= 0, a6.length > 1 ? (a6[1] as Advice).evidence[0] ?? "" : "");
+// 360 bytes at Claude's divisor 2.6: 139 tok per request
+ok("A6 inventory tokens", a6.length === 2 && ((a6[1] as Advice).evidence[0] ?? "").indexOf("≈ 139 tok per request, ≈ 13.9k tok") >= 0, a6.length > 1 ? (a6[1] as Advice).evidence[0] ?? "" : "");
 let all = ""; for (const a of a6) all += adviceLines(a).join("\n");
 ok("description text never shown", all.indexOf("LOREMDESC") < 0, "");
 ok("frontmatter folded description", (frontOf("---\ndescription: >\n  ab\n  cd\n---\n", "d") ?? { name: "", descBytes: 0, manual: false }).descBytes === 6, "");

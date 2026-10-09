@@ -7,8 +7,8 @@ import { type TS, type Cnt, type Pend, newTS, cnt, normFull, program, argSummary
 import { DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
 import { type Rows, newRows, push, addId, addCmd, KIND_PROG, KIND_FILE } from "./rows.ts";
 import { numAt } from "../../util/text.ts";
-import { own } from "../../util/own.ts";
-import { type SkLoad, type SkRead, newLoad, growLoad, attribute, saRow, skillPath, SA_LU, SA_LM, SA_LC, SK_CAP, LISTING } from "./skillrec.ts";
+import { own, pooledList } from "../../util/own.ts";
+import { type SkLoad, type SkRead, NO_HB, newLoad, growLoad, attribute, saRow, skillPath, SA_LU, SA_LM, SA_LC, SK_CAP, LISTING } from "./skillrec.ts";
 export { dayKey };
 export type { SkLoad };
 
@@ -99,11 +99,14 @@ export function lastDays(n: number): string[] {
 }
 export function nlines(s: string): number { if (!s) return 0; const n = s.split("\n").length; return s.endsWith("\n") ? n - 1 : n; }
 
+// shared empties until the first write (an empty Map or array still costs ~150 B, and most logs load no skill, most days book
+// none): writers swap in their own (skillLoad, skillReq, skillRead, skillCall); never mutate these
+export const NO_SA = new Map<string, number[]>(); export const NO_SK: SkLoad[] = []; export const NO_LST: string[] = []; export const NO_SKR = new Map<string, SkRead>();
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Map<string, number>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", rows: newRows(), lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [],
     p: "", ro: false, mo: new Map<string, number>(), mv: "", mc: new Map<string, string>(), xs: new Set<string>(),
-    sk: [], rq: 0, tq: 0, lastCtx: 0, lst: [], skr: new Map<string, SkRead>() };
+    sk: NO_SK, rq: 0, tq: 0, lastCtx: 0, lst: NO_LST, skr: NO_SKR };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -114,7 +117,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
   return { tools: 0, hx: newHeavy(), hv: "", skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
-    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>(), sa: new Map<string, number[]>() };
+    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>(), sa: NO_SA };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
 // tsIso/tsMs: the time of the last bucket() call, for the call rows tool() appends (0 = none: Date.now() fallback)
@@ -448,6 +451,7 @@ export function patchLines(a: Acc, d: Day, name: string, patch: string): void {
 function skillReq(a: Acc, d: Day, model: string, prov: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number): void {
   const ctx = nIn + nCr + w5 + w1; if (ctx <= 0) return;
   if (a.sk.length) {
+    if (d.sa === NO_SA) d.sa = new Map<string, number[]>();
     let w: number[] = [1, 1, 1, 1, 1];
     if (usd > 0) { const r = resolve(model, prov); if (r) w = [cost(r.p, 1e6, 0, 0, 0, 0), cost(r.p, 0, 0, 1e6, 0, 0), cost(r.p, 0, 0, 0, 1e6, 0), cost(r.p, 0, 0, 0, 0, 1e6), cost(r.p, 0, 1e6, 0, 0, 0)]; }
     attribute(a.sk, d.sa, model, prov, [nIn, nCr, w5, w1], nOut, ctx, a.lastCtx, a.tq, tsMs, usd, w);
@@ -479,10 +483,11 @@ export function skillLoad(a: Acc, name: string, trig: string, ms: number, iso: s
   const t = ms > 0 ? ms : isoMs(iso);
   const l = newLoad(name, trig, t, text, known, dir, est, a.tq, a.rq, o, o >= 0 && e > o ? e - o : 0, rec);
   if (trig === "user" || trig === "model") for (const x of a.sk) if (x.name === name && x.why === "compact") { l.rel = true; break; }
-  const d = bucket(a, t, iso);
+  const d = bucket(a, t, iso); if (d.sa === NO_SA) d.sa = new Map<string, number[]>();
   const r = saRow(d.sa, l.name, "", "");
   const slot = trig === "user" ? SA_LU : trig === "model" ? SA_LM : SA_LC;
   r[slot] = (r[slot] ?? 0) + 1;
+  if (a.sk === NO_SK) a.sk = [];
   a.sk.push(l);
   if (a.sk.length > SK_CAP) skillFold(a);
   return l;
@@ -505,12 +510,13 @@ export function skillListing(a: Acc, ms: number, iso: string, text: string, name
   const t = ms > 0 ? ms : isoMs(iso);
   for (const l of a.sk) if (l.end === 0 && l.name === LISTING) { l.end = t > 0 ? t : 1; l.why = "relist"; l.pend = false; }
   skillLoad(a, LISTING, "listing", t, iso, text, true, "", false);
-  const keep: string[] = []; for (const n of names) if (n && keep.length < SK_CAP && keep.indexOf(n) < 0) keep.push(own(n));
-  a.lst = keep;
+  const keep: string[] = []; for (const n of names) if (n && keep.length < SK_CAP && keep.indexOf(n) < 0) keep.push(n);
+  a.lst = pooledList(keep); // most logs list the same skills: one shared array
 }
 // a SKILL.md read (spec §2): the call side remembers the path; the output side loads it as a model load
 export function skillRead(a: Acc, callId: string, path: string): void {
   if (!callId || !skillPath(path)) return;
+  if (a.skr === NO_SKR) a.skr = new Map<string, SkRead>();
   if (a.skr.size > 64) a.skr.clear(); // outputs that never came
   a.skr.set(own(callId), { path: own(path), off: lineAt(a), tu: a.tq });
 }
@@ -532,6 +538,7 @@ export function skillCall(a: Acc, callId: string, name: string): void {
   if (!callId || !name) return;
   const done: string[] = []; for (const [k, e] of a.skr) if (e.tu === -1) done.push(k);
   for (const k of done) a.skr.delete(k); // texts of earlier calls are complete
+  if (a.skr === NO_SKR) a.skr = new Map<string, SkRead>();
   if (a.skr.size > 64) a.skr.clear();
   a.skr.set(own("S:" + callId), { path: own(name), off: lineAt(a), tu: -2 });
 }
@@ -558,7 +565,8 @@ function skillFold(a: Acc): void {
     const f = a.sk[into] as SkLoad;
     if (f.n === 1) { f.t = 0; f.te = 0; f.off = -1; f.len = 0; f.rec = ""; f.stub = false; f.rel = false; }
     f.n = f.n + x.n; f.nq = f.nq + x.nq; f.short = f.short + x.short; f.hu = f.hu + x.hu; f.hl = f.hl + x.hl; f.ht = f.ht + x.ht;
-    for (let k = 0; k < 4; k++) { f.lt[k] = (f.lt[k] ?? 0) + (x.lt[k] ?? 0); f.ct[k] = (f.ct[k] ?? 0) + (x.ct[k] ?? 0); f.tt[k] = (f.tt[k] ?? 0) + (x.tt[k] ?? 0); f.hb[k] = (f.hb[k] ?? 0) + (x.hb[k] ?? 0); }
+    if (f.hb === NO_HB && x.hb !== NO_HB) f.hb = [0, 0, 0, 0];
+    for (let k = 0; k < 4; k++) { f.lt[k] = (f.lt[k] ?? 0) + (x.lt[k] ?? 0); f.ct[k] = (f.ct[k] ?? 0) + (x.ct[k] ?? 0); f.tt[k] = (f.tt[k] ?? 0) + (x.tt[k] ?? 0); if (f.hb !== NO_HB) f.hb[k] = (f.hb[k] ?? 0) + (x.hb[k] ?? 0); }
     a.sk.splice(i, 1);
     return;
   }

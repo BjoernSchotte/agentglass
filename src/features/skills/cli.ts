@@ -43,7 +43,7 @@ const HELP = `usage: agentglass skills [--period today|7d|30d|all] [--sort ${SOR
   which skills the agents loaded and what each cost. A skill costs tokens when it is loaded (load: normally a cache write)
   and again on every later request while it stays in the context (carry: normally cache reads); tail = the carry after
   the turn it was loaded in. Tokens are the requests' measured tokens; a skill's share of a request is bounded by its text
-  size (bytes / 3.6) and the context's growth (≈ = size inferred or the text was cut, ? = size unknown: counted, not priced).
+  size (bytes / 2.6–3.9 by the model's tokenizer) and the context's growth (≈ = size inferred or the text was cut, ? = size unknown: counted, not priced).
   (listing) = the skill names and descriptions the harness puts into every request. $ = list price at today's prices.
 
   columns: loads (/ by you, ⚙ by the model; the rest re-injected after a compaction), sess, size (median tokens), load,

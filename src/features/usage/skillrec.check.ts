@@ -1,7 +1,7 @@
 // agentglass — self-check for skill attribution (skill-usage spec §3): scriptc build src/features/usage/skillrec.check.ts -o sr && ./sr
 // SPDX-License-Identifier: Apache-2.0
 import { type Acc, newAcc, bucket, tokens, usageExact, turn, skillLoad, skillUnload, skillRead, skillReadDone, skillListing, skillUsesOf } from "./record.ts";
-import { type SkLoad, skillPath, skillReadCmd, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU } from "./skillrec.ts";
+import { type SkLoad, skillPath, skillReadCmd, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU, bptOf } from "./skillrec.ts";
 
 let bad = 0;
 function ok(what: string, c: boolean, info: string): void { if (!c) { bad++; console.log("FAIL " + what + (info ? ": " + info : "")); } }
@@ -194,6 +194,19 @@ eq("no text kept", String(JSON.stringify(a.sk).indexOf("LOREMSKILLTEXT")), "-1")
   saMatches(k, "cap");
 }
 void SA_C; void SA_T;
+
+// the size divisor follows the tokenizer of the model the load was sent with (Claude's newer one: about a third more tokens)
+for (const [m, want] of [["claude-sonnet-5-5", 2.6], ["claude-opus-4-7", 2.6], ["us.anthropic.claude-opus-4-7-v1:0", 2.6], ["claude-fable-5-1", 2.6],
+  ["claude-sonnet-4-5", 3.6], ["claude-opus-4-1-20250805", 3.6], ["claude-sonnet-4-20250514", 3.6], ["claude-3-5-sonnet-20241022", 3.6],
+  ["gemini-2.5-flash", 3.9], ["gemini-3.5-flash-lite", 3.9], ["gpt-5.5", 3.6], ["", 3.6]] as [string, number][]) ok("bptOf " + m, bptOf(m) === want, String(bptOf(m)));
+{
+  const n = newAcc(); const dn = bucket(n, 0, iso);
+  tokens(n, dn, "claude-sonnet-5-5", 10, 5, 0, 20000, 0);
+  skillLoad(n, "alpha", "model", 1, iso, "x".repeat(2600), true, "", false);
+  ok("pending size: the default divisor", (n.sk[0] as SkLoad).S === 723, String((n.sk[0] as SkLoad).S));
+  tokens(n, dn, "claude-sonnet-5-5", 10, 5, 20000, 1500, 0);
+  ok("sent: Claude 5's divisor", (n.sk[0] as SkLoad).S === 1000 && ((n.sk[0] as SkLoad).lt[2] ?? 0) === 1000, String((n.sk[0] as SkLoad).S));
+}
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok skill attribution");

@@ -23,8 +23,8 @@ eq("opencode uses", JSON.stringify(skillUsesOf([o], null)), "[{\"name\":\"alpha\
 
 const g = feed("gemini.jsonl", gemini.usage);
 eq("gemini loads", g.sk.map(row).join("\n"), [
-  "alpha model 1000 1000/0/0/0 0/1000/0/0 drop",
-  "beta model 500 500/0/0/0 0/0/0/0 drop",
+  "alpha model 924 924/0/0/0 0/924/0/0 drop", // Gemini's divisor 3.9: 3600 B → 924 tok
+  "beta model 462 462/0/0/0 0/0/0/0 drop",
 ].join("\n"));
 eq("gemini uses", JSON.stringify(skillUsesOf([g], null)), "[{\"name\":\"alpha\",\"source\":\"model\",\"n\":1},{\"name\":\"beta\",\"source\":\"model\",\"n\":1}]");
 eq("no text kept", String(JSON.stringify(o.sk).indexOf("LOREMSKILLTEXT") + JSON.stringify(g.sk).indexOf("LOREMSKILLTEXT")), "-2");

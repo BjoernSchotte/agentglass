@@ -1,12 +1,12 @@
 // agentglass — the ledger cache's JSON shape: Acc/Day ⇄ plain objects (IO lives in ./cache.ts)
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
-import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy } from "./record.ts";
+import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy, NO_SA, NO_SK, NO_LST, NO_SKR } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
-import { own } from "../../util/own.ts";
+import { own, pooled, pooledText } from "../../util/own.ts";
 import { moOut } from "./owners.ts";
 import { newRows } from "./rows.ts";
-import { type SkLoad, type SkRead, SA_N, hexNum, scopeOf, FNV1, FNV2 } from "./skillrec.ts";
+import { type SkLoad, NO_HB, SA_N, hexNum, scopeOf, FNV1, FNV2 } from "./skillrec.ts";
 // every string read back is own()ed: the parser hands escaped strings (each key "<tool>\t<…>") over with up to 64 KB of
 // spare capacity, and the loaded ledger lives for the whole run
 
@@ -16,6 +16,7 @@ export const VERSION = 19; // 19: skill loads + per-skill day buckets (Acc.sk "s
 // older caches re-index (v18 and before hold no skill loads); dayIn still reads v12's inline heavy maps
 export function readable(v: number): boolean { return v === VERSION; }
 export function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
+function poolIn(v: unknown): string[] { const out: string[] = []; for (const x of arr(v)) out.push(pooled(str(x))); return out; } // few distinct values
 function strsIn(v: unknown): string[] { const out: string[] = []; for (const x of arr(v)) out.push(own(str(x))); return out; }
 function nums(v: unknown): number[] { const out: number[] = []; for (const x of arr(v)) out.push(num(x)); return out; }
 
@@ -45,6 +46,16 @@ function numMapOut(m: Map<string, number>): Obj { const o: Obj = {}; for (const 
 function numMapIn(v: unknown): Map<string, number> { const m = new Map<string, number>(); const o = obj(v); if (o) for (const k of Object.keys(o)) m.set(own(k), num(o[k])); return m; }
 function rowsOut(m: Map<string, number[]>): Obj { const o: Obj = {}; for (const [k, v] of m) o[k] = v; return o; }
 function rowsIn(v: unknown, n: number): Map<string, number[]> { const m = new Map<string, number[]>(); const o = obj(v); if (o) for (const k of Object.keys(o)) m.set(own(k), padTo(nums(o[k]), n)); return m; }
+// Day.sa rows: each into an SA_N literal (exact capacity: a grown array keeps twice the slots)
+function saIn(v: unknown): Map<string, number[]> {
+  const m = new Map<string, number[]>(); const o = obj(v); if (!o) return m;
+  for (const k of Object.keys(o)) {
+    const r = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; const xs = arr(o[k]);
+    for (let i = 0; i < SA_N && i < xs.length; i++) r[i] = num(xs[i]);
+    m.set(pooled(k), r);
+  }
+  return m;
+}
 function at(a: number[], i: number): number { let v = 0; for (const x of a.slice(i, i + 1)) v = x; return v; }
 function padTo(a: number[], n: number): number[] { while (a.length < n) a.push(0); return a; }
 // the heavy part as one JSON text ("hv"): read back without decoding, written out again as it came when never decoded
@@ -82,7 +93,7 @@ function dayIn(o: Obj): Day {
   const hc = padTo(nums(o["hc"]), 24);
   const hv = str(o["hv"]);
   return { tools: num(o["t"]), hx: hv ? null : heavyOf(o), hv: own(hv), skills: cntsIn(o["k"]), turns: num(o["tu"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
-    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6), sa: rowsIn(o["sa"], SA_N) };
+    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6), sa: o["sa"] ? saIn(o["sa"]) : NO_SA };
 }
 // git refs as [k, v, t, how, br, subj, call, ts] tuples
 function refsOut(rs: VRef[]): unknown[][] { const out: unknown[][] = []; for (const r of rs) out.push([r.k, r.v, r.t, r.how, r.br, r.subj, r.call, r.ts]); return out; }
@@ -97,42 +108,44 @@ function refsIn(v: unknown): VRef[] {
 }
 function pairsOut(m: Map<string, string>): string[][] { const out: string[][] = []; for (const [k, v] of m) out.push([k, v]); return out; }
 function pairsIn(v: unknown): Map<string, string> { const m = new Map<string, string>(); for (const x of arr(v)) { const t = arr(x); if (t.length !== 2) continue; const k = str(t[0]); if (k) m.set(own(k), own(str(t[1]))); } return m; }
-// skill loads as columns (one array per field; names and directories as tables, each load an index): no text, ever
+// skill loads: one flat number array (SKW numbers per load) and string tables (names, directories, hashes, record ids,
+// "model\tprovider"), each load an index into them: a few JSON nodes per log however many loads (a parse tree per field
+// and load cost more than the loads). No text, ever
 const TRIGS = ["user", "model", "compact", "listing"]; const WHYS = ["", "compact", "clear", "drop", "relist"];
+const SKW = 41; // [nm, trig, t, tu, te, rq0, bytes, S, dr, end, why, flags, short, nq, hu, ht, off, len, n, pg, hl, h, r, mp, 0, lt×4, ct×4, tt×4, hb×4]
 function idxOf(tab: string[], m: Map<string, number>, v: string): number { let i = m.get(v); if (i === undefined) { i = tab.length; tab.push(v); m.set(v, i); } return i; }
 function skOut(sk: SkLoad[]): Obj {
   const nm: string[] = []; const nmI = new Map<string, number>(); const dr: string[] = []; const drI = new Map<string, number>();
-  const c: number[][] = []; for (let k = 0; k < 21; k++) c.push([]);
-  const flat: number[][] = [[], [], [], []]; const h: string[] = []; const rec: string[] = []; const mp: string[] = [];
+  const hs: string[] = []; const hsI = new Map<string, number>(); const rs: string[] = []; const rsI = new Map<string, number>(); const mp: string[] = []; const mpI = new Map<string, number>();
+  const x: number[] = [];
   for (const l of sk) {
     const f = (l.rel ? 1 : 0) + (l.stub ? 2 : 0) + (l.pend ? 4 : 0) + (l.est ? 8 : 0) + (l.rd ? 16 : 0);
-    const row = [idxOf(nm, nmI, l.name), TRIGS.indexOf(l.trig), l.t, l.tu, l.te, l.rq0, l.bytes, l.S, idxOf(dr, drI, l.dir), l.end, WHYS.indexOf(l.why), f, l.short, l.nq, l.hu, l.ht, l.off, l.len, l.n, l.pg, l.hl];
-    for (let k = 0; k < 21; k++) (c[k] as number[]).push(row[k] ?? 0);
-    for (let k = 0; k < 4; k++) { (flat[0] as number[]).push(l.lt[k] ?? 0); (flat[1] as number[]).push(l.ct[k] ?? 0); (flat[2] as number[]).push(l.tt[k] ?? 0); (flat[3] as number[]).push(l.hb[k] ?? 0); }
-    h.push(l.hash); rec.push(l.rec); mp.push(l.mdl + "\t" + l.prov);
+    const row = [idxOf(nm, nmI, l.name), TRIGS.indexOf(l.trig), l.t, l.tu, l.te, l.rq0, l.bytes, l.S, idxOf(dr, drI, l.dir), l.end, WHYS.indexOf(l.why), f, l.short, l.nq, l.hu, l.ht, l.off, l.len, l.n, l.pg, l.hl,
+      idxOf(hs, hsI, l.hash), idxOf(rs, rsI, l.rec), idxOf(mp, mpI, l.mdl + "\t" + l.prov), 0];
+    for (const v of row) x.push(v);
+    for (let k = 0; k < 4; k++) x.push(l.lt[k] ?? 0);
+    for (let k = 0; k < 4; k++) x.push(l.ct[k] ?? 0);
+    for (let k = 0; k < 4; k++) x.push(l.tt[k] ?? 0);
+    for (let k = 0; k < 4; k++) x.push(l.hb[k] ?? 0);
   }
-  return { nm, dr, i: c[0] ?? [], g: c[1] ?? [], t: c[2] ?? [], tu: c[3] ?? [], te: c[4] ?? [], q: c[5] ?? [], b: c[6] ?? [], s: c[7] ?? [], d: c[8] ?? [],
-    e: c[9] ?? [], w: c[10] ?? [], f: c[11] ?? [], sh: c[12] ?? [], nq: c[13] ?? [], hu: c[14] ?? [], ht: c[15] ?? [], o: c[16] ?? [], l: c[17] ?? [], n: c[18] ?? [], pg: c[19] ?? [], hl: c[20] ?? [],
-    lt: flat[0] ?? [], ct: flat[1] ?? [], tt: flat[2] ?? [], hb: flat[3] ?? [], h, r: rec, mp };
+  return { nm, dr, h: hs, r: rs, mp, x };
 }
+// a pre-release VERSION 19 cache stored the loads as columns: that log re-indexes (cache.ts)
+export function skStale(o: Obj): boolean { const s = obj(o["sk"]); return s !== null && s["x"] === undefined; }
 function skIn(v: unknown): SkLoad[] {
   const out: SkLoad[] = []; const o = obj(v); if (!o) return out;
-  const nm = strsIn(o["nm"]); const dr = strsIn(o["dr"]); const ix = nums(o["i"]); const h = strsIn(o["h"]); const rec = strsIn(o["r"]); const mp = strsIn(o["mp"]);
-  const col = (k: string): number[] => nums(o[k]);
-  const g = col("g"); const t = col("t"); const tu = col("tu"); const te = col("te"); const q = col("q"); const b = col("b"); const S = col("s"); const d = col("d");
-  const e = col("e"); const w = col("w"); const f = col("f"); const sh = col("sh"); const nq = col("nq"); const hu = col("hu"); const ht = col("ht"); const off = col("o"); const len = col("l"); const n = col("n"); const pg = col("pg"); const hl = col("hl");
-  const lt = col("lt"); const ct = col("ct"); const tt = col("tt"); const hb = col("hb");
-  const four = (x: number[], i: number): number[] => [at(x, i * 4), at(x, i * 4 + 1), at(x, i * 4 + 2), at(x, i * 4 + 3)];
-  for (let i = 0; i < ix.length && i < 2000; i++) {
-    const name = nm[at(ix, i)] ?? ""; if (!name) continue;
-    const fl = at(f, i); const hash = h[i] ?? ""; const m = mp[i] ?? ""; const tab = m.indexOf("\t");
-    out.push({ name, trig: TRIGS[at(g, i)] ?? "model", t: at(t, i), tu: at(tu, i), te: at(te, i), rq0: at(q, i), bytes: at(b, i), S: at(S, i), hash,
-      dir: dr[at(d, i)] ?? "", scope: "", end: at(e, i), why: WHYS[at(w, i)] ?? "", rel: (fl & 1) !== 0, stub: (fl & 2) !== 0, pend: (fl & 4) !== 0, short: at(sh, i), nq: at(nq, i),
-      lt: four(lt, i), ct: four(ct, i), tt: four(tt, i), hb: four(hb, i), hu: at(hu, i), hl: at(hl, i), ht: at(ht, i), off: at(off, i), len: at(len, i), rec: rec[i] ?? "",
-      mdl: own(tab >= 0 ? m.slice(0, tab) : m), prov: own(tab >= 0 ? m.slice(tab + 1) : ""), est: (fl & 8) !== 0, n: Math.max(1, at(n, i)), rd: (fl & 16) !== 0,
-      h1: hexNum(hash.slice(0, 8), FNV1), h2: hexNum(hash.slice(8, 16), FNV2), pg: at(pg, i) });
+  const nm = poolIn(o["nm"]); const dr = poolIn(o["dr"]); const hs = poolIn(o["h"]); const rs = strsIn(o["r"]); const mp = poolIn(o["mp"]); const x = nums(o["x"]);
+  const four = (i: number): number[] => [at(x, i), at(x, i + 1), at(x, i + 2), at(x, i + 3)];
+  for (let i = 0; i + SKW <= x.length && out.length < 2000; i += SKW) {
+    const name = nm[at(x, i)] ?? ""; if (!name) continue;
+    const fl = at(x, i + 11); const hash = hs[at(x, i + 21)] ?? ""; const m = mp[at(x, i + 23)] ?? ""; const tab = m.indexOf("\t"); const dir = dr[at(x, i + 8)] ?? "";
+    const hb = at(x, i + 37) + at(x, i + 38) + at(x, i + 39) + at(x, i + 40) > 0 ? four(i + 37) : NO_HB;
+    out.push({ name, trig: TRIGS[at(x, i + 1)] ?? "model", t: at(x, i + 2), tu: at(x, i + 3), te: at(x, i + 4), rq0: at(x, i + 5), bytes: at(x, i + 6), S: at(x, i + 7), hash,
+      dir, scope: pooled(scopeOf(dir)), end: at(x, i + 9), why: WHYS[at(x, i + 10)] ?? "", rel: (fl & 1) !== 0, stub: (fl & 2) !== 0, pend: (fl & 4) !== 0, short: at(x, i + 12), nq: at(x, i + 13),
+      lt: four(i + 25), ct: four(i + 29), tt: four(i + 33), hb, hu: at(x, i + 14), hl: at(x, i + 20), ht: at(x, i + 15), off: at(x, i + 16), len: at(x, i + 17), rec: rs[at(x, i + 22)] ?? "",
+      mdl: pooled(tab >= 0 ? m.slice(0, tab) : m), prov: pooled(tab >= 0 ? m.slice(tab + 1) : ""), est: (fl & 8) !== 0, n: Math.max(1, at(x, i + 18)), rd: (fl & 16) !== 0,
+      h1: hexNum(hash.slice(0, 8), FNV1), h2: hexNum(hash.slice(8, 16), FNV2), pg: at(x, i + 19) });
   }
-  for (const l of out) l.scope = own(scopeOf(l.dir));
   return out;
 }
 // keepIds: claude dedupe only needs the ids near the resume offset
@@ -145,7 +158,7 @@ export function accOut(a: Acc, keepIds = 64): Obj {
     mo: a.mv || moOut(a.mo), mc: pairsOut(a.mc), xs: [...a.xs],
     sq: [a.rq, a.tq, a.lastCtx],
   };
-  if (a.lst.length) o["ls"] = a.lst;
+  if (a.lst.length) o["ls"] = a.lst.join("\n"); // one string: most logs list the same skills (pooledText shares the array)
   if (a.sk.length) o["sk"] = skOut(a.sk); // sessions without skills grow by nothing but sq
   return o;
 }
@@ -161,6 +174,6 @@ export function accIn(o: Obj): Acc {
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
     bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), rows: newRows(), lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
     p: "", ro: false, mo: new Map<string, number>(), mv: own(str(o["mo"])), mc: pairsIn(o["mc"]), xs: new Set<string>(strsIn(o["xs"])),
-    sk: skIn(o["sk"]), rq: at(sq, 0), tq: at(sq, 1), lastCtx: at(sq, 2), lst: strsIn(o["ls"]), skr: new Map<string, SkRead>(),
+    sk: o["sk"] ? skIn(o["sk"]) : NO_SK, rq: at(sq, 0), tq: at(sq, 1), lastCtx: at(sq, 2), lst: typeof o["ls"] === "string" && o["ls"] ? pooledText(str(o["ls"])) : NO_LST, skr: NO_SKR,
   };
 }

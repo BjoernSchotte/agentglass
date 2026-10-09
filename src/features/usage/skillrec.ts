@@ -2,7 +2,7 @@
 // context (skill-usage spec §3). Pure over its arguments: record.ts owns the Acc/Day wiring (skillLoad, skillReq, …)
 // SPDX-License-Identifier: Apache-2.0
 import { HOME } from "../../util/fs.ts";
-import { own } from "../../util/own.ts";
+import { own, pooled } from "../../util/own.ts";
 
 // one load of a skill (in load order); bytes/S -1 = text not visible; end 0 = still in context.
 // trig user | model | compact | listing; why "" | compact | clear | drop | relist; tu = turn (human prompts before it),
@@ -24,7 +24,23 @@ export interface SkLoad {
 // a SKILL.md read waiting for its output (by call id, not persisted): the path, the call line's place in the log, its turn
 export interface SkRead { path: string; off: number; tu: number }
 
-export const SKILL_BPT = 3.6; // UTF-8 bytes per token (spec Decision 2; Open question 8 calibrates it)
+// UTF-8 bytes per token of a skill text (spec Decision 2, Open question 8), per tokenizer family. Measured 2026-10-09 on five
+// public SKILL.md texts (5.6–18.7 KB of markdown with code and JSON): a request's context with the text minus one without.
+// Claude Sonnet 5.5: 2.57 pooled (2.37–3.35 per text); Gemini 3.5 Flash-Lite: 3.93 (3.63–4.71). Claude's newer tokenizer
+// (Opus 4.7 and later) takes about a third more tokens than the older one, which 3.6 fits; GPT/Codex is not measured here:
+// 3.6 (o200k on such text: ≈ 3.5–4). Spread per text ±15 %; the context growth bounds the size from above (§3.2)
+export const SKILL_BPT = 3.6; export const CLAUDE_BPT = 2.6; export const GEMINI_BPT = 3.9;
+// the divisor for the model a load was sent with ("" = not sent yet: the default)
+export function bptOf(model: string): number {
+  const m = model.toLowerCase();
+  if (m.indexOf("gemini") >= 0) return GEMINI_BPT;
+  if (m.indexOf("claude") < 0 && !/(^|[\/.])(opus|sonnet|haiku|fable)-\d/.test(m)) return SKILL_BPT;
+  const v = /(opus|sonnet|haiku|fable)-(\d+)(?:[-.](\d+))?/.exec(m); // claude-opus-4-7, us.anthropic.claude-sonnet-5-5-v1; claude-3-5-sonnet: old naming
+  if (!v) return SKILL_BPT;
+  const major = Number(v[2] ?? "0"); const minor = Number(v[3] ?? "0");
+  if (major >= 100) return SKILL_BPT; // claude-3-5-sonnet-20241022: the date is no version
+  return major > 4 || (major === 4 && minor >= 7 && minor < 100) ? CLAUDE_BPT : SKILL_BPT; // a date suffix (…-4-20250514) is no minor
+}
 export const SK_CAP = 400; // loads kept per log; beyond, the oldest ended loads fold per name
 export const LISTING = "(listing)";
 // skills bundled with Claude Code (the same on every install; the /help skill list, invoked_skills paths "bundled:<name>"):
@@ -47,7 +63,7 @@ export function utf8Len(s: string): number {
   }
   return n;
 }
-export function sizeEst(bytes: number): number { return bytes < 0 ? -1 : Math.ceil(bytes / SKILL_BPT); }
+export function sizeEst(bytes: number, model = ""): number { return bytes < 0 ? -1 : Math.ceil(bytes / bptOf(model)); }
 // the version identity: two FNV-1a hashes (callcache.ts pathKey scheme) over the text, 16 hex chars; fed in parts
 export const FNV1 = 2166136261; export const FNV2 = 3735928559;
 export function fnvFeed(h0: number, s: string): number { let h = h0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
@@ -125,6 +141,8 @@ export function skillReadCmd(cmd: string): string {
   return "";
 }
 
+// SkLoad.hb until a harness-priced request books into it (most loads are table-priced): shared, never written
+export const NO_HB: number[] = [0, 0, 0, 0];
 // "view skill" (skills/text.ts) parses the load's log lines again with capture on: the texts a parse loads, in order
 // (a grown load's parts appended), so the one whose hash matches can be shown. Off for every ledger read: text is never kept
 export interface SkCap { name: string; parts: string[] }
@@ -133,8 +151,8 @@ export function newLoad(name: string, trig: string, ms: number, text: string, kn
   const h1 = known ? fnvFeed(FNV1, text) : FNV1; const h2 = known ? fnvFeed(FNV2, text) : FNV2;
   const bytes = known ? utf8Len(text) : -1;
   if (SKCAP.on && known) SKCAP.out.push({ name: own(name), parts: [text] });
-  return { name: own(name), trig: own(trig), t: ms, tu, te: 0, rq0, bytes, S: sizeEst(bytes), hash: known ? hashHex(h1, h2) : "", dir: own(dir), scope: own(scopeOf(dir)),
-    end: 0, why: "", rel: false, stub: false, pend: true, short: 0, nq: 0, lt: [0, 0, 0, 0], ct: [0, 0, 0, 0], tt: [0, 0, 0, 0], hb: [0, 0, 0, 0], hu: 0, hl: 0, ht: 0,
+  return { name: pooled(name), trig: pooled(trig), t: ms, tu, te: 0, rq0, bytes, S: sizeEst(bytes), hash: known ? pooled(hashHex(h1, h2)) : "", dir: pooled(dir), scope: pooled(scopeOf(dir)),
+    end: 0, why: "", rel: false, stub: false, pend: true, short: 0, nq: 0, lt: [0, 0, 0, 0], ct: [0, 0, 0, 0], tt: [0, 0, 0, 0], hb: NO_HB, hu: 0, hl: 0, ht: 0,
     off, len, rec: own(rec), mdl: "", prov: "", est, n: 1, rd: false, h1, h2, pg: 0 };
 }
 // more text of the same load (a skill text over several lines, a second partial read): bytes, hash and size grow; once the
@@ -144,8 +162,8 @@ export function growLoad(l: SkLoad, text: string, lineEnd: number): void {
   if (SKCAP.on) for (let i = SKCAP.out.length - 1; i >= 0; i--) { const c = SKCAP.out[i] as SkCap; if (c.name === l.name) { c.parts.push(text); break; } }
   const was = l.S;
   l.bytes = (l.bytes < 0 ? 0 : l.bytes) + nb;
-  l.h1 = fnvFeed(l.h1, text); l.h2 = fnvFeed(l.h2, text); l.hash = hashHex(l.h1, l.h2);
-  l.S = sizeEst(l.bytes);
+  l.h1 = fnvFeed(l.h1, text); l.h2 = fnvFeed(l.h2, text); l.hash = pooled(hashHex(l.h1, l.h2));
+  l.S = sizeEst(l.bytes, l.pend ? "" : l.mdl);
   if (!l.pend) l.pg += l.S - Math.max(0, was);
   if (lineEnd > l.off && l.off >= 0) l.len = lineEnd - l.off;
 }
@@ -168,7 +186,7 @@ const CARRY_ORDER = [1, 2, 3, 0]; // a prefix is read from the cache; after an e
 export function saKey(name: string, prov: string, model: string): string { return name + "\t" + prov + "\t" + model; }
 export function saRow(sa: Map<string, number[]>, name: string, prov: string, model: string): number[] {
   const k = saKey(name, prov, model); let r = sa.get(k);
-  if (!r) { r = []; for (let i = 0; i < SA_N; i++) r.push(0); sa.set(own(k), r); }
+  if (!r) { r = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; sa.set(pooled(k), r); } // SA_N slots, a literal: exact capacity
   return r;
 }
 function addTo(x: number[], at: number, g: number[]): void { for (let i = 0; i < 4; i++) x[at + i] = (x[at + i] ?? 0) + (g[i] ?? 0); }
@@ -178,6 +196,7 @@ function book(l: SkLoad, g: number[], slot: number, tail0: boolean, row: number[
   addTo(into, 0, g); addTo(row, slot, g);
   if (tail) { addTo(l.tt, 0, g); addTo(row, SA_T, g); }
   if (!hp) return;
+  if (l.hb === NO_HB) l.hb = [0, 0, 0, 0];
   addTo(l.hb, 0, g);
   let wl = 0; for (let i = 0; i < 4; i++) wl += (g[i] ?? 0) * (w[i] ?? 1);
   const u = wReq > 0 ? usd * wl / wReq : 0;
@@ -209,8 +228,9 @@ export function attribute(sk: SkLoad[], sa: Map<string, number[]>, model: string
   const bounded = gl > 0; // none (cache expiry, model switch): the size from the text stands
   for (const l of sk) { // sent with this request
     if (l.end !== 0 || !l.pend) continue;
-    l.pend = false; l.mdl = own(model); l.prov = own(prov);
+    l.pend = false; l.mdl = pooled(model); l.prov = pooled(prov);
     if (l.S < 0) continue; // size unknown: counted, never priced
+    l.S = sizeEst(l.bytes, model); // the tokenizer is known now
     if (bounded) { if (l.S > gl) l.S = gl > 0 ? gl : 0; gl -= l.S; }
     const n = take(b, l.S, LOAD_ORDER, g);
     l.short += l.S - n;
