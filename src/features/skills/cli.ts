@@ -169,9 +169,10 @@ function spanOf(ss: Sess[], t0: number, t1: number, cut: number): SpanStat {
   }
   return o;
 }
-// the advice A1–A9 for a period's sessions (tops; accs/ids: their logs under the top session's id; bySess: every session
-// and subagent by "<harness>:<id>"); the CLI and the Stats skills panel ask the same. Hidden skills already out (visAdvice)
-export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: Map<string, Sess>, rows: SkillRow[], loads: LoadRow[], days: number, harness: string): Advice[] {
+// the advice A1–A9 for a period's sessions (tops; accs/ids: their logs under their session's key; bySess: every session by
+// that key; keyOf: the key, "<harness>:<id>" in the CLI, the log path in the Stats panel); the CLI and the Stats skills
+// panel ask the same. Hidden skills already out (visAdvice)
+export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: Map<string, Sess>, rows: SkillRow[], loads: LoadRow[], days: number, harness: string, keyOf: (s: Sess) => string = (s: Sess): string => s.h + ":" + s.id): Advice[] {
   const set: Set0 = { accs, ids, tops, bySess };
   const listed = new Map<string, number>(); let reqs = 0;
   for (const a of set.accs) { reqs += a.rq; for (const n of a.lst) listed.set(n, (listed.get(n) ?? 0) + 1); }
@@ -186,10 +187,11 @@ export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: M
     return { n, err: e, kept: r.n > 0 || s.mtime >= cut };
   };
   const tree = new Map<string, Sess[]>(); const turns = new Map<string, number>();
-  const kids = (s: Sess, into: Sess[]): void => { into.push(s); for (const c of s.subs) kids(c, into); };
-  for (const s of set.tops) { const v: Sess[] = []; kids(s, v); tree.set(s.h + ":" + s.id, v); }
+  const own = new Set<string>(); for (const s of set.tops) own.add(s.path); // a subagent listed itself (the panel: every log) counts under its own key only
+  const kids = (s: Sess, into: Sess[]): void => { into.push(s); for (const c of s.subs) if (!own.has(c.path)) kids(c, into); };
+  for (const s of set.tops) { const v: Sess[] = []; kids(s, v); tree.set(keyOf(s), v); }
   for (let k = 0; k < set.accs.length; k++) { const id = set.ids[k] ?? ""; const a = set.accs[k] as Acc; if (!a.sub) turns.set(id, (turns.get(id) ?? 0) + a.tq); }
-  const repoOf = new Map<string, string>(); for (const s of set.tops) { const x = identSync(s); repoOf.set(s.h + ":" + s.id, x && x.kind !== "none" ? x.key : ""); }
+  const repoOf = new Map<string, string>(); for (const s of set.tops) { const x = identSync(s); repoOf.set(keyOf(s), x && x.kind !== "none" ? x.key : ""); }
   const oi = { sessions: [...tree.keys()], repo: (s: string): string => repoOf.get(s) ?? "", turns: (s: string): number => turns.get(s) ?? 0, span: (s: string, t0: number, t1: number): SpanStat => spanOf(tree.get(s) ?? [], t0, t1, cut) };
   const cfg = adviseCfg();
   const all = advise(rows, loads, { days, listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !harness || x.harness === harness), cfg, calls).concat(adviseB(rows, loads, oi, [], cfg, Date.now()));
