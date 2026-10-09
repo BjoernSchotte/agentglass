@@ -24,7 +24,7 @@ export interface SessAgg {
   sk: Map<string, SkAgg>; // skill loads by "<name>\t<source>" from the turn roots' gen_ai.skill.load events (skill-usage 6.14)
 }
 // one skill and source of a session: loads, and the newest load's size, tier, hash, scope
-interface SkAgg { name: string; source: string; n: number; at: number; size: number; tier: string; hash: string; scope: string }
+interface SkAgg { name: string; source: string; n: number; at: number; size: number; tier: string; hash: string; scope: string; stub: boolean }
 export interface HostAgg {
   name: string; hostId: string; hostName: string; version: string; os: string; redact: boolean; exact: boolean;
   sess: Map<string, SessAgg>; seen: Map<string, number>; newest: number; beat: number; reqIds: Set<string>; respIds: Set<string>;
@@ -135,9 +135,10 @@ function skillEvents(x: SessAgg, evs: unknown): void {
     const m = attrMap(o["attributes"]); const name = s(m, "gen_ai.skill.name"); const tr = s(m, "agentglass.skill.trigger");
     if (!name || (tr !== "user" && tr !== "model")) continue;
     const src = tr === "user" ? "command" : "model"; const k = name + "\t" + src; const t = nsMs(o["timeUnixNano"]);
-    let g = x.sk.get(k); if (!g) { g = { name, source: src, n: 0, at: -1, size: -1, tier: "", hash: "", scope: "" }; x.sk.set(k, g); }
+    let g = x.sk.get(k); if (!g) { g = { name, source: src, n: 0, at: -1, size: -1, tier: "", hash: "", scope: "", stub: true }; x.sk.set(k, g); }
     g.n++;
-    if (t >= g.at) { g.at = t; g.size = m.n.has("agentglass.skill.size_tokens") ? n(m, "agentglass.skill.size_tokens") : -1; g.tier = s(m, "agentglass.skill.tier"); g.hash = s(m, "agentglass.skill.hash"); g.scope = s(m, "agentglass.skill.scope"); }
+    const stub = b(m, "agentglass.skill.stub"); // a re-invocation stub is no version of the text: the newest real load wins
+    if ((t >= g.at && (!stub || g.stub)) || (g.stub && !stub)) { g.at = t; g.stub = stub; g.size = m.n.has("agentglass.skill.size_tokens") ? n(m, "agentglass.skill.size_tokens") : -1; g.tier = s(m, "agentglass.skill.tier"); g.hash = s(m, "agentglass.skill.hash"); g.scope = s(m, "agentglass.skill.scope"); }
   }
 }
 function skillsOf(x: SessAgg): Obj[] {
