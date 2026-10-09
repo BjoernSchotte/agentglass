@@ -9,7 +9,7 @@ import { readFileSync, openSync, writeSync, closeSync, chmodSync, renameSync } f
 import { join } from "node:path";
 import type { Ev, Sess } from "../model/types.ts";
 import { type Mark, famOf, markKind } from "../model/marks.ts";
-import { kindIds, kindVer, kindSet, kindSets, kindsIn, famsIn, kindsOfFam, specific } from "../model/kinds.ts";
+import { kindIds, kindPairs, kindVer, kindSet, kindSets, kindsIn, famsIn, kindsOfFam, specific } from "../model/kinds.ts";
 import { S, say } from "../state.ts";
 import { section } from "../util/config.ts";
 import { parse, printClause } from "../features/query/parse.ts";
@@ -146,23 +146,24 @@ export function mask(view: string, s: Sess, evs: Ev[]): Uint8Array {
   const f = compiledOf(view); const v = vfOf(view);
   if (!f) { if (!v.inv) for (let i = 0; i < n; i++) m[i] = 1; }
   else {
-    const fast = kindOnly(f); const per = new Uint8Array(kindSets() * 8); // (kind set, raw kind) → 0 unknown, 1 shown, 2 hidden
-    const need = needs(f); const calls = new Map<string, number>(); const byText = new Map<string, number>();
+    // (kind set, raw kind) → 0 unknown, 1 shown, 2 hidden; a filter that reads the call (its name, server, family) also by
+    // the call's interned text: (text, kind set, raw kind) → shown, so repeated commands are judged once
+    const fast = kindOnly(f); const nk = kindSets(); const per = new Uint8Array(nk * 8);
+    const need = needs(f); const pp = kindPairs(s, evs); const byText = new Map<number, number>();
     for (let i = 0; i < n; i++) {
-      const e = evs[i]; const id = ids[i] + 0;
-      if (e.kind === "tool" && e.id) calls.set(e.id, i);
+      const e = evs[i]; const id = ids[i] + 0; const ri = rawIx(e.kind);
       let hit = false;
-      if (fast || (e.kind !== "tool" && e.kind !== "result")) { // decided by its kinds and raw kind alone: once per pair
-        const k = id * 8 + rawIx(e.kind);
+      const t = fast || (e.kind !== "tool" && e.kind !== "result") ? -2 : pp.tid[i] + 0;
+      if (t === -2) { // decided by its kinds and raw kind alone: once per pair
+        const k = id * 8 + ri;
         const c = k < per.length ? per[k] + 0 : 0;
         if (c !== 0) hit = c === 1;
-        else { hit = evalOne(f, s, evs, i, id, calls, need); if (k < per.length) per[k] = hit ? 1 : 2; }
-      } else { // a call or result: also by its call's text (repeated commands are judged once)
-        const ri = rawIx(e.kind); let ct = e.text;
-        if (e.kind === "result") { const j = e.id ? calls.get(e.id) : undefined; ct = j !== undefined && j + 0 < n ? evs[j + 0].text : ""; }
-        const k = String(id * 8 + ri) + "\t" + ct; const c = byText.get(k);
+        else { hit = evalOne(f, s, evs, i, id, pp.pair, need); if (k < per.length) per[k] = hit ? 1 : 2; }
+      } else if (t < 0) hit = evalOne(f, s, evs, i, id, pp.pair, need); // a result without its call
+      else {
+        const k = (t * nk + id) * 8 + ri; const c = byText.get(k);
         if (c !== undefined) hit = c === 1;
-        else { hit = evalOne(f, s, evs, i, id, calls, need); if (byText.size < 100000) byText.set(k, hit ? 1 : 0); }
+        else { hit = evalOne(f, s, evs, i, id, pp.pair, need); byText.set(k, hit ? 1 : 0); }
       }
       if (hit) m[i] = 1;
     }
@@ -182,9 +183,8 @@ function needs(f: Compiled): number {
   for (const c of f.cs) { const a = attrOf(c.key); if (!a) continue; if (a.key === "mcp.server") n |= 3; else if (a.key === "shell.family") n |= 5; else if (a.ent === "call") n |= 1; }
   return n;
 }
-function evalOne(f: Compiled, s: Sess, evs: Ev[], i: number, id: number, calls: Map<string, number>, need: number): boolean {
-  const e = evs[i]; let call: Ev | null = null;
-  if (e.kind === "result" && e.id) { const j = calls.get(e.id); if (j !== undefined && j + 0 < evs.length) call = evs[j + 0]; }
+function evalOne(f: Compiled, s: Sess, evs: Ev[], i: number, id: number, pair: Int32Array, need: number): boolean {
+  const e = evs[i]; const j = pair[i] + 0; const call: Ev | null = e.kind === "result" && j >= 0 && j < evs.length ? evs[j] : null;
   const ks = kindSet(id);
   const x: EvX = need === 0 ? { raw: e.kind, kinds: ks, tool: "", args: "", server: "", fam: "", err: ks.indexOf("error") >= 0 ? 1 : e.kind === "result" ? 0 : -1 } : evxOf(e, call, ks, need);
   for (const p of f.ev) if (!p(s, x)) return false;

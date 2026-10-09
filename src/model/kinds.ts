@@ -132,8 +132,10 @@ function withKind(id: number, k: string): number {
 
 // ── per events array: kind-set ids, extended as it grows ──
 // base = the events' own kinds; out = base plus the marks anchored on them (skill:load on a Skill call …), redone when the
-// marks or the events changed; calls = tool call id → its event (results pair by it); gen = the marks array laid in
-interface KMemo { s: Sess; evs: Ev[]; n: number; base: Int32Array; calls: Map<string, number>; marks: Mark[] | null; out: Int32Array; outN: number; ver: number }
+// marks or the events changed; calls = tool call id → its event (results pair by it); gen = the marks array laid in;
+// pair = a result's call event (-1 none), tid = the interned text of a call (a result: its call's; -1 none), texts = that
+// interning: a filter that reads more than kinds judges each (text, kind set) once without building string keys
+interface KMemo { s: Sess; evs: Ev[]; n: number; base: Int32Array; calls: Map<string, number>; marks: Mark[] | null; out: Int32Array; outN: number; ver: number; pair: Int32Array; tid: Int32Array; texts: Map<string, number> }
 const MEMO: KMemo[] = []; const MEMO_MAX = 8;
 export const KIND_STATS = { built: 0, events: 0 };
 function grow(a: Int32Array, n: number): Int32Array { if (n <= a.length) return a; const b = new Int32Array(Math.max(n, a.length * 2, 256)); b.set(a); return b; }
@@ -152,7 +154,7 @@ function memoOf(s: Sess, evs: Ev[]): KMemo {
     const m = MEMO[i];
     if (m.evs === evs) { if (m.s !== s || evs.length < m.n) { MEMO.splice(i, 1); break; } return m; } // a reused array: start over
   }
-  const m: KMemo = { s, evs, n: 0, base: new Int32Array(0), calls: new Map<string, number>(), marks: null, out: new Int32Array(0), outN: -1, ver: 0 };
+  const m: KMemo = { s, evs, n: 0, base: new Int32Array(0), calls: new Map<string, number>(), marks: null, out: new Int32Array(0), outN: -1, ver: 0, pair: new Int32Array(0), tid: new Int32Array(0), texts: new Map<string, number>() };
   if (MEMO.length >= MEMO_MAX) MEMO.shift();
   MEMO.push(m);
   return m;
@@ -162,13 +164,15 @@ export function kindIds(s: Sess, evs: Ev[]): Int32Array {
   const m = memoOf(s, evs);
   const n0 = m.n;
   if (evs.length > n0) {
-    m.base = grow(m.base, evs.length);
+    m.base = grow(m.base, evs.length); m.pair = grow(m.pair, evs.length); m.tid = grow(m.tid, evs.length);
     for (let i = n0; i < evs.length; i++) {
       const e = evs[i];
       let call: Ev | null = null; let ci = -1;
       if (e.kind === "result" && e.id) { const j = m.calls.get(e.id); if (j !== undefined) { ci = j + 0; if (ci < evs.length) call = evs[ci]; } }
       const ks = evKindList(e, call);
       m.base[i] = intern(ks);
+      m.pair[i] = ci; m.tid[i] = ci >= 0 ? m.tid[ci] + 0 : -1;
+      if (e.kind === "tool") { const t = m.texts.get(e.text); if (t !== undefined) m.tid[i] = t + 0; else { m.tid[i] = m.texts.size; m.texts.set(e.text, m.texts.size); } }
       if (e.kind === "tool" && e.id) m.calls.set(e.id, i);
       if (ci >= 0 && ks.indexOf("error") >= 0) m.base[ci] = withKind(m.base[ci] + 0, "error"); // the failed call is an error too
     }
@@ -183,6 +187,9 @@ export function kindIds(s: Sess, evs: Ev[]): Int32Array {
   }
   return m.out;
 }
+// per event of evs (after kindIds): a result's call event and every call's interned text (results: their call's), -1 none
+export interface KPairs { pair: Int32Array; tid: Int32Array }
+export function kindPairs(s: Sess, evs: Ev[]): KPairs { kindIds(s, evs); const m = memoOf(s, evs); return { pair: m.pair, tid: m.tid }; }
 // changes whenever kindIds(…, evs) rewrote its ids (new events, other marks): a memo over them keys on it (-1 none yet)
 export function kindVer(evs: Ev[]): number { for (const m of MEMO) if (m.evs === evs) return m.ver; return -1; }
 // spec §5a: the kind set of s.evs[i]
