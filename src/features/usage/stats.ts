@@ -29,6 +29,11 @@ import { type Compiled, EMPTY, compile, sessMatches, dayMatches, eachCall } from
 import { type Totals, totals } from "../query/agg.ts";
 import { setLocal } from "../query/scope.ts";
 import { tabFilter, chips, contentOk, callsChip, timeStep, rowsLater, rowsDeferred, rowsFill, fillChip, fillEmpty } from "../query/ui.ts";
+import { matchSession } from "../query/eval.ts";
+import { LISTING } from "./skillrec.ts";
+import { skillVis, HIDDEN } from "../skills/vis.ts";
+import { skillLoads } from "../skills/model.ts";
+import { type PanelScope, openSkillsPanel } from "../skills/panel.ts";
 
 // ── formatting ──────────────────────────────────────────────────────────────
 export { kfmt, grp };
@@ -38,7 +43,7 @@ function rj(s: string, w: number): string { const n = width(s); return n >= w ? 
 // ── aggregation over a set of local days (cached per ledger version) ────────
 // ms = cost by billing mode + unpriced; modes = each session's label with whether it is assumed from config ("plan\tteam\t*")
 interface HA { h: string; sess: number; tools: number; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number; ms: ModeSum; modes: string[] }
-interface Agg { key: string; ver: number; at: number; rows: HA[]; tot: HA; names: Map<string, Cnt>; skills: Map<string, Cnt>; hours: number[]; perDay: number[]; dayCost: number[]; busy: Sess | null; busyTools: number; busyCost: number; done: number; total: number; scoped: boolean; later: Sess[] /* deferred rows (ui.ts rowsLater) */ }
+interface Agg { key: string; ver: number; at: number; rows: HA[]; tot: HA; names: Map<string, Cnt>; skills: Map<string, Cnt>; hours: number[]; perDay: number[]; dayCost: number[]; busy: Sess | null; busyTools: number; busyCost: number; done: number; total: number; scoped: boolean; later: Sess[] /* deferred rows (ui.ts rowsLater) */; sk: number[] /* today: skill loads per hour (the chart's markers) */ }
 function ha(h: string): HA { return { h, sess: 0, tools: 0, inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0, ms: newSum(), modes: [] }; }
 function zeros(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(0); return a; }
 function addCnt(m: Map<string, Cnt>, k: string, n: number, err: number, add: number, del: number): void {
@@ -68,7 +73,7 @@ function aggF(days: string[], f: Compiled): Agg {
   const hit = cache.get(key);
   if (hit && hit.ver === L.ver && Date.now() - hit.at < Math.min(5000, timeStep(f.cs))) { rowsDeferred("Stats", key, hit.later); return hit; } // an age clause: its own step
   const rows = HARNESSES.map((ad) => ha(ad.id)); const tot = ha("total");
-  const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls, later: [] };
+  const g: Agg = { key, ver: L.ver, at: Date.now(), rows, tot, names: new Map<string, Cnt>(), skills: new Map<string, Cnt>(), hours: zeros(24), perDay: zeros(days.length), dayCost: zeros(days.length), busy: null, busyTools: 0, busyCost: 0, done: 0, total: 0, scoped: f.needsCalls, later: [], sk: zeros(24) };
   const cp = contentOk(f, "defer");
   // call clauses: tools from matching rows, money from the session-days holding them; in the TUI unread rows are deferred
   // (rowsLater), so only sessions with a matching row are looked at (a model clause would read rows in sessOk)
@@ -97,11 +102,20 @@ function aggF(days: string[], f: Compiled): Agg {
       const hs = m ? m.hours : d.hours;
       for (let hh = 0; hh < 24; hh++) g.hours[hh] = numAt(g.hours, hh, 0) + numAt(hs, hh, 0);
     }
+    if (any && days.length === 1 && a.sk.length) skHours(g.sk, a, days[0] ?? "");
     if (any && !s.parent && (s.twins === 0 || !once.has(copyKey(s)))) { if (s.twins > 0) once.add(copyKey(s)); r.sess++; tot.sess++; const mk = s.bill + "\t" + s.plan + "\t" + (s.billSrc === "config" ? "*" : ""); if (r.modes.indexOf(mk) < 0) r.modes.push(mk); }
     if (st > g.busyTools) { g.busyTools = st; g.busyCost = sc; g.busy = s; }
   }
   cache.set(key, g);
   return g;
+}
+
+// the hours of day dk a log loaded skills in (the listing and omitted skills are not marked)
+function skHours(hs: number[], a: Acc, dk: string): void {
+  for (const l of a.sk) {
+    if (l.t <= 0 || l.name === LISTING || skillVis(l.name).mode === "omit") continue;
+    const lo = localOf(l.t); if (lo.day === dk) hs[lo.hour] = numAt(hs, lo.hour, 0) + 1;
+  }
 }
 
 // ── Stats tab ───────────────────────────────────────────────────────────────
@@ -307,7 +321,7 @@ function renderStats(): void {
   if (!rows.length) put(2, y0 + 1, fg(C.dim) + "no tool calls in this period" + RST);
   const vals = week ? g.perDay : g.hours;
   box(lw2, y0, rw, bh, week ? "activity by day" : "activity by hour", "tool calls", false);
-  chart(lw2 + 1, y0 + 1, rw - 2, bh - 2, vals, days, g.dayCost, single(t.ms) === "api" ? "$" : "≈$");
+  chart(lw2 + 1, y0 + 1, rw - 2, bh - 2, vals, days, g.dayCost, single(t.ms) === "api" ? "$" : "≈$", week ? [] : g.sk);
 }
 // error rate cell, right-aligned in w columns: "·" when clean, else green → red by rate (≥ 20% is full red)
 function errCol(n: number, err: number, w: number): string {
@@ -326,7 +340,8 @@ let listY0 = 0; let listN = 0; let listX1 = 0; // mouse geometry of the list
 // skills: "<command | model>\t<name>" → one kid per name: "/" slash-command uses, "⚙" model-invoked, "/3 ⚙5" both
 function skillKids(skills: Map<string, Cnt>): Row[] {
   const by = new Map<string, number[]>();
-  for (const [k, c] of skills) { const i = k.indexOf("\t"); const nm = k.slice(i + 1); const v = by.get(nm) ?? [0, 0]; v[k.startsWith("command\t") ? 0 : 1] = (v[k.startsWith("command\t") ? 0 : 1] ?? 0) + c.n; by.set(nm, v); }
+  // names as skillVis shows them: a name rule's fake; omitted skills in one (hidden) kid
+  for (const [k, c] of skills) { const i = k.indexOf("\t"); const vs = skillVis(k.slice(i + 1)); const nm = vs.mode === "omit" ? HIDDEN : vs.shown; const v = by.get(nm) ?? [0, 0]; v[k.startsWith("command\t") ? 0 : 1] = (v[k.startsWith("command\t") ? 0 : 1] ?? 0) + c.n; by.set(nm, v); }
   const out: Row[] = [];
   for (const [nm, v] of by) {
     const cm = v[0] ?? 0; const md = v[1] ?? 0;
@@ -460,7 +475,7 @@ function rowDrill(da: DA, f: Compiled, days: string[], key: string): void {
   da.errs = da.errs.sort((x, y) => y.r.t - x.r.t).slice(0, 10);
 }
 function openDrill(r: Row): void {
-  if (r.skill) { if (!r.kid) toggle(r, -1); return; } // no per-skill drill-down: ↵ on the group folds it like ␣
+  if (r.skill) { openSkillsPanel(SCOPE, r.kid ? r.key.slice(r.key.indexOf("\t") + 1) : ""); return; } // the skills panel, at that skill
   dKey = r.key; dServer = r.server; dLabel = r.server ? "⧉ " + r.label : display("tool", r.key, null); dsel = 0; dCache = null; }
 function top(m: Map<string, Cnt>, n: number): [string, Cnt][] { return [...m.entries()].sort((x, y) => y[1].n - x[1].n).slice(0, n); }
 // keep the end of long paths: the file name matters more than the root
@@ -523,7 +538,7 @@ function renderDrill(days: string[]): void {
   const h1 = Math.max(8, Math.floor(R * 0.45)); const h2 = R - h1;
   const cw = Math.max(wk ? 45 : 38, Math.floor(W * 0.38)); const rw = W - cw; // 7 days need 5 columns per "Mo 21" label
   box(0, y1, cw, h1, wk ? "calls by day" : "calls by hour", "", false);
-  chart(1, y1 + 1, cw - 2, h1 - 2, da.vals, days, zeros(days.length), "");
+  chart(1, y1 + 1, cw - 2, h1 - 2, da.vals, days, zeros(days.length), "", []);
   const ih = h1 - 2;
   if (dServer) {
     box(cw, y1, rw, h1, "tools", String(da.kids.size) + " used", false);
@@ -603,8 +618,10 @@ export function hourAxis(n: number, cwid: number, h0: number, nowH: number): str
 }
 // today's first hour shown when 24 bars do not fit in room cells: the hours up to now that fit
 export function hourStart(len: number, room: number, nowH: number): number { return len > room ? Math.max(0, Math.min(len - room, nowH + 1 - room)) : 0; }
-function chart(x: number, y: number, w: number, h: number, all: number[], days: string[], dayCost: number[], cur: string): void {
-  const ch = h - 2; const axis = 5; const nowH = new Date().getHours();
+// marks (today): skill loads per hour, a row of ✧ under the bars (bright from 5) when the box has room for it (bars ≥ 3 rows)
+function chart(x: number, y: number, w: number, h: number, all: number[], days: string[], dayCost: number[], cur: string, marks: number[]): void {
+  const mrow = days.length === 1 && marks.length === 24 && h >= 6 ? 1 : 0; // reserved whether or not a skill was loaded: no layout jump
+  const ch = h - 2 - mrow; const axis = 5; const nowH = new Date().getHours();
   // today's 24 hours in fewer cells (60 columns): the hours up to now that fit, rather than bars past the box
   const room = Math.max(1, w - axis - 1); const h0 = days.length === 1 ? hourStart(all.length, room, nowH) : 0;
   const vals = days.length === 1 && all.length > room ? all.slice(h0, h0 + room) : all;
@@ -641,12 +658,37 @@ function chart(x: number, y: number, w: number, h: number, all: number[], days: 
     }
   }
   if (days.length === 1 && cwid < 3) { const ax = hourAxis(n, cwid, h0, nowH); const k = ax.indexOf("▲"); l1 += k < 0 ? fg(C.dim) + ax + RST : fg(C.dim) + ax.slice(0, k) + fg(C.accent) + "▲" + fg(C.dim) + ax.slice(k + 1) + RST; }
+  let nk = 0; for (const v of marks) nk += v;
   if (days.length === 1) {
     let pk = 0; for (let i = 0; i < 24; i++) if (numAt(all, i, 0) > numAt(all, pk, 0)) pk = i;
-    l2 += fg(C.dim) + "peak " + RST + fg(C.text) + pk + ":00" + RST + fg(C.dim) + " · " + grp(numAt(all, pk, 0)) + (w >= 34 ? " calls · ▲ now" : " calls") + RST;
+    l2 += fg(C.dim) + "peak " + RST + fg(C.text) + pk + ":00" + RST + fg(C.dim) + " · " + grp(numAt(all, pk, 0)) + (w >= 34 ? " calls · ▲ now" : " calls") + (mrow && nk && w >= 50 ? " · " + fg(C.cyan) + "✧" + fg(C.dim) + " skill loads (S)" : "") + RST;
   }
-  put(x, y + ch, " " + fitStyled(l1, w - 1)); put(x, y + ch + 1, " " + fitStyled(l2, w - 1));
+  if (mrow) put(x, y + ch, " " + fitStyled(markRow(marks, n, cwid, h0, axis), w - 1) + " ".repeat(Math.max(0, w - 1 - axis - n * cwid)));
+  put(x, y + ch + mrow, " " + fitStyled(l1, w - 1)); put(x, y + ch + mrow + 1, " " + fitStyled(l2, w - 1));
 }
+// the marker row under the hour bars: ✧ in the first cell of an hour with skill loads, bold from 5 (skill-usage §6.6)
+export function markRow(marks: number[], n: number, cwid: number, h0: number, axis: number): string {
+  let l = " ".repeat(axis);
+  for (let i = 0; i < n; i++) {
+    const v = numAt(marks, h0 + i, 0);
+    l += (v >= 5 ? fg(C.cyan) + CSI + "1m✧" + RST : v > 0 ? fg(C.cyan) + "✧" + RST : " ") + " ".repeat(Math.max(0, cwid - 1));
+  }
+  return l;
+}
+// the skills panel's view of this tab (S, ✧ skills ↵): the period, the Stats filter (pins ∘ local; its skill clauses pick
+// names), every log with a day in the period that passes it — subagents' too, as the tables above sum them
+function statsSess(): Sess[] {
+  const f = statsFilter(); const days = period(); const cp = contentOk(f); const o: Sess[] = [];
+  for (const s of sessions.values()) { if (!ledger.get(s.path)) continue; if (f !== EMPTY && (!matchSession(f, s, days) || !cp(s.path))) continue; o.push(s); }
+  return o;
+}
+const SCOPE: PanelScope = {
+  origin: "Stats",
+  label: (): string => { const f = statsFilter(); const p = week ? "last 7 days" : "today"; return f === EMPTY ? p : chips("Stats", "stats", Math.max(10, S.W - 30)) + fg(C.dim) + " · " + p + RST; },
+  days: (): string[] => period(), sess: statsSess, filter: (): Compiled => statsFilter(),
+  period: (k: string): boolean => { if (k === "d") { week = false; return true; } if (k === "w") { week = true; return true; } return false; },
+  keys: [["d", "today"], ["w", "7 days"]],
+};
 function budgetInfo(): void {
   if (budget.usd <= 0) { say("info", "no budget — set budget.monthlyUsd in " + home(CONFIG_FILE)); return; }
   const c = costNow(""); const ap = c.bs.approx ? "≈" : "";
@@ -658,6 +700,7 @@ function key(k: string): boolean {
   if (k === "d") { week = false; return true; }
   if (k === "w") { week = true; return true; }
   if (k === "$" && !dKey && !PP.open) { PP.open = true; return true; } // the price panel (pricepanel.ts) in place of the bottom boxes
+  if (k === "S" && !dKey) { openSkillsPanel(SCOPE, ""); return true; } // the skills panel over this period and filter
   if (PP.open && !dKey && panelKey(k, period())) return true;
   if (dKey) {
     if (k === "esc" || k === "bs") { dKey = ""; return true; }
@@ -740,11 +783,41 @@ H.previewSections.push((s: Sess, w: number): string[] => {
   }
   const d = dayOver(as, todayKey()); const ds = new Set<string>(); for (const x of as) for (const k of x.days.keys()) ds.add(k);
   if (d && ds.size > 1 && w > 30) out.push(fg(C.dim) + fit("today", 9) + RST + fg(C.yellow) + (d.cost === 0 && (d.unk > 0 || d.uc > 0) ? "cost ?" : moneyTag(d.cost, bill)) + RST + dot + fg(C.text) + grp(d.tools) + RST + fg(C.sub) + " tools" + RST + dot + linesStr(d.add, d.del));
-  const sk = new Map<string, number>(); for (const u of skillUsesOf(as, null)) sk.set(u.name, (sk.get(u.name) ?? 0) + u.n); // both sources per name
-  if (sk.size && w > 30) out.push(fg(C.dim) + fit("skills", 9) + RST + [...sk.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).slice(0, 5)
-    .map((e) => fg(C.cyan) + e[0] + RST + (e[1] > 1 ? fg(C.dim) + " ×" + String(e[1]) + RST : "")).join(fg(C.dim) + ", " + RST) + (sk.size > 5 ? fg(C.dim) + " +" + String(sk.size - 5) + RST : ""));
+  const sl = w > 30 ? skillLine(s, as, w - 9) : ""; if (sl) out.push(fg(C.dim) + fit("skills", 9) + RST + sl);
   return out;
 });
+// the preview's skills line (skill-usage §6.7): "brainstorming ×2 $0.31 · user-skill-a $0.52 · +1   (carry 92 %)" — per
+// shown name its loads and $ (load + carry), most $ first; omitted skills as one (hidden) entry; the listing is left
+// out (it rides in nearly every session); logs without load records (older detection) list their counted uses
+const SKP = new Map<string, string>();
+function skillLine(s: Sess, as: Acc[], w: number): string {
+  let off = 0; for (const a of as) off += a.off + a.sk.length;
+  const mk = s.path + "\t" + String(off) + "\t" + String(L.ver) + "\t" + String(w); const hit = SKP.get(mk); if (hit !== undefined) return hit;
+  const ids: string[] = []; for (let i = 0; i < as.length; i++) ids.push("");
+  const by = new Map<string, number[]>(); let tok = 0; let carry = 0;
+  for (const l of skillLoads(as, ids)) {
+    if (l.name === LISTING) continue;
+    const v = skillVis(l.name); const nm = v.mode === "omit" ? HIDDEN : v.shown;
+    const x = by.get(nm) ?? [0, 0, 0]; x[0] = (x[0] ?? 0) + Math.max(1, l.n); x[1] = (x[1] ?? 0) + l.usd; if (l.unpriced || l.tier === "?") x[2] = 1; by.set(nm, x);
+    tok += l.load + l.carry; carry += l.carry;
+  }
+  if (!by.size) for (const u of skillUsesOf(as, null)) { const v = skillVis(u.name); const nm = v.mode === "omit" ? HIDDEN : v.shown; const x = by.get(nm) ?? [0, -1, 0]; x[0] = (x[0] ?? 0) + u.n; by.set(nm, x); }
+  const es = [...by.entries()].sort((x: [string, number[]], y: [string, number[]]) => (y[1][1] ?? 0) - (x[1][1] ?? 0) || (y[1][0] ?? 0) - (x[1][0] ?? 0) || (x[0] < y[0] ? -1 : 1));
+  const bill = asBill(s.bill);
+  const part = (e: [string, number[]]): string => fg(e[0] === HIDDEN ? C.sub : C.cyan) + clean(e[0]) + RST + ((e[1][0] ?? 0) > 1 ? fg(C.dim) + " ×" + String(e[1][0] ?? 0) + RST : "") +
+    ((e[1][1] ?? 0) > 0 ? " " + fg(C.yellow) + money(e[1][1] ?? 0, bill) + ((e[1][2] ?? 0) > 0 ? "+" : "") + RST : (e[1][2] ?? 0) > 0 ? fg(C.dim) + " $ ?" + RST : "");
+  const tail = tok > 0 ? fg(C.dim) + "   (carry " + String(Math.round((carry / tok) * 100)) + " %)" + RST : "";
+  let line = "";
+  for (let n = Math.min(es.length, 5); n >= 1; n--) { // as many entries as fit, then "+k"; the carry share goes first when narrow
+    const more = es.length > n ? fg(C.dim) + " · +" + String(es.length - n) + RST : "";
+    const body = es.slice(0, n).map(part).join(fg(C.dim) + " · " + RST) + more;
+    if (vwidth(body + tail) <= w) { line = body + tail; break; }
+    if (vwidth(body) <= w) { line = body; break; }
+    if (n === 1) line = fitStyled(body, w);
+  }
+  if (SKP.size > 200) SKP.clear();
+  SKP.set(mk, line); return line;
+}
 // one day summed over entries (a session's copies): the preview's today line; null = no entry has it
 function dayOver(as: Acc[], k: string): Day | null {
   let o: Day | null = null;
@@ -780,10 +853,11 @@ H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || !mine()) return [];
   if (dKey) return [["↑↓", "call"], ["↵", "open session"], ["esc", "back"], ["d", "today"], ["w", "7 days"], ["/", "filter"]];
   if (PP.open) return [["↑↓", "model"], ["↵", "price"], ["a", "alias"], ["x", "remove"], ["$", "close"], ["d", "today"], ["w", "7 days"]];
-  return [["↑↓", "tool"], ["↵", "details"], ["$", "prices"], ["␣", "expand MCP/skills"], ["d", "today"], ["w", "7 days"], ["/", "filter"], ["p", "pin"], ["P", "pins"], ["B", "budget"]];
+  return [["↑↓", "tool"], ["↵", "details"], ["S", "skills"], ["$", "prices"], ["␣", "expand MCP/skills"], ["d", "today"], ["w", "7 days"], ["/", "filter"], ["p", "pin"], ["P", "pins"], ["B", "budget"]];
 });
 H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server or the skills group"],
-  ["↵  click", "tool drill-down: durations, errors, commands, files"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
+  ["↵  click", "tool drill-down: durations, errors, commands, files (✧ skills: the skills panel at that skill)"],
+  ["S", "skills: loads, carry, $ per skill over the period and filter (↵ sessions, a advice, v view skill); ✧ under the hour bars = skill loads"], ["↵", "drill-down: open the session at that call"], ["esc", "close the drill-down"],
   ["B", "budget: current state and the config path"], ["t", "triage the Stats filter's calls (drill-down: that tool's errors)"], ["C", "compare this period with the previous one (today vs yesterday, 7 days vs the 7 before)"],
   ["/  p  P", "filter Stats (tool is Bash, repo is x, day >= -3d…) · pin it · edit pins"],
   ["$", "prices: every model of the period with its price source; ↵ set a price, a alias, x remove (see prices below)"],

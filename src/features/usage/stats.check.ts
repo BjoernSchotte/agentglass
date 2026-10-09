@@ -10,10 +10,13 @@ import { vwidth } from "../../util/text.ts";
 import { H } from "../../hooks.ts";
 import { newSess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
+import { setVis, skillVis } from "../skills/vis.ts";
+import { markRow } from "./stats.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 function m(kv: [string, number][]): Map<string, Cnt> { const r = new Map<string, Cnt>(); for (const [k, n] of kv) { const c = newCnt(); c.n = n; r.set(k, c); } return r; }
+setVis([], false); // names as logged (the hermetic run sets AGENTGLASS_REDACT=1); hiding below
 const names = m([["Bash", 5], ["mcp__s__t", 2]]);
 const skills = m([["command\tcodex", 3], ["model\tcodex", 5], ["model\tbrainstorming", 1]]);
 const show = (): string => toolRows(names, skills).map((r) => r.label + " " + String(r.n)).join(" | ");
@@ -29,6 +32,17 @@ const c3 = toolRows(names, m([["command\tx", 2]])).map((r) => r.label + " " + St
 ok("command-only kid", c3 === "Bash 5 | s 2 | ✧ skills 2 | / x 2", c3);
 const c4 = toolRows(names, new Map<string, Cnt>()).map((r) => r.label).join(" | ");
 ok("no skills: no group row", c4 === "Bash | s", c4);
+// the kids go through skillVis: a name rule's fake, omitted skills folded into one (hidden) kid; --redact fakes user skills
+setVis([{ match: "codex", mode: "name" }, { match: "brainstorming", mode: "omit" }], false);
+const c5 = show(); ok("hidden kids", c5 === "✧ skills 9 | /3 ⚙5 " + skillVis("codex").shown + " 8 | ⚙ (hidden) 1 | Bash 5 | s 2", c5);
+setVis([], true);
+const c6 = show(); ok("--redact kids", c6.indexOf("codex") < 0 && c6.indexOf("brainstorming") < 0 && c6.indexOf(skillVis("brainstorming").shown) >= 0, c6);
+setVis([], false);
+// the hour chart's skill markers: ✧ in the first cell of an hour with loads, bold from 5
+{ const mk: number[] = []; for (let i = 0; i < 24; i++) mk.push(i === 9 ? 1 : i === 14 ? 5 : 0);
+  const row = markRow(mk, 24, 2, 0, 5).replace(/\x1b\[[0-9;]*m/g, "");
+  ok("marker row", row === "     " + "  ".repeat(9) + "✧ " + "  ".repeat(4) + "✧ " + "  ".repeat(9), JSON.stringify(row));
+  ok("marker bold from 5", markRow(mk, 24, 2, 0, 5).indexOf("\x1b[1m✧") >= 0, ""); }
 // filtered Stats: the summary row equals totals() of the same filter (bucket and row paths)
 fxBase();
 for (const ex of ["", "harness is codex", "repo is agentglass", "subagent is false"]) {

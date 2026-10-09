@@ -26,6 +26,7 @@ import { openGraph } from "../callgraph/view.ts";
 import { type RepoAgg, type HarnessAgg, type BranchAgg, type FileAgg, repoAgg, repoFill, relFile, errPct, allDays, topFiles } from "./agg.ts";
 import { perCommit, openGit } from "../vcs/view.ts";
 import { skillTable, visRows } from "../skills/model.ts";
+import { type PanelScope, openSkillsPanel } from "../skills/panel.ts";
 import { LISTING } from "../usage/skillrec.ts";
 export { topFiles };
 
@@ -315,7 +316,7 @@ function renderDetail(): void {
   const lw = Math.max(40, Math.floor(W * 0.56)); const rw2 = W - lw;
   if (RV.focus === 3 && !r.branches.size) RV.focus = 0;
   const ss = detailSessions(r, RV.file); let heads = 0;
-  box(0, y0, lw, bh, "sessions", String(ss.length) + (RV.file ? " touched it" : "") + " · ↵ transcript · c calls · V git", RV.focus === 0);
+  box(0, y0, lw, bh, "sessions", String(ss.length) + (RV.file ? " touched it" : "") + " · ↵ transcript · c calls · V git · S skills", RV.focus === 0);
   // row = cursor 1 + mark 2 + title + gap 1 + where + branch + cost + active + err%
   const sw = lw - 2; const showBr = sw >= 78; const cW = 10; const aW = 7; const eW = 6; const brW = showBr ? 14 : 0; const whW = sw >= 56 ? 15 : 0;
   const tW = Math.max(8, sw - 4 - whW - brW - cW - aW - eW);
@@ -376,6 +377,19 @@ function activate(): void {
   else if (RV.focus === 1) { const e = topFiles(r, 20)[selOf(1)]; if (e && e[0]) { RV.file = e[0]; RV.focus = 0; setSel(0, 0); setTop(0, 0); } else if (e) say("info", "files outside the repo have no sessions filter"); }
 }
 function period(k: string): boolean { if (k === "d" || k === "w" || k === "m" || k === "a") { RV.period = k; return true; } return false; }
+// S: the skills panel over one project's sessions (and their subagents without a cwd, as the project books them) and period
+function skillsOf(key0: string, label: string): void {
+  const sc: PanelScope = {
+    origin: "Repos", label: (): string => clean(shown(label)) + " · " + periodName(), days: periodDays, filter: (): Compiled => tabFilter("Repos", "stats"), period, keys: [["d/w/m/a", "period"]],
+    sess: (): Sess[] => {
+      let r: RepoAgg | null = null; for (const x of rows()) if (x.key === key0) r = x;
+      const o: Sess[] = []; if (!r) return o;
+      for (const p of r.paths) { const s = sessions.get(p); if (!s) continue; o.push(s); for (const k of s.subs) if (!k.cwd) o.push(k); }
+      return o;
+    },
+  };
+  openSkillsPanel(sc, "");
+}
 function key(k: string): boolean {
   if (period(k)) return true;
   if (RV.detail) {
@@ -393,6 +407,7 @@ function key(k: string): boolean {
     else if (k === "enter") activate();
     else if (k === "c") { if (RV.focus === 0) { const s = curDetailSess(); if (s) openGraph(s); } }
     else if (k === "V") { if (RV.focus === 0) { const s = curDetailSess(); if (s) openGit(s); } }
+    else if (k === "S") { if (r) skillsOf(r.key, r.label); }
     else return false;
     return true;
   }
@@ -405,6 +420,7 @@ function key(k: string): boolean {
   else if (k === "G" || k === "end") RV.sel = Math.max(0, n - 1);
   else if (k === "s") { RV.sort = SORTS[(SORTS.indexOf(RV.sort) + 1) % SORTS.length] ?? "cost"; RV.sel = 0; RV.top = 0; RV.selKey = ""; say("info", "repos sorted by " + RV.sort); return true; }
   else if (k === "enter" || k === "right") { const r = lastRows[RV.sel]; if (r) openDetail(r.key); }
+  else if (k === "S") { const r = lastRows[RV.sel]; if (r) skillsOf(r.key, r.label); }
   else return false;
   RV.selKey = lastRows[RV.sel]?.key ?? "";
   return true;
@@ -458,13 +474,13 @@ H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list") return [];
   if (S.tab === 0) return [["@", "project"]];
   if (!mine()) return [];
-  if (RV.detail) return RV.focus === 0 ? [["←→", "box"], ["↑↓", "session"], ["↵", "transcript"], ["c", "calls"], ["V", "git"], ["esc", RV.file ? "clear file" : "back"], ["d/w/m/a", "period"], ["/", "filter"]]
+  if (RV.detail) return RV.focus === 0 ? [["←→", "box"], ["↑↓", "session"], ["↵", "transcript"], ["c", "calls"], ["V", "git"], ["S", "skills"], ["esc", RV.file ? "clear file" : "back"], ["d/w/m/a", "period"], ["/", "filter"]]
     : [["←→", "box"], ["↑↓", "select"], ["↵", RV.focus === 1 ? "sessions that changed it" : "—"], ["esc", RV.file ? "clear file" : "back"], ["d/w/m/a", "period"], ["/", "filter"]];
-  return [["↑↓", "project"], ["↵", "details"], ["d/w/m/a", "period"], ["s", "sort"], ["/", "filter"], ["p", "pin"], ["P", "pins"]];
+  return [["↑↓", "project"], ["↵", "details"], ["S", "skills"], ["d/w/m/a", "period"], ["s", "sort"], ["/", "filter"], ["p", "pin"], ["P", "pins"]];
 });
 H.helpSections.push({ name: "repos", ctx: "Repos", keys: [["d w m a", "period: today, 7 days, 30 days, all time"], ["s", "sort: cost, active, sessions, err%, last"],
   ["↵  click", "project detail: sessions, files, tools, branches"], ["← →", "detail: move between the boxes"], ["↵", "detail: open the transcript · on a file: only sessions that changed it"],
-  ["c  V", "detail: call graph · git view (commits, PRs) of the selected session"], ["esc  ⌫", "clear the file chip, then back to the list"], ["@", "Sessions list: open the selected session's project"],
+  ["c  V", "detail: call graph · git view (commits, PRs) of the selected session"], ["S", "the project's skills: loads, carry, $ per skill in the period (skills column from 120 columns)"], ["esc  ⌫", "clear the file chip, then back to the list"], ["@", "Sessions list: open the selected session's project"],
   ["/  p  P", "filter the sessions before grouping (harness is codex = each project's Codex share) · pin · pins"],
   ["", "commits = the sessions' own (✓) commits in the period; $/commit = cost of the sessions that committed ÷ commits;"],
   ["", "  without commits = cost of sessions that made none; a branch's cost is split by its sessions' commits"],
