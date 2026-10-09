@@ -10,6 +10,7 @@ import { MQ_MSG } from "../features/usage/facts.ts";
 import { CLAUDE_BUNDLED } from "../features/usage/skillrec.ts";
 import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
+import { isErr } from "../features/callgraph/model.ts";
 import { OWN, claim } from "../features/usage/owners.ts";
 import { own } from "../util/own.ts";
 import { numAt } from "../util/text.ts";
@@ -173,7 +174,10 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     if (bt === "text") { const t = str(bo["text"]); if (type === "assistant") out.push({ kind: "assistant", text: t, ts, id: "", full: "" }); else userEvs(o, t, ts, out); }
     else if (bt === "thinking") { const t = str(bo["thinking"]); if (t) out.push({ kind: "thinking", text: t, ts, id: "", full: "" }); }
     else if (bt === "tool_use") { const n = str(bo["name"]); const inp = obj(bo["input"]); out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, inp, ""), ts, id: str(bo["id"]), full: inp ? JSON.stringify(inp) : "" }); }
-    else if (bt === "tool_result") { const tur = obj(o["toolUseResult"]); out.push({ kind: "result", text: blockText(bo["content"]), ts, id: str(bo["tool_use_id"]), full: tur ? JSON.stringify(tur) : "" }); }
+    else if (bt === "tool_result") { // is_error with an output that does not say so (a timeout, a hook's block, an MCP error): marked like pi / OpenCode do
+      const tur = obj(o["toolUseResult"]); const t = blockText(bo["content"]);
+      out.push({ kind: "result", text: bo["is_error"] === true && !isErr(t) ? "[error] " + t : t, ts, id: str(bo["tool_use_id"]), full: tur ? JSON.stringify(tur) : "" });
+    }
   }
 }
 // ~/.claude/sessions/<pid>.json: {pid, sessionId, status: busy|idle|…, name} for every running claude

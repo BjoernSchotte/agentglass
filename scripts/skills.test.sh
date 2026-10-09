@@ -71,6 +71,10 @@ run --watch --from-start --for 3s > "$t/watch" 2> /dev/null || true
 has "--watch skill" "$(cat "$t/watch")" "\"kind\":\"skill\""
 has "--watch skill_end" "$(cat "$t/watch")" "\"kind\":\"skill_end\""
 hasnt "--watch skill lines carry no text" "$(grep '"kind":"skill' "$t/watch")" "LOREMSKILLTEXT"
+# the event-kind filter takes skill lines: event.kind is skill streams only them, each with its kinds
+run --watch --from-start --for 3s --filter "event.kind is skill" > "$t/watchk" 2> /dev/null || true
+eq "--watch kind filter: only skill kinds" "$(grep -vc '"kinds":\["skill:' "$t/watchk")" 0 # skill lines, and Skill calls (kind skill:load)
+has "--watch kind filter: loads" "$(cat "$t/watchk")" '"kinds":["skill:load"]'; has "--watch kind filter: unloads" "$(cat "$t/watchk")" '"kinds":["skill:unload"]'
 # --watch under skills.hide: the calls that load a hidden skill (Skill, Read/read of a SKILL.md, a Codex sed) show the fake
 # name or nothing (omit), and their results no text
 CFG="$t/hide.json" run --watch --from-start --for 3s > "$t/watchh" 2> /dev/null || true

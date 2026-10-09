@@ -17,10 +17,32 @@ import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
 import { printClause, suggest } from "./parse.ts";
 import { repoVals } from "./project.ts";
-import { rowFam, rowKind, famName, famLabel, toolFamily } from "../wait/family.ts";
+import { rowFam, rowKind, famName, famLabel, toolFamily, famKind } from "../wait/family.ts";
+import { kindMatch, toolKinds, evKindList, shellFam, serverOf, LEGACY_EVENT } from "../../model/kinds.ts";
+import { marksOf } from "../../model/marks.ts";
+import { toolName, toolArg } from "../callgraph/model.ts";
+import type { Ev } from "../../model/types.ts";
 export { callCutoff };
 
-export type Ctx = "list" | "stats" | "json" | "watch" | "procs";
+// events: an event view's own filter (ui/evfilter.ts) and `agentglass events`: every clause per event
+export type Ctx = "list" | "stats" | "json" | "watch" | "procs" | "events";
+// one event as the event clauses see it: raw = the Ev kind (user, tool, result …), kinds = its event kinds (kinds.ts),
+// tool / args = the call's name and argument text (a result: its call's), server / fam = mcp.server / shell.family ("" none),
+// err = 1 failed, 0 ok, -1 unknown (a call before its result)
+export interface EvX { raw: string; kinds: string[]; tool: string; args: string; server: string; fam: string; err: number }
+// an event (and its paired call for a result, null otherwise / unknown) as EvX; kinds = its kinds when the caller holds them
+// (need: bits of what to fill beyond kinds — 2 the MCP server, 4 the shell family; 7 = everything)
+export function evxOf(e: Ev, call: Ev | null, kinds: string[] | null, need: number = 7): EvX {
+  const c = e.kind === "tool" ? e : call;
+  const tool = c ? toolName(c) : ""; const args = c ? toolArg(c) : "";
+  const ks = kinds ?? evKindList(e, call);
+  return { raw: e.kind, kinds: ks, tool, args, server: c && (need & 2) ? serverOf(tool, args).toLowerCase() : "", fam: c && (need & 4) ? shellFam(tool, args).toLowerCase() : "", err: ks.indexOf("error") >= 0 ? 1 : e.kind === "result" ? 0 : -1 };
+}
+// what the old (s, kind, tool, args) event predicates know: no result text, so no error flag
+function evxRaw(kind: string, tool: string, args: string): EvX {
+  const ks = kind === "tool" || kind === "result" ? toolKinds(tool, args) : evKindList({ kind, text: "", ts: "", id: "", full: "" }, null);
+  return { raw: kind, kinds: ks, tool, args, server: tool ? serverOf(tool, args).toLowerCase() : "", fam: tool ? shellFam(tool, args).toLowerCase() : "", err: -1 };
+}
 export interface Compiled {
   key: string;            // canonical text + resolved relative dates: cache key
   cs: Clause[];           // the clauses compiled (pinned flags kept)
@@ -28,13 +50,15 @@ export interface Compiled {
   day: ((s: Sess, dk: string, d: Day) => boolean)[];
   call: ((s: Sess, r: Rows, i: number) => boolean)[]; // call row i of the session's rows r
   event: ((s: Sess, kind: string, tool: string, args: string) => boolean)[];
+  ev: ((s: Sess, x: EvX) => boolean)[]; // event and (watch, events) call clauses over one event with its kinds
+  evLift: boolean;        // list / json: the ev clauses lift ("has such an event": call rows, marks, prompts and replies)
   content: Clause[];      // content ~ / !~ clauses (the full-text search runs elsewhere)
   dayKeys: string[] | null; // known day keys passing the day/weekday clauses, sorted; null = no day clause (scriptc: no Set | null members)
   rowx: ((s: Sess, r: Rows, i: number) => boolean)[]; // per-row tests of session attributes a call refines (model): rows only, never lifted alone
   needsCalls: boolean;    // any call clause or row refinement: totals and aggregates must read call rows
   dimmed: Clause[];       // clauses that do not apply in this ctx (procs: all but harness/repo/cwd/live)
 }
-export const EMPTY: Compiled = { key: "", cs: [], sess: [], day: [], call: [], event: [], content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [] };
+export const EMPTY: Compiled = { key: "", cs: [], sess: [], day: [], call: [], event: [], ev: [], evLift: false, content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [] };
 
 // later specs add attributes: register(attr) for the metadata + extend() for behaviour
 export interface Ext { sess: ((s: Sess) => Val) | null; resolve: ((v: string) => { v: string; err: string }) | null }
@@ -279,7 +303,7 @@ function knownDays(): string[] {
   return [...set];
 }
 export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr | null } {
-  const f: Compiled = { key: "", cs, sess: [], day: [], call: [], event: [], content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [] };
+  const f: Compiled = { key: "", cs, sess: [], day: [], call: [], event: [], ev: [], evLift: false, content: [], dayKeys: null, rowx: [], needsCalls: false, dimmed: [] };
   const parts: string[] = []; const dateCs: ((dk: string) => boolean)[] = [];
   for (const c of cs) {
     const a = attrOf(c.key);
@@ -289,14 +313,30 @@ export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr
       return { f: null, err: { msg: "--watch: " + a.key + " is known only after the call's result; filter result events with event is result instead", col: 0 } };
     }
     if (ctx === "watch" && a.ent === "call" && WATCH_CALL.indexOf(a.key) < 0) return { f: null, err: { msg: "--watch: " + a.key + " is not known per event; use it with --json", col: 0 } };
-    if (ctx !== "watch" && a.ent === "event") return { f: null, err: { msg: "event applies to --watch only", col: 0 } };
+    if (ctx === "events" && a.ent === "call" && WATCH_CALL.indexOf(a.key) < 0 && a.key !== "status") return { f: null, err: { msg: a.key + " is not known per event in an event view; use it on the session list or with --json", col: 0 } };
+    if (ctx === "events" && a.ent === "day") return { f: null, err: { msg: a.key + " applies to the session list and Stats, not to an event view", col: 0 } };
+    if (ctx === "stats" && a.ent === "event") return { f: null, err: { msg: a.key + " selects events: use it on the session list, in an event view (transcript, call graph: K or /), --watch or agentglass events", col: 0 } };
     const r = resolveVals(a, c); if (r.err) return { f: null, err: { msg: r.err, col: 0 } };
     parts.push(printClause({ key: c.key, op: c.op, vals: r.vals, neg: c.neg, pinned: false }));
     if (a.key === "content") { f.content.push(c); continue; }
-    const m = matcher(a, c, r.vals); const key = a.key;
-    if (a.ent === "event") { f.event.push((s: Sess, kind: string, tool: string, args: string) => m(V([kind]))); continue; }
-    // tool events, and result events with their call's name and arguments
-    if (ctx === "watch" && a.ent === "call") { f.event.push((s: Sess, kind: string, tool: string, args: string) => (kind === "tool" || kind === "result") && m(eventVal(key, tool, args))); continue; }
+    const key = a.key;
+    // the legacy values of event / event.kind name raw event kinds: marked so they never meet a kind of the same name
+    const legacy = key === "event";
+    const m = matcher(a, c, key === "event.kind" || legacy ? r.vals.map((v: string): string => rawValue(legacy, v.toLowerCase()) ? RAWP + v.toLowerCase() : v) : r.vals);
+    if (a.ent === "event") {
+      const p = evPred(key, m);
+      f.ev.push(p); f.event.push((s: Sess, kind: string, tool: string, args: string) => p(s, evxRaw(kind, tool, args)));
+      if (ctx === "list" || ctx === "json") { f.evLift = true; f.needsCalls = true; }
+      continue;
+    }
+    // tool events, and result events with their call's name and arguments (status: known on the result, and on its call
+    // once the result is in)
+    if ((ctx === "watch" || ctx === "events") && a.ent === "call") {
+      if (key === "status") { f.ev.push((s: Sess, x: EvX) => x.err >= 0 && m(V([x.err === 1 ? "error" : "ok"]))); continue; }
+      f.event.push((s: Sess, kind: string, tool: string, args: string) => (kind === "tool" || kind === "result") && m(eventVal(key, tool, args)));
+      f.ev.push((s: Sess, x: EvX) => (x.raw === "tool" || x.raw === "result") && m(eventVal(key, x.tool, x.args)));
+      continue;
+    }
     if (a.ent === "call") { f.call.push((s: Sess, r: Rows, i: number) => m(callVal(key, s, r, i))); f.needsCalls = true; continue; }
     // model is per session (its models) and per call (the issuing message's): the session test lifts, rows test their own
     if (key === "model") { f.sess.push((s: Sess) => m(sessVal(key, s))); f.rowx.push((s: Sess, r: Rows, i: number) => m(callVal(key, s, r, i))); f.needsCalls = true; continue; }
@@ -311,6 +351,24 @@ export function compile(cs: Clause[], ctx: Ctx): { f: Compiled | null; err: QErr
   f.key = parts.join(" and ");
   return { f, err: null };
 }
+// an event clause → its predicate. event.kind / event: the event's kinds (a family matches all of its kinds); the old values
+// of `event` (user, assistant, thinking, tool, result, live, exit, alert; meta under the old key) match the raw kind
+function evPred(key: string, m: (v: Val) => boolean): (s: Sess, x: EvX) => boolean {
+  if (key === "mcp.server") return (s: Sess, x: EvX) => m(V(x.server ? [x.server] : []));
+  if (key === "shell.family") return (s: Sess, x: EvX) => m(V(x.fam ? [x.fam] : []));
+  return (s: Sess, x: EvX) => m(V(evVals(x)));
+}
+// the values an event offers the kind matcher: the raw kind under its legacy name (kept apart from the kinds by a prefix
+// only the legacy values carry), every kind, and every family of a kind ("shell" for shell:test)
+function evVals(x: EvX): string[] {
+  const o: string[] = [];
+  for (const k of x.kinds) { o.push(k); const i = k.indexOf(":"); if (i > 0 && o.indexOf(k.slice(0, i)) < 0) o.push(k.slice(0, i)); }
+  o.push(RAWP + x.raw);
+  return o;
+}
+const RAWP = "\u0002";
+// a legacy value names a raw event kind: matched against the raw kind only (event is meta: under event.kind the family)
+export function rawValue(legacy: boolean, v: string): boolean { return LEGACY_EVENT.has(v) && (v !== "meta" || legacy); }
 // a call attribute of a --watch tool event (name + argument text)
 function eventVal(key: string, tool: string, args: string): Val {
   if (key === "tool") return V([tool.toLowerCase()]);
@@ -358,7 +416,7 @@ export interface RowMemo { a: Acc | null; off: number; cut: number; gen: number;
 export const MEMO_STATS = { evals: 0 };
 export function matchSessionMemo(f: Compiled, s: Sess, memo: Map<string, RowMemo>): boolean {
   if (!all1(f.sess, s)) return false;
-  if (!f.call.length && !f.day.length) return true;
+  if (!f.call.length && !f.day.length && !f.evLift) return true;
   const a = ledger.get(s.path) ?? null; const cut = callCutoff(); const m = memo.get(s.path);
   if (a && m && m.a === a && m.off === a.off && m.cut === cut && m.gen === LGEN.reapply && !unread.has(s.path)) return m.hit;
   MEMO_STATS.evals++;
@@ -370,15 +428,41 @@ export function matchSessionMemo(f: Compiled, s: Sess, memo: Map<string, RowMemo
 // matchSession would read this session's calls file first (not read in this run yet, rows possibly in the window)
 const NO_DAYS = new Set<string>();
 export function rowsPending(f: Compiled, s: Sess): boolean {
-  if (!f.call.length && !f.rowx.length) return false;
+  if (!f.call.length && !f.rowx.length && !f.evLift) return false;
   if (!unread.has(s.path)) return false;
   const a = ledger.get(s.path); return !!a && rowsMayMatch(a.days, callCutoff(), NO_DAYS, true);
 }
+// list / json: the session has an event that passes every event clause — a call row (its tool, shell family and
+// status), a mark (skill loads, debug episodes) or a prompt / reply (any turn) — the logs are not read for it. Like a
+// call clause, the event must lie on a day the selection and the day clauses keep (ds / any: matchSession's days)
+function evLifted(f: Compiled, s: Sess, a: Acc, ds: Set<string>, any: boolean): boolean {
+  const ok = (x: EvX): boolean => { for (const p of f.ev) if (!p(s, x)) return false; return true; };
+  const free = any && !f.day.length; // no day restriction: undated events count too
+  const dayOk = (dk: string): boolean => { if (!any && !ds.has(dk)) return false; if (!f.day.length) return true; const d = a.days.get(dk); return !!d && dayMatches(f, s, dk, d); };
+  const atOk = (t: number): boolean => t > 0 ? dayOk(localOf(t).day) : free;
+  let turns = 0; for (const [dk, d] of a.days) if (dayOk(dk)) turns += d.turns;
+  if (turns > 0 || (free && s.outTok > 0)) {
+    if (ok({ raw: "user", kinds: ["prompt"], tool: "", args: "", server: "", fam: "", err: -1 })) return true;
+    if (ok({ raw: "assistant", kinds: ["reply"], tool: "", args: "", server: "", fam: "", err: -1 })) return true;
+  }
+  for (const m of marksOf(s, null)) if (atOk(m.t0) && ok({ raw: "meta", kinds: [m.kind], tool: "", args: "", server: "", fam: "", err: -1 })) return true;
+  const r = callsOf(s); const cut = callCutoff();
+  for (let i = r.n - 1; i >= 0; i--) {
+    const t = r.t[i] + 0; if (t < cut || !atOk(t)) continue;
+    const tool = nameOf(DICT.tool, r.tool[i] + 0); const fi = rowFam(r, i);
+    const ks = fi >= 0 ? ["shell:" + famKind(fi)] : toolKinds(tool, "");
+    const e = r.err[i] + 0; if (e === 1) ks.push("error");
+    if (ok({ raw: "tool", kinds: ks, tool, args: "", server: serverOf(tool, "").toLowerCase(), fam: fi >= 0 ? famName(fi).toLowerCase() : "", err: e })) return true;
+  }
+  return false;
+}
 export function matchSession(f: Compiled, s: Sess, days: string[] | null): boolean {
   if (!all1(f.sess, s)) return false;
-  if (!f.call.length && !f.day.length) return true;
+  if (!f.call.length && !f.day.length && !f.evLift) return true;
   if (s.host) return false; // a remote row (fleet): its calls and days are not here (and it never gets a ledger entry)
   const a = accOf(s); const any = days === null; const ds = new Set<string>(days ?? []);
+  if (f.evLift && !evLifted(f, s, a, ds, any)) return false;
+  if (!f.call.length && !f.day.length) return true;
   if (f.call.length) {
     const cut = callCutoff(); if (!rowsMayMatch(a.days, cut, ds, any)) return false;
     const r = callsOf(s); const b = ledger.get(s.path) ?? a; // a stale calls file re-indexed the session: its new entry

@@ -32,8 +32,9 @@ const t0326 = obj(arr(toolsList("2025-03-26")["tools"])[0]) ?? {};
 ok("2025-03-26: title in the annotations (its Tool has none)", t0326["title"] === undefined && (obj(t0326["annotations"]) ?? {})["title"] === "Session" && (obj(t0326["annotations"]) ?? {})["readOnlyHint"] === true, J(t0326).slice(0, 200));
 ok("2025-03-26: annotations, no outputSchema", J(toolsList("2025-03-26")).indexOf("\"annotations\"") > 0 && J(toolsList("2025-03-26")).indexOf("\"outputSchema\"") < 0, "");
 ok("2025-11-25: outputSchema", g1.indexOf("\"outputSchema\"") > 0 && g1.indexOf("\"readOnlyHint\":true") > 0, "");
-ok("tools/list ≤ 9 KB", new TextEncoder().encode(g1).length <= 9216, String(new TextEncoder().encode(g1).length));
-ok("11 tools in order", TOOLS.map((t: ToolDef) => t.name).join(" ") === "session sessions errors cost triage compare related contention waits fleet prices", TOOLS.map((t: ToolDef) => t.name).join(" "));
+// 9 KB for the 11 tools of mcp-server; 10 KB with skill-usage's events (and skills) tool: ≈ 2.5k tokens
+ok("tools/list ≤ 10 KB", new TextEncoder().encode(g1).length <= 10240, String(new TextEncoder().encode(g1).length));
+ok("12 tools in order", TOOLS.map((t: ToolDef) => t.name).join(" ") === "session sessions errors cost triage compare related events contention waits fleet prices", TOOLS.map((t: ToolDef) => t.name).join(" "));
 for (const t of TOOLS) ok("description ≤ 200: " + t.name, t.description.length <= 200 && t.description.length > 40, String(t.description.length));
 const ins = instructionsFor("project"); const insAll = instructionsFor("all projects");
 ok("instructions ≤ 600", ins.length <= 600 && insAll.length <= 600 && ins.indexOf("(project)") > 0 && insAll.indexOf("(all projects)") > 0, ins);
@@ -159,6 +160,14 @@ const rc = shapeOk(plan("related", {}, o((x) => { x.content = true; })), J(rel),
 ok("related --content keeps", rc.text.indexOf("CANARY p") > 0, rc.text);
 const rd = shapeOk(plan("related", {}, d), J(rel), "project", d);
 ok("related strips by default", rd.text.indexOf("CANARY") < 0, rd.text);
+// events: ref, filter, paged here; no text without the server's --content
+ok("events", A(plan("events", {}, d)) === J(["events", "current", "--json"]), A(plan("events", {}, d)));
+const ev = plan("events", { ref: "last", filter: "event.kind is_one_of skill, error", limit: 3 }, o((x) => { x.content = true; }));
+ok("events full", A(ev) === J(["events", "last", "--json", "--filter=event.kind is_one_of skill, error", "--content"]) && ev.limit === 3, A(ev));
+const evo = { matched: 4, total: 9, events: rows(4, (i: number): Obj => ({ i, kind: "user", kinds: ["prompt"], text: "CANARY " + String(i) })) };
+const evs = shapeOk(plan("events", { limit: 2 }, d), J(evo), "project", d);
+ok("events pages and strips", arr(evs.obj["events"]).length === 2 && evs.obj["next"] === encodeCursor(2) && evs.text.indexOf("CANARY") < 0, evs.text);
+ok("events keeps text with --content", shapeOk(plan("events", {}, o((x) => { x.content = true; })), J(evo), "project", o((x) => { x.content = true; })).text.indexOf("CANARY 0") > 0, "");
 const rp = shapeOk(plan("related", { limit: 2 }, d), J({ anchor: {}, events: rows(5, (i: number): Obj => ({ kind: "shell", text: String(i) })) }), "project", d);
 ok("related pages events", arr(rp.obj["events"]).length === 2 && rp.obj["next"] === encodeCursor(2), J(rp.obj));
 

@@ -67,9 +67,9 @@ eq "compact agent help: no mcp" "$(run CLAUDECODE=1 AGENTGLASS_AGENT= agentglass
 # doctor: speaks MCP to agentglass-mcp from this shell (no agent around: no current session, said so)
 set +e; d=$(run agentglass mcp doctor --json < /dev/null); rc=$?; set -e
 eq "doctor: exit 0" "$rc" 0
-eq "doctor --json" "$(printf '%s' "$d" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["tools"], d["protocol"], d["current"]["code"], d["toolsBytes"] > 4000, d["callMs"] >= 0)')" "True 11 2025-11-25 no_current_session True True"
+eq "doctor --json" "$(printf '%s' "$d" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["tools"], d["protocol"], d["current"]["code"], d["toolsBytes"] > 4000, d["callMs"] >= 0)')" "True 12 2025-11-25 no_current_session True True"
 dt=$(run agentglass mcp doctor < /dev/null); has "doctor text: no current session explained" "$dt" "expected outside an agent"
-has "doctor text: tools" "$dt" "11 tools"
+has "doctor text: tools" "$dt" "12 tools"
 set +e; run AGENTGLASS_MCP_BIN=/nonexistent "$t/lone/agentglass" mcp doctor --json < /dev/null > "$t/d.json" 2>&1; rc=$?; set -e
 eq "doctor without agentglass-mcp: exit 1" "$rc" 1
 

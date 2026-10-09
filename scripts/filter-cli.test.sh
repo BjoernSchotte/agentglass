@@ -48,11 +48,12 @@ echo "$err" | grep -q 'known only after the call' || { echo "FAIL watch msg: $er
 HOME="$T/home" AGENTGLASS_AGENT=0 AGENTGLASS_CACHE_DIR="$T/cache" AGENTGLASS_NOTIFY=0 "$BIN" --watch --from-start --filter 'tool is Bash' > "$T/watch.out" 2>/dev/null & p=$!
 sleep 2; kill $p 2>/dev/null || true; wait $p 2>/dev/null || true
 w=$(cat "$T/watch.out")
-echo "$w" | grep -q '"kind":"tool","tool":"Bash"' || { echo "FAIL watch tool: $w"; exit 1; }
+echo "$w" | grep -q '"kind":"tool","kinds":\["shell:test"\],"tool":"Bash"' || { echo "FAIL watch tool: $w"; exit 1; }
 echo "$w" | grep -q '"kind":"result"' || { echo "FAIL watch result of the call: $w"; exit 1; }
 ! echo "$w" | grep -q '"kind":"user"' || { echo "FAIL watch user dropped: $w"; exit 1; }
-echo "$w" | grep -q '"kind":"tool","tool":"Bash","id":"t1"' || { echo "FAIL watch tool line carries its call id: $w"; exit 1; }
-echo "$w" | grep -q '"kind":"result","tool":null,"id":"t1"' || { echo "FAIL watch result line carries its call id: $w"; exit 1; }
+echo "$w" | grep -q '"kind":"tool","kinds":\["shell:test"\],"tool":"Bash","id":"t1"' || { echo "FAIL watch tool line carries its call id: $w"; exit 1; }
+# the result is is_error: its kinds say error (the call's line went out before the result was known)
+echo "$w" | grep -q '"kind":"result","kinds":\["shell:test","error"\],"tool":null,"id":"t1"' || { echo "FAIL watch result line carries its call id: $w"; exit 1; }
 ag --watch --for 1s --filter 'event is alert' > /dev/null || { echo "FAIL event is alert"; exit 1; }
 ag --help | grep -q '^filter keys: harness repo' || { echo "FAIL help keys"; exit 1; }
 ag --help | grep -q -- "--filter '<expr>'" || { echo "FAIL help option"; exit 1; }

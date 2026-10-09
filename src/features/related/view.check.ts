@@ -16,6 +16,8 @@ import { openGraph, graphAnchor } from "../callgraph/view.ts";
 import { relState, viewLines } from "./view.ts";
 import type { RelEv } from "./model.ts";
 import { stepBuild } from "./build.ts";
+import "../evkinds.ts";
+import { vfSet, vfOf } from "../../ui/evfilter.ts";
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -107,6 +109,13 @@ if (!tv) { bad++; console.log("FAIL no transcript"); } else {
   eq("related: error column", String(S.inputErrCol), "5"); // "tool is": the value is missing, the operator is marked
   onInput("ctrl-u"); for (const ch of "harn") onInput(ch); onInput("tab"); onInput("tab"); eq("related: tab completes, then goes on", S.inputText, "harness is ");
   onInput("esc"); onInput("/"); onInput("ctrl-u"); onInput("enter"); done();
+  // the event-kind filter: the same clause as every event view; hidden rows become gap lines with their kinds
+  vfSet("related", "event.kind is shell"); done();
+  eq("event.kind is shell", show(), "write:Edit shell:Bash shell:shell");
+  const sg = relState(); const gl = sg ? viewLines(sg, 80, 22).filter((l: string) => l.replace(/\x1b\[[0-9;]*m/g, "").indexOf("hidden ·") >= 0) : [];
+  eq("gap lines shown", String(gl.length > 0), "true");
+  onInput("esc"); eq("esc clears the kind filter first", S.fview + " " + vfOf("related").expr, "related ");
+  done();
   // ── enter → another session's transcript, focused; esc back ──
   const st4 = relState();
   if (st4) {

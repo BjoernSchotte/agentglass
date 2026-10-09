@@ -119,7 +119,8 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     if (stop === "error" || stop === "aborted") ev(out, "meta", "[" + stop + "] " + str(m["errorMessage"]), ts, "", "");
   } else if (role === "toolResult") {
     const det = obj(m["details"]); const id = str(m["toolCallId"]);
-    ev(out, "result", (m["isError"] === true ? "[error] " : "") + blockText(m["content"]), ts, id, det ? JSON.stringify(det) : "");
+    const derr = det ? str(det["error"]) : ""; // adapters < 2.11 leave isError false on failed calls (as the call rows read it)
+    ev(out, "result", (m["isError"] === true || derr === "tool_error" || derr === "call_failed" ? "[error] " : "") + blockText(m["content"]), ts, id, det ? JSON.stringify(det) : "");
     for (const c of nested(m, det, id)) { // script-nested calls have no events of their own: one line each
       const st = c.status === "error" ? "[error] " + (c.error.split("\n")[0] ?? "") : c.status || "ok";
       ev(out, "meta", "\u21b3 " + c.name + " " + st + (c.ms >= 0 ? " " + fmtMs(c.ms) : ""), ts, "", "");

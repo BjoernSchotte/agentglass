@@ -14,18 +14,32 @@ import { evLines } from "./transcript.ts";
 import { sourceOf } from "../harness/index.ts";
 import { scrubRemote, remoteLabel } from "../util/giturl.ts";
 import { link, sessUrl } from "../util/hyper.ts";
+import { kindIds, kindVer } from "../model/kinds.ts";
+import { mask as vfMask, fstate, active as vfActive, runs as vfRuns, gapText } from "./evfilter.ts";
 
 // mouse hit map for the preview, rebuilt every frame
 export const prevKind: number[] = []; export const prevIdx: number[] = []; // per preview row: 0 none, 1 subagent (idx into prevKids), 2 event (idx into prevSess.evs)
 export const prevKids: Sess[] = [];
 // the preview's activity lines (the last 25 events wrapped and styled) while the session's events are the same array (a
 // tail read makes a new one), at the same width and colors: formatting them was the bulk of a frame
-const ACT = { evs: [] as Ev[], w: -1, theme: "", lines: [] as string[], ev: [] as number[] };
+// With the preview's event-kind filter (ui/evfilter.ts, view "preview": linked views or the palette set it) the last 25 shown
+// events, each run of hidden ones between them as one dim gap line
+const ACT = { evs: [] as Ev[], n: -1, w: -1, theme: "", fk: "", lines: [] as string[], ev: [] as number[] };
 export function actLines(s: Sess, w: number): string[] {
   const theme = C.text + C.cyan + C.dim + C.sel + C.sub + C.line + C.yellow + C.purple; // every color evLines uses: a theme may change any one
-  if (ACT.evs === s.evs && ACT.w === w && ACT.theme === theme) return ACT.lines;
-  ACT.evs = s.evs; ACT.w = w; ACT.theme = theme; ACT.lines = []; ACT.ev = [];
-  for (let i = Math.max(0, s.evs.length - 25); i < s.evs.length; i++) { evLines(s.evs[i], w, false, ACT.lines); while (ACT.ev.length < ACT.lines.length) ACT.ev.push(i); }
+  const act = vfActive("preview"); const fk = act ? fstate("preview") + "|" + String(kindIds(s, s.evs).length) + ":" + String(kindVer(s.evs)) : "";
+  if (ACT.evs === s.evs && ACT.n === s.evs.length && ACT.w === w && ACT.theme === theme && ACT.fk === fk) return ACT.lines;
+  ACT.evs = s.evs; ACT.n = s.evs.length; ACT.w = w; ACT.theme = theme; ACT.fk = fk; ACT.lines = []; ACT.ev = [];
+  const m = act ? vfMask("preview", s, s.evs) : null;
+  let from = Math.max(0, s.evs.length - 25);
+  if (m) { let k = 0; from = s.evs.length; while (from > 0 && k < 25) { from--; if (m[from] + 0 === 1) k++; } }
+  for (let i = from; i < s.evs.length;) {
+    if (!m || m[i] + 0 === 1) { evLines(s.evs[i], w, false, ACT.lines); while (ACT.ev.length < ACT.lines.length) ACT.ev.push(i); i++; continue; }
+    let j = i; while (j < s.evs.length && m[j] + 0 === 0) j++;
+    const g = vfRuns("preview", s, s.evs, i, j)[0];
+    ACT.lines.push(fg(C.dim) + (g ? gapText(g, w) : "┄ " + String(j - i) + " hidden ┄") + RST); ACT.ev.push(i);
+    i = j;
+  }
   return ACT.lines;
 }
 

@@ -24,8 +24,8 @@ usage: agentglass-mcp [--all-projects] [--content] [--redact] [--max-bytes N] [-
   --log           diagnostics on stderr (also AGENTGLASS_MCP_LOG=1)
   --version, --help
 
-Tools: session sessions errors cost triage compare related contention waits fleet
-prices. Each call runs one agentglass CLI child (the agentglass beside this binary).
+Tools: session sessions errors cost triage compare related events contention waits
+fleet prices. Each call runs one agentglass CLI child (the agentglass beside this binary).
 Register it with your agents: agentglass mcp install. Check it: agentglass mcp doctor.
 `;
 

@@ -8,7 +8,8 @@ import { buildView, titleOf, parentOf, isOpen, expanded, collapsed, current } fr
 import { procView, procAt, procSess, sharedDaemon } from "./model/procs.ts";
 import { NONE_PANE, paneNow, paneNowPid, sendTo, focusOn, paneText, unreachable } from "./mux/index.ts";
 import { copyText, ask, confirm, target, targetPid, openFileN, pageDetail, owner, sendPrompt, resume, killPid, trash } from "./actions.ts";
-import { openTranscript, moveCur, cycleSub } from "./ui/transcript.ts";
+import { openTranscript, moveCur, cycleSub, expandAt, scrollTo } from "./ui/transcript.ts";
+import { viewKey } from "./ui/evfilter.ts";
 import { openDetail, stepDetail } from "./ui/detail.ts";
 import { prevKind, prevIdx, prevKids } from "./ui/list.ts";
 import { footX0, footX1, footKey } from "./ui/footer.ts";
@@ -91,10 +92,12 @@ export function onInput(k: string): void {
   const tv = S.tv;
   if (S.mode === "transcript" && tv) {
     const vh = S.H - 4;
+    const fk = viewKey("transcript", tv.s, tv.evs, tv.cur, k); // K i ! / ] [ L, esc while a kind filter is on
+    if (fk >= -1) { if (fk >= 0) { if (expandAt(tv, fk)) tv.lw = -1; tv.cur = fk; tv.follow = false; scrollTo(tv, vh); } return; }
     if (k === "esc" || k === "q" || k === "left") { S.mode = "list"; S.tv = null; return; }
     if (k === "up" || k === "k") moveCur(tv, -1, vh);
     else if (k === "down" || k === "j") moveCur(tv, 1, vh);
-    else if (k === "enter" || k === "right") openDetail(tv.cur);
+    else if (k === "enter" || k === "right") { if (!expandAt(tv, tv.cur)) openDetail(tv.cur); } // ↵ on a gap line shows that run
     else if (k === "wheelup") { tv.scroll -= 3; tv.follow = false; }
     else if (k === "wheeldown") tv.scroll += 3;
     else if (k === "pgup" || k === "b") { tv.scroll = Math.max(0, tv.scroll - (vh - 1)); tv.follow = false; tv.cur = numAt(tv.lineEv, tv.scroll, tv.cur); }
@@ -237,7 +240,7 @@ export function onMouse(k: string): void {
     if (y < 2 || li >= tv.lines.length) return;
     const ei = numAt(tv.lineEv, li, -1);
     if (ei < 0) return;
-    if (ei === tv.cur || dbl) openDetail(ei); else { tv.cur = ei; tv.follow = false; }
+    if (ei === tv.cur || dbl) { if (!expandAt(tv, ei)) openDetail(ei); } else { tv.cur = ei; tv.follow = false; }
     return;
   }
   if (S.mode !== "list") return;

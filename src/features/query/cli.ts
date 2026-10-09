@@ -6,8 +6,8 @@ import type { Sess } from "../../model/types.ts";
 import { loadHead, parentOf } from "../../model/sessions.ts";
 import type { Clause } from "./types.ts";
 import { parse, caret } from "./parse.ts";
-import { keys } from "./attrs.ts";
-import { type Compiled, EMPTY, compile, matchSession, sessMatches } from "./eval.ts";
+import { keys, attrOf } from "./attrs.ts";
+import { type Compiled, type EvX, EMPTY, compile, matchSession, sessMatches } from "./eval.ts";
 import { addAll } from "./scope.ts";
 import { contentSet } from "./content.ts";
 import { S, say } from "../../state.ts";
@@ -27,6 +27,8 @@ export function filterKeysHelp(): string {
   out.push(line);
   return out.join("\n");
 }
+// an event clause (event.kind, mcp.server, shell.family, event): --watch judges it per event, --json lifts it over rows
+function evKey(k: string): boolean { const a = attrOf(k); return a !== null && a.ent === "event"; }
 export interface CliFilter { f: Compiled; cheap: Compiled; ended: Compiled /* cheap clauses but live: an exit event's session */; fixed: Compiled /* clauses a session's log never changes */; needsLedger: boolean; needsHead: boolean; content: boolean }
 // keys whose values need no ledger and no transcript: they pick the candidates before complete(s) runs
 // (cwd, branch, title and agent come from a transcript's head for some harnesses: loaded first when a clause names them)
@@ -50,7 +52,7 @@ export function cliFilter(exprs: string[], harness: string, live: boolean, pinne
   for (const c of cs) {
     if (CHEAP.indexOf(c.key) >= 0) ch.push(c);
     else if (HEAD.indexOf(c.key) >= 0) { ch.push(c); head = true; }
-    else if (c.key !== "content" && c.key !== "event") { ledgerKeys = true; head = true; }
+    else if (c.key !== "content" && (!watch || !evKey(c.key))) { ledgerKeys = true; head = true; }
     if (c.key === "state" && !watch) say("warn", "state needs process info; run without --json or use live");
   }
   const cheap = compile(ch, ctx).f ?? EMPTY;
@@ -62,8 +64,8 @@ export function cliFilter(exprs: string[], harness: string, live: boolean, pinne
 // title and text clauses also a prompt. Until then the session does not pass — a negated clause (`cwd !~ x`) would let an
 // unread session through, and an export would send what it holds once its log fills in. Export and --watch ask again
 // on every poll, so the session joins as soon as it can be judged
-export function needsHeadOf(cs: Clause[]): boolean { for (const c of cs) if (CHEAP.indexOf(c.key) < 0 && c.key !== "content" && c.key !== "event") return true; return false; }
-export function needsLedgerOf(cs: Clause[]): boolean { for (const c of cs) if (CHEAP.indexOf(c.key) < 0 && HEAD.indexOf(c.key) < 0 && c.key !== "content" && c.key !== "event") return true; return false; }
+export function needsHeadOf(cs: Clause[]): boolean { for (const c of cs) if (CHEAP.indexOf(c.key) < 0 && c.key !== "content" && !evKey(c.key)) return true; return false; }
+export function needsLedgerOf(cs: Clause[]): boolean { for (const c of cs) if (CHEAP.indexOf(c.key) < 0 && HEAD.indexOf(c.key) < 0 && c.key !== "content" && !evKey(c.key)) return true; return false; }
 export function judgeable(cs: Clause[], s: Sess): boolean {
   if (!needsHeadOf(cs)) return true;
   if (!s.headDone || !realCwd(s)) loadHead(s);
@@ -115,5 +117,10 @@ export function cliWatchExit(cf: CliFilter, s: Sess): boolean { return (!cf.need
 // --watch: one event (kind, tool name, call arguments) against the event and call clauses
 export function cliWatchEvent(cf: CliFilter, s: Sess, kind: string, tool: string, args: string): boolean {
   for (const p of cf.f.event) if (!p(s, kind, tool, args)) return false;
+  return true;
+}
+// --watch: one event with its kinds (and its call's name and arguments for a result) against the event and call clauses
+export function cliWatchEv(cf: CliFilter, s: Sess, x: EvX): boolean {
+  for (const p of cf.f.ev) if (!p(s, x)) return false;
   return true;
 }

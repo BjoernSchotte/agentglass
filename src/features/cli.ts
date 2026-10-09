@@ -31,8 +31,8 @@ import { gitJson, gitCli, peers } from "./vcs/json.ts";
 import { saveVcs } from "./vcs/enrich.ts";
 import { labelOf } from "../model/project.ts";
 import { keyShown, reposCli } from "./repos/cli.ts";
-import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchTrack, cliWatchEvent, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
-import { livePid } from "./query/eval.ts";
+import { type CliFilter, cliFilter, cliSelect, cliWatchSession, cliWatchTrack, cliWatchEvent, cliWatchEv, cliWatchExit, filterKeysHelp } from "./query/cli.ts";
+import { type EvX, livePid, evxOf } from "./query/eval.ts";
 import { type Alert, stateOf, render, severityOf, flags } from "./rules/engine.ts";
 import type { AlertT } from "./otlp/logs.ts";
 import { rules } from "./rules/state.ts";
@@ -127,14 +127,17 @@ function usage(): string {
   skills source = command: a slash command / $mention, model: the agent chose it (or read its SKILL.md); tokens{load,carry,tail} and $
   of those loads (agentglass skills --help); --fields skillLoads adds the session's load timeline (its text with --content);
   repo = the project: worktrees and clones of one remote share key, kind = git|gitdir|path|none, null = no cwd known)
---watch lines: {ts,harness,session,title,project,parent,kind,tool,id,text}; kind = user|assistant|thinking|tool|result|meta,
+--watch lines: {ts,harness,session,title,project,parent,kind,kinds,tool,id,text}; kind = user|assistant|thinking|tool|result|meta,
+  kinds = the event kinds the TUI filters on (prompt, reply, shell:test, edit, mcp:<server>, skill:load, error …),
   plus live|exit when an agent process appears or disappears, and alert (rules.json transitions: an alert object
   {rule,severity,state,value,threshold,labels}; state = fire|escalate|deescalate|resolve; off with --no-alerts);
   id = the tool call id on tool|result lines (what --related --event and open <ref>#call= take), else null
   skill|skill_end lines: a skill entered or left a context, with skill{name,trigger,size,tier,hash,scope,why}
 
 filter: key op value [and …]; op = is = is_not != is_one_of is_not_one_of ~ !~ > >= < <=; not / - negates; bare words
-  search title, path, id; --json lists sessions with a matching call or day; --watch filters events (event is tool|result|alert|…)
+  search title, path, id; --json lists sessions with a matching call, day or event; --watch filters events
+  (event.kind is shell · event.kind is_one_of mcp, error · mcp.server is github · shell.family ~ test; the old
+  event is tool|result|alert|… still works; agentglass events <ref> lists one session's events the same way)
 ${filterKeysHelp()}
 
 OpenCode sessions are read from its SQLite database with the sqlite3 CLI (AGENTGLASS_SQLITE3 = another command);
@@ -149,14 +152,15 @@ export interface Opts { git: boolean; live: boolean; harness: string; limit: num
 export interface Sink { tick: (now: number) => void; stop: () => void; alert: (s: Sess, a: AlertT) => void }
 interface JAl { rule: string; severity: string; value: number; unit: string; threshold: number; since: string; message: string; labels: { [k: string]: string }; acked: boolean }
 interface WAl { rule: string; severity: string; state: string; value: number; threshold: number; labels: { [k: string]: string } }
-interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: null; id: null; text: string; alert: WAl }
+interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: null; id: null; text: string; alert: WAl }
 function jalerts(as: Alert[]): JAl[] {
   const o: JAl[] = [];
   for (const a of as) { const l: { [k: string]: string } = {}; for (const [k, v] of a.labels) l[k] = v; o.push({ rule: a.rule, severity: a.severity, value: a.value, unit: a.unit, threshold: a.threshold, since: new Date(a.since).toISOString(), message: a.message, labels: l, acked: a.acked }); }
   return o;
 }
 // id: the tool call id of a tool/result line (what --related --event and open #call= take), else null
-interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: string | null; id: string | null; text: string }
+// kinds: the event's kinds (skill-usage §5a: prompt, reply, shell:test, mcp:<server>, error …), the same as the TUI's filter
+interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: string | null; id: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
 function out(line: string): void {
@@ -251,10 +255,10 @@ function oneLine(t: string): string {
   const l = t.replace(/\s+/g, " ").trim();
   return l.length > 500 ? l.slice(0, 500) + "…" : l;
 }
-function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string, id = ""): void {
+function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string, id: string, kinds: string[]): void {
   const w: WEv = {
     ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: scrub(titleOf(s)), project: base(s.cwd),
-    parent: s.parent ? s.parent : null, kind, tool: tool === null ? null : display("tool", tool, s), id: id ? id : null, text: scrub(oneLine(text)),
+    parent: s.parent ? s.parent : null, kind, kinds, tool: tool === null ? null : display("tool", tool, s), id: id ? id : null, text: scrub(oneLine(text)),
   };
   out(JSON.stringify(w));
   lastOut = Date.now();
@@ -268,18 +272,22 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const args = e.kind === "tool" && i >= 0 ? e.text.slice(i + 1) : "";
   if (e.kind === "tool" && e.id) { if (calls.size > 20000) calls.clear(); calls.set(s.path + "\t" + e.id, [tool, args]); }
   const pc = e.kind === "result" && e.id ? calls.get(s.path + "\t" + e.id) : undefined;
-  if (cf && !cliWatchEvent(cf, s, e.kind, pc ? pc[0] ?? "" : tool, pc ? pc[1] ?? "" : args)) return;
+  const call: Ev | null = pc ? { kind: "tool", text: (pc[0] ?? "") + "\u0000" + (pc[1] ?? ""), ts: "", id: e.id, full: "" } : null;
+  const x = evxOf(e, call, null); // its kinds (a result: its call's, plus error when it failed)
+  if (cf && !cliWatchEv(cf, s, x)) return;
   const id = e.kind === "tool" || e.kind === "result" ? e.id : "";
   const cv = callVis(e.kind === "tool" ? tool : pc ? pc[0] ?? "" : "", e.kind === "tool" ? args : pc ? pc[1] ?? "" : "");
   if (cv.drop) return;
-  if (e.kind !== "tool") { emit(s, e.kind, null, cv.hide || e.text, e.ts, id); return; }
-  emit(s, "tool", tool, cv.args, e.ts, id);
+  if (e.kind !== "tool") { emit(s, e.kind, null, cv.hide || e.text, e.ts, id, x.kinds); return; }
+  emit(s, "tool", tool, cv.args, e.ts, id, x.kinds);
 }
 
 // skill loads in the stream: each watched log's new lines also go through its harness's usage() into a small per-log
 // record (only lines that can start, carry or end a load); new loads print as kind "skill", ended ones as "skill_end"
 interface WSk { name: string; trigger: string; size: number; tier: string; hash: string; scope: string; why: string }
-interface WSkEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; tool: null; id: string | null; text: string; skill: WSk }
+interface WSkEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: null; id: string | null; text: string; skill: WSk }
+// a skill line as the event-kind filter sees it (event.kind is skill / skill:load / skill:unload)
+function skX(kind: string): EvX { return { raw: kind, kinds: [kind === "skill" ? "skill:load" : "skill:unload"], tool: "", args: "", server: "", fam: "", err: 0 }; }
 const WSKILL = new Map<string, Acc>(); // log → its record
 const SK_MARKS = ["kill", "SKILL.md", "ompact", "<command-name>", "<skills_instructions>"];
 const WENDED = new Set<string>(); // "<log>\t<load index>" of unloads already printed
@@ -302,13 +310,13 @@ function skillWatch(s: Sess, l: string, show: boolean, cf: CliFilter | null): WS
     note(x.name);
     const v = skillVis(x.name); if (!show || v.mode === "omit") continue;
     const sk: WSk = { name: v.shown, trigger: x.trig, size: x.S, tier: x.S < 0 ? "?" : x.est ? "≈" : "exact", hash: x.hash, scope: x.scope, why: x.why };
-    if (isNew && (!cf || cliWatchEvent(cf, s, "skill", "", ""))) outL.push(wsk(s, "skill", x.t, sk, v.shown + " loaded (" + x.trig + ")"));
-    if (isEnd && (!cf || cliWatchEvent(cf, s, "skill_end", "", ""))) outL.push(wsk(s, "skill_end", x.end, sk, v.shown + " out (" + x.why + ")"));
+    if (isNew && (!cf || cliWatchEv(cf, s, skX("skill")))) outL.push(wsk(s, "skill", x.t, sk, v.shown + " loaded (" + x.trig + ")"));
+    if (isEnd && (!cf || cliWatchEv(cf, s, skX("skill_end")))) outL.push(wsk(s, "skill_end", x.end, sk, v.shown + " out (" + x.why + ")"));
   }
   return outL;
 }
 function wsk(s: Sess, kind: string, t: number, sk: WSk, text: string): WSkEv {
-  return { ts: t > 1 ? new Date(t).toISOString() : new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind, tool: null, id: null, text, skill: sk };
+  return { ts: t > 1 ? new Date(t).toISOString() : new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind, kinds: skX(kind).kinds, tool: null, id: null, text, skill: sk };
 }
 function printSk(ws: WSkEv[]): void { for (let i = 0; i < ws.length; i++) { const w = ws[i] as WSkEv; w.title = scrub(w.title); out(JSON.stringify(w)); lastOut = Date.now(); } }
 
@@ -335,13 +343,13 @@ export function watch(o: Opts, sink: Sink | null): void {
     for (const s of sessions.values()) {
       if (!s.pid || live.get(s.path) === s.pid) continue;
       live.set(s.path, s.pid);
-      if (lines && wanted(s, o) && (!o.cf || cliWatchEvent(o.cf, s, "live", "", ""))) emit(s, "live", null, "pid " + s.pid, "");
+      if (lines && wanted(s, o) && (!o.cf || cliWatchEvent(o.cf, s, "live", "", ""))) emit(s, "live", null, "pid " + s.pid, "", "", ["live"]);
     }
     for (const [p, pid] of [...live.entries()]) {
       const s = sessions.get(p);
       if (s && s.pid === pid) continue;
       live.delete(p);
-      if (lines && s && visible(s, o.sc) && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "");
+      if (lines && s && visible(s, o.sc) && (!o.cf || cliWatchExit(o.cf, s))) emit(s, "exit", null, "pid " + pid, "", "", ["exit"]);
     }
   };
   const poll = (): void => {
@@ -393,7 +401,7 @@ export function watch(o: Opts, sink: Sink | null): void {
         const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
         const msg = render(r, a.v, t.to || t.from, s);
         const l: { [k: string]: string } = {}; for (const [k, v] of r.labels) l[k] = v;
-        const w: WAlert = { ts: new Date(t.at).toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind: "alert", tool: null, id: null,
+        const w: WAlert = { ts: new Date(t.at).toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind: "alert", kinds: ["alert"], tool: null, id: null,
           text: oneLine(msg), alert: { rule: r.id, severity: severityOf(t.to || t.from), state: t.state, value: t.v, threshold: t.thr, labels: l } };
         if (shown && lines) { out(JSON.stringify(w)); lastOut = Date.now(); }
         if (sink) { const ls: string[][] = []; for (const [k, v] of r.labels) ls.push([k, v]); sink.alert(s, { rule: r.id, severity: w.alert.severity, state: t.state, value: t.v, threshold: t.thr, labels: ls, message: oneLine(msg) }); }

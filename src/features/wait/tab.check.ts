@@ -10,6 +10,8 @@ import { EMPTY } from "../query/eval.ts";
 import { LIVE, type Run } from "./live.ts";
 import { STEPS, newWaitRun, stepWait, waitResult } from "./report.ts";
 import { WAIT_TAB, waitState, setWaitForTest, sparkline } from "./tab.ts";
+import { VF_STORE, vfSet, vfOf, vfClear, resetForTest } from "../../ui/evfilter.ts";
+VF_STORE.path = "/tmp/agentglass-waittab-vf-" + String(process.pid) + ".json"; resetForTest();
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -65,6 +67,20 @@ WAIT_TAB.key("v"); eq("v: families again", waitState().view, "family");
 WAIT_TAB.key("enter"); eq("enter: calls", String(waitState().detail !== ""), "true");
 const gd = draw(80, 24); eq("calls list fits", String(gd.over), "0");
 WAIT_TAB.key("esc"); eq("esc: back", waitState().detail, "");
+// the event-kind filter: only the shell:test rows, the others counted below the table; K i ! work here too
+vfSet("wait", "event.kind is shell:test");
+const fd = draw(80, 24); const ft = fd.rows.join("\n");
+eq("filter: test family only", String(ft.indexOf("pnpm test") >= 0 && ft.indexOf("pnpm lint") < 0 && ft.indexOf("git") < 0), "true");
+eq("filter: hidden rows counted", String(ft.indexOf("rows hidden ·") >= 0), "true");
+eq("filter: count line", String(ft.indexOf("1 of 4 rows") >= 0), "true");
+eq("filter fits 80", String(fd.over), "0");
+WAIT_TAB.key("esc"); eq("esc clears the kind filter", vfOf("wait").expr, "");
+WAIT_TAB.key("down"); const sk0 = waitState().sel;
+WAIT_TAB.key("]"); eq("] without a filter keeps the row", String(waitState().sel), String(sk0));
+WAIT_TAB.key("K"); WAIT_TAB.key("right"); WAIT_TAB.key("esc"); eq("the chip bar keeps the row", String(waitState().sel), String(sk0));
+WAIT_TAB.key("g");
+WAIT_TAB.key("i"); eq("i solos the selected row's kind", String(vfOf("wait").expr.startsWith("event.kind is shell:")), "true");
+vfClear("wait");
 // work: none while hidden, one step per render while a report runs
 setWaitForTest(null);
 S.tab = 0; const n0 = STEPS.n;
