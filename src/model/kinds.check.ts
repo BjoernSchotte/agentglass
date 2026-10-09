@@ -92,6 +92,8 @@ const seen = new Set<string>(); for (const s of all) for (const k of kindsOf(s).
 for (const k of ["prompt", "prompt:agent", "reply", "reply:thinking", "shell:test", "shell:vcs", "shell:build", "shell:install", "shell:typecheck", "edit", "read", "read:search", "web", "mcp:github", "subagent", "skill:load", "skill:unload", "meta:compact", "approval", "error"])
   ok("taxonomy has " + k, seen.has(k));
 
+// Gemini logs MCP tools as mcp_<server>_<tool>
+eq("gemini mcp", toolKinds("mcp_agentglass_sessions", "").join(","), "mcp:agentglass");
 // each adapter's file-writing tools are edits (T_EDIT): claude, codex, gemini, pi, OpenCode
 for (const n of ["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "write_file", "replace", "edit", "write", "patch"]) eq("edit tool " + n, toolKinds(n, "").join(","), "edit");
 ok("T_EDIT lower case", T_EDIT.every((n: string) => n === n.toLowerCase()));
