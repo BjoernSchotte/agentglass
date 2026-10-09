@@ -27,6 +27,11 @@ export interface SkRead { path: string; off: number; tu: number }
 export const SKILL_BPT = 3.6; // UTF-8 bytes per token (spec Decision 2; Open question 8 calibrates it)
 export const SK_CAP = 400; // loads kept per log; beyond, the oldest ended loads fold per name
 export const LISTING = "(listing)";
+// skills bundled with Claude Code (the same on every install; the /help skill list, invoked_skills paths "bundled:<name>"):
+// they have no "Base directory" line, so a user's /<name> is told from a plain prompt command by its name alone
+export const CLAUDE_BUNDLED = ["update-config", "claude-api", "keybindings-help", "simplify", "loop", "schedule", "fewer-permission-prompts",
+  "code-review", "security-review", "review", "init", "workflow-authoring", "artifact-design", "artifact-diagramming", "artifact-capabilities",
+  "claude-in-chrome", "run", "verify", "debug", "batch"];
 // Day.sa slots: loads by trigger, then [in, cacheRead, write5m, write1h] of load, carry and tail, then harness-priced $
 // (all, of it the load part, the tail part)
 export const SA_LU = 0; export const SA_LM = 1; export const SA_LC = 2; export const SA_L = 3; export const SA_C = 7; export const SA_T = 11; export const SA_HU = 15; export const SA_HL = 16; export const SA_HT = 17; export const SA_N = 18;

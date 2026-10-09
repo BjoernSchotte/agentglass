@@ -7,6 +7,7 @@ import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp, lineAt, skillLoad, skillUnload, skillListing, skillRead, skillReadDone, skillCall, skillCallText } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
+import { CLAUDE_BUNDLED } from "../features/usage/skillrec.ts";
 import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
 import { OWN, claim } from "../features/usage/owners.ts";
@@ -225,7 +226,8 @@ OWN.bg = (path: string): boolean => { const a = OWN.accs().get(path); return !!a
 function owned(a: Acc, o: Obj): boolean { const u = str(o["uuid"]); return !u || claim(a, "u:" + u, str(o["timestamp"]), copied(a, o)); }
 function userText(o: Obj): string { const m = obj(o["message"]); const c = m ? m["content"] : null; return typeof c === "string" ? c : blockText(c); }
 // slash-command skills: the command line, then an isMeta line "Base directory for this skill: …/skills/<name>" with the same
-// promptId and no sourceToolUseID (a model's Skill call has one). /compact & co. never get that line.
+// promptId and no sourceToolUseID (a model's Skill call has one); a bundled skill's isMeta line has no such header (known by
+// name). /compact & co. never get that line.
 function userLine(a: Acc, l: string): void {
   if (l.indexOf("<command-name>/") >= 0) {
     const o = parseJson(l); if (!o) return;
@@ -248,6 +250,15 @@ function userLine(a: Acc, l: string): void {
     }
     return;
   }
+  if (CLAUDE_BUNDLED.indexOf(name) >= 0 && l.indexOf("\"isMeta\":true") >= 0) { // a bundled skill: its text is the command's isMeta line, no directory
+    const o = parseJson(l);
+    if (o && !str(o["sourceToolUseID"]) && pid && str(o["promptId"]) === pid) {
+      a.pk = ""; const iso = str(o["timestamp"]);
+      skill(bucket(a, 0, iso), "command", name);
+      skillLoad(a, name, "user", 0, iso, userText(o), true, "bundled:" + name, false, off >= 0 ? off : -1);
+      return;
+    }
+  }
   const pm = /"promptId":"([^"]+)"/.exec(l);
   if (!pm || (pm[1] ?? "") !== pid) a.pk = ""; // another prompt: that command had no skill directory
 }
@@ -264,7 +275,9 @@ function skillMeta(a: Acc, l: string): void {
   const o = parseJson(l); if (!o || o["isMeta"] !== true) return;
   const sid = str(o["sourceToolUseID"]); if (!sid || !owned(a, o)) return;
   const t = userText(o); const bd = /Base directory for this skill:[ \t]*([^\n]*)/.exec(t);
-  skillCallText(a, sid, 0, str(o["timestamp"]), skillBody(t), bd ? (bd[1] ?? "").trim().replace(/[\/\\]+$/, "") : "", t.startsWith("(Re-invocation of"));
+  const c = a.skr.get("S:" + sid); const nm = c ? c.path : ""; // the Skill call's skill name
+  const dir = bd ? (bd[1] ?? "").trim().replace(/[\/\\]+$/, "") : CLAUDE_BUNDLED.indexOf(nm) >= 0 ? "bundled:" + nm : "";
+  skillCallText(a, sid, 0, str(o["timestamp"]), skillBody(t), dir, t.startsWith("(Re-invocation of"));
 }
 const INJECT_CAP = 20000; // Claude cuts each re-injected skill's content at 20 000 characters (spec M5)
 function skillSys(a: Acc, l: string): void {

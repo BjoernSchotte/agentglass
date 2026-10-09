@@ -15,6 +15,7 @@ import { REDACT, PINNED } from "./redact-on.ts";
 import { attrOf } from "./query/attrs.ts";
 import { ESC_RE, firstLine } from "../util/text.ts";
 import { scrubSecrets } from "../util/secrets.ts";
+import { CLAUDE_BUNDLED } from "./usage/skillrec.ts";
 
 export { REDACT };
 const envKeep = process.env.AGENTGLASS_REDACT_KEEP;
@@ -166,11 +167,9 @@ export function fakeAgent(real: string): string {
 // skills bundled with a harness (public, the same on every install): --redact shows them as they are. Sources: Claude Code's
 // bundled skills (invoked_skills path "bundled:<name>", the /help skill list), Codex's ~/.codex/skills/.system dir;
 // OpenCode, pi, Kiro and fx bundle none
-export const BUILTIN_SKILLS = new Set<string>(["update-config", "claude-api", "keybindings-help", "simplify", "loop", "schedule",
-  "fewer-permission-prompts", "code-review", "security-review", "review", "init", "workflow-authoring", "artifact-design",
-  "artifact-diagramming", "artifact-capabilities", "claude-in-chrome", "run", "verify", "debug", "batch", // claude
+export const BUILTIN_SKILLS = new Set<string>(CLAUDE_BUNDLED.concat([
   "imagegen", "openai-docs", "review-agent", "skill-creator", "skill-installer", // codex .system
-  "(listing)"]); // agentglass's own name for the skill listing
+  "(listing)"])); // agentglass's own name for the skill listing
 // a user-defined skill name → a stable fake of the same length (a plugin:name as a whole), one per real name
 const skillMemo = new Map<string, string>(); const skillUsed = new Set<string>();
 export function fakeSkill(real: string): string {

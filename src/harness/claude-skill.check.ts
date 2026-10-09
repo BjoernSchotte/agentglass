@@ -34,5 +34,21 @@ eq("no text kept", String(JSON.stringify(a.sk).indexOf("LOREMSKILLTEXT")), "-1")
 let carried = 0; for (const l of a.sk) for (let i = 0; i < 4; i++) carried += (l.lt[i] ?? 0) + (l.ct[i] ?? 0);
 eq("skills ≤ context", String(carried <= a.inTok + a.cr + a.cw), "true");
 
+// bundled skills have no "Base directory" line: a user's /simplify is known by its name (a plain prompt command /mine is not
+// a skill), a model's Skill call of one by its call; both scope builtin
+const b = newAcc(); const U = (pid: string, uuid: string, c: string, meta: boolean, src: string): string => "{\"promptId\":\"" + pid + "\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":" + JSON.stringify(c) + "},\"uuid\":\"" + uuid + "\",\"timestamp\":\"2026-10-01T10:00:00.000Z\"" + (meta ? ",\"isMeta\":true" : "") + (src ? ",\"sourceToolUseID\":\"" + src + "\"" : "") + "}";
+const asst = (id: string, w: number, rest: string): string => "{\"type\":\"assistant\",\"uuid\":\"" + id + "\",\"timestamp\":\"2026-10-01T10:00:01.000Z\",\"requestId\":\"r" + id + "\",\"message\":{\"id\":\"m" + id + "\",\"model\":\"claude-sonnet-4-5\",\"role\":\"assistant\",\"content\":[" + rest + "],\"usage\":{\"input_tokens\":0,\"cache_read_input_tokens\":1000,\"cache_creation_input_tokens\":" + String(w) + ",\"output_tokens\":5,\"cache_creation\":{\"ephemeral_5m_input_tokens\":" + String(w) + ",\"ephemeral_1h_input_tokens\":0}}}}";
+for (const l of [
+  U("q1", "b-1", "<command-message>simplify</command-message>\n<command-name>/simplify</command-name>", false, ""), U("q1", "b-2", "LOREMBUNDLED " + "z".repeat(707), true, ""),
+  asst("b-3", 400, "{\"type\":\"text\",\"text\":\"ok\"}"),
+  U("q2", "b-4", "<command-message>mine</command-message>\n<command-name>/mine</command-name>", false, ""), U("q2", "b-5", "my own prompt command text", true, ""),
+  asst("b-6", 50, "{\"type\":\"tool_use\",\"id\":\"toolu_c1\",\"name\":\"Skill\",\"input\":{\"skill\":\"claude-api\"}}"),
+  U("q2", "b-7", "LOREMAPI " + "y".repeat(351), true, "toolu_c1"),
+  asst("b-8", 300, "{\"type\":\"text\",\"text\":\"ok\"}"),
+]) claude.usage(b, l);
+eq("bundled loads", b.sk.map(row).join("\n"), ["simplify user 720 200  open bundled:simplify", "claude-api model 360 100  open bundled:claude-api"].join("\n"));
+eq("bundled scope", b.sk.map((l: SkLoad) => l.scope).join(","), "builtin,builtin");
+eq("bundled uses", JSON.stringify(skillUsesOf([b], null)), "[{\"name\":\"claude-api\",\"source\":\"model\",\"n\":1},{\"name\":\"simplify\",\"source\":\"command\",\"n\":1}]");
+
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok claude skills");
