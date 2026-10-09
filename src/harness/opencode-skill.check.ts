@@ -7,6 +7,7 @@ import { opencode } from "./opencode.ts";
 import { gemini } from "./gemini.ts";
 import { kiro } from "./kiro.ts";
 import { type Acc, type SkLoad, newAcc, skillUsesOf, skillLoad } from "../features/usage/record.ts";
+import { outDir } from "../features/usage/skillrec.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -32,6 +33,11 @@ eq("no text kept", String(JSON.stringify(o.sk).indexOf("LOREMSKILLTEXT") + JSON.
 const k = newAcc(); skillLoad(k, "x", "model", 1, "", "lorem", true, "", false);
 kiro.usage(k, "{\"version\":\"v1\",\"kind\":\"Compaction\",\"data\":{}}");
 eq("kiro compaction unloads", (k.sk[0] as SkLoad).why, "compact");
+
+// the skill tool's output names the skill's directory: OpenCode's Base directory line, Gemini's available_resources
+eq("dir from OpenCode output", outDir("<skill_content name=\"x\">\nBase directory for this skill: file:///r/.opencode/skills/x/\nRelative paths …", "x"), "/r/.opencode/skills/x");
+eq("dir from Gemini output", outDir("<activated_skill name=\"x\">\n  <available_resources>\nShowing up to 200 items.\n\n/h/.gemini/skills/x/\n└───SKILL.md\n  </available_resources>", "x"), "/h/.gemini/skills/x");
+eq("no dir named", outDir("just text", "x") + outDir("<available_resources>\n/h/other/y/\n</available_resources>", "x"), "");
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok opencode/gemini/kiro skills");

@@ -78,6 +78,16 @@ export function hexNum(s: string, def: number): number {
 }
 export function skillHash(text: string): string { return hashHex(fnvFeed(FNV1, text), fnvFeed(FNV2, text)); }
 
+// the skill's directory as a skill tool's output names it: OpenCode "Base directory for this skill: <dir>", Gemini a
+// <available_resources> line ".../skills/<name>/"; "" when it names none (scope stays ?)
+export function outDir(out: string, name: string): string {
+  const bd = /Base directory for this skill:[ \t]*([^\n]*)/.exec(out);
+  if (bd) { const d = (bd[1] ?? "").trim().replace(/^file:\/\//, "").replace(/[\/\\]+$/, ""); if (d) return d; }
+  const i = out.indexOf("<available_resources>"); if (i < 0 || !name) return "";
+  const j = out.indexOf("</available_resources>", i);
+  for (const ln of out.slice(i, j > i ? j : out.length).split("\n")) { const d = ln.trim().replace(/[\/\\]+$/, ""); if (d.endsWith("/skills/" + name)) return d; }
+  return "";
+}
 // where a skill lives, from its base directory: user | project | plugin | builtin | ?
 export function scopeOf(dir: string): string {
   if (!dir) return "?";

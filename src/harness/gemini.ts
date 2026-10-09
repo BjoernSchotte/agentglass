@@ -8,6 +8,7 @@ import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, reasoning, turn, skill, nlines, num, isoMs, skillLoad, skillRead, skillReadDone } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
+import { outDir } from "../features/usage/skillrec.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
 import { FILE_SOURCE } from "./source.ts";
@@ -399,7 +400,8 @@ function usage(a: Acc, l: string): void {
     if (name === "activate_skill" && args) { // the skill's text is the call's response (written with the call): a model load
       const done0 = c["result"] !== undefined && c["result"] !== null;
       skill(d, "model", str(args["name"]));
-      skillLoad(a, str(args["name"]), "model", 0, iso, done0 ? resultText(c) : "", done0, "", false);
+      const out = done0 ? resultText(c) : "";
+      skillLoad(a, str(args["name"]), "model", 0, iso, out, done0, outDir(out, str(args["name"])), false);
     } else if (name === "read_file" && args && c["result"] !== undefined && c["result"] !== null) {
       skillRead(a, id, str(args["file_path"]) || str(args["absolute_path"]) || str(args["path"]));
       if (a.skr.has(id)) skillReadDone(a, d, id, 0, iso, resultText(c), false);
