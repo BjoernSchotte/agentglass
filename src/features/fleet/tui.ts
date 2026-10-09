@@ -19,13 +19,14 @@ import { addActions } from "../palette/actions.ts";
 import { type Allow, asBill } from "../usage/billing.ts";
 import { type RlWin, L } from "../usage/record.ts";
 import { type HostRow, SKILL_FLEET, hostRows } from "../skills/fleet.ts";
+import type { HostHash } from "../skills/advise.ts";
 import { kfmt, grp, moneyTag } from "../usage/costs.ts";
 import { type CostNow, costNow } from "../usage/summary.ts";
 import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
 import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed, openCmd } from "./config.ts";
 import type { HostReport } from "./model.ts";
-import { type RemoteHost, type Progress, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher, mergeMs, mergeGen, merged0, merging, mergeTick, exactMerge, skillSets } from "./hosts.ts";
+import { type RemoteHost, type Progress, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher, mergeMs, mergeGen, merged0, merging, mergeTick, exactMerge, skillSets, skillHashes } from "./hosts.ts";
 import { sshBin, hostControlPath } from "./ssh.ts";
 import { forget, keyOf } from "./store.ts";
 import { makeFeeds, hostStatus, statusLines, redactOf, MAX_PARALLEL } from "./cli.ts";
@@ -241,6 +242,8 @@ FLEET_HOOK.codex = (): RlWin[] | null => { if (!T.on) return null; allowNow(); r
 // asks every frame); the TUI takes the last finished merge (a new one runs in the tick's slices)
 const SKF = { sig: "", rows: [] as HostRow[] };
 SKILL_FLEET.on = (): boolean => T.on && merged().length > 0;
+SKILL_FLEET.local = (): string => FLEET.cfg ? FLEET.cfg.localName : "";
+SKILL_FLEET.hashes = (): HostHash[] => { const c = FLEET.cfg; return c ? skillHashes(merged(), c.localName) : []; };
 SKILL_FLEET.rows = (days: string[] | null, by: string): HostRow[] => {
   const c = FLEET.cfg; const hs = merged(); if (!c || !hs.length) return [];
   let exact = false; for (const rh of hs) if (rh.report && rh.report.exact) exact = true;

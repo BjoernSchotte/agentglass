@@ -29,7 +29,7 @@ import { SELF, parseRef } from "../palette/ref.ts";
 import type { HostFeed, FeedState } from "./model.ts";
 import { type RemoteHost, type FleetCost, FLEET, setFleet, reapply, merged, overlap, fleetCost, fleetBudget, freshOf, rowObj, exactMerge, skillSets, skillHashes } from "./hosts.ts";
 import { type HostRow, hostRows } from "../skills/fleet.ts";
-import { type Advice, adviseB, adviseCfg, adviceLines, visAdvice } from "../skills/advise.ts";
+import { type Advice, adviseHosts, adviseCfg, adviceLines } from "../skills/advise.ts";
 import { periodDays, rowJson, tableLines, termWidth } from "../skills/cli.ts";
 import { sshFeed, idleFeed, sshBin, hostControlPath } from "./ssh.ts";
 import { forget } from "./store.ts";
@@ -235,7 +235,7 @@ function skillsCli(args: string[]): void {
   let exact = false; for (const rh of hs) if (rh.report && rh.report.exact) exact = true;
   const x = exact ? exactMerge(hs, c.reprice, 0, true) : null;
   const rows = hostRows(skillSets(hs, x, c.localName, days), days, "cost");
-  const adv: Advice[] = visAdvice(adviseB([], [], { sessions: [], repo: (s: string): string => "", turns: (s: string): number => 0, span: (s: string, t0: number, t1: number) => ({ n: 0, err: 0, tests: 0, testsOk: 0, commits: 0, kept: false }) }, skillHashes(hs, c.localName), adviseCfg(), now));
+  const adv: Advice[] = adviseHosts(skillHashes(hs, c.localName), adviseCfg(), now); // names already shown (no second fake)
   let stale = 0; for (const rh of hs) if (!freshOf(rh, now, c, c.refreshS * 1000)) stale++;
   failedLines(r.failed);
   const code = strict ? strictCode(r.failed.length, stale) : 0;

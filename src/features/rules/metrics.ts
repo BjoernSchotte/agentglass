@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Sess } from "../../model/types.ts";
 import type { Rows } from "../usage/rows.ts";
-import { callMatches } from "../query/eval.ts";
+import { type SkQ, callMatches, skillRowsFrom, skillOk } from "../query/eval.ts";
 import { type Obs, type MVal, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, toolName } from "../detect.ts";
 import { type Rule, HOST_METRICS, SKILL_METRICS, paramDefault } from "./config.ts";
 import type { Acc, SkLoad } from "../usage/record.ts";
@@ -35,32 +35,37 @@ export function procMetric(r: Rule, o: Obs, turnAt: number): MVal {
 export function sessMetric(r: Rule, s: Sess): MVal {
   if (r.metric === "session_cost") return s.cost < 0 ? absent() : val(s.cost, s.mtime);
   if (r.metric === "session_tokens") return val(s.inTok + s.outTok + s.cacheRTok + s.cacheWTok, s.mtime);
-  if (SKILL_METRICS.indexOf(r.metric) >= 0) return skillMetric(r.metric, accsOf(s));
+  if (SKILL_METRICS.indexOf(r.metric) >= 0) return skillMetric(r.metric, accsOf(s), r.wf ? r.wf.skill : []);
   return absent();
 }
 // skill-usage 6.12 over a session's logs (as[0] its own, then its copies): skill_reloads = most copies of one skill in one
 // context at once (a load while earlier loads of it are still in), skill_carry_usd = the largest carry $ of one skill,
 // skill_context_share = the open loads' sizes / the newest request's context (as[0]). Skills hidden with omit never name
-// an alert ({skill} is the shown name: a fake under --redact or a name rule); the listing is no skill here
-export function skillMetric(metric: string, as: Acc[]): MVal {
+// an alert ({skill} is the shown name: a fake under --redact or a name rule); the listing is no skill here. ps: the
+// where's skill.* clauses (6.11/6.12): only the skills they match count ({"metric":"skill_carry_usd","where":"skill is x"}
+// is x's carry, not the largest of a session that loaded x); none = every skill
+export function skillMetric(metric: string, as: Acc[], ps: ((q: SkQ) => boolean)[] = []): MVal {
+  const ok = new Set<string>(); const scoped = ps.length > 0; // scriptc: no Set | null
+  if (scoped) for (const q of skillRowsFrom(skillLoads(as, as.map((a: Acc) => "")))) if (skillOk(ps, q)) ok.add(q.name);
+  const counts = (n: string): boolean => !scoped || ok.has(n);
   if (metric === "skill_context_share") {
     const a = as[0]; if (!a || a.lastCtx <= 0) return absent();
-    let sz = 0; let at = 0; let top = ""; let tv = -1;
-    for (const l of a.sk) { if (l.end !== 0 || l.pend || l.S <= 0) continue; sz += l.S; if (l.t > at) at = l.t; if (l.name !== LISTING && l.S > tv && skillVis(l.name).mode !== "omit") { tv = l.S; top = skillVis(l.name).shown; } }
+    let sz = 0; let at = 0; let top = ""; let tv = -1; // scoped: the matching skills' share (no listing)
+    for (const l of a.sk) { if (l.end !== 0 || l.pend || l.S <= 0 || (scoped && (l.name === LISTING || !counts(l.name)))) continue; sz += l.S; if (l.t > at) at = l.t; if (l.name !== LISTING && l.S > tv && skillVis(l.name).mode !== "omit") { tv = l.S; top = skillVis(l.name).shown; } }
     if (sz <= 0) return absent();
     const m = val(Math.min(1, sz / a.lastCtx), at); m.skill = top; return m;
   }
   let best = -1; let name = ""; let at = 0;
   if (metric === "skill_reloads") {
     for (const a of as) for (let i = 0; i < a.sk.length; i++) {
-      const l = a.sk[i] as SkLoad; if (l.name === LISTING || l.n > 1 || skillVis(l.name).mode === "omit") continue;
+      const l = a.sk[i] as SkLoad; if (l.name === LISTING || l.n > 1 || skillVis(l.name).mode === "omit" || !counts(l.name)) continue;
       let n = 1; for (let j = 0; j < i; j++) { const x = a.sk[j] as SkLoad; if (x.name === l.name && x.n === 1 && x.t <= l.t && (x.end === 0 || x.end > l.t)) n++; }
       if (n > best || (n === best && l.t > at)) { best = n; name = l.name; at = l.t; }
     }
   } else {
     const per = new Map<string, number>(); const last = new Map<string, number>();
     for (const r of skillLoads(as, as.map((a: Acc) => ""))) { if (r.name === LISTING) continue; per.set(r.name, (per.get(r.name) ?? 0) + r.carryUsd); if (r.t > (last.get(r.name) ?? 0)) last.set(r.name, r.t); }
-    for (const [k, v] of per) { if (skillVis(k).mode === "omit") continue; if (v > best) { best = v; name = k; at = last.get(k) ?? 0; } }
+    for (const [k, v] of per) { if (skillVis(k).mode === "omit" || !counts(k)) continue; if (v > best) { best = v; name = k; at = last.get(k) ?? 0; } }
   }
   if (best < 0) return absent();
   const m = val(best, at); m.skill = skillVis(name).shown; return m;

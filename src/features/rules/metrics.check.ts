@@ -161,6 +161,14 @@ eq("memo one entry", String(memo.size) + " " + v(a1), "1 2.5");
   const s0 = newSess("claude", "s", "/x/s.jsonl", false); s0.cwd = "/x";
   const mv = skillMetric("skill_reloads", [twice]);
   eq("enabled: degraded message", en ? String(en.enabled) + " " + String(mv.v >= en.deg) + " " + render(en, mv, 1, s0) : "", "true true alpha loaded 2× in one context");
+  // where on skill.* keys (6.12): the metric counts only the matching skills; the session's other skills do not
+  const wr = (w: string): Rule => { const r0 = loadRules('{"rules":[{"id":"w","metric":"skill_carry_usd","op":">","degraded":0,"where":' + JSON.stringify(w) + '}]}', true); eq("where compiles: " + w, r0.diags.map((d) => d.msg).join("|"), ""); return r0.rules.filter((r: Rule) => r.id === "w")[0] as Rule; };
+  const wb = wr("skill is beta"); const vb = skillMetric("skill_carry_usd", [twice], wb.wf ? wb.wf.skill : []);
+  eq("where skill is beta: beta's carry, not alpha's", vb.skill + " " + String(vb.v >= 0 && vb.v < cu.v), "beta true");
+  const wn = wr("skill is nope"); eq("where skill is nope: absent", v(skillMetric("skill_carry_usd", [twice], wn.wf ? wn.wf.skill : [])), "absent");
+  const wt = wr("skill.trigger is model and skill.loads >= 2"); eq("where skill.trigger and skill.loads", skillMetric("skill_reloads", [twice], wt.wf ? wt.wf.skill : []).skill, "alpha");
+  const ws = wr("skill is beta"); const sb = skillMetric("skill_context_share", [twice], ws.wf ? ws.wf.skill : []);
+  eq("where on skill_context_share: beta's size only", String(Math.round(sb.v * 1e4)), String(Math.round(Math.min(1, 1000 / 24600) * 1e4)));
   eq("unknown session: absent", v(sessMetric(rule('{"id":"r","metric":"skill_reloads","degraded":2}'), s0)), "absent");
 }
 console.log(bad ? bad + " failed" : "rules metrics: all checks passed");

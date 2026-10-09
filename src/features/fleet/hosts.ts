@@ -274,7 +274,7 @@ export function skillHashes(hs: RemoteHost[], localName: string): HostHash[] {
   for (const a of ledger.values()) for (const l of a.sk) { if (!l.hash || l.trig === "listing" || l.stub) continue; const v = skillVis(l.name); if (v.mode !== "omit") o.push({ host: localName, name: v.shown, hash: l.hash, at: l.t }); }
   for (const rh of hs) {
     const r = rh.report; if (!r) continue;
-    for (const sr of r.sessions) { const at = Date.parse(str(sr.s["updated"])); for (const v of arr(sr.s["skills"])) { const e = obj(v); if (!e) continue; const h = str(e["hash"]); const n = str(e["name"]); if (h && n) o.push({ host: rh.cfg.name, name: n, hash: h, at }); } }
+    for (const sr of r.sessions) { const at = Date.parse(str(sr.s["updated"])); for (const v of arr(sr.s["skills"])) { const e = obj(v); if (!e) continue; const h = str(e["hash"]); const n = str(e["name"]); if (!h || !n) continue; const vn = skillVis(n); if (vn.mode !== "omit") o.push({ host: rh.cfg.name, name: vn.shown, hash: h, at }); } } // as the host sent it, then this machine's rules
   }
   return o;
 }

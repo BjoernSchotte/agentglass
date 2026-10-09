@@ -221,6 +221,10 @@ interface Side { turns: number; n: number; err: number; tests: number; ok: numbe
 function side0(): Side { return { turns: 0, n: 0, err: 0, tests: 0, ok: 0, commits: 0 }; }
 function addSpan(x: Side, st: SpanStat, sign: number): void { x.n += sign * st.n; x.err += sign * st.err; x.tests += sign * st.tests; x.ok += sign * st.testsOk; x.commits += sign * st.commits; }
 function rate(a: number, b: number): string { return b > 0 ? pct(a / b) : "–"; }
+// A10 alone over the hosts' versions (names already as shown: skillHashes applied skillVis; no second fake)
+export function adviseHosts(hosts: HostHash[], cfg: AdviseCfg, now: number): Advice[] {
+  return adviseB([], [], { sessions: [], repo: (s: string): string => "", turns: (s: string): number => 0, span: (s: string, t0: number, t1: number): SpanStat => ({ n: 0, err: 0, tests: 0, testsOk: 0, commits: 0, kept: false }) }, hosts, cfg, now);
+}
 export function adviseB(rows: SkillRow[], loads: LoadRow[], inp: OutcomeIn, hosts: HostHash[], cfg: AdviseCfg, now: number): Advice[] {
   const out: Advice[] = [];
   // A9: per skill its loading turns (ended, call rows kept) against the other turns of the sessions in the same projects

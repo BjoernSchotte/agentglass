@@ -20,7 +20,7 @@ import { callCutoff } from "../usage/callcache.ts";
 import { type Acc, lastDays, startOfDay } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows } from "./model.ts";
-import { type Advice, type CallStat, type SpanStat, advise, adviseB, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
+import { type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviseHosts, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
 import { rowFam, famKind, famName } from "../wait/family.ts";
 import { identSync } from "../query/project.ts";
 import { type InvSkill, inventory } from "./inventory.ts";
@@ -172,7 +172,7 @@ function spanOf(ss: Sess[], t0: number, t1: number, cut: number): SpanStat {
 // the advice A1–A9 for a period's sessions (tops; accs/ids: their logs under their session's key; bySess: every session by
 // that key; keyOf: the key, "<harness>:<id>" in the CLI, the log path in the Stats panel); the CLI and the Stats skills
 // panel ask the same. Hidden skills already out (visAdvice)
-export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: Map<string, Sess>, rows: SkillRow[], loads: LoadRow[], days: number, harness: string, keyOf: (s: Sess) => string = (s: Sess): string => s.h + ":" + s.id): Advice[] {
+export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: Map<string, Sess>, rows: SkillRow[], loads: LoadRow[], days: number, harness: string, keyOf: (s: Sess) => string = (s: Sess): string => s.h + ":" + s.id, hosts: HostHash[] = []): Advice[] {
   const set: Set0 = { accs, ids, tops, bySess };
   const listed = new Map<string, number>(); let reqs = 0;
   for (const a of set.accs) { reqs += a.rq; for (const n of a.lst) listed.set(n, (listed.get(n) ?? 0) + 1); }
@@ -195,8 +195,9 @@ export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: M
   const oi = { sessions: [...tree.keys()], repo: (s: string): string => repoOf.get(s) ?? "", turns: (s: string): number => turns.get(s) ?? 0, span: (s: string, t0: number, t1: number): SpanStat => spanOf(tree.get(s) ?? [], t0, t1, cut) };
   const cfg = adviseCfg();
   const all = advise(rows, loads, { days, listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !harness || x.harness === harness), cfg, calls).concat(adviseB(rows, loads, oi, [], cfg, Date.now()));
-  all.sort((x: Advice, y: Advice) => y.severity - x.severity);
-  return visAdvice(all);
+  const out = visAdvice(all).concat(adviseHosts(hosts, cfg, Date.now())); // A10: the fleet's versions (names already shown)
+  out.sort((x: Advice, y: Advice) => y.severity - x.severity);
+  return out;
 }
 // --name: a skill as shown (a fake under --redact matches; its real name only where it is shown as is)
 function named(o: Opts, shown: string): boolean { return !o.name || shown === o.name; }

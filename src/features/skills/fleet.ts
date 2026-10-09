@@ -6,10 +6,12 @@
 import type { Acc } from "../usage/record.ts";
 import { type Obj, obj, arr, str } from "../../util/json.ts";
 import { type SkillRow, skillTable, sortRows, visRows } from "./model.ts";
+import type { HostHash } from "./advise.ts";
 
 export interface HostRow { host: string; row: SkillRow }
 // on: more than this machine is shown; rows: every host's rows for the local days (null = all), sorted by `by` within a host
-export const SKILL_FLEET = { on: (): boolean => false, rows: (days: string[] | null, by: string): HostRow[] => [] };
+// local: this machine's host name; hashes: every host's skill versions (A10 in the panel's advice)
+export const SKILL_FLEET = { on: (): boolean => false, rows: (days: string[] | null, by: string): HostRow[] => [], local: (): string => "", hashes: (): HostHash[] => [] };
 
 // one host's entries: Accs with their session ids (copies and subagents share their session's id), or (Part A) the
 // --json session objects whose skills[] entries are summed

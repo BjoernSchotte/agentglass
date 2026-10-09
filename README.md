@@ -812,6 +812,8 @@ A rule with a built-in `id` changes only the fields it names: `{"id":"approval",
 | `skill_carry_usd` | USD | the largest carry $ of one skill in the session (no skill carried); `{skill}` names it | |
 | `skill_context_share` | ratio | the open skills' sizes / the context of the newest request (no skill in context); `{skill}` = the largest | |
 
+With a skill metric, `where` clauses on `skill.*` keys pick the skills it counts: `{"id":"tdd-carry","metric":"skill_carry_usd","where":"skill is test-driven-development","op":">","degraded":0.5}` is that skill's carry, not the largest one of a session that loaded it.
+
 `samples` is at most 400 (one sample per ~1.5 s; the CPU history grows to the largest one in use).
 
 Built-ins (`agentglass rules defaults` prints them as an editable file, `--examples` adds disabled examples):
