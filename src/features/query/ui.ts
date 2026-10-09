@@ -438,8 +438,8 @@ function contentQuery(tab: string): string { for (const c of localFor(tab)) if (
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list") return false;
   const tab = tabName();
-  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", pinsText()); return true; }
-  if (tab === "Stats" || tab === "Repos") {
+  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos" || tab === "Wait")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", pinsText()); return true; }
+  if (tab === "Stats" || tab === "Repos" || tab === "Wait") { // Wait: its footer and help always offered / p P
     if (k === "/") { openFilterInput(tab); return true; }
     if (k === "p") { pinToast(pinAll(tab)); return true; }
     return false;

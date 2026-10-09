@@ -35,6 +35,12 @@ import { WANT } from "../fleet/ssh.ts";
 import { HOSTQ } from "../query/eval.ts";
 import { waitJson, rowJson } from "./cli.ts";
 import { mergeWait, reportOfObj, rowsOfObj } from "./merge.ts";
+import { newSess } from "../../model/types.ts";
+import { famOf } from "../../model/marks.ts";
+import { toolKinds } from "../../model/kinds.ts";
+import { SHELL_KINDS } from "./family.ts";
+import type { EvX } from "../query/eval.ts";
+import { test as vfTest, active as vfActive, filterKey, barOpen, chipBar, setCount, gapText, emptyText as vfEmpty, label as vfLabel } from "../../ui/evfilter.ts";
 
 // ── state ──
 export const SORTS = ["total", "count", "p95", "err", "trend", "peak"];
@@ -122,11 +128,46 @@ export function sortRows(rows: WRow[], s: string, ov: GroupOverlap[]): WRow[] {
   o.sort((a: WRow, b: WRow) => sortVal(b, s, ov) - sortVal(a, s, ov) || b.ms - a.ms || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return o;
 }
-function rows(): WRow[] {
+function rowsAll(): WRow[] {
   const r = J.rep; if (!r) return [];
   if (fleetOn()) { fleetRows(); if (WV.hosts === "merged") return sortRows(FX.rows, SORTS[WV.sort] ?? "total", []); return FX.rows; }
   return sortRows(rowsBy(r, WV.view), SORTS[WV.sort] ?? "total", ovOf());
 }
+// ── the event-kind filter (ui/evfilter.ts, view "wait"): a row is a family, kind or tool of calls; the rows it hides are
+// counted in one ┄ n hidden line below the table (the table has no time axis to keep) ──
+const VIEW = "wait";
+const WF = { hidden: 0, kinds: new Map<string, number>(), shown: 0 };
+function toolKindKinds(k: string): string[] { return k === "user" ? ["approval"] : k === "agent" ? ["subagent"] : k === "web" ? ["web"] : k === "mcp" ? ["mcp"] : k === "file" ? ["read"] : k === "wait" ? ["shell:wait"] : ["other"]; }
+export function waitRowX(w: WRow, view: string): EvX {
+  let ks: string[]; let fam = ""; let server = "";
+  if (view === "family" || (view !== "tool" && SHELL_KINDS.indexOf(view === "kind" ? w.key : w.kind) >= 0 && !w.isTool)) { ks = ["shell:" + (view === "kind" ? w.key : w.kind)]; if (view === "family") fam = w.key.toLowerCase(); }
+  else if (view === "kind") ks = toolKindKinds(w.key);
+  else if (w.key.startsWith("mcp ")) { server = w.key.slice(4).toLowerCase(); ks = ["mcp:" + server]; }
+  else ks = toolKinds(w.key, "");
+  if (w.err > 0) ks.push("error");
+  return { raw: "tool", kinds: ks, tool: view === "tool" ? w.key : "", args: "", server, fam, err: w.err > 0 ? 1 : 0 };
+}
+function rows(): WRow[] {
+  const all = rowsAll();
+  WF.hidden = 0; WF.kinds = new Map<string, number>(); WF.shown = all.length;
+  if (!vfActive(VIEW)) return all;
+  const out: WRow[] = []; const s = newSess("claude", "", "", false); // rows have no session: only event clauses decide
+  for (const w of all) {
+    const x = waitRowX(w, WV.view);
+    if (vfTest(VIEW, s, x)) { out.push(w); continue; }
+    WF.hidden++;
+    const fs: string[] = []; for (const k of x.kinds) { const f = famOf(k); if (fs.indexOf(f) < 0) fs.push(f); }
+    for (const f of fs) WF.kinds.set(f, (WF.kinds.get(f) ?? 0) + 1);
+  }
+  WF.shown = out.length;
+  return out;
+}
+function rowKinds(): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const w of rowsAll()) { const fs: string[] = []; for (const k of waitRowX(w, WV.view).kinds) { m.set(k, (m.get(k) ?? 0) + 1); const f = famOf(k); if (f !== k && fs.indexOf(f) < 0) fs.push(f); } for (const f of fs) m.set(f, (m.get(f) ?? 0) + 1); }
+  return m;
+}
+setCount(VIEW, (): string => String(WF.shown) + " of " + String(WF.shown + WF.hidden) + " rows");
 // the report whose split and trend the table shows (fleet: the merged one)
 function shownRep(): WaitReport | null { return fleetOn() && FX.mrep ? FX.mrep : J.rep; }
 function cur(): WRow | null { const rs = rows(); return rs[WV.sel] ?? null; }
@@ -206,10 +247,10 @@ function renderList(): void {
     fg(C.dim) + "  v " + RST + fg(C.text) + WV.view + RST + fg(C.dim) + "  s " + RST + fg(C.text) + (SORTS[WV.sort] ?? "total") + RST);
   const sp = rep ? splitTxt(rep) : ""; const vs = rep && !rep.complete ? " · no trend: the period before is past retention" : " · trend vs the " + periodName() + " before";
   line(1, 3, iw, " " + (rep ? fg(C.sub) + sp + RST + (width(sp + vs) < iw - 1 ? fg(C.dim) + vs + RST : "") : fg(C.dim) + "computing…" + RST));
-  line(1, 4, iw, " " + nowLine(iw - 1));
+  line(1, 4, iw, barOpen(VIEW) ? " " + chipBar(VIEW, rowKinds(), iw - 1) : vfActive(VIEW) ? " " + fg(C.accent) + vfLabel(VIEW) + RST + fg(C.dim) + " · " + String(WF.shown) + " of " + String(WF.shown + WF.hidden) + " rows · ] [ next · K edit · esc clears" + RST : " " + nowLine(iw - 1));
   const c = cols(iw);
   line(1, 5, iw, " " + fg(C.dim) + fit(WV.view, c.name) + fit(" kind", c.kind) + rj("share", c.share) + rj("total", c.total) + rj("n", c.n) + rj("p50≈", c.p50) + rj("p95≈", c.p95) + rj("err", c.err) + rj("trend", c.trend) + rj("peak", c.peak) + RST);
-  const rs = rows0; const y0 = 6; const vis = Math.max(0, Ht - 2 - y0 - 2);
+  const rs = rows0; const y0 = 6; const vis = Math.max(0, Ht - 2 - y0 - 2) - (WF.hidden > 0 ? 1 : 0); // a line for the hidden rows
   if (WV.selKey) for (let i = 0; i < rs.length; i++) if (rs[i]?.key === WV.selKey) { WV.sel = i; break; }
   WV.sel = Math.max(0, Math.min(WV.sel, rs.length - 1)); WV.selKey = rs[WV.sel]?.key ?? "";
   if (WV.sel < WV.top) WV.top = WV.sel;
@@ -218,9 +259,12 @@ function renderList(): void {
   LY.y0 = y0; LY.n = Math.min(vis, rs.length - WV.top);
   for (let i = 0; i < vis; i++) {
     const w = rs[WV.top + i];
-    if (!w || !rep) { line(1, y0 + i, iw, i === 0 && !rs.length ? "  " + fg(C.dim) + emptyText(f) + RST : ""); continue; }
+    if (!w || !rep) {
+      const gap = WF.hidden > 0 && WV.top + i === rs.length ? "  " + fg(C.dim) + gapText({ i: 0, hidden: WF.hidden, kinds: WF.kinds }, iw - 4).split(" hidden").join(" rows hidden") + RST : "";
+      line(1, y0 + i, iw, i === 0 && !rs.length ? "  " + fg(C.dim) + (WF.hidden ? vfEmpty(VIEW, "period").split(" events ").join(" rows ") : emptyText(f)) + RST : gap); continue;
+    }
     const on = WV.top + i === WV.sel;
-    line(1, y0 + i, iw, (on ? bg(C.sel) : "") + rowText(w, c, rep, ov, on, fl && WV.hosts !== "merged" ? FX.hostOf[WV.top + i] ?? "" : ""));
+    line(1, y0 + i, iw, (on ? bg(C.sel) : "") + rowText(w, c, rep, ov, on, fl && WV.hosts !== "merged" ? FX.hostOf[FX.rows.indexOf(w)] ?? "" : ""));
   }
   const bl = rep && !fl ? bottom(rs[WV.sel] ?? null, rep, ov, iw) : fl ? [fg(C.dim) + "── fleet: sums and histograms over the hosts; peaks and overlap stay per host (h: per host)" + RST, fleetNow(iw)] : ["", ""];
   line(1, Ht - 4, iw, " " + (bl[0] ?? "")); line(1, Ht - 3, iw, " " + (bl[1] ?? ""));
@@ -305,6 +349,9 @@ function key(k: string): boolean {
     return true;
   }
   const rs = rows(); const n = rs.length; const page = Math.max(1, LY.n - 1);
+  const cw = rs[WV.sel];
+  const fk = filterKey(VIEW, k, rowKinds, cw ? waitRowX(cw, WV.view).kinds : [], (d: number): number => vfActive(VIEW) && WV.sel + d >= 0 && WV.sel + d < n ? WV.sel + d : -1);
+  if (fk >= -1) { if (fk >= 0) WV.sel = fk; else { WV.sel = 0; WV.top = 0; } WV.selKey = fk >= 0 ? rs[fk]?.key ?? "" : ""; return true; }
   if (k === "up" || k === "k" || k === "wheelup") WV.sel = Math.max(0, WV.sel - 1);
   else if (k === "down" || k === "j" || k === "wheeldown") WV.sel = Math.min(Math.max(0, n - 1), WV.sel + 1);
   else if (k === "pgup") WV.sel = Math.max(0, WV.sel - page);
@@ -351,7 +398,8 @@ H.helpSections.push({ name: "wait", ctx: "Wait", keys: [["d w m a", "period: tod
   ["", "peak = most heavy calls at once (tests, type checks, lint, builds, installs ≥ wait.minSec); overlapped = ≥ 50 % of a"],
   ["", "  call ran beside another; slower when overlapped is a correlation, not a cause"],
   ["", "now = heavy commands running on this machine (age, RSS) · contention alert: rules.json id contention (off by default)"],
-  ["", "tool time includes approval dialogs; background runs end at launch and are not timed"]] });
+  ["", "tool time includes approval dialogs; background runs end at launch and are not timed"],
+  ["K  i  !  ] [", "event kinds: only some rows (shell:test, mcp, error …); the hidden ones are counted below the table"]] });
 function waitTab(): number { return 2 + H.tabs.indexOf(WAIT_TAB); }
 addActions([
   { id: "wait.open", title: "Wait: what agents wait on (tab)", group: "Wait", keys: "5", when: (c: Ctx): boolean => c.mode === "list", run: (): void => { S.mode = "list"; S.tab = waitTab(); } },
