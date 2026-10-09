@@ -39,7 +39,7 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
 
 - **Start:** [Quick install](#quick-install) · [Why it slaps](#why-it-slaps) · [More screens](#more-screens) · [Install](#install) · [Releases & channels](#releases--channels) · [Keys](#keys)
 - **Costs:** [Prices](#prices) · [Billing modes, projection, budget](#billing-modes-projection-budget)
-- **Explore:** [Repos](#repos) · [What do my agents wait on?](#what-do-my-agents-wait-on) · [Git linkage](#git-linkage) · [Filters](#filters) · [Filtering events](#filtering-events) · [Triage](#triage) · [Compare](#compare) · [Related events](#related-events) · [Palette and links](#palette-and-links)
+- **Explore:** [Repos](#repos) · [What do my agents wait on?](#what-do-my-agents-wait-on) · [Skills: what they cost](#skills-what-they-cost) · [Git linkage](#git-linkage) · [Filters](#filters) · [Filtering events](#filtering-events) · [Triage](#triage) · [Compare](#compare) · [Related events](#related-events) · [Palette and links](#palette-and-links)
 - **Alerts:** [Alert rules](#alert-rules)
 - **Beyond one machine:** [Several machines (fleet)](#several-machines-fleet) · [Send to an OTLP backend](#send-to-an-otlp-backend) · [OTLP: several hosts](#otlp-several-hosts) · [`agentglass receive` hub](#otlp-a-hub-for-hosts-you-cannot-reach-agentglass-receive)
 - **Integrations:** [herdr](#herdr) · [Inside coding agents](#inside-coding-agents) · [MCP server](#mcp-server) · [Scriptable](#scriptable) · [Custom agent commands](#custom-agent-commands)
@@ -93,6 +93,11 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
   `✧ … out (compacted)` when it leaves the context); `]` / `[` jump between them, `v` shows the loaded text. The call
   graph draws a lane per skill in context under the turns, related events (`k` all kinds) list skill loads, replay
   names the skills in context, compare (`C`) has a skills section and triage a `skill` dimension.
+- **It shows what your skills cost.** A loaded skill is paid for again on every later request while it stays in the
+  context: on this author's machine ~100–150× its load, in the longest, most expensive sessions. agentglass books each
+  request's tokens to the skills open at that moment (exact where the harness logs per-request usage), shows it on every
+  surface, and `agentglass skills advise` says which skill to shorten, split or stop auto-loading
+  (see [Skills: what they cost](#skills-what-they-cost)).
 - **It taps you on the shoulder.** When an agent finishes a turn or seems to wait for an approval,
   agentglass rings the bell, sends a desktop notification (macOS, or `notify-send` on Linux) and marks the row `◆`. `!` jumps there.
   Gemini CLI logs a tool call only after it ran; its approval dialog is seen from its terminal title when it runs in tmux.
@@ -155,6 +160,9 @@ the `P` editor — and keep filtering on the real value; `P` can keep or delete 
 run without `--redact`. Built-in subagent types (Explore, Plan, generalist, codebase_investigator, explore, worker…)
 stay; user-defined agent names get stable fakes of the same length in the list, detail, call graph, triage, compare,
 `--json` and OTLP export.
+Skills: names of skills bundled with a harness stay; your own and community skills get stable fakes of the same length
+(a `plugin:name` as a whole), and their loaded text is hidden (`view skill`: `text hidden (--redact)`); sizes and
+hashes stay. To hide chosen skills without `--redact`, see `skills.hide` in [Skills: what they cost](#skills-what-they-cost).
 Every screen in this README and the launch video was recorded this way.
 
 ## Tiny, fast, local
@@ -409,6 +417,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `@` | in Sessions: open the selected session's project in the Repos tab |
 | `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
 | `m` `C` | mark A / B · compare two sessions or periods (see [Compare](#compare)) |
+| `S` | in Stats or on a Repos project: the skills panel (see [Skills: what they cost](#skills-what-they-cost)) |
 | `K` `i` `!` `]` `[` | in a transcript, call graph, related events or Wait: event kinds, solo, invert, next / previous match (see [Filtering events](#filtering-events)) |
 | `r` | in a transcript, event detail or call graph: everything around that event in the same project (see [Related events](#related-events)) |
 | `y` `Y` | copy the session id · copy a link to the session (list) or to the event under the cursor (transcript) |
@@ -498,6 +507,59 @@ script. Each family has a **kind** (`test typecheck lint build install ci wait v
   with ^C (a dev server) keeps its yield's duration. A command line is stored up to 200 characters; when the cut hides
   the step its family comes from (`cd … && export … && pnpm test`), that step is kept beside it as a family hint.
   `--redact` shows an interpreter + script family (`node gen.js`) as its program (`node`).
+
+## Skills: what they cost
+
+A skill (a `SKILL.md`) costs tokens twice: once when it is loaded (**load**, normally a cache write) and again on every
+later request while it stays in the context (**carry**, normally cache reads); **tail** is the carry after the turn it
+was loaded in, the part its task no longer needed. agentglass books each request's tokens to the skills open at that
+moment, bounded by each skill's text size and the context's growth, so skill tokens never exceed a request's own and a
+session's $ is unchanged (skill $ is a share of it). Exact where the harness logs usage per request (Claude, Codex,
+Gemini, OpenCode, pi); `≈` when the size was inferred or the text was cut; `?` when the size is unknown (counted, not
+priced). The harness's skill **listing** (names and descriptions in every request) is booked like a skill, as
+`(listing)`. A compaction ends every open load; a skill re-injected after it is a new load (trigger `compact`).
+
+```sh
+agentglass skills                       # per skill: loads (/ by you, ⚙ by the model), sessions, size, load, carry, tail, share, $
+agentglass skills --period 7d --sort tail
+agentglass skills --session last        # one session's timeline: each load, its trigger, turn, size, carry, when it left
+agentglass skills show brainstorming    # the text its newest load put into the context
+agentglass skills advise                # A1 carried too long … A9 outcome in its turns; A10 across hosts: agentglass fleet skills
+agentglass skills --check               # the invariants over your ledger; exit 3 on a violation
+agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'   # per session: name, source, n, loads, tokens, $
+```
+
+In the TUI: `S` in Stats (or on a Repos project) opens the skills panel (`↵` its sessions, `a` advice, `v` the text,
+`s` sort); a transcript has a `✧` line per load and unload (`]` / `[` jump between them); the call graph a lane per open
+skill; related events, replay, the Wait timeline, the preview, triage (`skill`), compare and the filter language
+(`skill is x and skill.cost > $1`) show them too; rules can alert on `skill_reloads`, `skill_carry_usd` and
+`skill_context_share`.
+
+**Privacy.** Many skills are community skills, and yours cannot be told apart from them, so on your own machine
+skill names and text show by default: `view skill` and `skills show` print the text, `skills --session --json` carries
+it, `--json --fields skillLoads --content` adds it. agentglass never writes skill text to its own files (cache, call
+rows, logs): it keeps where the text is in the log and reads it when a view asks. You hide skills in
+`~/.agentglass/config.json`, rules in order, first match wins (`*` and `?` globs, case-sensitive, `plugin:` included):
+
+```json
+{ "skills": { "hide": [
+    { "match": "acme-*", "mode": "name" },
+    { "match": "secret-review", "mode": "omit" },
+    { "match": "*:internal-*", "mode": "content" },
+    "legacy-skill"
+] } }
+```
+
+| mode | effect, on every surface (TUI, CLI, `--json`, `--watch`, `events`, OTLP, fleet, MCP) |
+|---|---|
+| `content` (a bare string) | name and numbers shown, the text hidden (`text hidden by skills.hide`) |
+| `name` | as `content`, and the name replaced by a stable fake of the same length |
+| `omit` | no row, mark, transcript line, filter value, advice, OTLP event or fleet row; its tokens and $ go into one `(hidden) n skills` row, so totals stay true |
+
+`--redact` and `skills.hide` combine, the stricter wins. Paths that send data elsewhere apply the rules first and keep
+their own opt-in for text: OTLP export and `--watch --otlp` send names, trigger, sizes, hash, scope and $, the text only
+with `--content`; fleet reports carry names, sizes, hash and $, never text; the hub stores what the sender sent; the MCP
+server's `skills` / `events` tools return text only when the server runs with `--content`.
 
 ## Git linkage
 
@@ -1041,6 +1103,11 @@ agentglass open claude:5f1e…@ws  # a host's session: prints ssh -t me@workstat
 The `ssh -t … agentglass open …` command needs a login that may run agentglass interactively: the restricted viewer key
 above refuses it (exit 126), so it is meant for your usual key or login.
 
+Skill tokens across hosts follow the same merge: a log copied to two hosts counts once. When a copy loses a whole
+(day, provider, model) bucket to the other host (the usual case) its skill rows of that bucket leave exactly; when it
+loses only part of one (a copy ahead of an older owner copy, on the day the older copy ends) each skill row of that
+bucket shrinks by the same share as the bucket's tokens: a skill's split there is proportional, not per message.
+
 **Exact totals.** A host with this agentglass answers with a snapshot instead of a plain report: per session and
 local day its table-priced tokens, its harness-reported cost, and every owned Claude message as a salted 64-bit hash
 of its id with its usage (no message id leaves the host). The viewer counts a message once even when several hosts
@@ -1567,11 +1634,18 @@ Notes:
   copy its process writes is live, and `session <id>` takes the live copy. Sums (`cost`, Stats, Repos, triage,
   `compare`, `cost --by session`) count each message and each session once; `fleet pull` sends the session once.
 - **Codex**: the preview and `--json` show the session's git remote (`remote`) with credentials, query and fragment
-  removed; a remote that still looks suspicious is not shown. Skills you mention with `$name` count as command uses.
+  removed; a remote that still looks suspicious is not shown. Skills count from `$name` mentions (command uses) **and**
+  from the agent reading a `SKILL.md` with a shell command (`cat`, `sed -n`, `head`…; model uses, size `≈` when the
+  output was cut, a skill read in two parts is one load): Codex loads skills that way, so most of its skill use is the
+  second kind. The `## Skills` developer message is the listing; a compaction ends every open load.
   A forked rollout (`fork_context` subagents) starts with a copy of its parent's calls and token totals: those stay the
   parent's.
   OpenCode skills you activate count as command uses, its `skill` tool and Gemini `activate_skill` calls as model uses;
   pi `/skill:name` prompts count as command uses and show as `/skill:name <args>` (not the expanded skill file).
+  Skill tokens (see [Skills: what they cost](#skills-what-they-cost)) are exact per request on every harness that logs
+  per-request usage (Claude, Codex, Gemini, OpenCode, pi); a harness's compaction (Claude `compact_boundary`, Codex
+  `compacted`, pi `compaction`, OpenCode's compaction part) ends the open loads; a read of a `SKILL.md` by any harness's
+  read tool counts as a model load.
 - **pi**: honors `PI_CODING_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR` and `sessionDir` in pi's `settings.json`.
   pi has no session registry, so a session is live when a pi process runs in its working directory.
   Cost comes from pi's own `usage.cost`. MCP calls (pi ≥ 0.99 native MCP, also inside `codemode` scripts, and the
