@@ -145,14 +145,14 @@ Persistence `~/.agentglass/run/viewfilters.json` (0600, debounced 1 s; `filter.r
 
 **Files:** Create `src/features/events-cli.ts`, `scripts/events.test.sh`, `events.golden`; Modify `src/features/cli.ts` (`addCmd` `events`, `--watch` events gain `kinds`), `src/features/clihelp.ts:103`, `src/mcp/tools.ts` (tool `events`), `src/mcp/tools.check.ts` (golden `tools/list` updated under the CLI contract).
 
-- [ ] **Step 1: Failing test**: on the fixture HOME, `agentglass events <ref> --filter "event.kind is_one_of skill, error" --json` equals the TUI controller's `shown()` set on the same session (the test builds a tiny check binary that prints the controller's indexes); gap entries `{gap, kinds}`; no text without `--content`; `--watch --from 0 --filter "event.kind is skill"` prints only skill events, each with `kinds`; MCP `events` returns the same JSON, paginated by `cursor`.
+- [ ] **Step 1: Failing test**: on the fixture HOME, `agentglass events <ref> --filter "event.kind is_one_of skill, error" --json` equals the TUI controller's `shown()` set on the same session (the test builds a tiny check binary that prints the controller's indexes); gap entries `{gap, kinds}`; no text without `--content`; `--watch --from 0 --filter "event.kind is skill"` prints only skill events, each with `kinds` and the skill `text` (default, local), without it under `--redact` or a `skills.hide` rule; MCP `events` returns the same JSON, paginated by `cursor`.
 - [ ] **Step 2–4, 5:** commit `feat(cli,mcp): events with kind filters, --watch kinds`.
 
 ---
 
 ### Task P1: Skill visibility — `skillVis`, `skills.hide`, redaction (wave 1, parallel with Tasks 1 and 2)
 
-**Files:** Create `src/features/skills/vis.ts`, `src/features/skills/vis.check.ts`; Modify `src/features/redact.ts` (`fakeSkill`, `BUILTIN_SKILLS` with a source comment per name), the config reader (`skills.hide` schema, one startup toast per invalid entry), `README.md` privacy note later in Task 15.
+**Files:** Create `src/features/skills/vis.ts`, `src/features/skills/vis.check.ts`; Modify `src/features/redact.ts` (`fakeSkill`, `BUILTIN_SKILLS` with a source comment per name), the config reader (`skills.hide` schema plus its alias `skills.redact`, one startup toast per invalid entry), `README.md` privacy note later in Task 15.
 
 **Interfaces — Produces:**
 ```ts
@@ -163,7 +163,7 @@ export function hideRules(): { match: string; mode: string }[]; // parsed, valid
 export const VIS_SURFACES: string[];                  // surface entry points that must call skillVis (Task P2 walks them)
 ```
 
-- [ ] **Step 1: Failing check**: rule parsing (bare string → content; bad mode → ignored + toast text; first match wins; `*:internal-*` matches `acme:internal-x`); `--redact` fakes non-built-in names with a stable same-length fake and keeps built-ins; stricter of redact and a `content` rule; `textShown` table for local/outward × `--content` × each mode.
+- [ ] **Step 1: Failing check**: rule parsing (`skills.redact` entries joined with `skills.hide`; bare string → content; bad mode → ignored + toast text; first match wins; `*:internal-*` matches `acme:internal-x`); `--redact` fakes non-built-in names with a stable same-length fake and keeps built-ins; stricter of redact and a `content` rule; `textShown` table for local/outward × `--content` × each mode.
 - [ ] **Step 2–4:** FAIL → implement → PASS. **Step 5: Commit** `feat(skills): skill visibility rules (skills.hide, --redact)`.
 
 ### Task P2: Hidden skills on every surface (after Tasks 6, 6b, 8, 9, 10, 11, 12, 13, E3, E5)

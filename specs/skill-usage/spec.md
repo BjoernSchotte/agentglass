@@ -211,7 +211,8 @@ cold index, tail reads and fleet message rows see the same numbers.
 
 **3.1 Load.** The adapter calls `skillLoad(a, name, trig, ms, text)` when it sees the load line: a new `SkLoad`
 `{name, trig, t: ms, tu: a.tq, rq0: a.rq, bytes, hash, dir, scope, S: S_est, pend: true}` joins `A`. Text is hashed
-and measured, then dropped (never stored).
+and measured; the ledger keeps only where the text is (`off`/`len`/`rec`), and views read it from the transcript on demand
+(Privacy).
 
 **3.2 The load request** (the first request booked with `pend = true`). Let `g = ctx(r) − ctx(r−1)` (the context growth;
 `ctx(r−1)` of the previous request of this log, `0` if none). Then `S = min(S_est, max(g, 0))` when `g > 0`, else
@@ -621,9 +622,11 @@ asks for it, as transcript content already is.
 - CLI text output and the user's own `--json`:
   - `agentglass skills show <name | session-ref#sk<i>>` prints the text by default.
   - `skills --session ref --json` includes `text` per load by default.
-  - `--json` session lists (`agentglass --json`) carry names, sizes, hash, scope and `dir`, but no text: that is a
-    footprint choice (lists of thousands of sessions), not a privacy one. `--fields skillLoads` with `--content` adds
-    the text.
+  - `--fields skillLoads` on `agentglass --json` includes `text` per load by default. The default field set carries
+    names, sizes, hash, scope and `dir` per skill but not `skillLoads` at all: that is a footprint choice (lists of
+    thousands of sessions), not a privacy one.
+  - `--watch` and `agentglass events`: a skill load event carries `text` by default. Other events' text keeps the
+    existing `--content` rule; that rule is about prompts and tool output, not skills.
 - Filters may match the text: `skill.text ~ "TDD"` is a `content`-like key with ops `~`/`!~` only.
 
 **User-chosen hiding** (applied on every surface, local and outward, before anything is shown, filtered or sent):
@@ -632,7 +635,8 @@ asks for it, as transcript content already is.
   whole. Bundled names stay: the `BUILTIN_SKILLS` list, with a comment naming the source of each name. Text is hidden
   (`view skill` shows `text hidden (--redact)`). The base directory is faked like a cwd. Hashes and sizes stay. Filters
   on a fake work through the `EXACT` prefix rule, as for every redacted value.
-- (b) **`skills.hide` in `~/.agentglass/config.json`**: a list of rules applied in order, first match wins:
+- (b) **`skills.hide` in `~/.agentglass/config.json`** (`skills.redact` is accepted as an alias; both lists are
+  joined): a list of rules applied in order, first match wins:
   ```json
   { "skills": { "hide": [
       { "match": "acme-*", "mode": "name" },
