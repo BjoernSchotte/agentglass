@@ -113,17 +113,19 @@ if (!REDACT) {
   const entry = (s: Sess): Acc | null => { const a = ledger.get(s.path); return a && a.ep === s.ep && s.size >= a.off ? a : null; };
   HEADS.get = (s: Sess): HeadMemo | null => {
     const a = entry(s); if (!a || a.hd.length < 5) return null;
-    return { w: Number(a.hd[0]), h: Number(a.hd[1]), z: Number(a.hd[2]), t: Number(a.hd[3]), x: a.hd[4] ?? "", f: a.hd.slice(5) };
+    return { w: Number(a.hd[0]), h: Number(a.hd[1]), z: Number(a.hd[2]), t: Number(a.hd[3]), x: a.hd[4] ?? "", v: a.hd[5] ?? "", f: a.hd.slice(6) };
   };
-  HEADS.put = (s: Sess, m: HeadMemo): void => { const a = accOf(s); a.hd = [String(m.w), String(m.h), String(m.z), String(m.t), m.x].concat(m.f); L.idx++; };
+  // [w, h, z, t, x, v, field, value, …]; an entry of a build before v (no v slot) reads a field name as v: it misses and
+  // the next read rewrites it (one with no fields has v "", right for a run without rules)
+  HEADS.put = (s: Sess, m: HeadMemo): void => { const a = accOf(s); a.hd = [String(m.w), String(m.h), String(m.z), String(m.t), m.x, m.v].concat(m.f); L.idx++; };
   TAILS.get = (s: Sess): TailMemo | null => {
     const a = entry(s); const t = a ? a.tl : []; if (!a || t.length < 7) return null;
     const k = t[3] ?? "";
-    return { size: Number(t[0]), t: Number(t[1]), x: t[2] ?? "", ev: k ? { kind: k, text: t[4] ?? "", ts: t[5] ?? "", id: t[6] ?? "", full: "" } : null, f: t.slice(7) };
+    return { size: Number(t[0]), t: Number(t[1]), x: t[2] ?? "", v: t[7] ?? "", ev: k ? { kind: k, text: t[4] ?? "", ts: t[5] ?? "", id: t[6] ?? "", full: "" } : null, f: t.slice(8) };
   };
-  TAILS.put = (s: Sess, m: TailMemo): void => {
+  TAILS.put = (s: Sess, m: TailMemo): void => { // [size, t, x, kind, text, ts, id, v, field, value, …] (v: as HEADS)
     const a = accOf(s); const e = m.ev;
-    a.tl = [String(m.size), String(m.t), m.x, e ? e.kind : "", e ? e.text : "", e ? e.ts : "", e ? e.id : ""].concat(m.f); L.idx++;
+    a.tl = [String(m.size), String(m.t), m.x, e ? e.kind : "", e ? e.text : "", e ? e.ts : "", e ? e.id : "", m.v].concat(m.f); L.idx++;
   };
 }
 H.firstScan.push(load); // not at import: --help, --version and the agent help never read it

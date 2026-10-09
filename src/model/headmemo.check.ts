@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { appendFileSync, copyFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { type Sess, newSess } from "./types.ts";
+import { H } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, activity, HEADS, TAILS, type HeadMemo, type TailMemo } from "./sessions.ts";
 
 let bad = 0;
@@ -102,6 +103,22 @@ eq("tail memo, same size and mtime: replayed", String(tputs - n3), "0");
 writeFileSync(v, user("tail one", "00") + "\n" + asst("01", "claude-sonnet-4-6") + "\n"); n3 = tputs;
 eq("tail memo, same size, new mtime: read again", vt(21).model + "|" + String(tputs - n3), "claude-sonnet-4-6|1");
 
+// a head read in a run that knew the cwd already (the project cache, an earlier read) still keeps it: a later run that
+// replays the memo knows it only from there (agent mode scopes by it)
+{
+  const q = dir + "/q.jsonl"; writeFileSync(q, user("known cwd", "00") + "\n" + asst("01", "claude-sonnet-4-5") + "\n");
+  const k1 = newSess("claude", "q", q, false); k1.size = statSync(q).size; k1.mtime = 30; k1.cwd = "/w/app"; k1.branch = "feat"; k1.model = "claude-sonnet-4-5"; loadHead(k1);
+  const k2 = newSess("claude", "q", q, false); k2.size = statSync(q).size; k2.mtime = 30; const nq = puts; loadHead(k2);
+  eq("replay keeps the cwd, branch and model a run knew before its read", k2.cwd + "|" + k2.branch + "|" + k2.model + "|" + String(puts - nq), k1.cwd + "|" + k1.branch + "|" + k1.model + "|0");
+  eq("(the read kept them)", k1.cwd, "/w/app");
+}
+// memos hold what the event hooks made of the log (a title, the last event) under the hiding rules of their run: other
+// rules (skills.hide changed) read the log again, so a memo never shows what the new rules hide
+let key = ""; H.memoKey.push((): string => key);
+vt(21); n3 = tputs; let nh = puts; vt(21); eq("memo replayed before the change", String(puts - nh) + "|" + String(tputs - n3), "0|0"); key = "acme-*=name";
+const vk = vt(21); eq("other hiding rules: head and tail read again", String(puts - nh) + "|" + String(tputs - n3), "1|1");
+nh = puts; n3 = tputs; vt(21); eq("same rules again: replayed", String(puts - nh) + "|" + String(tputs - n3), "0|0");
+key = ""; eq("memo key kept", vk.model, "claude-sonnet-4-6");
 rmSync(dir, { recursive: true, force: true });
 console.log(bad ? bad + " failed" : "headmemo: all checks passed");
 if (bad) process.exit(1);
