@@ -7,6 +7,7 @@ import { type Acc, skillUsesOf } from "../usage/record.ts";
 import { type LoadRow, skillLoads, sizeFill } from "./model.ts";
 import { skillVis } from "./vis.ts";
 import { shownText } from "./text.ts";
+import { note } from "./watchvis.ts";
 
 function round(x: number): number { return Math.round(x * 1e6) / 1e6; }
 // source command ↔ a user load, model ↔ a model load (re-injections and the listing have no source entry)
@@ -16,7 +17,7 @@ export function skillsJson(as: Acc[]): Obj[] {
   const loads = skillLoads(as, as.map((a: Acc) => ""));
   const out: Obj[] = [];
   for (const u of skillUsesOf(as, null)) {
-    const v = skillVis(u.name); if (v.mode === "omit") continue;
+    const v = skillVis(u.name); note(u.name); if (v.mode === "omit") continue;
     let n = 0; let ld = 0; let cr = 0; let tl = 0; let usd = 0; let cu = 0; let tu = 0; let newest: LoadRow | null = null; let est = false; let unk = false;
     for (const l of loads) {
       if (l.name !== u.name || l.trig !== trigOf(u.source)) continue;

@@ -62,6 +62,8 @@ eq "--json skills entry" "$r" "carryUsd costUsd dir hash loads n name scope size
 r=$(run --json --filter "harness is codex" | python3 -c 'import json,sys; x=json.load(sys.stdin)[0]["skills"][0]; print(x["name"], x["source"], x["n"], x["loads"], x["tier"], x["dir"], x["tokens"]["load"] > 0)')
 eq "--json codex SKILL.md read" "$r" "alpha model 1 1 ≈ /h/.codex/skills/alpha True"
 hasnt "--json no text" "$(run --json --fields id,skillLoads)" "LOREMSKILLTEXT"
+printf '{"skills":{"hide":[{"match":"alpha","mode":"name"}]}}\n' > "$t/hidea.json"
+r=$(CFG="$t/hidea.json" run --json --fields id,title,skills); hasnt "--json hide name in title and skills" "$r" "alpha"; has "--json title kept" "$r" "/skill:"
 has "--json skillLoads --content" "$(run --json --fields id,skillLoads --content)" "LOREMSKILLTEXT"
 
 # --watch: skill and skill_end lines in stream order
