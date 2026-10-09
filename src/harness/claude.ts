@@ -5,7 +5,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { CLAUDE, readText, readBytes, listDir, listDirCached, KNOWN, LISTING } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp, lineAt, skillLoad, skillUnload, skillListing, skillRead, skillReadDone, skillCall, skillCallText } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
@@ -230,26 +230,79 @@ function userLine(a: Acc, l: string): void {
   if (l.indexOf("<command-name>/") >= 0) {
     const o = parseJson(l); if (!o) return;
     const cm = /<command-name>\/([^<]*)<\/command-name>/.exec(userText(o));
-    a.pk = cm && owned(a, o) ? str(o["promptId"]) + "\t" + (cm[1] ?? "").trim() : ""; // a copied command is its owner's
+    a.pk = cm && owned(a, o) ? str(o["promptId"]) + "\t" + (cm[1] ?? "").trim() + "\t" + String(lineAt(a)) : ""; // a copied command is its owner's; its line: where the skill's text is found again
     return;
   }
   if (!a.pk) return;
-  const tab = a.pk.indexOf("\t"); const pid = a.pk.slice(0, tab); const name = a.pk.slice(tab + 1);
+  const tab = a.pk.indexOf("\t"); const tab2 = a.pk.indexOf("\t", tab + 1); const pid = a.pk.slice(0, tab);
+  const name = tab2 > tab ? a.pk.slice(tab + 1, tab2) : a.pk.slice(tab + 1); const off = tab2 > tab ? Number(a.pk.slice(tab2 + 1)) : -1;
   if (l.indexOf("Base directory for this skill:") >= 0 && l.indexOf("\"isMeta\":true") >= 0) {
     a.pk = "";
     const o = parseJson(l); if (!o || str(o["sourceToolUseID"]) || !pid || str(o["promptId"]) !== pid) return;
     const bd = /Base directory for this skill:[ \t]*([^\n]*)/.exec(userText(o));
     const dir = bd ? (bd[1] ?? "").trim().replace(/[\/\\]+$/, "") : "";
-    if (dir && dir.slice(Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\")) + 1) === name.slice(name.lastIndexOf(":") + 1)) skill(bucket(a, 0, str(o["timestamp"])), "command", name);
+    if (dir && dir.slice(Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\")) + 1) === name.slice(name.lastIndexOf(":") + 1)) {
+      const iso = str(o["timestamp"]);
+      skill(bucket(a, 0, iso), "command", name);
+      skillLoad(a, name, "user", 0, iso, skillBody(userText(o)), true, dir, false, off >= 0 ? off : -1);
+    }
     return;
   }
   const pm = /"promptId":"([^"]+)"/.exec(l);
   if (!pm || (pm[1] ?? "") !== pid) a.pk = ""; // another prompt: that command had no skill directory
 }
+// ── skills (skill-usage spec §2): a skill's text without its "Base directory for this skill: …" line (the directory
+// must not change the hash); a model's Skill text on the isMeta line(s) naming the call (sourceToolUseID); re-injections
+// after a compaction (invoked_skills), the listing (skill_listing), compaction (compact_boundary) ──
+function skillBody(t: string): string {
+  const i = t.indexOf("Base directory for this skill:"); if (i < 0) return t;
+  const nl = t.indexOf("\n", i); if (nl < 0) return "";
+  let j = nl + 1; while (j < t.length && t.charAt(j) === "\n") j++;
+  return t.slice(j);
+}
+function skillMeta(a: Acc, l: string): void {
+  const o = parseJson(l); if (!o || o["isMeta"] !== true) return;
+  const sid = str(o["sourceToolUseID"]); if (!sid || !owned(a, o)) return;
+  const t = userText(o); const bd = /Base directory for this skill:[ \t]*([^\n]*)/.exec(t);
+  skillCallText(a, sid, 0, str(o["timestamp"]), skillBody(t), bd ? (bd[1] ?? "").trim().replace(/[\/\\]+$/, "") : "", t.startsWith("(Re-invocation of"));
+}
+const INJECT_CAP = 20000; // Claude cuts each re-injected skill's content at 20 000 characters (spec M5)
+function skillSys(a: Acc, l: string): void {
+  const o = parseJson(l); if (!o) return;
+  const iso = str(o["timestamp"]); const ty = str(o["type"]);
+  if (ty === "system" && str(o["subtype"]) === "compact_boundary") { if (owned(a, o)) skillUnload(a, isoMs(iso), "compact"); return; }
+  if (ty !== "attachment") return;
+  const at = obj(o["attachment"]); if (!at || !owned(a, o)) return;
+  const k = str(at["type"]);
+  if (k === "invoked_skills") {
+    for (const v of arr(at["skills"])) {
+      const e = obj(v); if (!e) continue;
+      const nm = str(e["name"]); const c = str(e["content"]); const p = str(e["path"]); if (!nm) continue;
+      const dir = p.endsWith("/SKILL.md") ? p.slice(0, -9) : p;
+      skillLoad(a, nm, "compact", 0, iso, skillBody(c), true, dir, c.length >= INJECT_CAP);
+    }
+  } else if (k === "skill_listing") {
+    const c = str(at["content"]); const names: string[] = [];
+    for (const ln of c.split("\n")) { if (!ln.startsWith("- ")) continue; const e = ln.indexOf(":", 2); const sp = ln.indexOf(" ", 2); if (e > 2 && (sp < 0 || sp > e)) names.push(ln.slice(2, e)); } // "- <name>: <description>"
+    skillListing(a, 0, iso, c, names);
+  }
+}
+// a Read's result, when the Read named a SKILL.md
+function readResult(a: Acc, l: string): void {
+  const o = parseJson(l); const m = o ? obj(o["message"]) : null; if (!o || !m) return;
+  const iso = str(o["timestamp"]);
+  for (const b of arr(m["content"])) {
+    const bo = obj(b); if (!bo || str(bo["type"]) !== "tool_result") continue;
+    const id = str(bo["tool_use_id"]); if (!a.skr.has(id)) continue;
+    const c = bo["content"];
+    skillReadDone(a, bucket(a, 0, iso), id, 0, iso, typeof c === "string" ? c : blockText(c), false);
+  }
+}
 function usage(a: Acc, l: string): void {
   if (l.indexOf("\"type\":\"assistant\"") < 0) {
-    if (l.indexOf("\"tool_use_id\":\"") >= 0) { if (a.pend.size) claudeResult(a, l); return; }
-    if (l.indexOf("\"type\":\"user\"") < 0) return;
+    if (l.indexOf("\"tool_use_id\":\"") >= 0) { if (a.skr.size) readResult(a, l); if (a.pend.size) claudeResult(a, l); return; }
+    if (l.indexOf("\"type\":\"user\"") < 0) { if (l.indexOf("\"subtype\":\"compact_boundary\"") >= 0 || (l.indexOf("\"type\":\"attachment\"") >= 0 && (l.indexOf("\"invoked_skills\"") >= 0 || l.indexOf("\"skill_listing\"") >= 0))) skillSys(a, l); return; }
+    if (a.skr.size && l.indexOf("\"sourceToolUseID\":\"") >= 0) skillMeta(a, l);
     userLine(a, l);
     if (a.sub || l.indexOf("\"isMeta\":true") >= 0) return; // never a (human) prompt
     const o = parseJson(l); const n = o ? prompts(parse, o) : 0;
@@ -290,7 +343,8 @@ function usage(a: Acc, l: string): void {
     const bo = obj(b); if (!bo || str(bo["type"]) !== "tool_use") continue;
     const name = str(bo["name"]) || "tool"; const st = tool(a, d, name, rowModel, MQ_MSG);
     const inp = obj(bo["input"]);
-    if (name === "Skill" && inp) skill(d, "model", str(inp["skill"]));
+    if (name === "Skill" && inp) { skill(d, "model", str(inp["skill"])); skillCall(a, str(bo["id"]), str(inp["skill"])); }
+    else if (name === "Read" && inp) skillRead(a, str(bo["id"]), str(inp["file_path"]));
     pend(a, d, st, name, str(bo["id"]), isoMs(iso), iso, toolArg(name, inp, ""), name === "Bash" && inp ? [str(inp["command"])] : []);
     if (!inp) continue;
     let add = 0; let del = 0;

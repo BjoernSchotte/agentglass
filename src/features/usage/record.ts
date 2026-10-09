@@ -527,6 +527,25 @@ export function skillReadDone(a: Acc, d: Day, callId: string, ms: number, iso: s
   skillLoad(a, name, "model", ms, iso, out, true, dir, cut, r.off).rd = true;
   skill(d, "model", name);
 }
+// a harness skill tool's call (Claude Skill): its text comes on a later line (skillCallText), loaded as a model load
+export function skillCall(a: Acc, callId: string, name: string): void {
+  if (!callId || !name) return;
+  const done: string[] = []; for (const [k, e] of a.skr) if (e.tu === -1) done.push(k);
+  for (const k of done) a.skr.delete(k); // texts of earlier calls are complete
+  if (a.skr.size > 64) a.skr.clear();
+  a.skr.set(own("S:" + callId), { path: own(name), off: lineAt(a), tu: -2 });
+}
+// that call's text (several lines: the first loads, later ones grow it while it is not sent yet); false = not a skill call's
+export function skillCallText(a: Acc, callId: string, ms: number, iso: string, text: string, dir: string, stub: boolean): boolean {
+  const e = a.skr.get("S:" + callId); if (!e) return false;
+  if (e.tu === -1) {
+    for (let i = a.sk.length - 1; i >= 0; i--) { const l = a.sk[i] as SkLoad; if (l.name === e.path && l.end === 0) { if (l.pend) growLoad(l, text, lineSpan(a)[1] ?? -1); break; } }
+    return true;
+  }
+  e.tu = -1;
+  skillLoad(a, e.path, "model", ms, iso, text, true, dir, false, e.off).stub = stub;
+  return true;
+}
 // the cap: the oldest ended load folds into its name's summary record (n > 1: counts and tokens kept, times dropped); a
 // name's first summary is made from its two oldest ended loads. Nothing foldable (all open): the log keeps them all
 function skillFold(a: Acc): void {
