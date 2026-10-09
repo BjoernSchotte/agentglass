@@ -1,0 +1,122 @@
+{
+    "advice": [],
+    "hidden": 0,
+    "notes": "tokens are measured request tokens; a skill's share is bounded by its text size and the context growth; \u2248 inferred or cut, ? unknown size (not priced); $ at current list prices",
+    "period": "all",
+    "rows": [
+        {
+            "carry": 8553,
+            "carryUsd": 0.0021,
+            "hashes": [
+                "dcb547f1b1b4dd9f",
+                "4ccdd7cc4243cca2"
+            ],
+            "load": 4039,
+            "loadsCompact": 1,
+            "loadsModel": 1,
+            "loadsUser": 2,
+            "name": "alpha",
+            "perSess": 0.00445,
+            "scope": "project",
+            "sessions": 3,
+            "share": 0.052499,
+            "sizeP50": 1000,
+            "tail": 0,
+            "tailUsd": 0,
+            "tier": "\u2248",
+            "unpriced": true,
+            "usd": 0.01335
+        },
+        {
+            "carry": 2500,
+            "carryUsd": 0.00075,
+            "hashes": [
+                "7442eaa23322f534",
+                "eef5f31ae44eb4ac",
+                "d92ca19275dc73ec"
+            ],
+            "load": 2515,
+            "loadsCompact": 0,
+            "loadsModel": 3,
+            "loadsUser": 0,
+            "name": "beta",
+            "perSess": 0.005091,
+            "scope": "project",
+            "sessions": 2,
+            "share": 0.025884,
+            "sizeP50": 500,
+            "tail": 0,
+            "tailUsd": 0,
+            "tier": "exact",
+            "unpriced": false,
+            "usd": 0.010181
+        },
+        {
+            "carry": 0,
+            "carryUsd": 0,
+            "hashes": [
+                "d92ca19275dc73ec"
+            ],
+            "load": 500,
+            "loadsCompact": 0,
+            "loadsModel": 1,
+            "loadsUser": 0,
+            "name": "delta",
+            "perSess": 0.001875,
+            "scope": "project",
+            "sessions": 1,
+            "share": 0.003428,
+            "sizeP50": 500,
+            "tail": 0,
+            "tailUsd": 0,
+            "tier": "exact",
+            "unpriced": false,
+            "usd": 0.001875
+        },
+        {
+            "carry": 1207,
+            "carryUsd": 0.0003,
+            "hashes": [
+                "bc11cda8004def6a",
+                "7864fddcabc0a0ea"
+            ],
+            "load": 338,
+            "loadsCompact": 3,
+            "loadsModel": 0,
+            "loadsUser": 0,
+            "name": "(listing)",
+            "perSess": 0.000525,
+            "scope": "?",
+            "sessions": 2,
+            "share": 0.008048,
+            "sizeP50": 69,
+            "tail": 1207,
+            "tailUsd": 0.0003,
+            "tier": "exact",
+            "unpriced": true,
+            "usd": 0.00105
+        },
+        {
+            "carry": 0,
+            "carryUsd": 0,
+            "hashes": [
+                "dcb547f1b1b4dd9f"
+            ],
+            "load": 10,
+            "loadsCompact": 0,
+            "loadsModel": 0,
+            "loadsUser": 1,
+            "name": "gamma",
+            "perSess": 3.8e-05,
+            "scope": "project",
+            "sessions": 1,
+            "share": 6.9e-05,
+            "sizeP50": 10,
+            "tail": 0,
+            "tailUsd": 0,
+            "tier": "exact",
+            "unpriced": false,
+            "usd": 3.8e-05
+        }
+    ]
+}

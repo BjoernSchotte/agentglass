@@ -184,7 +184,7 @@ export function colsOf(env: string, stty: string): number {
   return w > 20 ? w : 120;
 }
 // stty only for a person at a terminal (tables elsewhere use $COLUMNS or 120)
-function termCols(tty: boolean): number {
+export function termCols(tty: boolean): number {
   const env = process.env.COLUMNS ?? "";
   if (Number(env) > 20 || !tty) return colsOf(env, "");
   const r = spawnSync("sh", ["-c", "stty size < /dev/tty"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });

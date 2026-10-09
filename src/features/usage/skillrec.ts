@@ -120,9 +120,14 @@ export function skillReadCmd(cmd: string): string {
   return "";
 }
 
+// "view skill" (skills/text.ts) parses the load's log lines again with capture on: the texts a parse loads, in order
+// (a grown load's parts appended), so the one whose hash matches can be shown. Off for every ledger read: text is never kept
+export interface SkCap { name: string; parts: string[] }
+export const SKCAP = { on: false, out: [] as SkCap[] };
 export function newLoad(name: string, trig: string, ms: number, text: string, known: boolean, dir: string, est: boolean, tu: number, rq0: number, off: number, len: number, rec: string): SkLoad {
   const h1 = known ? fnvFeed(FNV1, text) : FNV1; const h2 = known ? fnvFeed(FNV2, text) : FNV2;
   const bytes = known ? utf8Len(text) : -1;
+  if (SKCAP.on && known) SKCAP.out.push({ name: own(name), parts: [text] });
   return { name: own(name), trig: own(trig), t: ms, tu, te: 0, rq0, bytes, S: sizeEst(bytes), hash: known ? hashHex(h1, h2) : "", dir: own(dir), scope: own(scopeOf(dir)),
     end: 0, why: "", rel: false, stub: false, pend: true, short: 0, nq: 0, lt: [0, 0, 0, 0], ct: [0, 0, 0, 0], tt: [0, 0, 0, 0], hb: [0, 0, 0, 0], hu: 0, hl: 0, ht: 0,
     off, len, rec: own(rec), mdl: "", prov: "", est, n: 1, rd: false, h1, h2, pg: 0 };
@@ -131,6 +136,7 @@ export function newLoad(name: string, trig: string, ms: number, text: string, kn
 // load was sent the extra tokens go out with the next request (pg)
 export function growLoad(l: SkLoad, text: string, lineEnd: number): void {
   const nb = utf8Len(text); if (nb <= 0) return;
+  if (SKCAP.on) for (let i = SKCAP.out.length - 1; i >= 0; i--) { const c = SKCAP.out[i] as SkCap; if (c.name === l.name) { c.parts.push(text); break; } }
   const was = l.S;
   l.bytes = (l.bytes < 0 ? 0 : l.bytes) + nb;
   l.h1 = fnvFeed(l.h1, text); l.h2 = fnvFeed(l.h2, text); l.hash = hashHex(l.h1, l.h2);
@@ -161,9 +167,9 @@ export function saRow(sa: Map<string, number[]>, name: string, prov: string, mod
   return r;
 }
 function addTo(x: number[], at: number, g: number[]): void { for (let i = 0; i < 4; i++) x[at + i] = (x[at + i] ?? 0) + (g[i] ?? 0); }
-// what one load got from this request: into the load (field arrays), its tail, the day row, and the harness-priced share
-function book(l: SkLoad, g: number[], slot: number, tail: boolean, row: number[], hp: boolean, usd: number, w: number[], wReq: number): void {
-  const into = slot === SA_L ? l.lt : l.ct;
+// what one load got from this request: into the load (field arrays), its tail (carry only), the day row, the harness-priced share
+function book(l: SkLoad, g: number[], slot: number, tail0: boolean, row: number[], hp: boolean, usd: number, w: number[], wReq: number): void {
+  const into = slot === SA_L ? l.lt : l.ct; const tail = tail0 && slot === SA_C; // tail = carry in a later turn, never the load
   addTo(into, 0, g); addTo(row, slot, g);
   if (tail) { addTo(l.tt, 0, g); addTo(row, SA_T, g); }
   if (!hp) return;

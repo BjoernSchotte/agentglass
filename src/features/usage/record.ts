@@ -467,7 +467,7 @@ export function lineSpan(a: Acc): number[] {
   for (let k = SKLN.si; k < SKLN.i; k++) { while (pos < b.length && b[pos] !== 10) pos++; pos++; }
   SKLN.si = SKLN.i; SKLN.sp = pos;
   let e = pos; while (e < b.length && b[e] !== 10) e++;
-  return [SKLN.base + pos, SKLN.base + e];
+  return [SKLN.base + pos, SKLN.base + (e < b.length ? e + 1 : e)]; // through its newline: a reader of [start, end) gets the whole line
 }
 // where the current line is in the log (source units), -1 outside a ledger read: adapters keep it for a load's trigger line
 export function lineAt(a: Acc): number { return lineSpan(a)[0] ?? -1; }
