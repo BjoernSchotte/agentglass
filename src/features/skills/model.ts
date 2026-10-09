@@ -142,7 +142,7 @@ export function visRows(rows: SkillRow[]): { rows: SkillRow[]; hidden: number } 
     const v = skillVis(r.name);
     if (v.mode !== "omit") { if (v.shown !== r.name) { r.name = v.shown; r.hashes = r.hashes.slice(); } out.push(r); continue; }
     n++;
-    if (!h) { h = newRow(HIDDEN); h.tier = r.tier; h.scope = "?"; }
+    if (!h) { h = newRow(HIDDEN); h.tier = r.tier; h.scope = "?"; h.sizeP50 = -1; }
     h.loadsUser += r.loadsUser; h.loadsModel += r.loadsModel; h.loadsCompact += r.loadsCompact; h.sessions += r.sessions;
     h.load += r.load; h.carry += r.carry; h.tail += r.tail; h.usd += r.usd; h.carryUsd += r.carryUsd; h.tailUsd += r.tailUsd; h.ctx += r.ctx;
     h.unpriced = h.unpriced || r.unpriced; if (r.tier !== h.tier) h.tier = "≈";
@@ -156,6 +156,9 @@ export function visLoads(rows: LoadRow[]): LoadRow[] {
   for (const r of rows) { const v = skillVis(r.name); if (v.mode === "omit") continue; r.name = v.shown; out.push(r); }
   return out;
 }
+// a row's size cell: the sizes of the skills folded into (hidden) are no one size (·); none known (a size-less load, a
+// hub-fed host that sent none: sizeP50 < 0) is ?
+export function sizeShown(r: SkillRow, fmt: (n: number) => string): string { return r.name === HIDDEN ? "·" : r.sizeP50 < 0 || (r.tier === "?" && r.sizeP50 === 0) ? "?" : fmt(r.sizeP50); }
 export function isListing(name: string): boolean { return name === LISTING; }
 
 // spec §3.8 over what the ledger keeps: per load no negative slot, tail ≤ load + carry, one state; per session the skills'

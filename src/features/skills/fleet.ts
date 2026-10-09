@@ -25,14 +25,14 @@ function fromJson(ss: Obj[]): SkillRow[] {
     const e = obj(v); if (!e) continue;
     const name = str(e["name"]); if (!name) continue;
     let r = m.get(name);
-    if (!r) { r = { name, loadsUser: 0, loadsModel: 0, loadsCompact: 0, sessions: 0, sizeP50: 0, load: 0, carry: 0, tail: 0, usd: 0, carryUsd: 0, tailUsd: 0, perSess: 0, share: 0, ctx: 0, tier: "≈", hashes: [], scope: "?", unpriced: false }; m.set(name, r); }
+    if (!r) { r = { name, loadsUser: 0, loadsModel: 0, loadsCompact: 0, sessions: 0, sizeP50: -1, load: 0, carry: 0, tail: 0, usd: 0, carryUsd: 0, tailUsd: 0, perSess: 0, share: 0, ctx: 0, tier: "≈", hashes: [], scope: "?", unpriced: false }; m.set(name, r); }
     const k = name + "\t" + str(s["harness"]) + ":" + str(s["id"]); if (!seen.has(k)) { seen.add(k); r.sessions++; }
     const n = num(e["loads"]) || num(e["n"]);
     if (str(e["source"]) === "command") r.loadsUser += n; else r.loadsModel += n;
     const t = obj(e["tokens"]); if (t) { r.load += num(t["load"]); r.carry += num(t["carry"]); r.tail += num(t["tail"]); }
     if (e["costUsd"] === null || e["costUsd"] === undefined) r.unpriced = true;
     r.usd += num(e["costUsd"]); r.carryUsd += num(e["carryUsd"]); r.tailUsd += num(e["tailUsd"]);
-    if (num(e["size"]) > r.sizeP50) r.sizeP50 = num(e["size"]);
+    if (typeof e["size"] === "number" && num(e["size"]) > r.sizeP50) r.sizeP50 = num(e["size"]); // none sent: stays -1 (?)
     const h = str(e["hash"]); if (h && r.hashes.indexOf(h) < 0) r.hashes.push(h);
     if (str(e["scope"])) r.scope = str(e["scope"]);
   }
@@ -46,6 +46,7 @@ export function hostRows(sets: HostSet[], days: string[] | null, by: string): Ho
   const out: HostRow[] = [];
   for (const hs of sets) {
     let rows = hs.accs.length ? skillTable(hs.accs, hs.ids, days, by) : [];
+    // (a size -1 from a host that sent none stays unknown: ?)
     if (hs.info.length && rows.length) { const ref = fromJson(hs.info); for (const r of rows) { if (r.sizeP50 > 0 || r.hashes.length) continue; for (const x of ref) if (x.name === r.name) { r.sizeP50 = x.sizeP50; r.hashes = x.hashes; r.scope = x.scope; } } }
     if (hs.sess.length) rows = sortRows(rows.concat(fromJson(hs.sess)), by);
     for (const r of visRows(rows).rows) {
