@@ -4,6 +4,7 @@
 import { HARNESSES, harnessIds } from "../../harness/index.ts";
 import type { Attr, AType, Ent } from "./types.ts";
 import { ALL_KINDS } from "../wait/family.ts";
+import { FAMILIES, SUBKINDS, RAW_EVENT, validKind } from "../../model/kinds.ts";
 
 const REG: Attr[] = [];
 const BY = new Map<string, Attr>(); // key and aliases, lowercase
@@ -23,9 +24,15 @@ const WEEKDAYS = ["su", "mo", "tu", "we", "th", "fr", "sa"]; // Date.getDay() or
 export function weekdayIndex(v: string): number { return WEEKDAYS.indexOf(v.slice(0, 2).toLowerCase()); }
 // enum values known only at runtime (fleet: this machine's name + the configured hosts; features/fleet/hosts.ts sets it)
 export const HOST_ENUM = { values: (): string[] => ["local"] };
+// event kinds offered: those of the event view whose filter input is open (ui/evfilter.ts sets present), else every
+// family and the kinds known without a session
+// values: mcp.server / shell.family values of that view's session ([] = none known there)
+export const EVK = { present: (): string[] => [] as string[], values: (key: string): string[] => [] as string[] };
+export function evkindValues(): string[] { const p = EVK.present(); return p.length ? p : FAMILIES.concat(SUBKINDS); }
 export function enumValues(a: Attr): string[] {
   if (a.enumFn === "harness") return harnessIds();
   if (a.enumFn === "host") return HOST_ENUM.values();
+  if (a.enumFn === "evkind") return evkindValues();
   return a.enumVals;
 }
 // "OpenCode" → "opencode" (ids and labels); "" when invalid
@@ -33,6 +40,7 @@ export function canonEnum(a: Attr, v: string): string {
   const l = v.toLowerCase();
   if (a.enumFn === "harness") { for (const h of HARNESSES) if (h.id === l || h.label.toLowerCase() === l) return h.id; return ""; }
   if (a.enumFn === "host") { for (const x of HOST_ENUM.values()) if (x.toLowerCase() === l) return x; return ""; }
+  if (a.enumFn === "evkind") return validKind(l) ? l : "";
   if (a.key === "weekday") { const full = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]; const i = full.indexOf(l); if (i >= 0) return WEEKDAYS[i] ?? ""; }
   return a.enumVals.indexOf(l) >= 0 ? l : "";
 }
@@ -103,4 +111,10 @@ r("status", [], "call", "enum", false, ["ok", "error", "unknown"], "", []);
 r("duration", [], "call", "dur", false, [], "", []);
 r("out", [], "call", "size", false, [], "", []);
 r("hour", [], "call", "num", false, [], "", []);
-r("event", [], "event", "enum", false, ["user", "assistant", "thinking", "tool", "result", "meta", "live", "exit", "alert"], "", []);
+// skill-usage §5a.3: an event's kinds (multi: a failing test run is shell:test and error; a family matches all its kinds);
+// `event` is the old key, kept as its own entry (pins print it back as typed): the same kinds, and its old values (user,
+// tool, result, meta …) keep matching the raw event kind (kinds.ts LEGACY_EVENT)
+r("event.kind", [], "event", "enum", true, RAW_EVENT, "evkind", []);
+r("event", [], "event", "enum", true, RAW_EVENT, "evkind", []);
+r("mcp.server", [], "event", "text", false, [], "", []); // the server of an mcp:* event
+r("shell.family", [], "event", "text", false, [], "", []); // a shell call's agent-wait family ("pnpm test")

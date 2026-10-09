@@ -91,7 +91,7 @@ PY
 }
 
 # ── 1. conformance (2025-11-25 and 2024-11-05), under the fake agent of session A in p1 ──
-TOOLS="session sessions errors cost triage compare related contention waits fleet prices"
+TOOLS="session sessions errors cost triage compare related events contention waits fleet prices"
 conf() { # conf <version> <script>
   init "$1" > "$2"; i=10
   for n in $TOOLS; do
@@ -115,11 +115,11 @@ for v in 1 0; do
   eq "$ver: unknown method" "$(py "$o" "r(32)['error']['code']")" -32601
   eq "$ver: stderr silent" "$(grep -cv "$(printf '^[0-9]*\t')" "$o" || true)" 0
 done
-eq "fleet: configured false" "$(py "$t/c1.out" "sc(19)")" "{'hosts': [], 'configured': False}"
-eq "structuredContent = text" "$(py "$t/c1.out" "all(sc(i) == tx(i) for i in range(10, 21))")" True
-eq "structuredContent valid against outputSchema" "$(py "$t/c1.out" "[n for i, n in zip(range(10, 21), '$TOOLS'.split()) if not valid(sc(i), next(x['outputSchema'] for x in res(2)['tools'] if x['name'] == n))]")" "[]"
+eq "fleet: configured false" "$(py "$t/c1.out" "sc(20)")" "{'hosts': [], 'configured': False}"
+eq "structuredContent = text" "$(py "$t/c1.out" "all(sc(i) == tx(i) for i in range(10, 22))")" True
+eq "structuredContent valid against outputSchema" "$(py "$t/c1.out" "[n for i, n in zip(range(10, 22), '$TOOLS'.split()) if not valid(sc(i), next(x['outputSchema'] for x in res(2)['tools'] if x['name'] == n))]")" "[]"
 eq "2024-11-05: no structuredContent" "$(grep -c structuredContent "$t/c0.out" || true)" 0
-eq "contention go" "$(py "$t/c1.out" "sc(17)['go'], sc(17)['advice']")" "(True, '0 heavy commands running: go')"
+eq "contention go" "$(py "$t/c1.out" "sc(18)['go'], sc(18)['advice']")" "(True, '0 heavy commands running: go')"
 
 # ── 2. identity: the process tree, not the env (CLAUDE_CODE_SESSION_ID names C); the registry moves A → B (/clear) ──
 eq "identity: session {} = the fake agent's" "$(py "$t/c1.out" "sc(10)['id']")" "$A"

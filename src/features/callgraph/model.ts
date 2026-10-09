@@ -166,21 +166,25 @@ function aggAdd(list: Agg[], name: string, agent: boolean, s: Span, i: number, s
   if (d > a.max) { a.max = d; a.best = i; }
   return a;
 }
-// call tree roots: the session's own tools by name, and one row per subagent type whose kids are the tools run inside those subagents
-export function aggregate(g: Graph): Agg[] {
+// call tree roots: the session's own tools by name, and one row per subagent type whose kids are the tools run inside those
+// subagents; hide[i] (an event-kind filter's hidden spans): those go into one "┄ n hidden" root instead (null = none hidden)
+export const HIDDEN_ROW = "┄ hidden";
+export function aggregate(g: Graph, hide: boolean[] | null = null): Agg[] {
   const kidDur: number[] = [];
   for (let i = 0; i < g.spans.length; i++) kidDur.push(0);
   for (const s of g.spans) if (s.parent >= 0 && s.parent < kidDur.length) kidDur[s.parent] = numOf(kidDur, s.parent) + (s.t1 - s.t0);
   const roots: Agg[] = [];
+  const hid = (i: number): boolean => hide !== null && i < hide.length && hide[i] === true;
   for (let i = 0; i < g.spans.length; i++) {
     const s = g.spans[i];
     const self = Math.max(0, s.t1 - s.t0 - numOf(kidDur, i));
+    if (s.kind !== K_TURN && hid(i)) { aggAdd(roots, HIDDEN_ROW, false, s, i, self); continue; }
     if (s.kind === K_TOOL && s.src === 0) aggAdd(roots, s.name, false, s, i, self);
     else if (s.kind === K_AGENT) aggAdd(roots, "⑂ " + s.name, true, s, i, self);
   }
   for (let i = 0; i < g.spans.length; i++) {
     const s = g.spans[i];
-    if (s.kind !== K_TOOL || s.src === 0 || s.parent < 0 || s.parent >= g.spans.length) continue;
+    if (s.kind !== K_TOOL || s.src === 0 || s.parent < 0 || s.parent >= g.spans.length || hid(i)) continue;
     const ag = g.spans[s.parent];
     for (const r of roots) if (r.agent && r.name === "⑂ " + ag.name) aggAdd(r.kids, s.name, false, s, i, Math.max(0, s.t1 - s.t0 - numOf(kidDur, i)));
   }
@@ -191,6 +195,7 @@ export function sortAggs(list: Agg[], by: number): void {
   const key = (a: Agg): number => by === 0 ? a.total : by === 1 ? a.self : by === 2 ? a.count : by === 3 ? a.total / Math.max(1, a.count) : by === 4 ? a.max : a.err;
   if (by === 6) list.sort((a, b) => a.name.localeCompare(b.name));
   else list.sort((a, b) => key(b) - key(a) || b.total - a.total);
+  const h = list.findIndex((a: Agg) => a.name.startsWith("┄")); if (h >= 0) { const x = list.splice(h, 1); for (const a of x) list.push(a); } // hidden calls last
   for (const a of list) sortAggs(a.kids, by);
 }
 export interface Summary { wall: number; active: number; turns: number; tools: number; agents: number; longest: number }

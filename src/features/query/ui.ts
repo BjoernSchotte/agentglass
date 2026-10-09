@@ -18,7 +18,7 @@ import { mcpServer } from "../usage/calls.ts";
 import { callDays, callCutoff } from "../usage/callcache.ts";
 import type { Clause } from "./types.ts";
 import { parse, print, printClause, quoteVal } from "./parse.ts";
-import { attrOf, keys, aliases, opsOf, enumValues } from "./attrs.ts";
+import { attrOf, keys, aliases, opsOf, enumValues, EVK } from "./attrs.ts";
 import { type Ctx, type Compiled, type RowMemo, EMPTY, compile, matchSession, matchSessionMemo, sessMatches, rowsPending, beyondRetention, oldestDay, numOf } from "./eval.ts";
 import { addClause, addAll, effective, localFor, setLocal, pinAll, setPins, pinsText, shownText, restoredToast, initPins, configStore, hiddenByPins, onScopeChange, pinToast } from "./scope.ts";
 import { contentSet, contentKnown, contentForget } from "./content.ts";
@@ -353,6 +353,7 @@ function valuesOf(k: string): string[] {
   if (a.type === "enum") return enumValues(a);
   if (a.type === "bool") return ["true", "false"];
   if (a.type === "date") return ["today", "yesterday", "-7d", "-30d"];
+  if (a.key === "mcp.server" || a.key === "shell.family") { const v = EVK.values(a.key); return v.length || a.key === "shell.family" ? v : frequent("server"); }
   if (a.type === "text" || a.type === "path") return frequent(a.key);
   return a.type === "usd" || a.type === "dur" ? ["unknown"] : [];
 }
@@ -437,8 +438,8 @@ function contentQuery(tab: string): string { for (const c of localFor(tab)) if (
 H.keys.push((mode: string, k: string): boolean => {
   if (mode !== "list") return false;
   const tab = tabName();
-  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", pinsText()); return true; }
-  if (tab === "Stats" || tab === "Repos") {
+  if (k === "P" && (S.tab <= 1 || tab === "Stats" || tab === "Repos" || tab === "Wait")) { S.inputErr = ""; editTab = tab; cyc.cands = []; ask("pins (all tabs)", "pins", pinsText()); return true; }
+  if (tab === "Stats" || tab === "Repos" || tab === "Wait") { // Wait: its footer and help always offered / p P
     if (k === "/") { openFilterInput(tab); return true; }
     if (k === "p") { pinToast(pinAll(tab)); return true; }
     return false;

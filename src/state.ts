@@ -11,6 +11,9 @@ export interface TV {
   focusKind: string; focusTs: string; focusText: string; // jump target when opened from the preview; focusText may instead be the event's id
   limit: number; // -1 = all events; else only evs[0..limit) are laid out (replay)
   from: number; // -1 = the last 6 MB (tail); else opened by a link at this cursor: read from just before it (openTranscriptAt)
+  // event-kind filter (ui/evfilter.ts): items = the cursor's stops (shown events, and the first event of each hidden run =
+  // its gap line); xr = runs ↵ expanded, flat [from, to) pairs (until the filter changes); fk = the filter the lines were laid out for
+  items: number[]; xr: number[]; fk: string;
 }
 // detail layer: one event (tool call + its result) fully expanded
 export interface DV { idx: number; lines: string[]; plain: string; files: string[]; fileRow: number[]; foldRow: number[]; foldId: number[]; fsel: number; scroll: number; title: string; lw: number }

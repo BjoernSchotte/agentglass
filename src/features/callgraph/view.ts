@@ -10,7 +10,12 @@ import { titleOf, subActive, current } from "../../model/sessions.ts";
 import { openDetail } from "../../ui/detail.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
-import { type Graph, type Agg, type Summary, type Src, type Span, K_TURN, K_AGENT, CATS, SORTS, buildGraph, aggregate, sortAggs, summary, dur } from "./model.ts";
+import { type Graph, type Agg, type Summary, type Src, type Span, K_TURN, K_AGENT, CATS, SORTS, HIDDEN_ROW, buildGraph, aggregate, sortAggs, summary, dur } from "./model.ts";
+import { kindIds, kindSet, kindsIn } from "../../model/kinds.ts";
+import { famOf } from "../../model/marks.ts";
+import { mask as vfMask, test as vfTest, active as vfActive, fstate, filterKey, barOpen, chipBar, setCount, emptyText as vfEmpty } from "../../ui/evfilter.ts";
+
+const VIEW = "callgraph";
 
 const NAME = "call graph";
 const EIGHT = ["▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
@@ -21,7 +26,7 @@ const empty: Graph = { spans: [], rows: [], t0: 0, t1: 1, noTiming: false };
 const G = {
   root: null as Sess | null, tvs: [] as TV[], spawn: [] as string[], nsubs: 0, tick: 0,
   g: empty, aggs: [] as Agg[], sum: { wall: 0, active: 0, turns: 0, tools: 0, agents: 0, longest: -1 } as Summary,
-  tab: 0, v0: 0, vw: 1, fitted: true, sel: -1, rtop: 0,
+  tab: 0, v0: 0, vw: 1, fitted: true, sel: -1, rtop: 0, aggKey: "",
   backMode: "list" as Mode, backTv: null as TV | null, inDetail: false,
   tsort: 0, tsel: 0, ttop: 0, topen: new Set<string>(), flat: [] as Agg[], lvl: [] as number[],
   hitY: [] as number[], hitX0: [] as number[], hitX1: [] as number[], hitI: [] as number[],
@@ -35,7 +40,7 @@ function loadTV(s: Sess): TV {
   const r = src.lines(s, src.align(s, Math.max(0, size - window(src, 6291456))), size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
-  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1 };
+  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1, items: [], xr: [], fk: "" };
 }
 // the parent's tool call that spawned subagent s, if the harness records it
 function spawnOf(s: Sess): string { const f = harnessOf(s.h).spawnOf; return f ? f(s) : ""; }
@@ -45,23 +50,91 @@ function load(s: Sess): void {
   G.nsubs = s.subs.length;
 }
 function spanAt(i: number): Span | null { return i >= 0 && i < G.g.spans.length ? G.g.spans[i] : null; }
+// ── the event-kind filter (ui/evfilter.ts, view "callgraph"): hidden tool and subagent spans are not drawn; their time
+// stays empty with a dim ┄n tick per lane, the axis and the turns stay; the tree folds them into one ┄ n hidden row ──
+const HID = { key: "", hide: [] as boolean[], shown: 0, total: 0 };
+function hidden(i: number): boolean { syncHidden(); return i >= 0 && i < HID.hide.length && HID.hide[i] === true; }
+function syncHidden(): void {
+  const on = vfActive(VIEW);
+  let k = on ? fstate(VIEW) + "|" + String(G.g.spans.length) : "";
+  if (on) for (const t of G.tvs) k += "|" + String(t.evs.length);
+  if (k === HID.key && HID.hide.length === G.g.spans.length) return;
+  HID.key = k; HID.hide = []; HID.shown = 0; HID.total = 0;
+  const ms: Uint8Array[] = []; for (const t of G.tvs) ms.push(on ? vfMask(VIEW, t.s, t.evs) : new Uint8Array(0));
+  for (const sp of G.g.spans) {
+    let h = false;
+    if (sp.kind !== K_TURN) {
+      HID.total++;
+      if (on) {
+        const t = tvAt(sp.src); const m = sp.src >= 0 && sp.src < ms.length ? ms[sp.src] : null;
+        if (sp.kind === K_AGENT) h = !(t && vfTest(VIEW, t.s, { raw: "tool", kinds: ["subagent"], tool: "", args: "", server: "", fam: "", err: -1 }));
+        else h = !(m && sp.ev >= 0 && sp.ev < m.length && m[sp.ev] + 0 === 1);
+      }
+      if (!h) HID.shown++;
+    }
+    HID.hide.push(h);
+  }
+}
+// the kinds of a span (its call's, a subagent's): solo (i) on the selection
+function spanKinds(sp: Span): string[] {
+  if (sp.kind === K_AGENT) return ["subagent"];
+  const t = tvAt(sp.src); if (!t || sp.ev < 0 || sp.ev >= t.evs.length) return [];
+  return kindSet(kindIds(t.s, t.evs)[sp.ev] + 0);
+}
+// the kinds of every loaded event (the chip bar)
+function graphKinds(): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const t of G.tvs) for (const [k, n] of kindsIn(t.s, t.evs)) m.set(k, (m.get(k) ?? 0) + n);
+  return m;
+}
+// ] [ with a filter: the next / previous shown span in time (any lane)
+function nextShown(d: number): number {
+  const cur = spanAt(G.sel); const t0 = cur ? cur.t0 : d > 0 ? -Infinity : Infinity;
+  let best = -1; let bt = 0;
+  for (let i = 0; i < G.g.spans.length; i++) {
+    const sp = G.g.spans[i]; if (sp.kind === K_TURN || hidden(i) || i === G.sel) continue;
+    const ok = d > 0 ? sp.t0 > t0 || (sp.t0 === t0 && i > G.sel) : sp.t0 < t0 || (sp.t0 === t0 && i < G.sel);
+    if (ok && (best < 0 || (d > 0 ? sp.t0 < bt : sp.t0 > bt))) { best = i; bt = sp.t0; }
+  }
+  return best;
+}
+setCount(VIEW, (): string => { syncHidden(); return String(HID.shown) + " of " + String(HID.total) + " spans"; });
 function tvAt(i: number): TV | null { return i >= 0 && i < G.tvs.length ? G.tvs[i] : null; }
 function rebuild(): void {
   const old = spanAt(G.sel);
   const srcs: Src[] = [];
   for (let k = 0; k < G.tvs.length; k++) { const t = G.tvs[k]; srcs.push({ evs: t.evs, live: subActive(t.s), kind: t.s.kind, spawn: G.spawn[k] ?? "" }); }
-  G.g = buildGraph(srcs, Date.now());
-  G.aggs = aggregate(G.g); sortAggs(G.aggs, G.tsort);
+  G.g = buildGraph(srcs, Date.now()); HID.key = "-";
+  aggs();
   G.sum = summary(G.g);
   G.sel = -1;
   if (old) for (let i = 0; i < G.g.spans.length; i++) { const s = G.g.spans[i]; if (s.src === old.src && s.ev === old.ev && s.kind === old.kind) { G.sel = i; break; } }
   if (G.sel < 0) G.sel = G.sum.longest >= 0 ? G.sum.longest : G.g.spans.length ? 0 : -1;
   if (G.fitted) fitAll();
 }
+// the call tree over the shown spans; the hidden ones as one ┄ n hidden row (its time, count and families)
+function aggs(): void {
+  syncHidden();
+  G.aggs = aggregate(G.g, vfActive(VIEW) ? HID.hide : null);
+  for (const a of G.aggs) if (a.name === HIDDEN_ROW) { // named with its count and families, most first
+    const fm = new Map<string, number>();
+    for (let i = 0; i < G.g.spans.length; i++) if (hidden(i)) { const sp = G.g.spans[i]; const fs: string[] = []; for (const k of spanKinds(sp)) { const f = famOf(k); if (fs.indexOf(f) < 0) fs.push(f); } for (const f of fs) fm.set(f, (fm.get(f) ?? 0) + 1); }
+    const ks: string[] = []; for (const k of fm.keys()) ks.push(k);
+    ks.sort((x: string, y: string): number => (fm.get(y) ?? 0) - (fm.get(x) ?? 0) || (x < y ? -1 : 1));
+    a.name = "┄ " + String(a.count) + " hidden" + ks.slice(0, 3).map((k: string): string => " · " + k + " " + String(fm.get(k) ?? 0)).join("");
+  }
+  sortAggs(G.aggs, G.tsort);
+  G.aggKey = HID.key;
+}
 // the selected span's session, its events and the event index (related events' r); null = nothing selected
 export function graphAnchor(): { s: Sess; evs: Ev[]; i: number } | null {
   const sp = spanAt(G.sel); if (!sp || sp.ev < 0) return null;
   const t = tvAt(sp.src); return t && sp.ev < t.evs.length ? { s: t.s, evs: t.evs, i: sp.ev } : null;
+}
+// checks: the selection, the spans, the last frame's hit boxes (span → first column) and the tree's rows
+export function cgState(): { sel: number; spans: Span[]; hitI: number[]; hitX0: number[]; hitY: number[]; tree: string[] } {
+  const tree: string[] = []; for (const a of G.aggs) tree.push(a.name + " " + String(a.count));
+  return { sel: G.sel, spans: G.g.spans, hitI: G.hitI.slice(), hitX0: G.hitX0.slice(), hitY: G.hitY.slice(), tree };
 }
 // the call graph of a session (the c key; repo-view's project detail); esc returns to where it was opened
 export function openGraph(s: Sess): void { open(s); }
@@ -119,14 +192,15 @@ function moveRow(d: number): void {
   if (r < 0 || r >= G.g.rows.length) return;
   const tc = selCenter();
   let best = -1; let bd = 0;
-  for (const x of rowOf(r)) { const i = x.ix; const dd = x.t1 < tc ? tc - x.t1 : x.t0 > tc ? x.t0 - tc : 0; if (best < 0 || dd < bd) { best = i; bd = dd; } }
+  for (const x of rowOf(r)) { const i = x.ix; if (hidden(i)) continue; const dd = x.t1 < tc ? tc - x.t1 : x.t0 > tc ? x.t0 - tc : 0; if (best < 0 || dd < bd) { best = i; bd = dd; } }
   if (best >= 0) { G.sel = best; reveal(); }
 }
 function step(d: number): void {
   const s = spanAt(G.sel);
   if (!s) return;
   const ids = rowOf(s.row);
-  const p = ids.indexOf(s) + d;
+  let p = ids.indexOf(s) + d;
+  while (p >= 0 && p < ids.length && hidden(ids[p].ix)) p += d; // hidden spans are skipped
   if (p >= 0 && p < ids.length) { G.sel = ids[p].ix; reveal(); }
 }
 function drill(i: number): void {
@@ -189,10 +263,12 @@ function drawRow(r: number, y: number, grid: string[]): void {
   const ch: string[] = []; const fs: string[] = []; const bs: string[] = [];
   for (let c = 0; c < n; c++) { ch.push(grid[c] ?? " "); fs.push(C.line); bs.push(C.panel); }
   const set = (c: number, x: string, f: string, b: string): void => { if (c >= 0 && c < n) { ch[c] = x; fs[c] = f; bs[c] = b; } };
+  const ticks: number[] = []; // hidden spans per column: a dim ┄n where they lie (the time axis stays true)
   for (const s of rowOf(r)) {
     const i = s.ix;
     const a = (s.t0 - G.v0) / dt; const z = (s.t1 - G.v0) / dt;
     if (z < 0 || a >= n) continue;
+    if (hidden(i)) { const c = Math.max(0, Math.min(n - 1, Math.floor(a))); while (ticks.length <= c) ticks.push(0); ticks[c] = (ticks[c] ?? 0) + 1; continue; }
     const on = i === G.sel;
     const col = on ? C.text : catCol(s.cat);
     const ink = on || s.kind !== K_TURN ? INK : C.text;
@@ -210,6 +286,11 @@ function drawRow(r: number, y: number, grid: string[]): void {
       if (room >= 3) { const t = narrow(label(s)).slice(0, room - 1); for (let j = 0; j < t.length; j++) set(lx + 1 + j, t[j] ?? " ", ink, col); }
     }
     G.hitY.push(y); G.hitX0.push(1 + Math.max(0, c0)); G.hitX1.push(1 + Math.min(n - 1, Math.max(c0, c1))); G.hitI.push(i);
+  }
+  for (let c = 0; c < ticks.length; c++) {
+    const k = ticks[c] ?? 0; if (!k || (ch[c] !== " " && ch[c] !== "┊")) continue;
+    const t = k > 1 ? "┄" + String(k) : "┄";
+    for (let j = 0; j < t.length && c + j < n; j++) if (j === 0 || ch[c + j] === " " || ch[c + j] === "┊") { ch[c + j] = t.charAt(j); fs[c + j] = C.dim; bs[c + j] = C.panel; }
   }
   put(1, y, runs(ch, fs, bs));
 }
@@ -281,7 +362,9 @@ function renderFlame(): void {
     else put(1, y0 + r, fg(C.line) + grid.join("") + RST);
   }
   if (!G.g.spans.length) put(3, y0 + 1, fg(C.dim) + "no turns or tool calls yet" + RST);
+  else if (vfActive(VIEW) && HID.shown === 0) put(3, y0 + 1, fg(C.dim) + vfEmpty(VIEW) + RST);
   infoBar(Ht - 4);
+  if (barOpen(VIEW)) { const b = fitStyled(" " + chipBar(VIEW, graphKinds(), S.W - 3), S.W - 2); put(1, Ht - 3, bg(C.sel) + b + fillTo(b, S.W - 2) + RST); }
 }
 function flatten(list: Agg[], lvl: number): void {
   for (const a of list) {
@@ -291,6 +374,7 @@ function flatten(list: Agg[], lvl: number): void {
 }
 function renderTree(): void {
   const Ht = S.H; const w = S.W - 2;
+  syncHidden(); if (G.aggKey !== HID.key) aggs();
   G.flat = []; G.lvl = [];
   flatten(G.aggs, 0);
   const cw8 = 8; const nw = Math.max(12, w - cw8 * 7 - 1);
@@ -324,14 +408,16 @@ function renderTree(): void {
   if (!G.flat.length) put(3, 6, fg(C.dim) + "no tool calls yet" + RST);
   const hint = fg(C.sub) + " sorted by " + fg(C.accent) + B + (SORTS[G.tsort] ?? "") + RST + fg(C.dim) + " (s)  ·  ␣ expand subagent  ·  ↵ longest call in the flame chart  ·  % of wall time; errors = results that read as failures" + RST;
   put(1, Ht - 4, bg(C.sel) + fitStyled(hint, w) + bg(C.sel) + fillTo(fitStyled(hint, w), w) + RST);
-  put(1, Ht - 3, " ".repeat(w));
+  if (barOpen(VIEW)) { const b = fitStyled(" " + chipBar(VIEW, graphKinds(), w - 1), w); put(1, Ht - 3, bg(C.sel) + b + fillTo(b, w) + RST); } else put(1, Ht - 3, " ".repeat(w));
 }
 function render(): void {
   const r = G.root;
   if (!r) return;
   const W = S.W; const Ht = S.H;
   const lv = live() ? " · " + spin() + " live" : "";
-  const info = "view " + dur(G.vw) + " of " + dur(Math.max(0, G.g.t1 - G.g.t0)) + " · from " + hms(G.g.t0) + (G.tvs.length > 1 ? " · ⑂ " + (G.tvs.length - 1) : "") + lv;
+  syncHidden();
+  const fc = vfActive(VIEW) ? String(HID.shown) + " of " + String(HID.total) + " spans · " : "";
+  const info = fc + "view " + dur(G.vw) + " of " + dur(Math.max(0, G.g.t1 - G.g.t0)) + " · from " + hms(G.g.t0) + (G.tvs.length > 1 ? " · ⑂ " + (G.tvs.length - 1) : "") + lv;
   box(0, 1, W, Ht - 2, "call graph · " + titleOf(r), home(r.cwd) + " · " + info, true);
   summaryLine(2);
   tabsLine(3);
@@ -362,6 +448,10 @@ H.keys.push((mode: string, k: string): boolean => {
   }
   if (mode !== "view" || S.fview !== NAME) return false;
   if (k === "?" || k === "r") return false; // r: related events around the selected span (features/related)
+  if ((k === "]" || k === "[") && !vfActive(VIEW) && G.tab === 0) { step(k === "]" ? 1 : -1); return true; } // no filter: the span beside it on the row
+  const sel = spanAt(G.sel);
+  const fk = filterKey(VIEW, k, graphKinds, sel ? spanKinds(sel) : [], nextShown);
+  if (fk >= -1) { if (fk >= 0) { G.sel = fk; G.tab = 0; reveal(); } else if (spanAt(G.sel) && hidden(G.sel)) { const nx = nextShown(1); G.sel = nx >= 0 ? nx : nextShown(-1); } return true; }
   if (k === "esc" || k === "q" || k === "backspace") { back(); return true; }
   if (k === "tab") { G.tab = 1 - G.tab; return true; }
   if (G.tab === 1) {
@@ -423,5 +513,6 @@ H.footerHints.push((mode: string): string[][] => {
 H.helpSections.push({ name: NAME, ctx: NAME, keys: [
   ["c", "call graph of the session (sessions list / transcript)"], ["tab", "flame chart ⇄ call tree"],
   ["←  →", "pan"], ["+  -  wheel", "zoom (around the selection / the mouse)"], ["0", "fit everything"],
-  ["↑  ↓", "row above / below (turn › tool › subagent › …)"], ["h l  [ ]", "previous / next span on the row"],
+  ["↑  ↓", "row above / below (turn › tool › subagent › …)"], ["h l  [ ]", "previous / next span on the row ([ ] with a kind filter: the previous / next shown span)"],
+  ["K  i  !  /", "event kinds: hidden spans leave their time empty with a dim ┄n tick, the tree folds them into one ┄ n hidden row"],
   ["↵  click again", "event detail of that call (esc comes back)"], ["s  ␣", "call tree: sort column · expand a subagent"], ["esc  q  right-click", "back"] ] });

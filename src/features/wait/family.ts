@@ -457,7 +457,7 @@ export function toolKind(tool: string): string {
   if (T_WAIT.indexOf(t) >= 0) return "wait";
   if (T_AGENT.indexOf(t) >= 0) return "agent";
   if (T_WEB.indexOf(t) >= 0 || t.startsWith("web_")) return "web";
-  if (t.startsWith("mcp__")) return "mcp";
+  if (t.startsWith("mcp__") || mcpServer(tool) !== "") return "mcp"; // Gemini: mcp_<server>_<tool>
   if (T_FILE.indexOf(t) >= 0) return "file";
   return "other";
 }

@@ -1,0 +1,5 @@
+open	 kinds >prompt 2 · reply 5 · shell 4 · edit 2 · mcp 2 · skill 2 · error 2
+narrow first	 kinds >prompt 2 · reply 5 ›
+narrow sixth	 kinds ‹ mcp 2 · >skill 2 · error 2
+reply hidden	 kinds prompt 2 · >~reply 5 · shell 4 · edit 2 · mcp 2 · skill 2 · error 2
+shell kinds	 shell › >shell:test 2 · shell:vcs 2

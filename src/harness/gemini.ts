@@ -323,6 +323,16 @@ function shellFail(out: string): Fail {
 // invoke_agent, list_directory, update_topic, activate_skill name their subject outside the common keys
 // a call that ran a subagent (agentId, set when it completes) names it: invoke_agent {agent_name} or a tool named after it
 function spawned(tc: Obj, name: string, a: Obj | null): void { if (str(tc["agentId"])) sawAgent(name === "invoke_agent" ? (a ? str(a["agent_name"]) : "") : name); }
+// a call's tool: MCP tools are named mcp_<server>_<tool>, and gemini's own parser splits that at the first "_" (a server
+// "my_server" reads as "my"); the displayName "<tool> (<server> MCP Server)" names both → mcp__<server>__<tool>, the form
+// every other harness logs (characters a function name cannot hold become "_", as gemini does)
+function toolName(c: Obj): string {
+  const n = str(c["name"]) || "tool";
+  if (!n.startsWith("mcp_")) return n;
+  const m = /^(.+) \((.+) MCP Server\)$/.exec(str(c["displayName"]));
+  const sv = m ? (m[2] ?? "").replace(/[^A-Za-z0-9_.-]/g, "_") : ""; const tl = m ? (m[1] ?? "").replace(/[^A-Za-z0-9_.-]/g, "_") : "";
+  return sv && tl && sv.indexOf("__") < 0 && !sv.endsWith("_") ? "mcp__" + sv + "__" + tl : n;
+}
 function callArg(name: string, a: Obj | null): string { const d = a ? str(a["agent_name"]) || str(a["dir_path"]) || str(a["objective"]) || str(a["title"]) || str(a["name"]) : ""; return d ? d : toolArg(name, a, ""); }
 // does this message (version) become a transcript event? (what parse below emits)
 function visible(m: Obj): boolean {
@@ -354,7 +364,7 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
   }
   for (const v of arr(o["toolCalls"])) {
     const tc = obj(v); if (!tc) continue;
-    const n = str(tc["name"]) || "tool"; const id = str(tc["id"]); const a = obj(tc["args"]);
+    const n = toolName(tc); const id = str(tc["id"]); const a = obj(tc["args"]);
     spawned(tc, n, a);
     ev(out, "tool", n + "\u0000" + callArg(n, a), ts, id, a ? JSON.stringify(a) : "");
     const f = failOf(tc);
@@ -393,7 +403,7 @@ function usage(a: Acc, l: string): void {
   const t0 = isoMs(iso);
   for (const v of arr(o["toolCalls"])) {
     const c = obj(v); if (!c) continue;
-    const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
+    const name = toolName(c); const id = str(c["id"]); const args = obj(c["args"]);
     spawned(c, name, args);
     const st = tool(a, d, name, md || a.model, MQ_MSG);
     if (name === "activate_skill" && args) skill(d, "model", str(args["name"]));

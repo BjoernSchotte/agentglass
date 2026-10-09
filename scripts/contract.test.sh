@@ -86,6 +86,12 @@ eq "session help via" "$(helped session via)" ok
 set +e
 run session zzzzzzzz > /dev/null 2>&1; eq "session not found" $? 3
 run session abcdef0 > /dev/null 2>&1; eq "session ambiguous prefix" $? 4
+# events <ref>: the envelope's fields and types; a bad expression 2, no session 3
+run events "claude:$A" --filter "event.kind is reply" --json > "$t/e.json"
+eq "events types" "$(types "$t/e.json" session:object\|null,filter:string\|null,matched:number,total:number,events:array)" ok
+eq "events help" "$(helped events session,filter,preset,matched,total,events)" ok
+run events "claude:$A" --filter "event.kind is nope" > /dev/null 2>&1; eq "events bad filter" $? 2
+run events zzzzzzzz > /dev/null 2>&1; eq "events not found" $? 3
 run session abc > /dev/null 2>&1; eq "session prefix too short" $? 2
 set -e
 

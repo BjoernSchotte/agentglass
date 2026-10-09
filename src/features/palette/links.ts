@@ -8,6 +8,7 @@ import { H, type Ctx } from "../../hooks.ts";
 import { current } from "../../model/sessions.ts";
 import { copyText } from "../../actions.ts";
 import { canonicalUrl } from "./ref.ts";
+import { vfOf } from "../../ui/evfilter.ts";
 import { addActions, keyAction, inSessions, inTranscript } from "./actions.ts";
 
 // the anchor of an event: a call's id (tool call or result), else its timestamp, else none
@@ -17,6 +18,8 @@ export function anchorOf(e: Ev | null): string[] {
   return e.ts ? ["ts", e.ts] : ["", ""];
 }
 export function linkOf(s: Sess, e: Ev | null): string { const a = anchorOf(e); return canonicalUrl(s, a[0] ?? "", a[1] ?? ""); }
+// the transcript's link carries its event filter (f=): the receiver sees the same events
+function txLink(s: Sess, e: Ev | null): string { const a = anchorOf(e); const f = vfOf("transcript").expr; return canonicalUrl(s, a[0] ?? "", a[1] ?? "", f ? "transcript" : "", f); }
 function cursorEv(): Ev | null {
   const tv = S.tv; if (!tv || !tv.evs.length) return null;
   const i = tv.cur >= 0 && tv.cur < tv.evs.length ? tv.cur : tv.evs.length - 1;
@@ -25,7 +28,7 @@ function cursorEv(): Ev | null {
 H.keys.push((mode: string, k: string): boolean => {
   if (k !== "Y") return false;
   if (mode === "list" && S.tab === 0) { const s = current(); if (s && !remoteOnly(s, "a link")) copyText(linkOf(s, null), "link"); return true; }
-  if (mode === "transcript" && S.tv) { copyText(linkOf(S.tv.s, cursorEv()), "link"); return true; }
+  if (mode === "transcript" && S.tv) { copyText(txLink(S.tv.s, cursorEv()), "link"); return true; }
   return false;
 });
 addActions([

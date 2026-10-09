@@ -7,6 +7,7 @@ import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put } from "./screen.ts";
 import { DBG } from "../sched.ts";
 import { sessAt } from "../model/sessions.ts";
+import { barView, barHints } from "./evfilter.ts";
 
 // mouse hit map for the hints, rebuilt every frame
 export const footX0: number[] = []; export const footX1: number[] = []; export const footKey: string[] = [];
@@ -38,7 +39,9 @@ export function renderFooter(): void {
   k("?", "keys"); if (mode === "list" || mode === "transcript" || mode === "detail" || mode === "view") k("^K", "palette"); // everywhere Ctrl+K works
   // the view's own keys; a closing esc / q is held back to stay last
   let tk = ""; let tw = "";
-  if (mode === "detail") { k("↑↓/jk", "scroll"); k("[/]", "prev/next event"); k("1-9", "open file"); k("tab", "select file"); k("o", "pager"); k("e", "edit"); k("z", "fold all"); k("w", "wrap"); k("v", "all in pager"); k("y", "copy"); tk = "esc"; tw = "back"; }
+  const bar = barView() !== "" && mode !== "palette"; // the event-kind chip bar (K) takes every key: only its own hints
+  if (bar) { for (const kd of barHints()) { if (kd[0] === "esc") { tk = "esc"; tw = kd[1] ?? ""; } else k(kd[0] ?? "", kd[1] ?? "", 1); } }
+  else if (mode === "detail") { k("↑↓/jk", "scroll"); k("[/]", "prev/next event"); k("1-9", "open file"); k("tab", "select file"); k("o", "pager"); k("e", "edit"); k("z", "fold all"); k("w", "wrap"); k("v", "all in pager"); k("y", "copy"); tk = "esc"; tw = "back"; }
   else if (mode === "view") { tk = "esc"; tw = "back"; }
   else if (mode === "palette") { k("↵", "run"); k("→", "session actions"); k("tab", "scope"); tk = "esc"; tw = "close"; }
   else if (mode === "transcript") { k("↑↓/jk", "event"); k("↵", "details"); k("g/G", "top/end"); k("f", "follow"); k("t", "expand tools"); k("n/N", "subagents"); k("u", "parent"); k("s", "send"); k("R", "resume"); tk = "esc"; tw = "back"; }
@@ -47,7 +50,7 @@ export function renderFooter(): void {
   else { tk = "q"; tw = "quit"; }
   // feature hints ([key, label, tier?]) after the built-in ones (in a full-screen view they are all of its keys); a
   // feature's esc renames the closing one (e.g. "back to related")
-  for (const f of H.footerHints) for (const kd of f(mode)) {
+  if (!bar) for (const f of H.footerHints) for (const kd of f(mode)) {
     const key = kd[0] ?? ""; const t = Number(kd[2] ?? "-1");
     if (key === "esc" && tk === "esc") { tw = kd[1] ?? ""; continue; }
     k(key, kd[1] ?? "", t >= 0 && t <= 3 ? t : -1);

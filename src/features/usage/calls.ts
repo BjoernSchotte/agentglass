@@ -198,10 +198,12 @@ export function patchFiles(patch: string): FileCh[] {
 }
 
 // ── MCP ─────────────────────────────────────────────────────────────────────
-// mcp__<server>__<tool> → server ("" for built-in tools); servers may contain single underscores
+// mcp__<server>__<tool> → server ("" for built-in tools); servers may contain single underscores. Gemini CLI logs
+// mcp_<server>_<tool>: its adapter renames the call from the displayName (harness/gemini.ts toolName); a name without one
+// (rows cached before) splits at the next underscore, as gemini itself does
 export function mcpServer(name: string): string {
-  if (!name.startsWith("mcp__")) return "";
-  const i = name.indexOf("__", 5);
-  return i > 5 ? name.slice(5, i) : "";
+  if (name.startsWith("mcp__")) { const i = name.indexOf("__", 5); return i > 5 ? name.slice(5, i) : ""; }
+  if (name.startsWith("mcp_") && name.charAt(4) !== "_") { const i = name.indexOf("_", 4); return i > 4 ? name.slice(4, i) : ""; }
+  return "";
 }
 export function argSummary(s: string): string { const t = clean(s).replace(/\s+/g, " ").trim(); return t.length > 120 ? t.slice(0, 120) : t; }
