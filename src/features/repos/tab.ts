@@ -102,13 +102,15 @@ export function repoSkills(r: RepoAgg): { top: string; more: number } {
   const rows = visRows(skillTable(as, ids, r.days, "cost")).rows.filter((x) => x.name !== LISTING);
   return { top: rows.length ? rows[0].name : "", more: Math.max(0, rows.length - 1) };
 }
-const skMemo = new Map<string, string>();
+// per row, kept while the period and width stay; the ledger moves on every booking while agents run: at most every 2 s then
+const skMemo = new Map<string, { c: string; ver: number; at: number }>();
 function skillsCell(r: RepoAgg, w: number): string {
-  const k = r.key + "\t" + String(L.ver) + "\t" + r.days.join(",") + "\t" + String(w); const hit = skMemo.get(k); if (hit !== undefined) return hit;
+  const k = r.key + "\t" + r.days.join(",") + "\t" + String(w); const hit = skMemo.get(k); const now = Date.now();
+  if (hit && (hit.ver === L.ver || now - hit.at < 2000)) return hit.c;
   const x = repoSkills(r); const more = x.more ? " +" + String(x.more) : "";
   const c = x.top ? fg(C.cyan) + fit(clean(x.top), Math.max(1, Math.min(width(clean(x.top)), w - 1 - width(more)))) + RST + fg(C.dim) + more + RST : fg(C.dim) + "·" + RST;
   if (skMemo.size > 500) skMemo.clear();
-  skMemo.set(k, c); return c;
+  skMemo.set(k, { c, ver: L.ver, at: now }); return c;
 }
 
 // ── state ──

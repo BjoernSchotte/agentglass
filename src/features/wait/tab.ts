@@ -226,7 +226,7 @@ function rowText(w: WRow, c: Cols, rep: WaitReport, ov: GroupOverlap[], on: bool
 }
 // ── skill loads on the period's timeline (skill-usage §6.5): per bucket of the report's sparkline (since … until, its
 // bucket size) the loads of the sessions the Wait filter keeps; a row of ✧ under the sparkline, aligned with it ──
-const SKT = { key: "", n: [] as number[], total: 0 };
+const SKT = { key: "", ver: -1, at: 0, n: [] as number[], total: 0 };
 export function skillBuckets(since: number, until: number, bucketMs: number, f: Compiled): number[] {
   const nb = bucketMs > 0 && until > since ? Math.ceil((until - since) / bucketMs) : 0; const o: number[] = []; for (let i = 0; i < nb; i++) o.push(0);
   for (const s of sessions.values()) {
@@ -250,8 +250,9 @@ export function skillTicks(vs: number[], w: number): string {
   return o;
 }
 function skillRow(rep: WaitReport, cells: number, iw: number): string {
-  const f = tabFilter("Wait", "stats"); const k = String(rep.since) + "|" + String(rep.until) + "|" + String(L.ver) + "|" + f.key;
-  if (SKT.key !== k) { SKT.key = k; SKT.n = skillBuckets(rep.since, rep.until, bucketFor(rep.days), f); let n = 0; for (let i = 0; i < SKT.n.length; i++) n += SKT.n[i] ?? 0; SKT.total = n; }
+  const f = tabFilter("Wait", "stats"); const k = String(rep.since) + "|" + String(rep.until) + "|" + f.key;
+  const now = Date.now(); // the ledger moves on every booking while agents run: recount at most every 2 s then
+  if (SKT.key !== k || (SKT.ver !== L.ver && now - SKT.at >= 2000)) { SKT.key = k; SKT.ver = L.ver; SKT.at = now; SKT.n = skillBuckets(rep.since, rep.until, bucketFor(rep.days), f); let n = 0; for (let i = 0; i < SKT.n.length; i++) n += SKT.n[i] ?? 0; SKT.total = n; }
   if (!SKT.total) return "";
   const tail = "  ✧ " + grp(SKT.total) + (SKT.total === 1 ? " skill load" : " skill loads");
   const w = cells > 0 ? cells : Math.max(0, Math.min(SKT.n.length, iw - 2 - width(tail)));
