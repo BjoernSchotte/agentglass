@@ -20,7 +20,9 @@ import { callCutoff } from "../usage/callcache.ts";
 import { type Acc, lastDays, startOfDay } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows } from "./model.ts";
-import { type Advice, type CallStat, advise, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
+import { type Advice, type CallStat, type SpanStat, advise, adviseB, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
+import { rowFam, famKind, famName } from "../wait/family.ts";
+import { identSync } from "../query/project.ts";
 import { type InvSkill, inventory } from "./inventory.ts";
 import { skillVis } from "./vis.ts";
 import { shownText } from "./text.ts";
@@ -52,7 +54,9 @@ const HELP = `usage: agentglass skills [--period today|7d|30d|all] [--sort ${SOR
   carry, tail (tokens), share (of the input + cached tokens of the sessions it was loaded in), $, $/sess, tier
 
   advise   evidence-based suggestions: A1 carried too long, A2 never auto-loaded, A3 loaded twice in one context,
-           A4 lost to compaction, A5 version changed, A6 listed but never loaded (thresholds: config skills.advise.*)
+           A4 lost to compaction, A5 version changed, A6 listed but never loaded, A7 loaded then nothing, A8 overlap with
+           another skill, A9 outcome in its turns (correlation, not cause); A10 versions across hosts: agentglass fleet
+           skills (thresholds: config skills.advise.*)
   show     the text a load put into the context (the newest load of <name> in the period, or load i of a session's
            timeline); hidden by --redact and skills.hide rules (content | name | omit) in ~/.agentglass/config.json
 
@@ -149,7 +153,26 @@ export function tableLines(rows: SkillRow[], w: number): string[] {
   for (const r of rows) { let l = rp(r.name, nw); for (const c of cols) l += lp(c.f(r), c.w); outL.push(l.trimEnd()); }
   return outL;
 }
-function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advice[] {
+function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advice[] { return periodAdvice(set.accs, set.ids, set.tops, set.bySess, rows, loads, periodLen(o.period), o.harness); }
+// a session's calls in [t0, t1) over its subagents too (call rows are per log): all, failed, test runs and passed ones, commits
+function spanOf(ss: Sess[], t0: number, t1: number, cut: number): SpanStat {
+  const o: SpanStat = { n: 0, err: 0, tests: 0, testsOk: 0, commits: 0, kept: false };
+  for (const s of ss) {
+    const r = callsOf(s); if (r.n > 0 || s.mtime >= cut) o.kept = true;
+    for (let i = 0; i < r.n; i++) {
+      const t = r.t[i] + 0; if (t < t0 || t >= t1) continue;
+      const e = r.err[i] + 0; o.n++; if (e === 1) o.err++;
+      const f = rowFam(r, i); if (f < 0) continue;
+      if (famKind(f) === "test" && e >= 0) { o.tests++; if (e === 0) o.testsOk++; }
+      if (famName(f).startsWith("git commit") && e === 0) o.commits++;
+    }
+  }
+  return o;
+}
+// the advice A1–A9 for a period's sessions (tops; accs/ids: their logs under the top session's id; bySess: every session
+// and subagent by "<harness>:<id>"); the CLI and the Stats skills panel ask the same. Hidden skills already out (visAdvice)
+export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: Map<string, Sess>, rows: SkillRow[], loads: LoadRow[], days: number, harness: string): Advice[] {
+  const set: Set0 = { accs, ids, tops, bySess };
   const listed = new Map<string, number>(); let reqs = 0;
   for (const a of set.accs) { reqs += a.rq; for (const n of a.lst) listed.set(n, (listed.get(n) ?? 0) + 1); }
   const repos: string[] = []; for (const s of set.tops) if (s.cwd && repos.indexOf(s.cwd) < 0 && repos.length < 200) repos.push(s.cwd);
@@ -162,12 +185,21 @@ function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advic
     for (let i = 0; i < r.n; i++) { const t = r.t[i] + 0; if (t >= t0 && t < t1) { n++; if (r.err[i] + 0 > 0) e++; } }
     return { n, err: e, kept: r.n > 0 || s.mtime >= cut };
   };
-  return visAdvice(advise(rows, loads, { days: periodLen(o.period), listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !o.harness || x.harness === o.harness), adviseCfg(), calls));
+  const tree = new Map<string, Sess[]>(); const turns = new Map<string, number>();
+  const kids = (s: Sess, into: Sess[]): void => { into.push(s); for (const c of s.subs) kids(c, into); };
+  for (const s of set.tops) { const v: Sess[] = []; kids(s, v); tree.set(s.h + ":" + s.id, v); }
+  for (let k = 0; k < set.accs.length; k++) { const id = set.ids[k] ?? ""; const a = set.accs[k] as Acc; if (!a.sub) turns.set(id, (turns.get(id) ?? 0) + a.tq); }
+  const repoOf = new Map<string, string>(); for (const s of set.tops) { const x = identSync(s); repoOf.set(s.h + ":" + s.id, x && x.kind !== "none" ? x.key : ""); }
+  const oi = { sessions: [...tree.keys()], repo: (s: string): string => repoOf.get(s) ?? "", turns: (s: string): number => turns.get(s) ?? 0, span: (s: string, t0: number, t1: number): SpanStat => spanOf(tree.get(s) ?? [], t0, t1, cut) };
+  const cfg = adviseCfg();
+  const all = advise(rows, loads, { days, listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !harness || x.harness === harness), cfg, calls).concat(adviseB(rows, loads, oi, [], cfg, Date.now()));
+  all.sort((x: Advice, y: Advice) => y.severity - x.severity);
+  return visAdvice(all);
 }
 // --name: a skill as shown (a fake under --redact matches; its real name only where it is shown as is)
 function named(o: Opts, shown: string): boolean { return !o.name || shown === o.name; }
 function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
-function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
+export function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
 
 function table(o: Opts, set: Set0): void {
   const days = periodDays(o.period);

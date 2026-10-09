@@ -27,7 +27,10 @@ import { type FleetCfg, type HostCfg, loadFleet, hostNamed, openCmd, splitHostRe
 import { type OpenArgs, REMOTE_OPEN } from "../palette/open.ts";
 import { SELF, parseRef } from "../palette/ref.ts";
 import type { HostFeed, FeedState } from "./model.ts";
-import { type RemoteHost, type FleetCost, FLEET, setFleet, reapply, merged, overlap, fleetCost, fleetBudget, freshOf, rowObj } from "./hosts.ts";
+import { type RemoteHost, type FleetCost, FLEET, setFleet, reapply, merged, overlap, fleetCost, fleetBudget, freshOf, rowObj, exactMerge, skillSets, skillHashes } from "./hosts.ts";
+import { type HostRow, hostRows } from "../skills/fleet.ts";
+import { type Advice, adviseB, adviseCfg, adviceLines, visAdvice } from "../skills/advise.ts";
+import { periodDays, rowJson, tableLines, termWidth } from "../skills/cli.ts";
 import { sshFeed, idleFeed, sshBin, hostControlPath } from "./ssh.ts";
 import { forget } from "./store.ts";
 import { pullCli, pullSessions } from "./pull.ts";
@@ -42,7 +45,7 @@ import { argVal } from "../../util/argv.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function warn(msg: string): void { errLine("agentglass", "warning", msg, ""); }
-export const SUBS = ["cost", "status", "pull", "snapshot", "watch", "drop", "serve", "authorize"];
+export const SUBS = ["cost", "status", "pull", "snapshot", "watch", "drop", "serve", "authorize", "skills"];
 export const MAX_PARALLEL = 4;
 // the --json row fields: --json's, with host after harness and stale after live
 export const FLEET_FIELDS: string[] = [];
@@ -213,6 +216,46 @@ function cost(args: string[]): void {
   process.exit(code);
 }
 
+// ── fleet skills (skill-usage 6.15, A10): per host what each skill cost; copies of a log on 2+ hosts counted once ──
+const SK_PERIODS = ["today", "7d", "30d", "all"];
+function skillsCli(args: string[]): void {
+  let refresh = false; let strict = false; let period = "30d"; const asJson = args.indexOf("--json") >= 0;
+  for (let i = 2; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--refresh") refresh = true; else if (a === "--strict") strict = true; else if (a === "--json") continue;
+    else if (a === "--period") { period = argVal(args, i) ?? ""; i++; if (SK_PERIODS.indexOf(period) < 0) cliError("usage", "--period must be one of " + SK_PERIODS.join(", "), "e.g. --period 7d", 2); }
+    else cliError("usage", "unknown option " + a + " for fleet skills", "agentglass fleet skills [--period 7d] [--json] [--refresh] [--strict]", 2);
+  }
+  const c = setup(true);
+  const r = pullAll(c, refresh, Date.now());
+  discover();
+  const now = Date.now(); const days = periodDays(period); const hs = merged();
+  const from = days && days.length ? Date.parse(days.slice().sort()[0] + "T00:00:00") : 0;
+  for (const s of sessions.values()) if (!s.host && s.mtime >= from) { loadHead(s); complete(s); } // this machine's ledger for the period
+  let exact = false; for (const rh of hs) if (rh.report && rh.report.exact) exact = true;
+  const x = exact ? exactMerge(hs, c.reprice, 0, true) : null;
+  const rows = hostRows(skillSets(hs, x, c.localName, days), days, "cost");
+  const adv: Advice[] = visAdvice(adviseB([], [], { sessions: [], repo: (s: string): string => "", turns: (s: string): number => 0, span: (s: string, t0: number, t1: number) => ({ n: 0, err: 0, tests: 0, testsOk: 0, commits: 0, kept: false }) }, skillHashes(hs, c.localName), adviseCfg(), now));
+  let stale = 0; for (const rh of hs) if (!freshOf(rh, now, c, c.refreshS * 1000)) stale++;
+  failedLines(r.failed);
+  const code = strict ? strictCode(r.failed.length, stale) : 0;
+  if (asJson) {
+    const rs: Obj[] = []; for (const h of rows) { const o: Obj = { host: h.host }; const j = rowJson(h.row); for (const k of Object.keys(j)) o[k] = j[k]; rs.push(o); }
+    out(JSON.stringify({ period, exact: x !== null, rows: rs, advice: adv.map((a: Advice): Obj => ({ id: a.id, skill: a.skill, evidence: a.evidence, suggestion: a.suggestion })) }));
+    process.exit(code);
+  }
+  if (!rows.length) { out("no skill loads on any host (" + period + ")"); process.exit(code); }
+  const w = termWidth(); let host = "";
+  for (const h of rows) {
+    if (h.host !== host) { if (host) out(""); host = h.host; const t = tableLines([h.row], w - 2); out(h.host + (h.host === c.localName ? " (this machine)" : "")); out("  " + (t[0] ?? "")); }
+    out("  " + (tableLines([h.row], w - 2)[1] ?? ""));
+  }
+  out("");
+  out(x ? "(exact merge: copies of a log on 2+ hosts counted once; ≈ = a host without day rows: its own $)" : "(each host's own figures)");
+  if (adv.length) { out(""); for (const a of adv) for (const l of adviceLines(a)) out(l); }
+  process.exit(code);
+}
+
 // ── fleet status ──
 export interface HostStatus { name: string; kind: string; target: string; enabled: boolean; okAgeSec: number; err: string; code: string; version: string; hostId: string; redact: boolean; tzOffsetMin: number; sessions: number; live: number; overlap: number; sharing: string; dupOf: string; skewSec: number; os: string; exact: boolean; priceSig: string; liveAgeSec: number;
   feedOf: string; feeds: string[]; via: string } // spec 17: feedOf = the entry this one's host shows under; feeds = this entry's host's other feeds; via = the feed whose report its rows show ("" = its own)
@@ -314,6 +357,8 @@ addCmd(rec("fleet", "agentglass fleet [--json] [--filter …] [--refresh] [--str
   [opt("--json", "", "the rows as JSON", "", []), FILTER_OPT, FORMAT_OPT, FIELDS_OPT, REFRESH, STRICT], FLEET_FIELDS), FIRST);
 addCmd(rec("fleet cost", "agentglass fleet cost [--json] [--check]", "costs per host and over the fleet (today / 7 days / month, projection, the budget over the fleet);\n≈ when a host is stale or a session is on 2+ hosts (--refresh, --strict; --check: exit 3 over budget)",
   [opt("--json", "", "{hosts, total (the cost --json shape), overlap, approx, exact, removed}", "", []), REFRESH, STRICT, opt("--check", "", "exit 3 when the fleet is over budget", "", [])], []), FIRST);
+addCmd(rec("fleet skills", "agentglass fleet skills [--period 7d] [--json] [--refresh] [--strict]", "per host which skills sessions loaded and what each cost (a log copied to 2+ hosts counted once),\nand skills whose versions differ across hosts (A10)",
+  [opt("--json", "", "{period, exact, rows[{host, …skills --json row}], advice[]}", "", []), opt("--period", SK_PERIODS.join("|"), "the days counted", "30d", SK_PERIODS), REFRESH, STRICT], []), FIRST);
 addCmd(rec("fleet status", "agentglass fleet status [--json] [--close]", "per host: what works and what does not (last report, error, version, host id, time zone, connection sharing)",
   [opt("--json", "", "one object per host", "", []), opt("--close", "", "end the shared ssh connections (ControlMaster)", "", []), opt("--refresh", "", "pull every host first", "", [])], []), FIRST);
 addCmd(rec("fleet pull", "agentglass fleet pull [--days N] [--wait] [--redact]", "this host's report for a fleet viewer (JSON lines: hello, cost, allowance, wait, sessions, end);\nwhat the viewer runs over ssh",
@@ -346,7 +391,8 @@ H.cli.unshift((args: string[]): boolean => { // before cli.ts's flag handlers: `
   if (sub === "authorize") { authorizeCli(args); return true; }
   if (sub === "cost") { cost(args); return true; }
   if (sub === "status") { status(args); return true; }
-  if (sub && !sub.startsWith("-")) cliError("usage", "unknown fleet command " + sub, "agentglass fleet --help (fleet, fleet cost, fleet status, fleet pull, fleet snapshot, fleet watch, fleet drop, fleet serve, fleet authorize)", 2);
+  if (sub === "skills") { skillsCli(args); return true; }
+  if (sub && !sub.startsWith("-")) cliError("usage", "unknown fleet command " + sub, "agentglass fleet --help (fleet, fleet cost, fleet skills, fleet status, fleet pull, fleet snapshot, fleet watch, fleet drop, fleet serve, fleet authorize)", 2);
   list(args);
   return true;
 });

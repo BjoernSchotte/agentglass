@@ -107,4 +107,13 @@ eq "after the host forgot this viewer" "$(run fleet cost --json --refresh | jq -
 # reprice off: each host's own table for its usage (the viewer's override no longer applies to remote sonnet usage)
 printf '{"fleet":{"reprice":false,"hosts":[{"name":"h2","ssh":"h2"},{"name":"h3","ssh":"h3"},{"name":"h4","ssh":"h4"}]}}\n' > "$t/h1/.agentglass/config.json"
 [ "$(run fleet cost --json | jq -c ".total | $r6 | $sel")" != "$want2" ] || { echo "FAIL reprice false keeps the hosts' prices"; fail=1; }
+# skills (skill-usage 6.15): the same log with skill loads on h2 and h3 (a tie: h2 owns every message): per skill the
+# fleet's $ and loads are one copy's, not two
+day=$(jq -nr --argjson s "$d0" '$s | todate | .[0:10]')
+for h in h2 h3 all; do p="$t/$h/.claude/projects/-w-sk"; mkdir -p "$p"; sed "s/2026-10-01T/${day}T/g" "$here/testdata/skills/claude.jsonl" > "$p/s-fixture-claude.jsonl"; done
+skw=$(TZ=Europe/Berlin HOME="$t/all" AGENTGLASS_PRICES="$t/prices.json" AGENTGLASS_OFFLINE=1 "$t/bin/agentglass" skills --json --period all | jq -c '[.rows[] | {name, l: (.loadsUser + .loadsModel + .loadsCompact), usd: (.usd * 1000000 | round)}] | sort_by(.name)')
+sk=$(run fleet skills --json --period all --refresh)
+eq "fleet skills: exact" "$(echo "$sk" | jq '.exact')" true
+eq "fleet skills: a copied log's skills counted once" "$(echo "$sk" | jq -c '[.rows | group_by(.name)[] | {name: .[0].name, l: (map(.loadsUser + .loadsModel + .loadsCompact) | add), usd: (map(.usd) | add * 1000000 | round)}] | sort_by(.name)')" "$skw"
+eq "fleet skills: h2 holds them" "$(echo "$sk" | jq -c '[.rows[] | select(.name == "alpha") | .host]')" '["h2"]'
 [ $fail = 0 ] && echo "fleet exact: all checks passed"; exit $fail

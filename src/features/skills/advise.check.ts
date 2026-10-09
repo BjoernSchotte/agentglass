@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { type Advice, type CallStat, advise, adviceLines, parseAdvise, visAdvice, ADVISE_DEFAULTS } from "./advise.ts";
+import { type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviceLines, parseAdvise, visAdvice, ADVISE_DEFAULTS } from "./advise.ts";
 import { type InvSkill, inventory, frontOf } from "./inventory.ts";
 import type { SkillRow, LoadRow } from "./model.ts";
 import { setVis, parseHide } from "./vis.ts";
@@ -16,9 +16,9 @@ function row(name: string, o: { u?: number; m?: number; c?: number; s?: number; 
   return { name, loadsUser: o.u ?? 0, loadsModel: o.m ?? 0, loadsCompact: o.c ?? 0, sessions: o.s ?? 1, sizeP50: o.size ?? 1000, load: 1000, carry: 5000, tail: 3000,
     usd: o.usd ?? 1, carryUsd: (o.usd ?? 1) * 0.9, tailUsd: o.tail ?? 0, perSess: 0, share: 0.01, ctx: 1e6, tier: "exact", hashes: o.hashes ?? [], scope: "user", unpriced: false };
 }
-function ld(name: string, sess: string, trig: string, t: number, o: { end?: number; rel?: boolean; hash?: string; usd?: number; size?: number }): LoadRow {
-  return { sess, i: 0, name, trig, t, turn: 0, te: 0, end: o.end ?? 0, why: o.end ? "compact" : "", rel: o.rel ?? false, stub: false, bytes: 3600, size: o.size ?? 1000, tier: "exact",
-    hash: o.hash ?? "", scope: "user", dir: "", requests: 3, n: 1, load: 1000, carry: 2000, tail: 0, usd: o.usd ?? 0.1, carryUsd: (o.usd ?? 0.1) / 2, tailUsd: 0, unpriced: false, off: -1, len: 0, rec: "", model: "m" };
+function ld(name: string, sess: string, trig: string, t: number, o: { end?: number; rel?: boolean; hash?: string; usd?: number; size?: number; turn?: number; te?: number; req?: number }): LoadRow {
+  return { sess, i: 0, name, trig, t, turn: o.turn ?? 0, te: o.te ?? 0, end: o.end ?? 0, why: o.end ? "compact" : "", rel: o.rel ?? false, stub: false, bytes: 3600, size: o.size ?? 1000, tier: "exact",
+    hash: o.hash ?? "", scope: "user", dir: "", requests: o.req ?? 3, n: 1, load: 1000, carry: 2000, tail: 0, usd: o.usd ?? 0.1, carryUsd: (o.usd ?? 0.1) / 2, tailUsd: 0, unpriced: false, off: -1, len: 0, rec: "", model: "m" };
 }
 const none = (s: string, t0: number, t1: number): CallStat => ({ n: 0, err: 0, kept: false });
 const C = ADVISE_DEFAULTS;
@@ -48,7 +48,7 @@ for (let i = 0; i < 3; i++) { l5.push(ld("ver", "a" + String(i), "model", D + i,
 for (let i = 0; i < 3; i++) l5.push(ld("vnear", "a" + String(i), "model", D + i, { hash: "3333333333333333" }));
 for (let i = 0; i < 2; i++) l5.push(ld("vnear", "b" + String(i), "model", D + 86400000 * 5 + i, { hash: "4444444444444444" }));
 const a5 = advise([row("ver", { m: 6, s: 6, hashes: ["1111111111111111", "2222222222222222"] }), row("vnear", { m: 5, s: 5, hashes: ["3333333333333333", "4444444444444444"] })], l5, ctx, [], C,
-  (s: string, t0: number, t1: number): CallStat => ({ n: 10, err: s.startsWith("b") ? 3 : 1, kept: true }));
+  (s: string, t0: number, t1: number): CallStat => ({ n: 10, err: s.startsWith("b") ? 3 : 1, kept: true })).filter((a: Advice) => a.id === "A5"); // (ver and vnear share their turns: A8 too)
 ok("A5", ids(a5) === "A5:ver", ids(a5));
 // A5 says so when call rows are not kept for every session, and gives no rate when one side has none
 const a5p = advise([row("ver", { m: 6, s: 6, hashes: ["1111111111111111", "2222222222222222"] })], l5, ctx, [], C,
@@ -86,8 +86,56 @@ const hv = visAdvice(mix);
 ok("hidden advice", hv.length === 1 && hv[0] !== undefined && (hv[0] as Advice).skill !== "lost" && (hv[0] as Advice).skill.length === 4, ids(hv));
 setVis([], false);
 // config
-const pc = parseAdvise({ minSizeTok: 500, tailShare: 2, minSessions: "x" });
-ok("config", pc.cfg.minSizeTok === 500 && pc.cfg.tailShare === 0.6 && pc.cfg.minSessions === 3 && pc.bad.length === 2, pc.bad.join("; "));
+const pc = parseAdvise({ minSizeTok: 500, tailShare: 2, minSessions: "x", idleShare: 0.4, overlap: 0, driftDays: 14 });
+ok("config", pc.cfg.minSizeTok === 500 && pc.cfg.tailShare === 0.6 && pc.cfg.minSessions === 3 && pc.cfg.idleShare === 0.4 && pc.cfg.overlap === 0.6 && pc.cfg.driftDays === 14 && pc.bad.length === 3, pc.bad.join("; "));
+
+// ── phase B ──
+// A7: model loads, then no call in their turn: 3 of 5 (60 %) fire; 2 of 5 do not; a turn still running is not judged
+{
+  const mk = (name: string, idle: number): LoadRow[] => { const o: LoadRow[] = []; for (let i = 0; i < 5; i++) o.push(ld(name, name + String(i), "model", D + i * 1000, { turn: 1, te: D + i * 1000 + 500, usd: 0.2 })); for (let i = 0; i < idle; i++) (o[i] as LoadRow).sess = name + "-idle" + String(i); return o; };
+  const callsA7 = (s: string, t0: number, t1: number): CallStat => ({ n: s.indexOf("-idle") >= 0 ? 0 : 4, err: 0, kept: true });
+  const l7 = mk("broad", 3).concat(mk("fine", 2)).concat([ld("open", "o1", "model", D, { turn: 1 }), ld("open", "o2", "model", D, { turn: 1 }), ld("open", "o3", "model", D, { turn: 1 }), ld("open", "o4", "model", D, { turn: 1 }), ld("open", "o5", "model", D, { turn: 1 })]);
+  const a7 = advise([row("broad", { m: 5, s: 5 }), row("fine", { m: 5, s: 5 }), row("open", { m: 5, s: 5 })], l7, ctx, [], C, callsA7).filter((a: Advice) => a.id === "A7");
+  ok("A7 fires on 3 of 5", ids(a7) === "A7:broad", ids(a7));
+  ok("A7 evidence", a7.length === 1 && ((a7[0] as Advice).evidence[0] ?? "").startsWith("loaded by the model 5×, then no tool call in that turn (or gone within a request) 3× (60 %)"), a7.length ? (a7[0] as Advice).evidence[0] ?? "" : "");
+  // a load dropped within one request counts as idle without call rows
+  const gone: LoadRow[] = []; for (let i = 0; i < 5; i++) gone.push(ld("drop", "d" + String(i), "model", D, { end: D + 10, req: i < 3 ? 1 : 5, turn: 1, te: D + 100 }));
+  ok("A7: gone within a request", ids(advise([row("drop", { m: 5, s: 5 })], gone, ctx, [], C, (s: string, t0: number, t1: number): CallStat => ({ n: 2, err: 0, kept: true })).filter((a: Advice) => a.id === "A7")) === "A7:drop", "");
+}
+// A8: two skills in the same 5 turns (and one more each): Jaccard 5/7 ≥ 0.6; near miss: 4 shared turns
+{
+  const l8: LoadRow[] = [];
+  for (let i = 0; i < 6; i++) l8.push(ld("tdd", "s" + String(i), "model", D, { turn: 1 }));
+  for (let i = 0; i < 5; i++) l8.push(ld("tests", "s" + String(i), "model", D, { turn: 1 })); l8.push(ld("tests", "x9", "model", D, { turn: 1 }));
+  for (let i = 0; i < 6; i++) l8.push(ld("lint", "s" + String(i), "model", D, { turn: 2 }));
+  for (let i = 0; i < 4; i++) l8.push(ld("fmt", "s" + String(i), "model", D, { turn: 2 })); for (let i = 0; i < 2; i++) l8.push(ld("fmt", "y" + String(i), "model", D, { turn: 2 }));
+  const a8 = advise([row("tdd", { m: 6, s: 6, usd: 3 }), row("tests", { m: 6, s: 6, usd: 1 }), row("lint", { m: 6, s: 6 }), row("fmt", { m: 6, s: 6 })], l8, ctx, [], C, none).filter((a: Advice) => a.id === "A8");
+  ok("A8 fires on the cheaper of the pair", ids(a8) === "A8:tests", ids(a8));
+  ok("A8 evidence names the other", a8.length === 1 && ((a8[0] as Advice).evidence[0] ?? "") === "loaded together with tdd in 5 turns (overlap 71 % of the turns either was loaded in)", a8.length ? (a8[0] as Advice).evidence[0] ?? "" : "");
+  setVis(parseHide([{ match: "tdd", mode: "omit" }]).rules, false);
+  ok("A8: a hidden partner is not named", advise([row("tdd", { m: 6, s: 6, usd: 3 }), row("tests", { m: 6, s: 6, usd: 1 })], l8, ctx, [], C, none).filter((a: Advice) => a.id === "A8").length === 0, "");
+  setVis([], false);
+}
+// A9: 10 loading turns vs 10 other turns of the same project, test pass rates side by side; near miss: 9 turns
+{
+  const l9: LoadRow[] = []; for (let i = 0; i < 10; i++) l9.push(ld("tdd", "p" + String(i), "user", D + i * 10000, { turn: 1, te: D + i * 10000 + 5000 }));
+  const sp = (s: string, t0: number, t1: number): SpanStat => t1 === Infinity ? { n: 10, err: 2, tests: 4, testsOk: 2, commits: 1, kept: true } : { n: 5, err: 0, tests: 2, testsOk: 2, commits: 1, kept: true };
+  const inp = { sessions: l9.map((l: LoadRow) => l.sess), repo: (s: string): string => "repo:x", turns: (s: string): number => 2, span: sp };
+  const a9 = adviseB([row("tdd", { u: 10, s: 10 })], l9, inp, [], C, D);
+  ok("A9 fires", ids(a9) === "A9:tdd", ids(a9));
+  ok("A9 evidence", a9.length === 1 && (a9[0] as Advice).evidence.join(" | ") === "turns that loaded it 10 vs the same projects' other turns 10 (correlation, not cause) | test runs passed 100 % vs 0 % · commits per turn 1.00 vs 0.00 · call errors 0 % vs 40 %", a9.length ? (a9[0] as Advice).evidence.join(" | ") : "");
+  ok("A9 near miss: 9 turns", adviseB([row("tdd", { u: 9, s: 9 })], l9.slice(1), { sessions: inp.sessions, repo: inp.repo, turns: inp.turns, span: sp }, [], C, D).length === 0, "");
+  ok("A9 rendered as correlation", adviceLines(a9[0] as Advice)[0] === "A9 outcome (correlation, not cause) · tdd", adviceLines(a9[0] as Advice)[0] ?? "");
+}
+// A10: one name, two hashes on two hosts within 7 days; near miss: the other version is older than 7 days, or one host
+{
+  const hh: HostHash[] = [{ host: "ws", name: "deploy", hash: "aaaaaaaa11111111", at: D }, { host: "vm1", name: "deploy", hash: "bbbbbbbb22222222", at: D - 86400000 },
+    { host: "ws", name: "old", hash: "cccccccc33333333", at: D }, { host: "vm1", name: "old", hash: "dddddddd44444444", at: D - 8 * 86400000 },
+    { host: "ws", name: "local", hash: "eeeeeeee55555555", at: D }, { host: "ws", name: "local", hash: "ffffffff66666666", at: D }];
+  const a10 = adviseB([], [], { sessions: [], repo: (s: string): string => "", turns: (s: string): number => 0, span: (s: string, t0: number, t1: number): SpanStat => ({ n: 0, err: 0, tests: 0, testsOk: 0, commits: 0, kept: false }) }, hh, C, D);
+  ok("A10", ids(a10) === "A10:deploy", ids(a10));
+  ok("A10 evidence", a10.length === 1 && (a10[0] as Advice).evidence.join(" | ") === "2 versions on 2 hosts in 7 days | ws: aaaaaaaa (last loaded 2026-10-01) | vm1: bbbbbbbb (last loaded 2026-09-30)", a10.length ? (a10[0] as Advice).evidence.join(" | ") : "");
+}
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok skill advice");
