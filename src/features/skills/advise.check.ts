@@ -97,10 +97,12 @@ ok("config", pc.cfg.minSizeTok === 500 && pc.cfg.tailShare === 0.6 && pc.cfg.min
   const l7 = mk("broad", 3).concat(mk("fine", 2)).concat([ld("open", "o1", "model", D, { turn: 1 }), ld("open", "o2", "model", D, { turn: 1 }), ld("open", "o3", "model", D, { turn: 1 }), ld("open", "o4", "model", D, { turn: 1 }), ld("open", "o5", "model", D, { turn: 1 })]);
   const a7 = advise([row("broad", { m: 5, s: 5 }), row("fine", { m: 5, s: 5 }), row("open", { m: 5, s: 5 })], l7, ctx, [], C, callsA7).filter((a: Advice) => a.id === "A7");
   ok("A7 fires on 3 of 5", ids(a7) === "A7:broad", ids(a7));
-  ok("A7 evidence", a7.length === 1 && ((a7[0] as Advice).evidence[0] ?? "").startsWith("loaded by the model 5×, then no tool call in that turn (or gone within a request) 3× (60 %)"), a7.length ? (a7[0] as Advice).evidence[0] ?? "" : "");
-  // a load dropped within one request counts as idle without call rows
+  ok("A7 evidence", a7.length === 1 && ((a7[0] as Advice).evidence[0] ?? "").startsWith("loaded by the model 5×, then no tool call in that turn 3× (60 %)"), a7.length ? (a7[0] as Advice).evidence[0] ?? "" : "");
+  // a load compacted within one request is judged by its turn's calls (the harness took it out: no sign of a broad description)
   const gone: LoadRow[] = []; for (let i = 0; i < 5; i++) gone.push(ld("drop", "d" + String(i), "model", D, { end: D + 10, req: i < 3 ? 1 : 5, turn: 1, te: D + 100 }));
-  ok("A7: gone within a request", ids(advise([row("drop", { m: 5, s: 5 })], gone, ctx, [], C, (s: string, t0: number, t1: number): CallStat => ({ n: 2, err: 0, kept: true })).filter((a: Advice) => a.id === "A7")) === "A7:drop", "");
+  ok("A7: compacted at once, calls made", advise([row("drop", { m: 5, s: 5 })], gone, ctx, [], C, (s: string, t0: number, t1: number): CallStat => ({ n: 2, err: 0, kept: true })).filter((a: Advice) => a.id === "A7").length === 0, "");
+  // without call rows nothing is judged
+  ok("A7: no call rows", advise([row("broad", { m: 5, s: 5 })], mk("broad", 5), ctx, [], C, none).filter((a: Advice) => a.id === "A7").length === 0, "");
 }
 // A8: two skills in the same 5 turns (and one more each): Jaccard 5/7 ≥ 0.6; near miss: 4 shared turns
 {
@@ -131,7 +133,9 @@ ok("config", pc.cfg.minSizeTok === 500 && pc.cfg.tailShare === 0.6 && pc.cfg.min
 {
   const hh: HostHash[] = [{ host: "ws", name: "deploy", hash: "aaaaaaaa11111111", at: D }, { host: "vm1", name: "deploy", hash: "bbbbbbbb22222222", at: D - 86400000 },
     { host: "ws", name: "old", hash: "cccccccc33333333", at: D }, { host: "vm1", name: "old", hash: "dddddddd44444444", at: D - 8 * 86400000 },
-    { host: "ws", name: "local", hash: "eeeeeeee55555555", at: D }, { host: "ws", name: "local", hash: "ffffffff66666666", at: D }];
+    { host: "ws", name: "local", hash: "eeeeeeee55555555", at: D }, { host: "ws", name: "local", hash: "ffffffff66666666", at: D },
+    // updated: vm1 ran 11 until two days ago, now 22 like ws — aligned
+    { host: "ws", name: "upd", hash: "2222222222222222", at: D - 86400000 }, { host: "vm1", name: "upd", hash: "1111111111111111", at: D - 2 * 86400000 }, { host: "vm1", name: "upd", hash: "2222222222222222", at: D }];
   const a10 = adviseB([], [], { sessions: [], repo: (s: string): string => "", turns: (s: string): number => 0, span: (s: string, t0: number, t1: number): SpanStat => ({ n: 0, err: 0, tests: 0, testsOk: 0, commits: 0, kept: false }) }, hh, C, D);
   ok("A10", ids(a10) === "A10:deploy", ids(a10));
   ok("A10 evidence", a10.length === 1 && (a10[0] as Advice).evidence.join(" | ") === "2 versions on 2 hosts in 7 days | ws: aaaaaaaa (last loaded 2026-10-01) | vm1: bbbbbbbb (last loaded 2026-09-30)", a10.length ? (a10[0] as Advice).evidence.join(" | ") : "");
