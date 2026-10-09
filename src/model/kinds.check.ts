@@ -162,5 +162,34 @@ ok("watch shim sees kinds of (tool, args)", wb);
 const lf = compile(parse("event.kind is skill").cs, "list").f ?? EMPTY;
 eq("list lifts event.kind is skill", all.map((x: Sess) => matchSession(lf, x, null) ? x.h : "").filter((h: string) => h !== "").join(","), "claude");
 
+// a failure the harness flags without saying so in the output text is an error too (the call rows count it as one)
+function sessOfLines(h: string, lines: string[]): Sess {
+  const s = newSess(h, h + "-err", "/k/" + h + "-err.jsonl", false); s.size = 100;
+  for (const l of lines) parseEvents(h, l, s.evs, s);
+  return s;
+}
+function errsOf(h: string, lines: string[]): string {
+  const s = sessOfLines(h, lines); const ids = kindIds(s, s.evs); let o = "";
+  for (let i = 0; i < s.evs.length; i++) o += kindSet(ids[i] + 0).indexOf("error") >= 0 ? "E" : "-";
+  return o;
+}
+const isErrTr = (s: number, id: string, text: string): string => JSON.stringify({ type: "user", timestamp: iso(s), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: true }] } });
+eq("claude is_error without a marker", errsOf("claude", [ca(1, tu("e1", "Bash", "{\"command\":\"npm test\"}")), isErrTr(2, "e1", "Command timed out after 2m 0s")]), "EE");
+eq("claude is_error on an mcp call", errsOf("claude", [ca(1, tu("e2", "mcp__github__get_issue", "{}")), isErrTr(2, "e2", "MCP error -32603: not found")]), "EE");
+const ce = sessOfLines("claude", [ca(1, tu("e3", "Bash", "{\"command\":\"ls\"}")), isErrTr(2, "e3", "Exit code 2\nls: x: No such file")]);
+eq("claude text marker kept as is", ce.evs.length > 1 ? ce.evs[1].text.slice(0, 11) : "", "Exit code 2");
+const cxe = [cx(1, "{\"type\":\"function_call\",\"name\":\"exec\",\"arguments\":\"{}\",\"call_id\":\"x1\"}"), cx(2, "{\"type\":\"function_call_output\",\"call_id\":\"x1\",\"output\":\"Script failed: ReferenceError: y is not defined\"}"),
+  cx(3, "{\"type\":\"function_call\",\"name\":\"shell\",\"arguments\":\"{}\",\"call_id\":\"x2\"}"), cx(4, "{\"type\":\"function_call_output\",\"call_id\":\"x2\",\"output\":" + JSON.stringify("{\"output\":\"denied\",\"status\":\"rejected\"}") + "}"),
+  cx(5, "{\"type\":\"function_call\",\"name\":\"shell\",\"arguments\":\"{}\",\"call_id\":\"x3\"}"), cx(6, "{\"type\":\"function_call_output\",\"call_id\":\"x3\",\"output\":\"fine\"}")];
+eq("codex script failure and rejection", errsOf("codex", cxe), "EEEE--");
+const pde = "{\"type\":\"message\",\"timestamp\":\"" + iso(41) + "\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"q1\",\"toolName\":\"mcp\",\"content\":[{\"type\":\"text\",\"text\":\"boom\"}],\"details\":{\"error\":\"tool_error\"}}}";
+eq("pi details.error without isError", errsOf("pi", [pc("q1", "mcp", "{\"tool\":\"x\"}"), pde]), "EE");
+// Gemini names MCP tools mcp_<server>_<tool> (a server with "_" is ambiguous there); its displayName "<tool> (<server> MCP
+// Server)" is not: the adapter names the call mcp__<server>__<tool> like every other harness
+const gml = "{\"id\":\"m9\",\"timestamp\":\"" + iso(70) + "\",\"type\":\"gemini\",\"content\":\"\",\"model\":\"gemini-2.5-pro\",\"toolCalls\":[{\"id\":\"mcp_ag_glass_sessions__call_1\",\"name\":\"mcp_ag_glass_sessions\",\"args\":{\"limit\":5},\"result\":[],\"status\":\"success\",\"timestamp\":\"" + iso(71) + "\",\"displayName\":\"sessions (ag_glass MCP Server)\"}]}";
+const gsv = sessOfLines("gemini", [gml]);
+eq("gemini mcp tool name", gsv.evs.length ? gsv.evs[0].text.split("\u0000")[0] ?? "" : "", "mcp__ag_glass__sessions");
+eq("gemini mcp server with an underscore", gsv.evs.length ? kindSet(kindIds(gsv, gsv.evs)[0] + 0).join(",") : "", "mcp:ag_glass");
+
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("event kinds: ok");

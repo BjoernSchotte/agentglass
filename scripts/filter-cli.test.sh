@@ -52,7 +52,8 @@ echo "$w" | grep -q '"kind":"tool","kinds":\["shell:test"\],"tool":"Bash"' || { 
 echo "$w" | grep -q '"kind":"result"' || { echo "FAIL watch result of the call: $w"; exit 1; }
 ! echo "$w" | grep -q '"kind":"user"' || { echo "FAIL watch user dropped: $w"; exit 1; }
 echo "$w" | grep -q '"kind":"tool","kinds":\["shell:test"\],"tool":"Bash","id":"t1"' || { echo "FAIL watch tool line carries its call id: $w"; exit 1; }
-echo "$w" | grep -q '"kind":"result","kinds":\["shell:test"\],"tool":null,"id":"t1"' || { echo "FAIL watch result line carries its call id: $w"; exit 1; }
+# the result is is_error: its kinds say error (the call's line went out before the result was known)
+echo "$w" | grep -q '"kind":"result","kinds":\["shell:test","error"\],"tool":null,"id":"t1"' || { echo "FAIL watch result line carries its call id: $w"; exit 1; }
 ag --watch --for 1s --filter 'event is alert' > /dev/null || { echo "FAIL event is alert"; exit 1; }
 ag --help | grep -q '^filter keys: harness repo' || { echo "FAIL help keys"; exit 1; }
 ag --help | grep -q -- "--filter '<expr>'" || { echo "FAIL help option"; exit 1; }

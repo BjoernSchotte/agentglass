@@ -10,6 +10,7 @@ import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { type Acc, L, bucket, tool, pend, tokens, reasoning, turn, skill, isoMs, num, patchLines, stamp } from "../features/usage/record.ts";
 import { MQ_TURN } from "../features/usage/facts.ts";
 import { type Pend, done, extend, normFull, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
+import { isErr } from "../features/callgraph/model.ts";
 import { rlWins } from "../features/usage/billing.ts";
 import type { AddFn, HarnessAdapter } from "./types.ts";
 import { toolArg, blockText, isNoise, prompts } from "./common.ts";
@@ -81,7 +82,8 @@ function parse(o: Obj, out: Ev[], s: Sess | null): void {
     const raw = str(p["arguments"]) || str(p["input"]);
     out.push({ kind: "tool", text: n + "\u0000" + toolArg(n, act, raw), ts, id: str(p["call_id"]), full: act ? JSON.stringify(act) : raw });
   } else if (pt === "function_call_output" || pt === "custom_tool_call_output") {
-    out.push({ kind: "result", text: blockText(p["output"]), ts, id: str(p["call_id"]), full: "" });
+    const t = blockText(p["output"]); const raw = JSON.stringify(t); // the output as the log line holds it: what codexFailed reads for the call rows
+    out.push({ kind: "result", text: !isErr(t) && codexFailed(raw, exitCodes(raw)) ? "[error] " + t : t, ts, id: str(p["call_id"]), full: "" });
   }
 }
 
