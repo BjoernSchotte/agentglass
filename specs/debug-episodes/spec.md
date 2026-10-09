@@ -121,7 +121,9 @@ What this means for the design:
   **debug print** (§2.2). A probe is *open* while the session has not removed it.
 - **Episode**: a span of one session from its first probe to the cleanup (and the verify run after it), with the
   runs, reads, fixes and reverts inside (§5).
-- **Step**: one entry of an episode's timeline: `probe+`, `probe-`, `run`, `read`, `fix`, `revert`, `restore`.
+- **Step**: one entry of an episode's timeline. Its kind is one of the shared event kinds of §6.1: `debug:probe`
+  (`change` add/remove), `debug:repro`, `debug:verify`, `debug:run`, `debug:read`, `debug:fix`, `debug:revert`,
+  `debug:restore`. The episode itself is the span kind `debug:episode`.
 - **Leftover**: an explicit-marker probe a session left open when its turn or session ended, **and** that is still in
   the file on disk (§4). Unverifiable ones are `unverified`, never alerts.
 
@@ -257,8 +259,8 @@ with the session's **real** cwd, `realCwd()`), then:
 — no I/O, no `S`/`H` state, deterministic, no LLM.
 
 ```ts
-export interface Step { seq: number; t: number /* 0 unknown */; cid: string; kind: string /* probe+ probe- run read fix revert restore */;
-  tag: string /* "" | "repro" | "verify" */; file: string; family: string; cmd: string; ok: number /* 1 ok, 0 failed, -1 unknown */ }
+export interface Step { seq: number; t: number /* 0 unknown */; cid: string; kind: string /* debug:probe debug:repro debug:verify debug:run debug:read debug:fix debug:revert debug:restore */;
+  change: string /* debug:probe: "add" | "remove"; else "" */; file: string; family: string; cmd: string; ok: number /* 1 ok, 0 failed, -1 unknown */ }
 export interface Episode {
   key: string;            // stable: "<harness>:<session id>#<cid of first step>" (or "#s<seq>" without a cid)
   t0: number; t1: number; // epoch ms, 0 unknown (Kiro)
@@ -286,9 +288,9 @@ export interface Episode {
 #### 5.2 Steps from the call rows (no transcript read)
 Call rows inside `[t0, t1]` (by row index for Kiro), joined with the probe stream by `cid`:
 - `fix`: a row that changed a file (`KIND_FILE`) and is not a probe or revert event.
-- `run`: a shell row. Tag `repro` when its family (`rowFam`, agent-wait) occurs ≥ 2× in the episode or its kind is
-  `test`, and it lies before the last `probe-`/`fix`; tag `verify` when the same family runs after the last
-  `fix`/`probe-`. `ok` from `err`. Other shell rows are listed untagged, collapsed in views (`… 6 other commands`).
+- `debug:repro` / `debug:verify` / `debug:run`: a shell row. It is `debug:repro` when its family (`rowFam`, agent-wait) occurs ≥ 2× in the episode or its kind is
+  `test`, and it lies before the last probe removal/fix; `debug:verify` when the same family runs after the last fix or
+  probe removal. `ok` from `err`. Other shell rows are `debug:run`, listed but collapsed in views (`… 6 other commands`).
 - `read`: a read-tool row or a shell row whose program is `cat tail head less jq grep rg` on a file ending in
   `.log`, `.ndjson`, `.jsonl` or with `debug`/`trace` in its basename. These files are the episode's `evidence`
   (§5.3).
@@ -334,7 +336,7 @@ export interface DebugFacts { episodes: number; open: number; leftover: number; 
     "probes": { "added": 2, "removed": 2, "open": 0 },
     "runs": { "total": 9, "failed": 7, "repro": 8, "verify": 1 }, "fixes": 3, "reverted": 1, "reads": 2,
     "evidence": [{ "file": "tmp/debug.ndjson", "reads": 2, "link": "agentglass://open/claude/…#call=toolu_05" }],
-    "steps": [{ "seq": 0, "at": "2026-10-09T12:04:31.000Z", "atMs": 0, "kind": "probe+", "tag": "", "file": "src/auth.ts", "family": "", "command": "", "ok": null, "marker": "agentglass:debug", "count": 2, "link": "…#call=toolu_01" }],
+    "steps": [{ "seq": 0, "at": "2026-10-09T12:04:31.000Z", "atMs": 0, "kind": "debug:probe", "change": "add", "file": "src/auth.ts", "family": "", "command": "", "ok": null, "marker": "agentglass:debug", "count": 2, "link": "…#call=toolu_01" }],
     "stepsTruncated": 0,
     "link": "agentglass://open/claude/…#call=toolu_01"
   }],
@@ -354,6 +356,28 @@ Rules of the contract:
   `--redact` fakes them.
 - A web UI maps `agentglass://open/<h>/<id>#call=<cid>` to its own route 1:1 and serves the same JSON; no new model
   code is needed (§13.5).
+
+### 6.1 Shared marks and event kinds (with skill-usage)
+Episodes and steps are not a debug-only timeline. They are registered on the shared, harness-neutral marks layer that
+the skill-usage spec defines (`src/model/marks.ts`). That layer is also the event-kind filter mechanism for every
+timeline and event view: kind chips, presets, filter-language integration, gap markers in place of hidden events,
+and deep links that carry the filter.
+
+- **Provider:** `registerMarks({ kind: "debug", glyph, color, of, gen })`. `of(s)` returns one span mark per episode
+  (`kind "debug:episode"`, `t0`/`t1`, `t1 = -1` while open, `sub` = state, `usd` = episode cost with `est: true`,
+  `tok 0`, `ref` = episode key). It also returns one point mark per step (`kind` = the step kind above, `sub` =
+  `change` or `ok`/`failed`, `ref` = `<episode key>/<seq>`). `gen(s)` changes when the disk state of an open probe
+  changes, so memoisation by `(s.id, s.size, gen)` stays correct when another session cleans up.
+- **Anchors and order:** each mark carries `anchor` (`call=<cid>`, else `ts=<iso>`), so drill-down and links use
+  `canonicalUrl`/`applyTarget`. It also carries `seq` for Kiro, where `t0 = 0` means unknown. Both are
+  coordinated additions to the marks shape, requested from skill-usage on 2026-10-09.
+- **Kind namespace:** `<family>:<name>`. The family `debug` is one chip group, and each name can be toggled alone,
+  so the same filter shows "only debug", "only `debug:repro`", or "everything except debug" in the transcript,
+  the call graph, replay, related events and the episode panel.
+- `DebugVM.steps[].kind` uses the same strings: one taxonomy for the TUI, JSON, MCP and filters. The filter attribute
+  for event kinds is owned by the shared layer; debug registers values and adds no attribute of its own for steps.
+  The session attributes of §8.3 stay.
+- `marksOf` is lazy: no marks are computed until a view or a filter asks (budgets of §8.4).
 
 ### 7. CLI: `agentglass debug`
 ```
@@ -538,6 +562,8 @@ call `debugOf`/`debugList`, with the hub's serving rules (loopback default, toke
 - **rules-config**: one metric, one enabled built-in (§9); `rules defaults` lists it.
 - **agent-wait**: families and kinds for `repro`/`verify` tagging (no second classifier).
 - **honest-costs**: billing label and `Day.hc` for episode cost; unknown is `null`.
+- **skill-usage (shared marks / event kinds)**: debug registers `debug:*` kinds and an episode span on
+  `src/model/marks.ts`; that layer owns kind chips, presets, gap markers and filter links (§6.1).
 - **command-palette**: links, `applyTarget` for drill-down, palette action.
 - **related-events**: `r` from a step.
 - **cli-agent-mode**: `addCmd`, `format.ts`, agent scope, contract 1.
@@ -638,6 +664,13 @@ Each: question · options · decision · why · cost if wrong.
 13. **Evidence content in the MVP** · read log files now, names only. · **Names only; contents phase 2.** · Reading
     app logs is content (privacy), needs windowing and opt-in UI; names and read counts already show the "read the
     evidence" step. · If wrong: the panel looks thinner for users of structured debug logs until phase 2.
+
+14. **Own timeline kinds or the shared event-kind layer?** · (a) debug-only step kinds and a debug-only filter, (b)
+    register on the shared marks/event-kind layer of skill-usage. · **(b), with namespaced kinds `debug:*`.** · The
+    user wants one way to filter every timeline and event view ("only skills", "only MCP", "only errors", "only
+    debugging"). A second taxonomy would split the filters and the web UI's API. · If wrong: the debug panel depends
+    on a layer another spec ships. Whichever spec merges first creates `marks.ts` to the agreed shape, so neither
+    blocks the other.
 
 ## Open questions (technical verification during implementation)
 1. **Codex exec patch escapes**: confirm on a real rollout that the unescape (`\\n`, `\\"`, `\\\\`, `\\t`) yields the

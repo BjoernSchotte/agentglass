@@ -10,7 +10,7 @@
 
 **Spec:** [spec.md](spec.md) — read it first, including "Today", "Decisions" and "Open questions"; this plan argues from it.
 
-**Round:** Round 3 (after 2026.10.10). Needs filter-language, rules-config, agent-wait (families), honest-costs (`Day.hc`, billing), cli-agent-mode, command-palette (links, `applyTarget`), mcp-server (merged). Bumps the ledger `VERSION` once (Task 3).
+**Round:** Round 3 (after 2026.10.10). Shares `src/model/marks.ts` (marks and event kinds) with skill-usage: if that layer is not on `main` when Task 6 starts, Task 6 creates it to the shape agreed in both specs (spec §6.1), and skill-usage then builds on it. Needs filter-language, rules-config, agent-wait (families), honest-costs (`Day.hc`, billing), cli-agent-mode, command-palette (links, `applyTarget`), mcp-server (merged). Bumps the ledger `VERSION` once (Task 3).
 
 ## Global Constraints
 
@@ -270,7 +270,7 @@ if (bad) process.exit(1);
 
 ### Task 6: Query layer, `DebugVM`, golden, stubs — wave 4, alone
 
-**Files:** Create `src/features/debug/query.ts`, `src/features/debug/query.check.ts`, `testdata/debug/vm.golden.json`, stubs `src/features/debug/cli.ts` and `src/features/debug/view.ts` (header comment only), `src/features/debug/index.ts` (imports `capture.ts`, `verify.ts`, `cli.ts`, `view.ts`); Modify `src/main.ts` (replace T3's capture import with `./features/debug/index.ts`).
+**Files:** Create or extend `src/model/marks.ts` (spec §6.1; see Round), `src/features/debug/marks.ts` (the `debug` provider); Create `src/features/debug/query.ts`, `src/features/debug/query.check.ts`, `testdata/debug/vm.golden.json`, stubs `src/features/debug/cli.ts` and `src/features/debug/view.ts` (header comment only), `src/features/debug/index.ts` (imports `capture.ts`, `verify.ts`, `cli.ts`, `view.ts`); Modify `src/main.ts` (replace T3's capture import with `./features/debug/index.ts`).
 
 **Interfaces — Produces** (spec §6): `debugOf(s, o): Obj`, `debugList(sel, o): Obj[]`, `debugFacts(s): DebugFacts`, `DebugOpts`, `export const DEBUG_FIELDS: string[]` (list-row fields in order: `session, harness, title, episodes, open, leftover, possible, lastAt, wallMs, costUsd, link`); memo per `(s.path, ledger generation)`; cost per spec §5.4 from `Day.hc` with the honest-costs billing label; links via `canonicalUrl` (`src/features/palette/ref.ts:233`); paths via `display("file", p, s)`.
 
@@ -280,7 +280,8 @@ if (bad) process.exit(1);
   - `content: true` adds `probes[].text`; `false` has no `text` key anywhere;
   - every `link` parses with `parseRef` and resolves to the fixture session and call;
   - under `AGENTGLASS_REDACT=1` paths are faked (no fixture project name in the JSON);
-  - `debugFacts` reads no call rows (counter on `callsOf`).
+  - `debugFacts` reads no call rows (counter on `callsOf`);
+  - `marksOf(s, ["debug"])` returns one `debug:episode` span per episode plus one point mark per step, with kinds equal to `steps[].kind`, `anchor` `call=<cid>`, Kiro marks `t0 0` ordered by `seq`; changing only the disk state (marker removed on disk) changes `gen(s)` and the memoised result.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS; `sh scripts/check.sh` PASS.
 - [ ] **Step 5: Commit** `feat(debug): DebugVM query layer with links and a golden`.
 
@@ -309,7 +310,7 @@ if (bad) process.exit(1);
 
 **Files:** Fill `src/features/debug/view.ts`; Create `src/features/debug/view.check.ts`.
 
-**Interfaces — Produces:** view `"debug"` (`H.views`); keys via `H.keys`: `E` in `transcript` mode and `list` mode on tab 0 → open; inside the view `j/k ↑↓` step, `]`/`[` episode, `g`/`G`, `↵` apply the step's link (`resolve(parseRef(link))` + `applyTarget`, `src/features/palette/apply.ts`, `open.ts`) and set `inTx`, `esc`/`q`/`←` back (and from a transcript opened by the panel back to the panel, as `related/view.ts:306-308`), `r` related at the step's event, `y` copy link; `H.rowBadges` `⚑` (yellow, after watchdog/herdr); `H.previewSections` one line; `H.helpSections` `{name: "debug", ctx: "transcript"}` with keys and markers; `H.footerHints` `E debug` in transcript and list (tier 2), the view's own footer; palette action "Debug episodes" (`H.actions`, key `E`).
+**Interfaces — Produces:** view `"debug"` (`H.views`); keys via `H.keys`: `E` in `transcript` mode and `list` mode on tab 0 → open; inside the view `j/k ↑↓` step, `]`/`[` episode, `g`/`G`, `↵` apply the step's link (`resolve(parseRef(link))` + `applyTarget`, `src/features/palette/apply.ts`, `open.ts`) and set `inTx`, `esc`/`q`/`←` back (and from a transcript opened by the panel back to the panel, as `related/view.ts:306-308`), `r` related at the step's event, `y` copy link; `H.rowBadges` `⚑` (yellow, after watchdog/herdr); `H.previewSections` one line; `H.helpSections` `{name: "debug", ctx: "transcript"}` with keys and markers; `H.footerHints` `E debug` in transcript and list (tier 2), the view's own footer; palette action "Debug episodes" (`H.actions`, key `E`). Kind filtering inside the panel and in other timelines uses the shared event-kind chips of `src/model/marks.ts` (family `debug`, names per spec §6.1); the panel adds no filter of its own.
 
 - [ ] **Step 1: Failing check** `view.check.ts` (fixture sessions from `fixture.ts`, `S.W` 80 then 120):
   - rendered lines equal the spec §8.1 mock at 80 columns (golden strings in the check, ANSI stripped); no line wider than `S.W`;
@@ -318,7 +319,8 @@ if (bad) process.exit(1);
   - session without activity → the one-line hint naming the markers and `agentglass debug --instructions`;
   - `⚑` badge only for `leftover > 0`; not for `possible`; with `◆` present the slot shows `◆⚑`;
   - preview line text as spec §8.2;
-  - help popup contains a "debug" section; the transcript footer contains `E debug`.
+  - help popup contains a "debug" section; the transcript footer contains `E debug`;
+  - with the shared kind filter showing only `debug:repro`, the panel lists only repro runs, and hidden steps collapse into one gap line (`… 5 hidden`).
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement** (render reads only `debugOf`/`debugFacts`; never `model.ts`). **Step 4: Run** → PASS; `src/ui/footer.check.ts`, `help.check.ts`, `palette.check.ts`, `sh scripts/check.sh` PASS.
 - [ ] **Step 5: Live look** (isolation set, tmux, `AGENTGLASS_AGENT=0`, fake `HOME` from T7's test fixture): open the panel at 80×24 and 120×40, capture with `tmux capture-pane -p`, attach both captures to the PR; kill the tmux session you started.
 - [ ] **Step 6: Commit** `feat(tui): debug episode panel (E), leftover badge and preview line`.
