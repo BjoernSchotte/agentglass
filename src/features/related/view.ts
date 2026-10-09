@@ -18,15 +18,17 @@ import { ms } from "../callgraph/model.ts";
 import { graphAnchor } from "../callgraph/view.ts";
 import type { EvX } from "../query/eval.ts";
 import { toolKinds, serverOf, shellFam, famsIn } from "../../model/kinds.ts";
-import { famOf } from "../../model/marks.ts";
+import { marksOf, famOf } from "../../model/marks.ts";
 import { type Gap, test as vfTest, active as vfActive, fstate, filterKey, gapText, emptyText as vfEmpty, barOpen, chipBar, setCount, label as vfLabel } from "../../ui/evfilter.ts";
 import { type RelEv, type FileRef, KIND_SETS, relCfg, fileShown } from "./model.ts";
 import { type Build, startBuild, stepBuild, repoll, isAnchor } from "./build.ts";
+import { loadOf } from "../skills/marks.ts";
+import { openSkillView } from "../skills/view.ts";
 
 export const NAME = "related";
 const STEPS = [2, 5, 10, 30, 60];
 const KIND_NAMES = ["default kinds", "all kinds", "writes only"];
-const GLYPH: { [k: string]: string } = { prompt: "❯", write: "✎", shell: "$", read: "○", agent: "↳", web: "◌", mcp: "◈", alert: "◆", commit: "●", tool: "⚒", assistant: "⏺", thinking: "∴" };
+const GLYPH: { [k: string]: string } = { skill: "✧", prompt: "❯", write: "✎", shell: "$", read: "○", agent: "↳", web: "◌", mcp: "◈", alert: "◆", commit: "●", tool: "⚒", assistant: "⏺", thinking: "∴" };
 interface Back { mode: Mode; tv: TV | null; dv: DV | null; fview: string }
 // as/aevs/ai: the anchor (rebuilds on +/-); vis: indexes into b.rows shown; sel/top: cursor and scroll over vis;
 // inTx: a transcript opened from here (esc comes back); polled: last live repoll
@@ -78,7 +80,7 @@ function shares(a: FileRef[], b: FileRef[]): boolean { for (const f of a) for (c
 // a row as the event-kind filter sees it (ui/evfilter.ts, view "related"): its kinds from the tool, or the row's kind
 export function relX(r: RelEv): EvX {
   const i = r.evText.indexOf("\u0000"); const args = i >= 0 ? r.evText.slice(i + 1) : "";
-  const ks: string[] = r.tool ? toolKinds(r.tool, args) : r.kind === "prompt" ? ["prompt"] : r.kind === "assistant" ? ["reply"] : r.kind === "thinking" ? ["reply:thinking"] : r.kind === "commit" ? ["shell:vcs"] : ["meta"];
+  const ks: string[] = r.tool ? toolKinds(r.tool, args) : r.kind === "prompt" ? ["prompt"] : r.kind === "assistant" ? ["reply"] : r.kind === "thinking" ? ["reply:thinking"] : r.kind === "commit" ? ["shell:vcs"] : r.kind === "skill" ? ["skill:load"] : ["meta"];
   if (r.err) ks.push("error");
   return { raw: r.tool ? "tool" : r.evKind || r.kind, kinds: ks, tool: r.tool, args, server: r.tool ? serverOf(r.tool, args).toLowerCase() : "", fam: r.tool ? shellFam(r.tool, args).toLowerCase() : "", err: r.err ? 1 : r.rt > 0 ? 0 : -1 };
 }
@@ -299,6 +301,7 @@ function enter(st: RState): void {
   const r = rowAt(st, st.sel); if (!r) return;
   if (!r.sess) { say("info", "no session recorded this commit (it came from the reflog)"); return; }
   const s = sessions.get(r.sess); if (!s) { say("warn", "that session is gone"); return; }
+  if (r.kind === "skill") { for (const m of marksOf(s, ["skill:load"])) if (m.t0 === r.t) { const x = loadOf(s, m); if (x) { openSkillView(s, x); return; } } } // a skill load: view skill
   const ts = tailStart(s);
   if (ts && r.t < ts) { // older than the transcript's last 6 MB: open it from the window the row was read from
     if (r.at < 0) { say("info", "event is older than the loaded transcript (last 6 MB)"); return; }
@@ -392,6 +395,6 @@ H.helpSections.push({ name: "related events", ctx: NAME, keys: [
   ["r", "related events around the event (detail, transcript cursor, call graph span)"],
   ["", "±N min in the same project, all sessions and harnesses; ▶ anchor · ‼ same file by two sessions or a git stash/checkout/reset over another's edits · ≈ same file in another worktree"],
   ["↑↓ j  g G  pgup pgdn", "move"], ["↵  click again", "open that session's transcript at the event (esc comes back)"],
-  ["+  -", "window 2 / 5 / 10 / 30 / 60 min"], ["k", "kinds: default → all (reads, web, mcp) → writes only"], ["f", "only events touching the anchor's files"],
+  ["+  -", "window 2 / 5 / 10 / 30 / 60 min"], ["k", "kinds: default → all (reads, web, mcp, ✧ skill loads) → writes only"], ["f", "only events touching the anchor's files"],
   ["o", "own session on / off"], ["n  N", "next / previous flagged row"], ["/", "filter: event.kind is shell · tool is Bash · harness is codex (event kinds: K i ! ] [)"], ["esc  q", "back (a kind filter on: esc clears it first)"],
   ["", "config related.minutes (10), related.conflictMinutes (10); writes through shell commands (sed -i, >) are not seen"]] });

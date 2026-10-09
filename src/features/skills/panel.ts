@@ -2,7 +2,7 @@
 // sessions, size, load / carry / tail tokens, share of context and $ over the opener's period and filter (skill-usage
 // §6.6). ↵ lists the sessions that loaded it, a shows its advice (§8), v the text of its newest load
 // SPDX-License-Identifier: Apache-2.0
-import { clean, fit, fitStyled, fillTo, width } from "../../util/text.ts";
+import { clean, fit, fitStyled, fillTo, width, wrap } from "../../util/text.ts";
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { S, say, type Mode } from "../../state.ts";
@@ -17,7 +17,7 @@ import { kfmt, grp, money } from "../usage/costs.ts";
 import { type Bill, asBill } from "../usage/billing.ts";
 import { type Compiled, skillRows, skillRowMatches } from "../query/eval.ts";
 import { addClause, localFor, setLocal, shownClause } from "../query/scope.ts";
-import { type SkillRow, type LoadRow, skillTable, skillLoads, visRows, sortRows } from "./model.ts";
+import { type SkillRow, type LoadRow, skillTable, skillLoads, visRows } from "./model.ts";
 import { type Advice, type CallStat, advise, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
 import { type InvSkill, inventory } from "./inventory.ts";
 import { skillVis, HIDDEN } from "./vis.ts";
@@ -31,7 +31,7 @@ export const SP_NAME = "skills";
 export interface PanelScope { origin: string; label: () => string; days: () => string[]; sess: () => Sess[]; filter: () => Compiled; period: (k: string) => boolean; keys: string[][] }
 export const SORTS = ["cost", "loads", "tail", "size", "share", "persess"];
 const SORT_NAMES = ["$", "loads", "tail $", "size", "share", "$/session"];
-interface PData { key: string; ver: number; at: number; rows: SkillRow[]; hidden: number; loads: LoadRow[]; accs: Acc[]; ids: string[]; paths: string[]; usd: number; tok: number; carry: number; sessions: number; bill: Bill | ""; named: boolean; days: number }
+interface PData { key: string; ver: number; at: number; rows: SkillRow[]; hidden: number; accs: Acc[]; ids: string[]; paths: string[]; usd: number; tok: number; carry: number; sessions: number; bill: Bill | ""; named: boolean; days: number }
 const P = {
   sc: null as PanelScope | null, sort: 0, sel: "", top: 0, adv: false, advFor: "", advs: [] as Advice[], advKey: "",
   backMode: "list" as Mode, backView: "", d: null as PData | null, y0: 0, n: 0,
@@ -60,7 +60,7 @@ export function panelData(sc: PanelScope, sort: string): PData {
   let usd = 0; let tok = 0; let carry = 0; const ss = new Set<string>();
   for (const r of v.rows) { usd += r.usd; tok += r.load + r.carry; carry += r.carry; }
   for (const id of ids) ss.add(id);
-  return { key: "", ver: L.ver, at: Date.now(), rows: v.rows, hidden: v.hidden, loads: [], accs, ids, paths, usd, tok, carry, sessions: ss.size, bill, named, days: days.length };
+  return { key: "", ver: L.ver, at: Date.now(), rows: v.rows, hidden: v.hidden, accs, ids, paths, usd, tok, carry, sessions: ss.size, bill, named, days: days.length };
 }
 function data(): PData | null {
   const sc = P.sc; if (!sc) return null;
@@ -107,8 +107,8 @@ function rowLine(r: SkillRow, w: number, on: boolean, b: Bill | ""): string {
 // the summary line: how many skills, their $ and tokens, how much of it is carry, the sort
 function summary(d: PData): string {
   const dot = fg(C.dim) + " · " + RST;
-  const n = d.rows.length - (d.hidden ? 1 : 0);
-  return fg(C.text) + CSI + "1m" + String(n) + RST + fg(C.sub) + (n === 1 ? " skill" : " skills") + (d.hidden ? " + " + String(d.hidden) + " hidden" : "") + RST + dot +
+  let n = 0; let lst = false; for (const r of d.rows) { if (r.name === LISTING) lst = true; else if (r.name !== HIDDEN) n++; }
+  return fg(C.text) + CSI + "1m" + String(n) + RST + fg(C.sub) + (n === 1 ? " skill" : " skills") + (d.hidden ? " + " + String(d.hidden) + " hidden" : "") + (lst ? " + listing" : "") + RST + dot +
     fg(C.yellow) + money(d.usd, d.bill) + RST + fg(C.sub) + " in " + grp(d.sessions) + (d.sessions === 1 ? " session" : " sessions") + (d.named ? " with matching skills" : "") + RST + dot +
     fg(C.text) + kfmt(d.tok) + RST + fg(C.sub) + " tok, carry " + (d.tok > 0 ? String(Math.round((d.carry / d.tok) * 100)) : "0") + " %" + RST + dot + fg(C.sub) + "sorted by " + RST + fg(C.accent) + (SORT_NAMES[P.sort] ?? "$") + RST + fg(C.dim) + " (s)" + RST;
 }
@@ -164,8 +164,8 @@ function build(W: number, Ht: number): string[] {
   if (P.adv && sel) {
     const xs = adviceFor(d).filter((a: Advice): boolean => a.skill === sel.name);
     al.push(fg(C.line) + "─".repeat(iw) + RST);
-    if (!xs.length) al.push(fg(C.dim) + "no advice for " + clean(sel.name) + ": no threshold crossed in this period (config skills.advise.*) · a closes" + RST);
-    for (const a of xs) { const ls = adviceLines(a); for (let i = 0; i < ls.length; i++) al.push((i === 0 ? fg(C.yellow) + CSI + "1m" : ls[i]?.startsWith("   →") ? fg(C.green) : fg(C.sub)) + clean(ls[i] ?? "") + RST); }
+    if (!xs.length) for (const x of wrap("no advice for " + clean(sel.name) + " in this period (thresholds: config skills.advise.*) · a closes", iw)) al.push(fg(C.dim) + x + RST);
+    for (const a of xs) { const ls = adviceLines(a); for (let i = 0; i < ls.length; i++) { const col = i === 0 ? fg(C.yellow) + CSI + "1m" : ls[i]?.startsWith("   →") ? fg(C.green) : fg(C.sub); const ws = wrap(clean(ls[i] ?? ""), iw); for (let j = 0; j < ws.length; j++) al.push(col + (j > 0 ? "     " : "") + (ws[j] ?? "") + RST); } }
   }
   const room = Math.max(3, Ht - 4 - out.length - Math.min(al.length, Math.floor((Ht - 4) / 2)));
   if (si < P.top) P.top = si; else if (si >= P.top + room) P.top = si - room + 1;
@@ -213,7 +213,7 @@ function key(k: string): boolean {
   else if (k === "pgdn") move(d, page);
   else if (k === "home" || k === "g") move(d, -d.rows.length);
   else if (k === "end" || k === "G") move(d, d.rows.length);
-  else if (k === "s") { P.sort = (P.sort + 1) % SORTS.length; if (P.d) P.d.rows = sortRows(P.d.rows, SORTS[P.sort] ?? "cost"); P.d = null; say("info", "skills sorted by " + (SORT_NAMES[P.sort] ?? "$")); }
+  else if (k === "s") { P.sort = (P.sort + 1) % SORTS.length; P.d = null; say("info", "skills sorted by " + (SORT_NAMES[P.sort] ?? "$")); }
   else if (k === "enter") { if (r) sessionsOf(r); }
   else if (k === "a") { P.adv = !P.adv; }
   else if (k === "v") { if (r) viewNewest(d, r); }

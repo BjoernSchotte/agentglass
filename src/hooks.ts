@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess, Proc } from "./model/types.ts";
 import type { HelpSec } from "./state.ts";
+import type { Mark } from "./model/marks.ts";
 
 // a session's metadata as parsed, before H.meta replaced it for display (redact): filters match these
 export interface RealMeta { cwd: string; title: string; prompt: string; branch: string; name: string; kind: string }
@@ -64,6 +65,8 @@ export const H = {
   backlog: [] as (() => boolean)[], // true = a feature has background work its onTick slices through (filter head reads): tick at the indexing burst cadence
   remoteRows: [] as (() => Sess[])[], // fleet: read-only rows of other hosts (s.host set), appended to the top-level list by buildView
   remoteCard: [] as ((s: Sess, w: number) => string[])[], // the preview of a remote row, instead of previewSections (nothing local to read)
+  markLines: [] as ((s: Sess, m: Mark, w: number) => string)[], // a mark's styled transcript line (skills: "✧ name · trigger · tok · $"); "" = not this hook's: the next, else the stock line
+  detailHead: [] as ((s: Sess, evs: Ev[], i: number, w: number) => string[])[], // styled lines on top of event i's detail (the skill loads it anchors)
   linkView: [] as ((view: string, f: string, s: Sess) => string)[], // a link's view= and f= after its transcript opened (features/evkinds.ts: the event filter, the call graph); "" = applied, else what was not
 };
 export function startTui(): void { for (const f of H.tui) f(); }

@@ -4,6 +4,9 @@ import { S, type TV } from "../state.ts";
 import { H } from "../hooks.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { active, mask } from "../ui/evfilter.ts";
+import { kfmt } from "./usage/costs.ts";
+import { vwidth } from "../util/text.ts";
+import { openAt } from "./skills/marks.ts";
 
 const SPEEDS = [1, 4, 16, 64];
 const R = { tv: null as TV | null, on: false, paused: false, sp: 2, next: 0 };
@@ -85,9 +88,16 @@ H.headerWidgets.push((w: number) => {
   if (!R.on || !t || S.tv !== t || w < 12) return "";
   const i = Math.min(t.limit, t.evs.length);
   const last = i > 0 ? t.evs[i - 1].ts : "";
-  return fg(R.paused ? C.yellow : C.green) + CSI + "1m" + (R.paused ? "⏸ " : "▶ ") + speed() + "×" + RST +
+  const base = fg(R.paused ? C.yellow : C.green) + CSI + "1m" + (R.paused ? "⏸ " : "▶ ") + speed() + "×" + RST +
     fg(C.dim) + " · " + RST + fg(C.text) + hms(last) + RST + fg(C.dim) + " · " + RST + fg(C.sub) + i + "/" + t.evs.length + RST;
+  return base + skillsNow(t, last, w - vwidth(base));
 });
+// the skills in context at the replay's time: "✧2 · carry 9.1k tok/req" (skill-usage §6.3); "" when none or no room
+function skillsNow(t: TV, ts: string, w: number): string {
+  const o = openAt(t.s, ms(ts)); if (!o.n) return "";
+  const full = fg(C.dim) + " · " + RST + fg(C.cyan) + "✧" + String(o.n) + RST + (o.tok > 0 ? fg(C.dim) + " · carry " + kfmt(o.tok) + " tok/req" + RST : "");
+  return vwidth(full) <= w ? full : w >= 6 ? fg(C.dim) + " · " + RST + fg(C.cyan) + "✧" + String(o.n) + RST : "";
+}
 
 H.footerHints.push((mode: string) => {
   if (mode !== "transcript") return [];
@@ -97,4 +107,5 @@ H.footerHints.push((mode: string) => {
 H.helpSections.push({ name: "replay", ctx: "transcript", keys: [
   ["P", "replay as a time-lapse (from the cursor, else from the top)"], ["␣", "pause / resume"],
   ["+  -", "speed 1× 4× 16× 64×"], ["→  ←", "step one event forward / back (back pauses)"], ["P  esc", "stop, back to live follow"],
-  ["", "with a kind filter (K) it plays only the shown events, with their real time gaps"] ] });
+  ["", "with a kind filter (K) it plays only the shown events, with their real time gaps"],
+  ["", "the header shows the skills in context at the replayed moment: ✧2 · carry 9.1k tok/req"] ] });

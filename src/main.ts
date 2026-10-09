@@ -39,7 +39,7 @@ import "./features/cli.ts";
 import "./features/cost-cli.ts";
 import "./features/wait/cli.ts";
 import "./features/skills/cli.ts";
-import "./features/skills/marks.ts"; // registers the skill marks (event kinds skill:load / skill:unload, ] [)
+import "./features/skills/marks.ts"; // skill loads on the shared marks (event kinds skill:load / skill:unload, ] [): transcript lines, call graph lanes, filters, events
 import "./features/prices-cli.ts";
 import "./features/queries.ts";
 import "./features/events-cli.ts"; // agentglass events <ref>: a session's events by kind

@@ -4,13 +4,14 @@ import { width, clean, fit, wrap, fitStyled, fillTo, localHM, bytes, home, numAt
 import type { Ev, Sess } from "../model/types.ts";
 import { S, say, type TV } from "../state.ts";
 import { remoteOnly } from "../model/remote.ts";
-import { enrich } from "../hooks.ts";
+import { H, enrich } from "../hooks.ts";
 import { parseEvents, sourceOf, window, epochOf } from "../harness/index.ts";
 import { titleOf, parentOf, subActive, activeSubs, restat } from "../model/sessions.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
 import { put, box, spin, scrollbar } from "./screen.ts";
 import { link, hyperOn, sessUrl } from "../util/hyper.ts";
-import { kindsIn, kindIds, kindVer } from "../model/kinds.ts";
+import { type Mark, marksOf, markKind } from "../model/marks.ts";
+import { kindsIn, kindIds, kindVer, markAt } from "../model/kinds.ts";
 import { setCount, mask as vfMask, fstate, active as vfActive, runs as vfRuns, gapText, matchCount, emptyText as vfEmpty, barOpen, chipBar } from "./evfilter.ts";
 
 const VIEW = "transcript";
@@ -44,6 +45,39 @@ export function evLines(e: Ev, w: number, expand: boolean, out: string[]): void 
   } else {
     out.push(fg(C.line) + "── " + fg(C.purple) + clean(e.text) + fg(C.line) + " " + "─".repeat(Math.max(0, w - width(e.text) - 5)) + RST);
   }
+}
+// marks (skill loads, debug episodes …) on the transcript's own events: per event index the marks that land there (the
+// call they anchor on, else the first event at or after their time; evs.length = after the last), rebuilt when the
+// marks or the events changed; ver counts rebuilds (the layout keys on it)
+const MK = { evs: null as Ev[] | null, n: -1, marks: null as Mark[] | null, at: new Map<number, Mark[]>(), ver: 0 };
+function marksAt(t: TV): Map<number, Mark[]> {
+  const ms = marksOf(t.s, null);
+  if (MK.evs === t.evs && MK.n === t.evs.length && MK.marks === ms) return MK.at;
+  const at = new Map<number, Mark[]>();
+  for (const m of ms) { const j = markAt(t.s, t.evs, m); if (j < 0) continue; const l = at.get(j); if (l) l.push(m); else at.set(j, [m]); }
+  MK.evs = t.evs; MK.n = t.evs.length; MK.marks = ms; MK.at = at; MK.ver++;
+  return at;
+}
+// points of one kind and sub at one event become one line naming each label (×n): a compaction that ends four loads reads
+// "✧ alpha, beta ×2, delta out (compacted)"
+function merged(ms: Mark[]): Mark[] {
+  if (ms.length < 2) return ms;
+  const o: Mark[] = []; const n: number[] = [];
+  for (const m of ms) {
+    let k = -1; if (m.t1 === m.t0) for (let j = 0; j < o.length; j++) { const x = o[j]; if (x && x.t1 === x.t0 && x.kind === m.kind && x.sub === m.sub) { k = j; break; } }
+    if (k < 0) { o.push({ kind: m.kind, t0: m.t0, t1: m.t1, seq: m.seq, turn: m.turn, ev: m.ev, anchor: m.anchor, label: m.label, sub: m.sub, tok: m.tok, usd: m.usd, est: m.est, ref: m.ref }); n.push(1); continue; }
+    const x = o[k]; if (!x) continue;
+    const parts = x.label.split(", "); let hit = -1; for (let j = 0; j < parts.length; j++) if ((parts[j] ?? "").replace(/ ×\d+$/, "") === m.label) hit = j;
+    if (hit < 0) parts.push(m.label); else { const p = parts[hit] ?? ""; const c = /×(\d+)$/.exec(p); parts[hit] = m.label + " ×" + String(c ? Number(c[1] ?? "1") + 1 : 2); }
+    x.label = parts.join(", "); n[k] = (n[k] ?? 1) + 1;
+  }
+  return o;
+}
+// a mark's line: a feature's own (H.markLines), else the family's glyph, the label and its kind
+export function markLine(s: Sess, m: Mark, w: number): string {
+  for (const f of H.markLines) { const l = f(s, m, w); if (l) return l; }
+  const k = markKind(m.kind.split(":")[0] ?? ""); const col = k ? k.color() : C.purple;
+  return fitStyled(fg(col) + (k ? k.glyph : "◆") + " " + clean(m.label) + RST + fg(C.dim) + " · " + m.kind + (m.sub ? " · " + m.sub : "") + RST, w);
 }
 // events laid out: all, or the first t.limit (replay)
 export function shown(t: TV): number { return t.limit < 0 ? t.evs.length : Math.min(t.limit, t.evs.length); }
@@ -111,18 +145,28 @@ export function layout(t: TV, iw: number, n: number): void {
   const act = vfActive(VIEW);
   const st = act ? fstate(VIEW) : "";
   if ((t.fk.split("\u0001")[0] ?? "") !== st) t.xr = []; // another filter: the runs ↵ opened close again
-  const fk = act ? st + "\u0001" + String(kindIds(t.s, t.evs).length) + ":" + String(kindVer(t.evs)) + "\u0001" + t.xr.join(",") : "";
+  const mk = marksAt(t);
+  const fk = (act ? st + "\u0001" + String(kindIds(t.s, t.evs).length) + ":" + String(kindVer(t.evs)) + "\u0001" + t.xr.join(",") : "") + "\u0001m" + String(MK.ver);
   if (t.lw === iw && t.ln === n && t.lexp === t.expand && t.fk === fk) return;
   const out: string[] = []; const le: number[] = []; const ls: number[] = []; const it: number[] = [];
   const m = act ? vfMask(VIEW, t.s, t.evs) : null;
   for (let i = 0; i < n;) {
-    if (!m || m[i] + 0 === 1 || inX(t, i)) { ls.push(out.length); it.push(i); evLines(t.evs[i], iw - 1, t.expand, out); while (le.length < out.length) le.push(i); i++; continue; }
+    if (!m || m[i] + 0 === 1 || inX(t, i)) {
+      ls.push(out.length); it.push(i);
+      const xs = merged(mk.get(i) ?? []);
+      if (xs.length && t.evs[i].kind === "user") out.push(""); // a prompt's blank line goes above its marks
+      for (const x of xs) out.push(markLine(t.s, x, iw - 1)); // the marks that land here, before the event
+      const at = out.length; evLines(t.evs[i], iw - 1, t.expand, out);
+      if (xs.length && t.evs[i].kind === "user" && out[at] === "") out.splice(at, 1);
+      while (le.length < out.length) le.push(i); i++; continue;
+    }
     let j = i; while (j < n && m[j] + 0 === 0 && !inX(t, j)) j++;
     const g = vfRuns(VIEW, t.s, t.evs, i, j)[0];
     const gl = out.length; out.push(fg(C.dim) + "  " + (g ? gapText(g, iw - 4) : "┄ " + String(j - i) + " hidden ┄") + RST); le.push(i); it.push(i);
     for (let k = i; k < j; k++) ls.push(gl);
     i = j;
   }
+  if (n > 0 && n === t.evs.length && (!m || m[n - 1] + 0 === 1)) for (const x of merged(mk.get(n) ?? [])) { out.push(markLine(t.s, x, iw - 1)); le.push(n - 1); } // later than every event: at the end
   t.lines = out; t.lineEv = le; t.lineStart = ls; t.items = it; t.lw = iw; t.ln = n; t.lexp = t.expand; t.fk = fk;
 }
 function inX(t: TV, i: number): boolean { for (let k = 0; k + 1 < t.xr.length; k += 2) if (i >= numAt(t.xr, k, 0) && i < numAt(t.xr, k + 1, 0)) return true; return false; }

@@ -26,9 +26,9 @@ export interface RelEv {
 // per-session read state across batches: dedup keys, and open calls (call id → row index in the append-only out)
 export interface RelSt { seen: Set<string>; pend: Map<string, number>; last: number }
 export function newSt(): RelSt { return { seen: new Set<string>(), pend: new Map<string, number>(), last: 0 }; }
-export const KINDS = ["prompt", "write", "shell", "read", "agent", "web", "mcp", "alert", "commit"];
-// k cycles: default → everything → writes only
-export const KIND_SETS: string[][] = [["prompt", "write", "shell", "agent", "alert", "commit"], ["prompt", "write", "shell", "read", "agent", "web", "mcp", "alert", "commit"], ["write"]];
+export const KINDS = ["prompt", "write", "shell", "read", "agent", "web", "mcp", "alert", "commit", "skill"];
+// k cycles: default → everything (reads, web, mcp, skill loads) → writes only
+export const KIND_SETS: string[][] = [["prompt", "write", "shell", "agent", "alert", "commit"], ["prompt", "write", "shell", "read", "agent", "web", "mcp", "alert", "commit", "skill"], ["write"]];
 const CAT_KIND = ["shell", "write", "read", "web", "agent", "mcp", "read"]; // callgraph CATS order; other → read
 
 // a file as shown: rel, through the display hooks (--redact: a stable fake, the same one for the same real path)

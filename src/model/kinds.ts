@@ -140,15 +140,18 @@ const MEMO: KMemo[] = []; const MEMO_MAX = 8;
 export const KIND_STATS = { built: 0, events: 0 };
 function grow(a: Int32Array, n: number): Int32Array { if (n <= a.length) return a; const b = new Int32Array(Math.max(n, a.length * 2, 256)); b.set(a); return b; }
 function msOf(ts: string): number { if (!ts) return 0; const t = new Date(ts.replace(/(\.\d{3})\d+/, "$1")).getTime(); return t > 0 ? t : 0; }
-// the event a mark lands on in this array: its call (anchor call=<id>), else the first event at or after its start
+// the event a mark lands on in this array: its call (anchor call=<id>), else the first event at or after its start;
+// evs.length = later than every event (no event carries it, a list view draws it at the end); -1 = no time and no call
 function anchorIn(evs: Ev[], m: Mark, calls: Map<string, number>): number {
   if (m.anchor.startsWith("call=")) { const j = calls.get(m.anchor.slice(5)); if (j !== undefined) return j; }
   const t0 = m.t0 > 0 ? m.t0 : m.anchor.startsWith("ts=") ? msOf(m.anchor.slice(3)) : 0;
   if (t0 <= 0) return -1;
   let lo = 0; let hi = evs.length;
   while (lo < hi) { const mid = (lo + hi) >> 1; const e = evs[mid]; if (msOf(e ? e.ts : "") < t0) lo = mid + 1; else hi = mid; }
-  return lo < evs.length ? lo : -1;
+  return lo;
 }
+// the event index of evs a mark lands on, as the kinds place it (the list views draw its line there), -1 none
+export function markAt(s: Sess, evs: Ev[], m: Mark): number { kindIds(s, evs); return anchorIn(evs, m, memoOf(s, evs).calls); }
 function memoOf(s: Sess, evs: Ev[]): KMemo {
   for (let i = 0; i < MEMO.length; i++) {
     const m = MEMO[i];
