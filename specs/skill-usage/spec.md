@@ -540,6 +540,12 @@ the fleet merge drops (owned elsewhere, fleet spec 13) never carried a skill sha
 exact by construction. Reports gain `DayRow.sa` (the `Day.sa` rows, names redacted per the host's privacy mode, hash
 kept) and `SessRow.s.skills` (6.13). The fleet view's Stats/Skills panel sums across hosts; the skills panel gets a
 `host` column when more than one host is shown. Portfolio drift (§8 A10) reads `hash` per host.
+Review ruling (exactness of the merge): an occurrence that loses a whole (day, provider, model) bucket to another host (a
+copy that lags behind or equals the owner's: the usual case) takes its skill rows of that bucket out exactly; one that
+loses part of a bucket (a copy ahead of an older owner copy, on the day the older copy ends) takes the same share of each
+skill's tokens out as of the bucket's tokens. Exact there would need each message's skill shares in the ownership rows
+(sidecar, snapshot `own` columns, hub rows): up to one share per open skill per message, several times the own rows that
+already dominate a snapshot (fleet 12.4, ~14 MB) — not worth it for a split that only moves within one session-day.
 
 **6.16 MCP server.** New tool `skills`: input `{ref?, period?: "today"|"7d"|"30d"|"all", repo?, name?, advise?: bool}`;
 output `{rows: SkillRow[], loads?: LoadRow[] (when ref given), advice?: Advice[], scope}`; `text` per load only when the
