@@ -224,6 +224,7 @@ block); before, the text block only. `testdata/mcp/tools-<version>.json` hold th
 | `compare` | `sessions` array (two refs), or `a` string and `b` string (filter expressions); `filter` string, `subagents` bool (true) |
 | `related` | `ref` string (`current`), `event` string, `at` string (ISO time), `minutes` integer 1–60 (10), `limit` integer 1–200 (50), `cursor` string |
 | `events` | `ref` string (`current`), `filter` string, `limit` integer 1–200 (50), `cursor` string |
+| `skills` | `ref` string, `period` enum (`today 7d 30d all`, default `30d`), `repo` string, `name` string, `advise` bool |
 | `contention` | `kind` enum (`test typecheck lint build install ci`), `family` string, `max` integer 1–32 (3) |
 | `waits` | `since` string (`7d`), `by` enum (`family kind tool`), `filter` string, `limit` integer 1–50 (15) |
 | `fleet` | none |
@@ -242,9 +243,11 @@ Results:
 - `waits`: `{period, agentTime, rows: [{key, kind, heavy, calls, totalMs, share, p50Ms, p95Ms, errors, trend, peak}],
   guard, scope}`. `fleet`: `fleet status --json` plus `configured: true`, or `{hosts: [], configured: false}`.
   `prices`: `{models: [{model, source, price, unpricedTokens, estimated}]}`.
+- `skills`: `agentglass skills --json` (`{period, rows, hidden, advice, notes}`; `advice` up to 10 items with `advise:
+  true`, else `[]`), or with `ref` `skills --session <ref> --json` (`{session, rows, hidden, loads}`).
 - Without the server option `--content`, content is left out: `errors` rows have no `text`, `session.errors[]` no
   `text`, `related` events and anchor of kinds `prompt`, `agent`, `assistant`, `thinking` no `text`, `events` events
-  no `text`.
+  no `text`, `skills` loads no `text` (the loaded skill text).
 
 Errors: an unknown tool is JSON-RPC `-32602`; anything else is a result with `isError: true` and `{"error": {code,
 message, hint?}}` as text and `structuredContent`. Codes: the CLI's own (`usage`, `not_found`, `ambiguous`,

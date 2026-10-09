@@ -29,7 +29,11 @@ d1="$h/.claude/projects/-w-p1"; d2="$h/.claude/projects/-w-p2"; mkdir -p "$d1" "
   u "$A" "$p1" 3 '[{"type":"tool_result","tool_use_id":"toolu_a1","content":"Exit code 1\nCANARY-7f3a npm ERR! missing script","is_error":true}]'
   u "$A" "$p1" 4 '"second prompt CANARY-7f3a"'
   as "$A" "$p1" 5 m2 '[{"type":"text","text":"CANARY-7f3a the answer"}]'; } > "$d1/$A.jsonl"
-{ u "$B" "$p1" 6 '"hello b"'; as "$B" "$p1" 7 m3 '[{"type":"text","text":"hi"}]'; } > "$d1/$B.jsonl"
+{ u "$B" "$p1" 6 '"hello b"'; as "$B" "$p1" 7 m3 '[{"type":"text","text":"hi"}]'
+  # a skill load (a slash command and its text): the skills tool's text canary
+  printf '{"type":"user","promptId":"pb","sessionId":"%s","cwd":"%s","timestamp":"%s","message":{"role":"user","content":"<command-name>/alpha</command-name>\\n<command-message>alpha</command-message>"}}\n' "$B" "$p1" "$(ts 10)"
+  printf '{"type":"user","promptId":"pb","isMeta":true,"sessionId":"%s","cwd":"%s","timestamp":"%s","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: %s/.claude/skills/alpha\\n\\nSKILLCANARY-9b1c lorem ipsum"}]}}\n' "$B" "$p1" "$(ts 11)" "$h"
+  as "$B" "$p1" 12 m5 '[{"type":"text","text":"ok"}]'; } > "$d1/$B.jsonl"
 { u "$C" "$p2" 8 '"hello c"'; as "$C" "$p2" 9 m4 '[{"type":"text","text":"hi"}]'; } > "$d2/$C.jsonl"
 
 # a clean environment: no markers of the agent that runs this suite; agentglass and agentglass-mcp first on PATH
@@ -91,7 +95,7 @@ PY
 }
 
 # ── 1. conformance (2025-11-25 and 2024-11-05), under the fake agent of session A in p1 ──
-TOOLS="session sessions errors cost triage compare related events contention waits fleet prices"
+TOOLS="session sessions errors cost triage compare related events skills contention waits fleet prices"
 conf() { # conf <version> <script>
   init "$1" > "$2"; i=10
   for n in $TOOLS; do
@@ -115,11 +119,11 @@ for v in 1 0; do
   eq "$ver: unknown method" "$(py "$o" "r(32)['error']['code']")" -32601
   eq "$ver: stderr silent" "$(grep -cv "$(printf '^[0-9]*\t')" "$o" || true)" 0
 done
-eq "fleet: configured false" "$(py "$t/c1.out" "sc(20)")" "{'hosts': [], 'configured': False}"
-eq "structuredContent = text" "$(py "$t/c1.out" "all(sc(i) == tx(i) for i in range(10, 22))")" True
-eq "structuredContent valid against outputSchema" "$(py "$t/c1.out" "[n for i, n in zip(range(10, 22), '$TOOLS'.split()) if not valid(sc(i), next(x['outputSchema'] for x in res(2)['tools'] if x['name'] == n))]")" "[]"
+eq "fleet: configured false" "$(py "$t/c1.out" "sc(21)")" "{'hosts': [], 'configured': False}"
+eq "structuredContent = text" "$(py "$t/c1.out" "all(sc(i) == tx(i) for i in range(10, 23))")" True
+eq "structuredContent valid against outputSchema" "$(py "$t/c1.out" "[n for i, n in zip(range(10, 23), '$TOOLS'.split()) if not valid(sc(i), next(x['outputSchema'] for x in res(2)['tools'] if x['name'] == n))]")" "[]"
 eq "2024-11-05: no structuredContent" "$(grep -c structuredContent "$t/c0.out" || true)" 0
-eq "contention go" "$(py "$t/c1.out" "sc(18)['go'], sc(18)['advice']")" "(True, '0 heavy commands running: go')"
+eq "contention go" "$(py "$t/c1.out" "sc(19)['go'], sc(19)['advice']")" "(True, '0 heavy commands running: go')"
 
 # ── 2. identity: the process tree, not the env (CLAUDE_CODE_SESSION_ID names C); the registry moves A → B (/clear) ──
 eq "identity: session {} = the fake agent's" "$(py "$t/c1.out" "sc(10)['id']")" "$A"
@@ -173,6 +177,19 @@ eq "canary: errors listed" "$(py "$t/k0.out" "len(sc(10)['rows'])")" 1
 eq "canary: absent without --content" "$(cat "$t"/c1.out "$t"/c0.out "$t"/k0.out "$t"/s*.out | grep -c CANARY || true)" 0
 srv "$p1" "$t/k.jsonl" "$t/k1.out" --content
 eq "canary: errors --content" "$(py "$t/k1.out" "'CANARY-7f3a' in sc(10)['rows'][0]['text']")" True
+
+# skills (skill-usage 6.16): the period's table and one session's loads; the loaded text only with --content
+{ init 2025-11-25; call 10 skills '{"period":"7d","advise":true}'; call 11 skills "{\"ref\":\"$B\"}"; call 12 skills '{"name":"nope"}'; } > "$t/sk.jsonl"
+srv "$p1" "$t/sk.jsonl" "$t/sk0.out"
+eq "skills: table" "$(py "$t/sk0.out" "[(r['name'], r['loadsUser']) for r in sc(10)['rows']], len(sc(10)['advice']) <= 10, sc(10)['scope']")" "([('alpha', 1)], True, 'project')"
+eq "skills: SKILL_FIELDS" "$(py "$t/sk0.out" "list(sc(10)['rows'][0].keys())[:6]")" "['name', 'loadsUser', 'loadsModel', 'loadsCompact', 'sessions', 'sizeP50']"
+eq "skills: a session's loads" "$(py "$t/sk0.out" "[(l['name'], l['trigger']) for l in sc(11)['loads']], 'text' in sc(11)['loads'][0]")" "([('alpha', 'user')], False)"
+eq "skills: name filter" "$(py "$t/sk0.out" "sc(12)['rows']")" "[]"
+eq "skills: no text without --content" "$(grep -c SKILLCANARY "$t/sk0.out" || true)" 0
+srv "$p1" "$t/sk.jsonl" "$t/sk1.out" --content
+eq "skills: text with --content" "$(py "$t/sk1.out" "'SKILLCANARY-9b1c' in (sc(11)['loads'][0]['text'] or '')")" True
+srv "$p1" "$t/sk.jsonl" "$t/sk2.out" --content --redact
+eq "skills: --redact fakes the name, hides the text" "$(py "$t/sk2.out" "sc(11)['loads'][0]['name'] != 'alpha'")$(grep -c SKILLCANARY "$t/sk2.out" || true)" "True0"
 
 # ── 5. --redact: fake titles, instructions without the project ──
 srv "$p1" "$t/s.jsonl" "$t/r.out" --redact

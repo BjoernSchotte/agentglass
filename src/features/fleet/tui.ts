@@ -17,14 +17,16 @@ import { put, box } from "../../ui/screen.ts";
 import type { Ctx } from "../../hooks.ts";
 import { addActions } from "../palette/actions.ts";
 import { type Allow, asBill } from "../usage/billing.ts";
-import type { RlWin } from "../usage/record.ts";
+import { type RlWin, type Acc, L } from "../usage/record.ts";
+import { ledger } from "../usage/ledger.ts";
+import { type HostSet, type HostRow, SKILL_FLEET, hostRows } from "../skills/fleet.ts";
 import { kfmt, grp, moneyTag } from "../usage/costs.ts";
 import { type CostNow, costNow } from "../usage/summary.ts";
 import { allowanceInfo, codexWins } from "../usage/bill-live.ts";
 import { type FleetHdr, FLEET_HOOK } from "../usage/stats.ts";
 import { type FleetCfg, type HostCfg, loadFleet, fleetOn, hostNamed, openCmd } from "./config.ts";
 import type { HostReport } from "./model.ts";
-import { type RemoteHost, type Progress, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher, mergeMs, mergeGen, merged0, merging, mergeTick } from "./hosts.ts";
+import { type RemoteHost, type Progress, FLEET, setFleet, reapply, syncFresh, merged, overlap, fleetCost, fleetBudget, fleetAllowance, freshOf, freshAt, rowObj, hostByName, overlay, liveFresh, primaryOf, watcher, mergeMs, mergeGen, merged0, merging, mergeTick, exactMerge } from "./hosts.ts";
 import { sshBin, hostControlPath } from "./ssh.ts";
 import { forget, keyOf } from "./store.ts";
 import { makeFeeds, hostStatus, statusLines, redactOf, MAX_PARALLEL } from "./cli.ts";
@@ -236,6 +238,40 @@ function allowNow(): void {
 }
 FLEET_HOOK.claude = (): Allow | null => { if (!T.on) return null; allowNow(); return AL.claude; };
 FLEET_HOOK.codex = (): RlWin[] | null => { if (!T.on) return null; allowNow(); return AL.codex; };
+// skill-usage 6.15: the Stats skills panel's host column. This machine: its ledger (a session's copies and subagents under
+// its id) plus the merge's corrections (copies another host owns, out); exact hosts: their merge entries; Part A hosts:
+// their sessions' skills[] in the period. One table per (merge, ledger version, days, sort): the panel asks every frame
+const SKF = { sig: "", rows: [] as HostRow[] };
+function topId(path: string): string {
+  let s = sessions.get(path); if (!s) return path;
+  for (let g = 0; s.parent && g < 8; g++) { const up = sessions.get(s.parent); if (!up) break; s = up; }
+  return s.h + ":" + s.id;
+}
+SKILL_FLEET.on = (): boolean => T.on && merged().length > 0;
+SKILL_FLEET.rows = (days: string[] | null, by: string): HostRow[] => {
+  const c = FLEET.cfg; const hs = merged(); if (!c || !hs.length) return [];
+  let exact = false; for (const rh of hs) if (rh.report && rh.report.exact) exact = true;
+  const x = exact ? exactMerge(hs, c.reprice, 30000, false) : null; // the TUI: the last finished merge (a new one runs in the tick's slices)
+  const sig = String(mergeGen()) + "|" + String(L.ver) + "|" + (days ? days.join(",") : "all") + "|" + by + "|" + hs.map((rh: RemoteHost) => rh.cfg.name + "@" + String(rh.okAt)).join(",") + "|" + String(x !== null);
+  if (sig === SKF.sig) return SKF.rows;
+  const local: HostSet = { host: c.localName, accs: [], ids: [], sess: [] };
+  for (const [p, a] of ledger) { local.accs.push(a); local.ids.push(topId(p)); }
+  const sets: HostSet[] = [local]; const by0 = new Map<string, HostSet>();
+  if (x) for (const e of x.accs) {
+    if (!e.host) { local.accs.push(e.a); local.ids.push(topId(e.key)); continue; } // a correction: its log's session
+    let g = by0.get(e.host); if (!g) { g = { host: e.host, accs: [] as Acc[], ids: [] as string[], sess: [] }; by0.set(e.host, g); sets.push(g); }
+    g.accs.push(e.a); g.ids.push(e.key);
+  }
+  const from = days && days.length ? Date.parse(days.slice().sort()[0] + "T00:00:00") : 0;
+  for (const rh of hs) {
+    const r = rh.report; if (!r || (r.exact && x)) continue;
+    const g: HostSet = { host: rh.cfg.name, accs: [], ids: [], sess: [] };
+    for (const sr of r.sessions) { const u = Date.parse(String(sr.s["updated"] ?? "")); if (!from || u >= from) g.sess.push(sr.s); }
+    if (g.sess.length) sets.push(g);
+  }
+  SKF.sig = sig; SKF.rows = hostRows(sets, days, by);
+  return SKF.rows;
+};
 function claudeOf(hs: RemoteHost[], now: number): Allow | null {
   const a = fleetAllowance(allowanceInfo(now), hs); if (!a) return null;
   let best: Allow | null = null; let top = -1;

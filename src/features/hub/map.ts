@@ -259,7 +259,7 @@ function dayRows(x: SessAgg): DayRow[] {
     }
     const hx: string[][] = []; for (const k of g.hx.keys()) { const p = k.split("\u0000"); hx.push([p[0] ?? "0", p[1] ?? "", String(g.hx.get(k) ?? 0)]); }
     const umr: string[][] = []; for (const mo of um.keys()) umr.push([mo, String(um.get(mo) ?? 0)]);
-    out.push({ d, tp, hx, unk: g.unk, um: umr, uc: 0, tools: g.tools, turns: g.turns, calls: g.calls, errors: g.errors });
+    out.push({ d, tp, hx, unk: g.unk, um: umr, uc: 0, tools: g.tools, turns: g.turns, calls: g.calls, errors: g.errors, sa: [] }); // skill tokens are not in the spans
   }
   return out;
 }

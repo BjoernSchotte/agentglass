@@ -146,7 +146,7 @@ hub.mine = ex(rep("ffffffffffffffff", [{ id: "s", live: false }], 1, true, null)
 ok("17: this machine's id: not merged, not shown", hub.dupOf === "local" && !hub.merged && hub.rows.length === 0, hub.dupOf);
 // an exact host's model without a price on this machine shows in the price panel's rows like a local one (spec 14)
 const rz = ex(rep("6666666666666666", [{ id: "z", live: false }], 1, true, null)); rz.hello.tzOffsetMin = -new Date().getTimezoneOffset();
-const none: string[][] = []; const zd: DayRow = { d: todayKey(), tp: [["3", "", "claude-zeta-9", "1000", "200", "0", "0", "0", "-1"]], hx: none, unk: 0, um: none.slice(), uc: 0, tools: 0, turns: 0, calls: 0, errors: 0 };
+const none: string[][] = []; const zd: DayRow = { d: todayKey(), tp: [["3", "", "claude-zeta-9", "1000", "200", "0", "0", "0", "-1"]], hx: none, unk: 0, um: none.slice(), uc: 0, tools: 0, turns: 0, calls: 0, errors: 0, sa: none.slice() };
 const zr = rz.sessions[0]; if (zr) zr.days = [zd];
 vm2.mine = rz; vm2.mineAt = now; reapply();
 const pz = pricedRows([todayKey()], "").find((x) => x.model === "claude-zeta-9");

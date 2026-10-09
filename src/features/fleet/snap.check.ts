@@ -9,7 +9,7 @@ let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const HEAD = { version: "2026.10.6", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 120, redact: false, days: 7, now: 1791000000000, priceSig: "x" };
 function sr(key: string, updated: string, cost: number): SessRow {
-  return { s: { harness: key.split(":")[0] ?? "", id: key.split(":")[1] ?? "", updated, costUsd: cost }, key, days: [{ d: "2026-10-01", tp: [["9", "", "claude-sonnet-4-5", "1", "2", "3", "4", "5", "0.5"]], hx: [["10", "anthropic", "0.25"]], unk: 0, um: [] as string[][], uc: 0, tools: 1, turns: 1, calls: 1, errors: 0 }], own: null, prov: [] };
+  return { s: { harness: key.split(":")[0] ?? "", id: key.split(":")[1] ?? "", updated, costUsd: cost }, key, days: [{ d: "2026-10-01", tp: [["9", "", "claude-sonnet-4-5", "1", "2", "3", "4", "5", "0.5"]], hx: [["10", "anthropic", "0.25"]], unk: 0, um: [] as string[][], uc: 0, tools: 1, turns: 1, calls: 1, errors: 0, sa: [["alpha", "", "claude-sonnet-4-5", "1", "0", "0", "0", "0", "0", "100", "0", "0", "0", "300", "0", "0", "0", "200", "0", "0", "0"]] }], own: null, prov: [] };
 }
 function row(h: string, key: number): OwnRow { return { h, key, d: "2026-10-01", hr: 9, m: "claude-sonnet-4-5", prov: "", n: [1, 2, 3, 4, 5, 0.5, 1] }; }
 const H1 = "00000000000000a1"; const H2 = "00000000000000a2"; const H3 = "00000000000000a3"; const H9 = "00000000000000f9";
@@ -23,6 +23,8 @@ ok("last line is end", ls[ls.length - 1]?.startsWith("{\"end\":") === true, ls[l
 const p = newSnapParse(); for (const l of ls) feedSnap(p, [l]);
 ok("parsed done", p.done && !p.err, p.err);
 ok("round trip", JSON.stringify(snapLines(p)) === JSON.stringify(ls), snapLines(p).join("\n"));
+ok("skill day rows travel (skill-usage 6.15)", JSON.stringify(p.sess[0]?.days?.[0]?.sa ?? []) === JSON.stringify(full.sess[0]?.days?.[0]?.sa ?? [["x"]]), JSON.stringify(p.sess[0]?.days?.[0]?.sa ?? []));
+{ const old = newSnapParse(); feedSnap(old, ls.map((l: string) => l.replace(/,"sa":\[\[[^\]]*\]\]/g, ""))); ok("a host without skill rows: sa []", (old.sess[0]?.days?.[0]?.sa.length ?? -1) === 0, old.err); }
 const cut = newSnapParse(); feedSnap(cut, ls.slice(0, ls.length - 1));
 ok("no end → not done", !cut.done && !cut.err, String(cut.done));
 const wrong = newSnapParse(); feedSnap(wrong, ls.slice(0, 2).concat([ls[ls.length - 1] ?? ""]));

@@ -32,6 +32,8 @@ const OPTS = [
   opt("--repo", "<name>", "only sessions of this project (the filter key repo)", "", []), opt("--filter", "'<expr>'", "only matching sessions (repeatable)", "", []),
   opt("--session", "<ref>", "one session's timeline: one line per load (current | last | <id> | <id prefix> | <harness>:<id>)", "", []),
   opt("--check", "", "verify the ledger's skill invariants; exit 3 on a violation", "", []),
+  opt("--name", "<skill>", "only this skill (its name as shown: a fake under --redact)", "", []),
+  opt("--advice", "<n>", "--json: how many advice items to include (0–50)", "3", []),
   opt("--all-projects", "", "inside an agent: every project (default: the current one)", "", []),
 ];
 const HELP = `usage: agentglass skills [--period today|7d|30d|all] [--sort ${SORTS.join("|")}] [--harness h] [--repo r] [--filter expr] [--json]
@@ -62,15 +64,17 @@ const HELP = `usage: agentglass skills [--period today|7d|30d|all] [--sort ${SOR
   --filter expr   only matching sessions (the filter language, repeatable)
   --session ref   one session's timeline (its subagents included)
   --check         verify the skill invariants over the ledger (shares never above a request's tokens); exit 3 on a violation
+  --name skill    only this skill (the table, advice, a session's timeline)
+  --advice n      --json: the top n advice items (default 3, 0–50)
 
   exit codes: 0 ok · 2 usage error · 3 not found, or --check found a violation`;
 
 let rc = 0;
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(rc); } }
 function fail(msg: string, hint = ""): never { cliError("usage", msg, hint, 2); }
-interface Opts { json: boolean; period: string; sort: string; harness: string; repo: string; filters: string[]; session: string; check: boolean; pos: string[] }
+interface Opts { json: boolean; period: string; sort: string; harness: string; repo: string; filters: string[]; session: string; check: boolean; pos: string[]; name: string; advice: number }
 function opts(args: string[]): Opts {
-  const o: Opts = { json: false, period: "30d", sort: "cost", harness: "", repo: "", filters: [], session: "", check: false, pos: [] };
+  const o: Opts = { json: false, period: "30d", sort: "cost", harness: "", repo: "", filters: [], session: "", check: false, pos: [], name: "", advice: 3 };
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
     const val = (): string => { const v = argVal(args, i); if (v === null) fail(a + " needs a value"); i++; return String(v); };
@@ -82,6 +86,8 @@ function opts(args: string[]): Opts {
     else if (a === "--repo") o.repo = val();
     else if (a === "--filter") o.filters.push(val());
     else if (a === "--session") o.session = val();
+    else if (a === "--name") o.name = val();
+    else if (a === "--advice") { const v = val(); if (!/^[0-9]{1,2}$/.test(v) || Number(v) > 50) fail("--advice needs a number from 0 to 50", "e.g. --advice 10"); o.advice = Number(v); }
     else if (a === "--all-projects" || a === "--project-only" || a === "--content") continue;
     else if (a === "--format" || a === "--fields") fail(a + " does not apply: use --json");
     else if (a.startsWith("-")) fail("unknown option " + a, "see agentglass skills --help");
@@ -158,6 +164,8 @@ function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advic
   };
   return visAdvice(advise(rows, loads, { days: periodLen(o.period), listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !o.harness || x.harness === o.harness), adviseCfg(), calls));
 }
+// --name: a skill as shown (a fake under --redact matches; its real name only where it is shown as is)
+function named(o: Opts, shown: string): boolean { return !o.name || shown === o.name; }
 function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
 function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
 
@@ -165,9 +173,9 @@ function table(o: Opts, set: Set0): void {
   const days = periodDays(o.period);
   const all = skillTable(set.accs, set.ids, days, o.sort);
   const loads = skillLoads(set.accs, set.ids);
-  const adv = adviceIn(set, all, loads, o);
-  const v = visRows(all.slice());
-  if (o.json) { out(JSON.stringify({ period: o.period, rows: v.rows.map(rowJson), hidden: v.hidden, advice: adv.slice(0, 3).map(advJson), notes: "tokens are measured request tokens; a skill's share is bounded by its text size and the context growth; ≈ inferred or cut, ? unknown size (not priced); $ at current list prices" })); return; }
+  const adv = adviceIn(set, all, loads, o).filter((a: Advice) => named(o, a.skill));
+  const v = visRows(all.slice()); if (o.name) v.rows = v.rows.filter((r: SkillRow) => named(o, r.name));
+  if (o.json) { out(JSON.stringify({ period: o.period, rows: v.rows.map(rowJson), hidden: v.hidden, advice: adv.slice(0, o.advice).map(advJson), notes: "tokens are measured request tokens; a skill's share is bounded by its text size and the context growth; ≈ inferred or cut, ? unknown size (not priced); $ at current list prices" })); return; }
   if (!v.rows.length) { out("no skill loads " + periodText(o.period) + (set.tops.length ? " (" + String(set.tops.length) + " sessions)" : "") + " — skills are counted from Claude, Codex, pi, OpenCode and Gemini logs"); return; }
   for (const l of tableLines(v.rows, termWidth())) out(l);
   if (adv.length) { out(""); for (const a of adv.slice(0, 3)) out(adviceLines(a)[0] ?? ""); if (adv.length > 3) out("… " + String(adv.length - 3) + " more: agentglass skills advise"); }
@@ -175,7 +183,7 @@ function table(o: Opts, set: Set0): void {
 function adviseCmd(o: Opts, set: Set0): void {
   const days = periodDays(o.period);
   const rows = skillTable(set.accs, set.ids, days, "cost");
-  const adv = adviceIn(set, rows, skillLoads(set.accs, set.ids), o);
+  const adv = adviceIn(set, rows, skillLoads(set.accs, set.ids), o).filter((a: Advice) => named(o, a.skill));
   if (o.json) { out(JSON.stringify({ period: o.period, advice: adv.map(advJson) })); return; }
   if (!adv.length) { out("no advice " + periodText(o.period) + ": no skill crossed a threshold (config skills.advise.*)"); return; }
   for (let i = 0; i < adv.length; i++) { if (i) out(""); for (const l of adviceLines(adv[i] as Advice)) out(l); }
@@ -200,17 +208,18 @@ function loadLine(i: number, r: LoadRow): string {
 function timeline(o: Opts, sc: Scope): void {
   const g = oneSession(o, sc, o.session);
   const raw = skillLoads(g.accs, g.ids); sizeFill(raw);
-  const ls: Obj[] = []; const lines: string[] = [];
+  const ls: Obj[] = []; const lines: string[] = []; let skipped = 0;
   for (const r of raw) {
     const v = skillVis(r.name); if (v.mode === "omit") continue; // its tokens stay in the session's totals
-    const i = lines.length + ls.length;
+    const i = lines.length + ls.length + skipped;
+    if (!named(o, v.shown)) { skipped++; continue; } // sk<i> stays the load's index in the full timeline
     if (!o.json) { const real = r.name; r.name = v.shown; lines.push(loadLine(i, r)); r.name = real; continue; }
     const t = shownText(sessOf(r.sess) ?? g.s, r.name, r.hash, r.off, r.len, false, false);
     ls.push({ i, session: r.sess, name: v.shown, trigger: r.trig, at: r.t > 0 ? new Date(r.t).toISOString() : null, turn: r.turn, bytes: r.bytes, size: r.size, end: r.end > 0 ? new Date(r.end).toISOString() : null, why: r.why || null,
       reloadedAfterCompact: r.rel, stub: r.stub, requests: r.requests, tokens: { load: r.load, carry: r.carry, tail: r.tail }, costUsd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd),
       tier: r.tier, hash: r.hash, scope: r.scope, dir: v.mode === "show" ? r.dir : "", text: t.text || null, textHidden: t.why || null });
   }
-  if (o.json) { out(JSON.stringify({ session: g.s.h + ":" + g.s.id, loads: ls })); return; }
+  if (o.json) { const v = visRows(skillTable(g.accs, g.ids, null, o.sort)); out(JSON.stringify({ session: g.s.h + ":" + g.s.id, rows: v.rows.filter((r: SkillRow) => named(o, r.name)).map(rowJson), hidden: v.hidden, loads: ls })); return; }
   if (!lines.length) { out("no skill loads in " + g.s.h + ":" + g.s.id); return; }
   for (const l of lines) out(l);
 }

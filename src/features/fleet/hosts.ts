@@ -16,11 +16,11 @@ import { type CostNow, type Ent, type Extra, budget, costWithX, extraOf, sumDays
 import type { SessAcc } from "../usage/pricerows.ts";
 import { PGEN } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
-import { L, todayKey, lastDays } from "../usage/record.ts";
+import { type Acc, L, todayKey, lastDays } from "../usage/record.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { ownIdsBy, rowsBy, forgetIds } from "../usage/msgrows.ts";
 import { hashId } from "./ownc.ts";
-import { type LocalLog, type LocalRows, type FleetHost, type Exact, type Shadow, type MergeJob, mergeStart, mergeStep, modeOfShadow, newXCache, costDays } from "./merge.ts";
+import { type LocalLog, type LocalRows, type FleetHost, type Exact, type Shadow, type MergeJob, mergeStart, mergeStep, modeOfShadow, newXCache, costDays, LOCAL_SKILLS } from "./merge.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
 import type { HostFeed, HostReport, FeedState, LiveRow } from "./model.ts";
 
@@ -236,6 +236,7 @@ function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; retu
 const EX = { at: 0, ver: -1, sig: "", cs: "", x: null as Exact | null, gen: 0, ms: 0, sums: 0, max: 0, smax: 0 }; // cs: the host set x was merged from; ms/sums: time spent merging and summing, max/smax: the longest merge slice and sum (the debug footer)
 export function mergeMs(): number[] { const o = [EX.ms, EX.sums, EX.max, EX.smax]; EX.ms = 0; EX.sums = 0; EX.max = 0; EX.smax = 0; return o; }
 export function mergeGen(): number { return EX.gen; } // bumped by every finished merge
+LOCAL_SKILLS.acc = (p: string): Acc | null => ledger.get(p) ?? null; // a correction takes its lost messages' skill shares out (skill-usage 6.15)
 // a merge result of the current host set exists (one of another set never stands for it)
 export function merged0(): boolean { return EX.x !== null && (!RUN.r || RUN.r.csig === EX.cs); }
 const XC = newXCache(); // what the merge keeps between rounds (merge.ts)

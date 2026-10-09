@@ -35,6 +35,7 @@ export function stripContent(tool: string, v: Obj): Obj {
     return c;
   }
   if (tool === "events" && v["events"] !== undefined) { const c = copy(v); c["events"] = noText(v["events"], all); return c; }
+  if (tool === "skills" && v["loads"] !== undefined) { const c = copy(v); c["loads"] = noText(v["loads"], all).map((x: unknown): unknown => { const r = obj(x); return r ? without(r, "textHidden") : x; }); return c; } // a skill's loaded text
   return v; // compare, triage: aggregates only
 }
 

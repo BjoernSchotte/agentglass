@@ -1,4 +1,4 @@
-// agentglass-mcp — the 12 read-only tools: schemas (tools/list), input validation and the argv of the one agentglass CLI
+// agentglass-mcp — the 13 read-only tools: schemas (tools/list), input validation and the argv of the one agentglass CLI
 // child each call runs. One property table per tool feeds both the JSON Schema and the validator, so they cannot differ.
 // Values reach argv only through this mapping: refs and ids by pattern, filters as --flag=value, never a shell.
 // SPDX-License-Identifier: Apache-2.0
@@ -106,6 +106,10 @@ const SPECS: Spec[] = [
     desc: "A session's events by kind (prompt, shell:test, mcp:<server>, skill:load, error …), filtered as in the TUI; hidden runs as gaps.",
     props: [REF(""), P("filter", "str", "expr", 0, 512, [], "", "event.kind is skill"), LIMIT(200, 50), CURSOR],
     out: OBJ({ events: T("array"), next: TN("string") }) },
+  { name: "skills", title: "Skills",
+    desc: "Skills (SKILL.md) agents loaded and what each cost (load + carry $); ref: one session's loads; advise: what to change.",
+    props: [REF(""), P("period", "enum", "", 0, 0, ["today", "7d", "30d", "all"], "", ""), P("repo", "str", "expr", 0, 128, [], "", ""), P("name", "str", "expr", 0, 128, [], "", ""), P("advise", "bool", "", 0, 0, [], "", "")],
+    out: OBJ({ rows: T("array") }) },
   { name: "contention", title: "Contention",
     desc: "Before running tests, builds, type checks, lint or installs: are other agents on this machine already running heavy commands? Returns go=false with what is running.",
     props: [P("kind", "enum", "", 0, 0, ["test", "typecheck", "lint", "build", "install", "ci"], "", ""), P("family", "str", "family", 0, 64, [], "", "e.g. pnpm test"), P("max", "int", "", 1, 32, [], "3", "")],
@@ -283,6 +287,10 @@ export function plan(name: string, raw: Obj, o: Opts): Call {
   } else if (name === "events") {
     page(50); // events are paged here: the CLI returns them all (text only with the server's --content)
     g = ["events", S(a, "ref") || "current", "--json"].concat(filter("filter", "--filter"), o.content ? ["--content"] : []);
+  } else if (name === "skills") { // text per load only with the server's --content (shape.ts strips it otherwise)
+    const ref = S(a, "ref"); const nm = S(a, "name") ? ["--name", S(a, "name")] : [];
+    if (ref) g = ["skills", "--session", ref, "--json"].concat(nm);
+    else g = ["skills", "--json", "--period", S(a, "period") || "30d"].concat(S(a, "repo") ? ["--repo", S(a, "repo")] : [], nm, ["--advice", Bo(a, "advise", false) ? "10" : "0"]);
   } else if (name === "contention") {
     if (S(a, "kind") && S(a, "family")) return failed(name, "give kind or family, not both");
     c.scoped = false; // machine resources are shared across projects: host-wide, as `wait --now` is

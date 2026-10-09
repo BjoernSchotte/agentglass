@@ -6,6 +6,8 @@ import { type Acc, peekHeavy, mkey } from "../usage/record.ts";
 import { type DayRow, type Hello, type HostReport, type Owned, type SessRow, ownSess } from "./model.ts";
 import { helloOf } from "./report.ts";
 import { type OwnChunk, NO_ROWS, newChunk, joinChunks, hashId, hashHex, wordId, word } from "./ownc.ts";
+import { SA_N } from "../usage/skillrec.ts";
+import { skillVis, HIDDEN } from "../skills/vis.ts";
 
 export const SNAP = "agentglass-snapshot/v1";
 export interface OwnLine { key: string; reset: boolean; rows: OwnChunk } // rows in columns (ownc.ts chunkOf)
@@ -36,8 +38,8 @@ function ownInto(c: OwnChunk, i: number, u: number, v: unknown): boolean {
   c.u[i] = u; c.d[u] = wordId(str(a[2])); c.hr[u] = hr; c.m[u] = wordId(str(a[4])); c.p[u] = wordId(str(a[5]));
   return true;
 }
-function dayOut(d: DayRow): Obj { return { d: d.d, tp: d.tp, hx: d.hx, unk: d.unk, um: d.um, uc: d.uc, tools: d.tools, turns: d.turns, calls: d.calls, errors: d.errors }; }
-function dayIn(o: Obj): DayRow { return { d: str(o["d"]), tp: rows2(o["tp"]), hx: rows2(o["hx"]), unk: num(o["unk"]), um: rows2(o["um"]), uc: num(o["uc"]), tools: num(o["tools"]), turns: num(o["turns"]), calls: num(o["calls"]), errors: num(o["errors"]) }; }
+function dayOut(d: DayRow): Obj { const o: Obj = { d: d.d, tp: d.tp, hx: d.hx, unk: d.unk, um: d.um, uc: d.uc, tools: d.tools, turns: d.turns, calls: d.calls, errors: d.errors }; if (d.sa.length) o["sa"] = d.sa; return o; }
+function dayIn(o: Obj): DayRow { return { d: str(o["d"]), tp: rows2(o["tp"]), hx: rows2(o["hx"]), unk: num(o["unk"]), um: rows2(o["um"]), uc: num(o["uc"]), tools: num(o["tools"]), turns: num(o["turns"]), calls: num(o["calls"]), errors: num(o["errors"]), sa: rows2(o["sa"]) }; }
 function sessOut(r: SessRow): Obj { const ds: Obj[] = []; for (const d of r.days ?? []) ds.push(dayOut(d)); return { key: r.key, s: r.s, days: ds, prov: r.prov }; }
 function sessIn(o: Obj): SessRow | null {
   const s = obj(o["s"]); const key = str(o["key"]); if (!s || !key) return null;
@@ -138,6 +140,22 @@ export function fullOf(r: HostReport, gen: string): Snap {
 // ── a session's days (spec 12.2): its own Acc and its subagents' folded into one DayRow per day of `days` ──
 function add(m: Map<string, number>, k: string, v: number): void { m.set(k, (m.get(k) ?? 0) + v); }
 const R6 = (x: number): number => Math.round(x * 1e9) / 1e9; // sums of many bookings: no float dust on the wire
+// a day's skill rows over the session's logs (Day.sa), names as this host shows them: a name rule's fake, omitted skills
+// summed into one "(hidden)" row per provider and model (their tokens stay in the totals)
+function addInto(r: number[], x: number[]): void { for (let i = 0; i < SA_N; i++) r[i] = (r[i] ?? 0) + (x[i] ?? 0); }
+export function saRows(accs: Acc[], k: string): string[][] {
+  const m = new Map<string, number[]>();
+  for (const a of accs) {
+    const d = a.days.get(k); if (!d) continue;
+    for (const [key, x] of d.sa) {
+      const t = key.indexOf("\t"); const v = skillVis(key.slice(0, t)); const nk = (v.mode === "omit" ? HIDDEN : v.shown) + key.slice(t);
+      const r = m.get(nk); if (r) addInto(r, x); else m.set(nk, x.slice());
+    }
+  }
+  const out: string[][] = [];
+  for (const [key, x] of m) { const p = key.split("\t"); const o = [p[0] ?? "", p[1] ?? "", p.slice(2).join("\t")]; for (let i = 0; i < SA_N; i++) o.push(String(R6(x[i] ?? 0))); out.push(o); }
+  return out;
+}
 export function dayRows(accs: Acc[], days: Set<string>): DayRow[] {
   const out: DayRow[] = []; const keys: string[] = [];
   for (const a of accs) for (const k of a.days.keys()) if (days.has(k) && keys.indexOf(k) < 0) keys.push(k);
@@ -173,7 +191,7 @@ export function dayRows(accs: Acc[], days: Set<string>): DayRow[] {
     for (const [rk, x] of tp) { const p = rk.split("\t"); tpo.push([p[0] ?? "0", p[1] ?? "", p.slice(2).join("\t"), String(x[0] ?? 0), String(x[1] ?? 0), String(x[2] ?? 0), String(x[3] ?? 0), String(x[4] ?? 0), String((x[5] ?? 0) < 0 ? -1 : R6(x[5] ?? 0))]); }
     const hxo: string[][] = []; for (const [hk, v] of hxP) { const t = hk.indexOf("\t"); hxo.push([hk.slice(0, t), hk.slice(t + 1), String(R6(v))]); }
     const umo: string[][] = []; for (const [m, n] of um) umo.push([m, String(n)]);
-    out.push({ d: k, tp: tpo, hx: hxo, unk, um: umo, uc, tools, turns, calls, errors });
+    out.push({ d: k, tp: tpo, hx: hxo, unk, um: umo, uc, tools, turns, calls, errors, sa: saRows(accs, k) });
   }
   return out;
 }

@@ -7,7 +7,8 @@
 // occurrence is taken out of its session's shadow entry (exactly what its host booked for it); a losing local
 // occurrence goes into a correction entry for its log (negative amounts: the local ledger itself stays untouched).
 // Copies carry identical usage, so which occurrence wins changes attribution, never the totals.
-import { type Acc, type Day, newAcc, newDay, mkey, reprice, lastDays } from "../usage/record.ts";
+import { type Acc, type Day, NO_SA, newAcc, newDay, mkey, reprice, lastDays } from "../usage/record.ts";
+import { SA_N, SA_LU, SA_LC, SA_L, SA_C, SA_T } from "../usage/skillrec.ts";
 import { monthStart } from "../usage/costs.ts";
 import { resolve, cost } from "../usage/pricing.ts";
 import { type Bill, MODES } from "../usage/billing.ts";
@@ -95,6 +96,14 @@ function addDayRow(a: Acc, dr: DayRow, shiftMin: number): void {
   }
   for (const h of dr.hx) { const x = shiftDH(dr.d, n(h[0]), shiftMin); addCostTo(a, dayOf(a, x.d), x.h, h[1] ?? "", "", n(h[2])); }
   // the day-level parts carry no hour: they move with the day's noon
+  if (dr.sa.length) { // skill rows carry no hour: with the day's noon (skill-usage 6.15)
+    const d = dayOf(a, shiftDH(dr.d, 12, shiftMin).d); if (d.sa === NO_SA) d.sa = new Map<string, number[]>();
+    for (const r of dr.sa) {
+      const k = (r[0] ?? "") + "\t" + (r[1] ?? "") + "\t" + (r[2] ?? ""); const x0 = d.sa.get(k);
+      const x = x0 ? x0 : saZero(); if (!x0) d.sa.set(k, x);
+      for (let i = 0; i < SA_N; i++) x[i] = (x[i] ?? 0) + n(r[3 + i]);
+    }
+  }
   if (!dr.um.length && !dr.unk && !dr.uc && !dr.tools && !dr.turns) return;
   const d = dayOf(a, shiftDH(dr.d, 12, shiftMin).d);
   for (const u of dr.um) addUnk(a, d, u[0] ?? "", n(u[1]));
@@ -118,6 +127,81 @@ export function subtract(a: Acc, row: OwnRow, shiftMin: number): void {
 // (tools and turns stay with their host's rows: no figure reads them from a shadow)
 function emptyDay(d: Day): boolean { return d.inTok === 0 && d.outTok === 0 && d.cr === 0 && d.cw === 0 && Math.abs(d.cost) < 1e-9 && Math.abs(d.unk) < 1e-9 && d.uc === 0 && d.um.size === 0; }
 export function prune(a: Acc): void { for (const [k, d] of [...a.days.entries()]) if (emptyDay(d)) a.days.delete(k); }
+
+// ── skills (skill-usage 6.15): a skill's tokens are shares of its requests' tokens, booked per day, provider and model
+// (Day.sa), not per message. A losing occurrence takes out of the skill rows of its (host day, provider, model) the part
+// of each bucket it took out of the session's tokens there: exact when an occurrence loses a whole bucket (a copy of a
+// log loses all of its messages to the other host: the usual case), in proportion when it loses part of one. Load
+// counts follow the day's tokens. ──
+// lost tokens per "<day>\t<provider>\t<model>": [in, cacheRead, write5m, write1h]
+export function addLost(m: Map<string, number[]>, row: OwnRow): void {
+  if (!row.n.length) return;
+  const k = row.d + "\t" + row.prov + "\t" + row.m; let x = m.get(k); if (!x) { x = [0, 0, 0, 0]; m.set(k, x); }
+  x[0] = (x[0] ?? 0) + (row.n[0] ?? 0); x[1] = (x[1] ?? 0) + (row.n[2] ?? 0); x[2] = (x[2] ?? 0) + (row.n[3] ?? 0); x[3] = (x[3] ?? 0) + (row.n[4] ?? 0);
+}
+// what a session's (day, provider, model) buckets held: [in, cacheRead, write5m, write1h]
+function had(m: Map<string, number[]>, d: string, prov: string, model: string, t: number[]): void {
+  const k = d + "\t" + prov + "\t" + model; let x = m.get(k); if (!x) { x = [0, 0, 0, 0]; m.set(k, x); }
+  x[0] = (x[0] ?? 0) + (t[0] ?? 0); x[1] = (x[1] ?? 0) + (t[1] ?? 0); x[2] = (x[2] ?? 0) + (t[2] ?? 0); x[3] = (x[3] ?? 0) + (t[3] ?? 0);
+}
+function lostShare(lost: number[] | undefined, held: number[] | undefined, i: number): number {
+  const l = lost ? lost[i] ?? 0 : 0; const h = held ? held[i] ?? 0 : 0;
+  return l <= 0 ? 0 : h <= 0 ? 1 : Math.min(1, l / h);
+}
+// the part of one skill row (x, at its host day) that goes with the lost tokens: per bucket of load, carry and tail; load
+// counts in proportion to the day's tokens (rounded: whole loads)
+function lostPart(x: number[], prov: string, model: string, day: string, lost: Map<string, number[]>, held: Map<string, number[]>, dayFrac: number): number[] {
+  const o: number[] = []; for (let i = 0; i < SA_N; i++) o.push(0);
+  if (!prov && !model) { for (let i = SA_LU; i <= SA_LC; i++) o[i] = Math.round((x[i] ?? 0) * dayFrac); return o; }
+  const k = day + "\t" + (prov.startsWith("=") ? prov.slice(1) : prov) + "\t" + model; const lo = lost.get(k); const he = held.get(k);
+  for (let b = 0; b < 4; b++) { const f = lostShare(lo, he, b); for (const at of [SA_L, SA_C, SA_T]) o[at + b] = (x[at + b] ?? 0) * f; }
+  return o;
+}
+function dayFracOf(lost: Map<string, number[]>, held: Map<string, number[]>, day: string): number {
+  let l = 0; let h = 0; const p = day + "\t";
+  for (const [k, v] of held) if (k.startsWith(p)) h += (v[0] ?? 0) + (v[1] ?? 0) + (v[2] ?? 0) + (v[3] ?? 0);
+  for (const [k, v] of lost) if (k.startsWith(p)) l += (v[0] ?? 0) + (v[1] ?? 0) + (v[2] ?? 0) + (v[3] ?? 0);
+  return l <= 0 ? 0 : h <= 0 ? 1 : Math.min(1, l / h);
+}
+// x − p per slot, never below 0; true = nothing left
+function takeOut(x: number[], p: number[]): boolean { for (let i = 0; i < SA_N; i++) x[i] = Math.max(0, (x[i] ?? 0) - (p[i] ?? 0)); return zero(x); }
+function saZero(): number[] { const o: number[] = []; for (let i = 0; i < SA_N; i++) o.push(0); return o; }
+function zero(x: number[]): boolean { for (const v of x) if (Math.abs(v) > 1e-9) return false; return true; }
+// a shadow's skill rows after its lost occurrences (lost, by host day): what its day rows held, then the lost parts out
+export function shadowSkills(a: Acc, ds: DayRow[], lost: Map<string, number[]>, shiftMin: number): void {
+  if (!lost.size) return;
+  const held = new Map<string, number[]>();
+  for (const dr of ds) for (const t of dr.tp) had(held, dr.d, t[1] ?? "", t[2] ?? "", [n(t[3]), n(t[5]), n(t[6]), n(t[7])]);
+  for (const dr of ds) {
+    if (!dr.sa.length) continue;
+    const d = a.days.get(shiftDH(dr.d, 12, shiftMin).d); if (!d || d.sa === NO_SA) continue;
+    const df = dayFracOf(lost, held, dr.d);
+    for (const r of dr.sa) {
+      const k = (r[0] ?? "") + "\t" + (r[1] ?? "") + "\t" + (r[2] ?? ""); const x = d.sa.get(k); if (!x) continue;
+      const src: number[] = []; for (let i = 0; i < SA_N; i++) src.push(n(r[3 + i]));
+      const p = lostPart(src, r[1] ?? "", r[2] ?? "", dr.d, lost, held, df);
+      if (takeOut(x, p)) d.sa.delete(k);
+    }
+  }
+}
+// a local log's skill rows into its correction entry, negative: the part that goes with its lost messages
+export const LOCAL_SKILLS = { acc: (path: string): Acc | null => null }; // the log's ledger entry (hosts.ts sets it)
+export function correctSkills(c: Acc, local: Acc, lost: Map<string, number[]>): void {
+  if (!lost.size) return;
+  const held = new Map<string, number[]>();
+  for (const [dk, d] of local.days) for (const [tk, r] of d.tp) { const t1 = tk.indexOf("\t"); const t2 = tk.indexOf("\t", t1 + 1); had(held, dk, tk.slice(t1 + 1, t2), tk.slice(t2 + 1), [r[0] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0]); }
+  for (const [dk, d] of local.days) {
+    if (d.sa === NO_SA) continue;
+    const df = dayFracOf(lost, held, dk);
+    for (const [k, x] of d.sa) {
+      const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1);
+      const p = lostPart(x, k.slice(t1 + 1, t2), k.slice(t2 + 1), dk, lost, held, df); if (zero(p)) continue;
+      const cd = dayOf(c, dk); if (cd.sa === NO_SA) cd.sa = new Map<string, number[]>();
+      const y0 = cd.sa.get(k); const y = y0 ? y0 : saZero(); if (!y0) cd.sa.set(k, y);
+      for (let i = 0; i < SA_N; i++) y[i] = (y[i] ?? 0) - (p[i] ?? 0);
+    }
+  }
+}
 // a local losing occurrence: its booking as a negative amount, priced with the current table (the local ledger is)
 function correct(a: Acc, row: OwnRow): void {
   if (!row.n.length) return;
@@ -184,8 +268,8 @@ export interface MergeJob {
 }
 // a shadow being built (its session's chunks, the hashes it loses, where the subtraction is) and a correction (its log's
 // rows, where it is): a session or log of thousands of messages spans slices
-interface ShadowBuild { mk: string; ds: DayRow[]; a: Acc; ls: Set<number>; lk: string; rows: OwnChunk[]; ci: number; ri: number }
-interface CorrBuild { rows: OwnRow[]; i: number; a: Acc; lost: Set<number> }
+interface ShadowBuild { mk: string; ds: DayRow[]; a: Acc; ls: Set<number>; lk: string; rows: OwnChunk[]; ci: number; ri: number; lt: Map<string, number[]> } // lt: lost tokens (skills)
+interface CorrBuild { rows: OwnRow[]; i: number; a: Acc; lost: Set<number>; lt: Map<string, number[]> }
 // a new job: which of the hosts' rows moved since the last merge (appended rows, a reset or a gone part rebuilds the index).
 // days: the days a local correction covers (costDays: what the hosts' day rows cover too; empty = every day)
 export function mergeStart(local: LocalLog[], localId: string, hosts: FleetHost[], reprice: boolean, rowsOf: (path: string, until: number) => LocalRows, xc: XCache, sig: string, pv: string, days: Set<string> = new Set<string>()): MergeJob {
@@ -327,7 +411,7 @@ export function mergeStep(j: MergeJob, until: number): boolean {
           }
           const lk = String(lenOf(rows)) + ":" + lost.join(",");
           if (hit && hit.days === ds && hit.lost === lk) { j.out.push(hit.sh); j.removed += hit.n; continue; }
-          bd = { mk, ds, a: shadowOf(sr, fh.shiftMin), ls, lk, rows, ci: 0, ri: 0 }; j.sb = bd;
+          bd = { mk, ds, a: shadowOf(sr, fh.shiftMin), ls, lk, rows, ci: 0, ri: 0, lt: new Map<string, number[]>() }; j.sb = bd;
         }
         // its lost rows out of it, a slice at a time (a session of thousands of messages)
         let n = 0;
@@ -335,11 +419,12 @@ export function mergeStep(j: MergeJob, until: number): boolean {
           const ch = bd.rows[bd.ci]; if (!ch) continue;
           for (; bd.ri < ch.n; bd.ri++) {
             if (!bd.ls.has(Number(ch.h[bd.ri] ?? -1))) continue;
-            fillRow(ch, bd.ri, scratch, false); subtract(bd.a, scratch, fh.shiftMin); did = true;
+            fillRow(ch, bd.ri, scratch, false); subtract(bd.a, scratch, fh.shiftMin); addLost(bd.lt, scratch); did = true;
             if (++n >= 256) { n = 0; if (late()) { bd.ri++; return false; } }
           }
         }
         j.sb = null; const a = bd.a;
+        shadowSkills(a, bd.ds, bd.lt, fh.shiftMin);
         if (bd.ls.size) prune(a);
         if (j.reprice) repriceShadow(a);
         const pm = new Map<string, string>(); for (const p of sr.prov) pm.set(p[0] ?? "", p[1] ?? "");
@@ -363,16 +448,17 @@ export function mergeStep(j: MergeJob, until: number): boolean {
         m.off = l.off; m.sh = null; m.nl = 0; m.inexact = false; m.built = m.lostJ + "|" + j.dsig;
         if (!lr.ok) { m.inexact = true; j.inexact.push(l.path); continue; }
         const a0 = newAcc(); a0.ro = true;
-        cb = { rows: lr.rows, i: 0, a: a0, lost: new Set<number>() }; j.cb = cb;
+        cb = { rows: lr.rows, i: 0, a: a0, lost: new Set<number>(), lt: new Map<string, number[]>() }; j.cb = cb;
       }
       // a message no host holds stays this machine's; a day outside the hosts' day rows keeps its local booking (no host
       // carries it there: taking it out would count the message nowhere)
       for (; cb.i < cb.rows.length; cb.i++) {
         const r = cb.rows[cb.i]; if (!r || !r.h || (j.days.size > 0 && !j.days.has(r.d))) continue;
-        const h = hashFind(r.h); if (held(c, h) && !steal.has(h)) { correct(cb.a, r); cb.lost.add(h); }
+        const h = hashFind(r.h); if (held(c, h) && !steal.has(h)) { correct(cb.a, r); addLost(cb.lt, r); cb.lost.add(h); }
         did = true; if ((cb.i & 255) === 255 && late()) { cb.i++; return false; }
       }
       j.cb = null;
+      const la = LOCAL_SKILLS.acc(l.path); if (la) correctSkills(cb.a, la, cb.lt);
       m.sh = { host: "", key: l.path, a: cb.a, bill: l.bill, prov: new Map<string, string>() }; m.nl = cb.lost.size;
       j.corrected += cb.lost.size; j.out.push(m.sh);
     }

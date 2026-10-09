@@ -1470,6 +1470,7 @@ config file itself.
 | `compare` | two sessions, or two groups of sessions (filter expressions `a`, `b`) |
 | `related` | what every agent in the project did around an event, conflicts flagged |
 | `events` | one session's events by kind (`filter` like `event.kind is skill`), hidden runs as gaps, paged by `cursor` |
+| `skills` | which skills agents loaded and what each cost (load + carry $) in a `period`, `repo` or one session (`ref`: its loads); `advise: true` adds up to 10 advice items; loaded text only with the server's `--content` |
 | `contention` | "start my tests now?": heavy commands other agents run on this machine, `go` true/false |
 | `waits` | where agent time goes: wall time per command family, kind or tool |
 | `fleet` | the fleet's hosts (`configured: false` without a fleet) |

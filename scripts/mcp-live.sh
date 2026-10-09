@@ -1,6 +1,6 @@
 #!/bin/sh
 # agentglass-mcp against the real Gemini CLI and pi (manual, not in check.sh; no model call): each host gets the
-# server in an isolated HOME and must report it connected with 12 tools. Never touches your own agent configs.
+# server in an isolated HOME and must report it connected with 13 tools. Never touches your own agent configs.
 #   sh scripts/mcp-live.sh <bin-dir>      (<bin-dir> holds agentglass and agentglass-mcp)
 set -e
 dir=$(cd "${1:?usage: mcp-live.sh <bin-dir>}" && pwd); t=$(mktemp -d)
@@ -15,6 +15,6 @@ else echo "gemini: not on PATH, skipped"; fi
 if command -v pi > /dev/null 2>&1; then
   o=$(cd "$p" && HOME="$h" PI_CODING_AGENT_DIR="$h/.pi/agent" timeout 60 pi mcp list --json 2>&1 || true)
   r=$(printf '%s' "$o" | python3 -c 'import json,sys; s=json.load(sys.stdin)["servers"][0]; print(s["state"], len(s["tools"]))' 2>/dev/null || echo "unreadable: $o")
-  [ "$r" = "connected 12" ] && echo "pi: connected, 12 tools" || { echo "FAIL pi: $r"; fail=1; }
+  [ "$r" = "connected 13" ] && echo "pi: connected, 13 tools" || { echo "FAIL pi: $r"; fail=1; }
 else echo "pi: not on PATH, skipped"; fi
 exit $fail

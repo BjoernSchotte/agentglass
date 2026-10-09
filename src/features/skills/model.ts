@@ -26,9 +26,10 @@ export interface SkillRow {
 export const SKILL_FIELDS = ["name", "loadsUser", "loadsModel", "loadsCompact", "sessions", "sizeP50", "load", "carry", "tail", "usd", "carryUsd", "tailUsd", "perSess", "share", "tier", "hashes", "scope", "unpriced"];
 export const LOAD_FIELDS = ["sess", "i", "name", "trig", "t", "turn", "te", "end", "why", "rel", "stub", "bytes", "size", "tier", "hash", "scope", "dir", "requests", "n", "load", "carry", "tail", "usd", "carryUsd", "tailUsd", "unpriced", "model"];
 
-// $ of [in, cacheRead, write5m, write1h] tokens under the current price table; -1 = no price (tokens present)
+// $ of [in, cacheRead, write5m, write1h] tokens under the current price table; -1 = no price (tokens present). Negative
+// tokens (a fleet correction: a copy another host owns, taken out) price negative (callers tell -1 apart by resolve())
 export function bucketUsd(model: string, prov: string, b: number[]): number {
-  const n = (b[0] ?? 0) + (b[1] ?? 0) + (b[2] ?? 0) + (b[3] ?? 0); if (n <= 0) return 0;
+  if ((b[0] ?? 0) === 0 && (b[1] ?? 0) === 0 && (b[2] ?? 0) === 0 && (b[3] ?? 0) === 0) return 0;
   const r = resolve(model, prov); if (!r) return -1;
   return cost(r.p, b[0] ?? 0, 0, b[1] ?? 0, b[2] ?? 0, b[3] ?? 0);
 }
@@ -47,7 +48,7 @@ export function skillLoads(as: Acc[], ids: string[]): LoadRow[] {
     for (let i = 0; i < a.sk.length; i++) {
       const l = a.sk[i] as SkLoad;
       let unpriced = false;
-      const pr = (b: number[]): number => { const u = bucketUsd(l.mdl, l.prov, b); if (u < 0) { unpriced = true; return 0; } return u; };
+      const pr = (b: number[]): number => { const u = bucketUsd(l.mdl, l.prov, b); if (u === -1 && !resolve(l.mdl, l.prov)) { unpriced = true; return 0; } return u; };
       let lu = 0; let cu = 0; let tu = 0;
       if (l.hu > 0) {
         const rest = pr(sub4([(l.lt[0] ?? 0) + (l.ct[0] ?? 0), (l.lt[1] ?? 0) + (l.ct[1] ?? 0), (l.lt[2] ?? 0) + (l.ct[2] ?? 0), (l.lt[3] ?? 0) + (l.ct[3] ?? 0)], l.hb));
@@ -99,7 +100,7 @@ export function skillTable(as: Acc[], ids: string[], days: string[] | null, by: 
         r.load += sum4(L); r.carry += sum4(C); r.tail += sum4(T);
         if (prov.startsWith(HP)) { const hu = x[SA_HU] ?? 0; const hl = x[SA_HL] ?? 0; r.usd += hu; r.carryUsd += hu - hl; r.tailUsd += x[SA_HT] ?? 0; continue; }
         let un = false;
-        const pp = (b: number[]): number => { const u = bucketUsd(model, prov, b); if (u < 0) { un = true; return 0; } return u; };
+        const pp = (b: number[]): number => { const u = bucketUsd(model, prov, b); if (u === -1 && !resolve(model, prov)) { un = true; return 0; } return u; }; // negative: a fleet correction
         const lu = pp(L); const cu = pp(C); r.usd += lu + cu; r.carryUsd += cu; r.tailUsd += pp(T);
         if (un) r.unpriced = true;
       }
