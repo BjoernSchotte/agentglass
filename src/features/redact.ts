@@ -163,6 +163,28 @@ export function fakeAgent(real: string): string {
   addWord("a" + real, "a" + out, true); // Claude team subagents: id a<name>-<hex>, transcript agent-a<name>-<hex>.jsonl
   return out;
 }
+// skills bundled with a harness (public, the same on every install): --redact shows them as they are. Sources: Claude Code's
+// bundled skills (invoked_skills path "bundled:<name>", the /help skill list), Codex's ~/.codex/skills/.system dir;
+// OpenCode, pi, Kiro and fx bundle none
+export const BUILTIN_SKILLS = new Set<string>(["update-config", "claude-api", "keybindings-help", "simplify", "loop", "schedule",
+  "fewer-permission-prompts", "code-review", "security-review", "review", "init", "workflow-authoring", "artifact-design",
+  "artifact-diagramming", "artifact-capabilities", "claude-in-chrome", "run", "verify", "debug", "batch", // claude
+  "imagegen", "openai-docs", "review-agent", "skill-creator", "skill-installer", // codex .system
+  "(listing)"]); // agentglass's own name for the skill listing
+// a user-defined skill name → a stable fake of the same length (a plugin:name as a whole), one per real name
+const skillMemo = new Map<string, string>(); const skillUsed = new Set<string>();
+export function fakeSkill(real: string): string {
+  if (!real || BUILTIN_SKILLS.has(real)) return real;
+  const hit = skillMemo.get(real); if (hit !== undefined) return hit;
+  const n = real.length; const k = real.toLowerCase();
+  const free = (c: string): boolean => c !== k && !skillUsed.has(c) && !BUILTIN_SKILLS.has(c);
+  let out = "";
+  for (let i = 0; i < 64 && !out; i++) { const c = stretch(pick(AGENT_POOL, "skill\t" + k + String(i)) + "-" + pick(AGENT_POOL, "skill#" + k + String(i)), n); if (free(c)) out = c; }
+  if (!out) out = stretch("skill", n);
+  skillMemo.set(real, out); skillUsed.add(out);
+  if (k.length >= 3 && !common.has(k) && !GENERIC.has(k)) addWord(real, out, true); // its name in tool arguments and screen text
+  return out;
+}
 function fakePerson(real: string, first: boolean): string {
   const n = real.length;
   return exactLen(first ? FIRST : LAST, n) || exactLen(first ? LAST : FIRST, n) || "x".repeat(n);
