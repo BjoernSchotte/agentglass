@@ -9,9 +9,10 @@ import { loadHead, titleOf } from "../../model/sessions.ts";
 import { identSync } from "../query/project.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
 import { type Acc, type Booking, type SkLoad, newAcc, setBookTap } from "../usage/record.ts";
-import { SKCAP, type SkCap, skillHash } from "../usage/skillrec.ts";
+import { SKCAP, type SkCap, skillHash, LISTING } from "../usage/skillrec.ts";
 import { skillLoads } from "../skills/model.ts";
-import { skillVis, textShown } from "../skills/vis.ts";
+import { skillVis, textShown, textHiddenWhy, listingShown } from "../skills/vis.ts";
+import { callSkill, note } from "../skills/watchvis.ts";
 import { setCallTap, program, norm, mcpServer } from "../usage/calls.ts";
 import { familyOf, waitCfg } from "../wait/family.ts";
 import { ledger } from "../usage/ledger.ts";
@@ -175,7 +176,7 @@ function skillMarks(b: SessB, sd: Side, tr0: XTurn | null): void {
   const tr = tr0 ?? (sd.top ? b.open : hostTurn(b, sd.last));
   const sp = tr ? parentOf(b, sd, tr, sd.last) : null;
   const q = (i: number, unload: boolean): void => {
-    const l = a.sk[i]; if (!l || skillVis(l.name).mode === "omit") return;
+    const l = a.sk[i]; if (!l) return; note(l.name); if (skillVis(l.name).mode === "omit") return; // noted: a hidden name is scrubbed from the texts sent
     const x: SkQ = { sd, i, sp: sp ?? newSpan("invoke_agent", "", "", "", 0, ""), unload, name: l.name };
     if (!tr) { b.skWait.push(x); return; }
     const v = b.skq.get(tr.key); if (v) v.push(x); else b.skq.set(tr.key, [x]);
@@ -208,7 +209,7 @@ function skillEvents(b: SessB, tr: XTurn, o: BuildOpts): void {
     if (l.stub) at.push(attrB("agentglass.skill.stub", true));
     if (o.content && textShown(l.name, true, true)) {
       const caps = x.sd.caps;
-      for (let k = 0; k < caps.length; k++) { const c = caps[k] as SkCap; if (c.name !== l.name) continue; const t = c.parts.join(""); if (skillHash(t) !== l.hash) continue; at.push(attrS("agentglass.skill.text", cut(t, CMAX))); caps.splice(k, 1); break; }
+      for (let k = 0; k < caps.length; k++) { const c = caps[k] as SkCap; if (c.name !== l.name) continue; const t = c.parts.join(""); if (skillHash(t) !== l.hash) continue; at.push(attrS("agentglass.skill.text", cut(l.name === LISTING ? listingShown(t) : t, CMAX))); caps.splice(k, 1); break; }
     }
     x.sp.events.push({ name: "gen_ai.skill.load", t: l.t > 0 ? l.t : x.sp.t0, attrs: at });
   }
@@ -248,6 +249,7 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
     }
     if (cat === 1 || cat === 2) sp.target = targetOf(name, arg, e.full);
     if (name === "Skill" || name === "activate_skill") { const m = /"(?:skill|name)":"([^"]+)"/.exec(e.full); sp.skill = shownSkill(m ? m[1] ?? "" : arg); }
+    const sk = callSkill(name, arg); if (sk && note(sk)) sp.skHide = "(" + textHiddenWhy(sk) + ")"; // a hidden skill's text (this call's result) never leaves; its name is scrubbed (encode.ts)
     if (o.content) sp.args = cut(e.full || arg, CMAX);
     if (sd.lineTurn !== tr.key || sd.lineAt < 0) { sd.lineTurn = tr.key; sd.lineAt = tr.spans.length; }
     const sx = add(tr, sp);
@@ -269,7 +271,7 @@ function event(b: SessB, sd: Side, tr: XTurn, e: Ev, t: number, calls: Map<strin
       if (c.codes.length) sp.exit = c.codes[c.codes.length - 1] ?? -1;
       if (c.name && c.name !== sp.tool) { sp.tool = c.name; sp.mcp = mcpServer(c.name); sp.name = "execute_tool " + mcpTool(c.name); } // pi: the real MCP tool behind a proxy
     }
-    if (o.content) { sp.result = cut(e.text, CMAX); if (sp.err) sp.errMsg = cut(e.text, 1024); }
+    if (o.content) { sp.result = sp.skHide || cut(e.text, CMAX); if (sp.err && !sp.skHide) sp.errMsg = cut(e.text, 1024); }
   }
 }
 // a request line: its chat span(s) get the line's bookings (Claude fallback iterations: one span each)

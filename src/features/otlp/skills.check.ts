@@ -40,6 +40,15 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
   const t2 = run(true); const b2 = encodeRequest(t2, cfgC);
   eq("hidden: beta omitted, delta faked, alpha without text", String(evs(t2).indexOf(":beta:") < 0) + " " + String(evs(t2).indexOf(":delta:") < 0) + " " + String(attr(t2, "alpha", "gen_ai.skill.load", "agentglass.skill.text") === ""), "true true true");
   eq("hidden: no beta, no delta name anywhere", String(b2.indexOf("\"beta\"") < 0 && b2.indexOf("\"delta\"") < 0), "true");
+  // a hidden skill's name and text stay out of the call spans too, with --content and call details: the Read of its
+  // SKILL.md (the path, its text as the result), the Skill call's arguments and result, the prompts naming it
+  setVis([{ match: "*", mode: "content" }], false);
+  const cfgM = cfgFrom({ contentMax: 100000, detail: "meta" }); cfgM.content = true;
+  const b4 = encodeRequest(run(true), cfgM);
+  eq("content rule: no skill text in any span with --content", String(b4.indexOf("LOREMSKILLTEXT")) + " " + String(b4.indexOf("MORELOREMTEXT")), "-1 -1");
+  setVis([{ match: "del*", mode: "omit" }, { match: "beta", mode: "name" }, { match: "*:never", mode: "omit" }], false);
+  const b5 = encodeRequest(run(true), cfgM);
+  eq("omit/name rules: no name in call details, arguments, results or prompts", String(b5.indexOf("delta")) + " " + String(b5.indexOf("beta")) + " " + String(b5.indexOf("LOREMSKILLTEXT") > 0), "-1 -1 true");
   setVis([], true);
   const t3 = run(false);
   eq("--redact fakes user skill names, keeps hashes", String(evs(t3).indexOf(":alpha:") < 0) + " " + String(attr(t3, "(listing)", "gen_ai.skill.load", "agentglass.skill.trigger")), "true listing");
