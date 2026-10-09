@@ -170,7 +170,6 @@ export function skillCheck(as: Acc[], ids: string[]): string[] {
       for (let j = 0; j < 4; j++) { const lt = l.lt[j] ?? 0; const ct = l.ct[j] ?? 0; const tt = l.tt[j] ?? 0; if (lt < 0 || ct < 0 || tt < 0 || tt > lt + ct) neg = true; }
       if (neg) out.push(at + ": negative or inconsistent token slots");
       if ((l.end === 0) !== (l.why === "")) out.push(at + ": state (end " + String(l.end) + ", why \"" + l.why + "\")");
-      if (l.end !== 0 && l.pend) out.push(at + ": ended while not sent");
       tok += sum4(l.lt) + sum4(l.ct); hu += l.hu;
     }
     const ctx = a.inTok + a.cr + a.cw;

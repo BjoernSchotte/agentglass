@@ -102,7 +102,7 @@ function words(seg: string): string[] {
   return out;
 }
 // the SKILL.md path a shell command line reads: a reading program (after cd …&&, sudo, rtk, env assignments; never after a
-// pipe) with a path argument skillPath() names; "" for anything else (ls, find, wc, an editor)
+// pipe; rtk proxy too) with a path argument skillPath() names; "" for anything else (ls, find, wc, an editor)
 export function skillReadCmd(cmd: string): string {
   if (cmd.indexOf("SKILL.md") < 0) return "";
   for (const line of cmd.split("\n")) {
@@ -110,7 +110,7 @@ export function skillReadCmd(cmd: string): string {
       const seg = part.split("|")[0] ?? ""; // a pipe's later stages read their stdin
       const w = words(seg.trim());
       let i = 0;
-      while (i < w.length && (WRAPS.indexOf(w[i] ?? "") >= 0 || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i] ?? ""))) i++;
+      while (i < w.length && (WRAPS.indexOf(w[i] ?? "") >= 0 || (i > 0 && w[i - 1] === "rtk" && w[i] === "proxy") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i] ?? ""))) i++;
       const prog = w[i] ?? ""; const base = prog.slice(prog.lastIndexOf("/") + 1);
       const rtkRead = i > 0 && w[i - 1] === "rtk" && base === "read";
       if (READERS.indexOf(base) < 0 && !rtkRead) continue;

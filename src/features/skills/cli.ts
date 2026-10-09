@@ -15,7 +15,7 @@ import { agentHost, agentScope, visible, cliError, type Scope } from "../agenten
 import { opt, helpOf, wantsHelp, addCmd } from "../clihelp.ts";
 import { termCols } from "../format.ts";
 import { cliFilter, cliSelect } from "../query/cli.ts";
-import { accsOf } from "../usage/ledger.ts";
+import { accsOf, callsOf } from "../usage/ledger.ts";
 import { type Acc, lastDays, startOfDay } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows } from "./model.ts";
@@ -146,7 +146,14 @@ function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advic
   const listed = new Map<string, number>(); let reqs = 0;
   for (const a of set.accs) { reqs += a.rq; for (const n of a.lst) listed.set(n, (listed.get(n) ?? 0) + 1); }
   const repos: string[] = []; for (const s of set.tops) if (s.cwd && repos.indexOf(s.cwd) < 0 && repos.length < 200) repos.push(s.cwd);
-  return visAdvice(advise(rows, loads, { days: periodLen(o.period), listed, requests: reqs }, inventory(repos), adviseCfg(), (s: string, t0: number, t1: number): { n: number; err: number } => ({ n: 0, err: 0 })));
+  // A5's error rate: the session's call rows (kept filter.callDays) started in the loading turn
+  const calls = (sid: string, t0: number, t1: number): { n: number; err: number } => {
+    const s = set.bySess.get(sid); if (!s) return { n: 0, err: 0 };
+    const r = callsOf(s); let n = 0; let e = 0;
+    for (let i = 0; i < r.n; i++) { const t = r.t[i] + 0; if (t >= t0 && t < t1) { n++; if (r.err[i] + 0 > 0) e++; } }
+    return { n, err: e };
+  };
+  return visAdvice(advise(rows, loads, { days: periodLen(o.period), listed, requests: reqs }, inventory(repos), adviseCfg(), calls));
 }
 function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
 function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }

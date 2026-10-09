@@ -41,6 +41,8 @@ eq("cmd before pipe", skillReadCmd("cat /x/skills/a/SKILL.md | head -5"), "/x/sk
 eq("cmd env + rtk", skillReadCmd("LC_ALL=C rtk read \"/x/skills/b c/SKILL.md\""), "/x/skills/b c/SKILL.md");
 eq("cmd multi-line", skillReadCmd("git status\nnl -ba /x/skills/z/SKILL.md"), "/x/skills/z/SKILL.md");
 eq("cmd bare SKILL.md", skillReadCmd("sed -n '1,260p' SKILL.md"), "");
+eq("cmd rtk proxy", skillReadCmd("rtk proxy cat /h/.agents/skills/x/SKILL.md"), "/h/.agents/skills/x/SKILL.md");
+eq("cmd several files", skillReadCmd("cat /h/RTK.md /h/.codex/skills/y/SKILL.md"), "/h/.codex/skills/y/SKILL.md");
 eq("cmd wc", skillReadCmd("wc -l /x/skills/a/SKILL.md"), "");
 
 // the plan's worked example (Task 2 Step 1)

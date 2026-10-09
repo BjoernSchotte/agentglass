@@ -498,12 +498,12 @@ export function skillGrow(a: Acc, name: string, text: string): boolean {
 }
 // every load in context ends (a compaction marker, a /clear): why = compact | clear
 export function skillUnload(a: Acc, ms: number, why: string): void {
-  for (const l of a.sk) if (l.end === 0) { l.end = ms > 0 ? ms : 1; l.why = why; }
+  for (const l of a.sk) if (l.end === 0) { l.end = ms > 0 ? ms : 1; l.why = why; l.pend = false; } // one never sent costs nothing
 }
 // a new skill listing replaces the open one (why = relist); names = the skills it lists (kept for "listed, never loaded")
 export function skillListing(a: Acc, ms: number, iso: string, text: string, names: string[]): void {
   const t = ms > 0 ? ms : isoMs(iso);
-  for (const l of a.sk) if (l.end === 0 && l.name === LISTING) { l.end = t > 0 ? t : 1; l.why = "relist"; }
+  for (const l of a.sk) if (l.end === 0 && l.name === LISTING) { l.end = t > 0 ? t : 1; l.why = "relist"; l.pend = false; }
   skillLoad(a, LISTING, "listing", t, iso, text, true, "", false);
   const keep: string[] = []; for (const n of names) if (n && keep.length < SK_CAP && keep.indexOf(n) < 0) keep.push(own(n));
   a.lst = keep;

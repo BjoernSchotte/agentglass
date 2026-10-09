@@ -13,6 +13,7 @@ import { LISTING, SKILL_BPT } from "../usage/skillrec.ts";
 // severity = $ at stake per 30 days (for ordering); sessions = up to 10 session ids the evidence comes from
 export interface Advice { id: string; skill: string; severity: number; evidence: string[]; suggestion: string; sessions: string[] }
 interface Ver { h: string; t: number; ls: LoadRow[] }
+interface VerStat { ps: number; size: number; tail: number; err: number } // err -1 = no call rows
 export interface AdviseCfg { minSizeTok: number; tailShare: number; minSessions: number; minUserLoads: number; reloadSessions: number; compactLoads: number; versionSessions: number }
 // what the period knows besides rows and loads: its length in days, the listings' skill names → sessions listing them,
 // the requests of the period's sessions (an inventory description rides along on each)
@@ -95,15 +96,15 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
       for (let i = 1; i < hs.length; i++) {
         const a = hs[i - 1] as Ver; const b = hs[i] as Ver;
         if (distinct(a.ls) < cfg.versionSessions || distinct(b.ls) < cfg.versionSessions) continue;
-        const st = (v: LoadRow[]): { ps: number; size: number; tail: number; err: number } => {
+        const st = (v: LoadRow[]): VerStat => {
           let u = 0; let tl = 0; let n = 0; let er = 0; const sz: number[] = [];
           for (const l of v) { u += l.usd; tl += l.tailUsd; if (l.size >= 0) sz.push(l.size); const c = calls(l.sess, l.t, l.te > 0 ? l.te : l.end > 0 ? l.end : l.t + 3600000); n += c.n; er += c.err; }
-          return { ps: u / Math.max(1, distinct(v)), size: p50(sz), tail: u > 0 ? tl / u : 0, err: n > 0 ? er / n : 0 };
+          return { ps: u / Math.max(1, distinct(v)), size: p50(sz), tail: u > 0 ? tl / u : 0, err: n > 0 ? er / n : -1 };
         };
         const x = st(a.ls); const y = st(b.ls);
         out.push({ id: "A5", skill: r.name, severity: Math.abs(y.ps - x.ps) * distinct(b.ls) * per30,
           evidence: ["version " + a.h.slice(0, 8) + " → " + b.h.slice(0, 8) + " (first seen " + new Date(b.t).toISOString().slice(0, 10) + ")",
-            "sessions " + String(distinct(a.ls)) + " → " + String(distinct(b.ls)) + " · size " + tok(x.size) + " → " + tok(y.size) + " tok · $/session " + usd(x.ps) + " → " + usd(y.ps) + " · tail " + pct(x.tail) + " → " + pct(y.tail) + " · call errors " + pct(x.err) + " → " + pct(y.err)],
+            "sessions " + String(distinct(a.ls)) + " → " + String(distinct(b.ls)) + " · size " + tok(x.size) + " → " + tok(y.size) + " tok · $/session " + usd(x.ps) + " → " + usd(y.ps) + " · tail " + pct(x.tail) + " → " + pct(y.tail) + (x.err >= 0 && y.err >= 0 ? " · call errors " + pct(x.err) + " → " + pct(y.err) : "")], // errors in the loading turn: only where call rows are kept
           suggestion: (y.ps > x.ps ? "the new version costs more per session" : "the new version costs less per session") + ": compare the two periods (agentglass compare) before keeping it", sessions: ids(b.ls) });
       }
     }
