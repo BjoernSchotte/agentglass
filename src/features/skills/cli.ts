@@ -16,10 +16,11 @@ import { opt, helpOf, wantsHelp, addCmd } from "../clihelp.ts";
 import { termCols } from "../format.ts";
 import { cliFilter, cliSelect } from "../query/cli.ts";
 import { accsOf, callsOf } from "../usage/ledger.ts";
+import { callCutoff } from "../usage/callcache.ts";
 import { type Acc, lastDays, startOfDay } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows } from "./model.ts";
-import { type Advice, advise, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
+import { type Advice, type CallStat, advise, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
 import { type InvSkill, inventory } from "./inventory.ts";
 import { skillVis } from "./vis.ts";
 import { shownText } from "./text.ts";
@@ -146,12 +147,14 @@ function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advic
   const listed = new Map<string, number>(); let reqs = 0;
   for (const a of set.accs) { reqs += a.rq; for (const n of a.lst) listed.set(n, (listed.get(n) ?? 0) + 1); }
   const repos: string[] = []; for (const s of set.tops) if (s.cwd && repos.indexOf(s.cwd) < 0 && repos.length < 200) repos.push(s.cwd);
-  // A5's error rate: the session's call rows (kept filter.callDays) started in the loading turn
-  const calls = (sid: string, t0: number, t1: number): { n: number; err: number } => {
-    const s = set.bySess.get(sid); if (!s) return { n: 0, err: 0 };
+  // A5's error rate: the session's call rows started in the loading turn; rows are kept filter.callDays (an older session
+  // without rows says nothing about its errors: kept false)
+  const cut = callCutoff();
+  const calls = (sid: string, t0: number, t1: number): CallStat => {
+    const s = set.bySess.get(sid); if (!s) return { n: 0, err: 0, kept: false };
     const r = callsOf(s); let n = 0; let e = 0;
     for (let i = 0; i < r.n; i++) { const t = r.t[i] + 0; if (t >= t0 && t < t1) { n++; if (r.err[i] + 0 > 0) e++; } }
-    return { n, err: e };
+    return { n, err: e, kept: r.n > 0 || s.mtime >= cut };
   };
   return visAdvice(advise(rows, loads, { days: periodLen(o.period), listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !o.harness || x.harness === o.harness), adviseCfg(), calls));
 }

@@ -13,7 +13,7 @@ import { LISTING, SKILL_BPT } from "../usage/skillrec.ts";
 // severity = $ at stake per 30 days (for ordering); sessions = up to 10 session ids the evidence comes from
 export interface Advice { id: string; skill: string; severity: number; evidence: string[]; suggestion: string; sessions: string[] }
 interface Ver { h: string; t: number; ls: LoadRow[] }
-interface VerStat { ps: number; size: number; tail: number; err: number } // err -1 = no call rows
+interface VerStat { ps: number; size: number; tail: number; err: number; cov: number; n: number } // err -1 = no call rows; cov of n sessions have call rows kept
 export interface AdviseCfg { minSizeTok: number; tailShare: number; minSessions: number; minUserLoads: number; reloadSessions: number; compactLoads: number; versionSessions: number }
 // what the period knows besides rows and loads: its length in days, the listings' skill names → sessions listing them,
 // the requests of the period's sessions (an inventory description rides along on each)
@@ -45,8 +45,17 @@ function pct(x: number): string { return String(Math.round(x * 100)) + " %"; }
 function ids(ls: LoadRow[]): string[] { const o: string[] = []; for (const l of ls) if (o.indexOf(l.sess) < 0 && o.length < 10) o.push(l.sess); return o; }
 function distinct(ls: LoadRow[]): number { const o: string[] = []; for (const l of ls) if (o.indexOf(l.sess) < 0) o.push(l.sess); return o.length; }
 
+// a session's tool calls (and failed ones) in a span; kept = its call rows are still kept (filter.callDays), else n/err say nothing
+export interface CallStat { n: number; err: number; kept: boolean }
+// A5's call error rate in the loading turns: only over sessions whose call rows are kept, and it says so when that is not all
+function errText(x: VerStat, y: VerStat): string {
+  if (x.cov === 0 || y.cov === 0) return " · call errors: no call rows kept for " + (x.cov === 0 && y.cov === 0 ? "either version" : x.cov === 0 ? "the older version" : "the newer version") + " (filter.callDays)";
+  if (x.err < 0 || y.err < 0) return " · call errors: no calls in the loading turns";
+  const part = x.cov < x.n || y.cov < y.n ? " (call rows of " + String(x.cov) + "/" + String(x.n) + " → " + String(y.cov) + "/" + String(y.n) + " sessions)" : "";
+  return " · call errors " + pct(x.err) + " → " + pct(y.err) + part;
+}
 // the advice for a period, ordered by $ at stake; calls(sess, t0, t1) = the session's tool calls (and errors) in a span
-export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: InvSkill[], cfg: AdviseCfg, calls: (sess: string, t0: number, t1: number) => { n: number; err: number }): Advice[] {
+export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: InvSkill[], cfg: AdviseCfg, calls: (sess: string, t0: number, t1: number) => CallStat): Advice[] {
   const out: Advice[] = []; const per30 = 30 / Math.max(1, ctx.days);
   const of = new Map<string, LoadRow[]>();
   for (const l of loads) { if (l.name === LISTING) continue; const v = of.get(l.name); if (v) v.push(l); else of.set(l.name, [l]); }
@@ -97,14 +106,18 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
         const a = hs[i - 1] as Ver; const b = hs[i] as Ver;
         if (distinct(a.ls) < cfg.versionSessions || distinct(b.ls) < cfg.versionSessions) continue;
         const st = (v: LoadRow[]): VerStat => {
-          let u = 0; let tl = 0; let n = 0; let er = 0; const sz: number[] = [];
-          for (const l of v) { u += l.usd; tl += l.tailUsd; if (l.size >= 0) sz.push(l.size); const c = calls(l.sess, l.t, l.te > 0 ? l.te : l.end > 0 ? l.end : l.t + 3600000); n += c.n; er += c.err; }
-          return { ps: u / Math.max(1, distinct(v)), size: p50(sz), tail: u > 0 ? tl / u : 0, err: n > 0 ? er / n : -1 };
+          let u = 0; let tl = 0; let n = 0; let er = 0; const sz: number[] = []; const kept: string[] = [];
+          for (const l of v) {
+            u += l.usd; tl += l.tailUsd; if (l.size >= 0) sz.push(l.size);
+            const c = calls(l.sess, l.t, l.te > 0 ? l.te : l.end > 0 ? l.end : l.t + 3600000); if (!c.kept) continue;
+            n += c.n; er += c.err; if (kept.indexOf(l.sess) < 0) kept.push(l.sess);
+          }
+          return { ps: u / Math.max(1, distinct(v)), size: p50(sz), tail: u > 0 ? tl / u : 0, err: n > 0 ? er / n : -1, cov: kept.length, n: distinct(v) };
         };
         const x = st(a.ls); const y = st(b.ls);
         out.push({ id: "A5", skill: r.name, severity: Math.abs(y.ps - x.ps) * distinct(b.ls) * per30,
           evidence: ["version " + a.h.slice(0, 8) + " → " + b.h.slice(0, 8) + " (first seen " + new Date(b.t).toISOString().slice(0, 10) + ")",
-            "sessions " + String(distinct(a.ls)) + " → " + String(distinct(b.ls)) + " · size " + tok(x.size) + " → " + tok(y.size) + " tok · $/session " + usd(x.ps) + " → " + usd(y.ps) + " · tail " + pct(x.tail) + " → " + pct(y.tail) + (x.err >= 0 && y.err >= 0 ? " · call errors " + pct(x.err) + " → " + pct(y.err) : "")], // errors in the loading turn: only where call rows are kept
+            "sessions " + String(distinct(a.ls)) + " → " + String(distinct(b.ls)) + " · size " + tok(x.size) + " → " + tok(y.size) + " tok · $/session " + usd(x.ps) + " → " + usd(y.ps) + " · tail " + pct(x.tail) + " → " + pct(y.tail) + errText(x, y)],
           suggestion: (y.ps > x.ps ? "the new version costs more per session" : "the new version costs less per session") + ": compare the two periods (agentglass compare) before keeping it", sessions: ids(b.ls) });
       }
     }

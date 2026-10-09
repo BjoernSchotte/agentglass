@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { type Advice, advise, adviceLines, parseAdvise, visAdvice, ADVISE_DEFAULTS } from "./advise.ts";
+import { type Advice, type CallStat, advise, adviceLines, parseAdvise, visAdvice, ADVISE_DEFAULTS } from "./advise.ts";
 import { type InvSkill, inventory, frontOf } from "./inventory.ts";
 import type { SkillRow, LoadRow } from "./model.ts";
 import { setVis, parseHide } from "./vis.ts";
@@ -20,7 +20,7 @@ function ld(name: string, sess: string, trig: string, t: number, o: { end?: numb
   return { sess, i: 0, name, trig, t, turn: 0, te: 0, end: o.end ?? 0, why: o.end ? "compact" : "", rel: o.rel ?? false, stub: false, bytes: 3600, size: o.size ?? 1000, tier: "exact",
     hash: o.hash ?? "", scope: "user", dir: "", requests: 3, n: 1, load: 1000, carry: 2000, tail: 0, usd: o.usd ?? 0.1, carryUsd: (o.usd ?? 0.1) / 2, tailUsd: 0, unpriced: false, off: -1, len: 0, rec: "", model: "m" };
 }
-const none = (s: string, t0: number, t1: number): { n: number; err: number } => ({ n: 0, err: 0 });
+const none = (s: string, t0: number, t1: number): CallStat => ({ n: 0, err: 0, kept: false });
 const C = ADVISE_DEFAULTS;
 const ctx = { days: 30, listed: new Map<string, number>(), requests: 1000 };
 function ids(xs: Advice[]): string { return xs.map((a) => a.id + ":" + a.skill).join(","); }
@@ -48,8 +48,15 @@ for (let i = 0; i < 3; i++) { l5.push(ld("ver", "a" + String(i), "model", D + i,
 for (let i = 0; i < 3; i++) l5.push(ld("vnear", "a" + String(i), "model", D + i, { hash: "3333333333333333" }));
 for (let i = 0; i < 2; i++) l5.push(ld("vnear", "b" + String(i), "model", D + 86400000 * 5 + i, { hash: "4444444444444444" }));
 const a5 = advise([row("ver", { m: 6, s: 6, hashes: ["1111111111111111", "2222222222222222"] }), row("vnear", { m: 5, s: 5, hashes: ["3333333333333333", "4444444444444444"] })], l5, ctx, [], C,
-  (s: string, t0: number, t1: number): { n: number; err: number } => ({ n: 10, err: s.startsWith("b") ? 3 : 1 }));
+  (s: string, t0: number, t1: number): CallStat => ({ n: 10, err: s.startsWith("b") ? 3 : 1, kept: true }));
 ok("A5", ids(a5) === "A5:ver", ids(a5));
+// A5 says so when call rows are not kept for every session, and gives no rate when one side has none
+const a5p = advise([row("ver", { m: 6, s: 6, hashes: ["1111111111111111", "2222222222222222"] })], l5, ctx, [], C,
+  (s: string, t0: number, t1: number): CallStat => ({ n: s === "a0" ? 0 : 10, err: s.startsWith("b") ? 3 : 1, kept: s !== "a0" }));
+ok("A5 partial call rows", ((a5p[0] as Advice).evidence[1] ?? "").endsWith("call errors 10 % → 30 % (call rows of 2/3 → 3/3 sessions)"), a5p.length ? (a5p[0] as Advice).evidence.join(" | ") : "");
+const a5n = advise([row("ver", { m: 6, s: 6, hashes: ["1111111111111111", "2222222222222222"] })], l5, ctx, [], C,
+  (s: string, t0: number, t1: number): CallStat => ({ n: 0, err: 0, kept: s.startsWith("b") }));
+ok("A5 no call rows", ((a5n[0] as Advice).evidence[1] ?? "").endsWith("call errors: no call rows kept for the older version (filter.callDays)"), a5n.length ? (a5n[0] as Advice).evidence.join(" | ") : "");
 ok("A5 table", a5.length === 1 && ((a5[0] as Advice).evidence[1] ?? "") === "sessions 3 → 3 · size 1.0k → 3.0k tok · $/session $0.10 → $0.30 · tail 0 % → 0 % · call errors 10 % → 30 %", a5.length ? (a5[0] as Advice).evidence.join(" | ") : "");
 
 // A6: listed names never loaded (Claude/Codex listings) and the inventory; a manual-only skill is not reported
