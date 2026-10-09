@@ -2,13 +2,15 @@
 # four skills, each with its own text marker: pub (slash command, PUBSKILLTEXT), acme-x (Skill tool, ACMESKILLTEXT),
 # secret (a Read of its SKILL.md, SECRETSKILLTEXT), notes (Skill tool, NOTESSKILLTEXT); then a failing Bash call.
 #   python3 gen.py <out.jsonl> <session id> <cwd> [skill,…]   (default: all four; "stop" in the list: the log ends after
-#   the loads, its last event a skill's text)
+#   the loads, its last event a skill's text). SKH_T0=<iso>: a fixed start (claude.jsonl, for hide.check.ts, was written with
+#   SKH_T0=2026-10-01T09:00:00+00:00 python3 gen.py claude.jsonl s-skills-hide /w/keepme; keepme: the checks' --redact keeps it real)
 # SPDX-License-Identifier: Apache-2.0
 import json, sys, datetime
 
 out, sid, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
 only = sys.argv[4].split(",") if len(sys.argv) > 4 else ["pub", "acme-x", "secret", "notes"]
-t0 = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0) - datetime.timedelta(hours=2)
+import os
+t0 = datetime.datetime.fromisoformat(os.environ["SKH_T0"]) if os.environ.get("SKH_T0") else datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0) - datetime.timedelta(hours=2)
 n = [0]; pc = [0]; cr = [0]; L = []
 def ts():
     n[0] += 1; return (t0 + datetime.timedelta(seconds=n[0])).strftime("%Y-%m-%dT%H:%M:%S.000Z")

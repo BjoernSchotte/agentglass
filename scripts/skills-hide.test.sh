@@ -110,7 +110,7 @@ mcp() { # mcp <cfg> [--content]: every tool that can show a skill, once
       i=$((i+1)); printf '{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n{"wait":%s}\n' "$i" "${c%%|*}" "${c#*|}" "$i"; done; } > "$t/mcp.jsonl"
   (CFG=$1 runx python3 "$t/client.py" --cwd "$app" --timeout 60 -- "$t/bin/agentglass-mcp" $2 < "$t/mcp.jsonl" 2>&1)
 }
-r=$(mcp hide); [ -z "${SKH_DEBUG:-}" ] || printf "%s\n" "$r" > "$SKH_DEBUG"; hidden "mcp" "$r"; has "mcp: fake" "$r" "$fake"; hasnt "mcp: no text without --content" "$r" "PUBSKILLTEXT"
+r=$(mcp hide); hidden "mcp" "$r"; has "mcp: fake" "$r" "$fake"; hasnt "mcp: no text without --content" "$r" "PUBSKILLTEXT"
 r=$(mcp hide --content); hidden "mcp --content" "$r"
 r=$(mcp none); hasnt "mcp without rules: no text without --content" "$r" "SKILLTEXT"; has "mcp without rules: names" "$r" "acme-x"
 

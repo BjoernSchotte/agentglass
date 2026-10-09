@@ -1,7 +1,7 @@
 // agentglass — self-check for skill visibility (skills.hide, --redact): scriptc build src/features/skills/vis.check.ts -o vc && ./vc
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, readFileSync } from "node:fs";
-import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, listingShown, VIS_SURFACES, type HideRule } from "./vis.ts";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, listingShown, VIS_SURFACES, VIS_SOURCES, VIS_DATA, SKILL_DATA_RE, type HideRule } from "./vis.ts";
 import { fakeSkill } from "../redact.ts";
 import { callSkill, callVis, scrub, hideEvents } from "./watchvis.ts";
 import type { Ev } from "../../model/types.ts";
@@ -103,12 +103,24 @@ eq("listing without hidden skills", listingShown("- pub: shown\n  more of pub\n-
 }
 setVis([], false);
 
-// every surface module that exists calls skillVis or textShown (or the read model's visRows / visLoads, which do)
+// every surface module calls skillVis or textShown, or takes its skills from a source that did
 for (const f2 of VIS_SURFACES) {
+  ok("surface exists: " + f2, existsSync(f2));
   if (!existsSync(f2)) continue;
   const t = readFileSync(f2, "utf-8");
-  ok("surface uses skillVis: " + f2, t.indexOf("skillVis(") >= 0 || t.indexOf("textShown(") >= 0 || t.indexOf("visRows(") >= 0 || t.indexOf("visLoads(") >= 0);
+  ok("surface uses skillVis: " + f2, VIS_SOURCES.some((x: string) => t.indexOf(x) >= 0));
 }
-
+// every module that reads skill data is a listed surface or data layer (a new surface must be listed, and so checked)
+function walk(d: string, out: string[]): void {
+  for (const n of readdirSync(d)) { const p2 = d + "/" + n; if (statSync(p2).isDirectory()) walk(p2, out); else if (n.endsWith(".ts") && !n.endsWith(".check.ts") && n.indexOf("fixture") < 0) out.push(p2); }
+}
+const all: string[] = []; walk("src", all);
+let seen = 0;
+for (const f3 of all) {
+  if (!SKILL_DATA_RE.test(readFileSync(f3, "utf-8"))) continue;
+  seen++;
+  ok("reads skill data, listed in VIS_SURFACES or VIS_DATA: " + f3, VIS_SURFACES.indexOf(f3) >= 0 || VIS_DATA.indexOf(f3) >= 0);
+}
+ok("the walk found the skill modules", seen >= 20);
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok skill visibility");

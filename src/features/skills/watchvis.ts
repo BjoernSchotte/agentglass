@@ -22,14 +22,16 @@ export function callSkill(tool: string, args: string): string {
 
 // real name → what the stream prints instead (the fake, or "(hidden)" for omit), for every hidden name seen so far
 const SCRUB = new Map<string, string>();
-let seeded = false;
+let seeded = false; let scrubGen = -1;
 function seed(): void { // rules without a glob name their skills already: titles are scrubbed before the first load is seen
+  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); seeded = false; } // other rules: what they hide, from scratch
   if (seeded) return; seeded = true;
   for (const r of hideRules()) if (r.match.indexOf("*") < 0 && r.match.indexOf("?") < 0) note(r.match);
 }
 // remember a skill name the stream met; true when the skill is hidden in any way (its text must not show)
 export function note(name: string): boolean {
   if (!name) return false;
+  seed();
   const v = skillVis(name);
   if ((v.mode === "name" || v.mode === "omit") && !SCRUB.has(name)) {
     const rep = v.mode === "omit" ? HIDDEN : v.shown;
