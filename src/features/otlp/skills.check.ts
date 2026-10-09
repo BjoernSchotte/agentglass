@@ -13,6 +13,8 @@ import { claude } from "../../harness/claude.ts";
 import { skillsJson } from "../skills/json.ts";
 import { newAgg, ingestLine, reportsOf } from "../hub/map.ts";
 import { type Obj, obj, arr } from "../../util/json.ts";
+import { REDACT } from "../redact-on.ts";
+import { scrubText } from "../redact.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ":\n  got  " + got + "\n  want " + want); } }
@@ -53,9 +55,11 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
   let hub: Obj[] = []; for (const r of reportsOf(g, Date.parse("2026-10-02T00:00:00.000Z"), true, 3650).values()) for (const x of r.sessions) for (const v of arr(x.s["skills"])) { const o = obj(v); if (o) hub.push(o); }
   const a = newAcc(); for (const l of readFileSync("testdata/skills/claude.jsonl", "utf8").split("\n")) if (l) claude.usage(a, l);
   const loc = skillsJson([a]);
-  const pick = (o: Obj): string => JSON.stringify([o["name"], o["source"], o["n"], o["size"], o["tier"], o["hash"], o["scope"]]);
+  // under --redact (the checks' env) the encoder scrubs every string it sends: a name the scrubber knows arrives faked
+  const nm = (v: unknown): string => { const n = typeof v === "string" ? v as string : ""; return REDACT ? scrubText(n) : n; };
+  const pick = (o: Obj, local: boolean): string => JSON.stringify([local ? nm(o["name"]) : o["name"], o["source"], o["n"], o["size"], o["tier"], o["hash"], o["scope"]]);
   eq("hub entries", String(hub.length), "4");
-  eq("hub skills[] = local --json entries", hub.map(pick).join(" "), loc.map(pick).join(" "));
+  eq("hub skills[] = local --json entries", hub.map((o: Obj) => pick(o, false)).sort().join(" "), loc.map((o: Obj) => pick(o, true)).sort().join(" "));
   eq("hub: no $ it cannot price", hub.map((o: Obj) => JSON.stringify([o["tokens"], o["costUsd"]])).join(" ").replace(/\[null,null\] ?/g, ""), "");
   hub = [];
 }
