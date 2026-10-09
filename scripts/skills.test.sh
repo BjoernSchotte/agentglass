@@ -69,6 +69,11 @@ run --watch --from-start --for 3s > "$t/watch" 2> /dev/null || true
 has "--watch skill" "$(cat "$t/watch")" "\"kind\":\"skill\""
 has "--watch skill_end" "$(cat "$t/watch")" "\"kind\":\"skill_end\""
 hasnt "--watch skill lines carry no text" "$(grep '"kind":"skill' "$t/watch")" "LOREMSKILLTEXT"
+# --watch under skills.hide: the calls that load a hidden skill (Skill, Read/read of a SKILL.md, a Codex sed) show the fake
+# name or nothing (omit), and their results no text
+CFG="$t/hide.json" run --watch --from-start --for 3s > "$t/watchh" 2> /dev/null || true
+r=$(cat "$t/watchh"); hasnt "--watch hide name" "$r" "beta"; hasnt "--watch hide omit" "$r" "delta"; hasnt "--watch hide text" "$r" "LOREMSKILLTEXT"
+hasnt "--watch hide text (2nd part)" "$r" "MORELOREMTEXT"; has "--watch hide result" "$r" "(text hidden by skills.hide)"; has "--watch keeps content-mode name" "$r" "alpha"
 
 has "advise runs" "$(run skills advise --period all)" "no advice in the history"
 # usage

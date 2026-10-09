@@ -20,6 +20,7 @@ import { type Acc, type SkLoad, newAcc } from "./usage/record.ts";
 import { newRows } from "./usage/rows.ts";
 import { skillVis } from "./skills/vis.ts";
 import { skillsJson, skillLoadsJson } from "./skills/json.ts";
+import { callVis, note, scrub } from "./skills/watchvis.ts";
 import { estTopOf } from "./usage/costs.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
@@ -251,13 +252,14 @@ function oneLine(t: string): string {
 }
 function emit(s: Sess, kind: string, tool: string | null, text: string, ts: string, id = ""): void {
   const w: WEv = {
-    ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd),
-    parent: s.parent ? s.parent : null, kind, tool: tool === null ? null : display("tool", tool, s), id: id ? id : null, text: oneLine(text),
+    ts: ts || new Date().toISOString(), harness: s.h, session: s.id, title: scrub(titleOf(s)), project: base(s.cwd),
+    parent: s.parent ? s.parent : null, kind, tool: tool === null ? null : display("tool", tool, s), id: id ? id : null, text: scrub(oneLine(text)),
   };
   out(JSON.stringify(w));
   lastOut = Date.now();
 }
-// a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run
+// a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run. A call that loads a
+// hidden skill (skills.hide, --redact) shows as callVis says: dropped, its name faked, its result's text hidden
 const calls = new Map<string, string[]>();
 function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const i = e.text.indexOf("\u0000");
@@ -267,8 +269,10 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const pc = e.kind === "result" && e.id ? calls.get(s.path + "\t" + e.id) : undefined;
   if (cf && !cliWatchEvent(cf, s, e.kind, pc ? pc[0] ?? "" : tool, pc ? pc[1] ?? "" : args)) return;
   const id = e.kind === "tool" || e.kind === "result" ? e.id : "";
-  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts, id); return; }
-  emit(s, "tool", tool, args, e.ts, id);
+  const cv = callVis(e.kind === "tool" ? tool : pc ? pc[0] ?? "" : "", e.kind === "tool" ? args : pc ? pc[1] ?? "" : "");
+  if (cv.drop) return;
+  if (e.kind !== "tool") { emit(s, e.kind, null, cv.hide || e.text, e.ts, id); return; }
+  emit(s, "tool", tool, cv.args, e.ts, id);
 }
 
 // skill loads in the stream: each watched log's new lines also go through its harness's usage() into a small per-log
@@ -278,11 +282,14 @@ interface WSkEv { ts: string; harness: string; session: string; title: string; p
 const WSKILL = new Map<string, Acc>(); // log → its record
 const SK_MARKS = ["kill", "SKILL.md", "ompact", "<command-name>", "<skills_instructions>"];
 const WENDED = new Set<string>(); // "<log>\t<load index>" of unloads already printed
-function skillWatch(s: Sess, l: string, show: boolean, cf: CliFilter | null): void {
+// the skill lines one log line makes (printed after that line's events; the names they load are noted first, so the
+// line's own events and titles already hide them)
+function skillWatch(s: Sess, l: string, show: boolean, cf: CliFilter | null): WSkEv[] {
+  const outL: WSkEv[] = [];
   let a = WSKILL.get(s.path);
   if (!a) { if (WSKILL.size > 2000) WSKILL.clear(); a = newAcc(); a.ro = true; a.sub = s.parent !== ""; WSKILL.set(s.path, a); }
   let hit = a.skr.size > 0 || a.pk !== ""; if (!hit) for (const m of SK_MARKS) if (l.indexOf(m) >= 0) { hit = true; break; }
-  if (!hit) return;
+  if (!hit) return outL;
   const n0 = a.sk.length;
   harnessOf(s.h).usage(a, l);
   a.days.clear(); a.rows = newRows(); // only the skill state is kept
@@ -291,16 +298,18 @@ function skillWatch(s: Sess, l: string, show: boolean, cf: CliFilter | null): vo
     const isNew = i >= n0; const k = s.path + "\t" + String(i); const isEnd = x.end !== 0 && !WENDED.has(k);
     if (!isNew && !isEnd) continue;
     if (isEnd) { if (WENDED.size > 100000) WENDED.clear(); WENDED.add(k); }
+    note(x.name);
     const v = skillVis(x.name); if (!show || v.mode === "omit") continue;
     const sk: WSk = { name: v.shown, trigger: x.trig, size: x.S, tier: x.S < 0 ? "?" : x.est ? "≈" : "exact", hash: x.hash, scope: x.scope, why: x.why };
-    if (isNew && (!cf || cliWatchEvent(cf, s, "skill", "", ""))) wsk(s, "skill", x.t, sk, v.shown + " loaded (" + x.trig + ")");
-    if (isEnd && (!cf || cliWatchEvent(cf, s, "skill_end", "", ""))) wsk(s, "skill_end", x.end, sk, v.shown + " out (" + x.why + ")");
+    if (isNew && (!cf || cliWatchEvent(cf, s, "skill", "", ""))) outL.push(wsk(s, "skill", x.t, sk, v.shown + " loaded (" + x.trig + ")"));
+    if (isEnd && (!cf || cliWatchEvent(cf, s, "skill_end", "", ""))) outL.push(wsk(s, "skill_end", x.end, sk, v.shown + " out (" + x.why + ")"));
   }
+  return outL;
 }
-function wsk(s: Sess, kind: string, t: number, sk: WSk, text: string): void {
-  const w: WSkEv = { ts: t > 1 ? new Date(t).toISOString() : new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind, tool: null, id: null, text, skill: sk };
-  out(JSON.stringify(w)); lastOut = Date.now();
+function wsk(s: Sess, kind: string, t: number, sk: WSk, text: string): WSkEv {
+  return { ts: t > 1 ? new Date(t).toISOString() : new Date().toISOString(), harness: s.h, session: s.id, title: titleOf(s), project: base(s.cwd), parent: s.parent ? s.parent : null, kind, tool: null, id: null, text, skill: sk };
 }
+function printSk(ws: WSkEv[]): void { for (let i = 0; i < ws.length; i++) { const w = ws[i] as WSkEv; w.title = scrub(w.title); out(JSON.stringify(w)); lastOut = Date.now(); } }
 
 const IDLE_MS = 10000;
 // JSONL lines go to stdout unless a sink takes the stream (then only with --jsonl)
@@ -361,7 +370,7 @@ export function watch(o: Opts, sink: Sink | null): void {
         // judged again on what these lines brought (an agent's log follows it to another cwd): none of a session the filter
         // no longer takes is printed. Skill loads and unloads go out right after the events of the line that made them
         const show = lines && (!o.cf || cliWatchSession(o.cf, s)) && visible(s, o.sc);
-        for (let k = 0; k < r.lines.length; k++) { if (show) for (const e of per[k] ?? []) emitEv(s, e, o.cf); skillWatch(s, r.lines[k] ?? "", show, o.cf); }
+        for (let k = 0; k < r.lines.length; k++) { const ws = skillWatch(s, r.lines[k] ?? "", show, o.cf); if (show) for (const e of per[k] ?? []) emitEv(s, e, o.cf); printSk(ws); }
       }
     }
   };

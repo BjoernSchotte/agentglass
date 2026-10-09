@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, VIS_SURFACES, type HideRule } from "./vis.ts";
 import { fakeSkill } from "../redact.ts";
+import { callSkill, callVis, scrub } from "./watchvis.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -51,6 +52,21 @@ eq("redact + content rule → name", skillVis("notes").mode, "name");
 eq("redact + omit rule → omit", skillVis("secret").mode, "omit");
 eq("why redact", textHiddenWhy("pub"), "text hidden (--redact)");
 ok("redact no text", !textShown("pub", false, false) && !textShown("pub", true, true));
+
+// --watch event lines: the skill a call loads, and what its line shows
+setVis(parseHide([{ match: "sec*", mode: "omit" }, { match: "acme-x", mode: "name" }, "notes"]).rules, false);
+eq("callSkill Skill", callSkill("Skill", "acme-x"), "acme-x");
+eq("callSkill opencode", callSkill("skill", "{\"id\":\"notes\"}"), "notes");
+eq("callSkill read", callSkill("Read", "/h/.claude/skills/notes/SKILL.md"), "notes");
+eq("callSkill codex exec", callSkill("exec", "const r = await tools.exec_command({\"cmd\":\"sed -n '1,9p' /h/.codex/skills/secret/SKILL.md\"});"), "secret");
+eq("callSkill plain call", callSkill("Bash", "ls /h/.codex/skills/secret/SKILL.md"), "");
+ok("callVis omit drops", callVis("Read", "/h/.claude/skills/secret/SKILL.md").drop);
+const cn = callVis("Read", "/h/.pi/agent/skills/acme-x/SKILL.md");
+ok("callVis name fakes the path, hides the text", !cn.drop && cn.args.indexOf("acme-x") < 0 && cn.args.endsWith("/SKILL.md") && cn.hide === "(text hidden by skills.hide)");
+eq("callVis content keeps the name", callVis("Skill", "notes").args + " " + callVis("Skill", "notes").hide, "notes (text hidden by skills.hide)");
+eq("callVis shown skill", callVis("Skill", "pub").hide, "");
+ok("scrub whole words only", scrub("use acme-x now; acme-xy stays").indexOf("acme-xy stays") > 0 && scrub("use acme-x now").indexOf("acme-x ") < 0);
+setVis([], false);
 
 // every surface module that exists calls skillVis or textShown
 for (const f2 of VIS_SURFACES) {
