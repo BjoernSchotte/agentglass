@@ -7,6 +7,7 @@ import { scrubRemote } from "../../util/giturl.ts";
 import { BUILD } from "../../build-info.ts";
 import { REDACT } from "../redact-on.ts";
 import { scrubText } from "../redact.ts";
+import { scrub } from "../skills/watchvis.ts";
 import { identNow, labelOf } from "../../model/project.ts";
 import { mcpServer } from "../usage/calls.ts";
 import { catOf } from "../callgraph/model.ts";
@@ -53,10 +54,11 @@ function cut(s: string, n: number): string { return s.length > n ? s.slice(0, n)
 // still group by project without the name leaving
 export function repoKeyAttr(key: string): Attr[] { return key ? [attrS("agentglass.repo.key", REDACT ? sha256Hex("agentglass/repo/v1|" + key).slice(0, 16) : key)] : []; }
 // titles (otlp-complete 3.2): with otlp.titles, or under --redact (then the fake title the screen shows); always scrubbed
-export function titleAttr(title: string, c: OtlpCfg): Attr[] { return (c.titles || REDACT) && title ? [attrS("agentglass.session.title", cut(scrubText(title), 256))] : []; }
+export function titleAttr(title: string, c: OtlpCfg): Attr[] { return (c.titles || REDACT) && title ? [attrS("agentglass.session.title", cut(scrubText(scrub(title)), 256))] : []; }
 // a file call's path, relative to the session's cwd when inside it
 function relTo(p: string, cwd: string): string { const d = cwd.replace(/\/+$/, ""); return d && p.startsWith(d + "/") ? p.slice(d.length + 1) : p; }
-function msgs(role: string, text: string, max: number): string { return JSON.stringify([{ role, parts: [{ type: "text", content: cut(text, max) }] }]); }
+// texts (content, call details, titles): the names of skills hidden by skills.hide / --redact scrubbed (skills/watchvis.ts)
+function msgs(role: string, text: string, max: number): string { return JSON.stringify([{ role, parts: [{ type: "text", content: cut(scrub(text), max) }] }]); }
 function usage(out: Attr[], t: XTurn, sp: XSpan, c: OtlpCfg): void {
   const prov = sp.provider || providerOf("", sp.model);
   out.push(attrI("gen_ai.usage.input_tokens", inputTokens(t.h, prov, sp, c.inputTokens === "provider" ? "provider" : "inclusive" as InMode)));
@@ -127,11 +129,11 @@ export function spanAttrs(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): Attr[] 
     if (sp.skill) a.push(attrS("gen_ai.skill.name", sp.skill));
     if (c.detail === "meta" || c.content) { // call details (otlp-complete 3.5): the normalized command, the target path
       const k = sv ? -1 : catOf(sp.tool);
-      if (k === 0 && sp.cmd) a.push(attrS("agentglass.tool.command", cut(scrubText(sp.cmd), 200)));
-      if ((k === 1 || k === 2) && sp.target) a.push(attrS("agentglass.tool.target", cut(scrubText(relTo(sp.target, t.cwd)), 256)));
+      if (k === 0 && sp.cmd) a.push(attrS("agentglass.tool.command", cut(scrubText(scrub(sp.cmd)), 200)));
+      if ((k === 1 || k === 2) && sp.target) a.push(attrS("agentglass.tool.target", cut(scrubText(scrub(relTo(sp.target, t.cwd))), 256)));
     }
-    if (c.content && sp.args) a.push(attrS("gen_ai.tool.call.arguments", cut(sp.args, c.contentMax)));
-    if (c.content && sp.result) a.push(attrS("gen_ai.tool.call.result", cut(sp.result, c.contentMax)));
+    if (c.content && sp.args) a.push(attrS("gen_ai.tool.call.arguments", cut(scrub(sp.args), c.contentMax)));
+    if (c.content && sp.result) a.push(attrS("gen_ai.tool.call.result", cut(scrub(sp.result), c.contentMax)));
   }
   if (sp.est) a.push(attrB("agentglass.timing.estimated", true));
   if (sp.err) a.push(attrS("error.type", sp.err));
@@ -160,14 +162,21 @@ function val(x: Attr): string {
   return "{\"arrayValue\":{\"values\":[" + x.a.map((v: string) => "{\"stringValue\":" + JSON.stringify(v) + "}").join(",") + "]}}";
 }
 export function attrsJson(a: Attr[]): string { return "[" + a.map((x: Attr) => "{\"key\":" + JSON.stringify(x.k) + ",\"value\":" + val(x) + "}").join(",") + "]"; }
+// an event's attributes as a span's go out (rename, drop, the --redact scrub); a skill's loaded text only with --content,
+// cut to contentMax
+function eventAttrs(a: Attr[], c: OtlpCfg): Attr[] {
+  const o: Attr[] = [];
+  for (const x of a) { if (x.k !== "agentglass.skill.text") { o.push(x); continue; } if (c.content) o.push(attrS(x.k, cut(x.s, c.contentMax))); }
+  return tables(o, c);
+}
 function spanJson(t: XTurn, sp: XSpan, c: OtlpCfg, vcs: Attr[]): string {
   let s = "{\"traceId\":\"" + t.traceId + "\",\"spanId\":\"" + sp.spanId + "\"";
   if (sp.parentId) s += ",\"parentSpanId\":\"" + sp.parentId + "\"";
   s += ",\"name\":" + JSON.stringify(REDACT ? scrubText(sp.name) : sp.name) + ",\"kind\":" + String(sp.kind);
   s += ",\"startTimeUnixNano\":\"" + nanos(sp.t0) + "\",\"endTimeUnixNano\":\"" + nanos(Math.max(sp.t0, sp.t1)) + "\"";
   s += ",\"attributes\":" + attrsJson(spanAttrs(t, sp, c, vcs));
-  if (sp.events.length) s += ",\"events\":[" + sp.events.map((e) => "{\"timeUnixNano\":\"" + nanos(e.t) + "\",\"name\":" + JSON.stringify(e.name) + ",\"attributes\":" + attrsJson(e.attrs) + "}").join(",") + "]";
-  if (sp.err) s += ",\"status\":{\"code\":2" + (c.content && sp.errMsg ? ",\"message\":" + JSON.stringify(cut(REDACT ? scrubText(sp.errMsg) : sp.errMsg, c.contentMax)) : "") + "}";
+  if (sp.events.length) s += ",\"events\":[" + sp.events.map((e) => "{\"timeUnixNano\":\"" + nanos(e.t) + "\",\"name\":" + JSON.stringify(e.name) + ",\"attributes\":" + attrsJson(eventAttrs(e.attrs, c)) + "}").join(",") + "]";
+  if (sp.err) s += ",\"status\":{\"code\":2" + (c.content && sp.errMsg ? ",\"message\":" + JSON.stringify(cut(REDACT ? scrubText(scrub(sp.errMsg)) : scrub(sp.errMsg), c.contentMax)) : "") + "}";
   return s + "}";
 }
 let host = "";

@@ -529,13 +529,23 @@ Session-level span attributes on the session root: `agentglass.skill.cost_usd` (
 With the export's `--content`: `agentglass.skill.text` on the load event (cut to `contentMax`). `skills.hide` applies
 (`omit`: no event; `name`: fake name; `content`: no text even with `--content`).
 Existing `gen_ai.skill.name` on tool spans and the turn root stays (otlp-export §table, line 182/189). The hub maps the
-events back into `skills[]` (replaces `skills: []`, `hub/map.ts:262`), so hub-fed fleet rows get skills too.
+events back into `skills[]` (replaces `skills: []`, `hub/map.ts:262`), so hub-fed fleet rows get skills too. Their
+tokens and $ ride on an `agentglass.skill.usage` event per (skill, source) on the turn root whenever they changed: the
+session's `--json` entry so far (`agentglass.skill.uses`, `.loads`, `.load_tokens`, `.carry_tokens`, `.tail_tokens`,
+`.cost_usd`, `.carry_usd`, `.tail_usd`; names through `skillVis`, `omit` skills none); the hub keeps the newest per entry
+(review ruling: exact, and a re-sent turn counts nothing twice).
 
 **6.15 Fleet.** Exact merge: skills are attributed on the host that owns the log, inside the booking path, so a message
 the fleet merge drops (owned elsewhere, fleet spec 13) never carried a skill share on the dropping host — the sums are
 exact by construction. Reports gain `DayRow.sa` (the `Day.sa` rows, names redacted per the host's privacy mode, hash
 kept) and `SessRow.s.skills` (6.13). The fleet view's Stats/Skills panel sums across hosts; the skills panel gets a
 `host` column when more than one host is shown. Portfolio drift (§8 A10) reads `hash` per host.
+Review ruling (exactness of the merge): an occurrence that loses a whole (day, provider, model) bucket to another host (a
+copy that lags behind or equals the owner's: the usual case) takes its skill rows of that bucket out exactly; one that
+loses part of a bucket (a copy ahead of an older owner copy, on the day the older copy ends) takes the same share of each
+skill's tokens out as of the bucket's tokens. Exact there would need each message's skill shares in the ownership rows
+(sidecar, snapshot `own` columns, hub rows): up to one share per open skill per message, several times the own rows that
+already dominate a snapshot (fleet 12.4, ~14 MB) — not worth it for a split that only moves within one session-day.
 
 **6.16 MCP server.** New tool `skills`: input `{ref?, period?: "today"|"7d"|"30d"|"all", repo?, name?, advise?: bool}`;
 output `{rows: SkillRow[], loads?: LoadRow[] (when ref given), advice?: Advice[], scope}`; `text` per load only when the

@@ -9,8 +9,10 @@ import { newAcc } from "../usage/record.ts";
 import { REDACT } from "../redact-on.ts";
 import { type XTurn, type XSpan } from "./types.ts";
 import { type BuildOpts, newSessB, advance, finish, hostSpan } from "./build.ts";
+import { setVis } from "../skills/vis.ts";
 
 let bad = 0;
+setVis([], false); // skill names as logged (skills.check.ts covers hiding and --redact)
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ":\n  got  " + got + "\n  want " + want); } }
 const F = "testdata/otlp/fixtures/";
 const NOW = Date.parse("2026-09-02T00:00:00.000Z");
@@ -215,5 +217,6 @@ if (ft.length === 2) eq("fx totals", String(ft[0].spans[1].total) + " " + String
 }
 
 rmSync(tmp, { recursive: true, force: true });
+
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("otlp build: all checks passed");

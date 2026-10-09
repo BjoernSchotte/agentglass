@@ -20,6 +20,7 @@ export interface XSpan {
   tool: string; callId: string; mcp: string; prog: string; exit: number; skill: string; superseded: boolean; // exit -1 = unknown
   fam: string; fkind: string; fgen: boolean; // execute_tool (shell): the command family and kind (agent-wait); fgen = interpreter + script (its program only without detail meta)
   input: string; output: string; args: string; result: string; // content, sent only with --content
+  skHide: string; // execute_tool: the call loads a skill hidden by skills.hide / --redact: why its result (the text) is not sent, "" = sent
   open: boolean; // execute_tool still waiting for its result
 }
 export interface XTurn {
@@ -43,7 +44,7 @@ export function newSpan(op: string, name: string, spanId: string, parentId: stri
     op, name, spanId, parentId, kind: op === "chat" ? 3 : 1, t0, t1: t0, est: false, err: "", errMsg: "", sess, agent: "", attrs: [], events: [],
     model: "", respModel: "", provider: "", respId: "", models: [],
     nIn: 0, nOut: 0, cr: 0, cw: 0, cw1: 0, reqId: "", cmd: "", target: "", rs: 0, cost: 0, unk: 0, exact: false, hasUsage: false, total: false, provId: "", bill: "", costSrc: "", costEst: false,
-    tool: "", callId: "", mcp: "", prog: "", exit: -1, skill: "", superseded: false, fam: "", fkind: "", fgen: false, input: "", output: "", args: "", result: "", open: false,
+    tool: "", callId: "", mcp: "", prog: "", exit: -1, skill: "", superseded: false, fam: "", fkind: "", fgen: false, input: "", output: "", args: "", result: "", skHide: "", open: false,
   };
 }
 // resource service.name and gen_ai.agent.name per harness

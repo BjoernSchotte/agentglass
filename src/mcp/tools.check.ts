@@ -32,9 +32,10 @@ const t0326 = obj(arr(toolsList("2025-03-26")["tools"])[0]) ?? {};
 ok("2025-03-26: title in the annotations (its Tool has none)", t0326["title"] === undefined && (obj(t0326["annotations"]) ?? {})["title"] === "Session" && (obj(t0326["annotations"]) ?? {})["readOnlyHint"] === true, J(t0326).slice(0, 200));
 ok("2025-03-26: annotations, no outputSchema", J(toolsList("2025-03-26")).indexOf("\"annotations\"") > 0 && J(toolsList("2025-03-26")).indexOf("\"outputSchema\"") < 0, "");
 ok("2025-11-25: outputSchema", g1.indexOf("\"outputSchema\"") > 0 && g1.indexOf("\"readOnlyHint\":true") > 0, "");
-// 9 KB for the 11 tools of mcp-server; 10 KB with skill-usage's events (and skills) tool: ≈ 2.5k tokens
-ok("tools/list ≤ 10 KB", new TextEncoder().encode(g1).length <= 10240, String(new TextEncoder().encode(g1).length));
-ok("12 tools in order", TOOLS.map((t: ToolDef) => t.name).join(" ") === "session sessions errors cost triage compare related events contention waits fleet prices", TOOLS.map((t: ToolDef) => t.name).join(" "));
+// 9 KB for the 11 tools of mcp-server; 10 KB with skill-usage's events tool; 10.5 KB with its skills tool (13 tools, its
+// schema 629 bytes at its leanest: ≈ 2.6k tokens in all, +160 bytes over 10 KB)
+ok("tools/list ≤ 10.5 KB", new TextEncoder().encode(g1).length <= 10752, String(new TextEncoder().encode(g1).length));
+ok("13 tools in order", TOOLS.map((t: ToolDef) => t.name).join(" ") === "session sessions errors cost triage compare related events skills contention waits fleet prices", TOOLS.map((t: ToolDef) => t.name).join(" "));
 for (const t of TOOLS) ok("description ≤ 200: " + t.name, t.description.length <= 200 && t.description.length > 40, String(t.description.length));
 const ins = instructionsFor("project"); const insAll = instructionsFor("all projects");
 ok("instructions ≤ 600", ins.length <= 600 && insAll.length <= 600 && ins.indexOf("(project)") > 0 && insAll.indexOf("(all projects)") > 0, ins);
@@ -57,6 +58,11 @@ ok("errors --content: text", A(plan("errors", {}, o((x) => { x.content = true; }
 ok("cost bare", A(plan("cost", {}, d)) === J(["cost", "--format", "json"]), A(plan("cost", {}, d)));
 ok("cost by", A(plan("cost", { since: "7d", by: "model" }, d)) === J(["cost", "--since", "7d", "--by", "model", "--format", "json"]), A(plan("cost", { since: "7d", by: "model" }, d)));
 ok("cost by only", A(plan("cost", { by: "harness" }, d)) === J(["cost", "--since", "today", "--by", "harness", "--format", "json"]), A(plan("cost", { by: "harness" }, d)));
+ok("skills: period table, no advice", A(plan("skills", {}, d)) === J(["skills", "--json", "--period", "30d", "--advice", "0"]), A(plan("skills", {}, d)));
+ok("skills: repo, name, advise", A(plan("skills", { period: "7d", repo: "agentglass", name: "brainstorming", advise: true }, d)) === J(["skills", "--json", "--period", "7d", "--repo", "agentglass", "--name", "brainstorming", "--advice", "10"]), A(plan("skills", { period: "7d", repo: "agentglass", name: "brainstorming", advise: true }, d)));
+ok("skills: ref = that session's loads", A(plan("skills", { ref: "current" }, d)) === J(["skills", "--session", "current", "--json"]), A(plan("skills", { ref: "current" }, d)));
+ok("skills: bad period", plan("skills", { period: "1y" }, d).err.indexOf("period must be one of") === 0, plan("skills", { period: "1y" }, d).err);
+ok("skills: a name is no flag", plan("skills", { name: "-x" }, d).err !== "", plan("skills", { name: "-x" }, d).err);
 ok("triage", A(plan("triage", { preset: "errors" }, d)) === J(["triage", "--json", "--preset", "errors", "--limit", "10"]), A(plan("triage", { preset: "errors" }, d)));
 ok("triage full", A(plan("triage", { select: "tool is Bash", baseline: "previous", entity: "call", days: 30, limit: 5 }, d)) === J(["triage", "--json", "--select=tool is Bash", "--baseline", "previous", "--entity", "call", "--days", "30", "--limit", "5"]), A(plan("triage", { select: "tool is Bash", baseline: "previous", entity: "call", days: 30, limit: 5 }, d)));
 ok("compare sessions", A(plan("compare", { sessions: ["last", "current"] }, d)) === J(["compare", "last", "current", "--json"]), A(plan("compare", { sessions: ["last", "current"] }, d)));
@@ -150,6 +156,7 @@ const es = errorShaped("busy", "2 calls running and 8 waiting", "retry in a few 
 ok("errorShaped", es.isError && J(es.obj) === J({ error: { code: "busy", message: "2 calls running and 8 waiting", hint: "retry in a few seconds" } }), J(es.obj));
 
 // ── content ──
+ok("strip skills: loads lose their text", J(stripContent("skills", { rows: [{ name: "alpha" }], loads: [{ name: "alpha", text: "LOREMSKILLTEXT", textHidden: null }] })) === J({ rows: [{ name: "alpha" }], loads: [{ name: "alpha" }] }), J(stripContent("skills", { rows: [], loads: [{ name: "alpha", text: "LOREMSKILLTEXT" }] })));
 ok("strip session errors text", J(stripContent("session", { errors: [{ tool: "Bash", text: "CANARY" }] })) === J({ errors: [{ tool: "Bash" }] }), J(stripContent("session", { errors: [{ tool: "Bash", text: "CANARY" }] })));
 const rel: Obj = { anchor: { kind: "assistant", text: "CANARY a" }, events: [{ kind: "prompt", text: "CANARY p" }, { kind: "agent", text: "CANARY g" }, { kind: "shell", text: "pnpm test" }, { kind: "thinking", text: "CANARY t" }] };
 const rs = J(stripContent("related", rel));

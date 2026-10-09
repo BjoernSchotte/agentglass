@@ -5,7 +5,7 @@ import { H } from "../../hooks.ts";
 import { TERM } from "../../term.ts";
 import { type Sess, newSess } from "../../model/types.ts";
 import { FRESH, RG, sessions } from "../../model/sessions.ts";
-import { type Obj, obj, str } from "../../util/json.ts";
+import { type Obj, obj, str, arr } from "../../util/json.ts";
 import type { Ident } from "../../model/project.ts";
 import { REMOTE_IDENT } from "../query/project.ts";
 import { HOSTQ } from "../query/eval.ts";
@@ -16,13 +16,16 @@ import { type CostNow, type Ent, type Extra, budget, costWithX, extraOf, sumDays
 import type { SessAcc } from "../usage/pricerows.ts";
 import { PGEN } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
-import { L, todayKey, lastDays } from "../usage/record.ts";
+import { type Acc, L, todayKey, lastDays } from "../usage/record.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { ownIdsBy, rowsBy, forgetIds } from "../usage/msgrows.ts";
 import { hashId } from "./ownc.ts";
-import { type LocalLog, type LocalRows, type FleetHost, type Exact, type Shadow, type MergeJob, mergeStart, mergeStep, modeOfShadow, newXCache, costDays } from "./merge.ts";
+import { type LocalLog, type LocalRows, type FleetHost, type Exact, type Shadow, type MergeJob, mergeStart, mergeStep, modeOfShadow, newXCache, costDays, LOCAL_SKILLS } from "./merge.ts";
 import type { HostCfg, FleetCfg } from "./config.ts";
 import type { HostFeed, HostReport, FeedState, LiveRow } from "./model.ts";
+import type { HostSet } from "../skills/fleet.ts";
+import type { HostHash } from "../skills/advise.ts";
+import { skillVis } from "../skills/vis.ts";
 
 // mine/mineAt: the newest report of this entry's own feed; report/okAt: the report its rows show — its own, or another
 // feed's of the same host (spec 17: via = that entry's name, vkind its transport; "" = its own)
@@ -236,6 +239,45 @@ function tot(m: ModeSum): number { let t = 0; for (const c of m.by) t += c; retu
 const EX = { at: 0, ver: -1, sig: "", cs: "", x: null as Exact | null, gen: 0, ms: 0, sums: 0, max: 0, smax: 0 }; // cs: the host set x was merged from; ms/sums: time spent merging and summing, max/smax: the longest merge slice and sum (the debug footer)
 export function mergeMs(): number[] { const o = [EX.ms, EX.sums, EX.max, EX.smax]; EX.ms = 0; EX.sums = 0; EX.max = 0; EX.smax = 0; return o; }
 export function mergeGen(): number { return EX.gen; } // bumped by every finished merge
+LOCAL_SKILLS.acc = (p: string): Acc | null => ledger.get(p) ?? null; // a correction takes its lost messages' skill shares out (skill-usage 6.15)
+// ── skills per host (skill-usage 6.15) ──
+// a log's top-level session id (subagents and copies count under it)
+function topId(path: string): string { let s = sessions.get(path); if (!s) return path; for (let g = 0; s.parent && g < 8; g++) { const up = sessions.get(s.parent); if (!up) break; s = up; } return s.h + ":" + s.id; }
+// the hosts' skill entries: this machine (its ledger and the merge's corrections: copies another host owns, out), each
+// exact host's merge entries (x), and the sessions' skills[] updated since the first of `days` where no day rows carry
+// them (a host without day rows, before the first merge, a hub-fed session: its $ unknown)
+export function skillSets(hs: RemoteHost[], x: Exact | null, localName: string, days: string[] | null): HostSet[] {
+  const local: HostSet = { host: localName, accs: [], ids: [], sess: [], info: [] };
+  for (const [p, a] of ledger) { local.accs.push(a); local.ids.push(topId(p)); }
+  const sets: HostSet[] = [local]; const by = new Map<string, HostSet>();
+  if (x) for (const e of x.accs) {
+    if (!e.host) { local.accs.push(e.a); local.ids.push(topId(e.key)); continue; }
+    let g = by.get(e.host); if (!g) { g = { host: e.host, accs: [], ids: [], sess: [], info: [] }; by.set(e.host, g); sets.push(g); }
+    g.accs.push(e.a); g.ids.push(e.key);
+  }
+  const from = days && days.length ? Date.parse(days.slice().sort()[0] + "T00:00:00") : 0;
+  for (const rh of hs) {
+    const r = rh.report; if (!r) continue;
+    const merged = r.exact && x !== null; const g0 = by.get(rh.cfg.name); const g: HostSet = g0 ? g0 : { host: rh.cfg.name, accs: [], ids: [], sess: [], info: [] };
+    for (const sr of r.sessions) {
+      const u = Date.parse(str(sr.s["updated"])); if (from && u < from) continue;
+      if (merged) { let sa = false; for (const d of sr.days ?? []) if (d.sa.length) sa = true; if (sa) g.info.push(sr.s); if (sa || !arr(sr.s["skills"]).length) continue; } // its day rows carry its skills (a hub-fed session has only skills[])
+      g.sess.push(sr.s);
+    }
+    if (!g0 && g.sess.length) sets.push(g);
+  }
+  return sets;
+}
+// every host's skill versions (A10): this machine's loads, the hosts' sessions' skills[] entries (newest hash per session)
+export function skillHashes(hs: RemoteHost[], localName: string): HostHash[] {
+  const o: HostHash[] = [];
+  for (const a of ledger.values()) for (const l of a.sk) { if (!l.hash || l.trig === "listing" || l.stub) continue; const v = skillVis(l.name); if (v.mode !== "omit") o.push({ host: localName, name: v.shown, hash: l.hash, at: l.t }); }
+  for (const rh of hs) {
+    const r = rh.report; if (!r) continue;
+    for (const sr of r.sessions) { const at = Date.parse(str(sr.s["updated"])); for (const v of arr(sr.s["skills"])) { const e = obj(v); if (!e) continue; const h = str(e["hash"]); const n = str(e["name"]); if (!h || !n) continue; const vn = skillVis(n); if (vn.mode !== "omit") o.push({ host: rh.cfg.name, name: vn.shown, hash: h, at }); } } // as the host sent it, then this machine's rules
+  }
+  return o;
+}
 // a merge result of the current host set exists (one of another set never stands for it)
 export function merged0(): boolean { return EX.x !== null && (!RUN.r || RUN.r.csig === EX.cs); }
 const XC = newXCache(); // what the merge keeps between rounds (merge.ts)

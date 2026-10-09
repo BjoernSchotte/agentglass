@@ -7,7 +7,7 @@ import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg } from "../ui/theme.ts";
 import { type Acc, bucket, tool, pend, file, lines, tokens, skill, turn, isoMs, nlines, num, stamp, lineAt, skillLoad, skillUnload, skillListing, skillRead, skillReadDone, skillCall, skillCallText } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
-import { CLAUDE_BUNDLED } from "../features/usage/skillrec.ts";
+import { CLAUDE_BUNDLED, listingName } from "../features/usage/skillrec.ts";
 import { modelBill } from "../features/usage/billing.ts";
 import { done } from "../features/usage/calls.ts";
 import { isErr } from "../features/callgraph/model.ts";
@@ -300,7 +300,7 @@ function skillSys(a: Acc, l: string): void {
     }
   } else if (k === "skill_listing") {
     const c = str(at["content"]); const names: string[] = [];
-    for (const ln of c.split("\n")) { if (!ln.startsWith("- ")) continue; const e = ln.indexOf(":", 2); const sp = ln.indexOf(" ", 2); if (e > 2 && (sp < 0 || sp > e)) names.push(ln.slice(2, e)); } // "- <name>: <description>"
+    for (const ln of c.split("\n")) { const n = listingName(ln); if (n) names.push(n); } // "- <name>: <description>", a plugin's "- <plugin>:<name>: …"
     skillListing(a, 0, iso, c, names);
   }
 }

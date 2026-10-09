@@ -15,8 +15,9 @@ export interface OwnRow { h: string; key: number; d: string; hr: number; m: stri
 // one local day of a session (spec 12.2), its subagents folded in: tp = table-priced rows [hour, provider, model, in, out,
 // cacheRead, write5m, write1h, usd] (usd -1 = unpriced; what re-pricing needs), hx = harness-priced cost [hour, provider,
 // usd] (pi/OpenCode reported costs: kept as sent), unk/um = unpriced tokens outside tp ([model, n]), uc = credits without a
-// rate, tools/turns/calls/errors of that day
-export interface DayRow { d: string; tp: string[][]; hx: string[][]; unk: number; um: string[][]; uc: number; tools: number; turns: number; calls: number; errors: number }
+// rate, tools/turns/calls/errors of that day; sa = the day's skill rows (Day.sa: [name, provider, model, 18 slots], skill-usage
+// 6.15; names as the host shows them: skills.hide / --redact applied, omitted skills folded into "(hidden)"; [] = none or an older host)
+export interface DayRow { d: string; tp: string[][]; hx: string[][]; unk: number; um: string[][]; uc: number; tools: number; turns: number; calls: number; errors: number; sa: string[][] }
 export interface SessRow {
   s: Obj;                // the jsonSess object (the `--json` contract)
   key: string;           // host-local stable key: "<harness>:<id>"

@@ -21,7 +21,12 @@ export interface SessAgg {
   model: string; modelAt: number; updated: number; tin: number; tout: number; tcr: number; tcw: number; cost: number; priced: boolean; unk: number;
   modes: Map<string, number>; tools: number; errors: number; subs: number; days: Map<string, DayAgg>; own: Map<string, OwnRow>; prov: Map<string, string>; // own: per chat span id (a message may have several bookings)
   live: LiveRow | null; alerts: Map<string, Obj>; native: boolean; // native: rebuilt from Claude Code's own api_request records
+  sk: Map<string, SkAgg>; // skill loads by "<name>\t<source>" from the turn roots' gen_ai.skill.load events (skill-usage 6.14)
 }
+// one skill and source of a session: loads, and the newest load's size, tier, hash, scope; u = the sender's figures from
+// its newest agentglass.skill.usage event (at uAt): [uses, loads, load, carry, tail tokens, $, carry $, tail $]; [] = none
+interface SkAgg { name: string; source: string; n: number; at: number; size: number; tier: string; hash: string; scope: string; stub: boolean; u: number[]; uAt: number }
+const SK_USAGE = ["agentglass.skill.uses", "agentglass.skill.loads", "agentglass.skill.load_tokens", "agentglass.skill.carry_tokens", "agentglass.skill.tail_tokens", "agentglass.skill.cost_usd", "agentglass.skill.carry_usd", "agentglass.skill.tail_usd"];
 export interface HostAgg {
   name: string; hostId: string; hostName: string; version: string; os: string; redact: boolean; exact: boolean;
   sess: Map<string, SessAgg>; seen: Map<string, number>; newest: number; beat: number; reqIds: Set<string>; respIds: Set<string>;
@@ -61,7 +66,7 @@ function hostAgg(a: Agg, name: string, hostId: string): HostAgg {
 function sessAgg(h: HostAgg, harness: string, id: string): SessAgg {
   const key = harness + ":" + id;
   let x = h.sess.get(key);
-  if (!x) { x = { key, h: harness, id, title: "", cwd: "", branch: "", remote: "", repoKey: "", repoName: "", model: "", modelAt: 0, updated: 0, tin: 0, tout: 0, tcr: 0, tcw: 0, cost: 0, priced: false, unk: 0, modes: new Map<string, number>(), tools: 0, errors: 0, subs: 0, days: new Map<string, DayAgg>(), own: new Map<string, OwnRow>(), prov: new Map<string, string>(), live: null, alerts: new Map<string, Obj>(), native: false }; h.sess.set(key, x); }
+  if (!x) { x = { key, h: harness, id, title: "", cwd: "", branch: "", remote: "", repoKey: "", repoName: "", model: "", modelAt: 0, updated: 0, tin: 0, tout: 0, tcr: 0, tcw: 0, cost: 0, priced: false, unk: 0, modes: new Map<string, number>(), tools: 0, errors: 0, subs: 0, days: new Map<string, DayAgg>(), own: new Map<string, OwnRow>(), prov: new Map<string, string>(), live: null, alerts: new Map<string, Obj>(), native: false, sk: new Map<string, SkAgg>() }; h.sess.set(key, x); }
   return x;
 }
 function dayAgg(x: SessAgg, d: string): DayAgg {
@@ -123,6 +128,44 @@ function chat(h: HostAgg, x: SessAgg, m: Attrs, end: number, inclusive: boolean,
   const req = s(m, "agentglass.request.id"); if (req) h.reqIds.add(req);
 }
 
+// a turn root's (or a subagent piece's) skill events → the session's skills[] entries: a user load is a "command" use, a
+// model load a "model" use (re-injections and the listing have no entry, as in --json); names arrive as the sender showed
+// them (skills.hide, --redact applied there). Tokens and $ come from the sender's agentglass.skill.usage events (its
+// --json entry so far, the newest wins); a sender without them leaves them null
+function skAgg(x: SessAgg, name: string, src: string): SkAgg {
+  const k = name + "\t" + src; let g = x.sk.get(k);
+  if (!g) { g = { name, source: src, n: 0, at: -1, size: -1, tier: "", hash: "", scope: "", stub: true, u: [], uAt: -1 }; x.sk.set(k, g); }
+  return g;
+}
+function skillEvents(x: SessAgg, evs: unknown): void {
+  for (const e of arr(evs)) {
+    const o = obj(e); if (!o) continue;
+    const en = str(o["name"]); if (en !== "gen_ai.skill.load" && en !== "agentglass.skill.usage") continue;
+    const m = attrMap(o["attributes"]); const name = s(m, "gen_ai.skill.name"); const t = nsMs(o["timeUnixNano"]); if (!name) continue;
+    if (en === "agentglass.skill.usage") {
+      const src = s(m, "agentglass.skill.source"); if (src !== "command" && src !== "model") continue;
+      const g = skAgg(x, name, src); if (t < g.uAt) continue;
+      g.uAt = t; g.u = SK_USAGE.map((k: string) => n(m, k));
+      continue;
+    }
+    const tr = s(m, "agentglass.skill.trigger"); if (tr !== "user" && tr !== "model") continue;
+    const g = skAgg(x, name, tr === "user" ? "command" : "model");
+    g.n++;
+    const stub = b(m, "agentglass.skill.stub"); // a re-invocation stub is no version of the text: the newest real load wins
+    if ((t >= g.at && (!stub || g.stub)) || (g.stub && !stub)) { g.at = t; g.stub = stub; g.size = m.n.has("agentglass.skill.size_tokens") ? n(m, "agentglass.skill.size_tokens") : -1; g.tier = s(m, "agentglass.skill.tier"); g.hash = s(m, "agentglass.skill.hash"); g.scope = s(m, "agentglass.skill.scope"); }
+  }
+}
+function skillsOf(x: SessAgg): Obj[] {
+  const gs: SkAgg[] = []; for (const g of x.sk.values()) gs.push(g);
+  const uses = (g: SkAgg): number => g.u.length ? g.u[0] ?? 0 : g.n;
+  gs.sort((p: SkAgg, q: SkAgg) => uses(q) - uses(p) || (p.name < q.name ? -1 : p.name > q.name ? 1 : p.source < q.source ? -1 : 1)); // the --json order: most used first
+  return gs.map((g: SkAgg): Obj => {
+    const u = g.u; const has = u.length === SK_USAGE.length;
+    return { name: g.name, source: g.source, n: uses(g), loads: has ? u[1] ?? 0 : g.n, tokens: has ? { load: u[2] ?? 0, carry: u[3] ?? 0, tail: u[4] ?? 0 } : null,
+      costUsd: has ? u[5] ?? 0 : null, carryUsd: has ? u[6] ?? 0 : null, tailUsd: has ? u[7] ?? 0 : null,
+      size: g.size >= 0 ? g.size : null, tier: g.tier || null, hash: g.hash || null, scope: g.scope || null, dir: null };
+  });
+}
 function spans(a: Agg, rs: Obj, label: Label | null): void {
   const r = obj(rs["resource"]); const rm = attrMap(r ? r["attributes"] : []);
   const who = hostOfResource(a, rm, label); if (!who.name) return;
@@ -156,7 +199,7 @@ function spans(a: Agg, rs: Obj, label: Label | null): void {
       if (s(m, "error.type")) { x.errors++; d.errors++; }
       if (op === "chat") chat(h, x, m, end, inclusive, sid || String(end) + ":" + String(x.own.size));
       else if (op === "execute_tool") { x.tools++; d.tools++; }
-      else if (op === "invoke_agent") { if (sp["parentSpanId"]) x.subs++; else d.turns++; }
+      else if (op === "invoke_agent") { if (sp["parentSpanId"]) x.subs++; else d.turns++; skillEvents(x, sp["events"]); }
     }
   }
 }
@@ -237,7 +280,7 @@ function dayRows(x: SessAgg): DayRow[] {
     }
     const hx: string[][] = []; for (const k of g.hx.keys()) { const p = k.split("\u0000"); hx.push([p[0] ?? "0", p[1] ?? "", String(g.hx.get(k) ?? 0)]); }
     const umr: string[][] = []; for (const mo of um.keys()) umr.push([mo, String(um.get(mo) ?? 0)]);
-    out.push({ d, tp, hx, unk: g.unk, um: umr, uc: 0, tools: g.tools, turns: g.turns, calls: g.calls, errors: g.errors });
+    out.push({ d, tp, hx, unk: g.unk, um: umr, uc: 0, tools: g.tools, turns: g.turns, calls: g.calls, errors: g.errors, sa: [] }); // skill tokens are not in the spans
   }
   return out;
 }
@@ -259,7 +302,7 @@ function jsonOf(x: SessAgg, live: LiveRow | null): Obj {
   vals["status"] = ""; vals["mux"] = null; vals["parent"] = null; vals["kind"] = ""; vals["subagents"] = x.subs; vals["activity"] = "";
   vals["tokens"] = tok; vals["costUsd"] = x.priced ? Math.round(x.cost * 1e9) / 1e9 : x.unk > 0 ? null : 0; vals["costEstimatedUsd"] = 0; vals["billing"] = bill;
   vals["unpricedTokens"] = x.unk; vals["unpricedCredits"] = 0; vals["tools"] = x.tools; vals["linesAdded"] = 0; vals["linesRemoved"] = 0;
-  vals["attention"] = live ? live.attention : false; vals["stuck"] = live && live.stuck ? live.stuck : null; vals["skills"] = []; vals["repo"] = repo; vals["alerts"] = alerts; vals["git"] = null;
+  vals["attention"] = live ? live.attention : false; vals["stuck"] = live && live.stuck ? live.stuck : null; vals["skills"] = skillsOf(x); vals["repo"] = repo; vals["alerts"] = alerts; vals["git"] = null;
   for (const k of JSON_FIELDS) o[k] = vals[k] ?? null;
   return o;
 }
@@ -354,6 +397,13 @@ export function restoreHost(a: Agg, key: string, r: HostReport, x: HostExtra): v
       g.unk = dr.unk; g.tools = dr.tools; g.turns = dr.turns; g.calls = dr.calls; g.errors = dr.errors; ss.errors += dr.errors;
     }
     let j = 0; for (const row of om.get(sr.key) ?? []) ss.own.set("restored:" + String(j++), row);
+    for (const v of arr(o["skills"])) { // skills[] as reported: later events add to it (their figures are the session's so far)
+      const e = obj(v); if (!e) continue; const name = str(e["name"]); const src = str(e["source"]); if (!name || (src !== "command" && src !== "model")) continue;
+      const g = skAgg(ss, name, src); g.n = numOf(e["loads"]) || numOf(e["n"]); g.at = 0; g.stub = false;
+      g.size = typeof e["size"] === "number" ? e["size"] as number : -1; g.tier = str(e["tier"]); g.hash = str(e["hash"]); g.scope = str(e["scope"]);
+      const tk = obj(e["tokens"]);
+      if (tk) { g.u = [numOf(e["n"]), numOf(e["loads"]), numOf(tk["load"]), numOf(tk["carry"]), numOf(tk["tail"]), numOf(e["costUsd"]), numOf(e["carryUsd"]), numOf(e["tailUsd"])]; g.uAt = 0; }
+    }
   }
   // sessions outside the window: their ownership-only rows
   for (const ow of r.owned) {

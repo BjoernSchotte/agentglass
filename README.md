@@ -789,7 +789,7 @@ A rule with a built-in `id` changes only the fields it names: `{"id":"approval",
 | `params` | metric tuning (table below) |
 | `ack` | `"look"`: selecting the row for > 1 s or opening its transcript hides the alert until it resolves; `"none"` (default) |
 | `notify` | `true` (default for new rules): bell, desktop notification and the notify command on transitions |
-| `message` | template: `{value} {threshold} {severity} {rule} {tool} {title} {project} {harness} {cpu} {cmd}` |
+| `message` | template: `{value} {threshold} {severity} {rule} {tool} {title} {project} {harness} {cpu} {cmd} {skill}` |
 | `labels` | up to 16 `"key": "value"` strings, shown in the preview, `--json`, `--watch` and the command's JSON |
 | `enabled` | `false` switches the rule off |
 
@@ -808,6 +808,11 @@ A rule with a built-in `id` changes only the fields it names: `{"id":"approval",
 | `tool_error_rate` | ratio | failed / matching calls with a result (fewer than `min_calls`) | |
 | `contention` | count | heavy commands (tests, type checks, lint, builds, installs) running on this host — the same value for every session running one (the session runs none) | `min_age` 0 (seconds a command runs before it counts) |
 | `contention_family` | count | running heavy commands of the family of the session's oldest heavy command (the session runs none) | `min_age` 0 |
+| `skill_reloads` | count | most copies of one skill in one context at once: a load while an earlier load of it is still in context (no loads); `{skill}` names it | |
+| `skill_carry_usd` | USD | the largest carry $ of one skill in the session (no skill carried); `{skill}` names it | |
+| `skill_context_share` | ratio | the open skills' sizes / the context of the newest request (no skill in context); `{skill}` = the largest | |
+
+With a skill metric, `where` clauses on `skill.*` keys pick the skills it counts: `{"id":"tdd-carry","metric":"skill_carry_usd","where":"skill is test-driven-development","op":">","degraded":0.5}` is that skill's carry, not the largest one of a session that loaded it.
 
 `samples` is at most 400 (one sample per ~1.5 s; the CPU history grows to the largest one in use).
 
@@ -822,6 +827,7 @@ Built-ins (`agentglass rules defaults` prints them as an editable file, `--examp
 | `stalled` | `stalled` | `⚠` `>` 8m | none | no | `no log activity {value}, cpu {cpu}%` |
 | `spinning` | `spinning` | `⚠` `>` 3m | none | no | `cpu > {cpu}% for 3m while the log is silent {value}` |
 | `contention` | `contention` | `◆` `>=` 3, for 30s | none | yes | `{value} heavy commands running: {cmd}` — **off** until `{"id":"contention","enabled":true}` |
+| `skill-reload` | `skill_reloads` | `◆` `>=` 2 | none | yes | `{skill} loaded {value}× in one context` — **off** until `{"id":"skill-reload","enabled":true}` |
 
 The `contention` metrics are host-wide: every agent running a heavy command gets the alert (the rows show which), but
 the bell, the desktop notification and the notify command come once per rule and host, not once per agent.
@@ -833,6 +839,7 @@ More examples:
 | only nag after 5 min of waiting (◆ and bell come at 5 min) | `{"id":"waiting","degraded":"5m"}` |
 | long test suites are fine | `{"id":"long-cmd","critical":"45m"}` |
 | warn when 3+ heavy runs overlap on this machine | `{"id":"contention","enabled":true}` |
+| a skill that keeps costing after its task | `{"id":"fat-skill","metric":"skill_carry_usd","op":">","degraded":0.5}` |
 | two agents running the same suite at once | `{"id":"same-heavy-command","metric":"contention_family","degraded":2,"for":"30s"}` |
 | the same command repeated more than 5 times | `{"id":"bash-repeats","metric":"repeat_run","where":"tool is Bash","degraded":5}` |
 | Bash error rate over the last 50 calls | `{"id":"bash-errors","metric":"tool_error_rate","where":"tool is Bash","min_calls":20,"window":50,"degraded":"30%"}` |
@@ -1025,6 +1032,7 @@ the hosts for one run; the palette has *Fleet: refresh hosts now* and *Fleet: st
 ```sh
 agentglass fleet --json | jq '.[] | select(.live) | {host, title, attention}'   # every host's sessions
 agentglass fleet cost --json | jq '{total: .total.today.byMode, overlap, approx}'
+agentglass fleet skills --period 7d  # per host what each skill cost (a copied log counted once), versions that differ (A10)
 agentglass fleet status          # per host: last report, error, version, host id, time zone; the first thing to run
 agentglass fleet status --close  # end the shared ssh connections
 agentglass open claude:5f1e…@ws  # a host's session: prints ssh -t me@workstation agentglass open claude:5f1e… (run it)
@@ -1474,6 +1482,7 @@ config file itself.
 | `compare` | two sessions, or two groups of sessions (filter expressions `a`, `b`) |
 | `related` | what every agent in the project did around an event, conflicts flagged |
 | `events` | one session's events by kind (`filter` like `event.kind is skill`), hidden runs as gaps, paged by `cursor` |
+| `skills` | which skills agents loaded and what each cost (load + carry $) in a `period`, `repo` or one session (`ref`: its loads); `advise: true` adds up to 10 advice items; loaded text only with the server's `--content` |
 | `contention` | "start my tests now?": heavy commands other agents run on this machine, `go` true/false |
 | `waits` | where agent time goes: wall time per command family, kind or tool |
 | `fleet` | the fleet's hosts (`configured: false` without a fleet) |

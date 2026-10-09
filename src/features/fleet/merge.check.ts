@@ -17,6 +17,11 @@ import { dayRows } from "./snap.ts";
 import { type LocalLog, type LocalRows, type FleetHost, type Exact, type Occ, type Shadow, exactFleet, ownerIndex, shiftDH, shadowOf, newXCache, mergeStart, mergeStep, MSTAT } from "./merge.ts";
 import { type OwnChunk, chunkOf, lenOf, rowsOfChunks, hashId } from "./ownc.ts";
 import "../../harness/index.ts";
+import { readFileSync } from "node:fs";
+import { skillTable } from "../skills/model.ts";
+import { skillsJson } from "../skills/json.ts";
+import { setVis } from "../skills/vis.ts";
+import { LOCAL_SKILLS } from "./merge.ts";
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -160,7 +165,7 @@ loadUser(null);
 const sh = shiftDH("2026-09-01", 23, 120);
 ok("shift 23h +2h → next day 1h", sh.d === "2026-09-02" && sh.h === 1, JSON.stringify(sh));
 ok("shift back", shiftDH("2026-09-02", 1, -120).d === "2026-09-01", "");
-const tz: SessRow = { s: { billing: { mode: "api" } }, key: "claude:z", days: [{ d: "2026-09-01", tp: [["23", "", M, "1", "0", "0", "0", "0", "0.5"]], hx: [] as string[][], unk: 0, um: [] as string[][], uc: 0, tools: 0, turns: 0, calls: 0, errors: 0 }], own: null, prov: [] };
+const tz: SessRow = { s: { billing: { mode: "api" } }, key: "claude:z", days: [{ d: "2026-09-01", tp: [["23", "", M, "1", "0", "0", "0", "0", "0.5"]], hx: [] as string[][], unk: 0, um: [] as string[][], uc: 0, tools: 0, turns: 0, calls: 0, errors: 0, sa: [] as string[][] }], own: null, prov: [] };
 const za = shadowOf(tz, 120);
 ok("shadow re-bucketed", za.days.has("2026-09-02") && !za.days.has("2026-09-01") && Math.abs((za.days.get("2026-09-02")?.hc[1] ?? 0) - 0.5) < 1e-12, JSON.stringify([...za.days.keys()]));
 ok("half-hour zone rounds", shiftDH("2026-09-01", 10, 330).h === 16 || shiftDH("2026-09-01", 10, 330).h === 15, String(shiftDH("2026-09-01", 10, 330).h));
@@ -255,5 +260,35 @@ for (const sd of [42, 7, 1234, 99, 2026]) {
 
 ok("some seed grew a host's rows without a reset", grownSeen > 0, String(grownSeen));
 ok("the sliced merges took many steps", slicedSteps >= 10, String(slicedSteps));
+
+// skill-usage 6.15: a log copied to two hosts carries the same skill shares on both; the merge keeps one copy's
+{
+  setVis([], false); LOCAL_SKILLS.acc = (p: string): Acc | null => ledger.get(p) ?? null;
+  const fx = readFileSync("testdata/skills/claude.jsonl", "utf8").trim().split("\n");
+  const SA = put("sk-a", fx); const SB = put("sk-b", fx); // the same messages under two session files
+  const usdOf = (as: Acc[], ids: string[], name: string): number => { let u = 0; for (const r of skillTable(as, ids, null, "cost")) if (r.name === name) u += r.usd + r.loadsUser * 1000 + r.loadsModel * 1e6; return u; };
+  const one = truth([SA]); void one; const solo = ledger.get(SA); const alone = solo ? usdOf([solo], ["a"], "alpha") : -1;
+  ok("fixture: alpha has $ and loads", alone > 1000, String(alone));
+  const ha = hostOf("ha", "1111111111111111", [SA]); const hb = hostOf("hb", "2222222222222222", [SB]);
+  ok("host rows carry Day.sa", (ha.r.sessions[0]?.days ?? []).some((d) => d.sa.length > 0), "");
+  const rx = fleet(none, [ha, hb], false);
+  const sh: Acc[] = []; const ids: string[] = []; for (const e of rx.x.accs) { sh.push(e.a); ids.push(e.host + ":" + e.key); }
+  const got = usdOf(sh, ids, "alpha");
+  ok("two hosts, one copy: skill $ and loads = host A's, not doubled", Math.abs(got - alone) < 1e-6, String(got) + " want " + String(alone));
+  // this machine holds the copy too, and loses it (its id sorts after the hosts'): its correction takes the skill shares out
+  const loc = localOf([SB]); const rl = fleet(loc, [ha], false);
+  const all: Acc[] = loc.accs.slice(); const ids2: string[] = loc.accs.map((a: Acc) => "local"); for (const e of rl.x.accs) { all.push(e.a); ids2.push(e.host ? e.host + ":" + e.key : "local"); }
+  const got2 = usdOf(all, ids2, "alpha");
+  ok("local copy loses: local + correction + host = one copy", Math.abs(got2 - alone) < 1e-6, String(got2) + " want " + String(alone));
+  // a redacted host: fake names in its day rows, the same tokens; skills[] keeps the hashes
+  setVis([], true);
+  const hr = hostOf("hr", "3333333333333333", [SA]); let names = ""; for (const d of hr.r.sessions[0]?.days ?? []) for (const x of d.sa) names += (x[0] ?? "") + ",";
+  ok("redacted day rows: no user skill name", names.indexOf("alpha") < 0 && names.indexOf("beta") < 0 && names.length > 0, names);
+  const ar = ledger.get(SA); const fakeJ = ar ? skillsJson([ar]) : [];
+  setVis([], false); const realJ = ar ? skillsJson([ar]) : [];
+  let same2 = fakeJ.length === realJ.length && fakeJ.length > 0;
+  for (let i = 0; i < fakeJ.length; i++) { const f = fakeJ[i] ?? {}; const r0 = realJ[i] ?? {}; if (f["name"] === r0["name"] || f["hash"] !== r0["hash"]) same2 = false; }
+  ok("redacted skills[]: fake names, same hashes", same2, JSON.stringify(fakeJ));
+}
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("fleet merge: all checks passed");

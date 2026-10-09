@@ -202,11 +202,11 @@ export function jsonSess(s: Sess): Obj {
   return {
     id: s.id, harness: s.h, title: scrub(titleOf(s)), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: display("path", s.path, s),
     updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status, mux: muxJson(s),
-    parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, twins: s.twins, activity: activity(s),
+    parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, twins: s.twins, activity: scrub(activity(s)),
     tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
     costUsd: s.cost < 0 ? null : s.cost, costEstimatedUsd: Math.round(estTopOf(accsOf(s)).usd * 1e6) / 1e6, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
     unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-    attention: s.attention, stuck: s.stuck ? s.stuck : null, skills, repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
+    attention: s.attention, stuck: s.stuck ? scrub(s.stuck) : null, skills, repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
   };
 }
 // mux: the live agent's multiplexer pane (a subagent: its parent's); labels are user text, hidden under --redact

@@ -136,7 +136,8 @@ eq "exact: status says so" "$(run fleet status --json | jq -r '[.hosts[].exact] 
 gen=$(grep -h '"snap"' "$t/spool/h2.snap" | head -1 | jq -r .snap.gen)
 runl fleet --json --refresh > /dev/null
 grep "h2 .*'snapshot'" "$t/remote-words.log" | tail -1 | grep -q "'--ack' '$gen'" || { echo "FAIL the second request acknowledges the first ($gen)"; grep "h2 " "$t/remote-words.log"; fail=1; }
-if grep "^.* h2 " "$t/remote-words.log" | grep -q "w1\|m-w1"; then echo "FAIL a session or message id in the remote words"; fail=1; fi
+# (the ControlPath is no id: a macOS temp dir can hold "w1")
+if grep "^.* h2 " "$t/remote-words.log" | sed "s/ControlPath=[^ ]*//g" | grep -q "w1\|m-w1"; then echo "FAIL a session or message id in the remote words"; fail=1; fi
 eq "exact: still the truth after a delta" "$(run fleet cost --json | jq '.total.today.byMode.api')" "$truth"
 # no message id travels: the snapshot holds only 16-hex hashes
 if grep -q '"m-w1"\|m-w1' "$t/spool/h2.snap" "$t/spool/h3.snap"; then echo "FAIL a raw message id in a snapshot"; fail=1; fi

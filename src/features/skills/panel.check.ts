@@ -17,6 +17,9 @@ import { type PanelScope, openSkillsPanel, panelLines, panelState, panelKey } fr
 import { skillViewLines } from "./view.ts";
 import { setVis } from "./vis.ts";
 import { skFixture } from "./fixture.ts";
+import { type HostRow, SKILL_FLEET } from "./fleet.ts";
+import type { SkillRow } from "./model.ts";
+import type { HostHash } from "./advise.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -69,6 +72,28 @@ eq("S in Stats", S.mode + " " + panelState().origin, "view Stats");
 eq("Stats panel rows", has(panelLines(120, 30), "alpha") && has(panelLines(120, 30), "gamma") ? "ok" : panelLines(120, 30).join("\n"), "ok");
 onInput("esc"); eq("back to Stats", S.mode + " " + String(S.tab), "list " + String(statsTabIndex()));
 S.tab = 0; onInput("S"); eq("S elsewhere does not open it", S.mode, "list");
+// a fleet shown (skill-usage 6.15): one row per skill and host with a host column (this machine's first among equals),
+// the panel's advice adds A10 from the hosts' versions, v on another host's row says where its text is
+{
+  const mk = (name: string, usd: number): SkillRow => ({ name, loadsUser: 1, loadsModel: 1, loadsCompact: 0, sessions: 1, sizeP50: 1000, load: 1000, carry: 2000, tail: 0, usd, carryUsd: usd / 2, tailUsd: 0, perSess: usd, share: 0.01, ctx: 1e5, tier: "exact", hashes: [], scope: "user", unpriced: false });
+  SKILL_FLEET.on = (): boolean => true; SKILL_FLEET.local = (): string => "ws";
+  SKILL_FLEET.rows = (days: string[] | null, by: string): HostRow[] => [{ host: "ws", row: mk("alpha", 0.5) }, { host: "vm1", row: mk("alpha", 0.25) }, { host: "vm1", row: mk("deploy", 0.1) }];
+  SKILL_FLEET.hashes = (): HostHash[] => [{ host: "ws", name: "deploy", hash: "aaaaaaaa11111111", at: Date.now() }, { host: "vm1", name: "deploy", hash: "bbbbbbbb22222222", at: Date.now() }];
+  S.mode = "list"; S.tab = statsTabIndex(); onInput("S");
+  for (const w of [80, 120]) {
+    const fl = panelLines(w, 24);
+    eq("fleet " + String(w) + ": host column", has(fl, "host") && has(fl, " ws ") && has(fl, " vm1 ") ? "ok" : fl.join("\n"), "ok");
+    eq("fleet " + String(w) + ": fits", fl.slice(1).every((l: string): boolean => l.length <= w - 4) ? "ok" : fl.join("\n"), "ok");
+  }
+  eq("fleet: summary", has(panelLines(120, 24), "2 skills on 2 hosts") ? "ok" : panelLines(120, 24).join("\n"), "ok");
+  eq("fleet: this machine's row first", panelState().host + " " + panelState().sel, "ws alpha");
+  panelKey("down"); eq("fleet: rows move by host", panelState().host + " " + panelState().sel, "vm1 alpha");
+  panelKey("down"); panelKey("a");
+  eq("fleet: A10 in the panel's advice", has(panelLines(120, 30), "A10 versions differ across hosts · deploy") ? "ok" : panelLines(120, 30).join("\n"), "ok");
+  panelKey("a"); panelKey("v"); eq("fleet: v on another host's row stays", S.fview, "skills");
+  onInput("esc");
+  SKILL_FLEET.on = (): boolean => false; S.tab = 0;
+}
 // the preview's skills line
 let pl = "";
 for (const f of H.previewSections) for (const l of f(fx.k1, 70)) { const t = l.replace(/\x1b\[[0-9;]*m/g, ""); if (t.startsWith("skills")) pl = t; }
