@@ -8,7 +8,7 @@ import { type SkLoad, newAcc, skillUsesOf } from "../features/usage/record.ts";
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 const a = newAcc();
-for (const l of readFileSync("src/features/skills/fixtures/codex.jsonl", "utf8").split("\n")) if (l) codex.usage(a, l);
+for (const l of readFileSync("testdata/skills/codex.jsonl", "utf8").split("\n")) if (l) codex.usage(a, l);
 function row(l: SkLoad): string { return [l.name, l.trig, l.est ? "≈" : "exact", l.end ? l.why : "open", l.dir].join(" "); }
 eq("loads", a.sk.map(row).join("\n"), [
   "(listing) listing exact compact ",

@@ -6,7 +6,7 @@ import { type Obj, obj, str, arr, parse as parseJson } from "../util/json.ts";
 import { HOME, readBytes, readText, listDir, listDirCached } from "../util/fs.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C } from "../ui/theme.ts";
-import { type Acc, bucket, tool, pend, file, lines, tokens, reasoning, turn, skill, nlines, num, isoMs } from "../features/usage/record.ts";
+import { type Acc, bucket, tool, pend, file, lines, tokens, reasoning, turn, skill, nlines, num, isoMs, skillLoad, skillRead, skillReadDone } from "../features/usage/record.ts";
 import { MQ_MSG } from "../features/usage/facts.ts";
 import { done } from "../features/usage/calls.ts";
 import type { AddFn, HarnessAdapter, SessionSource } from "./types.ts";
@@ -396,7 +396,14 @@ function usage(a: Acc, l: string): void {
     const name = str(c["name"]) || "tool"; const id = str(c["id"]); const args = obj(c["args"]);
     spawned(c, name, args);
     const st = tool(a, d, name, md || a.model, MQ_MSG);
-    if (name === "activate_skill" && args) skill(d, "model", str(args["name"]));
+    if (name === "activate_skill" && args) { // the skill's text is the call's response (written with the call): a model load
+      const done0 = c["result"] !== undefined && c["result"] !== null;
+      skill(d, "model", str(args["name"]));
+      skillLoad(a, str(args["name"]), "model", 0, iso, done0 ? resultText(c) : "", done0, "", false);
+    } else if (name === "read_file" && args && c["result"] !== undefined && c["result"] !== null) {
+      skillRead(a, id, str(args["file_path"]) || str(args["absolute_path"]) || str(args["path"]));
+      if (a.skr.has(id)) skillReadDone(a, d, id, 0, iso, resultText(c), false);
+    }
     pend(a, d, st, name, id, t0, iso, callArg(name, args), name === "run_shell_command" && args ? [str(args["command"])] : []);
     const f = failOf(c); const ok = !f.tag;
     const p = a.pend.get(id);

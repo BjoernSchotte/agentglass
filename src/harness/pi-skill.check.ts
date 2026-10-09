@@ -8,7 +8,7 @@ import { type SkLoad, newAcc, skillUsesOf } from "../features/usage/record.ts";
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 const a = newAcc();
-for (const l of readFileSync("src/features/skills/fixtures/pi.jsonl", "utf8").split("\n")) if (l) pi.usage(a, l);
+for (const l of readFileSync("testdata/skills/pi.jsonl", "utf8").split("\n")) if (l) pi.usage(a, l);
 function row(l: SkLoad): string { return [l.name, l.trig, String(l.bytes), String(l.S), l.lt.join("/"), l.ct.join("/"), l.end ? l.why : "open", l.dir, l.scope].join(" "); }
 eq("loads", a.sk.map(row).join("\n"), [
   "alpha user 3600 1000 0/0/1000/0 0/2000/0/0 compact /h/.pi/agent/skills/alpha project",

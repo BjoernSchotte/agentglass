@@ -7,7 +7,7 @@ import { type SkLoad, newAcc, skillUsesOf } from "../features/usage/record.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
-const lines = readFileSync("src/features/skills/fixtures/claude.jsonl", "utf8").split("\n");
+const lines = readFileSync("testdata/skills/claude.jsonl", "utf8").split("\n");
 const a = newAcc();
 a.mc.set("u:u-copied-1", "/elsewhere/other.jsonl"); a.mc.set("u:u-copied-2", "/elsewhere/other.jsonl"); // another log owns the copied pair
 for (const l of lines) if (l) claude.usage(a, l);
