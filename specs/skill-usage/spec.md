@@ -316,7 +316,7 @@ it came from a tool call (`Skill`, `activate_skill`, `skill`, a SKILL.md read), 
 and the tool name — `ev:user`, `ev:assistant`, `ev:thinking`, `ev:tool`, `ev:result`, `ev:error` (a failed result),
 `ev:meta`, `mcp:<server>` (an MCP tool call or result) — plus every registered mark kind (`skill:load`,
 `debug:probe` …). Owned here:
-- **Filter attribute**: the existing `event` key (entity `event`, `src/features/query/attrs.ts:108`; `kind` is taken
+- **Filter attribute**: the existing `event` key (entity `event`, `src/features/query/attrs.ts:106`; `kind` is taken
   by agent-wait's call kinds) gets a dynamic enum: its old values stay (`user` = `ev:user` …), plus every kind above
   and every family name (a family matches all its kinds): `event is skill`, `event is_not ev:thinking`,
   `event is_one_of debug, ev:error`. It selects which events and marks a timeline view shows; on the session list it
