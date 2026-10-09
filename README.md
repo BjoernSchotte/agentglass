@@ -39,7 +39,7 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
 
 - **Start:** [Quick install](#quick-install) · [Why it slaps](#why-it-slaps) · [More screens](#more-screens) · [Install](#install) · [Releases & channels](#releases--channels) · [Keys](#keys)
 - **Costs:** [Prices](#prices) · [Billing modes, projection, budget](#billing-modes-projection-budget)
-- **Explore:** [Repos](#repos) · [What do my agents wait on?](#what-do-my-agents-wait-on) · [Git linkage](#git-linkage) · [Filters](#filters) · [Triage](#triage) · [Compare](#compare) · [Related events](#related-events) · [Palette and links](#palette-and-links)
+- **Explore:** [Repos](#repos) · [What do my agents wait on?](#what-do-my-agents-wait-on) · [Git linkage](#git-linkage) · [Filters](#filters) · [Filtering events](#filtering-events) · [Triage](#triage) · [Compare](#compare) · [Related events](#related-events) · [Palette and links](#palette-and-links)
 - **Alerts:** [Alert rules](#alert-rules)
 - **Beyond one machine:** [Several machines (fleet)](#several-machines-fleet) · [Send to an OTLP backend](#send-to-an-otlp-backend) · [OTLP: several hosts](#otlp-several-hosts) · [`agentglass receive` hub](#otlp-a-hub-for-hosts-you-cannot-reach-agentglass-receive)
 - **Integrations:** [herdr](#herdr) · [Inside coding agents](#inside-coding-agents) · [MCP server](#mcp-server) · [Scriptable](#scriptable) · [Custom agent commands](#custom-agent-commands)
@@ -402,6 +402,7 @@ Press `?` inside the app for the full, context-aware cheat sheet. The essentials
 | `@` | in Sessions: open the selected session's project in the Repos tab |
 | `t` | triage the Sessions or Stats selection (see [Triage](#triage)) |
 | `m` `C` | mark A / B · compare two sessions or periods (see [Compare](#compare)) |
+| `K` `i` `!` `]` `[` | in a transcript, call graph, related events or Wait: event kinds, solo, invert, next / previous match (see [Filtering events](#filtering-events)) |
 | `r` | in a transcript, event detail or call graph: everything around that event in the same project (see [Related events](#related-events)) |
 | `y` `Y` | copy the session id · copy a link to the session (list) or to the event under the cursor (transcript) |
 
@@ -551,7 +552,7 @@ harness is pi, day >= -7d               duration > 30s                       con
   content worktree project.kind session mux workspace` (`session is claude:3f2a9c`: a run and its subagents; `mux is
   herdr`: the live agent's multiplexer, tmux | herdr | none; `workspace is webapp`: its herdr workspace), day `day weekday
   day.cost day.tokens day.tools`, call `tool server program command family kind file ext status duration out hour`,
-  `event` (`--watch`). `family` is the call's command family (`pnpm test`, `tsc`; other tools: the tool) and `kind`
+  event `event.kind mcp.server shell.family` and the older `event` (see [Filtering events](#filtering-events)). `family` is the call's command family (`pnpm test`, `tsc`; other tools: the tool) and `kind`
   its kind (`test typecheck lint build install ci wait vcs net other`, tools `user agent web mcp file`), as
   `agentglass wait` groups them: `kind is lint` in Stats drills into lint runs. On a session row, call clauses mean "has a call matching all of them" (the same call), day clauses
   "has a day matching all of them". `model` of a call is the model of the message that issued it (Codex: per turn;
@@ -572,6 +573,63 @@ agentglass --watch --filter 'harness is pi and event is_one_of tool result'    #
 agentglass --watch --filter 'event is alert'                                   # only alert transitions
 ```
 A bad expression exits 2 with the message and a caret under the column.
+
+## Filtering events
+
+"Show me only the skill loads", "only the MCP calls", "only the failing tests and what led to them": one filter for
+every event view, the same keys everywhere: the transcript (and its replay), the call graph, related events, the Wait
+tab and the session preview.
+
+Every event has one or more **kinds**:
+
+| family | kinds |
+|---|---|
+| `prompt` | `prompt` (yours), `prompt:agent` (a peer's message, a task notification) |
+| `reply` | `reply`, `reply:thinking` |
+| `shell` | `shell:test`, `shell:build`, `shell:typecheck`, `shell:lint`, `shell:vcs`, `shell:install` … (the [wait](#what-do-my-agents-wait-on) kinds) |
+| `edit` `read` `web` | file writes, `read` / `read:search` (grep, glob, ls), web fetch and search |
+| `mcp` | `mcp:<server>` |
+| `subagent` `skill` `approval` | subagent calls, `skill:load` / `skill:unload`, calls that waited for you |
+| `error` | a failed call and its result, on top of their own kinds (`shell:test` + `error`) |
+| `meta` `other` | notes, `meta:compact` (compaction); tools nothing else claims |
+
+A result carries its call's kinds, so "only `shell:test`" shows each test run and its output.
+
+| key | in an event view |
+|---|---|
+| `K` | the kind bar: the families in this session with counts; `←` `→` move, `␣` show / hide, `↵` the kinds below a family, `1`–`6` presets, `esc` close |
+| `1`–`6` (in the bar) | all · skills · MCP · shell · errors + causes (failing calls and the reply right before each) · my prompts + outcomes (each turn's last reply) |
+| `i` | solo the cursor's kind (`mcp:github`); again: its family (`mcp`); a third time: all |
+| `!` | invert: everything but the filter |
+| `/` | the full expression, with completion: `event.kind is_one_of skill, mcp` · `mcp.server is github` · `event.kind is shell and shell.family ~ test` · `not event.kind is reply:thinking` |
+| `]` `[` | next / previous match (no filter: next / previous skill or other mark) |
+| `L` | link the views: one filter for all of them, or one per view |
+| `esc` | clears the filter first, then goes back |
+
+- Hidden events never vanish silently. Lists show each hidden run as one dim line, `┄ 37 hidden · reply 20 · shell 12 ┄`
+  (`↵` on it shows that run); the header counts `3 of 412 events` (`of ≥412` while only the log's tail is loaded).
+  The call graph keeps its true time axis: hidden spans leave their time empty with a dim `┄` tick, and the tree
+  folds them into `┄ n hidden` rows. The Wait tab counts the rows it hides below the table.
+- Each view remembers its filter in `~/.agentglass/run/viewfilters.json` (0600; `"filter": {"remember": false}` turns
+  it off). A pinned `event.kind` clause (palette: "Pin this view's event filter") applies in every event view.
+- Links carry the filter: `Y` in a filtered transcript copies `agentglass://open/claude/<id>#call=toolu_1&view=transcript&f=event.kind%20is%20skill`,
+  and `agentglass open <link>` opens that view with it. The palette has "Show only skills", "… MCP calls", "… errors
+  and their causes", "… shell", "… file edits", "… my prompts" and "Show all events".
+- On the Sessions list and in `--json`, event clauses mean "has such an event" (`event.kind is mcp` = sessions with an
+  MCP call). Stats refuses them. The older `event is user | assistant | thinking | tool | result | meta | live | exit |
+  alert` keeps matching the raw event as before.
+
+```sh
+agentglass events                                              # the last session's events with their kinds (current one in an agent)
+agentglass events 3f2a9c --filter 'event.kind is_one_of skill, error' --json | jq '.events[] | select(.gap == null) | .kinds'
+agentglass events last --preset errors --content               # failing calls, the reply before each, with their text
+agentglass events current --filter 'mcp.server is github' --limit 20
+agentglass --watch --filter 'event.kind is shell:test' | jq -c '{kinds, tool}'   # live: every agent's test runs
+```
+`events` prints `{session, filter, preset, matched, total, events}`; each event has `i`, `ts`, `kind`, `kinds`, `tool`,
+`id`, `target` (a shell call's family, a file tool's path) and a `link`, each hidden run `{gap, kinds}`. Text (prompts,
+replies, commands, output) only with `--content`. `--preset` is one of `all skills mcp shell errors prompts`;
+`--pinned` adds the TUI's pinned event clauses. The MCP tool `events` returns the same JSON.
 
 ## Triage
 
@@ -871,6 +929,7 @@ agentglass sessions --since 7d --format table                       # json | jso
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
 agentglass --json --live --fields id,mux_kind,mux_pane,mux_status --format csv  # the pane of every live agent
 agentglass cost --since 7d --by workspace --format csv --fields key,workspaceId,costUsd  # cost per herdr workspace
+agentglass events last --preset errors                              # a session's failing calls and the reply before each
 agentglass wait --by kind --since 30d                               # what agents wait on: tests, lint, CI, you, the model
 agentglass wait --check --kind test || echo "3+ heavy runs here"    # for agents, before a test run (exit 3)
 ```
@@ -1405,6 +1464,7 @@ config file itself.
 | `triage` | what stands out in a selection (failing or slow calls, expensive sessions) |
 | `compare` | two sessions, or two groups of sessions (filter expressions `a`, `b`) |
 | `related` | what every agent in the project did around an event, conflicts flagged |
+| `events` | one session's events by kind (`filter` like `event.kind is skill`), hidden runs as gaps, paged by `cursor` |
 | `contention` | "start my tests now?": heavy commands other agents run on this machine, `go` true/false |
 | `waits` | where agent time goes: wall time per command family, kind or tool |
 | `fleet` | the fleet's hosts (`configured: false` without a fleet) |
