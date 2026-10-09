@@ -1,7 +1,7 @@
 // agentglass — self-check for skill visibility (skills.hide, --redact): scriptc build src/features/skills/vis.check.ts -o vc && ./vc
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, readFileSync } from "node:fs";
-import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, VIS_SURFACES, type HideRule } from "./vis.ts";
+import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, listingShown, VIS_SURFACES, type HideRule } from "./vis.ts";
 import { fakeSkill } from "../redact.ts";
 import { callSkill, callVis, scrub } from "./watchvis.ts";
 
@@ -66,6 +66,16 @@ ok("callVis name fakes the path, hides the text", !cn.drop && cn.args.indexOf("a
 eq("callVis content keeps the name", callVis("Skill", "notes").args + " " + callVis("Skill", "notes").hide, "notes (text hidden by skills.hide)");
 eq("callVis shown skill", callVis("Skill", "pub").hide, "");
 ok("scrub whole words only", scrub("use acme-x now; acme-xy stays").indexOf("acme-xy stays") > 0 && scrub("use acme-x now").indexOf("acme-x ") < 0);
+// a glob rule hides a name in a title before any load of it was seen (--watch and --json titles); prose words stay
+setVis(parseHide([{ match: "*:internal-*", mode: "omit" }, { match: "acme-*", mode: "name" }, { match: "*", mode: "content" }]).rules, false);
+const ti = scrub("/acme:internal-x fix the second bug");
+eq("glob omit: a title before any load", ti, "/(hidden) fix the second bug");
+const tn = scrub("<command-name>/acme-tool</command-name> then $acme-other, /skill:acme-pi and ~/.pi/skills/acme-dir/SKILL.md; acme-prose stays");
+ok("glob name: references faked, prose kept " + tn, ["acme-tool", "acme-other", "acme-pi", "acme-dir"].every((n: string) => tn.indexOf(n) < 0) && tn.indexOf("acme-prose stays") > 0 && tn.indexOf("/SKILL.md") > 0);
+eq("a * rule hides no prose", scrub("fix the build at 10:30"), "fix the build at 10:30");
+// a listing names and describes every skill: hidden ones (any mode but show) leave it
+setVis(parseHide([{ match: "sec*", mode: "omit" }, { match: "acme-x", mode: "name" }, "notes"]).rules, false);
+eq("listing without hidden skills", listingShown("- pub: shown\n  more of pub\n- secret: s\n  more of secret\n- acme-x: a\n- notes: n\n- p:pub2: shown too"), "- pub: shown\n  more of pub\n- p:pub2: shown too\n(3 hidden by skills.hide)");
 setVis([], false);
 
 // every surface module that exists calls skillVis or textShown

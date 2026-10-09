@@ -134,36 +134,41 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
       }
     }
   }
-  // A7 loaded, then nothing: model loads whose loading turn made no tool call after the load (turns that ended, sessions
-  // whose call rows are kept), or that left the context within one request
+  // A7 loaded, then nothing: model loads whose loading turn made no tool call after the load, i.e. ended with the next
+  // answer (turns that ended, sessions whose call rows are kept). A load compacted or dropped right away is no sign of a
+  // broad description (the harness took it out): judged by its turn's calls like any other
   for (const r of rows) {
     if (r.name === LISTING) continue;
     let judged = 0; let idle = 0; let iu = 0; const idl: LoadRow[] = [];
     for (const l of of.get(r.name) ?? []) {
       if (l.trig !== "model" || l.n !== 1 || l.stub) continue;
-      const gone = l.end > 0 && l.requests <= 1;
-      if (!gone && l.te <= 0) continue; // its turn is still running: not known yet
-      const c = gone ? { n: 0, err: 0, kept: true } : calls(l.sess, l.t + 1, l.te); if (!c.kept) continue;
-      judged++; if (gone || c.n === 0) { idle++; iu += l.usd; idl.push(l); }
+      if (l.te <= 0) continue; // its turn is still running: not known yet
+      const c = calls(l.sess, l.t + 1, l.te); if (!c.kept) continue;
+      judged++; if (c.n === 0) { idle++; iu += l.usd; idl.push(l); }
     }
     if (judged >= cfg.idleLoads && idle / judged >= cfg.idleShare) {
       out.push({ id: "A7", skill: r.name, severity: iu * per30,
-        evidence: ["loaded by the model " + String(judged) + "×, then no tool call in that turn (or gone within a request) " + String(idle) + "× (" + pct(idle / judged) + "), " + usd(iu) + " for those loads"],
-        suggestion: "narrow its description: the model pulls it in for requests it does not help with", sessions: ids(idl) });
+        evidence: ["loaded by the model " + String(judged) + "×, then no tool call in that turn " + String(idle) + "× (" + pct(idle / judged) + "), " + usd(iu) + " for those loads"],
+        suggestion: "narrow its description: the model pulls it in for requests it does not help with (a skill meant to answer without tools, e.g. one that asks questions: ignore this)", sessions: ids(idl) });
     }
   }
   // A8 overlap: two skills loaded in the same turns (Jaccard over the loading turns of each)
-  const turnsOf = new Map<string, string[]>(); const usdOf = new Map<string, number>(); const names: string[] = [];
-  for (const r of rows) { if (r.name === LISTING) continue; names.push(r.name); usdOf.set(r.name, r.usd); const ks: string[] = []; for (const l of of.get(r.name) ?? []) { if (l.trig !== "user" && l.trig !== "model") continue; const k = l.sess + "#" + String(l.turn); if (ks.indexOf(k) < 0) ks.push(k); } turnsOf.set(r.name, ks); }
+  // turnsOf: each skill's loading turns "<session>#<turn>"; inTurn: "<skill>\t<session>#<turn>" (a hash lookup per pair)
+  const turnsOf = new Map<string, string[]>(); const inTurn = new Set<string>(); const usdOf = new Map<string, number>(); const names: string[] = [];
+  for (const r of rows) {
+    if (r.name === LISTING) continue;
+    const ks: string[] = []; for (const l of of.get(r.name) ?? []) { if (l.trig !== "user" && l.trig !== "model") continue; const k = l.sess + "#" + String(l.turn); if (!inTurn.has(r.name + "\t" + k)) { inTurn.add(r.name + "\t" + k); ks.push(k); } }
+    if (ks.length < cfg.overlapTurns) continue;
+    names.push(r.name); usdOf.set(r.name, r.usd); turnsOf.set(r.name, ks);
+  }
   for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
     const x = names[i] ?? ""; const y = names[j] ?? ""; const tx = turnsOf.get(x) ?? []; const ty = turnsOf.get(y) ?? [];
-    if (tx.length < cfg.overlapTurns || ty.length < cfg.overlapTurns) continue;
-    let both = 0; for (const k of tx) if (ty.indexOf(k) >= 0) both++;
+    let both = 0; for (const k of tx) if (inTurn.has(y + "\t" + k)) both++;
     const jac = both / (tx.length + ty.length - both);
     if (both < cfg.overlapTurns || jac < cfg.overlap) continue;
     const ux = usdOf.get(x) ?? 0; const uy = usdOf.get(y) ?? 0; const small = ux <= uy ? x : y; const big = small === x ? y : x;
     const vb = skillVis(big); if (vb.mode === "omit") continue; // the other one is hidden: its name may not appear
-    const sess: string[] = []; for (const l of of.get(small) ?? []) if (sess.indexOf(l.sess) < 0 && sess.length < 10 && (turnsOf.get(big) ?? []).indexOf(l.sess + "#" + String(l.turn)) >= 0) sess.push(l.sess);
+    const sess: string[] = []; for (const l of of.get(small) ?? []) if (sess.indexOf(l.sess) < 0 && sess.length < 10 && inTurn.has(big + "\t" + l.sess + "#" + String(l.turn))) sess.push(l.sess);
     out.push({ id: "A8", skill: small, severity: Math.min(ux, uy) * jac * per30,
       evidence: ["loaded together with " + vb.shown + " in " + String(both) + " turns (overlap " + pct(jac) + " of the turns either was loaded in)"],
       suggestion: "merge the two, or reference one from the other so only one is loaded", sessions: sess });
@@ -244,15 +249,21 @@ export function adviseB(rows: SkillRow[], loads: LoadRow[], inp: OutcomeIn, host
         "test runs passed " + rate(sk.ok, sk.tests) + " vs " + rate(rest.ok, rest.tests) + " · commits per turn " + per(sk) + " vs " + per(rest) + " · call errors " + rate(sk.err, sk.n) + " vs " + rate(rest.err, rest.n)],
       suggestion: "informational: compare the two groups before changing the skill (agentglass compare)", sessions: ids(spans) });
   }
-  // A10: one name, several versions across hosts within driftDays
-  const since = now - cfg.driftDays * 86400000; const by = new Map<string, HostHash[]>();
-  for (const h of hosts) { if (h.at < since || !h.hash || h.name === LISTING) continue; const v = by.get(h.name); if (v) v.push(h); else by.set(h.name, [h]); }
-  for (const [name, hs] of by) {
-    const hashes: string[] = []; const hostsOf: string[] = []; for (const h of hs) { if (hashes.indexOf(h.hash) < 0) hashes.push(h.hash); if (hostsOf.indexOf(h.host) < 0) hostsOf.push(h.host); }
-    if (hashes.length < 2 || hostsOf.length < 2) continue;
-    const ev: string[] = [];
-    for (const hn of hostsOf) { const mine: string[] = []; let at = 0; for (const h of hs) if (h.host === hn) { if (mine.indexOf(h.hash.slice(0, 8)) < 0) mine.push(h.hash.slice(0, 8)); if (h.at > at) at = h.at; } ev.push(hn + ": " + mine.join(", ") + " (last loaded " + new Date(at).toISOString().slice(0, 10) + ")"); }
-    out.push({ id: "A10", skill: name, severity: 0, evidence: [String(hashes.length) + " versions on " + String(hostsOf.length) + " hosts in " + String(cfg.driftDays) + " days"].concat(ev),
+  // A10: one name whose hosts loaded different versions last (each host's newest load within driftDays): a host that
+  // updated to the version the others run is aligned, whatever it ran before
+  const since = now - cfg.driftDays * 86400000; const newest = new Map<string, HostHash>(); const hostsOf = new Map<string, string[]>(); // "<name>\t<host>"; name → hosts
+  for (const h of hosts) {
+    if (h.at < since || !h.hash || h.name === LISTING) continue;
+    const k = h.name + "\t" + h.host; const p = newest.get(k);
+    if (!p) { const v = hostsOf.get(h.name); if (v) v.push(h.host); else hostsOf.set(h.name, [h.host]); }
+    if (!p || h.at > p.at) newest.set(k, h);
+  }
+  for (const [name, hn] of hostsOf) {
+    const cur: HostHash[] = []; const hashes: string[] = [];
+    for (const x of hn) { const h = newest.get(name + "\t" + x); if (!h) continue; cur.push(h); if (hashes.indexOf(h.hash) < 0) hashes.push(h.hash); }
+    if (hashes.length < 2 || cur.length < 2) continue;
+    const ev: string[] = []; for (const h of cur) ev.push(h.host + ": " + h.hash.slice(0, 8) + " (last loaded " + new Date(h.at).toISOString().slice(0, 10) + ")");
+    out.push({ id: "A10", skill: name, severity: 0, evidence: [String(hashes.length) + " versions on " + String(cur.length) + " hosts in " + String(cfg.driftDays) + " days"].concat(ev),
       suggestion: "align the versions (the same SKILL.md on every host), or the hosts' costs and advice are not comparable", sessions: [] });
   }
   out.sort((x, y) => y.severity - x.severity || (x.id < y.id ? -1 : x.id > y.id ? 1 : x.skill < y.skill ? -1 : x.skill > y.skill ? 1 : 0));

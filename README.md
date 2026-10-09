@@ -1021,6 +1021,7 @@ the hosts for one run; the palette has *Fleet: refresh hosts now* and *Fleet: st
 ```sh
 agentglass fleet --json | jq '.[] | select(.live) | {host, title, attention}'   # every host's sessions
 agentglass fleet cost --json | jq '{total: .total.today.byMode, overlap, approx}'
+agentglass fleet skills --period 7d  # per host what each skill cost (a copied log counted once), versions that differ (A10)
 agentglass fleet status          # per host: last report, error, version, host id, time zone; the first thing to run
 agentglass fleet status --close  # end the shared ssh connections
 agentglass open claude:5f1e…@ws  # a host's session: prints ssh -t me@workstation agentglass open claude:5f1e… (run it)

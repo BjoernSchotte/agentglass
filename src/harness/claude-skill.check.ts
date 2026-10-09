@@ -30,6 +30,11 @@ eq("re-injection after compaction", R.lt.join(",") + " carry " + R.ct.join(",") 
 eq("no line positions outside a ledger read", String(A.off), "-1");
 eq("day skill counts", JSON.stringify(skillUsesOf([a], null)), "[{\"name\":\"beta\",\"source\":\"model\",\"n\":2},{\"name\":\"alpha\",\"source\":\"command\",\"n\":1},{\"name\":\"delta\",\"source\":\"model\",\"n\":1}]");
 eq("listing names", a.lst.join(","), "alpha,beta,delta");
+{ // a plugin skill's line names "<plugin>:<name>" (not the plugin); a description with ": " in it; a bare "- name:"
+  const p = newAcc();
+  claude.usage(p, JSON.stringify({ type: "attachment", uuid: "att-p", timestamp: "2026-10-01T09:00:01.000Z", attachment: { type: "skill_listing", content: "- superpowers:brainstorming: Use this: before work\n- solo: x\n- bare:\n- not a skill: x\nplain" } }));
+  eq("listing names: plugin skills", p.lst.join(","), "superpowers:brainstorming,solo,bare");
+}
 eq("no text kept", String(JSON.stringify(a.sk).indexOf("LOREMSKILLTEXT")), "-1");
 let carried = 0; for (const l of a.sk) for (let i = 0; i < 4; i++) carried += (l.lt[i] ?? 0) + (l.ct[i] ?? 0);
 eq("skills ≤ context", String(carried <= a.inTok + a.cr + a.cw), "true");

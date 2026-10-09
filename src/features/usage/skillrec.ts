@@ -43,6 +43,13 @@ export function bptOf(model: string): number {
 }
 export const SK_CAP = 400; // loads kept per log; beyond, the oldest ended loads fold per name
 export const LISTING = "(listing)";
+// the skill a listing line names ("- <name>: <description>", a plugin's "- <plugin>:<name>: …"), "" for other lines
+export function listingName(ln: string): string {
+  if (!ln.startsWith("- ")) return "";
+  let e = ln.indexOf(": ", 2); if (e < 0 && ln.endsWith(":")) e = ln.length - 1;
+  const sp = ln.indexOf(" ", 2);
+  return e > 2 && (sp < 0 || sp >= e) ? ln.slice(2, e) : "";
+}
 // skills bundled with Claude Code (the same on every install; the /help skill list, invoked_skills paths "bundled:<name>"):
 // they have no "Base directory" line, so a user's /<name> is told from a plain prompt command by its name alone
 export const CLAUDE_BUNDLED = ["update-config", "claude-api", "keybindings-help", "simplify", "loop", "schedule", "fewer-permission-prompts",

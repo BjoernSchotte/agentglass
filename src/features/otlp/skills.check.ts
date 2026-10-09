@@ -22,7 +22,7 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
   const SK = "testdata/skills/claude.jsonl";
   const so = (content: boolean): BuildOpts => ({ now: Date.parse("2026-10-02T00:00:00.000Z"), quietMs: 600000, content, subagents: false });
   const run = (content: boolean): XTurn[] => { const s = newSess("claude", "s-fixture-claude", SK, false); s.mtime = Date.parse("2026-10-01T09:00:30.000Z"); return finish(newSessB(s, []), so(content)); };
-  const evs = (ts: XTurn[]): string => { const o: string[] = []; for (const t of ts) for (const sp of t.spans) for (const e of sp.events) { let n = ""; let x = ""; for (const a of e.attrs) { if (a.k === "gen_ai.skill.name") n = a.s; if (a.k === "agentglass.skill.trigger" || a.k === "agentglass.skill.reason") x = a.s; } o.push(e.name.slice(13) + ":" + n + ":" + x); } return o.join(" "); };
+  const evs = (ts: XTurn[]): string => { const o: string[] = []; for (const t of ts) for (const sp of t.spans) for (const e of sp.events) { if (!e.name.startsWith("gen_ai.skill.")) continue; let n = ""; let x = ""; for (const a of e.attrs) { if (a.k === "gen_ai.skill.name") n = a.s; if (a.k === "agentglass.skill.trigger" || a.k === "agentglass.skill.reason") x = a.s; } o.push(e.name.slice(13) + ":" + n + ":" + x); } return o.join(" "); };
   const attr = (ts: XTurn[], name: string, ev: string, k: string): string => { for (const t of ts) for (const sp of t.spans) for (const e of sp.events) { let hit = false; for (const a of e.attrs) if (a.k === "gen_ai.skill.name" && a.s === name) hit = true; if (!hit || e.name !== ev) continue; for (const a of e.attrs) if (a.k === k) return a.t === "i" ? String(a.n) : a.t === "b" ? String(a.b) : a.s; } return ""; };
   setVis([], false);
   const t0 = run(false);
@@ -40,13 +40,22 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
   const t2 = run(true); const b2 = encodeRequest(t2, cfgC);
   eq("hidden: beta omitted, delta faked, alpha without text", String(evs(t2).indexOf(":beta:") < 0) + " " + String(evs(t2).indexOf(":delta:") < 0) + " " + String(attr(t2, "alpha", "gen_ai.skill.load", "agentglass.skill.text") === ""), "true true true");
   eq("hidden: no beta, no delta name anywhere", String(b2.indexOf("\"beta\"") < 0 && b2.indexOf("\"delta\"") < 0), "true");
+  // a hidden skill's name and text stay out of the call spans too, with --content and call details: the Read of its
+  // SKILL.md (the path, its text as the result), the Skill call's arguments and result, the prompts naming it
+  setVis([{ match: "*", mode: "content" }], false);
+  const cfgM = cfgFrom({ contentMax: 100000, detail: "meta" }); cfgM.content = true;
+  const b4 = encodeRequest(run(true), cfgM);
+  eq("content rule: no skill text in any span with --content", String(b4.indexOf("LOREMSKILLTEXT")) + " " + String(b4.indexOf("MORELOREMTEXT")), "-1 -1");
+  setVis([{ match: "del*", mode: "omit" }, { match: "beta", mode: "name" }, { match: "*:never", mode: "omit" }], false);
+  const b5 = encodeRequest(run(true), cfgM);
+  eq("omit/name rules: no name in call details, arguments, results or prompts", String(b5.indexOf("delta")) + " " + String(b5.indexOf("beta")) + " " + String(b5.indexOf("LOREMSKILLTEXT") > 0), "-1 -1 true");
   setVis([], true);
   const t3 = run(false);
   eq("--redact fakes user skill names, keeps hashes", String(evs(t3).indexOf(":alpha:") < 0) + " " + String(attr(t3, "(listing)", "gen_ai.skill.load", "agentglass.skill.trigger")), "true listing");
   setVis([], false);
 }
-// the hub turns the load events back into the session's skills[]: name, source, n, size, tier, hash, scope as the local
-// --json entry; tokens and $ are not in the events (null)
+// the hub turns the load and usage events back into the session's skills[]: name, source, n, size, tier, hash, scope,
+// loads, tokens and $ as the local --json entry
 {
   setVis([], false);
   const s = newSess("claude", "s-fixture-claude", "testdata/skills/claude.jsonl", false); s.mtime = Date.parse("2026-10-01T09:00:30.000Z");
@@ -60,7 +69,13 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
   const pick = (o: Obj, local: boolean): string => JSON.stringify([local ? nm(o["name"]) : o["name"], o["source"], o["n"], o["size"], o["tier"], o["hash"], o["scope"]]);
   eq("hub entries", String(hub.length), "4");
   eq("hub skills[] = local --json entries", hub.map((o: Obj) => pick(o, false)).sort().join(" "), loc.map((o: Obj) => pick(o, true)).sort().join(" "));
-  eq("hub: no $ it cannot price", hub.map((o: Obj) => JSON.stringify([o["tokens"], o["costUsd"]])).join(" ").replace(/\[null,null\] ?/g, ""), "");
+  const figs = (o: Obj, local: boolean): string => JSON.stringify([local ? nm(o["name"]) : o["name"], o["source"], o["loads"], o["tokens"], o["costUsd"], o["carryUsd"], o["tailUsd"]]);
+  eq("hub: the sender's tokens and $ per entry", hub.map((o: Obj) => figs(o, false)).sort().join(" "), loc.map((o: Obj) => figs(o, true)).sort().join(" "));
+  eq("hub: priced", String(hub.every((o: Obj) => typeof o["costUsd"] === "number") && hub.some((o: Obj) => (o["costUsd"] as number) > 0)), "true");
+  // a re-sent turn (an export retried) counts nothing twice: the usage event is the session's figures so far
+  ingestLine(g, encodeRequest(ts.slice(ts.length - 1), cfgFrom({})), null);
+  const again: Obj[] = []; for (const r of reportsOf(g, Date.parse("2026-10-02T00:00:00.000Z"), true, 3650).values()) for (const x of r.sessions) for (const v of arr(x.s["skills"])) { const o = obj(v); if (o) again.push(o); }
+  eq("hub: a re-sent turn", again.map((o: Obj) => figs(o, false)).sort().join(" "), hub.map((o: Obj) => figs(o, false)).sort().join(" "));
   hub = [];
 }
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
