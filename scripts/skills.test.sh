@@ -77,7 +77,7 @@ eq "--watch kind filter: only skill kinds" "$(grep -vc '"kinds":\["skill:' "$t/w
 has "--watch kind filter: loads" "$(cat "$t/watchk")" '"kinds":["skill:load"]'; has "--watch kind filter: unloads" "$(cat "$t/watchk")" '"kinds":["skill:unload"]'
 # --watch under skills.hide: the calls that load a hidden skill (Skill, Read/read of a SKILL.md, a Codex sed) show the fake
 # name or nothing (omit), and their results no text
-CFG="$t/hide.json" run --watch --from-start --for 3s > "$t/watchh" 2> /dev/null || true
+(CFG="$t/hide.json" run --watch --from-start --for 3s > "$t/watchh" 2> /dev/null) || true
 r=$(cat "$t/watchh"); hasnt "--watch hide name" "$r" "beta"; hasnt "--watch hide omit" "$r" "delta"; hasnt "--watch hide text" "$r" "LOREMSKILLTEXT"
 hasnt "--watch hide text (2nd part)" "$r" "MORELOREMTEXT"; has "--watch hide result" "$r" "(text hidden by skills.hide)"; has "--watch keeps content-mode name" "$r" "alpha"
 

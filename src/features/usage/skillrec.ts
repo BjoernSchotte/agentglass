@@ -88,6 +88,11 @@ export function outDir(out: string, name: string): string {
   for (const ln of out.slice(i, j > i ? j : out.length).split("\n")) { const d = ln.trim().replace(/[\/\\]+$/, ""); if (d.endsWith("/skills/" + name)) return d; }
   return "";
 }
+// skills bundled with a harness (public, the same on every install): --redact shows them as they are. Sources: Claude Code's
+// bundled skills (CLAUDE_BUNDLED), Codex's ~/.codex/skills/.system dir; OpenCode, pi, Kiro and fx bundle none
+export const BUILTIN_SKILLS = new Set<string>(CLAUDE_BUNDLED.concat([
+  "imagegen", "openai-docs", "review-agent", "skill-creator", "skill-installer", // codex .system
+  LISTING])); // agentglass's own name for the skill listing
 // where a skill lives, from its base directory: user | project | plugin | builtin | ?
 export function scopeOf(dir: string): string {
   if (!dir) return "?";

@@ -7,7 +7,8 @@ import { type Obj, obj, str, arr } from "../../util/json.ts";
 import { section } from "../../util/config.ts";
 import { say } from "../../state.ts";
 import { REDACT } from "../redact-on.ts";
-import { fakeSkill, BUILTIN_SKILLS } from "../redact.ts";
+import { H } from "../../hooks.ts";
+import { BUILTIN_SKILLS, fnvFeed, FNV1 } from "../usage/skillrec.ts";
 
 // mode: show (everything) | content (name and numbers, no text) | name (as content, the name faked) | omit (no per-skill
 // row anywhere: its tokens fold into one "(hidden) n skills" row); shown = the name to print ("" for omit)
@@ -59,6 +60,13 @@ export function hideRules(): HideRule[] {
 // checks: replace the rules (and the redact switch) and forget what was decided
 export function setVis(rules: HideRule[], redact: boolean): void { VIS.rules = rules; VIS.redact = redact; memo.clear(); }
 
+// a name's fake: redact.ts's (stable, scrubbed from screen text too) when the binary has it, else letters from its hash
+function fakeOf(name: string): string {
+  const f = H.fakeSkill[0]; if (f) return f(name);
+  let h = fnvFeed(FNV1, name); let o = "";
+  for (let i = 0; i < name.length; i++) { const c = name.charAt(i); if (c === "-" || c === ":" || c === "_") { o += c; continue; } o += "abcdefghijklmnopqrstuvwxyz".charAt(h % 26); h = Math.imul(h ^ i, 16777619) >>> 0; }
+  return o === name ? "x" + o.slice(1) : o;
+}
 // --redact and skills.hide combined, the stricter mode wins
 export function skillVis(name: string): Vis {
   const hit = memo.get(name); if (hit) return hit;
@@ -66,7 +74,7 @@ export function skillVis(name: string): Vis {
   for (const r of hideRules()) if (globMatch(r.match, name)) { mode = r.mode; break; }
   if (VIS.redact) { const rm = BUILTIN_SKILLS.has(name) ? "content" : "name"; if (rank(rm) > rank(mode)) mode = rm; }
   if (name === "(listing)" && mode === "name") mode = "content"; // agentglass's own label, never a secret
-  const v: Vis = { mode, shown: mode === "omit" ? "" : mode === "name" ? fakeSkill(name) : name };
+  const v: Vis = { mode, shown: mode === "omit" ? "" : mode === "name" ? fakeOf(name) : name };
   memo.set(name, v);
   return v;
 }

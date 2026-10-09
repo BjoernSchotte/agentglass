@@ -820,7 +820,10 @@ Format: question · options considered · decision · why · cost if wrong.
    Nothing is left to verify; Task 4a keeps a fixture for it. Bundled Claude skills (`update-config`, `claude-api`, …)
    have no `Base directory` header: model loads still pair by `sourceToolUseID`, but a **user**-invoked bundled skill is
    not detectable. Task 0 checks whether its command line + isMeta pair has another marker; if not, it stays a known gap
-   (README).
+   (README). **Answered (review, 2026-10-09):** Claude Code writes `<command-name>/<name>` and then the prompt as an isMeta
+   line with the same `promptId` for every prompt command; a bundled skill has no other marker, but its name is fixed
+   (`CLAUDE_BUNDLED`). A command of a bundled name followed by that isMeta line is a user load (dir `bundled:<name>`,
+   scope `builtin`), as is a model's `Skill` call of one.
 6. Codex: is the `<skills_instructions>` developer message re-sent with every turn context, or only logged again? The
    requests' usage decides it (a re-sent listing is in context once, not N times): book it as one open `(listing)` load
    that a new copy replaces (`relist`), never as N concurrent loads.
@@ -828,3 +831,8 @@ Format: question · options considered · decision · why · cost if wrong.
    seen 260 813 chars (not cut). Flag `est` only on the attachment cap.
 8. `SKILL_BPT` calibration: for loads where the load request's growth is dominated by the skill (a subagent's first
    skill load right after its prompt), fit bytes → growth; keep 3.6 unless the fit differs by > 10 %.
+   **Answered (review, 2026-10-09):** five public SKILL.md texts (5.6–18.7 KB), context of a request with the text minus
+   one without, throwaway sessions: Claude Sonnet 5.5 2.57 bytes/token pooled (2.37–3.35 per text), Gemini 3.5
+   Flash-Lite 3.93 (3.63–4.71). The divisor is per tokenizer, chosen by the load request's model (`bptOf`): 2.6 for
+   Claude's newer tokenizer (Opus 4.7 and later), 3.9 for Gemini, 3.6 otherwise (older Claude, GPT/Codex: not measured).
+   Error bound per text ±15 %; the context growth caps the size from above (3.2).
