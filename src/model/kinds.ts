@@ -121,6 +121,8 @@ export function intern(kinds: string[]): number {
   SETS.push({ ks }); SETID.set(key, SETS.length - 1);
   return SETS.length - 1;
 }
+// how many kind sets exist (ids are 0 … n-1): scratch arrays indexed by id
+export function kindSets(): number { return SETS.length; }
 export function kindSet(id: number): string[] { if (id >= 0 && id < SETS.length) return SETS[id].ks; return SETS[0].ks; }
 const ADD = new Map<string, number>();
 function withKind(id: number, k: string): number {

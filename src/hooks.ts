@@ -63,6 +63,7 @@ export const H = {
   backlog: [] as (() => boolean)[], // true = a feature has background work its onTick slices through (filter head reads): tick at the indexing burst cadence
   remoteRows: [] as (() => Sess[])[], // fleet: read-only rows of other hosts (s.host set), appended to the top-level list by buildView
   remoteCard: [] as ((s: Sess, w: number) => string[])[], // the preview of a remote row, instead of previewSections (nothing local to read)
+  linkView: [] as ((view: string, f: string, s: Sess) => string)[], // a link's view= and f= after its transcript opened (features/evkinds.ts: the event filter, the call graph); "" = applied, else what was not
 };
 export function startTui(): void { for (const f of H.tui) f(); }
 export function backlog(): boolean { for (const f of H.backlog) if (f()) return true; return false; }

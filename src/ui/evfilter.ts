@@ -9,7 +9,7 @@ import { readFileSync, openSync, writeSync, closeSync, chmodSync, renameSync } f
 import { join } from "node:path";
 import type { Ev, Sess } from "../model/types.ts";
 import { type Mark, famOf, markKind } from "../model/marks.ts";
-import { kindIds, kindVer, kindSet, kindsIn, famsIn, kindsOfFam, specific } from "../model/kinds.ts";
+import { kindIds, kindVer, kindSet, kindSets, kindsIn, famsIn, kindsOfFam, specific } from "../model/kinds.ts";
 import { S, say } from "../state.ts";
 import { section } from "../util/config.ts";
 import { parse, printClause } from "../features/query/parse.ts";
@@ -129,7 +129,8 @@ function kindOnly(f: Compiled): boolean {
   for (const c of f.cs) { const a = attrOf(c.key); if (!a || a.ent !== "event" || a.key === "mcp.server" || a.key === "shell.family") return false; }
   return true;
 }
-const RAWS = ["user", "assistant", "thinking", "tool", "result", "meta"];
+// the raw kind's slot (0–6) in the per-(kind set, raw kind) cache
+function rawIx(k: string): number { return k === "tool" ? 0 : k === "result" ? 1 : k === "assistant" ? 2 : k === "user" ? 3 : k === "thinking" ? 4 : k === "meta" ? 5 : 6; }
 interface MaskMemo { view: string; evs: Ev[]; n: number; kv: number; key: string; m: Uint8Array; shown: number }
 const MASKS: MaskMemo[] = []; const MASK_MAX = 12;
 export const MASK_STATS = { built: 0 };
@@ -145,19 +146,19 @@ export function mask(view: string, s: Sess, evs: Ev[]): Uint8Array {
   const f = compiledOf(view); const v = vfOf(view);
   if (!f) { if (!v.inv) for (let i = 0; i < n; i++) m[i] = 1; }
   else {
-    const fast = kindOnly(f); const per = new Map<number, number>();
+    const fast = kindOnly(f); const per = new Uint8Array(kindSets() * 8); // (kind set, raw kind) → 0 unknown, 1 shown, 2 hidden
     const need = needs(f); const calls = new Map<string, number>(); const byText = new Map<string, number>();
     for (let i = 0; i < n; i++) {
       const e = evs[i]; const id = ids[i] + 0;
       if (e.kind === "tool" && e.id) calls.set(e.id, i);
       let hit = false;
       if (fast || (e.kind !== "tool" && e.kind !== "result")) { // decided by its kinds and raw kind alone: once per pair
-        const ri = RAWS.indexOf(e.kind); const k = id * 8 + (ri < 0 ? 7 : ri);
-        const c = per.get(k);
-        if (c !== undefined) hit = c === 1;
-        else { hit = evalOne(f, s, evs, i, id, calls, need); per.set(k, hit ? 1 : 0); }
+        const k = id * 8 + rawIx(e.kind);
+        const c = k < per.length ? per[k] + 0 : 0;
+        if (c !== 0) hit = c === 1;
+        else { hit = evalOne(f, s, evs, i, id, calls, need); if (k < per.length) per[k] = hit ? 1 : 2; }
       } else { // a call or result: also by its call's text (repeated commands are judged once)
-        const ri = RAWS.indexOf(e.kind); let ct = e.text;
+        const ri = rawIx(e.kind); let ct = e.text;
         if (e.kind === "result") { const j = e.id ? calls.get(e.id) : undefined; ct = j !== undefined && j + 0 < n ? evs[j + 0].text : ""; }
         const k = String(id * 8 + ri) + "\t" + ct; const c = byText.get(k);
         if (c !== undefined) hit = c === 1;
@@ -218,13 +219,13 @@ export function matchCount(view: string, s: Sess, evs: Ev[]): { shown: number; t
 export interface Gap { i: number; hidden: number; kinds: Map<string, number> }
 export function runs(view: string, s: Sess, evs: Ev[], from: number, to: number): Gap[] {
   const m = mask(view, s, evs); const ids = kindIds(s, evs); const out: Gap[] = [];
-  let cur: Gap | null = null; let per = new Map<number, number>(); // kind-set id → events of the current run
-  const close = (): void => { const g = cur; if (!g) return; for (const [id, n] of per) for (const f of famsOfSet(id)) g.kinds.set(f, (g.kinds.get(f) ?? 0) + n); cur = null; per = new Map<number, number>(); };
+  let cur: Gap | null = null; const per = new Int32Array(kindSets()); const used: number[] = []; // kind-set id → events of the current run
+  const close = (): void => { const g = cur; if (!g) return; for (let u = 0; u < used.length; u++) { const id = (used[u] ?? 0) + 0; const c = per[id] + 0; for (const f of famsOfSet(id)) g.kinds.set(f, (g.kinds.get(f) ?? 0) + c); per[id] = 0; } used.length = 0; cur = null; };
   for (let i = Math.max(0, from); i < Math.min(to, evs.length); i++) {
     if (m[i] + 0 === 1) { close(); continue; }
     if (!cur) { cur = { i, hidden: 0, kinds: new Map<string, number>() }; out.push(cur); }
     cur.hidden++;
-    const id = ids[i] + 0; per.set(id, (per.get(id) ?? 0) + 1);
+    const id = ids[i] + 0; if (id < per.length) { if (per[id] + 0 === 0) used.push(id); per[id] = per[id] + 1; }
   }
   close();
   return out;

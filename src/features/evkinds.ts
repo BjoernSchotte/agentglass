@@ -10,6 +10,8 @@ import { addClause } from "./query/scope.ts";
 import { parse } from "./query/parse.ts";
 import { INPUT, PRESETS, hasCount, countText, vfOf, vfSet, preset, flush, label, active, barView, barKinds, closeBar, chipKey } from "../ui/evfilter.ts";
 import { restore } from "./palette/actions.ts";
+import { openGraph } from "./callgraph/view.ts";
+import type { Sess } from "../model/types.ts";
 
 // the event view a palette origin (or the current screen) is in: "" none
 export function viewOfCtx(mode: string, fview: string, tab: number): string {
@@ -40,6 +42,12 @@ H.input.push((action: string, ev: string, text: string): boolean => {
   if (e) { S.inputErr = e; S.inputErrCol = vfOf(INPUT.view).errCol; say("warn", e); return true; } // the last valid filter stays
   say("info", text.trim() ? "showing " + label(INPUT.view) + " — esc clears" : "all events");
   return false;
+});
+// a link's view= and f= (palette/open.ts applyTarget, after the transcript opened): the filter, then the call graph
+H.linkView.push((view: string, f: string, s: Sess): string => {
+  const e = f ? vfSet(view, f) : "";
+  if (view === "callgraph") openGraph(s);
+  return e ? "the link's filter was not applied: " + e : "";
 });
 H.onTick.push(() => { flush(false); });
 // the chip bar is modal: every key goes to it (? shows help, ctrl-k the palette) while its view is on screen
