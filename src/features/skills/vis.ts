@@ -8,7 +8,7 @@ import { section } from "../../util/config.ts";
 import { say } from "../../state.ts";
 import { REDACT } from "../redact-on.ts";
 import { H } from "../../hooks.ts";
-import { BUILTIN_SKILLS, fnvFeed, FNV1 } from "../usage/skillrec.ts";
+import { BUILTIN_SKILLS, fnvFeed, FNV1, listingName } from "../usage/skillrec.ts";
 
 // mode: show (everything) | content (name and numbers, no text) | name (as content, the name faked) | omit (no per-skill
 // row anywhere: its tokens fold into one "(hidden) n skills" row); shown = the name to print ("" for omit)
@@ -83,6 +83,20 @@ export function skillVis(name: string): Vis {
 export function textShown(name: string, outward: boolean, content: boolean): boolean {
   if (skillVis(name).mode !== "show") return false;
   return outward ? content : true;
+}
+// a skill listing's text as a surface may show it: the entries (name, description, continuation lines) of skills hidden in
+// any way left out, their count in their place — a listing names and describes every installed skill
+export function listingShown(t: string): string {
+  const o: string[] = []; let skip = false; let n = 0;
+  for (const ln of t.split("\n")) {
+    const nm = listingName(ln);
+    if (nm) { skip = skillVis(nm).mode !== "show"; if (skip) { n++; continue; } }
+    else if (ln.startsWith("- ")) skip = false;
+    else if (skip) continue;
+    o.push(ln);
+  }
+  if (n) o.push("(" + String(n) + " hidden by skills.hide)");
+  return o.join("\n");
 }
 // why a text is not shown, for the "view skill" pane and `skills show`
 export function textHiddenWhy(name: string): string {

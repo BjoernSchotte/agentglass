@@ -6,7 +6,7 @@
 import { type Obj, parse, str } from "../../util/json.ts";
 import { execCmds } from "../usage/calls.ts";
 import { skillPath, skillReadCmd } from "../usage/skillrec.ts";
-import { skillVis, hideRules, textHiddenWhy, HIDDEN } from "./vis.ts";
+import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN } from "./vis.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
 export function callSkill(tool: string, args: string): string {
@@ -37,10 +37,38 @@ export function note(name: string): boolean {
   return v.mode !== "show";
 }
 function word(c: string): boolean { return /[A-Za-z0-9_-]/.test(c); }
+// a glob rule hiding names (name, omit) matches skills no load has shown yet: the text's words that are written as a skill
+// reference are matched against those rules, so a title names no such skill even before its first load. A reference: a
+// slash command (/x, Claude's <command-name>/x), a Codex $x mention, pi's /skill:x, a skills/x/ directory, a plugin's
+// "p:x" (not every word: a "*" rule would hide the prose)
+function ref(t: string, i: number, w: string): boolean {
+  const c = /[A-Za-z]/.test(w.charAt(0)); if (!c || w.length < 2) return false;
+  if (w.indexOf(":") > 0) return true;
+  const p = i > 0 ? t.charAt(i - 1) : "";
+  if (p === "$") return true;
+  if (p !== "/") return false;
+  return i < 2 || /[\s(<>"'`]/.test(t.charAt(i - 2)) || t.slice(Math.max(0, i - 7), i) === "skills/";
+}
+function globWords(t: string): void {
+  const gs: HideRule[] = []; for (const r of hideRules()) if ((r.mode === "name" || r.mode === "omit") && (r.match.indexOf("*") >= 0 || r.match.indexOf("?") >= 0)) gs.push(r);
+  if (!gs.length) return;
+  let i = 0;
+  while (i < t.length) {
+    if (!word(t.charAt(i))) { i++; continue; }
+    let e = i; while (e < t.length && (word(t.charAt(e)) || (t.charAt(e) === ":" && e + 1 < t.length && word(t.charAt(e + 1))))) e++;
+    const w0 = t.slice(i, e); const at = i; i = e;
+    if (!ref(t, at, w0)) continue;
+    const w = w0.startsWith("skill:") ? w0.slice(6) : w0; // pi's /skill:<name>
+    if (SCRUB.has(w)) continue;
+    for (const r of gs) if (globMatch(r.match, w)) { note(w); break; }
+  }
+}
 // the text with every hidden name (as a whole word) replaced
 export function scrub(t: string): string {
   seed();
-  if (!SCRUB.size || !t) return t;
+  if (!t) return t;
+  globWords(t);
+  if (!SCRUB.size) return t;
   let o = t;
   for (const [real, rep] of SCRUB) {
     let at = o.indexOf(real); if (at < 0) continue;
