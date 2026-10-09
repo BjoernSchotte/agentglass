@@ -19,6 +19,7 @@ import { asBill } from "../usage/billing.ts";
 import { toolName, toolArg } from "../callgraph/model.ts";
 import { type LoadRow, skillLoads, tierOf } from "./model.ts";
 import { skillVis, VIS } from "./vis.ts";
+import { hideEvents } from "./watchvis.ts";
 import { openSkillView, recordLines } from "./view.ts";
 
 function iso(t: number): string { return t > 0 ? new Date(t).toISOString() : ""; }
@@ -42,6 +43,11 @@ export function skillMarks(as: Acc[]): Mark[] {
 // changes when the ledger read more of the session at the same log size (its marks then differ), or the hiding rules did
 function gen(s: Sess): number { let g = 0; for (const a of accsOf(s)) g += a.off + a.sk.length; return g + VIS.gen * 7919; }
 registerMarks({ kind: "skill", glyph: "✧", color: (): string => fg(C.cyan), of: (s: Sess): Mark[] => skillMarks(accsOf(s)), gen });
+// the TUI's events follow skills.hide / --redact like its skill lines (transcript, detail, search, copy, call graph,
+// related, replay): first, on the real text, before the redaction hook scrubs it. --watch applies the rules per line itself
+export const EVVIS = { on: false };
+H.tui.unshift((): void => { EVVIS.on = true; });
+H.events.unshift((s: Sess | null, evs: Ev[], from: number): void => { if (EVVIS.on) hideEvents(s, evs, from); });
 
 // the load row behind a skill mark (sk<i>: load i of the session's log, or of a copy with a load at that time); null: not
 // a skill mark, or the load is gone. Kept per (session, ref, times): the transcript asks every frame

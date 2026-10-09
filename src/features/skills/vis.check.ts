@@ -3,7 +3,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, VIS_SURFACES, type HideRule } from "./vis.ts";
 import { fakeSkill } from "../redact.ts";
-import { callSkill, callVis, scrub } from "./watchvis.ts";
+import { callSkill, callVis, scrub, hideEvents } from "./watchvis.ts";
+import type { Ev } from "../../model/types.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -66,6 +67,23 @@ ok("callVis name fakes the path, hides the text", !cn.drop && cn.args.indexOf("a
 eq("callVis content keeps the name", callVis("Skill", "notes").args + " " + callVis("Skill", "notes").hide, "notes (text hidden by skills.hide)");
 eq("callVis shown skill", callVis("Skill", "pub").hide, "");
 ok("scrub whole words only", scrub("use acme-x now; acme-xy stays").indexOf("acme-xy stays") > 0 && scrub("use acme-x now").indexOf("acme-x ") < 0);
+// the TUI's events (transcript, detail, call graph, related): the same rules over parsed events, results paired by call id
+{
+  const E = (kind: string, text: string, id: string, full: string): Ev => ({ kind, text, ts: "2026-10-01T09:00:00.000Z", id, full });
+  const evs: Ev[] = [E("user", "/notes and acme-x please", "", ""), E("tool", "Skill\u0000secret", "c1", "{\"skill\":\"secret\"}"), E("tool", "Read\u0000/h/.claude/skills/notes/SKILL.md", "c2", ""),
+    E("tool", "Skill\u0000acme-x", "c3", "{\"skill\":\"acme-x\"}"), E("tool", "Bash\u0000ls", "c4", "")];
+  hideEvents(null, evs, 0);
+  const later: Ev[] = [E("result", "Launching skill: secret", "c1", ""), E("result", "LOREMSKILLTEXT notes body", "c2", "LOREMSKILLTEXT notes body"), E("result", "Launching skill: acme-x", "c3", "{\"commandName\":\"acme-x\"}"), E("result", "a.txt", "c4", "")];
+  hideEvents(null, later, 0); // a later read: results find their calls
+  const all = evs.concat(later).map((e: Ev): string => e.kind + " " + e.text.split("\u0000").join("(") + " | " + e.full).join("\n");
+  ok("events: omitted skill's call and result gone", all.indexOf("secret") < 0 && evs.length === 4 && later.length === 3);
+  ok("events: content skill's text hidden", all.indexOf("LOREMSKILLTEXT") < 0 && all.indexOf("result (text hidden by skills.hide) | ") >= 0);
+  ok("events: name skill faked in call, result and prompt", all.indexOf("acme-x") < 0 && all.indexOf("tool Skill(" + skillVis("acme-x").shown) >= 0);
+  ok("events: other calls untouched", all.indexOf("tool Bash(ls") >= 0 && all.indexOf("result a.txt") >= 0);
+  setVis([], false);
+  const free: Ev[] = [E("tool", "Skill\u0000secret", "c9", "")]; hideEvents(null, free, 0);
+  eq("events: no rules, no change", free.map((e: Ev): string => e.text).join(""), "Skill\u0000secret");
+}
 setVis([], false);
 
 // every surface module that exists calls skillVis or textShown (or the read model's visRows / visLoads, which do)

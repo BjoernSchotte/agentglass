@@ -190,7 +190,7 @@ function skillLine(r: SkillCmpRow, W: number, on: boolean, billA: Bill | "", bil
   const b = on ? bg(C.sel) : ""; const c = skillCols(W);
   const usd = (v: number, unk: boolean, bill: Bill | ""): string => unk ? (v > 0 ? money(v, bill) + " +?" : "$ ?") : v > 0 ? money(v, bill) : "–";
   const per = (v: number, n: number, bill: Bill | ""): string => n > 0 && v > 0 ? money(v / n, bill) : "–";
-  const l = b + " " + fg(r.name === HIDDEN ? C.dim : C.cyan) + (on ? CSI + "1m" : "") + fit(r.name, c.nw) + RST + b + fg(C.text) + rp(r.loadsA ? grp(r.loadsA) : "–", 8) + rp(r.loadsB ? grp(r.loadsB) : "–", 8) + RST + b +
+  const l = b + " " + fg(r.name === HIDDEN ? C.dim : C.cyan) + (on ? CSI + "1m" : "") + fit(clean(r.name), c.nw) + RST + b + fg(C.text) + rp(r.loadsA ? grp(r.loadsA) : "–", 8) + rp(r.loadsB ? grp(r.loadsB) : "–", 8) + RST + b +
     fg(C.yellow) + rp(usd(r.usdA, r.unkA, billA), 12) + rp(usd(r.usdB, r.unkB, billB), 12) + RST + b + (c.per ? fg(C.sub) + rp(per(r.usdA, r.sessA, billA), 11) + rp(per(r.usdB, r.sessB, billB), 11) + RST + b : "") + " " + (r.sig ? fg(C.accent) + "●" + RST + b : " ");
   return line(l, W) + RST;
 }
