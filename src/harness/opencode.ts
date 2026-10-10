@@ -169,10 +169,23 @@ function httpLine(m: Obj, i: number, fork: number): string {
   return JSON.stringify(o);
 }
 
-// mid-turn, decided when asked (the DB is only re-read when it changes): an open 2.x turn while the service daemon lives
+// the sessions the daemon really runs: a run stopped mid-turn (Ctrl-C on `opencode run`) leaves its session suspended,
+// and no process runs it. Asked only while a suspended 2.x row is read through SQLite, once per DB change (a turn that
+// starts or ends writes it) or daemon restart; no answer (an older daemon, a password it refused): every suspended row, as before
+const ACT = { key: "", known: false, ids: new Set<string>() };
+function daemonRuns(id: string): boolean {
+  const k = dbKey + "|" + fileKey(statePath()); // a restarted daemon (service.json rewritten) is asked again
+  if (k !== ACT.key) {
+    ACT.key = k; ACT.ids.clear();
+    const ep = endpoint(statePath()); const ids = ep ? activeSet(ep) : null;
+    ACT.known = ids !== null; if (ids) for (const x of ids) ACT.ids.add(x);
+  }
+  return !ACT.known || ACT.ids.has(id);
+}
+// mid-turn, decided when asked (the DB is only re-read when it changes): an open 2.x turn the live service daemon runs
 // (it resumes suspended sessions; a dead one leaves time_suspended set); otherwise — 1.x, 2.x `--standalone`/`--server`
 // with a private server and no service.json — while the turn was written to within IN_FLIGHT_MS
-function running(r: Row): boolean { return r.busy && ((!r.v1 && daemonUp) || Date.now() - r.act < IN_FLIGHT_MS); }
+function running(r: Row): boolean { return r.busy && ((!r.v1 && daemonUp && (r.http || daemonRuns(r.id))) || Date.now() - r.act < IN_FLIGHT_MS); }
 function endOf(r: Row): number {
   const e = running(r) && r.hold >= 0 ? Math.min(r.end, r.hold) : r.end;
   if (e > r.floor) r.floor = e;
@@ -441,7 +454,7 @@ function spawnOf(s: Sess): string {
   return "";
 }
 // ~/.local/state/opencode/service.json names the 2.x daemon ({id, version, url, pid, password}; only pid is read):
-// it runs every suspended (= mid-turn) session
+// it runs the suspended (= mid-turn) sessions its active list names (daemonRuns)
 function liveRegistry(alive: (pid: number) => boolean, harnessOfPid: (pid: number) => string): Live[] {
   const pid = daemonPid();
   const up = pid > 0 && alive(pid);
