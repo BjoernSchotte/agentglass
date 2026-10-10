@@ -98,7 +98,8 @@ if (mode === "--child-redact") {
 mkdirSync(dir, { recursive: true });
 for (let i = 0; i < 3; i++) {
   writeFileSync(file(i), line(IDS[i] ?? "", 1, TITLES[i] ?? ""));
-  execFileSync("touch", ["-d", "@" + String(Math.floor(Date.now() / 1000) - (3 - i) * 60), file(i)]); // no utimesSync in scriptc
+  // no utimesSync in scriptc; ISO with Z: GNU and BSD (macOS) touch both take it, "@<epoch>" only GNU
+  execFileSync("touch", ["-d", new Date(Date.now() - (3 - i) * 60000).toISOString().slice(0, 19) + "Z", file(i)]);
 }
 function child(m: string, redact: string): string {
   const sh = "AGENTGLASS_REDACT=" + redact + " AGENTGLASS_AGENT=0 '" + process.execPath + "' " + m + " 2>&1; echo \"rc=$?\"";
