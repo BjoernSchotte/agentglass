@@ -42,7 +42,9 @@ import { relatedJson } from "./related/cli.ts";
 import { relCfg } from "./related/model.ts";
 import { section } from "../util/config.ts";
 import { LIVE, collectLive } from "./wait/live.ts";
-import { watched, looker, observeWith, watchStep, forgetSession, ruleOf, ledgerRule, alertsOf } from "./watchdog.ts";
+import { watched, looker, observeWith, watchStep, forgetSession, ruleOf, ledgerRule } from "./watchdog.ts";
+import { JSON_FIELDS, MUX_FLAT, jsonSess, discover, pickSessions, rowsOf } from "../read/row.ts";
+export { JSON_FIELDS, MUX_FLAT, jsonSess, discover };
 
 const HARNESS_OPT = opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds());
 const LIVE_OPT = opt("--live", "", "only sessions with a running agent process", "", []);
@@ -70,8 +72,6 @@ const EVENT_OPT = opt("--event", "<id>", "--related: anchor on this tool call id
 const AT_OPT = opt("--at", "<iso>", "--related: anchor on the first event at/after this time", "", []);
 const MINUTES_OPT = opt("--minutes", "N", "--related: window ±N minutes, 1–240 (default related.minutes, 10)", "10", []);
 const IDLE_OPT = opt("--until-idle", "", "--watch: stop when no event arrived for 10 s (inside an agent: --for or this)", "", []);
-export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "mux", "parent", "kind", "subagents", "twins",
-  "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git"];
 function cmd(c: string, usage: string, summary: string, options: OptRec[], fields: string[]): CmdRec { return { cmd: c, usage, summary, options, fields, group: "cmd" }; }
 function optRow(o: OptRec): CmdRec { return { cmd: o.flag, usage: o.flag + (o.arg ? " " + o.arg : ""), summary: o.summary, options: [], fields: [], group: "opt" }; }
 addCmd(cmd("", "agentglass", "interactive TUI", [], []));
@@ -150,14 +150,8 @@ export interface Opts { git: boolean; live: boolean; harness: string; limit: num
 // a consumer of the --watch poll loop (the OTLP live export): tick after every poll, stop before exit, alert per rules
 // transition of a watched top-level session (the rules run for a sink unless --no-alerts, JSONL lines or not)
 export interface Sink { tick: (now: number) => void; stop: () => void; alert: (s: Sess, a: AlertT) => void }
-interface JAl { rule: string; severity: string; value: number; unit: string; threshold: number; since: string; message: string; labels: { [k: string]: string }; acked: boolean }
 interface WAl { rule: string; severity: string; state: string; value: number; threshold: number; labels: { [k: string]: string } }
 interface WAlert { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: null; id: null; text: string; alert: WAl }
-function jalerts(as: Alert[]): JAl[] {
-  const o: JAl[] = [];
-  for (const a of as) { const l: { [k: string]: string } = {}; for (const [k, v] of a.labels) l[k] = v; o.push({ rule: a.rule, severity: a.severity, value: a.value, unit: a.unit, threshold: a.threshold, since: new Date(a.since).toISOString(), message: a.message, labels: l, acked: a.acked }); }
-  return o;
-}
 // id: the tool call id of a tool/result line (what --related --event and open #call= take), else null
 // kinds: the event's kinds (skill-usage §5a: prompt, reply, shell:test, mcp:<server>, error …), the same as the TUI's filter
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: string | null; id: string | null; text: string }
@@ -196,54 +190,14 @@ export function opts(args: string[]): Opts {
 // paths and events go to the agent's model provider
 function wanted(s: Sess, o: Opts): boolean { const cf = o.cf; return (!cf || cliWatchSession(cf, s)) && visible(s, o.sc); }
 export { usage };
-// the --json fields of one session (key order is the output order)
-export function jsonSess(s: Sess): Obj {
-  const skills = skillsJson(accsOf(s)); // first: a hidden skill's name is scrubbed from the title too
-  return {
-    id: s.id, harness: s.h, title: scrub(titleOf(s)), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: display("path", s.path, s),
-    updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status, mux: muxJson(s),
-    parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, twins: s.twins, activity: scrub(activity(s)),
-    tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
-    costUsd: s.cost < 0 ? null : s.cost, costEstimatedUsd: Math.round(estTopOf(accsOf(s)).usd * 1e6) / 1e6, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },
-    unpricedTokens: s.unkTok, unpricedCredits: s.unkCr, tools: s.tools, linesAdded: s.linesAdd, linesRemoved: s.linesDel,
-    attention: s.attention, stuck: s.stuck ? scrub(s.stuck) : null, skills, repo: repoJ(s), alerts: jalerts(alertsOf(s)), git: gitJson(s),
-  };
-}
-// mux: the live agent's multiplexer pane (a subagent: its parent's); labels are user text, hidden under --redact
-export const MUX_FLAT = ["mux_kind", "mux_pane", "mux_workspace", "mux_tab", "mux_status"]; // --fields names (csv columns), valid when every mux is null too
-function muxJson(s: Sess): Obj | null {
-  const pid = livePid(s); if (!pid) return null;
-  const p = paneOfPid(pid); if (p.kind === "none") return null;
-  return { kind: p.kind, pane: p.id, workspace: REDACT || !p.ws ? null : p.ws, tab: REDACT || !p.tab ? null : p.tab, status: p.kind === "herdr" && p.status ? p.status : null };
-}
-// repo: the session's project (repo-view); top = real repo top, remote scrubbed; faked through display() under --redact
-function repoJ(s: Sess): Obj | null {
-  const id = identSync(s); if (!id) return null;
-  return { key: keyShown(id.key), label: display("repo", labelOf(id), s), kind: id.kind, worktree: id.worktree ? display("repo", id.worktree, s) : "",
-    top: id.top ? display("cwd", id.top, s) : "", remote: id.remote ? display("remote", id.remote, s) : "" };
-}
 // table columns of a session list (project = the cwd's last part)
 export const TABLE_COLS = ["updated", "harness", "title", "cwd", "costUsd", "tools", "status"];
-function sessByRef(id: string): Sess | null { const i = id.indexOf(":"); for (const x of sessions.values()) if (x.h === id.slice(0, i) && x.id === id.slice(i + 1)) return x; return null; }
-export function discover(): void { scan(); refreshProcs(); refreshSlow(); buildView(); }
 
 function snapshot(o: Opts): void {
   discover();
-  const list: Sess[] = [];
-  const cands: Sess[] = []; for (const s of sessions.values()) if ((o.subs || s.depth === 0) && visible(s, o.sc)) cands.push(s);
-  const cf = o.cf; for (const s of cf ? cliSelect(cf, cands) : cands) list.push(s);
-  list.sort((a, b) => b.mtime - a.mtime);
-  const res: Obj[] = [];
+  const list = pickSessions(o.cf, o.subs, (s: Sess): boolean => visible(s, o.sc));
   const sel = o.limit > 0 ? list.slice(0, o.limit) : list;
-  // everything indexed first (git: each worktree's peers too), then the rows: the git attribution is built once, not
-  // again for every session that changed the picture
-  for (const s of sel) { loadHead(s); loadTail(s, true); complete(s); for (const c of s.subs) complete(c); peers(s); }
-  const loadsF = o.f.fields.indexOf("skillLoads") >= 0; const content = process.argv.indexOf("--content") >= 0;
-  for (const s of sel) {
-    const r = jsonSess(s);
-    if (loadsF) { const as: Acc[] = []; const ids: string[] = []; const add = (x: Sess): void => { for (const a of accsOf(x)) { as.push(a); ids.push(x.h + ":" + x.id); } for (const c of x.subs) add(c); }; add(s); r["skillLoads"] = skillLoadsJson(s, as, ids, content, sessByRef); }
-    res.push(r);
-  }
+  const res = rowsOf(sel, o.f.fields.indexOf("skillLoads") >= 0, process.argv.indexOf("--content") >= 0);
   if (o.git) saveVcs(); // closed sessions' git log results: the next run reads them instead of spawning
   out(formatRows(res, o.f, false, TABLE_COLS, JSON_FIELDS.concat(MUX_FLAT, ["skillLoads"]), o.json));
   if (o.cf && o.cf.needsLedger) for (const f of H.onQuit) f(); // a ledger filter indexed every candidate: keep that work for the next run
