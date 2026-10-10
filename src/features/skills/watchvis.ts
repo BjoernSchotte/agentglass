@@ -31,6 +31,10 @@ const BY = new Map<string, number[]>(); const ODD: string[] = [];
 const SUF = new Set<string>();
 // FAKES: what scrub put in (the fakes): a text scrubbed twice (a title, then its JSON line) keeps them, no word of them is noted
 const FAKES = new Set<string>();
+// GUESS: names only guessed to be skills from a reference's shape under a broad rule ("/flurb", "$x"): hidden in that
+// shape only (shape()), never as a bare word — "/tmp" or "$HOME" once made "tmp" and "HOME" vanish from every text. A
+// name known to be a skill later (a load, KNOWN, a rule) leaves it and hides everywhere
+const GUESS = new Set<string>();
 // the leading words' length range and first characters (ASCII; others always looked up): most words skip the lookup
 const LEADS = { min: 1 << 30, max: 0, first: new Uint8Array(128) };
 let seeded = false; let scrubGen = -1;
@@ -50,7 +54,7 @@ function partAdd(nm: string): void {
 // work counters (scrub-perf.check.ts bounds them): characters visited, glob matches tried, name compares
 export const SCRUB_STAT = { chars: 0, glob: 0, cmp: 0 };
 function seed(): void { // rules without a glob name their skills already: titles are scrubbed before the first load is seen
-  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; SUF.clear(); FAKES.clear(); LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; PART.clear(); PF.min = 1 << 30; PF.max = 0; for (let c = 0; c < 128; c++) PF.first[c] = 0; LSET.clear(); LN.base += LEARNT.length + 1; LEARNT.length = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
+  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; SUF.clear(); FAKES.clear(); GUESS.clear(); LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; PART.clear(); PF.min = 1 << 30; PF.max = 0; for (let c = 0; c < 128; c++) PF.first[c] = 0; LSET.clear(); LN.base += LEARNT.length + 1; LEARNT.length = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
   if (seeded) return; seeded = true;
   const on = LN.on; LN.on = true; LN.rule = true;
   for (const r of hideRules()) if (r.match.indexOf("*") < 0 && r.match.indexOf("?") < 0) note(r.match);
@@ -69,19 +73,21 @@ function put(real: string, rep: string): void {
 }
 // remember a skill name the stream met; true when the skill is hidden in any way (its text must not show). dir: a plugin
 // skill's dir too (its SKILL.md path names it); not for a name known only by name (KNOWN: installed, listed), whose dir
-// alone ("review" of p:review) is no skill and stays a prose word
-export function note(name: string, dir = true): boolean {
+// alone ("review" of p:review) is no skill and stays a prose word. guess: only a reference's shape says it is a skill (GUESS)
+export function note(name: string, dir = true, guess = false): boolean {
   if (!name) return false;
   seed();
   const v = skillVis(name);
-  if ((v.mode === "name" || v.mode === "omit") && (!SCRUB.has(name) || SUF.has(name))) {
+  if (!guess) GUESS.delete(name);
+  if (v.mode === "name" || v.mode === "omit") {
     const rep = v.mode === "omit" ? HIDDEN : v.shown;
-    if (name.length >= 2) { put(name, rep); SUF.delete(name); }
-    // a plugin skill's dir in its SKILL.md path; a skill of that name keeps its own fake, whichever is seen first
+    if (name.length >= 2 && (!SCRUB.has(name) || SUF.has(name))) { if (guess && !SCRUB.has(name)) GUESS.add(name); put(name, rep); SUF.delete(name); }
+    // a plugin skill's dir in its SKILL.md path, also when its name was known before (KNOWN: by name only, no dir); a skill
+    // of that name keeps its own fake, whichever is seen first. A dir only guessed before ("/xyz") hides everywhere now
     const c = name.lastIndexOf(":"); const d = name.slice(c + 1);
-    if (dir && c > 0 && name.length - c > 2 && !SCRUB.has(d)) { put(d, rep); SUF.add(d); }
+    if (dir && c > 0 && name.length - c > 2) { if (!SCRUB.has(d)) { put(d, rep); SUF.add(d); } else GUESS.delete(d); }
   }
-  if (LN.on && SCRUB.has(name) && !SUF.has(name) && !LSET.has(name)) { // a skill's name, surely
+  if (LN.on && SCRUB.has(name) && !SUF.has(name) && !GUESS.has(name) && !LSET.has(name)) { // a skill's name, surely
     LSET.add(name); LEARNT.push(name); if (LN.rule || name.length >= 5) partAdd(name);
   }
   return v.mode !== "show";
@@ -105,10 +111,19 @@ function lead(c: number): boolean {
 function ref(t: string, i: number, e: number, colon: number): boolean {
   if (e - i < 2 || !alpha(t.charCodeAt(i))) return false;
   if (colon > 0 && alpha(t.charCodeAt(colon + 1))) return true; // "p:x" ("a.ts:57", "host:4318", "T09:30": no skill)
+  return shape(t, i, e);
+}
+// is the name at i..e written as a skill reference: "$x" (no capital: "$HOME" is a variable, skill names are lower case),
+// "/x" after white space or a quote, not a path's segment ("/tmp/x", "~/app", a URL's "/app") or a closing tag ("</x>"),
+// pi's "/skill:x" (as wordAt reads it: "skill:x" at a word's start), a skills/x/ dir
+function shape(t: string, i: number, e: number): boolean {
   const p = i > 0 ? t.charCodeAt(i - 1) : 0;
-  if (p === 36) return true; // $
+  if (p === 36) { for (let j = i; j < e; j++) { const c = t.charCodeAt(j); if (c >= 65 && c <= 90) return false; } return true; } // $
+  if (i >= 7 && t.startsWith("skills/", i - 7)) return true;
+  if (p === 58) return i >= 6 && t.startsWith("skill:", i - 6) && (i === 6 || !wc(t.charCodeAt(i - 7))); // wordAt's "skill:" (sk)
   if (p !== 47) return false; // /
-  return i < 2 || lead(t.charCodeAt(i - 2)) || (i >= 7 && t.startsWith("skills/", i - 7));
+  const q = i < 2 ? 32 : t.charCodeAt(i - 2); // "</x>" closes a tag: no command
+  return lead(q) && q !== 60 && t.charCodeAt(e) !== 47;
 }
 // the glob rules hiding names, compiled once per rule change; a word's verdict is kept (GW: words tried, GS: a strong
 // rule matches, GA: any rule does — sets, a lookup allocates nothing), so each distinct word meets each rule once (bounded)
@@ -173,7 +188,9 @@ function wordAt(t: string, i: number, n: number): number {
   // a strong rule matches the whole word ("acme-x:15" under "acme-*"); else the name ("acme-x" of it, a ref's name)
   const w = t.slice(i + sk, e); const nm = ne < e ? t.slice(i + sk, ne) : w;
   if (GL.anyStrong && w.length >= 2 && fresh(w) && hides(w, true)) note(w);
-  else if (nm.length >= 2 && fresh(nm) && hides(nm, !isRef)) note(nm, !isRef || hides(nm, true)); // a guessed "p:x" hides no dir "x"
+  else if (nm.length >= 2 && fresh(nm) && hides(nm, !isRef)) { // a guessed "p:x" hides no dir "x", a guessed "/x" only as "/x"
+    const st = !isRef || hides(nm, true); note(nm, st, !st && nm.indexOf(":") < 0);
+  }
   return e;
 }
 // the start of the word holding position p (word characters and the ":"s between them), -1 if p is in none
@@ -226,7 +243,7 @@ function nameAt(t: string, i: number, e: number, n: number, inner: boolean, ls: 
       const ke = i + l; if (ke > n) continue; // past the text
       const at = ke < n && wc(t.charCodeAt(ke)); if (at && !sep(t.charCodeAt(ke))) continue; // no end
       const nm = ke === e ? lead : t.slice(i, ke); const rep = SCRUB.get(nm);
-      if (rep !== undefined && (!(inner || at) || PART.has(nm))) { AT.rep = rep; return ke; }
+      if (rep !== undefined && (!(inner || at) || PART.has(nm)) && (!GUESS.size || !GUESS.has(nm) || shape(t, i, ke))) { AT.rep = rep; return ke; }
     }
   }
   if (ls > i && (f >= 128 || PF.first[f])) for (let b = Math.min(ls, i + PF.max); b >= i + PF.min; b--) { // a skill's name ending at a "-"/"_"
