@@ -11,6 +11,8 @@ import { type Obj, str } from "../../util/json.ts";
 import { type DayRow } from "../fleet/model.ts";
 import { type TeamState } from "./state.ts";
 import { type TeamFeed, teamFeed, pollFeed } from "./feed.ts";
+import { displayNames } from "./names.ts";
+import { claimsOf } from "./activity.ts";
 
 export const MAX_STREAMS = 64; export const MAX_VIEW_ROOMS = 16;
 export const ONLINE_MS = 900000; // a device that published within 15 min is online (TUI sync 1 min, the service 5 min)
@@ -25,7 +27,7 @@ export function resetFeeds(): void { FEEDS.clear(); }
 export function buildView(t: TeamState, room: string, now: number, lines: number): TeamView {
   const v: TeamView = { team: t.id, room, at: now, members: [], rows: [], skipped: [], truncated: 0 };
   const m = t.manifest; if (!m) return v;
-  const names = t.priv ? t.priv.names : {};
+  const names = displayNames(m, claimsOf(t), t.priv ? t.priv.names : {});
   // the streams: (room, member, device) of current members holding the room
   const fs: TeamFeed[] = []; let nRooms = 0;
   for (const r of m.rooms) {
@@ -79,7 +81,7 @@ export function buildView(t: TeamState, room: string, now: number, lines: number
     const ds: TeamDevice[] = [];
     for (const d of x.devices) { const dv = devs.get(x.id + "|" + d); const e = dv ?? { id: d, online: false, at: 0, live: 0, attention: 0, stuck: 0 }; e.online = e.at > 0 && now - e.at < ONLINE_MS; ds.push(e); }
     let sn = 0; for (const r of v.rows) if (r.member === x.id) sn++;
-    v.members.push({ id: x.id, name: names[x.id] ?? "", mine: x.id === t.me.id, devices: ds, sessions: sn });
+    v.members.push({ id: x.id, name: names.get(x.id) ?? "", mine: x.id === t.me.id, devices: ds, sessions: sn });
   }
   return v;
 }

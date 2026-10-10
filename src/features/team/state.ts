@@ -12,7 +12,8 @@ import { type Manifest, type Private, localManifest, openPrivate } from "./manif
 import { type RoomShare } from "./policy.ts";
 import { type Mailbox, dirMailbox } from "./mailbox.ts";
 
-export interface TeamState { id: string; mailbox: string; kind: string; me: MemberKeys; device: string; label: string; req: string; manifest: Manifest | null; priv: Private | null; policy: RoomShare[] }
+// name: my display name as I chose it (my claim in names/ carries it to the others)
+export interface TeamState { id: string; mailbox: string; kind: string; me: MemberKeys; device: string; label: string; name: string; req: string; manifest: Manifest | null; priv: Private | null; policy: RoomShare[] }
 const ID = /^[0-9a-f]{16}$/;
 function dirOf(id: string): string { return join(teamDir(), id); }
 function writeText(p: string, t: string): string {
@@ -24,7 +25,7 @@ export function saveTeamKey(t: TeamState, epoch: number, key: Uint8Array): strin
 export function mbOf(t: TeamState): Mailbox { return dirMailbox(t.mailbox); }
 
 export function saveMeta(t: TeamState): string {
-  return writeText(join(dirOf(t.id), "team.json"), JSON.stringify({ v: 1, id: t.id, mailbox: t.mailbox, kind: t.kind, device: t.device, label: t.label, req: t.req }) + "\n");
+  return writeText(join(dirOf(t.id), "team.json"), JSON.stringify({ v: 1, id: t.id, mailbox: t.mailbox, kind: t.kind, device: t.device, label: t.label, name: t.name, req: t.req }) + "\n");
 }
 export function savePolicy(t: TeamState): string {
   const o: Obj[] = []; for (const s of t.policy) o.push({ room: s.room, on: s.on, repos: s.repos, level: s.level, since: s.since, paused: s.paused });
@@ -56,7 +57,7 @@ export function loadTeam(id: string): { t: TeamState | null; err: string } {
   const o = obj(parse(readText(join(d, "team.json"), 0, 65536))); if (!o || o["v"] !== 1 || o["id"] !== id) return { t: null, err: "no team " + id + " here" };
   const mk = loadMember(id); if (!mk.k) return { t: null, err: mk.err };
   const mb = readBytes(join(d, "manifest.agm"), 0, 16777216);
-  const t: TeamState = { id, mailbox: str(o["mailbox"]), kind: str(o["kind"]) || "dir", me: mk.k, device: str(o["device"]), label: str(o["label"]), req: str(o["req"]),
+  const t: TeamState = { id, mailbox: str(o["mailbox"]), kind: str(o["kind"]) || "dir", me: mk.k, device: str(o["device"]), label: str(o["label"]), name: str(o["name"]), req: str(o["req"]),
     manifest: mb.length ? localManifest(mb) : null, priv: null, policy: policyIn((obj(parse(readText(join(d, "policy.json"), 0, 1048576))) ?? {})["shares"]) };
   t.priv = privOf(t);
   return { t, err: "" };

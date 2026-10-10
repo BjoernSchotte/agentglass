@@ -58,7 +58,7 @@ for (let i = 0; i < MEMBERS; i++) {
 }
 console.log("sealed " + String(MEMBERS * DEVICES) + " streams, " + String(Math.round(bytes / 1024)) + " KB, in " + String(Date.now() - t0) + " ms");
 const viewer = ms[0] as MemberKeys;
-const t: TeamState = { id: T, mailbox: box, kind: "dir", me: viewer, device: pubs[0]?.devices[0] ?? "", label: "", req: "", manifest: m, priv: null, policy: [] };
+const t: TeamState = { id: T, mailbox: box, kind: "dir", me: viewer, device: pubs[0]?.devices[0] ?? "", label: "", name: "", req: "", manifest: m, priv: null, policy: [] };
 const r0 = selfRssMb(); const b0 = Date.now();
 const v = buildView(t, "", now, 0);
 const ms1 = Date.now() - b0; const rss = selfRssMb();

@@ -22,6 +22,8 @@ import { type Invite, inviteCode, deviceId } from "./code.ts";
 import { type Mailbox, NAMES, dirMailbox, roomFile } from "./mailbox.ts";
 import { type TeamState, loadTeam, saveMeta, savePolicy, saveManifest, teamKey, saveTeamKey, mbOf, privOf, dropTeam } from "./state.ts";
 import { publishRoom } from "./publish.ts";
+import { signClaim, nameErr } from "./names.ts";
+import { claimsOf, writeEvent } from "./activity.ts";
 
 export const MAX_DEVICES = 64; export const MAX_ROOMS = 16;
 export interface SyncOut { admitted: string[]; pending: string[]; published: string[]; fetched: number; removed: string[]; wiped: string[]; problems: string[] }
@@ -79,14 +81,14 @@ function putKey(mb: Mailbox, room: string, epoch: number, x: MemberPub, key: Uin
 }
 
 // ── create ──
-export function createTeam(name: string, mailbox: string, rooms: Room[], personal: boolean, now: number): { t: TeamState | null; err: string } {
+export function createTeam(name: string, mailbox: string, rooms: Room[], personal: boolean, now: number, myName = ""): { t: TeamState | null; err: string } {
   if (!name.trim()) return { t: null, err: "a team needs a name" };
   if (rooms.length < 1 || rooms.length > MAX_ROOMS) return { t: null, err: "a team has 1 to " + String(MAX_ROOMS) + " rooms" };
   const mb = dirMailbox(mailbox); const why = mb.problem(); if (why) return { t: null, err: why };
   if (existsSync(join(mailbox, "agentglass-team.json"))) return { t: null, err: mailbox + " already holds a team: pick another folder" };
   const id = newId(); const me = newMember(); const dev = deviceId(id, hostId());
   const e1 = saveMember(id, me); if (e1) return { t: null, err: e1 };
-  const t: TeamState = { id, mailbox, kind: "dir", me, device: dev, label: label(dev), req: "", manifest: null, priv: null, policy: [] };
+  const t: TeamState = { id, mailbox, kind: "dir", me, device: dev, label: label(dev), name: myName.trim(), req: "", manifest: null, priv: null, policy: [] };
   const tk = randomBytes(32); const e2 = saveTeamKey(t, 1, tk); wipe(tk); if (e2) return { t: null, err: e2 };
   const rs: Room[] = []; const rp: RoomPub[] = [];
   for (const r of rooms) {
@@ -100,6 +102,7 @@ export function createTeam(name: string, mailbox: string, rooms: Room[], persona
   const e3 = writeManifest(t, m, p); if (e3) return { t: null, err: e3 };
   const e4 = mb.put("agentglass-team.json", enc(JSON.stringify({ format: "agentglass-team/v1", team: id }) + "\n")); if (e4) return { t: null, err: e4 };
   const e5 = saveMeta(t) || savePolicy(t); if (e5) return { t: null, err: e5 };
+  if (t.name) { const e6 = publishClaim(t, 1, now); if (e6) return { t: null, err: e6 }; }
   return { t, err: "" };
 }
 
@@ -148,7 +151,7 @@ export function requestJoin(code: Invite, mb: Mailbox, name: string, shares: Roo
   const to: Obj[] = [];
   for (const x of m.members) if (x.admin && !x.removedAt) { const pk = unhex(x.boxPk); if (pk) to.push({ id: x.id, box: b64url(seal(pk, pay)) }); }
   const rname = "join/" + inv.id + "-" + newId() + ".req";
-  const t: TeamState = { id: m.team, mailbox: mb.where, kind: mb.kind, me, device: dev, label: label(dev), req: rname, manifest: m, priv: null, policy: shares.slice() };
+  const t: TeamState = { id: m.team, mailbox: mb.where, kind: mb.kind, me, device: dev, label: label(dev), name: name.trim(), req: rname, manifest: m, priv: null, policy: shares.slice() };
   const e1 = saveMember(t.id, me) || saveMeta(t) || savePolicy(t); if (e1) return { t: null, err: e1 };
   if (ch.b) { const e2 = saveManifest(t, ch.b); if (e2) return { t: null, err: e2 }; }
   const e3 = mb.put(rname, enc(JSON.stringify({ v: 1, invite: inv.id, to }))); if (e3) return { t: null, err: e3 };
@@ -226,7 +229,7 @@ export function admit(t: TeamState, member: string, now: number): string {
 }
 
 // ── keys this member is owed ──
-function takeWelcome(t: TeamState, mb: Mailbox, out: SyncOut): void {
+function takeWelcome(t: TeamState, mb: Mailbox, now: number, out: SyncOut): void {
   const b = mb.get("welcome/" + t.me.id + "-" + t.device + ".key", 1048576); if (!b) return;
   const pt = sealOpen(t.me.box, b); if (!pt) { out.problems.push("welcome does not open"); return; }
   const w = obj(parse(dec(pt))); if (!w || w["team"] !== t.id) return;
@@ -238,7 +241,27 @@ function takeWelcome(t: TeamState, mb: Mailbox, out: SyncOut): void {
     const seed = unhex(str(mo["sign"])); const bs = unhex(str(mo["box"]));
     if (seed && bs && seed.length === 32 && bs.length === 32) { const sk = signKeys(seed); const bk = boxKeys(bs); t.me = { id: hash16(sk.pk), sign: sk, box: bk }; saveMember(t.id, t.me); }
   }
-  if (t.req) { mb.del(t.req); t.req = ""; saveMeta(t); }
+  if (t.req) {
+    mb.del(t.req); t.req = ""; saveMeta(t);
+    // welcomed: my name and my choice of rooms reach the others (signed, sealed with the team key)
+    const m = t.manifest; if (m && t.name) { const e = publishClaim(t, 1, now); if (e) out.problems.push(e); }
+    for (const s of t.policy) if (s.on) { const e = writeEvent(t, s.paused ? "paused" : "shares", s.room, now); if (e) out.problems.push(e); }
+  }
+}
+// my name claim with sequence seq (my current name and this device's label)
+function publishClaim(t: TeamState, seq: number, now: number): string {
+  const m = t.manifest; const k = m ? teamKey(t, m.tk) : null; if (!m || !k) return "no team key yet";
+  const devices: { [d: string]: string } = {}; if (t.label) devices[t.device] = t.label;
+  for (const c of claimsOf(t)) if (c.member === t.me.id) for (const d of Object.keys(c.devices)) if (!devices[d]) devices[d] = c.devices[d] ?? "";
+  return mbOf(t).put("names/" + t.me.id + ".name", signClaim({ member: t.me.id, name: t.name, devices, seq, at: now }, t.me, k));
+}
+// team rename-me: a new name and/or this device's label, as a claim one higher than the last
+export function renameMe(t: TeamState, name: string, devLabel: string, now: number): string {
+  if (name) { const e = nameErr(name); if (e) return e; t.name = name.trim(); }
+  if (devLabel) { const e = nameErr(devLabel); if (e) return "label: " + e; t.label = devLabel.trim(); }
+  let seq = 0; for (const c of claimsOf(t)) if (c.member === t.me.id && c.seq > seq) seq = c.seq;
+  const e = publishClaim(t, seq + 1, now); if (e) return e;
+  return saveMeta(t);
 }
 function fetchKeys(t: TeamState, mb: Mailbox, out: SyncOut): void {
   const m = t.manifest; if (!m || !current(m, t.me.id)) return;
@@ -313,7 +336,7 @@ export function syncOnce(t: TeamState, now: number, dry: boolean): SyncOut {
   const ch = chain(mb, t.manifest); for (const p of ch.problems) out.problems.push(p);
   if (ch.m && ch.b && ch.m !== t.manifest) { t.manifest = ch.m; saveManifest(t, ch.b); }
   const m = t.manifest; if (!m) { out.problems.push("no manifest of team " + t.id + " in " + t.mailbox); return out; }
-  takeWelcome(t, mb, out);
+  takeWelcome(t, mb, now, out);
   fetchKeys(t, mb, out);
   t.priv = privOf(t);
   if (!dry) { admitPass(t, mb, now, [], out); tombs(t, mb, now, out); }

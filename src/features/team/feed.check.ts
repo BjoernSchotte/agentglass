@@ -54,7 +54,7 @@ function publish(who: string, k: MemberKeys, device: string, room: Room, at: num
 const r1 = rooms[0] as Room; const r2 = rooms[1] as Room;
 // the viewer: its own team dir with the keys
 const vdir = join(HOME, "viewer"); process.env["AGENTGLASS_TEAM_DIR"] = vdir; saveMember(T, viewer); saveRoomKey(T, R1, 1, rk1); saveRoomKey(T, R2, 1, rk2);
-const t: TeamState = { id: T, mailbox: box, kind: "dir", me: viewer, device: D.a, label: "", req: "", manifest: m, priv: { name: "acme", names: { [B.id]: "Bob", [C.id]: "Carol", [viewer.id]: "Vic" }, rooms }, policy: [] };
+const t: TeamState = { id: T, mailbox: box, kind: "dir", me: viewer, device: D.a, label: "", name: "", req: "", manifest: m, priv: { name: "acme", names: { [B.id]: "Bob", [C.id]: "Carol", [viewer.id]: "Vic" }, rooms }, policy: [] };
 function view(room: string, at: number): ReturnType<typeof buildView> { process.env["AGENTGLASS_TEAM_DIR"] = vdir; return buildView(t, room, at, 0); }
 function sessIds(rows: TeamRow[]): string { const o: string[] = []; for (const r of rows) o.push(String(r.s["id"])); o.sort(); return o.join(","); }
 
