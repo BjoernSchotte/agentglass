@@ -140,9 +140,11 @@ function walk(d: string, out: string[]): void {
   for (const n of readdirSync(d)) { const p2 = d + "/" + n; if (statSync(p2).isDirectory()) walk(p2, out); else if (n.endsWith(".ts") && !n.endsWith(".check.ts") && n.indexOf("fixture") < 0) out.push(p2); }
 }
 const all: string[] = []; walk("src", all);
+// modules whose ".sk" is something else: the team crypto's secret keys (SignKeys/BoxKeys.sk)
+const NOT_SKILL = ["src/features/team/crypto.ts"];
 let seen = 0;
 for (const f3 of all) {
-  if (!SKILL_DATA_RE.test(readFileSync(f3, "utf-8"))) continue;
+  if (NOT_SKILL.indexOf(f3) >= 0 || !SKILL_DATA_RE.test(readFileSync(f3, "utf-8"))) continue;
   seen++;
   ok("reads skill data, listed in VIS_SURFACES or VIS_DATA: " + f3, VIS_SURFACES.indexOf(f3) >= 0 || VIS_DATA.indexOf(f3) >= 0);
 }

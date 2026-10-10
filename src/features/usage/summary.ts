@@ -198,6 +198,8 @@ export function extraOf(es: Ent[]): Extra {
 }
 // this machine's figures plus the given entries (the fleet's exact merge): the same sums, series and projections
 export function costWith(es: Ent[]): CostNow { return costWithX(extraOf(es)); }
+// the given entries' figures alone (no machine's own): a scoped snapshot's cost line (fleet-teams spec 6)
+export function costOfEnts(es: Ent[]): CostNow { const x = extraOf(es); return costFrom(x.today, x.week, x.month, x.rows, Date.now()); }
 export function costWithX(x: Extra): CostNow {
   const now = Date.now(); const p = parts("", now); const rows = p.rows; // fresh series: added into in place
   for (let i = 0; i < rows.length; i++) { const r = rows[i]; const e = x.rows[i]; if (!r || !e) continue; for (let j = 0; j < r.length; j++) { const a = r[j]; const b = e[j]; if (!a || !b) continue; a.cost += b.cost; for (let h = 0; h < 24; h++) a.hc[h] = (a.hc[h] ?? 0) + (b.hc[h] ?? 0); } }

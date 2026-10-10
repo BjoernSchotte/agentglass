@@ -12,6 +12,7 @@ import { parse } from "./query/parse.ts";
 import type { Clause } from "./query/types.ts";
 import { BUILD } from "../build-info.ts";
 import { versionInfo } from "./version.ts";
+import { selfTest, CRYPTO_LIB } from "./team/crypto.ts";
 import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { paneOfPid } from "../mux/index.ts";
@@ -92,7 +93,7 @@ addCmd(cmd("export", "agentglass export --otlp <url> [opts]", "send sessions to 
 addCmd(cmd("--update-prices", "agentglass --update-prices", "fetch the opted-in community price list now (see ~/.agentglass/config.json)", [], []));
 addCmd(cmd("--help", "agentglass --help | -h", "this text", [], []));
 addCmd(cmd("update", "agentglass update [--channel stable|dev]", "update to the newest release (--tag T, --dry-run, --json, --yes, --rollback, status)", [], []));
-addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method, contract = the CLI contract, docs/cli-contract.md)", [], ["version", "channel", "commit", "date", "platform", "installMethod", "contract"]));
+addCmd(cmd("--version", "agentglass --version [--json]", "print the version (--json: version, channel, commit, date, platform, install method, contract = the CLI contract, docs/cli-contract.md; crypto = the team crypto self-test)", [], ["version", "channel", "commit", "date", "platform", "installMethod", "contract", "crypto"]));
 for (const o of [LIVE_OPT, HARNESS_OPT, LIMIT_OPT, SUBS_OPT, FROM_OPT, FILTER_OPT, PINNED_OPT, REPOS_OPT, DAYS_OPT, RELATED_OPT, EVENT_OPT, AT_OPT, MINUTES_OPT, GIT_OPT, NOALERTS_OPT, NOTIFY_OPT, FORMAT_OPT, FIELDS_OPT, FOR_OPT, IDLE_OPT, ALLP_OPT, PONLY_OPT, OTLP_OPT, JSONL_OPT, NOLOGS_OPT]) addCmd(optRow(o));
 function usage(): string {
   return textHelp(`agentglass ${BUILD.version} (${BUILD.channel}, ${BUILD.commit.slice(0, 8)}, ${BUILD.platform}) — browse, watch and steer coding-agent sessions (${HARNESSES.map((a) => a.label).join(", ")})`,
@@ -157,6 +158,9 @@ interface WAlert { ts: string; harness: string; session: string; title: string; 
 interface WEv { ts: string; harness: string; session: string; title: string; project: string; parent: string | null; kind: string; kinds: string[]; tool: string | null; id: string | null; text: string }
 
 // sync write: a closed reader (| head) surfaces as EPIPE here → quiet exit
+// --version --json: versionInfo() plus the team crypto's self-test ("monocypher 4.0.2", else what failed: a build without
+// build.sh's --ffi src/features/team/crypto/ffi.json)
+function versionJson(): Obj { const v = versionInfo(); const t = selfTest(); v["crypto"] = t === "" ? CRYPTO_LIB : t; return v; }
 function out(line: string): void {
   try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); }
 }
@@ -425,7 +429,7 @@ export function strictArgs(args: string[], c: string, extra: OptRec[]): void {
 }
 H.cli.push((args: string[]): boolean => {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { help(args); return true; }
-  if (args.indexOf("--version") >= 0) { const m = badArg(args, [], ["--version", "--json"], []); if (m) fail(m); out(args.indexOf("--json") >= 0 ? JSON.stringify(versionInfo()) : BUILD.version); return true; }
+  if (args.indexOf("--version") >= 0) { const m = badArg(args, [], ["--version", "--json"], []); if (m) fail(m); out(args.indexOf("--json") >= 0 ? JSON.stringify(versionJson()) : BUILD.version); return true; }
   if (args.indexOf("--json") >= 0) { // no toast line: warnings go to stderr
     S.cli = true; strictArgs(args, "--json", []);
     if (args.indexOf("--related") >= 0) { relatedCli(args, agentScope(args)); return true; }

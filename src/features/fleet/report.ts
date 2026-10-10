@@ -13,7 +13,7 @@ export function helloOf(o: Obj): Hello {
 }
 // "agentglass-fleet/v1" → 1; another family or an unreadable version → -1
 function major(format: string): number { const m = /^agentglass-fleet\/v(\d+)$/.exec(format); return m ? Number(m[1] ?? "") : -1; }
-export function sessRowOf(s: Obj): SessRow { return { s, key: str(s["harness"]) + ":" + str(s["id"]), days: null, own: null, prov: [] }; }
+export function sessRowOf(s: Obj): SessRow { return { s, key: str(s["harness"]) + ":" + str(s["id"]), days: null, own: null, prov: [], dd: false }; }
 // feeds lines in order; after an error or the end line nothing more is taken
 export function feedLines(p: Parse, lines: string[]): void {
   for (const l of lines) {

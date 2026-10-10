@@ -37,7 +37,7 @@ ok("snapshot argv", JSON.stringify(a.slice(a.indexOf("--") + 3)) === JSON.string
 ok("no ack: no --ack", snapArgs(h, 7, false, "", PEER, "").indexOf("'--ack'") < 0, "");
 
 const HEAD = { version: "x", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: Date.now(), priceSig: "" };
-function sr(key: string, cost: number): SessRow { return { s: { harness: "claude", id: key.slice(7), updated: new Date().toISOString(), costUsd: cost }, key, days: [], own: null, prov: [] }; }
+function sr(key: string, cost: number): SessRow { return { s: { harness: "claude", id: key.slice(7), updated: new Date().toISOString(), costUsd: cost }, key, days: [], own: null, prov: [], dd: false }; }
 function row(h16: string): OwnRow { return { h: h16, key: 2, d: "2026-10-01", hr: 1, m: "claude-sonnet-4-5", prov: "", n: [1, 1, 1, 1, 1, 0.1, 1] }; }
 const G1 = "1111111111111111"; const G2 = "2222222222222222"; const G3 = "3333333333333333";
 const full: Snap = { head: HEAD, gen: G1, base: "", full: true, sess: [sr("claude:a", 1), sr("claude:b", 2)], own: [{ key: "claude:a", reset: true, rows: chunkOf([row("00000000000000a1")]) }], gone: [], cost: null, allowance: null, done: true, err: "" };

@@ -16,7 +16,11 @@ import { BY, COST_FIELDS, MODEL_FIELDS, WS_FIELDS, costRows, qopts, qfilter, pri
 import { startOfDay, dayKey, todayKey } from "./usage/record.ts";
 import { MODES } from "./usage/billing.ts";
 import { type ModeSum, money, kfmt, grp, unpricedLine, monthStart } from "./usage/costs.ts";
-import { type CostNow, costNow, budget } from "./usage/summary.ts";
+import { type CostNow, type Ent, costNow, costOfEnts, budget } from "./usage/summary.ts";
+import type { Sess } from "../model/types.ts";
+import { ledger } from "./usage/ledger.ts";
+import { modeOf } from "./usage/bill-live.ts";
+import type { Bill } from "./usage/billing.ts";
 
 const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
        agentglass cost [--since today|<n>d|YYYY-MM-DD] [--by day|model|harness|project|session|workspace] [--format F] [--fields a,b]
@@ -98,6 +102,17 @@ export function summary(harness: string): CostNow {
   const from = Math.min(startOfDay() - (monthStart(Date.now()).length - 1) * 86400000, startOfDay() - 15 * 86400000) - 3600000;
   for (const s of sessions.values()) if (s.mtime >= from && (!harness || s.h === harness)) { loadHead(s); complete(s); }
   return costNow(harness);
+}
+// summary() over these top-level sessions and their subagents only (a scoped snapshot: fleet-teams spec 6)
+export function summaryOf(top: Sess[]): CostNow {
+  const es: Ent[] = []; const st: Sess[] = []; for (const s of top) st.push(s);
+  while (st.length) {
+    const s = st.pop(); if (!s) break;
+    loadHead(s); complete(s);
+    const a = ledger.get(s.path); if (a) { const x = s; es.push({ a, mode: (p: string): Bill => modeOf(x, p) }); }
+    for (const c of s.subs) st.push(c);
+  }
+  return costOfEnts(es);
 }
 // without --by/--since: the summary (json or its text table); with them: rows per day/model/harness/project/session
 function cost(args: string[]): void {

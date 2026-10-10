@@ -51,7 +51,7 @@ function hostOf(name: string, hostId: string, paths: string[]): FleetHost {
     const r = rowsFor(p, "claude", a); ok(name + ": rows ok", r.ok, p);
     const key = "claude:" + p.slice(p.lastIndexOf("/") + 1, -6);
     const ch = [chunkOf(r.rows)];
-    ss.push({ s: { harness: "claude", id: key.slice(7), billing: { mode: "api" } }, key, days: dayRows([a], allDays(a)), own: ch, prov: [] });
+    ss.push({ s: { harness: "claude", id: key.slice(7), billing: { mode: "api" } }, key, days: dayRows([a], allDays(a)), own: ch, prov: [], dd: false });
     owned.push({ key, rows: ch });
   }
   const rep: HostReport = { hello: { format: FORMAT, version: "x", hostId, hostName: name, os: "linux", tzOffsetMin: 0, redact: false, days: 7, now: 0, priceSig: "" }, sessions: ss, cost: null, allowance: null, live: null, exact: true, owned, wait: null };
@@ -103,7 +103,7 @@ let ws = hostOf("ws", "1111111111111111", [A]); let vm = hostOf("vm1", "22222222
 let r = fleet(none, [ws, vm], false);
 ok("copies later: totals equal one machine reading both", same(r.t, want), show(r.t) + " want " + show(want));
 ok("copies later: removed 2", r.x.removed === 2, String(r.x.removed));
-const naive = totOf([shadowOf(ws.r.sessions[0] ?? { s: {}, key: "", days: null, own: null, prov: [] }, 0), shadowOf(vm.r.sessions[0] ?? { s: {}, key: "", days: null, own: null, prov: [] }, 0)]);
+const naive = totOf([shadowOf(ws.r.sessions[0] ?? { s: {}, key: "", days: null, own: null, prov: [], dd: false }, 0), shadowOf(vm.r.sessions[0] ?? { s: {}, key: "", days: null, own: null, prov: [], dd: false }, 0)]);
 ok("without the merge the copies count twice", naive.tok[0] === (want.tok[0] ?? 0) + 500, show(naive));
 const vmShadow = of(r.x, "vm1");
 ok("vm1's shadow keeps only m4", !!vmShadow && vmShadow.a.inTok === 400, vmShadow ? String(vmShadow.a.inTok) : "-");
@@ -165,7 +165,7 @@ loadUser(null);
 const sh = shiftDH("2026-09-01", 23, 120);
 ok("shift 23h +2h → next day 1h", sh.d === "2026-09-02" && sh.h === 1, JSON.stringify(sh));
 ok("shift back", shiftDH("2026-09-02", 1, -120).d === "2026-09-01", "");
-const tz: SessRow = { s: { billing: { mode: "api" } }, key: "claude:z", days: [{ d: "2026-09-01", tp: [["23", "", M, "1", "0", "0", "0", "0", "0.5"]], hx: [] as string[][], unk: 0, um: [] as string[][], uc: 0, tools: 0, turns: 0, calls: 0, errors: 0, sa: [] as string[][] }], own: null, prov: [] };
+const tz: SessRow = { s: { billing: { mode: "api" } }, key: "claude:z", days: [{ d: "2026-09-01", tp: [["23", "", M, "1", "0", "0", "0", "0", "0.5"]], hx: [] as string[][], unk: 0, um: [] as string[][], uc: 0, tools: 0, turns: 0, calls: 0, errors: 0, sa: [] as string[][] }], own: null, prov: [], dd: false };
 const za = shadowOf(tz, 120);
 ok("shadow re-bucketed", za.days.has("2026-09-02") && !za.days.has("2026-09-01") && Math.abs((za.days.get("2026-09-02")?.hc[1] ?? 0) - 0.5) < 1e-12, JSON.stringify([...za.days.keys()]));
 ok("half-hour zone rounds", shiftDH("2026-09-01", 10, 330).h === 16 || shiftDH("2026-09-01", 10, 330).h === 15, String(shiftDH("2026-09-01", 10, 330).h));

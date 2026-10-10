@@ -1,7 +1,8 @@
 // agentglass — self-check for the snapshot codec (fleet spec 12): scriptc build src/features/fleet/snap.check.ts -o sc && ./sc
 // SPDX-License-Identifier: Apache-2.0
 import { type Snap, SNAP, newSnap, newSnapParse, snapLines, feedSnap, applySnap, fullOf, dayRows } from "./snap.ts";
-import type { OwnRow, Owned, SessRow, HostReport } from "./model.ts";
+import type { DayRow, OwnRow, Owned, SessRow, HostReport } from "./model.ts";
+import { str } from "../../util/json.ts";
 import { chunkOf, lenOf, rowsOfChunks, NO_ROWS } from "./ownc.ts";
 import { newAcc, bucket, tokens, usageExact, tool, credits } from "../usage/record.ts";
 
@@ -9,7 +10,7 @@ let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
 const HEAD = { version: "2026.10.6", hostId: "0123456789abcdef", hostName: "ws", os: "linux", tzOffsetMin: 120, redact: false, days: 7, now: 1791000000000, priceSig: "x" };
 function sr(key: string, updated: string, cost: number): SessRow {
-  return { s: { harness: key.split(":")[0] ?? "", id: key.split(":")[1] ?? "", updated, costUsd: cost }, key, days: [{ d: "2026-10-01", tp: [["9", "", "claude-sonnet-4-5", "1", "2", "3", "4", "5", "0.5"]], hx: [["10", "anthropic", "0.25"]], unk: 0, um: [] as string[][], uc: 0, tools: 1, turns: 1, calls: 1, errors: 0, sa: [["alpha", "", "claude-sonnet-4-5", "1", "0", "0", "0", "0", "0", "100", "0", "0", "0", "300", "0", "0", "0", "200", "0", "0", "0"]] }], own: null, prov: [] };
+  return { s: { harness: key.split(":")[0] ?? "", id: key.split(":")[1] ?? "", updated, costUsd: cost }, key, days: [{ d: "2026-10-01", tp: [["9", "", "claude-sonnet-4-5", "1", "2", "3", "4", "5", "0.5"]], hx: [["10", "anthropic", "0.25"]], unk: 0, um: [] as string[][], uc: 0, tools: 1, turns: 1, calls: 1, errors: 0, sa: [["alpha", "", "claude-sonnet-4-5", "1", "0", "0", "0", "0", "0", "100", "0", "0", "0", "300", "0", "0", "0", "200", "0", "0", "0"]] }], own: null, prov: [], dd: false };
 }
 function row(h: string, key: number): OwnRow { return { h, key, d: "2026-10-01", hr: 9, m: "claude-sonnet-4-5", prov: "", n: [1, 2, 3, 4, 5, 0.5, 1] }; }
 const H1 = "00000000000000a1"; const H2 = "00000000000000a2"; const H3 = "00000000000000a3"; const H9 = "00000000000000f9";
@@ -81,6 +82,27 @@ ok("no unpriced outside tp", !!one && one.unk === 0 && one.um.length === 0, JSON
 ok("credits, tools", !!one && one.uc === 3 && one.tools === 1 && one.calls === 1, JSON.stringify(one));
 ok("day cost = tp + hx", !!one && Math.abs(one.tp.reduce((t: number, r: string[]) => t + Math.max(0, Number(r[8] ?? "0")), 0) + 0.75 - (day.cost + (sub.days.get(one.d)?.cost ?? 0))) < 1e-9, "cost");
 void newSnap;
+// changed-day rows (dd, fleet-teams Task 3): a day present replaces that day, absent days stay, in date order; a v1 row
+// (no dd) replaces the row as before; dd travels only when true
+{
+  const day = (d: string, tools: number): DayRow => ({ d, tp: [] as string[][], hx: [] as string[][], unk: 0, um: [] as string[][], uc: 0, tools, turns: 0, calls: 0, errors: 0, sa: [] as string[][] });
+  const b0: Snap = { head: HEAD, gen: "2222222222222222", base: "", full: true, sess: [{ s: { harness: "claude", id: "d", updated: "2026-10-02T10:00:00.000Z" }, key: "claude:d", days: [day("2026-10-01", 1), day("2026-10-02", 2)], own: null, prov: [], dd: false }],
+    own: [], gone: [], cost: null, allowance: { claude: null, codex: null }, done: true, err: "" };
+  const dl: Snap = { head: HEAD, gen: "3333333333333333", base: "2222222222222222", full: false, sess: [{ s: { harness: "claude", id: "d", updated: "2026-10-03T10:00:00.000Z" }, key: "claude:d", days: [day("2026-10-03", 5), day("2026-10-02", 4)], own: null, prov: [], dd: true }],
+    own: [], gone: [], cost: null, allowance: { claude: null, codex: null }, done: true, err: "" };
+  const wire = snapLines(dl); const back = newSnapParse(); feedSnap(back, wire);
+  ok("dd on the wire and back", wire.some((l: string) => l.indexOf("\"dd\":true") > 0) && (back.sess[0]?.dd ?? false), wire.join("\n"));
+  ok("no dd on a v1 row", snapLines(b0).every((l: string) => l.indexOf("\"dd\"") < 0), "");
+  const m = applySnap(applySnap(null, b0), back); const r = m.sessions[0];
+  const got: string[] = []; if (r) for (const d of r.days ?? []) got.push(d.d + "=" + String(d.tools));
+  ok("dd merges days by date", got.join(",") === "2026-10-01=1,2026-10-02=4,2026-10-03=5" && r !== undefined && !r.dd && str(r.s["updated"]) === "2026-10-03T10:00:00.000Z", got.join(","));
+  const v1: Snap = { head: HEAD, gen: "3333333333333333", base: "2222222222222222", full: false, sess: [{ s: { harness: "claude", id: "d", updated: "2026-10-03T10:00:00.000Z" }, key: "claude:d", days: [day("2026-10-03", 5)], own: null, prov: [], dd: false }],
+    own: [], gone: [], cost: null, allowance: { claude: null, codex: null }, done: true, err: "" };
+  const m1 = applySnap(applySnap(null, b0), v1); const g1: string[] = []; for (const d of m1.sessions[0]?.days ?? []) g1.push(d.d);
+  ok("a v1 row replaces the days", g1.join(",") === "2026-10-03", g1.join(","));
+  const m2 = applySnap(null, dl); const g2: string[] = []; for (const d of m2.sessions[0]?.days ?? []) g2.push(d.d);
+  ok("a dd row without a row to update keeps what it has", g2.join(",") === "2026-10-03,2026-10-02" || g2.join(",") === "2026-10-02,2026-10-03", g2.join(","));
+}
 
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("fleet snap: all checks passed");
