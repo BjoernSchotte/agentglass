@@ -218,7 +218,9 @@ and measured, then dropped (never stored).
 `S_est` (a cache-expiry or model switch made `g` meaningless; the tier stays as for the harness). Several loads pending
 at the same request (parallel loads of one message) share `g`: when `Σ S_est > g` each gets `S_est_i × g / Σ S_est`
 (largest remainder, `Σ S = g`). Taken in load order instead, a few % of overshoot each starved the last load to 0
-(live: pi 4 loads, OpenCode 2: the last got 0 tokens, 0 requests, $0).
+(live: pi 4 loads, OpenCode 2: the last got 0 tokens, 0 requests, $0). Caches of dev builds before this fix (VERSION 19
+too) carry no head `sk` (`codec.ts SK_SPLIT`): on load, only a log with ≥ 2 sized loads of one `rq0` of which one has
+`S < S_est` re-indexes, once; the next save writes the head (no `VERSION` bump).
 The skill's tokens in this request are taken from the request's buckets in the order **write5m → write1h → in →
 cacheRead** (a new text is written to the cache). This is the load cost. `pend = false`.
 

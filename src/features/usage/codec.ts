@@ -6,7 +6,7 @@ import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 import { own, pooled, pooledText } from "../../util/own.ts";
 import { moOut } from "./owners.ts";
 import { newRows } from "./rows.ts";
-import { type SkLoad, NO_HB, SA_N, hexNum, scopeOf, FNV1, FNV2 } from "./skillrec.ts";
+import { type SkLoad, NO_HB, SA_N, hexNum, scopeOf, sizeEst, FNV1, FNV2 } from "./skillrec.ts";
 // every string read back is own()ed: the parser hands escaped strings (each key "<tool>\t<…>") over with up to 64 KB of
 // spare capacity, and the loaded ledger lives for the whole run
 
@@ -137,6 +137,25 @@ function skOut(sk: SkLoad[]): Obj {
 }
 // a pre-release VERSION 19 cache stored the loads as columns: that log re-indexes (cache.ts)
 export function skStale(o: Obj): boolean { const s = obj(o["sk"]); return s !== null && s["x"] === undefined; }
+// the skill split (cache head "sk"): 1 = loads sent with one request share its growth in proportion (§3.2). A VERSION 19
+// cache without it (dev builds before 2026.10.12) shared it in load order, which starved the last of several parallel
+// loads: a log with such a request re-indexes, once (the next save writes the head with SK_SPLIT)
+export const SK_SPLIT = 1;
+// ≥ 2 loads sent with one request (the same rq0: requests booked before each) of which one got less than its estimate
+// (the bound cut it): its split may be wrong. Read from the stored columns, no SkLoad built
+export function skSplitStale(o: Obj): boolean {
+  const v = o["sk"]; const s = typeof v === "string" ? obj(parse(str(v))) : null; if (!s) return false;
+  const x = nums(s["x"]); const mp = strsIn(s["mp"]);
+  const n = new Map<number, number>(); const cut = new Set<number>();
+  for (let i = 0; i + SKW <= x.length; i += SKW) {
+    const bytes = at(x, i + 6); if (bytes < 0 || at(x, i + 18) > 1 || (at(x, i + 11) & 4) !== 0) continue; // size unknown, folded, not sent
+    const rq = at(x, i + 5); n.set(rq, (n.get(rq) ?? 0) + 1);
+    const m = mp[at(x, i + 23)] ?? ""; const tab = m.indexOf("\t");
+    if (at(x, i + 7) < sizeEst(bytes, tab >= 0 ? m.slice(0, tab) : m)) cut.add(rq);
+  }
+  for (const rq of cut) if ((n.get(rq) ?? 0) > 1) return true;
+  return false;
+}
 // stored as one JSON text ("sk", the layout above), decoded on first use (record.ts skOf); an object: a cache before that
 function skIn(v: unknown): SkLoad[] {
   const o = obj(v); if (!o) return NO_SK;
