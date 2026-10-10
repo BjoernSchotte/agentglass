@@ -17,7 +17,7 @@ import { termCols } from "../format.ts";
 import { cliFilter, cliSelect } from "../query/cli.ts";
 import { accsOf, callsOf } from "../usage/ledger.ts";
 import { callCutoff } from "../usage/callcache.ts";
-import { type Acc, lastDays, startOfDay } from "../usage/record.ts";
+import { type Acc, lastDays, startOfDay, skOf } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows, sizeShown } from "./model.ts";
 import { type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviseHosts, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
@@ -289,7 +289,7 @@ function check(o: Opts, sc: Scope): void {
   const set = gather(o, sc);
   const v = skillCheck(set.accs, set.ids);
   let loads = 0; let drops = 0; let open = 0;
-  for (const a of set.accs) for (const l of a.sk) { loads += l.n; if (l.why === "drop") drops++; if (l.end === 0) open++; }
+  for (const a of set.accs) for (const l of skOf(a)) { loads += l.n; if (l.why === "drop") drops++; if (l.end === 0) open++; }
   rc = v.length ? 3 : 0;
   if (o.json) { out(JSON.stringify({ ok: v.length === 0, sessions: set.tops.length, loads, open, implicitDrops: drops, violations: v.slice(0, 200) })); process.exit(rc); }
   out((v.length ? "FAIL" : "ok") + " skill invariants: " + String(set.tops.length) + " sessions, " + String(loads) + " loads (" + String(open) + " still in context), implicit drops " + String(drops) + ", violations " + String(v.length));

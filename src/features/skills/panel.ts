@@ -11,7 +11,7 @@ import { H, type Ctx } from "../../hooks.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, box } from "../../ui/screen.ts";
 import { ledger } from "../usage/ledger.ts";
-import { type Acc, L, dayKey } from "../usage/record.ts";
+import { type Acc, L, dayKey, hasSk } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { kfmt, grp, money } from "../usage/costs.ts";
 import { type Bill, asBill } from "../usage/billing.ts";
@@ -49,7 +49,7 @@ export function panelData(sc: PanelScope, sort: string): PData {
   const named = f.skill.length > 0; const names = new Set<string>(); // scriptc: no Set | null
   let bill: Bill | "" = ""; let first = true;
   for (const s of sc.sess()) {
-    const a = ledger.get(s.path); if (!a || !a.sk.length) continue;
+    const a = ledger.get(s.path); if (!a || !hasSk(a)) continue;
     let inP = false; for (const dk of days) if (a.days.has(dk)) { inP = true; break; }
     if (!inP) continue;
     accs.push(a); ids.push(sidOf(s)); paths.push(s.path);

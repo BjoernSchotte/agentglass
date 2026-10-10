@@ -1,7 +1,7 @@
 // agentglass — self-check for the ledger cache codec (round trip of billing/unpriced fields): scriptc build src/features/usage/codec.check.ts -o cc && ./cc
 // SPDX-License-Identifier: Apache-2.0
 import { accOut, accIn, VERSION, readable, rlOut, rlIn, skStale } from "./codec.ts";
-import { newAcc, bucket, tokens, usageExact, credits, reasoning, L, tool, pend, file, heavy, turn, skillLoad, skillUnload, skillListing } from "./record.ts";
+import { newAcc, bucket, tokens, usageExact, credits, reasoning, L, tool, pend, file, heavy, turn, skillLoad, skillUnload, skillListing, skOf, saOf, hasSk, NO_SA, NO_SK } from "./record.ts";
 import { type Obj, parse } from "../../util/json.ts";
 import { moIn } from "./owners.ts";
 import type { SkLoad } from "./skillrec.ts";
@@ -65,6 +65,15 @@ ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan =
   const js2 = JSON.stringify(accOut(x, 64));
   const y = accIn(parse(js2) ?? {});
   ok("no skill text in the cache", js2.indexOf("LOREMSKILLTEXT") < 0, "");
+  // a warm start keeps the loads and the day rows as text until something reads them; written back as they came
+  const dy0 = y.days.get([...x.days.keys()][0] ?? "");
+  ok("sk stays text", y.sk === NO_SK && y.skv.length > 0 && hasSk(y), y.skv.slice(0, 80));
+  ok("sa stays text", !!dy0 && dy0.sa === NO_SA && dy0.sav.length > 0, dy0 ? dy0.sav.slice(0, 80) : "no day");
+  const yo = accOut(y, 64); const dyo = ((yo["days"] as Obj)[[...x.days.keys()][0] ?? ""] as Obj);
+  ok("undecoded sk/sa written back as is", yo["sk"] === y.skv && !!dy0 && dyo["sa"] === dy0.sav, "");
+  const sat = dy0 ? dy0.sav : ""; skOf(y); if (dy0) saOf(dy0);
+  ok("decoded once", y.skv === "" && !!dy0 && dy0.sav === "" && y.sk.length === 5, String(y.sk.length));
+  ok("decoded written back the same", JSON.stringify(accOut(y, 64)) === js2, "");
   const strip = (l: SkLoad): string =>
     [l.name, l.trig, l.t, l.tu, l.te, l.rq0, l.bytes, l.S, l.hash, l.dir, l.scope, l.end, l.why, l.rel, l.stub, l.pend, l.short, l.nq, l.lt.join("/"), l.ct.join("/"), l.tt.join("/"), l.hb.join("/"), l.hu, l.hl, l.ht, l.off, l.len, l.rec, l.mdl, l.prov, l.est, l.n, l.rd, l.h1, l.h2, l.pg].join("|");
   ok("loads round trip", y.sk.length === x.sk.length && y.sk.length === 5 && y.sk.map(strip).join("\n") === x.sk.map(strip).join("\n"), y.sk.map(strip).join("\n") + "\n---\n" + x.sk.map(strip).join("\n"));
@@ -79,9 +88,27 @@ ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan =
   const zs = JSON.stringify(accOut(z, 64));
   ok("no sk/sa/ls keys without skills", zs.indexOf("\"sk\"") < 0 && zs.indexOf("\"sa\"") < 0 && zs.indexOf("\"ls\"") < 0, zs.slice(0, 300));
   // compact: one number array and string tables per log; a listing is one string, shared by the logs that list the same
-  const sko = (parse(js2) ?? {})["sk"] as Obj; const keys = Object.keys(sko).sort().join(",");
+  const sko = parse(String((parse(js2) ?? {})["sk"])) ?? {}; const keys = Object.keys(sko).sort().join(",");
   ok("sk layout", keys === "dr,h,mp,nm,r,x" || keys === "c,dr,h,mp,nm,r,x", keys);
   const y2 = accIn(parse(js2) ?? {}); ok("listing shared", y2.lst === y.lst, "");
+  // a cache written before the text form (the same VERSION) holds sk/sa as objects: decoded at once, no re-index
+  const dk0 = [...x.days.keys()][0] ?? ""; const skt = String((parse(js2) ?? {})["sk"]);
+  const oo = js2.split(JSON.stringify(skt)).join(skt).split(JSON.stringify(sat)).join(sat);
+  const yo2 = accIn(parse(oo) ?? {}); const dyo2 = yo2.days.get(dk0);
+  ok("object form loads", oo !== js2 && !skStale(parse(oo) ?? {}) && yo2.skv === "" && yo2.sk.map(strip).join("\n") === x.sk.map(strip).join("\n") && !!dyo2 && dyo2.sav === "" && dyo2.sa.size === dx.sa.size, String(yo2.sk.length) + " " + oo.slice(0, 200));
+  // writers decode first: a new load and a request into an undecoded log and day keep what was there
+  const w = accIn(parse(js2) ?? {}); const dw = w.days.get(dk0);
+  skillLoad(w, "gamma", "user", 7, si, T, true, "", false);
+  if (dw) tokens(w, dw, "claude-sonnet-4-5", 0, 10, 9000, 0, 0);
+  ok("writers decode first", w.sk.length === 6 && (w.sk[5] as SkLoad).name === "gamma" && !!dw && dw.sav === "" && dw.sa.size >= dx.sa.size && dw.sa.has("gamma\t\t"), String(w.sk.length) + " " + (dw ? [...dw.sa.keys()].join("|") : ""));
+  // a damaged text (cut short, not an object) reads as no loads/rows and is not written back; a writer still books
+  const bo = parse(js2.split(JSON.stringify(skt)).join(JSON.stringify(skt.slice(0, 40))).split(JSON.stringify(sat)).join(JSON.stringify("[1,2]"))) ?? {};
+  const bz = accIn(bo); const bzd = bz.days.get(dk0); const bzo = accOut(bz, 64); const bzdo = (bzo["days"] as Obj)[dk0] as Obj;
+  ok("damaged text: undecoded it is written back as read", bzo["sk"] === skt.slice(0, 40) && bzdo["sa"] === "[1,2]", String(bzo["sk"]) + " " + String(bzdo["sa"]));
+  ok("damaged text: no loads, no rows", skOf(bz).length === 0 && !hasSk(bz) && !!bzd && saOf(bzd).size === 0, "");
+  const bzo2 = accOut(bz, 64); ok("damaged text: dropped once decoded", bzo2["sk"] === undefined && ((bzo2["days"] as Obj)[dk0] as Obj)["sa"] === undefined, "");
+  skillLoad(bz, "delta", "user", 8, si, T, true, "", false); if (bzd) tokens(bz, bzd, "claude-sonnet-4-5", 0, 10, 900, 0, 0);
+  ok("damaged text: a writer books from empty", bz.sk.length === 1 && !!bzd && bzd.sa.has("delta\t\t"), String(bz.sk.length));
   ok("pre-release columns re-index", skStale(parse("{\"sk\":{\"nm\":[\"a\"],\"i\":[0]}}") ?? {}) && !skStale(parse(js2) ?? {}) && !skStale(parse(zs) ?? {}), "");
 }
 // an older 9-element t: uc defaults to 0

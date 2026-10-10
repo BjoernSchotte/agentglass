@@ -2,7 +2,7 @@
 // at read time through the resolver (a price change re-prices skills like everything else). Every skill surface reads
 // these; none re-derives (skill-usage spec §6.0). Names here are real: surfaces show them through vis.ts (visRows/visLoads)
 // SPDX-License-Identifier: Apache-2.0
-import { type Acc, type SkLoad, dayKey } from "../usage/record.ts";
+import { type Acc, type SkLoad, dayKey, skOf, saOf } from "../usage/record.ts";
 import { resolve, cost } from "../usage/pricing.ts";
 import { SA_LU, SA_LM, SA_LC, SA_L, SA_C, SA_T, SA_HU, SA_HL, SA_HT, HP, LISTING } from "../usage/skillrec.ts";
 import { skillVis, HIDDEN } from "./vis.ts";
@@ -45,7 +45,7 @@ export function skillLoads(as: Acc[], ids: string[]): LoadRow[] {
   const out: LoadRow[] = [];
   for (let k = 0; k < as.length; k++) {
     const a = as[k] as Acc; const sid = ids[k] ?? "";
-    for (let i = 0; i < a.sk.length; i++) {
+    for (let i = 0; i < skOf(a).length; i++) {
       const l = a.sk[i] as SkLoad;
       let unpriced = false;
       const pr = (b: number[]): number => { const u = bucketUsd(l.mdl, l.prov, b); if (u === -1 && !resolve(l.mdl, l.prov)) { unpriced = true; return 0; } return u; };
@@ -90,7 +90,7 @@ export function skillTable(as: Acc[], ids: string[], days: string[] | null, by: 
     for (const [dk, d] of a.days) {
       if (days && days.indexOf(dk) < 0) continue;
       ctx += d.inTok + d.cr + d.cw;
-      for (const [key, x] of d.sa) {
+      for (const [key, x] of saOf(d)) {
         const t1 = key.indexOf("\t"); const t2 = key.indexOf("\t", t1 + 1);
         const name = key.slice(0, t1); const prov = key.slice(t1 + 1, t2); const model = key.slice(t2 + 1);
         const g = aggOf(name); const r = g.row; any = true;
@@ -106,7 +106,7 @@ export function skillTable(as: Acc[], ids: string[], days: string[] | null, by: 
       }
     }
     if (any) sessCtx.set(sid, (sessCtx.get(sid) ?? 0) + ctx);
-    for (const l of a.sk) {
+    for (const l of skOf(a)) {
       if (days && (l.t <= 0 || days.indexOf(dayKey(new Date(l.t))) < 0)) continue;
       const g = aggOf(l.name); const r = g.row;
       if (l.S >= 0) g.sizes.push(l.S);
@@ -168,7 +168,7 @@ export function skillCheck(as: Acc[], ids: string[]): string[] {
   for (let k = 0; k < as.length; k++) {
     const a = as[k] as Acc; const sid = ids[k] ?? String(k);
     let tok = 0; let hu = 0;
-    for (let i = 0; i < a.sk.length; i++) {
+    for (let i = 0; i < skOf(a).length; i++) {
       const l = a.sk[i] as SkLoad; const v = skillVis(l.name); const at = sid + "#sk" + String(i) + " (" + (v.mode === "omit" ? HIDDEN : v.shown) + ")";
       let neg = l.short < 0 || l.nq < 0 || l.hu < 0;
       for (let j = 0; j < 4; j++) { const lt = l.lt[j] ?? 0; const ct = l.ct[j] ?? 0; const tt = l.tt[j] ?? 0; if (lt < 0 || ct < 0 || tt < 0 || tt > lt + ct) neg = true; }
@@ -180,7 +180,7 @@ export function skillCheck(as: Acc[], ids: string[]): string[] {
     if (tok > ctx + 0.5) out.push(sid + ": skills hold " + String(tok) + " tokens, the session's context " + String(ctx));
     if (hu > a.cost + 1e-9) out.push(sid + ": skills' reported $ " + String(hu) + " > the session's " + String(a.cost));
     for (const [dk, d] of a.days) {
-      let dt = 0; for (const x of d.sa.values()) dt += sum4(slice4(x, SA_L)) + sum4(slice4(x, SA_C));
+      let dt = 0; for (const x of saOf(d).values()) dt += sum4(slice4(x, SA_L)) + sum4(slice4(x, SA_C));
       if (dt > d.inTok + d.cr + d.cw + 0.5) out.push(sid + " " + dk + ": skills hold " + String(dt) + " tokens, the day's context " + String(d.inTok + d.cr + d.cw));
     }
   }

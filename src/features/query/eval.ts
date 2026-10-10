@@ -11,7 +11,7 @@ import { DICT, nameOf, extOf, localOf } from "../usage/facts.ts";
 import { type Rows, rowIds, KIND_PROG, KIND_CMD, KIND_FILE } from "../usage/rows.ts";
 import { mcpServer, program, norm } from "../usage/calls.ts";
 import { accOf, accsOf, ledger, callsOf, unread, LGEN } from "../usage/ledger.ts";
-import type { Acc } from "../usage/record.ts";
+import { type Acc, skOf, hasSk } from "../usage/record.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { type Attr, type Clause, type QErr, type Val, EXACT } from "./types.ts";
 import { attrOf, canonEnum, isNumeric, weekdayIndex } from "./attrs.ts";
@@ -440,7 +440,7 @@ export function skillRows(s: Sess): SkQ[] {
     let same = true; for (let i = 0; i < as.length; i++) if (m.as[i] !== as[i] || numAt0(m.offs, i) !== as[i].off) { same = false; break; }
     if (same) return m.rows;
   }
-  let any = false; for (const a of as) if (a.sk.length) { any = true; break; }
+  let any = false; for (const a of as) if (hasSk(a)) { any = true; break; }
   const ids: string[] = []; for (let i = 0; i < as.length; i++) ids.push("");
   const rows = any ? skillRowsFrom(skillLoads(as, ids)) : [];
   const offs: number[] = []; for (const a of as) offs.push(a.off);
@@ -453,7 +453,7 @@ function numAt0(a: number[], i: number): number { return i >= 0 && i < a.length 
 // start: loaded at or before it and not yet unloaded); the listing is in nearly every context and says nothing here
 export function skillsAt(s: Sess, at: number): string[] {
   const o: string[] = []; if (s.host) return o;
-  for (const a of accsOf(s)) for (const l of a.sk) {
+  for (const a of accsOf(s)) for (const l of skOf(a)) {
     if (l.name === LISTING || (at >= 0 && (l.t > at || (l.end > 0 && l.end <= at)))) continue;
     const v = skillVis(l.name); if (v.mode !== "omit" && o.indexOf(v.shown) < 0) o.push(v.shown);
   }

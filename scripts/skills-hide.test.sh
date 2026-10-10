@@ -48,6 +48,8 @@ hidden() {
 fake=$(runq skills --period all --json | python3 -c 'import json,sys; r=[x["name"] for x in json.load(sys.stdin)["rows"] if x["name"] not in ("pub","notes","(listing)","(hidden)")]; print(r[0] if r else "?")')
 [ ${#fake} -eq 6 ] || { echo "FAIL acme-x's fake: '$fake'"; fail=1; }
 (CFG=none runq skills --period all --json > "$t/all.json")
+# every later run is a warm start: the loads and day rows come from the cache as text, decoded on first use (skOf/saOf)
+grep -q '"sk":"' "$t/cache/ledger.jsonl" && grep -q '"sa":"' "$t/cache/ledger.jsonl" || { echo "FAIL the cache keeps skill loads and rows as text"; fail=1; }
 
 # ── local CLI surfaces under the rules ──
 r=$(run skills --period all); hidden "skills" "$r"; has "skills: fake" "$r" "$fake"; has "skills: (hidden) row" "$r" "(hidden)"; has "skills: content mode keeps the name" "$r" "notes"

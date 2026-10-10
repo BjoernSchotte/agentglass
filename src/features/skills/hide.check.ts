@@ -15,6 +15,8 @@ import { H, realMeta } from "../../hooks.ts";
 import { sessions, loadHead, loadTail, titleOf } from "../../model/sessions.ts";
 import { marksOf } from "../../model/marks.ts";
 import { ledger, complete, accsOf } from "../usage/ledger.ts";
+import { accIn, accOut } from "../usage/codec.ts";
+import { parse } from "../../util/json.ts";
 import { openTranscript, renderTranscript } from "../../ui/transcript.ts";
 import { skillLanes, skillAgg } from "../callgraph/model.ts";
 import { skillRows as relSkillRows, startBuild, stepBuild } from "../related/build.ts";
@@ -112,6 +114,25 @@ ok("Wait timeline: 3 loads (the omitted one not ticked)", wb.reduce((x: number, 
 // rules messages: {skill} is the shown name, never an omitted one
 const msgs = ["skill_carry_usd", "skill_context_share", "skill_reloads"].map((m: string): string => m + "=" + skillMetric(m, accsOf(s)).skill).join(" ");
 hidden("rules {skill}", msgs);
+// a warm start: the ledger holds the loads and day rows as the cache's text (skOf/saOf decode on first use); each
+// surface is the first reader of a freshly loaded entry and must hide the same
+function warm(): boolean {
+  const a = ledger.get(s.path); if (!a) return false;
+  const b = accIn(parse(JSON.stringify(accOut(a))) ?? {}); ledger.set(s.path, b);
+  let txt = b.skv !== ""; for (const d of b.days.values()) if (d.sa.size) txt = false;
+  return txt;
+}
+const wsurf: [string, () => string][] = [
+  ["Stats panel", (): string => { openSkillsPanel(SC, ""); const t = panelLines(120, 30).join("\n"); S.mode = "list"; return t; }],
+  ["filter values", (): string => skillRows(s).map((q) => q.shown).join(",")],
+  ["triage dimension", (): string => sessDim("skill", s).join(",")],
+  ["compare", (): string => skillCmpRows(compareGroups(groupOfSession(s), groupOfSession(s), [], true, null)).rows.map((r) => r.name).join(",")],
+  ["related skill rows", (): string => relSkillRows(s, t0, t1, true, "/w/keepme").map((r: RelEv) => r.text).join("\n")],
+  ["rules {skill}", (): string => ["skill_carry_usd", "skill_context_share", "skill_reloads"].map((m: string): string => m + "=" + skillMetric(m, accsOf(s)).skill).join(" ")],
+  ["view skill", (): string => { let v = ""; for (const m of marksOf(s, ["skill:load"])) { const l = loadOf(s, m); if (l) { openSkillView(s, l); v += skillViewLines(100).join("\n"); S.mode = "list"; } } return v; }],
+];
+for (const [what, f] of wsurf) { ok("warm start: " + what + " reads cache text", warm(), ""); const t = f(); ok("warm start: " + what + " output", t.length > 0, ""); hidden("warm start: " + what, t); }
+ok("warm start: Stats panel fake and (hidden)", warm() && ((): boolean => { openSkillsPanel(SC, ""); const t = panelLines(120, 30).join("\n"); S.mode = "list"; return t.indexOf(fake) >= 0 && t.indexOf("(hidden)") >= 0; })(), "");
 
 // ── without rules nothing is hidden locally ──
 setVis([], false);

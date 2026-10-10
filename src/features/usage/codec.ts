@@ -1,7 +1,7 @@
 // agentglass — the ledger cache's JSON shape: Acc/Day ⇄ plain objects (IO lives in ./cache.ts)
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
-import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy, NO_SA, NO_SK, NO_LST, NO_SKR } from "./record.ts";
+import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy, NO_SA, NO_SK, NO_LST, NO_SKR, SKV } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 import { own, pooled, pooledText } from "../../util/own.ts";
 import { moOut } from "./owners.ts";
@@ -46,9 +46,11 @@ function numMapOut(m: Map<string, number>): Obj { const o: Obj = {}; for (const 
 function numMapIn(v: unknown): Map<string, number> { const m = new Map<string, number>(); const o = obj(v); if (o) for (const k of Object.keys(o)) m.set(own(k), num(o[k])); return m; }
 function rowsOut(m: Map<string, number[]>): Obj { const o: Obj = {}; for (const [k, v] of m) o[k] = v; return o; }
 function rowsIn(v: unknown, n: number): Map<string, number[]> { const m = new Map<string, number[]>(); const o = obj(v); if (o) for (const k of Object.keys(o)) m.set(own(k), padTo(nums(o[k]), n)); return m; }
-// Day.sa rows: each into an SA_N literal (exact capacity: a grown array keeps twice the slots)
+// Day.sa rows: each into an SA_N literal (exact capacity: a grown array keeps twice the slots); stored as one JSON text
+// ("sa"), decoded on first use (record.ts saOf)
 function saIn(v: unknown): Map<string, number[]> {
-  const m = new Map<string, number[]>(); const o = obj(v); if (!o) return m;
+  const o = obj(v); if (!o) return NO_SA;
+  const m = new Map<string, number[]>();
   for (const k of Object.keys(o)) {
     const r = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; const xs = arr(o[k]);
     for (let i = 0; i < SA_N && i < xs.length; i++) r[i] = num(xs[i]);
@@ -79,7 +81,7 @@ HEAVY.decode = heavyIn; HEAVY.encode = heavyOut;
 function dayOut(d: Day): Obj {
   const o: Obj = { t: d.tools, hv: d.hx ? heavyOut(d.hx) : d.hv, k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del,
     um: numMapOut(d.um), uc: d.uc, cp: numMapOut(d.cp), hc: d.hc, mt: rowsOut(d.mt), ak: d.act, tp: rowsOut(d.tp) };
-  if (d.sa.size) o["sa"] = rowsOut(d.sa);
+  if (d.sav) o["sa"] = d.sav; else if (d.sa.size) o["sa"] = JSON.stringify(rowsOut(d.sa));
   return o;
 }
 // a stored interval list: even length, bounded, sorted pairs (anything else is dropped rather than trusted)
@@ -93,7 +95,8 @@ function dayIn(o: Obj): Day {
   const hc = padTo(nums(o["hc"]), 24);
   const hv = str(o["hv"]);
   return { tools: num(o["t"]), hx: hv ? null : heavyOf(o), hv: own(hv), skills: cntsIn(o["k"]), turns: num(o["tu"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
-    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6), sa: o["sa"] ? saIn(o["sa"]) : NO_SA };
+    um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6),
+    sa: typeof o["sa"] === "object" ? saIn(o["sa"]) : NO_SA, sav: typeof o["sa"] === "string" ? own(str(o["sa"])) : "" }; // object: a cache before the text form
 }
 // git refs as [k, v, t, how, br, subj, call, ts] tuples
 function refsOut(rs: VRef[]): unknown[][] { const out: unknown[][] = []; for (const r of rs) out.push([r.k, r.v, r.t, r.how, r.br, r.subj, r.call, r.ts]); return out; }
@@ -134,8 +137,10 @@ function skOut(sk: SkLoad[]): Obj {
 }
 // a pre-release VERSION 19 cache stored the loads as columns: that log re-indexes (cache.ts)
 export function skStale(o: Obj): boolean { const s = obj(o["sk"]); return s !== null && s["x"] === undefined; }
+// stored as one JSON text ("sk", the layout above), decoded on first use (record.ts skOf); an object: a cache before that
 function skIn(v: unknown): SkLoad[] {
-  const out: SkLoad[] = []; const o = obj(v); if (!o) return out;
+  const o = obj(v); if (!o) return NO_SK;
+  const out: SkLoad[] = [];
   const nm = poolIn(o["nm"]); const dr = poolIn(o["dr"]); const hs = poolIn(o["h"]); const rs = strsIn(o["r"]); const mp = poolIn(o["mp"]); const x = nums(o["x"]); const cs = strsIn(o["c"]);
   const four = (i: number): number[] => [at(x, i), at(x, i + 1), at(x, i + 2), at(x, i + 3)];
   for (let i = 0; i + SKW <= x.length && out.length < 2000; i += SKW) {
@@ -148,8 +153,9 @@ function skIn(v: unknown): SkLoad[] {
       mdl: pooled(tab >= 0 ? m.slice(0, tab) : m), prov: pooled(tab >= 0 ? m.slice(tab + 1) : ""), est: (fl & 8) !== 0, n: Math.max(1, at(x, i + 18)), rd: (fl & 16) !== 0,
       h1: hexNum(hash.slice(0, 8), FNV1), h2: hexNum(hash.slice(8, 16), FNV2), pg: at(x, i + 19), cid: cs[at(x, i + 24)] ?? "" });
   }
-  return out;
+  return out.length ? out : NO_SK;
 }
+SKV.loads = (raw: string): SkLoad[] => skIn(parse(raw)); SKV.rows = (raw: string): Map<string, number[]> => saIn(parse(raw));
 // keepIds: claude dedupe only needs the ids near the resume offset
 export function accOut(a: Acc, keepIds = 64): Obj {
   const days: Obj = {};
@@ -161,7 +167,7 @@ export function accOut(a: Acc, keepIds = 64): Obj {
     sq: [a.rq, a.tq, a.lastCtx],
   };
   if (a.lst.length) o["ls"] = a.lst.join("\n"); // one string: most logs list the same skills (pooledText shares the array)
-  if (a.sk.length) o["sk"] = skOut(a.sk); // sessions without skills grow by nothing but sq
+  if (a.skv) o["sk"] = a.skv; else if (a.sk.length) o["sk"] = JSON.stringify(skOut(a.sk)); // sessions without skills grow by nothing but sq
   return o;
 }
 export function accIn(o: Obj): Acc {
@@ -176,6 +182,6 @@ export function accIn(o: Obj): Acc {
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
     bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), rows: newRows(), lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
     p: "", ro: false, mo: new Map<string, number>(), mv: own(str(o["mo"])), mc: pairsIn(o["mc"]), xs: new Set<string>(strsIn(o["xs"])),
-    sk: o["sk"] ? skIn(o["sk"]) : NO_SK, rq: at(sq, 0), tq: at(sq, 1), lastCtx: at(sq, 2), lst: typeof o["ls"] === "string" && o["ls"] ? pooledText(str(o["ls"])) : NO_LST, skr: NO_SKR,
+    sk: typeof o["sk"] === "object" ? skIn(o["sk"]) : NO_SK, skv: typeof o["sk"] === "string" ? own(str(o["sk"])) : "", rq: at(sq, 0), tq: at(sq, 1), lastCtx: at(sq, 2), lst: typeof o["ls"] === "string" && o["ls"] ? pooledText(str(o["ls"])) : NO_LST, skr: NO_SKR,
   };
 }
