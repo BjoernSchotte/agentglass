@@ -16,7 +16,7 @@ function pub(k: MemberKeys, admin: boolean): MemberPub { return { id: k.id, sign
 const teamKey = randomBytes(32);
 const P: Private = { name: "acme", names: { [root.id]: "root", [ann.id]: "Ann" }, rooms: [{ id: "fedcba9876543210", name: "api", scope: ["github.com/acme/*"], level: "numbers", budgetUsd: 50, epoch: 1 }] };
 function man(version: number, members: MemberPub[]): Manifest {
-  return { team: T, version, root: hex(root.sign.pk), signer: "", at: 1790000000000 + version, members, rooms: [{ id: "fedcba9876543210", epoch: 1 }], invites: [], priv: sealPrivate(P, teamKey) };
+  return { team: T, version, root: hex(root.sign.pk), signer: "", at: 1790000000000 + version, tk: 1, members, rooms: [{ id: "fedcba9876543210", epoch: 1, members: [] }], invites: [], priv: sealPrivate(P, teamKey) };
 }
 function read(b: Uint8Array, prev: Manifest | null): Manifest | null { return readManifest(b, prev).m; }
 function err(b: Uint8Array, prev: Manifest | null): string { return readManifest(b, prev).err; }

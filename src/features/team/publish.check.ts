@@ -50,7 +50,7 @@ const me = newMember(); ok("save member", saveMember(T, me) === "", "");
 const rk = randomBytes(32); ok("save room key", saveRoomKey(T, R, 1, rk) === "", "");
 const room: Room = { id: R, name: "api", scope: ["github.com/acme/*"], level: "titles", budgetUsd: 0, epoch: 1 };
 const share: RoomShare = { room: R, on: true, repos: ["github.com/acme/api"], level: "titles", since: 0, paused: false };
-const m: Manifest = { team: T, version: 1, root: hex(me.sign.pk), signer: me.id, at: 1, members: [{ id: me.id, signPk: hex(me.sign.pk), boxPk: hex(me.box.pk), devices: [DEV], admin: true, removedAt: 0 }], rooms: [{ id: R, epoch: 1 }], invites: [], priv: new Uint8Array(0) };
+const m: Manifest = { team: T, version: 1, root: hex(me.sign.pk), signer: me.id, at: 1, tk: 1, members: [{ id: me.id, signPk: hex(me.sign.pk), boxPk: hex(me.box.pk), devices: [DEV], admin: true, removedAt: 0 }], rooms: [{ id: R, epoch: 1, members: [] }], invites: [], priv: new Uint8Array(0) };
 const root = join(HOME, "mailbox"); mkdirSync(root, { recursive: true, mode: 0o700 });
 const mb = dirMailbox(root);
 const keyOf = (r: string, e: number): Uint8Array | null => roomKey(T, r, e);

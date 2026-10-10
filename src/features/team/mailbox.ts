@@ -11,7 +11,7 @@ import { OS } from "../../platform/index.ts";
 import { myUid } from "../palette/rundir.ts";
 
 export interface MbFile { name: string; size: number; at: number }
-export interface Mailbox { kind: string; list: (dir: string) => MbFile[]; get: (path: string, max: number) => Uint8Array | null; put: (path: string, b: Uint8Array) => string; del: (path: string) => string; problem: () => string }
+export interface Mailbox { kind: string; where: string; list: (dir: string) => MbFile[]; get: (path: string, max: number) => Uint8Array | null; put: (path: string, b: Uint8Array) => string; del: (path: string) => string; problem: () => string }
 const H = "[0-9a-f]{16}";
 // manifest/<version>-<signer>.agm: two admins writing one version at once make two files (a sync tool would turn one
 // name into a conflict copy); the reader keeps the higher signer id (manifest.ts)
@@ -44,7 +44,7 @@ function regular(p: string): MbFile | null {
 }
 export function dirMailbox(root: string): Mailbox {
   return {
-    kind: "dir",
+    kind: "dir", where: root,
     list: (dir: string): MbFile[] => {
       const out: MbFile[] = []; if (!/^[a-z]+(\/[0-9a-f]{16}(\/\d{1,9})?)?$/.test(dir)) return out;
       let ns: string[] = []; try { ns = readdirSync(join(root, dir)); } catch (e) { return out; }

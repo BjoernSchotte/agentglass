@@ -15,7 +15,7 @@ const T = "0123456789abcdef"; const R = "fedcba9876543210";
 const ann = newMember(); const bob = newMember(); const eve = newMember();
 const DEV = "aaaaaaaaaaaaaaaa";
 function pub(k: MemberKeys, removedAt: number): MemberPub { return { id: k.id, signPk: hex(k.sign.pk), boxPk: hex(k.box.pk), devices: [DEV], admin: false, removedAt }; }
-const m: Manifest = { team: T, version: 2, root: hex(ann.sign.pk), signer: ann.id, at: 1790000000000, members: [pub(ann, 0), pub(bob, 1790000005000)], rooms: [{ id: R, epoch: 2 }], invites: [], priv: new Uint8Array(0) };
+const m: Manifest = { team: T, version: 2, root: hex(ann.sign.pk), signer: ann.id, at: 1790000000000, tk: 1, members: [pub(ann, 0), pub(bob, 1790000005000)], rooms: [{ id: R, epoch: 2, members: [] }], invites: [], priv: new Uint8Array(0) };
 const k2 = randomBytes(32); const k1 = randomBytes(32);
 const keyOf = (room: string, epoch: number): Uint8Array | null => room === R && epoch === 2 ? k2 : room === R && epoch === 1 ? k1 : null;
 function head(member: string, at: number, epoch: number): Head { return { team: T, room: R, epoch, member, device: DEV, kind: "base", n: 0, gen: "g1", base: "", at }; }
@@ -36,7 +36,7 @@ ok("sealed with another key than the epoch's: refused", openFile(sealFile(head(a
 let flips = 0; let n = 0; for (let i = 0; i < f.length; i += 3) { n++; const t = f.slice(); t[i] = (t[i] ?? 0) ^ 1; if (openFile(t, m, keyOf).err !== "") flips++; }
 ok("a flipped byte anywhere (header, ciphertext, signature): refused", flips === n, String(flips) + " of " + String(n));
 ok("truncated: refused", openFile(f.subarray(0, f.length - 1), m, keyOf).err !== "" && openFile(f.subarray(0, 10), m, keyOf).err !== "", "");
-ok("another team's file: refused", openFile(f, { team: "1111111111111111", version: m.version, root: m.root, signer: m.signer, at: m.at, members: m.members, rooms: m.rooms, invites: m.invites, priv: m.priv }, keyOf).err !== "", "");
+ok("another team's file: refused", openFile(f, { team: "1111111111111111", version: m.version, root: m.root, signer: m.signer, at: m.at, tk: m.tk, members: m.members, rooms: m.rooms, invites: m.invites, priv: m.priv }, keyOf).err !== "", "");
 // a member of the room could make a ciphertext with the same Poly1305 tag (the key is shared): the signature covers the
 // ciphertext itself, so a file of Ann's cannot carry Bob's content
 {

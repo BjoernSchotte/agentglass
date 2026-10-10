@@ -3,7 +3,7 @@
 // directory others can access. No passphrase (as SSH keys without one; team doctor says so).
 // SPDX-License-Identifier: Apache-2.0
 import { join } from "node:path";
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { HOME } from "../../util/fs.ts";
 import { OS } from "../../platform/index.ts";
 import { secureDir, myUid } from "../palette/rundir.ts";
@@ -25,6 +25,7 @@ export function newMember(): MemberKeys {
 function privDir(team: string, sub: string, create: boolean): string {
   if (!ID.test(team)) return "not a team id: " + team;
   const info = (p: string) => OS.fileInfo(p); const uid = myUid();
+  if (create) { const old = process.umask(0o077); try { mkdirSync(teamDir(), { recursive: true, mode: 0o700 }); } catch (e) { /* secureDir says why */ } finally { process.umask(old); } }
   const d = join(teamDir(), team);
   const why = secureDir(teamDir(), uid, info, create) || secureDir(d, uid, info, create) || (sub ? secureDir(join(d, sub), uid, info, create) : "");
   return why ? "not private: " + why : "";
