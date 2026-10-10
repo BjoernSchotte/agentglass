@@ -7,7 +7,7 @@ import { type Obj, parse, str } from "../../util/json.ts";
 import { execCmds } from "../usage/calls.ts";
 import { skillPath, skillReadCmd, fnvFeed, FNV1 } from "../usage/skillrec.ts";
 import type { Ev, Sess } from "../../model/types.ts";
-import { H } from "../../hooks.ts";
+import { H, READ } from "../../hooks.ts";
 import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN, VIS } from "./vis.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
@@ -20,13 +20,32 @@ export function callSkill(tool: string, args: string): string {
   return "";
 }
 
-// real name → what the stream prints instead (the fake, or "(hidden)" for omit), for every hidden name seen so far
+// real name → what the stream prints instead (the fake, or "(hidden)" for omit), for every hidden name seen so far.
+// BY indexes them by their leading word (the run of word characters a name starts with) → the names' lengths, longest
+// first: scrub finds a text's hidden names in one pass, a lookup per word and per length (not per name: thousands of
+// "p:x" names share a leading word). ODD: the rare names that start with another character, swept one by one
 const SCRUB = new Map<string, string>();
+const BY = new Map<string, number[]>(); const ODD: string[] = [];
+// the leading words' length range and first characters (ASCII; others always looked up): most words skip the lookup
+const LEADS = { min: 1 << 30, max: 0, first: new Uint8Array(128) };
 let seeded = false; let scrubGen = -1;
+// work counters (scrub-perf.check.ts bounds them): characters visited, glob matches tried, name compares
+export const SCRUB_STAT = { chars: 0, glob: 0, cmp: 0 };
 function seed(): void { // rules without a glob name their skills already: titles are scrubbed before the first load is seen
-  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); seeded = false; } // other rules: what they hide, from scratch
+  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
   if (seeded) return; seeded = true;
   for (const r of hideRules()) if (r.match.indexOf("*") < 0 && r.match.indexOf("?") < 0) note(r.match);
+}
+function put(real: string, rep: string): void {
+  const had = SCRUB.has(real); SCRUB.set(real, rep); if (had) return;
+  let e = 0; while (e < real.length && wc(real.charCodeAt(e))) e++;
+  if (!e) { ODD.push(real); return; }
+  const lead = real.slice(0, e); const ls = BY.get(lead) ?? []; const n = real.length;
+  if (e < LEADS.min) LEADS.min = e; if (e > LEADS.max) LEADS.max = e;
+  const f = real.charCodeAt(0); if (f < 128) LEADS.first[f] = 1;
+  let i = 0; while (i < ls.length && (ls[i] ?? 0) > n) i++; // longest first: "p:x" before "p"
+  if (i < ls.length && ls[i] === n) return;
+  ls.splice(i, 0, n); BY.set(lead, ls);
 }
 // remember a skill name the stream met; true when the skill is hidden in any way (its text must not show)
 export function note(name: string): boolean {
@@ -35,50 +54,143 @@ export function note(name: string): boolean {
   const v = skillVis(name);
   if ((v.mode === "name" || v.mode === "omit") && !SCRUB.has(name)) {
     const rep = v.mode === "omit" ? HIDDEN : v.shown;
-    if (name.length >= 2) SCRUB.set(name, rep);
-    const c = name.lastIndexOf(":"); if (c > 0 && name.length - c > 2) SCRUB.set(name.slice(c + 1), rep); // a plugin skill's dir in its SKILL.md path
+    if (name.length >= 2) put(name, rep);
+    // a plugin skill's dir in its SKILL.md path; a skill of that name keeps its own fake
+    const c = name.lastIndexOf(":"); if (c > 0 && name.length - c > 2 && !SCRUB.has(name.slice(c + 1))) put(name.slice(c + 1), rep);
   }
   return v.mode !== "show";
 }
-function word(c: string): boolean { return /[A-Za-z0-9_-]/.test(c); }
+// a word character: letters, digits, _ and - (a table: the passes ask once per character)
+const WC = new Uint8Array(128);
+for (let c = 0; c < 128; c++) WC[c] = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 45 ? 1 : 0;
+function wc(c: number): boolean { return c < 128 && WC[c] === 1; }
+function word(c: string): boolean { return c.length > 0 && wc(c.charCodeAt(0)); }
+function alpha(c: number): boolean { return (c >= 97 && c <= 122) || (c >= 65 && c <= 90); }
+// what may precede a slash command: white space (as \s), ( < > " ' `
+function lead(c: number): boolean {
+  return c === 32 || (c >= 9 && c <= 13) || c === 40 || c === 60 || c === 62 || c === 34 || c === 39 || c === 96 || c === 160 || c === 0x1680 ||
+    (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff;
+}
 // a glob rule hiding names (name, omit) matches skills no load has shown yet: the text's words are matched against those
 // rules, so a title names no such skill even before its first load. A rule with 3+ literal characters ("acme-*",
 // "*:internal-*") hides every word it matches; a broader one ("*", "a*") only words written as a skill reference — a
 // slash command (/x, Claude's <command-name>/x), a Codex $x mention, pi's /skill:x, a skills/x/ directory, a plugin's
 // "p:x" — or it would hide the prose
-function ref(t: string, i: number, w: string): boolean {
-  const c = /[A-Za-z]/.test(w.charAt(0)); if (!c || w.length < 2) return false;
-  if (w.indexOf(":") > 0) return true;
-  const p = i > 0 ? t.charAt(i - 1) : "";
-  if (p === "$") return true;
-  if (p !== "/") return false;
-  return i < 2 || /[\s(<>"'`]/.test(t.charAt(i - 2)) || t.slice(Math.max(0, i - 7), i) === "skills/";
+function ref(t: string, i: number, e: number, colon: number): boolean {
+  if (e - i < 2 || !alpha(t.charCodeAt(i))) return false;
+  if (colon > 0 && alpha(t.charCodeAt(colon + 1))) return true; // "p:x" ("a.ts:57", "host:4318", "T09:30": no skill)
+  const p = i > 0 ? t.charCodeAt(i - 1) : 0;
+  if (p === 36) return true; // $
+  if (p !== 47) return false; // /
+  return i < 2 || lead(t.charCodeAt(i - 2)) || (i >= 7 && t.startsWith("skills/", i - 7));
 }
-function globWords(t: string): void {
-  const gs: HideRule[] = []; const strong: boolean[] = [];
-  for (const r of hideRules()) if ((r.mode === "name" || r.mode === "omit") && (r.match.indexOf("*") >= 0 || r.match.indexOf("?") >= 0)) { gs.push(r); strong.push(r.match.replace(/[*?]/g, "").length >= 3); }
-  if (!gs.length) return;
-  let i = 0;
-  while (i < t.length) {
-    if (!word(t.charAt(i))) { i++; continue; }
-    let e = i; while (e < t.length && (word(t.charAt(e)) || (t.charAt(e) === ":" && e + 1 < t.length && word(t.charAt(e + 1))))) e++;
-    const w0 = t.slice(i, e); const at = i; i = e;
-    const isRef = ref(t, at, w0);
-    const w = w0.startsWith("skill:") ? w0.slice(6) : w0; // pi's /skill:<name>
-    if (w.length < 2 || SCRUB.has(w)) continue;
-    for (let k = 0; k < gs.length; k++) if ((isRef || strong[k]) && globMatch((gs[k] as HideRule).match, w)) { note(w); break; }
+// the glob rules hiding names, compiled once per rule change; a word's verdict is kept (GW: words tried, GS: a strong
+// rule matches, GA: any rule does — sets, a lookup allocates nothing), so each distinct word meets each rule once (bounded)
+// lits: each strong rule's longest literal run — a word it matches holds it, so a native search finds the candidates
+const GL = { gen: -1, gs: [] as HideRule[], strong: [] as boolean[], anyStrong: false, lits: [] as string[] };
+const GW = new Set<string>(); const GS = new Set<string>(); const GA = new Set<string>();
+function forgetVerdicts(): void { GW.clear(); GS.clear(); GA.clear(); }
+function globsOf(): void {
+  if (GL.gen === VIS.gen) return;
+  GL.gen = VIS.gen; GL.gs = []; GL.strong = []; GL.anyStrong = false; GL.lits = []; forgetVerdicts();
+  for (const r of hideRules()) if ((r.mode === "name" || r.mode === "omit") && (r.match.indexOf("*") >= 0 || r.match.indexOf("?") >= 0)) {
+    const st = r.match.split("*").join("").split("?").join("").length >= 3;
+    GL.gs.push(r); GL.strong.push(st); if (!st) continue;
+    GL.anyStrong = true;
+    let lit = ""; for (const a of r.match.split("*")) for (const b of a.split("?")) if (b.length > lit.length) lit = b;
+    let fits = true; for (let i = 0; i < lit.length; i++) { const c = lit.charCodeAt(i); if (!wc(c) && c !== 58) fits = false; }
+    if (fits && GL.lits.indexOf(lit) < 0) GL.lits.push(lit); // else no word holds it: the rule hides no prose word
   }
 }
-// the text with every hidden name (as a whole word) replaced
+// does a rule hide word w: a strong one (strong), or any (else)
+function hides(w: string, strong: boolean): boolean {
+  if (GW.has(w)) return strong ? GS.has(w) : GA.has(w);
+  let v = 0;
+  for (let k = 0; k < GL.gs.length && v !== 3; k++) {
+    const st = GL.strong[k] === true;
+    if (v >= 2 && !st) continue; // only a strong rule can still add
+    SCRUB_STAT.glob++;
+    if (globMatch((GL.gs[k] as HideRule).match, w)) v |= st ? 3 : 2;
+  }
+  if (GW.size > 200000) forgetVerdicts();
+  GW.add(w); if (v & 1) GS.add(w); if (v) GA.add(w);
+  return strong ? (v & 1) !== 0 : v !== 0;
+}
+// the word starting at i (word characters, a ":" between them: "p:x"): noted when a rule hides it; returns its end
+function wordAt(t: string, i: number, n: number): number {
+  let e = i; let colon = -1; // the last ":" inside the word
+  while (e < n) { const c = t.charCodeAt(e); if (wc(c)) e++; else if (c === 58 && e + 1 < n && wc(t.charCodeAt(e + 1))) { colon = e; e++; } else break; }
+  SCRUB_STAT.chars += e - i;
+  const isRef = ref(t, i, e, colon);
+  if (!isRef && !GL.anyStrong) return e;
+  const w = t.startsWith("skill:", i) ? t.slice(i + 6, e) : t.slice(i, e); // pi's /skill:<name>
+  if (w.length >= 2 && !SCRUB.has(w) && hides(w, !isRef)) note(w);
+  return e;
+}
+// the start of the word holding position p (word characters and the ":"s between them), -1 if p is in none
+function wordStart(t: string, p: number, n: number): number {
+  const c0 = t.charCodeAt(p);
+  if (!wc(c0) && !(c0 === 58 && p > 0 && p + 1 < n && wc(t.charCodeAt(p - 1)) && wc(t.charCodeAt(p + 1)))) return -1;
+  let i = p; if (c0 === 58) i--;
+  while (i > 0) { const c = t.charCodeAt(i - 1); if (wc(c) || (c === 58 && i >= 2 && wc(t.charCodeAt(i - 2)))) i--; else break; }
+  SCRUB_STAT.chars += p - i + 1;
+  return i;
+}
+// the text's words a glob rule hides, noted. Native searches find the candidates, the prose between is never read: a
+// reference follows a "/" or "$" or holds a ":", and a word a strong rule hides holds that rule's longest literal run
+function globWords(t: string): void {
+  globsOf();
+  if (!GL.gs.length) return;
+  const n = t.length;
+  let ps = t.indexOf("/"); let pd = t.indexOf("$"); let pc = t.indexOf(":"); let done = 0;
+  while (ps >= 0 || pd >= 0 || pc >= 0) {
+    let p = n; if (ps >= 0) p = ps; if (pd >= 0 && pd < p) p = pd; if (pc >= 0 && pc < p) p = pc;
+    let i = -1;
+    if (p === pc) { pc = t.indexOf(":", p + 1); i = wordStart(t, p, n); } // inside a word: back to its start
+    else {
+      if (p === ps) ps = t.indexOf("/", p + 1); else pd = t.indexOf("$", p + 1);
+      if (p + 1 < n && wc(t.charCodeAt(p + 1))) i = p + 1;
+    }
+    if (i >= done) done = wordAt(t, i, n);
+  }
+  for (const lit of GL.lits) {
+    done = 0;
+    for (let p = t.indexOf(lit); p >= 0; p = t.indexOf(lit, Math.max(p + 1, done))) {
+      const i = p < done ? -1 : wordStart(t, p, n);
+      if (i >= 0) done = wordAt(t, i, n);
+    }
+  }
+}
+// the text with every hidden name (as a whole word) replaced: one pass over the text's words, the longest hidden name
+// starting at a word wins
 export function scrub(t: string): string {
   seed();
   if (!t) return t;
   globWords(t);
   if (!SCRUB.size) return t;
   let o = t;
-  for (const [real, rep] of SCRUB) {
+  if (BY.size) {
+    const n = t.length; SCRUB_STAT.chars += n;
+    const r: string[] = []; let last = 0; let i = 0; // parts, joined once: += would copy the text per name
+    while (i < n) {
+      if (!wc(t.charCodeAt(i))) { i++; continue; }
+      let e = i + 1; while (e < n && wc(t.charCodeAt(e))) e++;
+      const f = t.charCodeAt(i);
+      const lead = e - i < LEADS.min || e - i > LEADS.max || (f < 128 && !LEADS.first[f]) ? "" : t.slice(i, e);
+      const ls = lead ? BY.get(lead) : undefined;
+      if (ls) for (const l of ls) {
+        SCRUB_STAT.cmp++;
+        const ke = i + l; if (ke > n || (ke < n && wc(t.charCodeAt(ke)))) continue; // past the text, or no word's end
+        const rep = SCRUB.get(ke === e ? lead : t.slice(i, ke));
+        if (rep !== undefined) { r.push(t.slice(last, i)); r.push(rep); last = ke; e = ke; break; }
+      }
+      i = e;
+    }
+    if (last) { r.push(t.slice(last)); o = r.join(""); }
+  }
+  for (const real of ODD) { // names starting with a non-word character: rare, one sweep each
     let at = o.indexOf(real); if (at < 0) continue;
-    let r = ""; let last = 0;
+    const rep = SCRUB.get(real) ?? ""; let r = ""; let last = 0;
     while (at >= 0) {
       const e = at + real.length;
       if ((at === 0 || !word(o.charAt(at - 1))) && (e >= o.length || !word(o.charAt(e)))) { r += o.slice(last, at) + rep; last = e; }
@@ -146,8 +258,8 @@ export function hideEvents(s: Sess | null, evs: Ev[], from: number): void {
     const t0 = e.text; const f0 = e.full;
     if (e.kind === "tool") e.text = tool + (e.text.indexOf("\u0000") >= 0 ? "\u0000" + scrub(cv.args) : "");
     else if (cv.hide) { e.text = cv.hide; e.full = ""; } // the result of a call that loaded a hidden skill: its text
-    else e.text = scrub(e.text);
-    if (e.full && !e.full.startsWith("@file:") && e.full.length < 1048576) e.full = scrub(e.full);
+    else if (!READ.lean || (e.kind !== "assistant" && e.kind !== "thinking")) e.text = scrub(e.text);
+    if (e.full && !READ.lean && !e.full.startsWith("@file:") && e.full.length < 1048576) e.full = scrub(e.full);
     if (e.kind === "tool" && (e.text !== t0 || e.full !== f0)) rw = true;
     evs[w] = e; w++;
   }

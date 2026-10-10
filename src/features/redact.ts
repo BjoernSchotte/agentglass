@@ -198,8 +198,11 @@ function addWord(word: string, rep: string, bound: boolean): void {
   if (inDict.has(w)) { if (!bound) for (const d of dict) if (d.w === w) { d.bound = false; dictVer++; } return; } // denylist entries match inside words too
   let r = rep.toLowerCase();
   if (r.length !== w.length) r = r.length > w.length ? r.slice(0, w.length) : r + " ".repeat(w.length - r.length);
-  inDict.add(w); dict.push({ w, rep: r, bound });
-  dict.sort((a, b) => b.w.length - a.w.length); // longest first: a long name wins over a shorter one inside it
+  // longest first: a long name wins over a shorter one inside it; after the words of its length (a sort per word was
+  // quadratic: skills.hide "*" fakes thousands of names)
+  let lo = 0; let hi = dict.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if ((dict[m] as Word).w.length >= w.length) lo = m + 1; else hi = m; }
+  inDict.add(w); dict.splice(lo, 0, { w, rep: r, bound });
   dictVer++;
 }
 // lowercase dictionary words ("plan", "inspect") name nothing; scrubbing them would garble ordinary text

@@ -80,6 +80,9 @@ export const H = {
   detailHead: [] as ((s: Sess, evs: Ev[], i: number, w: number) => string[])[], // styled lines on top of event i's detail (the skill loads it anchors)
   linkView: [] as ((view: string, f: string, s: Sess) => string)[], // a link's view= and f= after its transcript opened (features/evkinds.ts: the event filter, the call graph); "" = applied, else what was not
 };
+// a reader that keeps lean events (callgraph/model.ts lean(): no replies, thinking or full text) parses with lean on: the
+// events hooks may skip work on what it drops
+export const READ = { lean: false };
 export function startTui(): void { for (const f of H.tui) f(); }
 export function backlog(): boolean { for (const f of H.backlog) if (f()) return true; return false; }
 export function boxChips(where: string, w: number): string { let o = ""; for (const f of H.boxChips) o += f(where, w); return o; }
