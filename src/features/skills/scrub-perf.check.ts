@@ -82,6 +82,22 @@ for (const m of ["name", "omit"]) {
   eq("* " + m + ": known skill everywhere, paths stay", ke[0] ? ke[0].text : "", "build in /tmp/out and /app/src with $HOME, then " + fq + " and flurb");
   eq("* " + m + ": unknown command in place only", ke[1] ? ke[1].text : "", "ran /" + fq + " and /" + ff + "; tmp, app, HOME, " + fq + "-x and flurb stay");
 }
+// a closing tag ("</div>") is no slash command; Claude's <command-name>/x is one
+eq("* omit: a closing tag is no ref", scrub("<b>x</b> then </florp> and <command-name>/florp</command-name>"), "<b>x</b> then </florp> and <command-name>/(hidden)</command-name>");
+// pi's "skill:x" is read as a reference with or without its "/": hidden in place either way, the bare word stays
+setVis([{ match: "*", mode: "omit" }], false);
+eq("* omit: skill:x hides in place, with or without /", scrub("try skill:florp, /skill:florp and florp"), "try skill:(hidden), /skill:(hidden) and florp");
+// a loaded plugin skill's dir hides as a word, whatever came first: a guess of its shape ("/zentry"), or its name known
+// by name only (KNOWN: no dir)
+for (const k of ["guess", "known"]) {
+  setVis([{ match: "*", mode: "omit" }], false);
+  const k0 = KNOWN.of; KNOWN.of = (x: Sess | null): string[] => k === "known" ? ["kq:zentry"] : [];
+  if (k === "guess") scrub("ran /zentry");
+  const ks: Sess = newSess("claude", "dir-" + k, "/k/dir-" + k + ".jsonl", false);
+  const ke: Ev[] = [{ kind: "tool", text: "Skill\u0000kq:zentry", ts: "", id: "z1", full: "" }, { kind: "user", text: "zentry done", ts: "", id: "", full: "" }];
+  hideEvents(ks, ke, 0); KNOWN.of = k0;
+  eq("* omit: a loaded plugin skill's dir after a " + k, ke.map((e: Ev): string => e.text).join("|"), "(hidden) done");
+}
 // under a broad rule a known skill's name is a part of a word from 5 characters: a shorter one is mostly a word of its own
 setVis([{ match: "*", mode: "name" }], false);
 { const k0 = KNOWN.of; KNOWN.of = (x: Sess | null): string[] => ["run", "lint-x"];

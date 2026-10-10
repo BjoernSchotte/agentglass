@@ -565,8 +565,8 @@ The names of skills hidden with `name` or `omit` are also replaced in titles, pr
 `-`/`_` part of one (`ts-x-1`, `x_v2`; never inside a run of letters: `xs`, `subx` stay). A rule with fewer than 3
 literal characters (`*`, `a*`) replaces a word where it is written as a skill reference (`/x`, `$x`, `/skill:x`,
 `skills/x/`, `p:x`), there only, and everywhere once agentglass knows it as a skill: installed (yours, plugins', your
-projects') or loaded or listed in any session it has read, subagents included. A path (`/tmp/x`, `~/app`, a URL) and an
-environment variable (`$HOME`) are no references. Plain prose keeps its other words; under `*` a skill named like a
+projects') or loaded or listed in any session it has read, subagents included. A path (`/tmp/x`, `~/app`, a URL), a
+closing tag (`</x>`) and an environment variable (`$HOME`) are no references. Plain prose keeps its other words; under `*` a skill named like a
 common word (`review`) is hidden in prose too, as a part of a word only from 5 characters (`dry-run` stays). The TUI
 replaces a name it learns later (a subagent read after the transcript opened) on screen with the next frame.
 

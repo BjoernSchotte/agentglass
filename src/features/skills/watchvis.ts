@@ -79,12 +79,13 @@ export function note(name: string, dir = true, guess = false): boolean {
   seed();
   const v = skillVis(name);
   if (!guess) GUESS.delete(name);
-  if ((v.mode === "name" || v.mode === "omit") && (!SCRUB.has(name) || SUF.has(name))) {
+  if (v.mode === "name" || v.mode === "omit") {
     const rep = v.mode === "omit" ? HIDDEN : v.shown;
-    if (name.length >= 2) { if (guess && !SCRUB.has(name)) GUESS.add(name); put(name, rep); SUF.delete(name); }
-    // a plugin skill's dir in its SKILL.md path; a skill of that name keeps its own fake, whichever is seen first
+    if (name.length >= 2 && (!SCRUB.has(name) || SUF.has(name))) { if (guess && !SCRUB.has(name)) GUESS.add(name); put(name, rep); SUF.delete(name); }
+    // a plugin skill's dir in its SKILL.md path, also when its name was known before (KNOWN: by name only, no dir); a skill
+    // of that name keeps its own fake, whichever is seen first. A dir only guessed before ("/xyz") hides everywhere now
     const c = name.lastIndexOf(":"); const d = name.slice(c + 1);
-    if (dir && c > 0 && name.length - c > 2 && !SCRUB.has(d)) { put(d, rep); SUF.add(d); }
+    if (dir && c > 0 && name.length - c > 2) { if (!SCRUB.has(d)) { put(d, rep); SUF.add(d); } else GUESS.delete(d); }
   }
   if (LN.on && SCRUB.has(name) && !SUF.has(name) && !GUESS.has(name) && !LSET.has(name)) { // a skill's name, surely
     LSET.add(name); LEARNT.push(name); if (LN.rule || name.length >= 5) partAdd(name);
@@ -113,14 +114,16 @@ function ref(t: string, i: number, e: number, colon: number): boolean {
   return shape(t, i, e);
 }
 // is the name at i..e written as a skill reference: "$x" (no capital: "$HOME" is a variable, skill names are lower case),
-// "/x" after white space or a quote, not a path's segment ("/tmp/x", "~/app", a URL's "/app"), pi's "/skill:x", a skills/x/ dir
+// "/x" after white space or a quote, not a path's segment ("/tmp/x", "~/app", a URL's "/app") or a closing tag ("</x>"),
+// pi's "/skill:x" (as wordAt reads it: "skill:x" at a word's start), a skills/x/ dir
 function shape(t: string, i: number, e: number): boolean {
   const p = i > 0 ? t.charCodeAt(i - 1) : 0;
   if (p === 36) { for (let j = i; j < e; j++) { const c = t.charCodeAt(j); if (c >= 65 && c <= 90) return false; } return true; } // $
   if (i >= 7 && t.startsWith("skills/", i - 7)) return true;
-  if (p === 58) return i >= 7 && t.startsWith("/skill:", i - 7);
+  if (p === 58) return i >= 6 && t.startsWith("skill:", i - 6) && (i === 6 || !wc(t.charCodeAt(i - 7))); // wordAt's "skill:" (sk)
   if (p !== 47) return false; // /
-  return (i < 2 || lead(t.charCodeAt(i - 2))) && t.charCodeAt(e) !== 47;
+  const q = i < 2 ? 32 : t.charCodeAt(i - 2); // "</x>" closes a tag: no command
+  return lead(q) && q !== 60 && t.charCodeAt(e) !== 47;
 }
 // the glob rules hiding names, compiled once per rule change; a word's verdict is kept (GW: words tried, GS: a strong
 // rule matches, GA: any rule does — sets, a lookup allocates nothing), so each distinct word meets each rule once (bounded)
