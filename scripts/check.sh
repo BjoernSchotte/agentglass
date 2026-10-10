@@ -16,7 +16,8 @@
 # libproc.c is also compiled once with -Wall -Wextra -Werror (job cc:<file>).
 # On every OS CHECK_CRYPTO (--ffi src/features/team/crypto/ffi.json: Monocypher, the team crypto) goes into the bin and
 # release builds and into every check with a "// check: crypto" line (on macOS built with --backend c too); agcrypto.c
-# is compiled once with -Wall -Wextra -Werror (job cc:<file>).
+# is compiled once with -Wall -Wextra -Werror (job cc:<file>). scriptc takes one --ffi: where two apply (the bin and
+# release builds on macOS, a check with both lines) CHECK_ALLFFI is their merge (scripts/ffi-merge.mjs).
 # The shell tests share one agentglass, built here once, in parallel with the checks: AGENTGLASS_BIN uses a prebuilt one
 # instead; else AGENTGLASS_OUT (default .scriptc/check/agentglass) with CHECK_BIN_FLAGS (default: the check flags).
 # CHECK_RELEASE_OUT: also build the release binary (-O2, as shipped) there and smoke-test it, as one more job.
@@ -65,10 +66,10 @@ if [ "${1:-}" = --summary ]; then summary "$2"; exit 0; fi
 if [ "${1:-}" = --job ]; then
   job=$2; id=$(printf %s "$job" | tr '/:.' '___'); log="$CHECK_OUT/$id.log"; rc=0; t0=$(date +%s)
   case "$job" in
-    bin) scriptc build $CHECK_BIN_FLAGS $CHECK_CRYPTO $CHECK_FFI src/main.ts -o "$AGENTGLASS_BIN" >"$log" 2>&1 || rc=$?
+    bin) scriptc build $CHECK_BIN_FLAGS $CHECK_ALLFFI src/main.ts -o "$AGENTGLASS_BIN" >"$log" 2>&1 || rc=$?
          echo $rc > "$CHECK_OUT/bin.done" ;;
     release) # the release build (-O2, as shipped) and a smoke test of it
-         { scriptc build $RELEASE_FLAGS $CHECK_CRYPTO $CHECK_FFI src/main.ts -o "$CHECK_RELEASE_OUT" && h="$CHECK_OUT/release.home" && mkdir -p "$h" &&
+         { scriptc build $RELEASE_FLAGS $CHECK_ALLFFI src/main.ts -o "$CHECK_RELEASE_OUT" && h="$CHECK_OUT/release.home" && mkdir -p "$h" &&
            HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_STATE_HOME="$h/.local/state" XDG_CACHE_HOME="$h/.cache" sh -c \
              '"$1" --version && "$1" --version --json && "$1" --json --limit 1 >/dev/null && echo "release build: smoke test ok"' _ "$CHECK_RELEASE_OUT" &&
            { [ -z "$CHECK_FFI" ] || { nm -u "$CHECK_RELEASE_OUT" | grep -q '_proc_listallpids' && echo "release build: libproc bound"; }; } &&
@@ -77,8 +78,9 @@ if [ "${1:-}" = --job ]; then
     check:*) f=${job#check:} # scriptc keys its cache on the output path: keep it stable. One directory per check: scriptc
          d="$PWD/.scriptc/check/$id"; mkdir -p "$d" # writes <source basename>.ll beside it, and basenames repeat
          fl=$CHECK_SCRIPTC_FLAGS; timing=""; if grep -q '^// check: timing' "$f"; then fl=""; timing=1; fi
-         if [ -n "$CHECK_FFI" ] && grep -q '^// check: ffi' "$f"; then fl="$fl $CHECK_FFI --backend c"; fi
-         if grep -q '^// check: crypto' "$f"; then fl="$fl $CHECK_CRYPTO"; [ -z "$CHECK_FFI" ] || case "$fl" in *"--backend c"*) ;; *) fl="$fl --backend c";; esac; fi
+         ff=""; cr=""; if [ -n "$CHECK_FFI" ] && grep -q '^// check: ffi' "$f"; then ff=1; fi; if grep -q '^// check: crypto' "$f"; then cr=1; fi
+         if [ -n "$ff" ] && [ -n "$cr" ]; then fl="$fl $CHECK_ALLFFI"; elif [ -n "$ff" ]; then fl="$fl $CHECK_FFI"; elif [ -n "$cr" ]; then fl="$fl $CHECK_CRYPTO"; fi
+         if [ -n "$CHECK_FFI" ] && [ -n "$ff$cr" ]; then fl="$fl --backend c"; fi # macOS: the darwin-x64 release's backend
          if ! scriptc build $fl "$f" -o "$d/c" >"$log" 2>&1; then rc=build
          elif [ -n "$timing" ]; then rc=deferred # runs after the pool, alone
          else run_check "$id" "$d/c" "$log"; fi
@@ -137,8 +139,9 @@ CHECK_SCRIPTC_FLAGS=${CHECK_SCRIPTC_FLAGS---optimization dev --strip}
 RELEASE_FLAGS="${SCRIPTC_FLAGS:-}"; CHECK_BIN_FLAGS="${SCRIPTC_FLAGS:-} ${CHECK_BIN_FLAGS-$CHECK_SCRIPTC_FLAGS}"
 SCRIPTC_FLAGS="${SCRIPTC_FLAGS:-} $CHECK_SCRIPTC_FLAGS" # the tests' own builds: build.sh honors SCRIPTC_FLAGS
 CHECK_FFI=""; if [ "$(uname -s)" = Darwin ] && [ -f src/platform/darwin/ffi.json ]; then CHECK_FFI="--ffi $PWD/src/platform/darwin/ffi.json"; fi
-CHECK_CRYPTO="--ffi $PWD/src/features/team/crypto/ffi.json"
-export CHECK_OUT CHECK_SCRIPTC_FLAGS CHECK_BIN_FLAGS RELEASE_FLAGS SCRIPTC_FLAGS CHECK_FFI CHECK_CRYPTO PATH
+CHECK_CRYPTO="--ffi $PWD/src/features/team/crypto/ffi.json"; CHECK_ALLFFI=$CHECK_CRYPTO
+if [ -n "$CHECK_FFI" ]; then node scripts/ffi-merge.mjs "$CHECK_OUT/ffi-all.json" src/features/team/crypto/ffi.json src/platform/darwin/ffi.json; CHECK_ALLFFI="--ffi $CHECK_OUT/ffi-all.json"; fi
+export CHECK_OUT CHECK_SCRIPTC_FLAGS CHECK_BIN_FLAGS RELEASE_FLAGS SCRIPTC_FLAGS CHECK_FFI CHECK_CRYPTO CHECK_ALLFFI PATH
 rm -rf .scriptc/check; mkdir -p .scriptc/check
 checks=$(find src -name '*.check.ts' | sort); tests=$(find scripts -name '*.test.sh' | sort)
 shard=${CHECK_SHARD:-1/1}; si=${shard%/*}; sn=${shard#*/}
