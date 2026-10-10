@@ -442,7 +442,7 @@ view with the load record (trigger, turn, time, bytes, S, tier, hash, base dir, 
 Help section `skills` (ctx `transcript`).
 
 **6.2 Call graph `c`.** Flame chart: a thin `✧` tick on the turn row at the load time, a dim band from load to
-unload on a dedicated lane under the turns lane (one lane per concurrently open skill, at most 3, then `+n`). Call tree:
+unload on a dedicated lane under the turns lane (one lane per concurrently open skill: every lane while the graph leaves rows free, else at most 3, then `+n`). Call tree:
 a `✧ name` row under the turn that loaded it (`↵` = the detail of 6.1). No new keys.
 
 **6.3 Replay `P`.** The skill meta lines of 6.1 replay like any event; the status line shows the open skills
