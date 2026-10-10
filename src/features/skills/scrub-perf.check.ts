@@ -7,7 +7,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Ev, type Sess, newSess } from "../../model/types.ts";
 import { setVis, skillVis, type HideRule } from "./vis.ts";
-import { hideEvents, scrub, SCRUB_STAT } from "./watchvis.ts";
+import { hideEvents, scrub, SCRUB_STAT, INSTALLED } from "./watchvis.ts";
+import { READ } from "../../hooks.ts";
 
 let bad = 0;
 function ok(what: string, c: boolean, info: string): void { if (!c) { bad++; console.log("FAIL " + what + (info ? ": " + info.slice(0, 300) : "")); } }
@@ -27,6 +28,22 @@ setVis([{ match: "*", mode: "omit" }], false);
 eq("* omit keeps prose and finds refs", scrub("run /deploy then $other and p:q at 10:30 in skills/dir/x"), "run /(hidden) then $(hidden) and (hidden) at 10:30 in skills/(hidden)/x");
 eq("* omit: a file:line, host:port or time is no plugin skill", scrub("see app.ts:57, localhost:4318 at T09:30 — up 57 hours"), "see app.ts:57, localhost:4318 at T09:30 — up 57 hours");
 eq("a ref seen later hides earlier mentions too", scrub("deployer then /deployer"), "(hidden) then /(hidden)");
+eq("* omit: a plugin ref's :line tail stays, the ref goes", scrub("at acme:deploy:15 and /p:x:3:7 then"), "at (hidden):15 and /(hidden):3:7 then");
+// an installed plugin skill with a digit after its colon is no file:line: hidden from its first mention
+INSTALLED.of = (): string[] => ["p:3d", "tools:2fa", "acme:deploy"];
+setVis([{ match: "*", mode: "omit" }], false);
+eq("* omit: installed p:3d, tools:2fa:12 go; a file:line stays", scrub("use p:3d, tools:2fa:12 and app.ts:57 or p:3"), "use (hidden), (hidden):12 and app.ts:57 or p:3");
+// a skill keeps its own fake whichever is met first: a plugin skill's dir, or the skill of that name
+setVis([{ match: "*", mode: "name" }], false);
+scrub("load acme:xyz"); eq("a skill met after a plugin skill's dir takes its own fake", scrub("then /xyz"), "then /" + skillVis("xyz").shown);
+eq("the plugin skill keeps its fake", scrub("load acme:xyz"), "load " + skillVis("acme:xyz").shown);
+// a lean reader (the call graph) drops replies and full texts: the names in them still hide the texts it keeps
+setVis([{ match: "*", mode: "name" }], false);
+{ const ls: Sess = newSess("claude", "lean", "/k/lean.jsonl", false);
+  const le: Ev[] = [{ kind: "assistant", text: "next /secret-x", ts: "", id: "", full: "" }, { kind: "thinking", text: "or $other-y", ts: "", id: "", full: "" },
+    { kind: "tool", text: "Bash\u0000run secret-x other-y", ts: "", id: "c1", full: "" }];
+  READ.lean = true; hideEvents(ls, le, 0); READ.lean = false;
+  const tl = le[2] ? le[2].text : ""; ok("lean: names in dropped texts hide kept ones", tl.indexOf("secret-x") < 0 && tl.indexOf("other-y") < 0, tl); }
 setVis([{ match: "abc*", mode: "name" }], false);
 eq("3+ literal chars match every word", scrub("abcdef and xabc"), skillVis("abcdef").shown + " and xabc");
 setVis([{ match: "*acme*", mode: "omit" }, { match: "*:int-*", mode: "omit" }], false);

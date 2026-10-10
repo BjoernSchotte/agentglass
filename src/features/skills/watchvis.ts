@@ -9,6 +9,7 @@ import { skillPath, skillReadCmd, fnvFeed, FNV1 } from "../usage/skillrec.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { H, READ } from "../../hooks.ts";
 import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN, VIS } from "./vis.ts";
+import { inventory } from "./inventory.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
 export function callSkill(tool: string, args: string): string {
@@ -26,13 +27,15 @@ export function callSkill(tool: string, args: string): string {
 // "p:x" names share a leading word). ODD: the rare names that start with another character, swept one by one
 const SCRUB = new Map<string, string>();
 const BY = new Map<string, number[]>(); const ODD: string[] = [];
+// SUF: entries that are only a plugin skill's dir ("xyz" of acme:xyz): a skill of that name, noted later, takes its own fake
+const SUF = new Set<string>();
 // the leading words' length range and first characters (ASCII; others always looked up): most words skip the lookup
 const LEADS = { min: 1 << 30, max: 0, first: new Uint8Array(128) };
 let seeded = false; let scrubGen = -1;
 // work counters (scrub-perf.check.ts bounds them): characters visited, glob matches tried, name compares
 export const SCRUB_STAT = { chars: 0, glob: 0, cmp: 0 };
 function seed(): void { // rules without a glob name their skills already: titles are scrubbed before the first load is seen
-  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
+  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; SUF.clear(); LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
   if (seeded) return; seeded = true;
   for (const r of hideRules()) if (r.match.indexOf("*") < 0 && r.match.indexOf("?") < 0) note(r.match);
 }
@@ -52,11 +55,12 @@ export function note(name: string): boolean {
   if (!name) return false;
   seed();
   const v = skillVis(name);
-  if ((v.mode === "name" || v.mode === "omit") && !SCRUB.has(name)) {
+  if ((v.mode === "name" || v.mode === "omit") && (!SCRUB.has(name) || SUF.has(name))) {
     const rep = v.mode === "omit" ? HIDDEN : v.shown;
-    if (name.length >= 2) put(name, rep);
-    // a plugin skill's dir in its SKILL.md path; a skill of that name keeps its own fake
-    const c = name.lastIndexOf(":"); if (c > 0 && name.length - c > 2 && !SCRUB.has(name.slice(c + 1))) put(name.slice(c + 1), rep);
+    if (name.length >= 2) { put(name, rep); SUF.delete(name); }
+    // a plugin skill's dir in its SKILL.md path; a skill of that name keeps its own fake, whichever is seen first
+    const c = name.lastIndexOf(":"); const d = name.slice(c + 1);
+    if (c > 0 && name.length - c > 2 && !SCRUB.has(d)) { put(d, rep); SUF.add(d); }
   }
   return v.mode !== "show";
 }
@@ -87,15 +91,15 @@ function ref(t: string, i: number, e: number, colon: number): boolean {
 // the glob rules hiding names, compiled once per rule change; a word's verdict is kept (GW: words tried, GS: a strong
 // rule matches, GA: any rule does — sets, a lookup allocates nothing), so each distinct word meets each rule once (bounded)
 // lits: each strong rule's longest literal run — a word it matches holds it, so a native search finds the candidates
-const GL = { gen: -1, gs: [] as HideRule[], strong: [] as boolean[], anyStrong: false, lits: [] as string[] };
+const GL = { gen: -1, gs: [] as HideRule[], strong: [] as boolean[], anyStrong: false, lits: [] as string[], weak: false };
 const GW = new Set<string>(); const GS = new Set<string>(); const GA = new Set<string>();
 function forgetVerdicts(): void { GW.clear(); GS.clear(); GA.clear(); }
 function globsOf(): void {
   if (GL.gen === VIS.gen) return;
-  GL.gen = VIS.gen; GL.gs = []; GL.strong = []; GL.anyStrong = false; GL.lits = []; forgetVerdicts();
+  GL.gen = VIS.gen; GL.gs = []; GL.strong = []; GL.anyStrong = false; GL.lits = []; GL.weak = false; forgetVerdicts();
   for (const r of hideRules()) if ((r.mode === "name" || r.mode === "omit") && (r.match.indexOf("*") >= 0 || r.match.indexOf("?") >= 0)) {
     const st = r.match.split("*").join("").split("?").join("").length >= 3;
-    GL.gs.push(r); GL.strong.push(st); if (!st) continue;
+    GL.gs.push(r); GL.strong.push(st); if (!st) { GL.weak = true; continue; }
     GL.anyStrong = true;
     let lit = ""; for (const a of r.match.split("*")) for (const b of a.split("?")) if (b.length > lit.length) lit = b;
     let fits = true; for (let i = 0; i < lit.length; i++) { const c = lit.charCodeAt(i); if (!wc(c) && c !== 58) fits = false; }
@@ -116,15 +120,36 @@ function hides(w: string, strong: boolean): boolean {
   GW.add(w); if (v & 1) GS.add(w); if (v) GA.add(w);
   return strong ? (v & 1) !== 0 : v !== 0;
 }
-// the word starting at i (word characters, a ":" between them: "p:x"): noted when a rule hides it; returns its end
+// installed plugin skills whose name has a ":" before a non-letter ("p:3d"): ref() reads those as a file:line, so they are
+// looked up by name (the inventory, scanned at most once per hour; only under a broad rule and for such a word)
+export const INSTALLED = { of: (): string[] => { const o: string[] = []; for (const s of inventory([])) o.push(s.name); return o; } };
+const ODDREF = new Set<string>(); let oddGen = -1;
+function oddRef(w: string): boolean {
+  if (oddGen !== VIS.gen) {
+    oddGen = VIS.gen; ODDREF.clear();
+    for (const nm of INSTALLED.of()) for (let c = nm.indexOf(":"); c > 0; c = nm.indexOf(":", c + 1)) if (!alpha(nm.charCodeAt(c + 1))) { ODDREF.add(nm); break; }
+  }
+  return ODDREF.has(w);
+}
+// a name not noted as itself yet (a plugin skill's dir only is: a skill of that name takes its own fake)
+function fresh(w: string): boolean { return !SCRUB.has(w) || SUF.has(w); }
+// the word starting at i (word characters, a ":" between them: "p:x"): noted when a rule hides it; returns its end. Its
+// ":<digit>…" tail is a line or port ("acme:deploy:15", "p:x:3:7"): the name before it is the candidate
 function wordAt(t: string, i: number, n: number): number {
   let e = i; let colon = -1; // the last ":" inside the word
   while (e < n) { const c = t.charCodeAt(e); if (wc(c)) e++; else if (c === 58 && e + 1 < n && wc(t.charCodeAt(e + 1))) { colon = e; e++; } else break; }
   SCRUB_STAT.chars += e - i;
-  const isRef = ref(t, i, e, colon);
+  let ne = e; let nc = colon; // the name's end and its last ":"
+  while (nc > i && !alpha(t.charCodeAt(nc + 1))) { ne = nc; nc = t.lastIndexOf(":", nc - 1); if (nc <= i) nc = -1; }
+  const sk = t.startsWith("skill:", i) ? 6 : 0; // pi's /skill:<name>
+  let isRef = ref(t, i, ne, nc);
+  if (!isRef && ne < e && GL.weak) // an installed "p:3d", maybe with a tail of its own ("p:3d:15")
+    for (let c = e; c > ne; c = t.lastIndexOf(":", c - 1)) if (oddRef(t.slice(i + sk, c))) { isRef = true; ne = c; break; }
   if (!isRef && !GL.anyStrong) return e;
-  const w = t.startsWith("skill:", i) ? t.slice(i + 6, e) : t.slice(i, e); // pi's /skill:<name>
-  if (w.length >= 2 && !SCRUB.has(w) && hides(w, !isRef)) note(w);
+  // a strong rule matches the whole word ("acme-x:15" under "acme-*"); else the name ("acme-x" of it, a ref's name)
+  const w = t.slice(i + sk, e); const nm = ne < e ? t.slice(i + sk, ne) : w;
+  if (GL.anyStrong && w.length >= 2 && fresh(w) && hides(w, true)) note(w);
+  else if (nm.length >= 2 && fresh(nm) && hides(nm, !isRef)) note(nm);
   return e;
 }
 // the start of the word holding position p (word characters and the ":"s between them), -1 if p is in none
@@ -259,6 +284,8 @@ export function hideEvents(s: Sess | null, evs: Ev[], from: number): void {
     if (e.kind === "tool") e.text = tool + (e.text.indexOf("\u0000") >= 0 ? "\u0000" + scrub(cv.args) : "");
     else if (cv.hide) { e.text = cv.hide; e.full = ""; } // the result of a call that loaded a hidden skill: its text
     else if (!READ.lean || (e.kind !== "assistant" && e.kind !== "thinking")) e.text = scrub(e.text);
+    else { seed(); globWords(e.text); } // a lean reader drops replies: only the names they hold, for the texts it keeps
+    // and full texts unread (MBs of tool output: a third of the graph's load under "*"; its kept texts name their own refs)
     if (e.full && !READ.lean && !e.full.startsWith("@file:") && e.full.length < 1048576) e.full = scrub(e.full);
     if (e.kind === "tool" && (e.text !== t0 || e.full !== f0)) rw = true;
     evs[w] = e; w++;

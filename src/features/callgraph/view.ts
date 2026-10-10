@@ -55,7 +55,7 @@ function readEvs(s: Sess, a: number, z: number, slim: boolean, out: Ev[]): numbe
     if (r.next <= at) { if (at + step >= z) break; step = step * 2; continue; } // no whole line in the step
     step = base;
     const evs: Ev[] = slim ? [] : out;
-    READ.lean = slim; // lean() drops replies and full texts: the hiding hook leaves them unscrubbed
+    READ.lean = slim; // lean() drops replies and full texts: the hiding hook only notes the skill names they hold
     try { for (const l of r.lines) parseEvents(s.h, l, evs, s); } finally { READ.lean = false; }
     if (slim) for (const e of evs) out.push(lean(e, out.length ? out[out.length - 1] : null));
     at = r.next;
