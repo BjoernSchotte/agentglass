@@ -100,7 +100,8 @@ export function wantsHelp(args: string[]): boolean { return args.indexOf("--help
 // TUI-only and maintenance commands: --help lists them
 const NOT_COMPACT = ["", "--theme", "--redact", "--help", "--update-prices", "update", "rules check", "rules defaults", "prices set", "prices alias", "prices unset",
   "--no-fleet", "fleet cost", "fleet status", "fleet pull", "fleet snapshot", "fleet watch", "fleet drop", "fleet serve", "fleet authorize",
-  "receive", "receive token", "receive status", "receive service", "mcp", "mcp install", "mcp doctor"]; // fleet: one entry, fleet --help lists the rest; receive: a hub command, not an agent tool; mcp: agents in shells do not register servers on their own
+  "receive", "receive token", "receive status", "receive service", "mcp", "mcp install", "mcp doctor",
+  "team create", "team invite", "team join", "team sync", "team report", "team sessions"]; // fleet, team: one entry each, their --help lists the rest; receive: a hub command, not an agent tool; mcp: agents in shells do not register servers on their own
 // the summary's first clause (before a parenthesis or semicolon), at most 36 characters, cut after a whole word
 function brief(s: string): string {
   const t = (s.split("\n")[0] ?? "").split(" (")[0].split(";")[0].trim(); if (t.length <= 36) return t;
