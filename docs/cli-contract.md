@@ -223,7 +223,7 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
 | Method | Params | Result |
 |---|---|---|
 | `meta` | none | `{version, contract, proto, caps[], readOnly, redact, harnesses[], teams[]}` |
-| `sessions.list` | `filter` (the filter language), `limit` 1–1000 (200), `cursor`, `subagents` bool | `{data: [--json rows], at (ms), gen, next: cursor\|null}` |
+| `sessions.list` | `filter` (the filter language: `live is true`, `harness is codex and cost > 1`; a bare word searches title, path, id), `limit` 1–1000 (200), `cursor`, `subagents` bool | `{data: [--json rows], at (ms), gen, next: cursor\|null}` |
 | `sessions.get` | `ref` (required): `<harness>:<id>`, an id or a unique prefix of 6+ characters | the `session <ref>` object (`via` = `"ref"`) |
 | `sub` | `topic`: `sessions`; `filter`, `limit`, `subagents` as `sessions.list`; `from` (an event id) | `{sub, resumed}`, then events |
 | `unsub` | `sub` | `{}` |
