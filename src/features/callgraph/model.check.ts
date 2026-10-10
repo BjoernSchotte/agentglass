@@ -1,7 +1,8 @@
 // agentglass — self-check for the call-graph model: scriptc build src/features/callgraph/model.check.ts -o cgc && ./cgc
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev } from "../../model/types.ts";
-import { type Src, buildGraph, aggregate, summary, catOf, isErr, dur, lean, LEAN } from "./model.ts";
+import { type Src, buildGraph, aggregate, summary, catOf, isErr, dur, lean, LEAN, laneCap, skillLanes } from "./model.ts";
+import type { Mark } from "../../model/marks.ts";
 import { evKindList } from "../../model/kinds.ts";
 
 let bad = 0;
@@ -75,5 +76,11 @@ eq("lean: same kinds", kinds(ln), kinds(full));
 eq("lean: errors", ln.filter((e) => e.kind === "result").map((e) => String(isErr(e.text))).join(","), "true,true,true,false");
 eq("lean: cut", String(ln[0].text.length <= LEAN + 1) + " " + ln[1].text + ln[2].text + " " + String(ln[4].text.length < 1000) + " " + String(ln[3].text === full[3].text) + " " + String(ln[11].text === full[11].text), "true  true true true");
 eq("lean: no full, one ts per line", String(ln.every((e) => e.full === "")) + " " + String(ln[1].ts === ln[2].ts), "true true");
+// skill lanes fill the rows the spans leave free (80×24: 15 chart rows, 160×45: 36), at least 3; the rest fold into +n
+const sk: Mark[] = []; for (let i = 0; i < 16; i++) sk.push({ kind: "skill:load", t0: T + i * 1000, t1: -1, seq: i, turn: 0, ev: -1, anchor: "", label: "s" + String(i), sub: "", tok: 0, usd: 0, est: false, ref: "r" + String(i) });
+const fold = (h: number, rows: number): string => { const l = skillLanes(sk, T + 99000, laneCap(h, rows, 3)); return String(l.lanes.length) + "+" + String(l.more); };
+eq("lanes 80x24", fold(24 - 9, 2), "13+3");
+eq("lanes 160x45", fold(45 - 9, 2), "16+0");
+eq("lanes, a full chart", fold(15, 40), "3+13");
 console.log(bad ? bad + " FAILED" : "ok");
 process.exit(bad ? 1 : 0);

@@ -188,6 +188,8 @@ export function skillLanes(marks: Mark[], end: number, max: number): { lanes: Ba
   }
   return { lanes, more };
 }
+// how many skill lanes a chart of h rows shows over its span rows: the rows left free, at least min (a taller chart scrolls)
+export function laneCap(h: number, rows: number, min: number): number { return Math.max(min, h - rows); }
 // the call tree's skills row: per skill its loads (count) and time in context (total, max); kids by name
 export const SKILL_ROW = "✧ skills";
 export function skillAgg(marks: Mark[], end: number): Agg | null {

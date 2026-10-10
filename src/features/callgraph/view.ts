@@ -11,7 +11,7 @@ import { titleOf, subActive, current } from "../../model/sessions.ts";
 import { openDetail } from "../../ui/detail.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
-import { type Graph, type Agg, type Summary, type Src, type Span, type Band, K_TURN, K_AGENT, CATS, SORTS, HIDDEN_ROW, SKILL_ROW, buildGraph, aggregate, sortAggs, summary, dur, skillLanes, skillAgg, lean } from "./model.ts";
+import { type Graph, type Agg, type Summary, type Src, type Span, type Band, K_TURN, K_AGENT, CATS, SORTS, HIDDEN_ROW, SKILL_ROW, buildGraph, aggregate, sortAggs, summary, dur, skillLanes, skillAgg, laneCap, lean } from "./model.ts";
 import { type Mark, marksOf } from "../../model/marks.ts";
 import { loadOf } from "../skills/marks.ts";
 import { openSkillView } from "../skills/view.ts";
@@ -34,9 +34,9 @@ const G = {
   backMode: "list" as Mode, backTv: null as TV | null, inDetail: false,
   tsort: 0, tsel: 0, ttop: 0, topen: new Set<string>(), flat: [] as Agg[], lvl: [] as number[],
   hitY: [] as number[], hitX0: [] as number[], hitX1: [] as number[], hitI: [] as number[],
-  sk: [] as Band[][], skMore: 0, skMarks: [] as Mark[], skY: [] as number[], skX0: [] as number[], skX1: [] as number[], skRef: [] as string[], // skill lanes, their hit boxes
+  sk: [] as Band[][], skMore: 0, skMax: -1, skMarks: [] as Mark[], skY: [] as number[], skX0: [] as number[], skX1: [] as number[], skRef: [] as string[], // skill lanes, their hit boxes
 };
-const SK_LANES = 3;
+const SK_LANES = 3; // skill lanes at least; more while the chart leaves rows free below (laneCap)
 
 // ── loading: the same bounded tail the transcript reads (last 6 MB), one TV per session. The graph keeps lean events
 // (model.ts lean(): a 27 MB session with 175 subagents held 1.4 GB as parsed); ↵ and r read that one session in full
@@ -159,7 +159,7 @@ function rebuild(): void {
   const srcs: Src[] = [];
   for (let k = 0; k < G.tvs.length; k++) { const t = G.tvs[k]; srcs.push({ evs: t.evs, live: subActive(t.s), kind: t.s.kind, spawn: G.spawn[k] ?? "" }); }
   G.g = buildGraph(srcs, Date.now()); G.gen++; HID.key = "-";
-  const r = G.root; G.skMarks = r ? marksOf(r, ["skill:load"]) : []; const sl = skillLanes(G.skMarks, G.g.t1, SK_LANES); G.sk = sl.lanes; G.skMore = sl.more;
+  const r = G.root; G.skMarks = r ? marksOf(r, ["skill:load"]) : []; G.skMax = -1; layLanes();
   aggs();
   G.sum = summary(G.g);
   G.sel = -1;
@@ -445,8 +445,15 @@ function skillAt(ref: string): void {
   const r = G.root; if (!r) return;
   for (const m of G.skMarks) if (m.ref === ref) { const x = loadOf(r, m); if (x) openSkillView(r, x); return; }
 }
+// the skill lanes for the chart's height: the rows the spans leave free (≥ SK_LANES), so "+n" folds only what cannot show
+function layLanes(): void {
+  const max = laneCap(Math.max(1, S.H - 9), G.g.rows.length, SK_LANES);
+  if (max === G.skMax) return;
+  const sl = skillLanes(G.skMarks, G.g.t1, max); G.sk = sl.lanes; G.skMore = sl.more; G.skMax = max;
+}
 function renderFlame(): void {
   const Ht = S.H; const y0 = 5; const rh = Math.max(1, Ht - 9);
+  layLanes();
   G.hitY.length = 0; G.hitX0.length = 0; G.hitX1.length = 0; G.hitI.length = 0;
   G.skY.length = 0; G.skX0.length = 0; G.skX1.length = 0; G.skRef.length = 0;
   const grid = ruler(4);
