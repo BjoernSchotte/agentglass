@@ -3,7 +3,8 @@
 # skill that only the session's subagent loads, later (zorbent), an installed skill no session loaded (quillow), and a skill
 # another session loaded (vexmark, once the ledger indexed it). `events --json --content` and `session --json`, on a
 # cold cache and a warm one; prose words stay. A known name is hidden as a "-"/"_" part of a word too (ts-zorbent-1,
-# zorbent_v2), a short one (run, installed) only as a word: dry-run stays. sh scripts/skills-hide-known.test.sh
+# zorbent_v2), a short one (run, installed) only as a word: dry-run stays. An unknown "/flurb" hides in place only; /tmp/out,
+# /app/src and $HOME stay. sh scripts/skills-hide-known.test.sh
 # check: builds 1
 set -e
 unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR AGENTGLASS_REDACT AGENTGLASS_OTLP_DIR SSH_ORIGINAL_COMMAND # hermetic
@@ -45,12 +46,14 @@ write("%s/%s.jsonl" % (d, P), [
     asst(P, 3, [dict(type="tool_use", id="toolu_t", name="Task", input=dict(description="import", prompt="run zorbent on data.csv", subagent_type="general-purpose"))]),
     user(P, 60, [dict(type="tool_result", tool_use_id="toolu_t", content="imported with zorbent")], 1),
     user(P, 61, "now vexmark, and quillow again", 2),
-    asst(P, 62, [dict(type="text", text="done")])])
+    asst(P, 62, [dict(type="text", text="done")]),
+    user(P, 63, "build in /tmp/out and /app/src with $HOME, then /quillow and /flurb; tmp, app, HOME and flurb stay", 3)])
 write("%s/%s/subagents/agent-a1.jsonl" % (d, P), [user(P, 4, "run zorbent on data.csv", 1, side=True, agentId="a1"), asst(P, 5, [dict(type="text", text="reading " * 20000)], side=True, agentId="a1")] + load(P, 10, "toolu_z", "zorbent", "ZORBENTTEXT", side=True, agentId="a1") + [asst(P, 20, [dict(type="text", text="imported")], side=True, agentId="a1")])
 write("%s/%s.jsonl" % (d, O), [user(O, 1, "mark the release", 1)] + load(O, 2, "toolu_v", "vexmark", "VEXMARKTEXT") + [asst(O, 8, [dict(type="text", text="marked")])])
 PY
 touch -t "$(python3 -c "import datetime; print((datetime.datetime.now()-datetime.timedelta(hours=1)).strftime('%Y%m%d%H%M'))")" "$d/$P.jsonl" "$d/$O.jsonl" "$d/$P/subagents/agent-a1.jsonl"
 printf '{"skills":{"hide":[{"match":"*","mode":"name"}]}}\n' > "$t/hide.json"
+printf '{"skills":{"hide":[{"match":"*","mode":"omit"}]}}\n' > "$t/omit.json"
 printf '{}\n' > "$t/none.json"
 run() { (cd "$app" && env -i HOME="$h" PATH="$PATH" TZ=UTC COLUMNS=120 AGENTGLASS_CACHE_DIR="$t/${CACHE:-cache}" AGENTGLASS_CONFIG="$t/${CFG:-hide}.json" AGENTGLASS_RULES=/nonexistent \
   AGENTGLASS_RUN_DIR="$t/run" AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 AGENTGLASS_AGENT=0 AGENTGLASS_HERDR=off AGENTGLASS_PRICES="$t/prices.json" \
@@ -73,6 +76,13 @@ r=$( (CACHE=c1 run events "claude:$P" --json --content) )
 for w in zorbent quillow vexmark ZORBENTTEXT; do hasnt "warm: events" "$r" "$w"; done
 has "warm: prose stays" "$r" "now"
 r=$( (CACHE=c1 run session "claude:$P" --json) ); for w in zorbent quillow vexmark; do hasnt "warm: session" "$r" "$w"; done
+
+# a word only guessed from its shape ("/flurb") hides in place, never as a bare word; paths and env vars are no references
+for c in hide omit; do
+  r=$( (CFG=$c CACHE=c1 run events "claude:$P" --json --content) )
+  hasnt "$c: guessed ref" "$r" "/flurb"; hasnt "$c: known skill" "$r" "quillow"
+  for w in "build in /tmp/out and /app/src with \$HOME" "tmp, app, HOME and flurb stay"; do has "$c: paths and words stay" "$r" "$w"; done
+done
 
 [ "$fail" = 0 ] && echo "skills-hide-known: ok"
 exit "$fail"

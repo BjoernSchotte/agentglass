@@ -43,7 +43,10 @@ setVis([{ match: "X:a", mode: "name" }, { match: "a.b", mode: "name" }, { match:
 setVis([{ match: "*", mode: "omit" }], false);
 eq("* omit keeps prose and finds refs", scrub("run /deploy then $other and p:q at 10:30 in skills/dir/x"), "run /(hidden) then $(hidden) and (hidden) at 10:30 in skills/(hidden)/x");
 eq("* omit: a file:line, host:port or time is no plugin skill", scrub("see app.ts:57, localhost:4318 at T09:30 — up 57 hours"), "see app.ts:57, localhost:4318 at T09:30 — up 57 hours");
-eq("a ref seen later hides earlier mentions too", scrub("deployer then /deployer"), "(hidden) then /(hidden)");
+// a word only guessed to be a skill from its shape hides in place, never as a bare word: "/tmp", "$PATH" made "tmp" and
+// "PATH" vanish from every text. A path ("/tmp/x", "~/app", a URL) is no slash command, an all-caps "$HOME" no skill mention
+eq("* omit: a guessed ref hides in place only", scrub("deployer then /deployer, deployer"), "deployer then /(hidden), deployer");
+eq("* omit: paths and env vars are no refs", scrub("cd /tmp/x, /app/src/a.ts, ~/app, https://x.io/app and $HOME or $Path: tmp app HOME"), "cd /tmp/x, /app/src/a.ts, ~/app, https://x.io/app and $HOME or $Path: tmp app HOME");
 eq("* omit: a plugin ref's :line tail stays, the ref goes", scrub("at acme:deploy:15 and /p:x:3:7 then"), "at (hidden):15 and /(hidden):3:7 then");
 // an installed plugin skill with a digit after its colon is no file:line: hidden from its first mention
 INSTALLED.of = (): string[] => ["p:3d", "tools:2fa", "acme:deploy"];
@@ -65,7 +68,20 @@ setVis([{ match: "*", mode: "name" }], false);
 eq("* name: a guessed p:x hides no dir", scrub("Note:the end, the end"), skillVis("Note:the").shown + " end, the end");
 // a word only guessed to be a skill from its shape ("/deploy", "$TMP" under "*") hides as a word, never as a part of one
 setVis([{ match: "*", mode: "name" }], false);
-eq("* name: a reference's word is no part of another", scrub("run /deploy, then deploy and x-deploy-y, $TMP_DIR or $TMP"), "run /" + skillVis("deploy").shown + ", then " + skillVis("deploy").shown + " and x-deploy-y, $" + skillVis("TMP_DIR").shown + " or $" + skillVis("TMP").shown);
+eq("* name: a reference's word is no part of another, nor a bare word", scrub("run /deploy, then deploy and x-deploy-y, $tmp-dir or $tmp"), "run /" + skillVis("deploy").shown + ", then deploy and x-deploy-y, $" + skillVis("tmp-dir").shown + " or $" + skillVis("tmp").shown);
+// a session naming paths, an env var, a known skill's slash command and an unknown one: the known skill goes everywhere,
+// the unknown command in place, the rest stays readable (under name and omit)
+for (const m of ["name", "omit"]) {
+  setVis([{ match: "*", mode: m }], false);
+  const k0 = KNOWN.of; KNOWN.of = (x: Sess | null): string[] => ["quillow"];
+  const ks: Sess = newSess("claude", "paths-" + m, "/k/paths-" + m + ".jsonl", false);
+  const ke: Ev[] = [{ kind: "user", text: "build in /tmp/out and /app/src with $HOME, then quillow and flurb", ts: "", id: "", full: "" },
+    { kind: "assistant", text: "ran /quillow and /flurb; tmp, app, HOME, quillow-x and flurb stay", ts: "", id: "", full: "" }];
+  hideEvents(ks, ke, 0); KNOWN.of = k0;
+  const fq = m === "omit" ? "(hidden)" : skillVis("quillow").shown; const ff = m === "omit" ? "(hidden)" : skillVis("flurb").shown;
+  eq("* " + m + ": known skill everywhere, paths stay", ke[0] ? ke[0].text : "", "build in /tmp/out and /app/src with $HOME, then " + fq + " and flurb");
+  eq("* " + m + ": unknown command in place only", ke[1] ? ke[1].text : "", "ran /" + fq + " and /" + ff + "; tmp, app, HOME, " + fq + "-x and flurb stay");
+}
 // under a broad rule a known skill's name is a part of a word from 5 characters: a shorter one is mostly a word of its own
 setVis([{ match: "*", mode: "name" }], false);
 { const k0 = KNOWN.of; KNOWN.of = (x: Sess | null): string[] => ["run", "lint-x"];
@@ -81,7 +97,7 @@ setVis([{ match: "*", mode: "name" }], false);
 setVis([{ match: "*", mode: "name" }], false);
 { const ls: Sess = newSess("claude", "lean", "/k/lean.jsonl", false);
   const le: Ev[] = [{ kind: "assistant", text: "next /secret-x", ts: "", id: "", full: "" }, { kind: "thinking", text: "or $other-y", ts: "", id: "", full: "" },
-    { kind: "tool", text: "Bash\u0000run secret-x other-y", ts: "", id: "c1", full: "" }];
+    { kind: "tool", text: "Bash\u0000run /secret-x \$other-y", ts: "", id: "c1", full: "" }];
   READ.lean = true; hideEvents(ls, le, 0); READ.lean = false;
   const tl = le[2] ? le[2].text : ""; ok("lean: names in dropped texts hide kept ones", tl.indexOf("secret-x") < 0 && tl.indexOf("other-y") < 0, tl); }
 setVis([{ match: "abc*", mode: "name" }], false);
