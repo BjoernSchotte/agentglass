@@ -2,6 +2,37 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.12
+
+### Features
+
+- **skills:** rules metrics, OTLP events + hub, fleet merge + MCP tool, advice A7–A10 (#107) (b5c63c9, [#107](https://github.com/BjoernSchotte/agentglass/pull/107))
+- **skills:** skills panel, timeline marks, filters, triage, compare, Repos (skill-usage Tasks 8–10) (#106) (18b46ac, [#106](https://github.com/BjoernSchotte/agentglass/pull/106))
+- **skills:** skill loads as session marks for the event-kind filter (#105) (b360cfa, [#105](https://github.com/BjoernSchotte/agentglass/pull/105))
+- **skills:** skill load timeline, per-request attribution, agentglass skills (core) (#104) (2235905, [#104](https://github.com/BjoernSchotte/agentglass/pull/104))
+- one event-kind filter for every event view, events CLI and MCP tool (skill-usage E1–E5) (#103) (fb4b6e9, [#103](https://github.com/BjoernSchotte/agentglass/pull/103))
+
+### Fixes
+
+- **skills:** a guessed skill reference hides in place only; paths and env vars are no references (#115) (9f57e25, [#115](https://github.com/BjoernSchotte/agentglass/pull/115))
+- **skills:** a broad hide rule knows every skill name from line 1; overlapping names both go (#113) (de42d15, [#113](https://github.com/BjoernSchotte/agentglass/pull/113))
+- **skills:** scrub hidden skill names in one linear pass per text (#112) (f64cfcc, [#112](https://github.com/BjoernSchotte/agentglass/pull/112))
+- **skills:** parallel loads share the context growth in proportion; events name skills, A8 names both, header text not cut (#111) (159965a, [#111](https://github.com/BjoernSchotte/agentglass/pull/111))
+- **callgraph:** keep lean events so a large session's graph stays bounded (#110) (626dfa2, [#110](https://github.com/BjoernSchotte/agentglass/pull/110))
+- **skills:** hidden skills on every surface, docs, real-life verification (skill-usage P2, 15, 16) (#108) (009dd6c, [#108](https://github.com/BjoernSchotte/agentglass/pull/108))
+
+### Performance
+
+- **skills:** keep skill loads and day rows as cache text until read (#109) (32f62c7, [#109](https://github.com/BjoernSchotte/agentglass/pull/109))
+
+### Docs
+
+- **specs:** local-web-api + fleet-teams — local web API/UI and private team analytics (#114) (e0ab4eb, [#114](https://github.com/BjoernSchotte/agentglass/pull/114))
+- **specs:** skill usage — spec and plan (#102) (17f6c6b, [#102](https://github.com/BjoernSchotte/agentglass/pull/102))
+- **specs:** debug episodes — spec and plan (#101) (3118372, [#101](https://github.com/BjoernSchotte/agentglass/pull/101))
+- **readme:** grouped table of contents with jump links (#100) (bda9190, [#100](https://github.com/BjoernSchotte/agentglass/pull/100))
+- **readme:** highlights for wait, fleet, OTLP, MCP and prices; binary size and opt-in network list updated (#99) (7d06143, [#99](https://github.com/BjoernSchotte/agentglass/pull/99))
+
 ## 2026.10.11
 
 ### Features
