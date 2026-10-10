@@ -2,6 +2,18 @@
 
 All notable changes to agentglass. Versions are `YYYY.M.N` (N counts releases within the month).
 
+## 2026.10.13
+
+### Features
+
+- S1 — read model, serve --stdio, team crypto, invites, rooms, scoped snapshots (#116) (a27881a, [#116](https://github.com/BjoernSchotte/agentglass/pull/116))
+
+### Fixes
+
+- **opencode:** a session left suspended by a stopped run is no ghost live session (#120) (79ec0c3, [#120](https://github.com/BjoernSchotte/agentglass/pull/120))
+- **usage:** a call pending at a cache save keeps its duration after a restart (#119) (8c31f3e, [#119](https://github.com/BjoernSchotte/agentglass/pull/119))
+- **skills:** a cut after the scrub never leaves a hidden name's head (#118) (df1b494, [#118](https://github.com/BjoernSchotte/agentglass/pull/118))
+
 ## 2026.10.12
 
 ### Features
