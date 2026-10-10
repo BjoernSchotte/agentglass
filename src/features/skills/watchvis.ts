@@ -10,6 +10,7 @@ import type { Ev, Sess } from "../../model/types.ts";
 import { H, READ, HIDE } from "../../hooks.ts";
 import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN, VIS } from "./vis.ts";
 import { inventory, projectSkills } from "./inventory.ts";
+import { CUT } from "../../util/text.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
 export function callSkill(tool: string, args: string): string {
@@ -257,6 +258,8 @@ function nameAt(t: string, i: number, e: number, n: number, inner: boolean, ls: 
 // the text with every hidden name (a word; a skill's name also as "-"/"_" components of one) replaced: one pass over the text's words and
 // their components, the longest hidden name starting at one wins; a hidden name starting inside it and ending past it
 // ("a.b" in "X:a.b" after "X:a") goes too
+// a column cut inside a word (util/text.ts fit) scrubs the head it leaves: "xyzs" cut to "xyz…" must not show a hidden xyz
+CUT.word = (t: string): string => scrub(t);
 export function scrub(t: string): string {
   seed();
   if (!t) return t;

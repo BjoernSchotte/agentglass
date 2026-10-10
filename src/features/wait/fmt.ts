@@ -1,6 +1,6 @@
 // agentglass — agent-wait: shared figures and text pieces of the Wait tab and `agentglass wait`
 // SPDX-License-Identifier: Apache-2.0
-import { width } from "../../util/text.ts";
+import { width, fit } from "../../util/text.ts";
 import { fmtMs } from "../usage/calls.ts";
 import type { RuleSet } from "../rules/config.ts";
 import { ALL_KINDS, famKind } from "./family.ts";
@@ -21,7 +21,7 @@ export function groupOf(ov: GroupOverlap[], id: number): GroupOverlap | null { f
 export function rowsBy(rep: WaitReport, by: string): WRow[] { return by === "kind" ? rep.kinds : by === "tool" ? rep.tools : rep.fams; }
 // the overlap group of a row in view `by` (tools: none)
 export function groupFor(ov: GroupOverlap[], w: WRow, by: string): GroupOverlap | null { return by === "tool" ? null : groupOf(ov, by === "kind" ? ALL_KINDS.indexOf(w.kind) : w.id); }
-export function cut(s: string, w: number): string { return width(s) <= w ? s : s.slice(0, w - 1) + "…"; }
+export function cut(s: string, w: number): string { return width(s) <= w ? s : fit(s, w).trimEnd(); } // fit: a word cut mid-way is scrubbed again
 export function lp(s: string, w: number): string { const n = width(s); return n >= w ? cut(s, w) : s + " ".repeat(w - n); }
 export function rp(s: string, w: number): string { const n = width(s); return n >= w ? cut(s, w) : " ".repeat(w - n) + s; }
 export function hours(ms: number): string { return ms <= 0 ? "0" : ms < 3600000 ? fmtMs(ms) : (ms / 3600000).toFixed(ms < 36000000 ? 1 : 0) + "h"; }
