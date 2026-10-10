@@ -83,6 +83,10 @@ export const H = {
 // a reader that keeps lean events (callgraph/model.ts lean(): no replies, thinking or full text) parses with lean on: the
 // events hooks may skip work on what it drops
 export const READ = { lean: false };
+// skills.hide in open views: n = the hidden names learnt so far, a count that only grows (s: the session shown; its names
+// are looked up first); rescrub = events read when it was at, scrubbed in place for the names learnt since (a subagent's load
+// the ledger indexes after the view opened), full texts too when full; true when a text changed. Stock: nothing hides
+export const HIDE = { n: (s: Sess | null): number => 0, rescrub: (evs: Ev[], at: number, full: boolean): boolean => false };
 export function startTui(): void { for (const f of H.tui) f(); }
 export function backlog(): boolean { for (const f of H.backlog) if (f()) return true; return false; }
 export function boxChips(where: string, w: number): string { let o = ""; for (const f of H.boxChips) o += f(where, w); return o; }

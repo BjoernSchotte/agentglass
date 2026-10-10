@@ -9,6 +9,7 @@ import { link, fileUrl } from "../util/hyper.ts";
 import type { Ev } from "../model/types.ts";
 import { S, type TV, type DV } from "../state.ts";
 import { titleOf } from "../model/sessions.ts";
+import { tvRescrub } from "./transcript.ts";
 import { H } from "../hooks.ts";
 import { C, HL, CSI, RST, fg } from "./theme.ts";
 import { put, box, scrollbar } from "./screen.ts";
@@ -309,7 +310,7 @@ export function renderDetail(): void {
   if (!d || !tv) return;
   const W = S.W;
   let v = d;
-  if (d.lw !== W - 4) { v = buildDetail(tv, d.idx, W - 4); v.scroll = d.scroll; v.fsel = d.fsel; S.dv = v; }
+  if (tvRescrub(tv) || d.lw !== W - 4) { v = buildDetail(tv, d.idx, W - 4); v.scroll = d.scroll; v.fsel = d.fsel; S.dv = v; }
   const vh = S.H - 4; const iw = W - 4;
   const maxScroll = Math.max(0, v.lines.length - vh);
   v.scroll = Math.max(0, Math.min(v.scroll, maxScroll));

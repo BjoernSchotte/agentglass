@@ -7,7 +7,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Ev, type Sess, newSess } from "../../model/types.ts";
 import { setVis, skillVis, type HideRule } from "./vis.ts";
-import { hideEvents, scrub, SCRUB_STAT, INSTALLED } from "./watchvis.ts";
+import { hideEvents, scrub, SCRUB_STAT, INSTALLED, KNOWN } from "./watchvis.ts";
 import { READ } from "../../hooks.ts";
 
 let bad = 0;
@@ -19,7 +19,16 @@ setVis([{ match: "acme:*", mode: "name" }, { match: "xyz", mode: "name" }], fals
 const fx = skillVis("xyz").shown; const fp = skillVis("acme:xyz").shown;
 // a skill's own name keeps its own fake: a plugin skill's dir ("xyz" of acme:xyz) never takes it over
 eq("longest name wins at a position (plugin name over its dir)", scrub("load acme:xyz and xyz"), "load " + fp + " and " + fx);
-eq("a name inside a longer word stays", scrub("xyzz xyz-y y_xyz xyz"), "xyzz xyz-y y_xyz " + fx);
+eq("a name glued into a longer word stays", scrub("xyzz axyz xyz2 xyz"), "xyzz axyz xyz2 " + fx);
+// a name as a "-" or "_" component of a word goes (an identifier: "ts-<name>-1", "<name>_v2"), the rest of the word stays
+eq("a name as a word's component", scrub("xyz-y y_xyz ts-xyz-1 a_xyz_b --xyz"), fx + "-y y_" + fx + " ts-" + fx + "-1 a_" + fx + "_b --" + fx);
+setVis([{ match: "acme:xyz", mode: "name" }], false);
+eq("a plugin name as a component", scrub("run acme:xyz-1 and x-acme:xyz"), "run " + fp + "-1 and x-" + fp);
+setVis([{ match: "my-sk", mode: "name" }, { match: "my-sk-ab", mode: "omit" }, { match: "sk_2", mode: "name" }], false);
+{ const fm = skillVis("my-sk").shown; const f2 = skillVis("sk_2").shown;
+  eq("a hyphenated name inside a word, the longest first", scrub("x-my-sk-2 x-my-sk-ab-3 my-skx amy-sk my-sk_v"), "x-" + fm + "-2 x-(hidden)-3 my-skx amy-sk " + fm + "_v");
+  eq("an underscore name, overlapping a hyphenated one", scrub("a_sk_2_b my-sk_2"), "a_" + f2 + "_b " + fm + f2); }
+setVis([{ match: "acme:*", mode: "name" }, { match: "xyz", mode: "name" }], false);
 eq("text edges", scrub("xyz"), fx);
 setVis([{ match: "(odd)", mode: "omit" }, { match: "a.b", mode: "name" }], false);
 eq("a name that starts with a non-word char", scrub("see (odd) here"), "see (hidden) here");
@@ -44,6 +53,24 @@ eq("* omit: installed p:3d, tools:2fa:12 go; a file:line stays", scrub("use p:3d
 setVis([{ match: "*", mode: "name" }], false);
 scrub("load acme:xyz"); eq("a skill met after a plugin skill's dir takes its own fake", scrub("then /xyz"), "then /" + skillVis("xyz").shown);
 eq("the plugin skill keeps its fake", scrub("load acme:xyz"), "load " + skillVis("acme:xyz").shown);
+// a name known only by name (installed, listed: KNOWN) hides itself, not its plugin dir: "review" of p:review stays prose
+setVis([{ match: "*", mode: "name" }], false);
+{ const k0 = KNOWN.of; KNOWN.of = (x: Sess | null): string[] => ["kp:review", "solo-sk"];
+  const ks: Sess = newSess("claude", "known", "/k/known.jsonl", false);
+  const ke: Ev[] = [{ kind: "user", text: "review kp:review and solo-sk, then x-solo-sk-2", ts: "", id: "", full: "" }];
+  hideEvents(ks, ke, 0); KNOWN.of = k0;
+  eq("known names: a plugin skill's dir stays a word", ke[0] ? ke[0].text : "", "review " + skillVis("kp:review").shown + " and " + skillVis("solo-sk").shown + ", then x-" + skillVis("solo-sk").shown + "-2"); }
+// a word only guessed to be a skill from its shape ("/deploy", "$TMP" under "*") hides as a word, never as a part of one
+setVis([{ match: "*", mode: "name" }], false);
+eq("* name: a reference's word is no part of another", scrub("run /deploy, then deploy and x-deploy-y, $TMP_DIR or $TMP"), "run /" + skillVis("deploy").shown + ", then " + skillVis("deploy").shown + " and x-deploy-y, $" + skillVis("TMP_DIR").shown + " or $" + skillVis("TMP").shown);
+// under a broad rule a known skill's name is a part of a word from 5 characters: a shorter one is mostly a word of its own
+setVis([{ match: "*", mode: "name" }], false);
+{ const k0 = KNOWN.of; KNOWN.of = (x: Sess | null): string[] => ["run", "lint-x"];
+  const ks: Sess = newSess("claude", "short", "/k/short.jsonl", false);
+  const ke: Ev[] = [{ kind: "user", text: "run dry-run, lint-x and pre-lint-x", ts: "", id: "", full: "" }];
+  hideEvents(ks, ke, 0); KNOWN.of = k0;
+  const fr = skillVis("run").shown; const fl = skillVis("lint-x").shown;
+  eq("known short name: a word, no part", ke[0] ? ke[0].text : "", fr + " dry-run, " + fl + " and pre-" + fl); }
 // a text scrubbed twice (a title, then its JSON line) keeps the fakes the first scrub put in
 setVis([{ match: "*", mode: "name" }], false);
 { const s1 = scrub("run /deploy-x, $other-y and p:q-z then /deploy-x"); eq("scrub twice = once", scrub(s1), s1); ok("scrub hid the refs", s1.indexOf("deploy-x") < 0 && s1.indexOf("other-y") < 0 && s1.indexOf("p:q-z") < 0, s1); }
