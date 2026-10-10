@@ -116,8 +116,8 @@ export const VIS_SURFACES: string[] = ["src/features/skills/cli.ts", "src/featur
 // calls that hand out skill data already through skillVis: the skill marks (skillMarks), the filter's skill rows, the read
 // model's visible rows and loads, the hooked events; or a "skillVis: <why>" comment for a pure function over such data
 export const VIS_SOURCES = ["skillVis: ", "skillVis(", "textShown(", "visRows(", "visLoads(", "marksOf(", "skillRows(", "skillsAt(", "openAt(", "hideEvents", "callVis(", "scrub("];
-// modules that read skill data but print none: the engine and its storage, the event kinds, the fleet's and hub's merges
-// (names stay as the sending host showed them; this machine's surfaces apply its own rules on top)
+// modules that read skill data but print none: the engine and its storage, a parser's unload, the event kinds, the fleet's
+// and hub's merges (names stay as the sending host showed them; this machine's surfaces apply its own rules on top)
 export const VIS_DATA: string[] = ["src/features/usage/codec.ts", "src/features/usage/record.ts", "src/features/usage/skillrec.ts", "src/model/kinds.ts",
-  "src/features/fleet/merge.ts", "src/features/fleet/model.ts", "src/features/skills/vis.ts"];
-export const SKILL_DATA_RE = /\bSkLoad\b|\bskillRows\(|\bskillsAt\(|"skill:load"|\bvisRows\(|\bvisLoads\(|\bskillLoads\(|\bskillTable\(|\bskillMarks\(|\bloadsAt\(|\bopenAt\(|\.sa\b/;
+  "src/harness/kiro.ts", "src/features/fleet/merge.ts", "src/features/fleet/model.ts", "src/features/hub/map.ts", "src/features/skills/vis.ts"];
+export const SKILL_DATA_RE = /\bSkLoad\b|\bskillRows\(|\bskillsAt\(|"skill:load"|\bvisRows\(|\bvisLoads\(|\bskillLoads\(|\bskillTable\(|\bskillMarks\(|\bloadsAt\(|\bopenAt\(|\.sa\b|\.sk\b/;
