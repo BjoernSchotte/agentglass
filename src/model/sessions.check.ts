@@ -3,7 +3,7 @@
 import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { newSess, type Sess } from "./types.ts";
 import { H } from "../hooks.ts";
-import { sessions, probeLive, scan, SCANNED } from "./sessions.ts";
+import { sessions, probeLive, scan, SCANNED, loadTail, activity } from "./sessions.ts";
 import { CLAUDE } from "../util/fs.ts";
 
 let bad = 0;
@@ -51,6 +51,16 @@ eq("meta per listed session per scan", String(metas - m1), String(sessions.size)
 const one = sessions.get(u(1)); if (one) { one.title = "real title"; one.mtime = 1; } // a writer that set a field without applyMeta, on an old log
 scan(); eq("faked on the next scan", one ? one.title : "", "F-real title");
 H.meta.pop();
+// a tail with no whole record yet (the agent is writing a large line; a source whose read failed): the last events stay
+// and the next pass reads again — activity never blinks to ""
+const pt = pd + "/00000009-aaaa-bbbb-cccc-dddddddddddd.jsonl";
+writeFileSync(pt, "{\"type\":\"user\",\"sessionId\":\"t\",\"cwd\":\"/tmp\",\"timestamp\":\"2026-10-10T00:00:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"hello tail\"}}\n");
+const ts = newSess("claude", "t", pt, false); ts.size = statSync(pt).size; ts.mtime = statSync(pt).mtimeMs; ts.pid = 1;
+loadTail(ts); eq("tail read", activity(ts), "❯ hello tail");
+appendFileSync(pt, "{\"type\":\"assistant\",\"x\":\"" + "y".repeat(120000)); ts.size = statSync(pt).size;
+loadTail(ts); eq("partial tail keeps the last events", activity(ts), "❯ hello tail");
+appendFileSync(pt, "\"}\n{\"type\":\"user\",\"sessionId\":\"t\",\"cwd\":\"/tmp\",\"timestamp\":\"2026-10-10T00:00:01.000Z\",\"message\":{\"role\":\"user\",\"content\":\"next\"}}\n"); ts.size = statSync(pt).size;
+loadTail(ts); eq("the next whole record shows", activity(ts), "❯ next");
 rmSync(CLAUDE, { recursive: true, force: true }); scan(); eq("all gone", String(sessions.size), "0");
 console.log(bad ? bad + " failed" : "sessions: all checks passed");
 if (bad) process.exit(1);
