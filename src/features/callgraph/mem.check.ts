@@ -11,7 +11,8 @@ import { H, viewOf } from "../../hooks.ts";
 import { buf } from "../../ui/screen.ts";
 import { onInput } from "../../input.ts";
 import { selfRssMb } from "../../util/selfmem.ts";
-import { VF_STORE, vfSet, vfClear, resetForTest } from "../../ui/evfilter.ts";
+import { VF_STORE, vfSet, vfClear, resetForTest, MASK_STATS } from "../../ui/evfilter.ts";
+import { KIND_STATS } from "../../model/kinds.ts";
 import { openGraph, cgState, cgSelect, graphAnchor } from "./view.ts";
 import "../evkinds.ts";
 
@@ -76,13 +77,16 @@ else {
   ok("error in a long result's tail", err.get("npm test") === 1);
   ok("error at a long result's head", err.get("/w/a.ts") === 1);
   ok("a long ok result", err.get("ls") === 0);
-  // frame time, with and without an event-kind filter
+  // frames redo no classification or masking (deterministic), and stay well clear of slow (loose: CI runners vary 10×)
   let t0 = Date.now(); for (let i = 0; i < 10; i++) frame(); const plain = (Date.now() - t0) / 10;
-  vfSet("callgraph", "event.kind is shell"); frame();
+  vfSet("callgraph", "event.kind is shell"); onInput("K"); frame();
+  const k0 = KIND_STATS.events; const m0 = MASK_STATS.built;
   t0 = Date.now(); for (let i = 0; i < 10; i++) frame(); const filt = (Date.now() - t0) / 10;
-  vfClear("callgraph");
-  ok("a frame ≤ 40 ms (got " + String(plain) + ")", plain <= 40);
-  ok("a filtered frame ≤ 40 ms (got " + String(filt) + ")", filt <= 40);
+  ok("frames with a filter and the chip bar classify nothing again (" + String(KIND_STATS.events - k0) + " events)", KIND_STATS.events === k0);
+  ok("frames with a filter build no mask (" + String(MASK_STATS.built - m0) + ")", MASK_STATS.built === m0);
+  onInput("esc"); vfClear("callgraph");
+  ok("a frame ≤ 250 ms (got " + String(plain) + ")", plain <= 250);
+  ok("a filtered frame ≤ 250 ms (got " + String(filt) + ")", filt <= 250);
   if (process.env.CG_VERBOSE) console.log("open +" + String(r1 - r0) + " MB · frame " + String(plain) + " ms · filtered " + String(filt) + " ms");
   // ↵ on a long call: the detail has its full result; r anchors on the full events
   let sel = -1; for (let i = 0; i < st.spans.length; i++) if (st.spans[i].arg === "ls") sel = i;
