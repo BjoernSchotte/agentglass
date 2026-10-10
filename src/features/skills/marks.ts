@@ -47,7 +47,7 @@ registerMarks({ kind: "skill", glyph: "✧", color: (): string => fg(C.cyan), of
 const knownAt = new Map<string, number>();
 KNOWN.of = (s: Sess): string[] => {
   const g = gen(s); if (knownAt.get(s.path) === g) return [];
-  knownAt.set(s.path, g); const o: string[] = []; for (const a of accsOf(s)) for (const l of a.sk) o.push(l.name);
+  knownAt.set(s.path, g); const o: string[] = []; for (const a of accsOf(s)) for (const l of skOf(a)) o.push(l.name);
   return o;
 };
 

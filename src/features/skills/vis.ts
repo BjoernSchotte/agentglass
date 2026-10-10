@@ -120,4 +120,4 @@ export const VIS_SOURCES = ["skillVis: ", "skillVis(", "textShown(", "visRows(",
 // and hub's merges (names stay as the sending host showed them; this machine's surfaces apply its own rules on top)
 export const VIS_DATA: string[] = ["src/features/usage/codec.ts", "src/features/usage/record.ts", "src/features/usage/skillrec.ts", "src/model/kinds.ts",
   "src/harness/kiro.ts", "src/features/fleet/merge.ts", "src/features/fleet/model.ts", "src/features/hub/map.ts", "src/features/skills/vis.ts"];
-export const SKILL_DATA_RE = /\bSkLoad\b|\bskillRows\(|\bskillsAt\(|"skill:load"|\bvisRows\(|\bvisLoads\(|\bskillLoads\(|\bskillTable\(|\bskillMarks\(|\bloadsAt\(|\bopenAt\(|\.sa\b|\.sk\b/;
+export const SKILL_DATA_RE = /\bSkLoad\b|\bskillRows\(|\bskillsAt\(|"skill:load"|\bvisRows\(|\bvisLoads\(|\bskillLoads\(|\bskillTable\(|\bskillMarks\(|\bloadsAt\(|\bopenAt\(|\.sa\b|\.sk\b|\bskOf\(|\bsaOf\(|\bsaW\(|\bhasSk\(/; // the lazy accessors too (record.ts)
