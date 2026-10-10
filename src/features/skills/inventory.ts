@@ -62,13 +62,16 @@ export function inventory(repos: string[], home = HOME): InvSkill[] {
   scanDir(out, join(home, ".gemini", "skills"), "gemini", "user", "");
   scanDir(out, join(home, ".config", "opencode", "skills"), "opencode", "user", "");
   scanDir(out, join(home, ".pi", "agent", "skills"), "pi", "user", "");
-  for (const r of repos) {
-    if (!r || r === home) continue;
-    scanDir(out, join(r, ".claude", "skills"), "claude", "project", "");
-    scanDir(out, join(r, ".agents", "skills"), "codex", "project", "");
-    scanDir(out, join(r, ".opencode", "skills"), "opencode", "project", "");
-    scanDir(out, join(r, ".gemini", "skills"), "gemini", "project", "");
-  }
+  for (const r of repos) projectScan(out, r, home);
   MEMO.at = Date.now(); MEMO.key = key; MEMO.out = out;
   return out;
 }
+function projectScan(out: InvSkill[], r: string, home: string): void {
+  if (!r || r === home) return;
+  scanDir(out, join(r, ".claude", "skills"), "claude", "project", "");
+  scanDir(out, join(r, ".agents", "skills"), "codex", "project", "");
+  scanDir(out, join(r, ".opencode", "skills"), "opencode", "project", "");
+  scanDir(out, join(r, ".gemini", "skills"), "gemini", "project", "");
+}
+// one project's own skills (not memoized: a caller asks once per project)
+export function projectSkills(r: string, home = HOME): InvSkill[] { const out: InvSkill[] = []; projectScan(out, r, home); return out; }

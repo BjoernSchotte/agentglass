@@ -16,6 +16,7 @@ import { sessions, loadHead, loadTail, titleOf } from "../../model/sessions.ts";
 import { marksOf } from "../../model/marks.ts";
 import { ledger, complete, accsOf } from "../usage/ledger.ts";
 import { accIn, accOut } from "../usage/codec.ts";
+import { skNames, skOf } from "../usage/record.ts";
 import { parse } from "../../util/json.ts";
 import { openTranscript, renderTranscript } from "../../ui/transcript.ts";
 import { skillLanes, skillAgg } from "../callgraph/model.ts";
@@ -132,6 +133,10 @@ const wsurf: [string, () => string][] = [
   ["view skill", (): string => { let v = ""; for (const m of marksOf(s, ["skill:load"])) { const l = loadOf(s, m); if (l) { openSkillView(s, l); v += skillViewLines(100).join("\n"); S.mode = "list"; } } return v; }],
 ];
 for (const [what, f] of wsurf) { ok("warm start: " + what + " reads cache text", warm(), ""); const t = f(); ok("warm start: " + what + " output", t.length > 0, ""); hidden("warm start: " + what, t); }
+{ // the names of a warm start's loads come from the cache text's name pool, no load decoded (KNOWN, marks.ts)
+  const b = warm() ? ledger.get(s.path) : undefined; const ns = b ? skNames(b) : [];
+  ok("warm start: skNames from the name pool", ["pub", "acme-x", "secret", "notes"].every((n: string) => ns.indexOf(n) >= 0) && b !== undefined && b.skv !== "", ns.join(","));
+  ok("warm start: skNames = the decoded names", b !== undefined && ns.join(",") === skOf(b).map((l) => l.name).filter((n: string, i: number, a: string[]) => a.indexOf(n) === i).join(","), ns.join(",")); }
 ok("warm start: Stats panel fake and (hidden)", warm() && ((): boolean => { openSkillsPanel(SC, ""); const t = panelLines(120, 30).join("\n"); S.mode = "list"; return t.indexOf(fake) >= 0 && t.indexOf("(hidden)") >= 0; })(), "");
 
 // ── without rules nothing is hidden locally ──

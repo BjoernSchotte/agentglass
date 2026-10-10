@@ -24,6 +24,13 @@ eq("text edges", scrub("xyz"), fx);
 setVis([{ match: "(odd)", mode: "omit" }, { match: "a.b", mode: "name" }], false);
 eq("a name that starts with a non-word char", scrub("see (odd) here"), "see (hidden) here");
 eq("a name with a dot", scrub("use a.b, not a.bc"), "use " + skillVis("a.b").shown + ", not a.bc");
+// hidden names that overlap ("X:a" ends inside "a.b" in "X:a.b"): the longest at the first position wins and the other's
+// rest goes too — no ".b" left behind
+setVis([{ match: "X:a", mode: "name" }, { match: "a.b", mode: "name" }, { match: "b.c", mode: "omit" }], false);
+{ const fa = skillVis("X:a").shown; const fb = skillVis("a.b").shown;
+  eq("overlapping names: both go", scrub("load X:a.b now"), "load " + fa + fb + " now");
+  eq("overlapping names: a chain", scrub("X:a.b.c!"), fa + fb + "(hidden)!");
+  eq("overlapping names: apart", scrub("X:a, a.b"), fa + ", " + fb); }
 setVis([{ match: "*", mode: "omit" }], false);
 eq("* omit keeps prose and finds refs", scrub("run /deploy then $other and p:q at 10:30 in skills/dir/x"), "run /(hidden) then $(hidden) and (hidden) at 10:30 in skills/(hidden)/x");
 eq("* omit: a file:line, host:port or time is no plugin skill", scrub("see app.ts:57, localhost:4318 at T09:30 — up 57 hours"), "see app.ts:57, localhost:4318 at T09:30 — up 57 hours");

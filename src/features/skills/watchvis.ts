@@ -9,7 +9,7 @@ import { skillPath, skillReadCmd, fnvFeed, FNV1 } from "../usage/skillrec.ts";
 import type { Ev, Sess } from "../../model/types.ts";
 import { H, READ } from "../../hooks.ts";
 import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN, VIS } from "./vis.ts";
-import { inventory } from "./inventory.ts";
+import { inventory, projectSkills } from "./inventory.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
 export function callSkill(tool: string, args: string): string {
@@ -122,14 +122,16 @@ function hides(w: string, strong: boolean): boolean {
   GW.add(w); if (v & 1) GS.add(w); if (v) GA.add(w);
   return strong ? (v & 1) !== 0 : v !== 0;
 }
-// installed plugin skills whose name has a ":" before a non-letter ("p:3d"): ref() reads those as a file:line, so they are
-// looked up by name (the inventory, scanned at most once per hour; only under a broad rule and for such a word)
-export const INSTALLED = { of: (): string[] => { const o: string[] = []; for (const s of inventory([])) o.push(s.name); return o; } };
+// the installed skills' names (user, plugins, and these projects'; the inventory scans at most once per hour). Plugin skills
+// whose name has a ":" before a non-letter ("p:3d"): ref() reads those as a file:line, so they are looked up by name (only
+// under a broad rule and for such a word); marks.ts's KNOWN notes them all
+export const INSTALLED = { of: (repos: string[]): string[] => { const o: string[] = []; for (const s of inventory(repos)) o.push(s.name); return o; },
+  project: (repo: string): string[] => { const o: string[] = []; for (const s of projectSkills(repo)) o.push(s.name); return o; } };
 const ODDREF = new Set<string>(); let oddGen = -1;
 function oddRef(w: string): boolean {
   if (oddGen !== VIS.gen) {
     oddGen = VIS.gen; ODDREF.clear();
-    for (const nm of INSTALLED.of()) for (let c = nm.indexOf(":"); c > 0; c = nm.indexOf(":", c + 1)) if (!alpha(nm.charCodeAt(c + 1))) { ODDREF.add(nm); break; }
+    for (const nm of INSTALLED.of([])) for (let c = nm.indexOf(":"); c > 0; c = nm.indexOf(":", c + 1)) if (!alpha(nm.charCodeAt(c + 1))) { ODDREF.add(nm); break; }
   }
   return ODDREF.has(w);
 }
@@ -188,8 +190,22 @@ function globWords(t: string): void {
     }
   }
 }
+// the longest hidden name starting at word i (its first word ends at e): its end (-1: none), its replacement in AT.rep
+const AT = { rep: "" };
+function nameAt(t: string, i: number, e: number, n: number): number {
+  const f = t.charCodeAt(i);
+  if (e - i < LEADS.min || e - i > LEADS.max || (f < 128 && !LEADS.first[f])) return -1;
+  const lead = t.slice(i, e); const ls = BY.get(lead); if (!ls) return -1;
+  for (const l of ls) {
+    SCRUB_STAT.cmp++;
+    const ke = i + l; if (ke > n || (ke < n && wc(t.charCodeAt(ke)))) continue; // past the text, or no word's end
+    const rep = SCRUB.get(ke === e ? lead : t.slice(i, ke));
+    if (rep !== undefined) { AT.rep = rep; return ke; }
+  }
+  return -1;
+}
 // the text with every hidden name (as a whole word) replaced: one pass over the text's words, the longest hidden name
-// starting at a word wins
+// starting at a word wins; a hidden name starting inside it and ending past it ("a.b" in "X:a.b" after "X:a") goes too
 export function scrub(t: string): string {
   seed();
   if (!t) return t;
@@ -202,14 +218,15 @@ export function scrub(t: string): string {
     while (i < n) {
       if (!wc(t.charCodeAt(i))) { i++; continue; }
       let e = i + 1; while (e < n && wc(t.charCodeAt(e))) e++;
-      const f = t.charCodeAt(i);
-      const lead = e - i < LEADS.min || e - i > LEADS.max || (f < 128 && !LEADS.first[f]) ? "" : t.slice(i, e);
-      const ls = lead ? BY.get(lead) : undefined;
-      if (ls) for (const l of ls) {
-        SCRUB_STAT.cmp++;
-        const ke = i + l; if (ke > n || (ke < n && wc(t.charCodeAt(ke)))) continue; // past the text, or no word's end
-        const rep = SCRUB.get(ke === e ? lead : t.slice(i, ke));
-        if (rep !== undefined) { r.push(t.slice(last, i)); r.push(rep); last = ke; e = ke; break; }
+      let ke = nameAt(t, i, e, n);
+      if (ke >= 0) {
+        r.push(t.slice(last, i)); r.push(AT.rep);
+        for (let j = e; j < ke; j++) { // the words inside the name: one may start an overlapping one
+          if (!wc(t.charCodeAt(j)) || wc(t.charCodeAt(j - 1))) continue;
+          let we = j + 1; while (we < n && wc(t.charCodeAt(we))) we++;
+          const oe = nameAt(t, j, we, n); if (oe > ke) { r.push(AT.rep); ke = oe; }
+        }
+        last = ke; e = ke;
       }
       i = e;
     }
@@ -237,14 +254,14 @@ export function callVis(tool: string, args: string): { drop: boolean; args: stri
   return { drop: false, args: tool === "Skill" || tool === "activate_skill" ? v.shown : scrub(args), hide: v.mode === "show" ? "" : "(" + textHiddenWhy(n) + ")" };
 }
 
-// the skills a session's ledger knows it loaded, names not yet noted only (features/skills/marks.ts sets it): a broad glob
-// rule ("*", "a*") hides a prose word only once it is known as a skill, and a title or prompt may name one long before
-// the load is read
-export const KNOWN = { of: (s: Sess): string[] => [] };
+// the skill names agentglass knows (installed, or loaded or listed by any log in the ledger), new ones only
+// (features/skills/marks.ts sets it; s: the session being read): a broad glob rule ("*", "a*") hides a prose word only
+// once it is known as a skill, and a title or prompt may name one long before its load is read, or in another log
+export const KNOWN = { of: (s: Sess | null): string[] => [] };
 let weakGen = -1; let weakOn = false;
 function known(s: Sess | null): void {
   if (weakGen !== VIS.gen) { weakGen = VIS.gen; weakOn = hideRules().some((r: HideRule) => (r.mode === "name" || r.mode === "omit") && /[*?]/.test(r.match) && r.match.replace(/[*?]/g, "").length < 3); }
-  if (s && weakOn) for (const n of KNOWN.of(s)) note(n);
+  if (weakOn) for (const n of KNOWN.of(s)) note(n);
 }
 // OpenCode logs a skill the user activates as a meta event "skill: <name>" (harness/opencode.ts): a load like a Skill call
 function metaSkill(e: Ev): string { return e.kind === "meta" && e.text.startsWith("skill: ") ? e.text.slice(7).trim() : ""; }
