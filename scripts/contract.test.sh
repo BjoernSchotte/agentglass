@@ -21,7 +21,7 @@ cl "$h/.claude/projects/-w-p1" "$A" "$p1"
 cl "$h/.claude/projects/-w-p1" "$B" "$p1"
 # a resumed session copied into a second project dir: the same id twice; the copy written last is the session
 cl "$h/.claude/projects/-w-p2" "$B" "$p2"
-touch -t "$(date +%Y%m%d)0001" "$h/.claude/projects/-w-p1/$B.jsonl"
+touch -t "$(python3 -c 'import datetime as d; print((d.datetime.now() - d.timedelta(hours=2)).strftime("%Y%m%d%H%M"))')" "$h/.claude/projects/-w-p1/$B.jsonl" # older than the p2 copy, also right after midnight
 run() { env -i HOME="$h" PATH="$PATH" AGENTGLASS_CACHE_DIR="$t/cache" AGENTGLASS_CONFIG="$t/config.json" AGENTGLASS_RULES=/nonexistent \
   AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 AGENTGLASS_AGENT=0 AGENTGLASS_HERDR=off "$t/ag" "$@"; }
 # types <file> <field:type,…>: every row (a JSON object or a list of them) has each field with that type

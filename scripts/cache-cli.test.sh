@@ -49,11 +49,11 @@ size=$(wc -c < "$f" | tr -d ' ')
 eq "cost ledger offset" "$(off "$c/ledger.jsonl")" "$size"
 eq "cost calls offset" "$(off "$c"/calls/*.json)" "$size"
 # errors reads the rows from the cache: the failed call from before and the one after the growth
-e=$(run errors --format json --since 1d)
+e=$(run errors --format json --since 2d) # 2d: a run across midnight still holds its rows (the window counts calendar days)
 echo "$e" | grep -q 'npm test' || { echo "FAIL errors lost the cached row"; echo "$e"; fail=1; }
 echo "$e" | grep -q 'make' || { echo "FAIL errors lacks the new row"; echo "$e"; fail=1; }
 # triage too reads the cached rows of the sessions in its period
-tr=$(run triage --preset errors --days 1 --json)
+tr=$(run triage --preset errors --days 2 --json)
 echo "$tr" | grep -q '"selection":{"expr":"status is error","n":2}' || { echo "FAIL triage over cached rows"; echo "$tr"; fail=1; }
 
 # nothing new to index (and the head/tail memos of this log already kept): the cache is not rewritten

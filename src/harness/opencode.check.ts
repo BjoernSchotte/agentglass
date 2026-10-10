@@ -196,6 +196,25 @@ scan();
 ok("recycled daemon pid: an old suspended turn is not busy", !busy(sess(P2)), "busy");
 reg((pid: number) => pid === ME, isOC); scan();
 ok("the real daemon again: busy", busy(sess(P2)), "idle");
+// a session left suspended by a run that was stopped mid-turn (Ctrl-C on `opencode run`) while the daemon is up: the daemon
+// does not run it — its active list decides (cached per DB change), not the suspended flag; no answer = as before
+{
+  const fc = dir + "/curl";
+  writeFileSync(fc, ["#!/bin/sh", "[ \"$1\" = -V ] && { echo curl 8; exit 0; }", "cfg=$(cat)", "url=$(printf '%s\\n' \"$cfg\" | sed -n 's/^url = \"\\(.*\\)\"$/\\1/p'); p=${url#http://*/}",
+    "case \"$p\" in api/info) cat " + dir + "/info.json ;; api/session/active) cat " + dir + "/active.json ;; *) exit 22 ;; esac", ""].join("\n"));
+  chmodSync(fc, 493); process.env["AGENTGLASS_CURL"] = fc;
+  writeFileSync(dir + "/info.json", JSON.stringify({ version: "2.0.19", pid: ME }));
+  writeFileSync(dir + "/active.json", "{\"data\":{}}");
+  writeFileSync(dir + "/state/opencode/service.json", JSON.stringify({ id: "x", version: "2.0.19", url: "http://127.0.0.1:4242", pid: ME, password: "keepme" }));
+  reg((pid: number) => pid === ME, isOC); scan();
+  ok("ghost: a suspended session the daemon does not run is not busy", !busy(sess(P2)), "busy");
+  ok("ghost: nor live", reg((pid: number) => pid === ME, isOC).every((l: Live) => l.id !== P2), "");
+  writeFileSync(dir + "/active.json", JSON.stringify({ data: { [P2]: { type: "running" } } }));
+  sql("update session_v2 set time_updated=time_updated+1 where id='" + P2 + "'"); // the daemon picks it up: it writes
+  reg((pid: number) => pid === ME, isOC); scan();
+  ok("the daemon runs it again: busy and live", busy(sess(P2)) && reg((pid: number) => pid === ME, isOC).some((l: Live) => l.id === P2), "idle");
+  delete process.env["AGENTGLASS_CURL"]; daemon(ME); reg((pid: number) => pid === ME, isOC); scan();
+}
 sql("update session_message set data=json_set(data,'$.time.completed',1790688301000) where id='msg_run'");
 sql("update session_v2 set time_suspended=null where id='" + P2 + "'");
 scan();
