@@ -1711,3 +1711,7 @@ notifications, trash) sit behind the `Platform` port in [`src/platform/`](src/pl
 ## License
 
 [Apache-2.0](LICENSE)
+
+Vendored: [Monocypher](https://monocypher.org) 4.0.2 (the team crypto, `src/features/team/crypto/monocypher.{c,h}`,
+unmodified), 2-clause BSD or CC0 at your choice — see
+[`LICENCE.monocypher.md`](src/features/team/crypto/LICENCE.monocypher.md).

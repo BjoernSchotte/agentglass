@@ -6,8 +6,14 @@ here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d); trap '[ "$(exec sh -c "e
 fail=0; eq() { [ "$2" = "$3" ] || { echo "FAIL $1: got '$2' want '$3'"; fail=1; }; }
 # stub <file> <version>: answers --version, --version --json (linux-x64) and --json
 stub() { printf '#!/bin/sh\ncase "$*" in "--version --json") echo '"'"'{"version":"%s","platform":"linux-x64"}'"'"';; --version) echo %s;; *) echo "[]";; esac\n' "$2" "$2" > "$1"; chmod 755 "$1"; }
-pk() { (cd "$t/w" && OBJDUMP=true sh "$here/scripts/package.sh" linux-x64 2026.10.11 > "$t/out" 2>&1); }
+# nm stub: the team crypto symbol is there unless $t/nocrypto exists
+printf '#!/bin/sh\n[ -e "%s/nocrypto" ] || echo "0000000000001000 T ag_lock"\n' "$t" > "$t/nm"; chmod 755 "$t/nm"
+pk() { (cd "$t/w" && OBJDUMP=true NM="$t/nm" sh "$here/scripts/package.sh" linux-x64 2026.10.11 > "$t/out" 2>&1); }
 mkdir -p "$t/w"; stub "$t/w/agentglass" 2026.10.11
+touch "$t/nocrypto"
+if pk; then echo "FAIL packed a binary without the team crypto"; fail=1; fi
+eq "missing team crypto named" "$(cat "$t/out")" "package.sh: linux-x64 binary has no team crypto (build.sh --ffi)"
+rm "$t/nocrypto"
 if pk; then echo "FAIL packed without agentglass-mcp"; fail=1; fi
 eq "missing agentglass-mcp named" "$(cat "$t/out")" "package.sh: agentglass-mcp missing (build.sh builds it beside agentglass)"
 stub "$t/w/agentglass-mcp" 2026.10.10

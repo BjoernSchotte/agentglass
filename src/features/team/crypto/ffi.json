@@ -1,0 +1,17 @@
+{
+  "ffi_format": 1,
+  "functions": [
+    { "name": "agSignKeypair", "symbol": "ag_sign_keypair", "params": ["bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agSign", "symbol": "ag_sign", "params": ["bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agVerify", "symbol": "ag_verify", "params": ["bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agX25519Keypair", "symbol": "ag_x25519_keypair", "params": ["bytes", "bytes"], "returns": "i32" },
+    { "name": "agX25519", "symbol": "ag_x25519", "params": ["bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agSeal", "symbol": "ag_seal", "params": ["bytes", "bytes", "bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agSealOpen", "symbol": "ag_seal_open", "params": ["bytes", "bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agLock", "symbol": "ag_lock", "params": ["bytes", "bytes", "bytes", "bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agUnlock", "symbol": "ag_unlock", "params": ["bytes", "bytes", "bytes", "bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agKdf", "symbol": "ag_kdf", "params": ["bytes", "bytes", "bytes"], "returns": "i32" },
+    { "name": "agWipe", "symbol": "ag_wipe", "params": ["bytes"], "returns": "i32" }
+  ],
+  "libraries": ["agcrypto.c"]
+}

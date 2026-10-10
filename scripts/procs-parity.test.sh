@@ -16,6 +16,8 @@ live() { # live [ps]: the session rows as CSV, sorted (HOME: $lh, default $h)
     AGENTGLASS_THEME_FILE="$t/theme" AGENTGLASS_PRICES="$t/prices.json" AGENTGLASS_OTLP_DIR="$t/otlp" ${1:+AGENTGLASS_PROCS=ps} \
     "$AGENTGLASS_BIN" --json --fields id,harness,live,pid,status --format csv | sort
 }
+# every fake agent up (Codex opens its rollout, Gemini sits in its cwd) before comparing: under load they start late
+i=0; while [ "$(live | grep -c ',true,' || true)" != 3 ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
 a=$(live ps); b=$(live)
 [ "$a" = "$b" ] || { echo "FAIL ps and native differ:"; echo "--- AGENTGLASS_PROCS=ps"; echo "$a"; echo "--- native"; echo "$b"; fail=1; }
 n=$(printf '%s\n' "$b" | grep -c ',true,' || true)

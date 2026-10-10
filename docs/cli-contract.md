@@ -38,6 +38,7 @@ Types below: `string`, `number`, `bool`, `object|null`, `string|null`, `number|n
 |---|---|---|
 | `version` | string | the agentglass version (CalVer, e.g. `2026.10.6`) |
 | `contract` | number | this contract's number |
+| `crypto` | string | the team crypto library when its self-test passes (`monocypher 4.0.2`), else `crypto: …` naming what failed |
 
 Exit 0.
 
@@ -58,7 +59,8 @@ inside an agent shell.
 | `cwd` | string | the session's working directory |
 | `live` | bool | an agent process runs it |
 | `pid` | number | the agent's process id, 0 when not live |
-| `status` | string | how the process was linked or what the agent's registry says (e.g. `open`, `busy`, `idle`); `""` when not live — free text, do not switch on it |
+| `status` | string | how the process was linked or what the agent's registry says (e.g. `open`, `busy`, `idle`); `""` when not live — free text, do not switch on it; use `state` |
+| `state` | string | `busy` (mid-turn), `idle`, `attention`, `stuck` or `ended` — the same as the filter's `state` attribute, for every harness |
 | `costUsd` | number\|null | API-equivalent cost in USD; null = not priced |
 | `twins` | number | other rows that are this same session (Claude: one session under several project dirs); 0 = none |
 | `attention` | bool | an alert at the degraded level is active and not acknowledged (approval, turn finished, …) |
@@ -205,6 +207,44 @@ The command (an argv, no shell) gets one alert as a JSON line on stdin, with at 
 The command's environment is reduced to `PATH`, `HOME`, locale, desktop-bus and proxy variables plus
 `AGENTGLASS_RULE`, `AGENTGLASS_SEVERITY`, `AGENTGLASS_STATE`, `AGENTGLASS_SESSION`, `AGENTGLASS_HARNESS`,
 `AGENTGLASS_VALUE`; it is killed after 10 s.
+
+## Protocol `agentglass-serve/1` (`agentglass serve --stdio`)
+
+`agentglass serve --stdio [--redact] [--read-only]` speaks a persistent JSON-lines protocol on stdin/stdout; it is
+the data source of `agentglass-web` and open to integrations. Its number is `proto` (now **1**), separate from
+`contract`; the session rows inside it are contract rows. Additive changes (a method, a topic, a field, an error code)
+keep `proto`; consumers ignore what they do not know. The process exits 0 when stdin closes; warnings go to stderr.
+
+- **Framing**: one JSON object per line (UTF-8, `\n`), at most 4 MiB; a longer line is dropped and answered with
+  `{"id":null,"err":{"code":"oversize",…}}`, and the stream continues.
+- **Requests** `{"id": <string|number>, "m": "<method>", "p": {…}}` → `{"id":…, "ok": {…}}` or
+  `{"id":…, "err": {"code", "msg", "hint"?}}` (`id` null when the line had none). Answers come in request order.
+- **`hello` first**: `{"m":"hello","p":{"client":"…","want":1}}` → `{proto, contract, version, readOnly, redact, caps}`;
+  `want` above `proto` → `proto` error ("update agentglass"); any other method before `hello` → `proto` error.
+
+| Method | Params | Result |
+|---|---|---|
+| `meta` | none | `{version, contract, proto, caps[], readOnly, redact, harnesses[], teams[]}` |
+| `sessions.list` | `filter` (the filter language: `live is true`, `harness is codex and cost > 1`; a bare word searches title, path, id), `limit` 1–1000 (200), `cursor`, `subagents` bool | `{data: [--json rows], at (ms), gen, next: cursor\|null}` |
+| `sessions.get` | `ref` (required): `<harness>:<id>`, an id or a unique prefix of 6+ characters | the `session <ref>` object (`via` = `"ref"`) |
+| `sub` | `topic`: `sessions`; `filter`, `limit`, `subagents` as `sessions.list`; `from` (an event id) | `{sub, resumed}`, then events |
+| `unsub` | `sub` | `{}` |
+
+- **Rows**: `sessions.list` rows equal `agentglass --json` rows for the same filter (the conformance test compares
+  them). `gen` moves only when the rows' inputs moved; `next` pages newest first, after the last row shown.
+- **Events** `{"sub": "s1", "ev": "<epoch>-<seq>", "k": "snapshot"|"patch"|"hb", "d": {…}}`: `snapshot`
+  `d = {data, at, gen, next: null}` (the topic's rows, each with a `key`), `patch` `d = {upsert: [rows], remove: [keys]}`,
+  `hb` (no `d`) after 25 s without an event. A row's `key` is `<harness>:<id>` (copies of one session in one list:
+  `<harness>:<id>@<path>`); order rows by `updated`, newest first. Patches follow the engine's cadence (1.5 s while
+  subscribed; no cadence without subscriptions).
+- **Resume**: `sub` with `from` = the last event id seen. The process keeps each topic's last 1,000 events (10 minutes):
+  inside → the missed events, `resumed: true`; outside, another process (`epoch`) or a topic that was closed meanwhile →
+  a `snapshot`, `resumed: false`. A topic closes with its last `unsub`.
+- **Errors** (`code`): `proto`, `bad_request` (not a request object), `unknown_method`, `oversize`, `bad_param`,
+  `bad_filter` (`msg` names the column, `hint` the caret line), `not_found`, `ambiguous`, `no_team`, `too_many` (64
+  subscriptions per process are open: `unsub` one first), `read_only`
+  (`cmd`/`confirm`: commands are not in this release), `internal`.
+- `--redact` applies to every answer and event, as for `--json`.
 
 ## MCP server (`agentglass-mcp`)
 

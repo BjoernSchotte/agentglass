@@ -201,7 +201,9 @@ export function loadTail(s: Sess, lite = false): void {
   const r = src.lines(s, src.align(s, Math.max(0, s.size - window(src, 98304))), s.size);
   const evs: Ev[] = [];
   for (const l of r.lines) parseEvents(s.h, l, evs, s);
-  s.evs = evs.slice(-60).map(keepEv);
+  // a tail without an event (a line larger than the window or still being written, a source whose read failed): the last
+  // events stay until the log grows again — the activity must not blink to ""
+  if (evs.length || !s.evs.length) s.evs = evs.slice(-60).map(keepEv);
   if (!s.prompt) for (const e of evs) if (e.kind === "user") { s.prompt = firstLine(e.text, 200); break; } // head was read before the first prompt
   const f: string[] = []; const f1 = fieldsOf(s);
   for (let i = 0; i < HEAD_FIELDS.length; i++) if (f1[i] !== f0[i]) { f.push(HEAD_FIELDS[i] ?? ""); f.push(own(f1[i] ?? "")); }

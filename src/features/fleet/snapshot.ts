@@ -17,7 +17,7 @@ import { sha256Hex } from "../../util/sha256.ts";
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { REDACT } from "../redact-on.ts";
 import { discover, jsonSess } from "../cli.ts";
-import { json, summary } from "../cost-cli.ts";
+import { json, summary, summaryOf } from "../cost-cli.ts";
 import { livePid } from "../query/eval.ts";
 import { peers } from "../vcs/json.ts";
 import { allowanceInfo, codexWins, modeOf } from "../usage/bill-live.ts";
@@ -25,8 +25,8 @@ import { pricesSig, resolve, cost } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
 import type { Acc } from "../usage/record.ts";
 import { rowsFor, ownKeys } from "../usage/msgrows.ts";
-import type { OwnRow, SessRow } from "./model.ts";
-import { type Snap, newSnap, snapLines, dayRows } from "./snap.ts";
+import type { DayRow, OwnRow, SessRow } from "./model.ts";
+import { type Snap, newSnap, snapLines, dayRows, dayOut } from "./snap.ts";
 import { NO_ROWS, chunkOf } from "./ownc.ts";
 import { fleetDir } from "./store.ts";
 import { costDays } from "./merge.ts";
@@ -130,13 +130,21 @@ function sigN(sig: string): number { const i = sig.indexOf(":"); return i > 0 ? 
 // every top-level session the snapshot covers: the cost days' (usage), the list window's, the live ones; and every other
 // top-level Claude session (ownership only)
 export interface Built { snap: Snap; next: Gen; inexact: number }
-export function buildSnap(days: number, base: Gen | null, now: number): Built {
+// a snapshot of part of the host (a team room stream, fleet-teams spec 6); null = fleet's whole-host snapshot, unchanged.
+// pass: which top-level sessions go; row: the projection of each session object; head: the head rewrite; ownAll: false =
+// ownership rows only for the passed sessions (no "rest"); dayDelta: a delta's row carries only the days whose content
+// changed since the base, "dd": true; cost: the cost line sums the passed sessions only (no budget); allowance: send it
+export interface SnapScope { pass: (s: Sess) => boolean; row: (o: Obj) => Obj; head: (h: Obj) => Obj; ownAll: boolean; dayDelta: boolean; cost: boolean; allowance: boolean }
+// the per-day signature of a day row ("d:<session key>|<day>" in a generation, only with a scope's dayDelta)
+function daySig(d: DayRow): string { return sha256Hex(JSON.stringify(dayOut(d))).slice(0, 16); }
+export function buildSnap(days: number, base: Gen | null, now: number, scope: SnapScope | null = null): Built {
   discover();
   const cd = costDays(now); const from = Math.min(oldest(cd), now - days * DAY_MS);
-  const win: Sess[] = []; const rest: Sess[] = [];
+  const win: Sess[] = []; const rest: Sess[] = []; const ownAll = !scope || scope.ownAll;
   for (const s of sessions.values()) {
     if (s.depth !== 0 || s.parent) continue;
-    if (s.mtime >= from || livePid(s) > 0) win.push(s); else if (s.h === "claude") rest.push(s);
+    if (scope && !scope.pass(s)) { if (ownAll && s.h === "claude") rest.push(s); continue; }
+    if (s.mtime >= from || livePid(s) > 0) win.push(s); else if (s.h === "claude" && ownAll) rest.push(s);
   }
   win.sort((a: Sess, b: Sess) => b.mtime - a.mtime);
   const listFrom = now - days * DAY_MS;
@@ -154,6 +162,9 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
     else x.own.push({ key, reset: true, rows: chunkOf(rows) });
   };
   const cdl = [...cd].sort(); const cdSig = (cdl[0] ?? "") + "-" + (cdl[cdl.length - 1] ?? ""); const ps = pricesSig();
+  const dd = scope !== null && scope.dayDelta;
+  const baseDays = new Map<string, string[]>(); // session key → its "d:" keys in the base (carried over when unchanged)
+  if (dd) for (const k of b.keys()) if (k.startsWith("d:")) { const sk = k.slice(2, k.lastIndexOf("|")); const l = baseDays.get(sk); if (l) l.push(k); else baseDays.set(sk, [k]); }
   for (const s of win) {
     const t: Sess[] = []; tree(s, t); const accs = accsOf(t);
     const key = s.h + ":" + s.id;
@@ -168,10 +179,19 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
       next.sig.set("q:" + key, cheap);
     }
     const oldS = b.get("s:" + key);
-    if (cheap && oldS !== undefined && b.get("q:" + key) === cheap) next.sig.set("s:" + key, oldS);
-    else {
-      const row: SessRow = { s: listed ? jsonSess(s) : shortSess(s), key, days: dayRows(accs, cd), own: null, prov: provOf(s, accs) };
+    if (cheap && oldS !== undefined && b.get("q:" + key) === cheap) {
+      next.sig.set("s:" + key, oldS);
+      if (dd) for (const k of baseDays.get(key) ?? []) next.sig.set(k, b.get(k) ?? "");
+    } else {
+      const o = listed ? jsonSess(s) : shortSess(s);
+      const row: SessRow = { s: scope ? scope.row(o) : o, key, days: dayRows(accs, cd), own: null, prov: provOf(s, accs), dd: false };
       const sg = sha256Hex(JSON.stringify({ s: row.s, d: row.days ?? [], p: row.prov })).slice(0, 16); next.sig.set("s:" + key, sg);
+      if (dd) { // only the changed days, when the base had this row and every day it had is still here
+        const ch: DayRow[] = []; let keepAll = oldS === undefined;
+        for (const d of row.days ?? []) { const k = "d:" + key + "|" + d.d; const g = daySig(d); next.sig.set(k, g); if (b.get(k) !== g) ch.push(d); }
+        for (const k of baseDays.get(key) ?? []) if (!next.sig.has(k)) keepAll = true;
+        if (!keepAll && base) { row.days = ch; row.dd = true; }
+      }
       if (oldS !== sg) x.sess.push(row);
     }
     for (const c of t) {
@@ -199,13 +219,17 @@ export function buildSnap(days: number, base: Gen | null, now: number): Built {
   if (inexact) x.head["inexact"] = inexact; // logs whose rows do not add up to the ledger: the viewer marks the host ≈
   // what the base had and this run has not: a session row goes (gone), a row set empties (an own reset without rows)
   for (const k of b.keys()) {
-    if (next.sig.has(k) || k.startsWith("c:") || k.startsWith("q:")) continue;
+    if (next.sig.has(k) || k.startsWith("c:") || k.startsWith("q:") || k.startsWith("d:")) continue;
     if (k.startsWith("s:")) x.gone.push(k.slice(2));
     else if (k.startsWith("o:") && b.get(k) !== NONE) x.own.push({ key: k.slice(2), reset: true, rows: NO_ROWS });
   }
-  x.head = { version: BUILD.version, hostId: hostId(), hostName: REDACT ? "" : hostName(), os: process.platform, tzOffsetMin: -new Date(now).getTimezoneOffset(), redact: REDACT, days, now, priceSig: pricesSig() };
+  const head: Obj = { version: BUILD.version, hostId: hostId(), hostName: REDACT ? "" : hostName(), os: process.platform, tzOffsetMin: -new Date(now).getTimezoneOffset(), redact: REDACT, days, now, priceSig: pricesSig() };
+  x.head = scope ? scope.head(head) : head;
   x.gen = next.gen; x.base = base ? base.gen : ""; x.full = !base;
-  x.cost = json(summary("")); x.allowance = { claude: allowanceInfo(now), codex: codexWins() };
+  if (scope && scope.cost) { const c = json(summaryOf(win)); c["budget"] = null; x.cost = c; } // the selection's figures; the budget is this user's own
+  else x.cost = json(summary(""));
+  const al = !scope || scope.allowance; const ac: Obj | null = al ? allowanceInfo(now) : null; const ax: Obj | null = al ? codexWins() : null;
+  x.allowance = { claude: ac, codex: ax };
   x.done = true;
   return { snap: x, next, inexact };
 }

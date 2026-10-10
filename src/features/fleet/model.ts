@@ -24,6 +24,7 @@ export interface SessRow {
   days: DayRow[] | null; // per-day usage (Part B feeds); null = only the totals in `s` (Part A pull)
   own: OwnChunk[] | null; // Claude messages this session owns on its host (Part B, OTLP hub), in columns; null = unknown
   prov: string[][];      // [provider, billing mode] for multi-provider harnesses (pi, OpenCode); [] = the session's mode
+  dd: boolean;           // days holds only the days that changed since the base ("dd": true on the wire; team streams)
 }
 // one session's live state: the SState sessState() computes on its host (model/state.ts, also the OTLP logs stream's
 // session.state records), keyed and timed

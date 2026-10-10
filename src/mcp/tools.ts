@@ -51,11 +51,11 @@ function matches(pat: string, v: string): boolean {
 }
 const HARNESSES = ["claude", "codex", "fx", "pi", "opencode", "kiro", "gemini"];
 // the CLI's field lists (testdata/mcp/cli-fields.json; tools.check.ts compares them)
-const SESSION_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "mux", "parent", "kind", "twins", "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git", "turns", "wallMs", "activeMs", "models", "tools", "errors", "files", "repeats", "subagents", "costBasis", "via"];
-const SESSIONS_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "mux", "parent", "kind", "subagents", "twins", "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git", "project"];
+const SESSION_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "state", "mux", "parent", "kind", "twins", "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git", "turns", "wallMs", "activeMs", "models", "tools", "errors", "files", "repeats", "subagents", "costBasis", "via"];
+const SESSIONS_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "state", "mux", "parent", "kind", "subagents", "twins", "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git", "project"];
 // curated defaults: 20 session rows are ~5 KB instead of ~320 KB with every field (spec, measured)
-const SESSION_DEF = ["id", "harness", "title", "cwd", "live", "status", "updated", "costUsd", "costBasis", "tokens", "turns", "wallMs", "activeMs", "models", "tools", "errors", "files", "repeats", "attention", "stuck", "alerts", "via"];
-const SESSIONS_DEF = ["id", "harness", "title", "project", "updated", "live", "status", "costUsd", "attention", "stuck"];
+const SESSION_DEF = ["id", "harness", "title", "cwd", "live", "status", "state", "updated", "costUsd", "costBasis", "tokens", "turns", "wallMs", "activeMs", "models", "tools", "errors", "files", "repeats", "attention", "stuck", "alerts", "via"];
+const SESSIONS_DEF = ["id", "harness", "title", "project", "updated", "live", "status", "state", "costUsd", "attention", "stuck"];
 const ERRORS_DEF = ["ts", "harness", "session", "tool", "arg", "durationMs"];
 
 const REF = (d: string): Prop => P("ref", "str", "ref", 0, 128, [], "", d);

@@ -4,7 +4,7 @@
 import { complete, screenOut, realCwd, realMeta } from "../../hooks.ts";
 import type { Sess } from "../../model/types.ts";
 import { loadHead, parentOf } from "../../model/sessions.ts";
-import type { Clause } from "./types.ts";
+import type { Clause, QErr } from "./types.ts";
 import { parse, caret } from "./parse.ts";
 import { keys, attrOf } from "./attrs.ts";
 import { type Compiled, type EvX, EMPTY, compile, matchSession, sessMatches } from "./eval.ts";
@@ -39,15 +39,22 @@ const FIXED = ["harness", "id", "subagent"]; // what a session's log never chang
 export function fixedOf(cs: Clause[]): Compiled { const o: Clause[] = []; for (const c of cs) if (FIXED.indexOf(c.key) >= 0) o.push(c); return compile(o, "json").f ?? EMPTY; }
 // --filter values (merged with the same-scope rules), --harness / --live sugar, --pinned; a bad expression exits 2 with a caret
 export function cliFilter(exprs: string[], harness: string, live: boolean, pinned: boolean, watch: boolean): CliFilter {
+  const r = filterOf(exprs, harness, live, pinned, watch);
+  const cf = r.cf; if (!cf) die(r.err ? r.err.msg : "invalid filter", r.src, r.err ? r.err.col : 0);
+  return cf;
+}
+// the same without exiting (the read model, serve --stdio): err = the first bad expression's message and column, src = it
+export interface FilterR { cf: CliFilter | null; err: QErr | null; src: string }
+export function filterOf(exprs: string[], harness: string, live: boolean, pinned: boolean, watch: boolean): FilterR {
   let cs: Clause[] = [];
   const extra: Clause[] = [];
   if (harness) extra.push({ key: "harness", op: "is", vals: [harness], neg: false, pinned: false });
   if (live) extra.push({ key: "live", op: "is", vals: ["true"], neg: false, pinned: false });
   if (pinned) cs = addAll(cs, S.pins).cs;
-  for (const e of exprs) { const p = parse(e); if (p.err) die(p.err.msg, e, p.err.col); cs = addAll(cs, p.cs).cs; }
+  for (const e of exprs) { const p = parse(e); if (p.err) return { cf: null, err: p.err, src: e }; cs = addAll(cs, p.cs).cs; }
   cs = addAll(cs, extra).cs;
   const ctx = watch ? "watch" : "json";
-  const r = compile(cs, ctx); if (r.err || !r.f) die(r.err ? r.err.msg : "invalid filter", "", 0);
+  const r = compile(cs, ctx); if (r.err || !r.f) return { cf: null, err: { msg: r.err ? r.err.msg : "invalid filter", col: 0 }, src: "" };
   const ch: Clause[] = []; let ledgerKeys = false; let head = false;
   for (const c of cs) {
     if (CHEAP.indexOf(c.key) >= 0) ch.push(c);
@@ -57,7 +64,7 @@ export function cliFilter(exprs: string[], harness: string, live: boolean, pinne
   }
   const cheap = compile(ch, ctx).f ?? EMPTY;
   const nl: Clause[] = []; for (const c of ch) if (c.key !== "live") nl.push(c);
-  return { f: r.f ?? EMPTY, cheap, ended: compile(nl, ctx).f ?? EMPTY, fixed: fixedOf(cs), needsLedger: ledgerKeys, needsHead: head, content: (r.f ?? EMPTY).content.length > 0 };
+  return { cf: { f: r.f ?? EMPTY, cheap, ended: compile(nl, ctx).f ?? EMPTY, fixed: fixedOf(cs), needsLedger: ledgerKeys, needsHead: head, content: (r.f ?? EMPTY).content.length > 0 }, err: null, src: "" };
 }
 // can the filter judge this session yet? Clauses on what a transcript's head holds (cwd, branch, title, repo…, and every
 // ledger key: their sessions are matched by project too) need the head read and a cwd in it (a subagent: its parent's),

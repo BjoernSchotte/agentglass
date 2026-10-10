@@ -78,7 +78,8 @@ function home(p: string): string { return p === "~" ? HOME : p.startsWith("~/") 
 export function livePid(s: Sess): number { if (s.pid) return s.pid; const p = parentOf(s); return p ? p.pid : 0; }
 // fleet: this machine's name in the host attribute (fleet.localName; features/fleet/hosts.ts sets it)
 export const HOSTQ = { local: "local" };
-function stateOf(s: Sess): string {
+// the state attribute; also the --json `state` field (read/row.ts)
+export function stateOf(s: Sess): string {
   if (s.host) return !isLive(s) ? "ended" : s.stuck ? "stuck" : s.attention ? "attention" : s.status === "busy" ? "busy" : "idle"; // a stale remote row is not live
   if (s.stuck) return "stuck";
   if (s.attention) return "attention";

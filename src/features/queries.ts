@@ -24,7 +24,7 @@ import { loopRuns } from "./detect.ts";
 import { scrubText } from "./redact.ts";
 import { REDACT } from "./redact-on.ts";
 import { workspaceOf } from "../mux/rowstate.ts";
-import { jsonSess, discover, JSON_FIELDS, MUX_FLAT } from "./cli.ts";
+import { jsonSess, discover, JSON_FIELDS, MUX_FLAT } from "../read/row.ts";
 import { peers } from "./vcs/json.ts";
 import { type CmdRec, type OptRec, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "./format.ts";

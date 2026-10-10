@@ -38,13 +38,13 @@ function ownInto(c: OwnChunk, i: number, u: number, v: unknown): boolean {
   c.u[i] = u; c.d[u] = wordId(str(a[2])); c.hr[u] = hr; c.m[u] = wordId(str(a[4])); c.p[u] = wordId(str(a[5]));
   return true;
 }
-function dayOut(d: DayRow): Obj { const o: Obj = { d: d.d, tp: d.tp, hx: d.hx, unk: d.unk, um: d.um, uc: d.uc, tools: d.tools, turns: d.turns, calls: d.calls, errors: d.errors }; if (d.sa.length) o["sa"] = d.sa; return o; }
+export function dayOut(d: DayRow): Obj { const o: Obj = { d: d.d, tp: d.tp, hx: d.hx, unk: d.unk, um: d.um, uc: d.uc, tools: d.tools, turns: d.turns, calls: d.calls, errors: d.errors }; if (d.sa.length) o["sa"] = d.sa; return o; }
 function dayIn(o: Obj): DayRow { return { d: str(o["d"]), tp: rows2(o["tp"]), hx: rows2(o["hx"]), unk: num(o["unk"]), um: rows2(o["um"]), uc: num(o["uc"]), tools: num(o["tools"]), turns: num(o["turns"]), calls: num(o["calls"]), errors: num(o["errors"]), sa: rows2(o["sa"]) }; }
-function sessOut(r: SessRow): Obj { const ds: Obj[] = []; for (const d of r.days ?? []) ds.push(dayOut(d)); return { key: r.key, s: r.s, days: ds, prov: r.prov }; }
+function sessOut(r: SessRow): Obj { const ds: Obj[] = []; for (const d of r.days ?? []) ds.push(dayOut(d)); const o: Obj = { key: r.key, s: r.s, days: ds, prov: r.prov }; if (r.dd) o["dd"] = true; return o; }
 function sessIn(o: Obj): SessRow | null {
   const s = obj(o["s"]); const key = str(o["key"]); if (!s || !key) return null;
   const days: DayRow[] = []; for (const x of arr(o["days"])) { const d = obj(x); if (d) days.push(dayIn(d)); }
-  return { s, key, days, own: null, prov: rows2(o["prov"]) };
+  return { s, key, days, own: null, prov: rows2(o["prov"]), dd: o["dd"] === true };
 }
 
 export function snapLines(x: Snap): string[] {
@@ -98,6 +98,13 @@ export function helloOfSnap(x: Snap): Hello { return helloOf(x.head); }
 // sessions it carries, drops the `gone` sessions, appends or resets own rows (a reset without rows drops the key). The caller checks x.base against what it applied
 // last: a delta on another base must not apply (feed and dir reader do). The result is a new report (the old one stays
 // valid for whoever holds it); reports are never changed in place (a delta that changed nothing shares cur's arrays)
+// a changed-day row (dd) over the row it updates: a day it carries replaces that day, the others stay; in date order
+function withDays(n: SessRow, old: SessRow): SessRow {
+  const by = new Map<string, DayRow>(); for (const d of old.days ?? []) by.set(d.d, d); for (const d of n.days ?? []) by.set(d.d, d);
+  const days: DayRow[] = []; for (const d of by.values()) days.push(d);
+  days.sort((a: DayRow, b: DayRow) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+  return { s: n.s, key: n.key, days, own: n.own, prov: n.prov, dd: false };
+}
 export function applySnap(cur: HostReport | null, x: Snap): HostReport {
   // a delta that changed no session keeps the sessions and owned rows as they were (the merge keys its cache on them)
   if (cur && !x.full && !x.sess.length && !x.own.length && !x.gone.length) return { hello: helloOf(x.head), sessions: cur.sessions, cost: x.cost, allowance: x.allowance, live: cur.live, exact: true, owned: cur.owned, wait: null };
@@ -108,7 +115,7 @@ export function applySnap(cur: HostReport | null, x: Snap): HostReport {
     for (const s of cur.sessions) { keep.set(s.key, s); order.push(s.key); }
   }
   for (const k of x.gone) keep.delete(k);
-  for (const s of x.sess) { if (!keep.has(s.key)) order.push(s.key); keep.set(s.key, s); }
+  for (const s of x.sess) { const old = keep.get(s.key); if (!old) order.push(s.key); keep.set(s.key, s.dd && old ? withDays(s, old) : s); }
   for (const o of x.own) {
     const old = own.get(o.key);
     if (o.reset && !o.rows.n) own.delete(o.key); // the key owns nothing any more
@@ -122,7 +129,7 @@ export function applySnap(cur: HostReport | null, x: Snap): HostReport {
   for (const k of order) {
     const s = keep.get(k); if (!s) continue; keep.delete(k);
     if (!x.full && cur && !moved.has(k) && s.own) { sessions.push(s); continue; }
-    sessions.push({ s: s.s, key: s.key, days: s.days, own: bySess.get(k) ?? [], prov: s.prov });
+    sessions.push({ s: s.s, key: s.key, days: s.days, own: bySess.get(k) ?? [], prov: s.prov, dd: false });
   }
   sessions.sort((a: SessRow, b: SessRow) => { const ua = str(a.s["updated"]); const ub = str(b.s["updated"]); return ua < ub ? 1 : ua > ub ? -1 : 0; });
   const owned: Owned[] = []; for (const [k, v] of own) owned.push({ key: k, rows: v });
@@ -133,7 +140,7 @@ export function fullOf(r: HostReport, gen: string): Snap {
   const own: OwnLine[] = [];
   for (const o of r.owned) own.push({ key: o.key, reset: true, rows: joinChunks(o.rows) });
   const head: Obj = { version: r.hello.version, hostId: r.hello.hostId, hostName: r.hello.hostName, os: r.hello.os, tzOffsetMin: r.hello.tzOffsetMin, redact: r.hello.redact, days: r.hello.days, now: r.hello.now, priceSig: r.hello.priceSig };
-  const sess: SessRow[] = []; for (const s of r.sessions) sess.push({ s: s.s, key: s.key, days: s.days, own: null, prov: s.prov });
+  const sess: SessRow[] = []; for (const s of r.sessions) sess.push({ s: s.s, key: s.key, days: s.days, own: null, prov: s.prov, dd: false });
   return { head, gen, base: "", full: true, sess, own, gone: [], cost: r.cost, allowance: r.allowance, done: true, err: "" };
 }
 
