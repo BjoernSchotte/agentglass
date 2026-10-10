@@ -107,7 +107,9 @@ function save(): void {
 LAZY.rows = (path: string, a: Acc): boolean => {
   const rows = loadCallsFrom(CALLS_DIR, path, a);
   if (!rows) { written.delete(path); return false; } // stale or of an older format: the session indexes again, and its next save must write the file
-  a.rows = rows; a.lastCall = rows.n - 1; written.set(path, a.off); return true;
+  a.rows = rows; a.lastCall = rows.n - 1; written.set(path, a.off);
+  for (const p of a.pend.values()) if (!p.rows) for (let i = rows.n - 1; i >= 0; i--) if (rows.cid[i] === p.id) { p.rows = rows; p.ri = i; break; } // cached pending calls: their rows
+  return true;
 };
 // head and tail memos live in the session's ledger entry (reset with it when the log is rewritten); never under --redact,
 // where a read sees faked texts and a replay could show real ones

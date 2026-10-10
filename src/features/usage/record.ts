@@ -53,7 +53,8 @@ export function peekHeavy(d: Day): Heavy { const h = d.hx; return h ? h : d.hv ?
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Map<string, number>; days: Map<string, Day>; model: string; // claude: booked message id → its output_tokens booked so far
-  pend: Map<string, Pend>; // calls waiting for their result, by call id (not persisted: a restart loses their duration)
+  pend: Map<string, Pend>; // calls waiting for their result, by call id (cached as "pd": a result after a restart still books)
+  pdr: unknown[]; // cached pending calls not linked yet: codec.ts pendIn() links them before the next new line (days stay text till then)
   ep: string; // the source's cursor epoch off counts in (SessionSource.epoch)
   x: number[]; xM: number; // the harness adapter's own running state (codex: cumulative token counters; fx: usage snapshot + its mtime)
   pk: string; // claude: "<promptId>\t<command>" of a slash command waiting for its skill base-directory line
@@ -116,7 +117,7 @@ export function saW(d: Day): Map<string, number[]> { const sa = saOf(d); if (sa 
 // whether the log has skill loads, without decoding them
 export function hasSk(a: Acc): boolean { return a.skv !== "" || a.sk.length > 0; }
 export function newAcc(): Acc {
-  return { off: 0, skip: false, stall: -1, ids: new Map<string, number>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
+  return { off: 0, skip: false, stall: -1, ids: new Map<string, number>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), pdr: [], ep: "", x: [], xM: 0, pk: "", sub: false,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", rows: newRows(), lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [],
     p: "", ro: false, mo: new Map<string, number>(), mv: "", mc: new Map<string, string>(), xs: new Set<string>(),
     sk: NO_SK, skv: "", rq: 0, tq: 0, lastCtx: 0, lst: NO_LST, skr: NO_SKR };
@@ -243,11 +244,11 @@ function newest(a: Acc): number { return a.lastCall >= 0 && a.lastCall < a.rows.
 // a call's shell command line(s) for the git-linkage scraper, ≤ 4 KB (one command: no copy)
 function cmdOf(cmds: string[]): string { const c = cmds.length === 1 ? cmds[0] ?? "" : cmds.join("\n"); return c.length > 4096 ? c.slice(0, 4096) : c; }
 export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number, ts: string, arg: string, cmds: string[]): void {
-  const sh: Cnt[] = []; const row = newest(a); const r = a.rows;
+  const sh: Cnt[] = []; const shk: string[] = []; const row = newest(a); const r = a.rows;
   for (const c of cmds) {
     const f = normFull(c); if (!f) continue;
     const n = f.length > 200 ? f.slice(0, 200) : f; const pg = program(n);
-    const h = heavy(d); sh.push(cnt(h.prog, name + "\t" + pg)); sh.push(cnt(h.cmds, name + "\t" + n));
+    const h = heavy(d); sh.push(cnt(h.prog, name + "\t" + pg)); sh.push(cnt(h.cmds, name + "\t" + n)); shk.push(name + "\t" + pg); shk.push(name + "\t" + n);
     if (row < 0) continue;
     addId(r, row, KIND_PROG, intern(DICT.prog, pg));
     const ci = intern(DICT.cmd, n); const ht = f.length > 200 ? CMDS.hint(f) : ""; const hi = ht ? intern(DICT.cmd, ht) : -1;
@@ -256,7 +257,7 @@ export function pend(a: Acc, d: Day, st: TS, name: string, id: string, t: number
   if (row >= 0) r.cid[row] = id;
   if (!id) return;
   if (a.pend.size > 2000) a.pend.clear(); // results that never came (skipped >1 MB lines, crashes): don't leak
-  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, rows: row >= 0 ? r : null, ri: row, sp: a.sp, name, cmd: cmdOf(cmds), id, end: 0, dn: a.dn });
+  a.pend.set(id, { t: t > 0 ? t : 0, ts, arg: argSummary(arg), st, sh, rows: row >= 0 ? r : null, ri: row, sp: a.sp, name, cmd: cmdOf(cmds), id, end: 0, dn: a.dn, day: tsDay, shk });
 }
 // the result names the real tool (pi MCP behind a proxy): move the call's one count to that row of the same day
 export function retool(a: Acc, p: Pend, name: string): void {

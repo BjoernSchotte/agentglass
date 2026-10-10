@@ -1,7 +1,7 @@
 // agentglass — the ledger cache's JSON shape: Acc/Day ⇄ plain objects (IO lives in ./cache.ts)
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
-import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy, NO_SA, NO_SK, NO_LST, NO_SKR, SKV } from "./record.ts";
+import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy, heavy, NO_SA, NO_SK, NO_LST, NO_SKR, SKV } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 import { own, pooled, pooledText } from "../../util/own.ts";
 import { moOut } from "./owners.ts";
@@ -192,6 +192,10 @@ export function accOut(a: Acc, keepIds = 64): Obj {
     mo: a.mv || moOut(a.mo), mc: pairsOut(a.mc), xs: [...a.xs],
     sq: [a.rq, a.tq, a.lastCtx],
   };
+  if (a.pend.size || a.pdr.length) { // calls still waiting for their result (a save mid-call): the newest 256, re-linked by accIn
+    const pd: unknown[] = a.pdr.slice(); for (const p of a.pend.values()) pd.push([p.id, p.t, p.ts, p.arg, p.day, p.name, p.cmd, p.shk]);
+    o["pd"] = pd.slice(-256);
+  }
   if (a.lst.length) o["ls"] = a.lst.join("\n"); // one string: most logs list the same skills (pooledText shares the array)
   if (a.skv) o["sk"] = a.skv; else if (a.sk.length) o["sk"] = JSON.stringify(skOut(a.sk)); // sessions without skills grow by nothing but sq
   return o;
@@ -203,11 +207,27 @@ export function accIn(o: Obj): Acc {
   const days = new Map<string, Day>();
   const dd = obj(o["days"]);
   if (dd) for (const k of Object.keys(dd)) { const d = obj(dd[k]); if (d) days.set(own(k), dayIn(d)); }
-  return {
-    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: own(str(o["model"])), pend: new Map<string, Pend>(), ep: own(str(o["ep"])), x: nums(o["x"]), xM: num(o["xM"]), pk: own(str(o["pk"])), sub: false,
+  const a: Acc = {
+    off: num(o["off"]), skip: o["skip"] === true, stall: -1, ids, days, model: own(str(o["model"])), pend: new Map<string, Pend>(), pdr: arr(o["pd"]), ep: own(str(o["ep"])), x: nums(o["x"]), xM: num(o["xM"]), pk: own(str(o["pk"])), sub: false,
     inTok: at(t, 0), outTok: at(t, 1), cr: at(t, 2), cw: at(t, 3), cost: at(t, 4), unk: at(t, 5), tools: at(t, 6), add: at(t, 7), del: at(t, 8), uc: at(t, 9), rs: at(t, 10),
     bill: own(str(o["bill"])), plan: own(str(o["plan"])), billSrc: own(str(o["bs"])), rows: newRows(), lastCall: -1, t0: num(o["t0"]), al: num(o["al"]), sp: [], vcs: refsIn(o["v"]), dn: [], vk: new Set<string>(), vkn: -1, hd: strsIn(o["hd"]), tl: strsIn(o["tl"]),
     p: "", ro: false, mo: new Map<string, number>(), mv: own(str(o["mo"])), mc: pairsIn(o["mc"]), xs: new Set<string>(strsIn(o["xs"])),
     sk: typeof o["sk"] === "object" ? skIn(o["sk"]) : NO_SK, skv: typeof o["sk"] === "string" ? own(str(o["sk"])) : "", rq: at(sq, 0), tq: at(sq, 1), lastCtx: at(sq, 2), lst: typeof o["ls"] === "string" && o["ls"] ? pooledText(str(o["ls"])) : NO_LST, skr: NO_SKR,
   };
+  return a;
+}
+// the cached pending calls, linked again to their day's tool row and counters (rows: once the call rows load, cache.ts)
+export function pendIn(a: Acc): void {
+  const v = a.pdr; a.pdr = [];
+  for (const x of v) {
+    const r = arr(x); const id = str(r[0]); const day = str(r[4]); const name = str(r[5]);
+    const d = a.days.get(day); if (!id || !d) continue;
+    const h = heavy(d); const st = h.tt.get(name); if (!st) continue;
+    const shk = strsIn(r[7]); const sh: Cnt[] = []; const ks: string[] = [];
+    for (let i = 0; i + 1 < shk.length; i += 2) {
+      const cp = h.prog.get(shk[i] ?? ""); const cc = h.cmds.get(shk[i + 1] ?? "");
+      if (cp && cc) { sh.push(cp); sh.push(cc); ks.push(shk[i] ?? ""); ks.push(shk[i + 1] ?? ""); }
+    }
+    a.pend.set(own(id), { t: num(r[1]), ts: own(str(r[2])), arg: own(str(r[3])), st, sh, rows: null, ri: -1, sp: a.sp, name: own(name), cmd: own(str(r[6])), id: own(id), end: 0, dn: a.dn, day: own(day), shk: ks });
+  }
 }

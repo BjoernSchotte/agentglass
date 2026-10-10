@@ -11,6 +11,7 @@ import { callList } from "../features/usage/rows.ts";
 import { price, cost } from "../features/usage/pricing.ts";
 import { skillUses, heavy } from "../features/usage/record.ts";
 import { accOut, accIn } from "../features/usage/cache.ts";
+import { pendIn } from "../features/usage/codec.ts";
 import { accOf } from "../features/usage/ledger.ts";
 import { buildGraph, summary } from "../features/callgraph/model.ts";
 import { HARNESSES, harnessOf, parseEvents, cmdOf, busy } from "./index.ts";
@@ -286,6 +287,18 @@ function claudeKinds(lines: string[]): string { return claudeEvs(lines).map((e: 
   }
   const a = run(-1); for (const l of L) harnessOf("claude").usage(a, l);
   ok("split message: lines read again book nothing", a.outTok === 2533, String(a.outTok));
+}
+// a call still waiting for its result when the cache is written (the TUI saves mid-call; a CLI run reads on): the result
+// after the resume still books the call's duration, error and its row's ms
+{
+  const call = "{\"type\":\"assistant\",\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"message\":{\"id\":\"mp\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tp1\",\"name\":\"Bash\",\"input\":{\"command\":\"npm test\"}}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}";
+  const res = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tp1\",\"is_error\":true,\"content\":\"1 failing\"}]},\"timestamp\":\"2026-10-01T10:00:42.000Z\"}";
+  for (const at of [-1, 1]) {
+    let a = newAcc(); const L = [call, res];
+    for (let i = 0; i < L.length; i++) { if (i === at) { a = accIn(JSON.parse(JSON.stringify(accOut(a)))); pendIn(a); } harnessOf("claude").usage(a, L[i] ?? ""); } // pendIn: as the ledger's step() before new lines
+    let ms = 0; let dn = 0; let er = 0; for (const d of a.days.values()) { const t = heavy(d).tt.get("Bash"); if (t) { ms += t.ms; dn += t.dn; er += t.err; } }
+    ok("a pending call across a resume (" + String(at) + "): duration and error", ms === 42000 && dn === 1 && er === 1 && a.pend.size === 0, [ms, dn, er, a.pend.size].join(" "));
+  }
 }
 // Claude skills: a slash command paired with its base-directory meta line (same promptId) = command; a Skill tool call = model
 const SK_T = "\"timestamp\":\"2026-10-01T10:00:00.000Z\"";
