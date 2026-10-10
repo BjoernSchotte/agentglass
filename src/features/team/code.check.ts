@@ -1,7 +1,7 @@
 // agentglass — self-check for invite codes and team ids (fleet-teams spec 1, 3; Task 2):
 //   scriptc build src/features/team/code.check.ts -o cc && ./cc
 // SPDX-License-Identifier: Apache-2.0
-import { type Invite, inviteCode, parseInvite, deviceId, teamSessId } from "./code.ts";
+import { type Invite, inviteCode, parseInvite, WHERE_MAX, deviceId, teamSessId } from "./code.ts";
 import { hex } from "../../util/rand.ts";
 
 let bad = 0;
@@ -58,8 +58,13 @@ ok("empty → err", parseInvite("").err !== "", "");
 // limits: > 200 characters, a hub that is not http(s), control characters
 {
   const long: Invite = { v: 1, team: dir.team, invite: dir.invite, secret: dir.secret, root: dir.root, kind: "hub", where: "https://example.com/" + "x".repeat(100) };
-  const lc = inviteCode(long);
-  ok("a code over 200 characters → err", lc.length > 200 && parseInvite(lc).err.indexOf("200") >= 0, String(lc.length) + " " + parseInvite(lc).err);
+  // a code is never made that no one can join: the address is capped (WHERE_MAX bytes) when the code is made and read
+  let thrown = ""; try { inviteCode(long); } catch (e) { thrown = e instanceof Error ? e.message : String(e); }
+  ok("an address too long for a 200-character code is refused when made", thrown.indexOf("too long") >= 0, thrown);
+  const max: Invite = { v: 1, team: dir.team, invite: dir.invite, secret: dir.secret, root: dir.root, kind: "hub", where: "https://example.com/" + "x".repeat(WHERE_MAX - 20) };
+  const mc = inviteCode(max); const mp = parseInvite(mc);
+  ok("the longest address round-trips", mc.length <= 200 && mp.i !== null && mp.i.where === max.where, String(mc.length) + " " + mp.err);
+  ok("a code over 200 characters → err", parseInvite(mc + "x".repeat(10)).err.indexOf("200") >= 0, parseInvite(mc + "x".repeat(10)).err);
   ok("200 + junk → err", parseInvite(cd + "x".repeat(200)).err !== "", "");
   const ftp: Invite = { v: 1, team: dir.team, invite: dir.invite, secret: dir.secret, root: dir.root, kind: "hub", where: "ftp://example.com/x" };
   ok("hub must be http(s)", parseInvite(inviteCode(ftp)).err.indexOf("http") >= 0, parseInvite(inviteCode(ftp)).err);

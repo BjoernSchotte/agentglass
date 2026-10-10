@@ -80,8 +80,9 @@ const STATES = ["busy", "idle", "attention", "stuck", "ended"];
 function isNum(v: unknown): boolean { return typeof v === "number" && isFinite(v); }
 function n0(v: unknown): number { return typeof v === "number" && isFinite(v) ? v : 0; }
 function has(s: Obj, k: string): boolean { return s[k] !== undefined; }
-// the state enum, never the free-text status or the stuck text
+// the state enum, never the free-text status or the stuck text: the row's own state (read/row.ts) when it has one
 function stateOf(s: Obj): string {
+  const st = s["state"]; if (typeof st === "string" && STATES.indexOf(st) >= 0) return st;
   if (s["live"] !== true) return "ended";
   if (s["stuck"] !== null && s["stuck"] !== undefined && s["stuck"] !== "") return "stuck";
   if (s["attention"] === true) return "attention";

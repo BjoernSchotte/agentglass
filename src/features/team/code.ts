@@ -11,6 +11,8 @@ export interface Invite { v: number; team: string; invite: string; secret: Uint8
 export const CODE_PREFIX = "agt1-";
 export const CODE_MAX = 200;
 export const CODE_V = 1;
+// the address bytes that still fit in CODE_MAX: 5 + ceil((50 + n) × 8 / 5) + 2 ≤ 200
+export const WHERE_MAX = 70;
 const ALPHA = "0123456789abcdefghjkmnpqrstvwxyz";
 const P = 1021;
 const HEX16 = /^[0-9a-f]{16}$/;
@@ -27,6 +29,7 @@ function unhex(s: string): Uint8Array { const b = new Uint8Array(s.length / 2); 
 // the folder name or hub URL a code may carry: "" ok, else why not
 export function whereErr(kind: string, where: string): string {
   if (!where) return kind === "hub" ? "no hub URL" : "no folder name";
+  if (new TextEncoder().encode(where).length > WHERE_MAX) return (kind === "hub" ? "hub URL" : "folder name") + " too long (at most " + String(WHERE_MAX) + " bytes: the code must stay under " + String(CODE_MAX) + " characters)";
   if (/[\u0000-\u001f\u007f]/.test(where)) return "control characters in the " + (kind === "hub" ? "hub URL" : "folder name");
   if (kind === "hub") return /^https?:\/\/[^/\s]/i.test(where) && !/\s/.test(where) ? "" : "the hub must be an http(s) URL"; // as otlp urlErr
   return where.indexOf("/") >= 0 || where.indexOf("\\") >= 0 || where === "." || where === ".." ? "the folder name must be one name, not a path" : "";
@@ -35,7 +38,7 @@ function polyMod(syms: number[]): number { let h = 0; for (const s of syms) h = 
 
 export function inviteCode(i: Invite): string {
   if (!HEX16.test(i.team) || !HEX16.test(i.invite) || !HEX32.test(i.root) || i.secret.length !== 16 || i.v < 1 || i.v > 255) throw new Error("invite: malformed fields");
-  if (!i.where) throw new Error("invite: " + whereErr(i.kind, i.where));
+  if (!i.where || new TextEncoder().encode(i.where).length > WHERE_MAX) throw new Error("invite: " + whereErr(i.kind, i.where)); // other address checks: parseInvite
   const w = new TextEncoder().encode(i.where);
   const b = new Uint8Array(50 + w.length);
   b[0] = i.v; b.set(unhex(i.team), 1); b.set(unhex(i.invite), 9); b.set(i.secret, 17); b.set(unhex(i.root), 33); b[49] = i.kind === "hub" ? 1 : 0; b.set(w, 50);

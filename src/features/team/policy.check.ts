@@ -97,6 +97,8 @@ ok("an unknown level is numbers", JSON.stringify(teamRow(fixture(), "everything"
 function st(o: Obj): string { const r = teamRow(o, "numbers", TEAM); return typeof r["status"] === "string" ? String(r["status"]) : "-"; }
 ok("status busy", st({ id: "a", harness: "claude", live: true, status: "busy", attention: false, stuck: null }) === "busy", "");
 ok("status idle (free text otherwise)", st({ id: "a", harness: "claude", live: true, status: "open via /dev/pts/3", attention: false, stuck: null }) === "idle", "");
+ok("status from the row's state (pi: status open while it works)", st({ id: "a", harness: "pi", live: true, status: "open", state: "busy", attention: false, stuck: null }) === "busy", "");
+ok("an unknown state falls back", st({ id: "a", harness: "pi", live: true, status: "open", state: "weird", attention: false, stuck: null }) === "idle", "");
 ok("status attention", st({ id: "a", harness: "claude", live: true, status: "busy", attention: true, stuck: null }) === "attention", "");
 ok("status ended", st({ id: "a", harness: "claude", live: false, status: "", attention: false, stuck: null }) === "ended", "");
 // repo: only a git remote key, never a local path identity
