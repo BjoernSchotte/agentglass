@@ -24,6 +24,23 @@ export function b64url(b: Uint8Array): string {
   else if (r === 2) { const v = ((b[i] ?? 0) << 16) | ((b[i + 1] ?? 0) << 8); s += B64[(v >>> 18) & 63] + B64[(v >>> 12) & 63] + B64[(v >>> 6) & 63]; }
   return s;
 }
+// hex → bytes; null for an odd length or a non-hex character
+export function unhex(s: string): Uint8Array | null {
+  if (s.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(s)) return null;
+  const b = new Uint8Array(s.length / 2); for (let i = 0; i < b.length; i++) b[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  return b;
+}
+// base64url without padding → bytes; null for a character outside the alphabet or a length no encoding produces
+export function unb64url(s: string): Uint8Array | null {
+  if (s.length % 4 === 1) return null;
+  const b = new Uint8Array(Math.floor(s.length * 3 / 4)); let acc = 0; let bits = 0; let k = 0;
+  for (let i = 0; i < s.length; i++) {
+    const v = B64.indexOf(s.charAt(i)); if (v < 0) return null;
+    acc = ((acc << 6) | v) & 0xffffff; bits += 6;
+    if (bits >= 8) { bits -= 8; b[k] = (acc >>> bits) & 255; k++; }
+  }
+  return b;
+}
 // equal strings in time that depends only on the length (token hashes: always 64 hex characters)
 export function ctEq(a: string, b: string): boolean {
   let d = a.length ^ b.length; const n = Math.max(a.length, b.length);
