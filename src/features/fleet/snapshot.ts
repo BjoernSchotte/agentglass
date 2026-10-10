@@ -139,8 +139,9 @@ export interface Built { snap: Snap; next: Gen; inexact: number }
 // a snapshot of part of the host (a team room stream, fleet-teams spec 6); null = fleet's whole-host snapshot, unchanged.
 // pass: which top-level sessions go; row: the projection of each session object; head: the head rewrite; ownAll: false =
 // ownership rows only for the passed sessions (no "rest"); dayDelta: a delta's row carries only the days whose content
-// changed since the base, "dd": true; cost: the cost line sums the passed sessions only (no budget); allowance: send it
-export interface SnapScope { pass: (s: Sess) => boolean; row: (o: Obj) => Obj; head: (h: Obj) => Obj; ownAll: boolean; dayDelta: boolean; cost: boolean; allowance: boolean }
+// changed since the base, "dd": true; cost: the cost line sums the passed sessions only (no budget); allowance: send it;
+// noOwn: no ownership rows at all (a team stream: its view joins sessions by id, not by message)
+export interface SnapScope { pass: (s: Sess) => boolean; row: (o: Obj) => Obj; head: (h: Obj) => Obj; ownAll: boolean; dayDelta: boolean; cost: boolean; allowance: boolean; noOwn: boolean }
 // the per-day signature of a day row ("d:<session key>|<day>" in a generation, only with a scope's dayDelta)
 function daySig(d: DayRow): string { return sha256Hex(JSON.stringify(dayOut(d))).slice(0, 16); }
 export function buildSnap(days: number, base: Gen | null, now: number, scope: SnapScope | null = null): Built {
@@ -200,6 +201,7 @@ export function buildSnap(days: number, base: Gen | null, now: number, scope: Sn
       }
       if (oldS !== sg) x.sess.push(row);
     }
+    if (scope && scope.noOwn) continue;
     for (const c of t) {
       if (c.h !== "claude") continue;
       const a = ledger.get(c.path); if (!a) continue;

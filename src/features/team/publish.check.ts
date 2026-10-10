@@ -78,6 +78,7 @@ const dj = dry.plain.join("\n");
 ok("only the chosen repo's sessions (claude + codex in api)", dj.indexOf("\"claude:a1\"") >= 0 && dj.indexOf("\"codex:" + CX + "\"") >= 0 && dj.indexOf("w1") < 0, dj);
 ok("titles level: a title, secrets scrubbed", dj.indexOf("fix the api login") >= 0 && dj.indexOf("Xy7Kq2Lm9Pz4Rt8Vw1Bn5Cd6Ef3Gh") < 0, dj);
 ok("never: cwd, path, the home dir, hostName", dj.indexOf("\"cwd\"") < 0 && dj.indexOf("\"path\"") < 0 && dj.indexOf(HOME) < 0 && dj.indexOf("hostName\":\"x") < 0, dj);
+ok("no ownership rows in a team stream (the view joins by session id)", dj.indexOf("{\"own\"") < 0, dj);
 ok("a hidden skill never appears", dj.indexOf("secret-skill") < 0, dj.slice(Math.max(0, dj.indexOf("secret-skill") - 300), dj.indexOf("secret-skill") + 40));
 ok("head: the device as hostId, the room, epoch, member, level", (dry.plain[0] ?? "").indexOf("\"hostId\":\"" + DEV + "\"") >= 0 && (dry.plain[0] ?? "").indexOf("\"room\":\"" + R + "\"") >= 0
   && (dry.plain[0] ?? "").indexOf("\"member\":\"" + me.id + "\"") >= 0 && (dry.plain[0] ?? "").indexOf("\"level\":\"titles\"") >= 0 && (dry.plain[0] ?? "").indexOf("\"hostName\":\"\"") >= 0, dry.plain[0] ?? "");

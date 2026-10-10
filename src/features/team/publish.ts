@@ -64,7 +64,7 @@ export function publishRoom(mb: Mailbox, team: string, room: Room, share: RoomSh
     pass: (s: Sess): boolean => { const ik = identKey(s); return shareKey(ik) !== "" && inScope(room, share, ik, Number.MAX_SAFE_INTEGER) && (share.since <= 0 || started(s) >= share.since); },
     row: (o: Obj): Obj => teamRow(o, level, team),
     head: (h: Obj): Obj => ({ version: h["version"], hostId: device, hostName: "", tzOffsetMin: h["tzOffsetMin"], redact: false, days: h["days"], now: h["now"], priceSig: h["priceSig"], room: room.id, epoch: room.epoch, member: me.id, level }),
-    ownAll: false, dayDelta: true, cost: true, allowance: personal,
+    ownAll: false, dayDelta: true, cost: true, allowance: personal, noOwn: true,
   });
   b.next.sig.set("p:share", sig);
   const x = b.snap; x.head["n"] = k.n;
