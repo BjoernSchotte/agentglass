@@ -46,8 +46,8 @@ export function publishRoom(mb: Mailbox, team: string, room: Room, share: RoomSh
   if (!share.on || share.paused || share.room !== room.id) return { name: "", bytes: 0, plain: [], err: "" };
   // --redact fakes titles and names for a screencast: a room stream carries the real ones within its scope (spec 6)
   if (REDACT) return { name: "", bytes: 0, plain: [], err: "not published under --redact (a room stream carries real names within its scope)" };
-  const key = roomKey(team, room.id, room.epoch);
-  if (!key) return { name: "", bytes: 0, plain: [], err: "no key for room " + room.id + " epoch " + String(room.epoch) + " (team sync fetches it)" };
+  const key = roomKey(team, room.id, room.epoch); // a dry run seals nothing: a joiner sees what would leave before it holds a key
+  if (!key && !dry) return { name: "", bytes: 0, plain: [], err: "no key for room " + room.id + " epoch " + String(room.epoch) + " (team sync fetches it)" };
   const sd = join(teamDir(), team, "state"); const sf = join(sd, room.id + ".json");
   const st = loadPeerFile(sf);
   const files = myFiles(mb, room.id, me.id, device);
@@ -71,6 +71,7 @@ export function publishRoom(mb: Mailbox, team: string, room: Room, share: RoomSh
   const plain = snapLines(x);
   if (dry) return { name: "", bytes: 0, plain, err: "" };
   const name = "rooms/" + room.id + "/" + me.id + "-" + device + "." + (k.full ? "base" : "delta-" + String(k.n)) + "-" + x.gen + ".agt";
+  if (!key) return { name: "", bytes: 0, plain, err: "no room key" };
   const f = sealFile({ team, room: room.id, epoch: room.epoch, member: me.id, device, kind: k.full ? "base" : "delta", n: k.n, gen: x.gen, base: x.base, at: now },
     new TextEncoder().encode(plain.join("\n") + "\n"), key, me);
   const e = mb.put(name, f); if (e) return { name: "", bytes: 0, plain, err: e };

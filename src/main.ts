@@ -73,6 +73,7 @@ import "./features/prices.ts";
 import "./features/update.ts";
 import "./features/otlp/export.ts";
 import "./features/fleet/cli.ts";
+import "./features/team/cli.ts";
 import "./features/mcp-cli.ts";
 import "./serve/main.ts"; // agentglass serve --stdio: the protocol agentglass-web reads
 import "./features/fleet/tui.ts";
