@@ -19,7 +19,8 @@
 | S3 | breadth: Stats, Alerts, Fleet, Skills, Wait, events with kind filter, team groupings | W8 (tables/KPIs), then W9 (viz, after research) | T9b |
 | S4 | consent and sharing in TUI and browser: what I share, dry run, rename, leave, doctor, service, activity log | W10 | T8b ∥ T9c |
 | S5 | commands from the browser (opt-in), audit, TUI toast | W11 → W12 | T17 |
-| S6 | phase 2: hub relay, wait per room, MCP `team` | — | T11 ∥ T13, then T12 ∥ T14, then T15 |
+| S6 | phase 2: hub relay, wait per room, MCP `team`, team server image + compose | W13 | T11 ∥ T13, then T12 ∥ T14 ∥ T18, then T19, then T15 |
+| S7 | team server for enterprises: Helm chart, built-in OIDC, NetworkPolicy | W14 | T20 |
 
 Inside a slice, `∥` tasks run in parallel (separate worktrees), `→` is sequential. A slice merges as one PR when its tasks are green; S1 and S2 are the first two PRs.
 
@@ -170,3 +171,20 @@ export function gen(resource: string): number;                     // bumped whe
 
 - [ ] **Step 1: Failing tests:** BFF — command frame without/with wrong `csrf` → refused; 21 frames in a second → `rate`; `confirm` frames forwarded only for nonces issued on the same socket. Web — R2 dialog shows the server summary verbatim and sends `confirm`; kill requires typing the short id; read-only shows commands disabled with "started read-only: agentglass web --allow-commands". E2E — `agentglass web --allow-commands` with a fake `herdr` on PATH: send prompt from the browser → fake herdr receives it → the TUI (tmux, isolation set) shows the toast. Expected: FAIL.
 - [ ] **Step 2: Implement. Step 3: Run** all suites + e2e. **Step 4: Commit** `feat(web): commands over the socket with two-step confirm`. S5 PR (with fleet-teams T17).
+
+---
+
+### Task W13: Server mode with trusted-proxy auth (S6)
+
+**Files:** Modify `packages/bff/src/{main,auth,http,ws}.ts` (`--server`, `--public-url`, `--trusted-proxy`, `--auth proxy`, `--healthcheck`), `src/serve/main.ts` (`member` scoping parameter honoured on every team resource; `--read-only` forced with `--no-local`); tests `packages/bff/test/server-*.test.ts`.
+
+- [ ] **Step 1: Failing tests** (bun test, in-process): without `--public-url` → exit 2; `Host` other than the public URL → 421; proxy header from an address outside `--trusted-proxy` → 401; an unmapped user → only the link page; a mapped user's `team.report` includes only their member's rooms (fake serve child records the `member` parameter on every call); command frames and `POST /api/v1/commands` → `read_only`, `meta.caps` without `cmd`; cookie flags `Secure; HttpOnly; SameSite=Lax`; `--healthcheck` exits 0 against a running server and 1 otherwise. Expected: FAIL.
+- [ ] **Step 2: Implement. Step 3: Run** `pnpm --filter bff test`. **Step 4: Commit** `feat(web): server mode behind a trusted proxy`.
+
+### Task W14: Built-in OIDC (S7)
+
+**Files:** Create `packages/bff/src/oidc.ts` (+ tests with a fake issuer served by Bun on 127.0.0.1:0: discovery, JWKS, token endpoint).
+
+- [ ] **Step 1: Failing tests:** login redirect carries `state`, `nonce`, PKCE `S256`; callback with a wrong `state` → 400; ID token with wrong `aud`/`iss`, expired, or signed by an unknown key → 401; key rotation in JWKS picked up; session cookie rotated at login, 8 h expiry; logout clears it; the client secret is read from a file/env and never logged. Expected: FAIL.
+- [ ] **Step 2: Implement** (Web Crypto RS256/ES256; Open question 6). **Step 3: Run. Step 4: Commit** `feat(web): built-in OIDC for the team server`.
+

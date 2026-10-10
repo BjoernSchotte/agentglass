@@ -38,7 +38,8 @@ goes read model → protocol/stream → TUI + web view → tests, and merges as 
 | S3 | breadth: Stats, Alerts, Fleet, Skills, Wait, events with kind filter, team groupings | W8, then W9 (viz, after research) | T9b |
 | S4 | consent and sharing in TUI and browser: what I share, dry run, rename, leave, doctor, service, activity log | W10 | T8b ∥ T9c |
 | S5 | commands from the browser (opt-in), audit, TUI toast | W11 → W12 | T17 |
-| S6 | phase 2: hub relay, wait per room, MCP `team` | — | T11 ∥ T13, then T12 ∥ T14, then T15 |
+| S6 | phase 2: hub relay, wait per room, MCP `team`, team server image + compose | W13 | T11 ∥ T13, then T12 ∥ T14 ∥ T18, then T19, then T15 |
+| S7 | team server for enterprises: Helm chart, built-in OIDC, NetworkPolicy | W14 | T20 |
 
 `∥` = parallel (separate worktrees), `→` = sequential. T10 (end-to-end, docs) runs at the end of S4 for phase 1.
 
@@ -367,6 +368,26 @@ export function activity(t: TeamState, since: number): Act[];
 **Files:** Modify `src/mcp/tools.ts` (tool `team` after `fleet`, `tools.ts:121`), `src/mcp/tools.check.ts`, the golden `tools/list`, `docs/cli-contract.md`.
 
 - [ ] **Step 1: Failing check:** `tools/list` contains `team` with its schema; a call maps to `agentglass team report --json --room <the calling session's repo's room>` in agent mode; without a team → a clear "no team" result, not an error; size cap and cursor as the other tools; `numbers` rooms never return titles. Expected: FAIL. **Step 2: Implement. Step 3: Run** `src/mcp/*.check.ts`. Expected: pass. **Step 4: Commit** `feat(mcp): team tool`.
+
+### Task 18: Server members and `--no-local` engine (S6, after T12)
+
+**Files:** Modify `src/features/team/manifest.ts` (member kind `server`), `code.ts` (`--server` invites), `sync.ts`, `cli.ts` (`team invite --server`, `team join --server`, `team link-web <code>`, `team link-web --revoke <member>`), `src/serve/main.ts` (`--no-local`: no discovery/process scan; team feeds only), `consent.ts` (the "visible on the team server <label>" line), `activity.ts`; Create `src/features/team/link.ts` (+ check).
+
+- [ ] **Step 1: Failing checks:** a server invite admits a `server` member that receives only the granted rooms' keys and publishes nothing; it never appears in member groupings or counts; `team remove` of the server rotates its rooms; a member's consent screen for a room granted to a server lists it; `link-web` signs `{code, member, server}`, a claim signed by another key or for another server is ignored, `--revoke` by an admin removes the binding; `serve --stdio --no-local` on a fixture HOME with local sessions returns none of them and no process data. Expected: FAIL. **Step 2: Implement. Step 3: Run. Step 4: Commit** `feat(team): server members, web links and a team-only engine`.
+
+### Task 19: Team server image, compose, CI (S6, after T18 and local-web-api W13)
+
+**Files:** Create `deploy/docker/Dockerfile` (multi-arch, `FROM gcr.io/distroless/cc-debian12:nonroot`, `COPY` of the release binaries per `TARGETARCH` with checksum verification in a builder stage, `USER 65532`, `ENTRYPOINT` none: commands per service), `deploy/compose/{compose.yaml,Caddyfile,.env.example,README.md}`, `.github/workflows/image.yml` (buildx, GHCR push on release, `--sbom=true --provenance=mode=max`, `actions/attest-build-provenance`), `.github/dependabot.yml` (`docker` for `deploy/docker`), `scripts/image.test.sh`.
+
+- [ ] **Step 1: Failing test** `scripts/image.test.sh` (Docker required; skipped with a notice where absent, never on CI): build the image for the host arch from `$C` binaries; `docker run --rm --read-only --cap-drop ALL <img> agentglass --version` and `agentglass-web --version` → versions; `docker run --rm <img> sh` → fails (no shell); `ldd`-equivalent check passed at build (Open question 6); compose up (relay + web, no Caddy) with a temp volume → `curl -fsS http://127.0.0.1:<port>/healthz` → `ok`; container user 65532; root filesystem read-only (a write outside `/data` and `/tmp` fails in the healthcheck's self-test). Expected: FAIL.
+- [ ] **Step 2: Implement**; CI job: buildx for both arches on release tags and PRs touching `deploy/` (push only on tags), smoke steps of Step 1, SBOM + attestation on push.
+- [ ] **Step 3: Measure and record** (spec 16): compressed image size per arch, idle RSS of both processes with 0 and 3 users, the team bench (T7 synthetic mailbox mounted) RSS and first-view time, relay upload throughput. **Step 4: Commit** `feat(deploy): team server image and compose`.
+
+### Task 20: Helm chart and OIDC hardening (S7, after T19 and local-web-api W14)
+
+**Files:** Create `deploy/helm/agentglass-team-server/{Chart.yaml,values.yaml,values.schema.json,templates/*.yaml,templates/tests/healthz.yaml,README.md}`, `.github/workflows/helm.yml` (`helm lint`, `kubeconform -strict`, `ct install` into `kind`, OCI push to GHCR on release with attestation), Dependabot `helm` entry.
+
+- [ ] **Step 1: Failing checks:** `helm template` with defaults → Deployment replicas 1, `Recreate`, two containers, PVC, `runAsNonRoot`, `readOnlyRootFilesystem`, `capabilities.drop: [ALL]`, seccomp `RuntimeDefault`, NetworkPolicy ingress only from the configured ingress namespace and egress only to DNS + OIDC issuer; values schema rejects a missing `oidc.issuer` when `auth.mode=oidc`; `ct install` in kind → the test hook's `/healthz` passes. Expected: FAIL. **Step 2: Implement. Step 3: Run** in CI (kind) and once locally if a kind cluster can be created within the resource budget. **Step 4: Commit** `feat(deploy): Helm chart for the team server`.
 
 ### Task 15: Phase 2 end-to-end and docs (S6, alone)
 

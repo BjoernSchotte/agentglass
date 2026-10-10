@@ -173,6 +173,26 @@ Framing: one JSON object per line, ≤ 4 MB (the MCP framer, `src/mcp/rpc.ts`, m
 - **Logs**: `web.log` holds method, path (no query values), status and timing; never tokens, cookies, filters with
   values, prompt text or response bodies.
 
+### 4b. Server mode (the fleet-teams team server; slices S6/S7)
+`agentglass-web --server` replaces the loopback + per-run token model; it only runs inside the team-server image
+(fleet-teams section 16), never as `agentglass web` on a developer machine.
+- **Bind**: `0.0.0.0:<port>` inside the container; TLS terminates at the ingress / reverse proxy (Caddy in compose, an
+  Ingress in Helm); `--public-url https://…` is required and is the only accepted `Host`/`Origin`.
+- **Auth modes**: `proxy` (S6) — a trusted reverse proxy (oauth2-proxy behind Caddy `forward_auth`, or an ingress
+  auth annotation) sets `X-Auth-Request-User`/`Remote-User`; accepted only from `--trusted-proxy <CIDR>`; `oidc`
+  (S7) — built-in OpenID Connect authorization code flow with PKCE (confidential client; issuer discovery; `state`,
+  `nonce`; ID token signature and `aud`/`iss`/`exp` checked with the issuer's JWKS through Web Crypto in Bun).
+- **Sessions**: cookie `agw` with `Secure; HttpOnly; SameSite=Lax` (`Lax` for the OIDC redirect), 8 h lifetime,
+  rotated at login; CSRF token on every POST; Origin check on every non-GET and the WebSocket upgrade; the same
+  CSP, headers and limits as section 4, plus per-user rate limits.
+- **Authorization**: a user maps to a team member through a key-signed link (fleet-teams section 16); every request
+  is filtered to that member's rooms by the serve child (`member` parameter on every team resource, enforced in
+  agentglass, not in the BFF). Unmapped users get only the link page.
+- **Read-only, always**: the serve child runs `--read-only --no-local`; command routes and WS command frames answer
+  `read_only`; the command channel is not even advertised in `meta.caps`. Commands only ever act on a member's own
+  machine (section 9's invariant).
+- **Logs**: user subject hash, route, status, timing — no tokens, cookies, ID tokens or query values.
+
 ### 5. Streaming: WebSocket first, SSE + POST as fallback
 - **WebSocket** (`GET /api/v1/ws`, authenticated at the upgrade): one socket per tab carries everything: requests
   `{id, m, p}`, subscriptions, push events, command frames `{id, cmd, args, idem, csrf}`, acks, progress and results.
@@ -436,7 +456,9 @@ model and budgets were fixed first, and the libraries were chosen to meet them.
   quiet engine (measured prototype: 18 MB / 0.23 %, 24 MB / 0.8 % with one push per second).
 
 ## Out of scope
-- Remote access other than an SSH tunnel; TLS for the local server; multi-user hosting.
+- Remote access to a developer's own `agentglass web` other than an SSH tunnel; TLS for the local server.
+- Running the per-developer view in a container (Decision 15); multi-user hosting other than the team server
+  (section 4b, fleet-teams section 16).
 - Views beyond those in the slices; mobile layout beyond "usable".
 - Editing transcripts, starting new agents from the browser, any command on another machine.
 - A web UI inside the TUI process (Decision 4).
@@ -501,6 +523,20 @@ Each: question · options · decision · why · cost if wrong.
     shadcn's current components need it (ref as prop; Radix `asChild` breaks on 18); no pick needs 18. Constraints:
     React Compiler off on TanStack Table views; no `<Activity>` around React Flow. Cost if wrong: none known;
     downgrading means shadcn's older component set and Tailwind v3.
+15. **The per-developer web view stays native; no container for local use** (lead analysis on the user's
+    Docker/compose consideration, 2026-10-10). Options: (a) native `agentglass` + `agentglass-web` only; (b) also a
+    local container. **Decision: (a).** Why: the local view needs the host's harness logs (bind mounts and uid
+    mapping per harness directory), the host's processes for live detection (`pid: host` on Linux; impossible on
+    macOS, where Docker Desktop's VM cannot see macOS processes or call libproc), and the host's herdr/tmux sockets
+    for commands — a container would show less and need more privileges than the binary. Cost if wrong: no
+    container option for people who only run containers locally; the binaries are two files and need no runtime.
+16. **Server mode in the same `agentglass-web` binary** (`--server`). Options: same binary with a mode; a separate
+    server binary. **Decision: same binary.** Why: one UI, one API, one hardening codebase; the mode switches only
+    bind, auth and authorization, and forces read-only. Cost if wrong: server-only code (OIDC) ships in the local
+    binary, inert unless `--server`.
+17. **Auth on the server: trusted proxy first (S6), built-in OIDC later (S7).** Why: oauth2-proxy + Caddy is a solved,
+    audited path for small teams; built-in OIDC removes a moving part for enterprises once the server has run in the
+    field. Cost if wrong: one extra container in compose until S7.
 
 ## Open questions (technical verification during implementation)
 1. Bun's `bun-linux-x64-baseline` binary on debian:12 glibc 2.36 and on an older CPU without AVX2 (CI runner with
@@ -512,3 +548,5 @@ Each: question · options · decision · why · cost if wrong.
 4. Bun `Bun.serve` per-socket backpressure API (`ws.getBufferedAmount()`, `send` return values) under a stalled
    client: verify the 2 MB queue cap is enforceable.
 5. macOS signing/notarisation of a Bun-compiled binary (Gatekeeper on downloads outside Homebrew).
+6. Bun Web Crypto for RS256/ES256 JWKS verification of ID tokens (S7) and `Secure` cookies behind a TLS-terminating
+   proxy (`X-Forwarded-Proto`, only from the trusted proxy).

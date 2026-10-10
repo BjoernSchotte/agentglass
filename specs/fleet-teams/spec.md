@@ -436,6 +436,55 @@ takes 4 min for alice and 40 s for carol".
 project scope as the other tools): the room's cost this week, harness and skill mix, teammates' live agents on this
 repo. Same size cap, cursor and redaction rules as mcp-server; no other member's session titles at `numbers` level.
 
+### 16. Team server (OCI image; slices S6 and S7)
+For teams that want one always-on place to look (a browser tab for people who run no agentglass themselves, a
+manager, a wall screen) and one relay that is always reachable. The **per-developer view stays the native binaries**
+(local-web-api Decision 15); the team server is a different deployment target.
+- **What it is**: one OCI image `ghcr.io/bjoernschotte/agentglass-team-server` (linux/amd64 + linux/arm64) with
+  `agentglass` and `agentglass-web`, run as two processes of one pod/compose project sharing one volume:
+  `agentglass receive --team` (the relay of section 13) and `agentglass-web --server` (local-web-api section 4b),
+  whose `serve --stdio` child runs with `--no-local` (no harness discovery, no processes: it reads only team
+  streams) and `--read-only` (forced; commands do not exist on a server).
+- **A device of the team, not a bypass**: the server joins with a server invite (`team invite --server --rooms a,b`;
+  `docker compose run --rm team-server agentglass team join <code> --server --yes`), gets its own device and member
+  keys (member kind `server`, shown as "server: <label>" in the activity log, never counted as a person), is
+  admitted by an admin, receives the keys of exactly the rooms it was granted, and is removed like any member
+  (`team remove`, key rotation). It publishes nothing. E2E stays intact: rooms the server is not in remain
+  ciphertext on its disk; for its rooms the server holds plaintext in memory like any member — whoever operates the
+  server can read those rooms (stated in the invite, the consent screens of members of those rooms — "visible on
+  the team server <label>" — and `team doctor`).
+- **Who may see what**: web users authenticate (local-web-api 4b) and are mapped to members; a user sees only the
+  rooms their member is in, with the same names, levels and redaction as in their own agentglass. Mapping is
+  proven, not configured by hand: after the first login the page shows a one-time link code; the member runs
+  `agentglass team link-web <code>` on their own machine, which signs `{code, member, server}` with the member key
+  into the mailbox; the server binds the identity provider's subject to that member. An admin can unlink
+  (`team link-web --revoke <member>`). Unmapped users see a "link your agentglass" page and no data.
+- **Image hardening**: base `gcr.io/distroless/cc-debian12:nonroot` (glibc for both binaries, no shell, no package
+  manager), uid/gid 65532, read-only root filesystem, one writable volume `/data` (hub storage, team keys of the
+  server, caches) and a `tmpfs` `/tmp`, all capabilities dropped, `no-new-privileges`, seccomp `RuntimeDefault`;
+  `HEALTHCHECK` in exec form (`agentglass-web --healthcheck`); the binaries are the release binaries of the same
+  version (copied, not rebuilt), verified against their checksums in the Dockerfile.
+- **docker compose** (S6, `deploy/compose/`): services `relay` and `web` (same image, shared volume), an optional
+  `caddy` (automatic TLS, `forward_auth` to an `oauth2-proxy` service for identity — the trusted-proxy auth mode of
+  4b) and an `.env.example`; `docker compose up` gives HTTPS with Let's Encrypt or a tailnet certificate.
+- **Helm chart** (S7, `deploy/helm/agentglass-team-server/`, published as an OCI chart on GHCR): one Deployment
+  (replicas 1: file-based state with one writer; strategy `Recreate`), two containers, a PVC for `/data`, Service,
+  Ingress (class, host, TLS secret or cert-manager annotations), values for OIDC (issuer, client id,
+  `existingSecret` for the client secret), resources (requests 50m/128Mi, limits 500m/512Mi as defaults to verify),
+  securityContext as above, a NetworkPolicy (ingress only from the ingress controller's namespace; egress only to
+  DNS, the OIDC issuer and the configured relay peers), optional ServiceMonitor off by default. HA, multiple
+  replicas and object storage are out of scope.
+- **Supply chain**: images built in the release workflow with buildx from the release binaries, pushed to GHCR,
+  build-provenance attestations (`actions/attest-build-provenance`) and an SPDX SBOM attached (`buildx --sbom`);
+  Dependabot `docker` ecosystem for the base image digest and `helm` for the chart's dependencies (none planned);
+  CI smoke: `docker run --rm <image> agentglass --version` and `agentglass-web --version`, a compose up with a test
+  relay + web and `curl` of `/healthz`; `helm lint` + `kubeconform` + an install into `kind` with the chart's test
+  hook.
+- **Measurements to record at implementation** (targets to verify, not measured yet): compressed image size (target
+  ≤ 60 MB: agentglass ≈ 15 MB + agentglass-web ≈ 36 MB gzip + base ≈ 10 MB); idle RSS of both processes with 0 and
+  3 browser users (target ≤ 80 MB together without team data); RSS and first-view time for the team bench (10
+  members × 3 devices) served through the image; relay throughput for one day of the bench's uploads.
+
 ## Failure modes
 - **Mailbox missing or read-only** (sync not set up, disk full, unmounted drive): publish keeps the peer state
   (nothing acknowledged), header shows "team: cannot write <path>", `team doctor` names the cause; reading continues.
@@ -720,6 +769,31 @@ Each: question · options · decision · why · cost if wrong.
     - Decision: a label chosen at join (default `<os>-<4 hex>`), never the hostname.
     - Why: hostnames often name people, customers or employers; the `numbers` level already drops them.
     - Cost if wrong: one more field on the consent screen.
+26. **Local view in a container?** (lead analysis, user consideration 2026-10-10)
+    - Options: (a) native binaries only for the per-developer view; (b) also a container for local use.
+    - **Decision: (a).** Recorded in local-web-api Decision 15 with its cost.
+27. **Team server as an admitted device.**
+    - Options: (a) the server is a team member of kind `server`, admitted per room, revocable; (b) the server gets
+      every room key by configuration; (c) the server is only a relay (ciphertext) and the browser decrypts.
+    - **Decision: (a)** (lead analysis, adopted).
+    - Why: the same admission, rotation and removal as everyone else; rooms not granted stay ciphertext on the
+      server; (b) silently widens who can read; (c) would need member keys in the browser (key storage, XSS
+      exposure, every viewer a member) — the opposite of the goal of a view for people without agentglass.
+    - Cost if wrong: the operator can read the granted rooms; members see that on their consent screens.
+28. **Web identity on the server: proof by the member's key.**
+    - Options: (a) OIDC/proxy login + a one-time code signed by the member's key (`team link-web`); (b) an admin
+      maps e-mails to members by hand; (c) OIDC groups.
+    - **Decision: (a).**
+    - Why: only the key holder can claim a member; no e-mail lists to maintain; works with any identity provider.
+    - Cost if wrong: one command per member once; an admin can revoke links.
+29. **Compose first (S6), Helm and built-in OIDC later (S7).**
+    - Why: small teams run compose with Caddy + oauth2-proxy today; enterprises need Helm, NetworkPolicy and
+      direct OIDC — built after the relay and image have run in the field.
+    - Cost if wrong: an enterprise waits one slice; compose works on any VM meanwhile.
+30. **One pod, two containers, replicas 1.**
+    - Why: relay and web share file-based state on one volume with one writer; scaling out needs object storage and
+      locking, not justified for teams of ≤ 64 devices (Decision 20).
+    - Cost if wrong: a pod restart is a short outage; members keep working locally and catch up through their chains.
 
 ## Open questions (technical verification during implementation)
 1. Monocypher on macOS arm64/x64 with `--backend c` and the libproc manifest in one build (Linux measured; macOS
@@ -732,3 +806,5 @@ Each: question · options · decision · why · cost if wrong.
    names on the macOS runner.
 5. Per-member merge memory on the bench: the ≤ 150 MB TUI budget for 30 streams is an estimate from the CLI runs —
    Task 8 measures and records it; if exceeded, ownership rows of other members are dropped after their member merge.
+6. Distroless `cc-debian12` provides every shared library `agentglass` and the Bun binary load (`ldd` in the image
+   build; a missing one → copy it in or switch to `base-debian12:nonroot`) — Task 19.
