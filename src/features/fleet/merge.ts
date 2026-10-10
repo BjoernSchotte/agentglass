@@ -7,7 +7,7 @@
 // occurrence is taken out of its session's shadow entry (exactly what its host booked for it); a losing local
 // occurrence goes into a correction entry for its log (negative amounts: the local ledger itself stays untouched).
 // Copies carry identical usage, so which occurrence wins changes attribution, never the totals.
-import { type Acc, type Day, NO_SA, newAcc, newDay, mkey, reprice, lastDays } from "../usage/record.ts";
+import { type Acc, type Day, NO_SA, saOf, saW, newAcc, newDay, mkey, reprice, lastDays } from "../usage/record.ts";
 import { SA_N, SA_LU, SA_LC, SA_L, SA_C, SA_T } from "../usage/skillrec.ts";
 import { monthStart } from "../usage/costs.ts";
 import { resolve, cost } from "../usage/pricing.ts";
@@ -97,10 +97,10 @@ function addDayRow(a: Acc, dr: DayRow, shiftMin: number): void {
   for (const h of dr.hx) { const x = shiftDH(dr.d, n(h[0]), shiftMin); addCostTo(a, dayOf(a, x.d), x.h, h[1] ?? "", "", n(h[2])); }
   // the day-level parts carry no hour: they move with the day's noon
   if (dr.sa.length) { // skill rows carry no hour: with the day's noon (skill-usage 6.15)
-    const d = dayOf(a, shiftDH(dr.d, 12, shiftMin).d); if (d.sa === NO_SA) d.sa = new Map<string, number[]>();
+    const d = dayOf(a, shiftDH(dr.d, 12, shiftMin).d); const sa = saW(d);
     for (const r of dr.sa) {
-      const k = (r[0] ?? "") + "\t" + (r[1] ?? "") + "\t" + (r[2] ?? ""); const x0 = d.sa.get(k);
-      const x = x0 ? x0 : saZero(); if (!x0) d.sa.set(k, x);
+      const k = (r[0] ?? "") + "\t" + (r[1] ?? "") + "\t" + (r[2] ?? ""); const x0 = sa.get(k);
+      const x = x0 ? x0 : saZero(); if (!x0) sa.set(k, x);
       for (let i = 0; i < SA_N; i++) x[i] = (x[i] ?? 0) + n(r[3 + i]);
     }
   }
@@ -174,7 +174,7 @@ export function shadowSkills(a: Acc, ds: DayRow[], lost: Map<string, number[]>, 
   for (const dr of ds) for (const t of dr.tp) had(held, dr.d, t[1] ?? "", t[2] ?? "", [n(t[3]), n(t[5]), n(t[6]), n(t[7])]);
   for (const dr of ds) {
     if (!dr.sa.length) continue;
-    const d = a.days.get(shiftDH(dr.d, 12, shiftMin).d); if (!d || d.sa === NO_SA) continue;
+    const d = a.days.get(shiftDH(dr.d, 12, shiftMin).d); if (!d || saOf(d) === NO_SA) continue;
     const df = dayFracOf(lost, held, dr.d);
     for (const r of dr.sa) {
       const k = (r[0] ?? "") + "\t" + (r[1] ?? "") + "\t" + (r[2] ?? ""); const x = d.sa.get(k); if (!x) continue;
@@ -191,13 +191,13 @@ export function correctSkills(c: Acc, local: Acc, lost: Map<string, number[]>): 
   const held = new Map<string, number[]>();
   for (const [dk, d] of local.days) for (const [tk, r] of d.tp) { const t1 = tk.indexOf("\t"); const t2 = tk.indexOf("\t", t1 + 1); had(held, dk, tk.slice(t1 + 1, t2), tk.slice(t2 + 1), [r[0] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0]); }
   for (const [dk, d] of local.days) {
-    if (d.sa === NO_SA) continue;
+    if (saOf(d) === NO_SA) continue;
     const df = dayFracOf(lost, held, dk);
     for (const [k, x] of d.sa) {
       const t1 = k.indexOf("\t"); const t2 = k.indexOf("\t", t1 + 1);
       const p = lostPart(x, k.slice(t1 + 1, t2), k.slice(t2 + 1), dk, lost, held, df); if (zero(p)) continue;
-      const cd = dayOf(c, dk); if (cd.sa === NO_SA) cd.sa = new Map<string, number[]>();
-      const y0 = cd.sa.get(k); const y = y0 ? y0 : saZero(); if (!y0) cd.sa.set(k, y);
+      const cs = saW(dayOf(c, dk));
+      const y0 = cs.get(k); const y = y0 ? y0 : saZero(); if (!y0) cs.set(k, y);
       for (let i = 0; i < SA_N; i++) y[i] = (y[i] ?? 0) - (p[i] ?? 0);
     }
   }

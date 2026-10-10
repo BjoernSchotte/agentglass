@@ -2,7 +2,7 @@
 // drop` writes, the incremental parser and how a snapshot applies to the report a viewer holds. Pure: no I/O
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr } from "../../util/json.ts";
-import { type Acc, peekHeavy, mkey } from "../usage/record.ts";
+import { type Acc, peekHeavy, mkey, saOf } from "../usage/record.ts";
 import { type DayRow, type Hello, type HostReport, type Owned, type SessRow, ownSess } from "./model.ts";
 import { helloOf } from "./report.ts";
 import { type OwnChunk, NO_ROWS, newChunk, joinChunks, hashId, hashHex, wordId, word } from "./ownc.ts";
@@ -147,7 +147,7 @@ export function saRows(accs: Acc[], k: string): string[][] {
   const m = new Map<string, number[]>();
   for (const a of accs) {
     const d = a.days.get(k); if (!d) continue;
-    for (const [key, x] of d.sa) {
+    for (const [key, x] of saOf(d)) {
       const t = key.indexOf("\t"); const v = skillVis(key.slice(0, t)); const nk = (v.mode === "omit" ? HIDDEN : v.shown) + key.slice(t);
       const r = m.get(nk); if (r) addInto(r, x); else m.set(nk, x.slice());
     }

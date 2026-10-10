@@ -8,7 +8,7 @@ import { parse as parseJson, obj, str } from "../../util/json.ts";
 import { loadHead, titleOf } from "../../model/sessions.ts";
 import { identSync } from "../query/project.ts";
 import { harnessOf, sourceOf, parseEvents, window, epochOf, busy } from "../../harness/index.ts";
-import { type Acc, type Booking, type SkLoad, newAcc, setBookTap } from "../usage/record.ts";
+import { type Acc, type Booking, type SkLoad, newAcc, setBookTap, skOf } from "../usage/record.ts";
 import { SKCAP, type SkCap, skillHash, LISTING } from "../usage/skillrec.ts";
 import { skillLoads } from "../skills/model.ts";
 import { skillsJson } from "../skills/json.ts";
@@ -163,7 +163,7 @@ function line(b: SessB, sd: Side, l: string, o: BuildOpts): void {
   }
   if (!tr && !sd.top) tr = hostTurn(b, sd.last);
   if (tr && (q || bs.length > 0 || a.rs > rs0)) request(b, sd, tr, q, bs, a.rs - rs0, o);
-  if (a.sk.length !== sd.skN || sd.skOpen.length) skillMarks(b, sd, tr);
+  if (skOf(a).length !== sd.skN || sd.skOpen.length) skillMarks(b, sd, tr);
   if (sd.top && b.open && l.indexOf("Base directory for this skill:") >= 0 && l.indexOf("\"isMeta\":true") >= 0) { // a slash command's skill (parsing-fixes L6)
     const rt = b.open.spans[0]; const m = /^\/([^\s]+)/.exec(rt.input);
     if (m) rt.skill = shownSkill(m[1] ?? "");
@@ -195,7 +195,7 @@ function tierOf(l: SkLoad): string { return l.S < 0 ? "?" : l.est ? "≈" : "exa
 function skillEvents(b: SessB, tr: XTurn, o: BuildOpts): void {
   const qs = b.skq.get(tr.key) ?? []; b.skq.delete(tr.key);
   for (const x of qs) {
-    const l = x.sd.acc.sk[x.i]; if (!l || l.name !== x.name) continue;
+    const l = skOf(x.sd.acc)[x.i]; if (!l || l.name !== x.name) continue;
     const v = skillVis(l.name); if (v.mode === "omit") continue;
     const at: Attr[] = [attrS("gen_ai.skill.name", v.shown)];
     if (x.unload) {

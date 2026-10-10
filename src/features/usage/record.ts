@@ -21,11 +21,12 @@ export type { SkLoad };
 // act = active minutes, flat sorted merged [s0,e0,s1,e1,…] local minutes of the day (e exclusive, ≤ ACT_MAX intervals)
 // hx = the heavy part (heavy()); hv = that part as the cache stored it (JSON text), until something asks for it
 // sa = per-skill tokens "<skill>\t<provider>\t<model as booked>" → 18 slots (skillrec.ts SA_*): loads by trigger, load/carry/tail
-//   tokens per bucket, harness-priced $ (rows whose provider starts with "=": never re-priced)
+//   tokens per bucket, harness-priced $ (rows whose provider starts with "=": never re-priced); read through saOf():
+//   sav = sa as the cache stored it (JSON text), until something asks for it
 export interface Day {
   tools: number; hx: Heavy | null; hv: string; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
   um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>; act: number[]; tp: Map<string, number[]>;
-  sa: Map<string, number[]>;
+  sa: Map<string, number[]>; sav: string;
 }
 // per tool, per program, per command line, per file: ~90 % of the ledger cache. A run that never looks at them (cost,
 // --json) reads them back as text and writes that text out again; heavy() decodes a day's on first use (HEAVY: codec.ts)
@@ -76,8 +77,9 @@ export interface Acc {
   mc: Map<string, string>; // copies this log skipped → the path that owned them then
   xs: Set<string>; // other sessions its lines name as their source (a Claude continuation's session_id): they may own its messages
   // skills (skillrec.ts): every load in load order; requests booked; human prompts (turns, also a subagent's own); the
-  // previous request's context; the newest listing's skill names; SKILL.md reads waiting for their output (not persisted)
-  sk: SkLoad[]; rq: number; tq: number; lastCtx: number; lst: string[]; skr: Map<string, SkRead>;
+  // previous request's context; the newest listing's skill names; SKILL.md reads waiting for their output (not persisted).
+  // Loads are read through skOf(): skv = sk as the cache stored it (JSON text), until something asks for them
+  sk: SkLoad[]; skv: string; rq: number; tq: number; lastCtx: number; lst: string[]; skr: Map<string, SkRead>;
 }
 // one scraped git reference: k = commit (v = sha as printed) | pr | issue | link (v = canonical URL; link = a commit URL) |
 // gcall (v = "<t0>-<t1>" epoch ms of a commit-making git call); t = call time (epoch ms); how = observed | created | mentioned;
@@ -102,11 +104,20 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 // shared empties until the first write (an empty Map or array still costs ~150 B, and most logs load no skill, most days book
 // none): writers swap in their own (skillLoad, skillReq, skillRead, skillCall); never mutate these
 export const NO_SA = new Map<string, number[]>(); export const NO_SK: SkLoad[] = []; export const NO_LST: string[] = []; export const NO_SKR = new Map<string, SkRead>();
+// a warm start keeps every log's skill loads and every day's skill rows as the cache's text (codec.ts sets the decoders):
+// decoded they take several times that, and most are a listing nobody looks at. A reader or writer decodes one on first use
+export const SKV = { loads: (raw: string): SkLoad[] => NO_SK, rows: (raw: string): Map<string, number[]> => NO_SA };
+export function skOf(a: Acc): SkLoad[] { if (a.skv) { const raw = a.skv; a.skv = ""; a.sk = SKV.loads(raw); } return a.sk; }
+export function saOf(d: Day): Map<string, number[]> { if (d.sav) { const raw = d.sav; d.sav = ""; d.sa = SKV.rows(raw); } return d.sa; }
+// a day's skill rows to write into (shared empties swapped for its own map)
+export function saW(d: Day): Map<string, number[]> { const sa = saOf(d); if (sa !== NO_SA) return sa; const m = new Map<string, number[]>(); d.sa = m; return m; }
+// whether the log has skill loads, without decoding them
+export function hasSk(a: Acc): boolean { return a.skv !== "" || a.sk.length > 0; }
 export function newAcc(): Acc {
   return { off: 0, skip: false, stall: -1, ids: new Map<string, number>(), days: new Map<string, Day>(), model: "", pend: new Map<string, Pend>(), ep: "", x: [], xM: 0, pk: "", sub: false,
     inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, tools: 0, add: 0, del: 0, uc: 0, rs: 0, bill: "", plan: "", billSrc: "", rows: newRows(), lastCall: -1, t0: 0, al: 0, sp: [], vcs: [], dn: [], vk: new Set<string>(), vkn: 0, hd: [], tl: [],
     p: "", ro: false, mo: new Map<string, number>(), mv: "", mc: new Map<string, string>(), xs: new Set<string>(),
-    sk: NO_SK, rq: 0, tq: 0, lastCtx: 0, lst: NO_LST, skr: NO_SKR };
+    sk: NO_SK, skv: "", rq: 0, tq: 0, lastCtx: 0, lst: NO_LST, skr: NO_SKR };
 }
 // billing evidence: transcript ("session") beats the live environment ("process"); the first conclusive session result
 // stays (a mid-session switch keeps the first mode); current config is never stamped — it is only assumed at display time
@@ -117,7 +128,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
   return { tools: 0, hx: newHeavy(), hv: "", skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
-    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>(), sa: NO_SA };
+    um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>(), sa: NO_SA, sav: "" };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)
 // tsIso/tsMs: the time of the last bucket() call, for the call rows tool() appends (0 = none: Date.now() fallback)
@@ -274,7 +285,7 @@ export function file(a: Acc, d: Day, name: string, path: string, add: number, de
 // every prompt also numbers the log's turns (a.tq, a subagent's too: skill tail carry) and ends its skills' loading turn
 export function turn(a: Acc, ms: number, iso: string, n: number): void {
   if (n <= 0) return;
-  if (a.sk.length) { const t = ms > 0 ? ms : isoMs(iso); for (const l of a.sk) if (l.tu === a.tq && l.te === 0) l.te = t > 0 ? t : 1; }
+  if (hasSk(a)) { const t = ms > 0 ? ms : isoMs(iso); for (const l of skOf(a)) if (l.tu === a.tq && l.te === 0) l.te = t > 0 ? t : 1; }
   a.tq = a.tq + n;
   if (!a.sub) { const d = bucket(a, ms, iso); d.turns = d.turns + n; }
 }
@@ -450,11 +461,10 @@ export function patchLines(a: Acc, d: Day, name: string, patch: string): void {
 // message's later lines, is none); with no load in the log only the counters move
 function skillReq(a: Acc, d: Day, model: string, prov: string, nIn: number, nOut: number, nCr: number, w5: number, w1: number, usd: number): void {
   const ctx = nIn + nCr + w5 + w1; if (ctx <= 0) return;
-  if (a.sk.length) {
-    if (d.sa === NO_SA) d.sa = new Map<string, number[]>();
+  if (skOf(a).length) {
     let w: number[] = [1, 1, 1, 1, 1];
     if (usd > 0) { const r = resolve(model, prov); if (r) w = [cost(r.p, 1e6, 0, 0, 0, 0), cost(r.p, 0, 0, 1e6, 0, 0), cost(r.p, 0, 0, 0, 1e6, 0), cost(r.p, 0, 0, 0, 0, 1e6), cost(r.p, 0, 1e6, 0, 0, 0)]; }
-    attribute(a.sk, d.sa, model, prov, [nIn, nCr, w5, w1], nOut, ctx, a.lastCtx, a.tq, tsMs, usd, w);
+    attribute(a.sk, saW(d), model, prov, [nIn, nCr, w5, w1], nOut, ctx, a.lastCtx, a.tq, tsMs, usd, w);
   }
   a.rq = a.rq + 1; a.lastCtx = ctx;
 }
@@ -482,19 +492,18 @@ export function skillLoad(a: Acc, name: string, trig: string, ms: number, iso: s
   const sp = lineSpan(a); const o = off >= 0 ? off : sp[0] ?? -1; const e = sp[1] ?? -1;
   const t = ms > 0 ? ms : isoMs(iso);
   const l = newLoad(name, trig, t, text, known, dir, est, a.tq, a.rq, o, o >= 0 && e > o ? e - o : 0, rec);
-  if (trig === "user" || trig === "model") for (const x of a.sk) if (x.name === name && x.why === "compact") { l.rel = true; break; }
-  const d = bucket(a, t, iso); if (d.sa === NO_SA) d.sa = new Map<string, number[]>();
-  const r = saRow(d.sa, l.name, "", "");
+  if (trig === "user" || trig === "model") for (const x of skOf(a)) if (x.name === name && x.why === "compact") { l.rel = true; break; }
+  const r = saRow(saW(bucket(a, t, iso)), l.name, "", "");
   const slot = trig === "user" ? SA_LU : trig === "model" ? SA_LM : SA_LC;
   r[slot] = (r[slot] ?? 0) + 1;
-  if (a.sk === NO_SK) a.sk = [];
+  if (skOf(a) === NO_SK) a.sk = [];
   a.sk.push(l);
   if (a.sk.length > SK_CAP) skillFold(a);
   return l;
 }
 // more text of the newest pending/open load of this name (a text over several lines, a second partial read)
 export function skillGrow(a: Acc, name: string, text: string): boolean {
-  for (let i = a.sk.length - 1; i >= 0; i--) {
+  for (let i = skOf(a).length - 1; i >= 0; i--) {
     const l = a.sk[i]; if (!l || l.name !== name || l.end !== 0) continue;
     growLoad(l, text, lineSpan(a)[1] ?? -1);
     return true;
@@ -503,12 +512,12 @@ export function skillGrow(a: Acc, name: string, text: string): boolean {
 }
 // every load in context ends (a compaction marker, a /clear): why = compact | clear
 export function skillUnload(a: Acc, ms: number, why: string): void {
-  for (const l of a.sk) if (l.end === 0) { l.end = ms > 0 ? ms : 1; l.why = why; l.pend = false; } // one never sent costs nothing
+  for (const l of skOf(a)) if (l.end === 0) { l.end = ms > 0 ? ms : 1; l.why = why; l.pend = false; } // one never sent costs nothing
 }
 // a new skill listing replaces the open one (why = relist); names = the skills it lists (kept for "listed, never loaded")
 export function skillListing(a: Acc, ms: number, iso: string, text: string, names: string[]): void {
   const t = ms > 0 ? ms : isoMs(iso);
-  for (const l of a.sk) if (l.end === 0 && l.name === LISTING) { l.end = t > 0 ? t : 1; l.why = "relist"; l.pend = false; }
+  for (const l of skOf(a)) if (l.end === 0 && l.name === LISTING) { l.end = t > 0 ? t : 1; l.why = "relist"; l.pend = false; }
   skillLoad(a, LISTING, "listing", t, iso, text, true, "", false);
   const keep: string[] = []; for (const n of names) if (n && keep.length < SK_CAP && keep.indexOf(n) < 0) keep.push(n);
   a.lst = pooledList(keep); // most logs list the same skills: one shared array
@@ -525,7 +534,7 @@ export function skillReadDone(a: Acc, d: Day, callId: string, ms: number, iso: s
   a.skr.delete(callId);
   const name = skillPath(r.path); if (!name) return;
   const dir = r.path.slice(0, r.path.lastIndexOf("/"));
-  for (let i = a.sk.length - 1; i >= 0; i--) { // the same skill in this turn: a tool load being sent (part of it), or a read of the same file (grown)
+  for (let i = skOf(a).length - 1; i >= 0; i--) { // the same skill in this turn: a tool load being sent (part of it), or a read of the same file (grown)
     const l = a.sk[i]; if (!l || l.name !== name || l.end !== 0 || l.tu !== a.tq) continue;
     if (!l.rd && l.pend) return; // the harness's skill tool loaded it right before this read
     if (l.rd && l.dir === dir) { skillGrow(a, name, out); l.est = true; return; }
@@ -546,7 +555,7 @@ export function skillCall(a: Acc, callId: string, name: string): void {
 export function skillCallText(a: Acc, callId: string, ms: number, iso: string, text: string, dir: string, stub: boolean): boolean {
   const e = a.skr.get("S:" + callId); if (!e) return false;
   if (e.tu === -1) {
-    for (let i = a.sk.length - 1; i >= 0; i--) { const l = a.sk[i] as SkLoad; if (l.name === e.path && l.end === 0) { if (l.pend) growLoad(l, text, lineSpan(a)[1] ?? -1); break; } }
+    for (let i = skOf(a).length - 1; i >= 0; i--) { const l = a.sk[i] as SkLoad; if (l.name === e.path && l.end === 0) { if (l.pend) growLoad(l, text, lineSpan(a)[1] ?? -1); break; } }
     return true;
   }
   e.tu = -1;

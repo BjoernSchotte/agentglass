@@ -10,7 +10,7 @@ import { sessions, titleOf } from "../../model/sessions.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
-import { L, startOfDay, todayKey } from "../usage/record.ts";
+import { L, startOfDay, todayKey, skOf, hasSk } from "../usage/record.ts";
 import { pct, fmtMs } from "../usage/calls.ts";
 import { grp } from "../usage/costs.ts";
 import { callCutoff } from "../usage/callcache.ts";
@@ -230,8 +230,8 @@ const SKT = { key: "", ver: -1, at: 0, n: [] as number[], total: 0 };
 export function skillBuckets(since: number, until: number, bucketMs: number, f: Compiled): number[] {
   const nb = bucketMs > 0 && until > since ? Math.ceil((until - since) / bucketMs) : 0; const o: number[] = []; for (let i = 0; i < nb; i++) o.push(0);
   for (const s of sessions.values()) {
-    const a = ledger.get(s.path); if (!a || !a.sk.length || (f !== EMPTY && !sessMatches(f, s))) continue;
-    for (const l of a.sk) {
+    const a = ledger.get(s.path); if (!a || !hasSk(a) || (f !== EMPTY && !sessMatches(f, s))) continue;
+    for (const l of skOf(a)) {
       if (l.name === LISTING || l.t < since || l.t >= until || skillVis(l.name).mode === "omit") continue;
       const k = Math.floor((l.t - since) / bucketMs); if (k >= 0 && k < nb) o[k] = (o[k] ?? 0) + 1;
     }

@@ -7,7 +7,7 @@ import { home } from "../../util/text.ts";
 import { ledger, copyKey } from "../usage/ledger.ts";
 import { type Cnt, HB, pct, mcpServer } from "../usage/calls.ts";
 import type { Rows } from "../usage/rows.ts";
-import { dayKey, heavy } from "../usage/record.ts";
+import { dayKey, heavy, hasSk } from "../usage/record.ts";
 import type { ToolT } from "../query/agg.ts";
 import { EMPTY, callsIn, callCutoff } from "../query/eval.ts";
 import { projectRoot } from "../query/project.ts";
@@ -155,7 +155,7 @@ export const SIG_SESS = 20; // sessions per group before χ² marks a skill row
 function skSide(sd: Side): Map<string, SkSide> {
   const m = new Map<string, SkSide>(); const t = sd.t;
   for (const p of t.paths) {
-    const a = ledger.get(p); const ds = t.pdays.get(p); if (!a || !ds || !a.sk.length) continue;
+    const a = ledger.get(p); const ds = t.pdays.get(p); if (!a || !ds || !hasSk(a)) continue;
     const s = sessions.get(p); const sid = s ? copyKey(s) : p;
     for (const r of skillTable([a], [sid], ds, "cost")) {
       const v = skillVis(r.name); const k = v.mode === "omit" ? HIDDEN : v.shown;

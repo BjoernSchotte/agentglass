@@ -288,10 +288,14 @@ export interface SkLoad {
 - `Day.skills` (parsing-fixes) stays as is: counts by source, the Stats `✧ skills` group keeps reading it.
 - Codec: `Acc.sk` as columns under key `sk` (names front-coded per Acc), `Day.sa` under day key `sa` (light part: Stats
   reads it without decoding the heavy maps). **`VERSION` bumps once** (19, or the next free number at implementation
-  time); old caches re-index (the loads need the text, which only a re-read sees).
+  time); old caches re-index (the loads need the text, which only a re-read sees). Both are stored as one JSON text each
+  (per log, per day) and kept as that text until something reads or books into them (`skOf`/`saOf`, perf/skills-footprint):
+  most logs hold only a `(listing)` load nobody looks at.
 - Footprint: a load record ≈ 220 B in memory, `Day.sa` row ≈ 180 B. With M2's counts (≈ 3 loads per session with
   skills) the whole machine's ledger grows by well under 1 MB (tui-footprint budget: ledger resident ≤ budget there;
-  Task 2 measures RSS before/after with the footprint script).
+  Task 2 measures RSS before/after with the footprint script). Measured 2026-10-10 on this machine (4346 logs, 5445 loads,
+  4078 of them listings; 9046 day rows), TUI vs 17f6c6b: decoded at startup +14 MB RSS and +110 ms first frame; kept as
+  text (≈ 1.8 MB) +1.7 MB and first frame within ±1 %.
 - Hot path: `tokens()`/`usageExact()` add one branch `if (a.sk.length)` and, when loads are open, one loop over `A`
   (open loads, ≤ a handful). Lines that are no skill line are rejected by `indexOf` pre-filters as today.
 

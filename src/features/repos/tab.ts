@@ -15,7 +15,7 @@ import { put, box, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { harnessOf, isHarness } from "../../harness/index.ts";
 import { ledger, pending as pendingBytes } from "../usage/ledger.ts";
-import { type Acc, L, todayKey, lastDays, spanMin, startOfDay, heavy } from "../usage/record.ts";
+import { type Acc, L, todayKey, lastDays, spanMin, startOfDay, heavy, hasSk } from "../usage/record.ts";
 import type { Cnt } from "../usage/calls.ts";
 import { kfmt, grp, money, split, single } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
@@ -97,7 +97,7 @@ export function topErrTools(r: RepoAgg, n: number): [string, Cnt][] {
 // a cwd of their own, as the aggregation books them) and how many more; the listing is in nearly every context: left out
 export function repoSkills(r: RepoAgg): { top: string; more: number } {
   const as: Acc[] = []; const ids: string[] = [];
-  const add = (x: Sess, id: string): void => { const a = ledger.get(x.path); if (a && a.sk.length) { as.push(a); ids.push(id); } };
+  const add = (x: Sess, id: string): void => { const a = ledger.get(x.path); if (a && hasSk(a)) { as.push(a); ids.push(id); } };
   for (const p of r.paths) { const s = sessions.get(p); if (!s) continue; add(s, s.path); for (const k of s.subs) if (!k.cwd) add(k, s.path); }
   const rows = visRows(skillTable(as, ids, r.days, "cost")).rows.filter((x) => x.name !== LISTING);
   return { top: rows.length ? rows[0].name : "", more: Math.max(0, rows.length - 1) };

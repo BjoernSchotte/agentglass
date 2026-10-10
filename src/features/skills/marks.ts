@@ -12,7 +12,7 @@ import { toolKinds, markAt } from "../../model/kinds.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { clean, fitStyled } from "../../util/text.ts";
 import { accsOf } from "../usage/ledger.ts";
-import { type Acc, type SkLoad } from "../usage/record.ts";
+import { type Acc, type SkLoad, skOf } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { kfmt, money } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
@@ -29,7 +29,7 @@ export function skillMarks(as: Acc[]): Mark[] {
   const rows = skillLoads(as, as.map((a: Acc) => ""));
   let r = 0;
   for (const a of as) {
-    for (let i = 0; i < a.sk.length; i++, r++) {
+    for (let i = 0; i < skOf(a).length; i++, r++) {
       const l = a.sk[i] as SkLoad; if (l.name === LISTING || l.n > 1) continue; // folded summaries have no time
       const v = skillVis(l.name); if (v.mode === "omit") continue;
       const row = rows[r]; const tok = row ? row.load + row.carry : 0; const usd = row ? row.usd : 0;
@@ -41,7 +41,7 @@ export function skillMarks(as: Acc[]): Mark[] {
   return out;
 }
 // changes when the ledger read more of the session at the same log size (its marks then differ), or the hiding rules did
-function gen(s: Sess): number { let g = 0; for (const a of accsOf(s)) g += a.off + a.sk.length; return g + VIS.gen * 7919; }
+function gen(s: Sess): number { let g = 0; for (const a of accsOf(s)) g += a.off + skOf(a).length; return g + VIS.gen * 7919; }
 registerMarks({ kind: "skill", glyph: "✧", color: (): string => fg(C.cyan), of: (s: Sess): Mark[] => skillMarks(accsOf(s)), gen });
 // the TUI's events follow skills.hide / --redact like its skill lines (transcript, detail, search, copy, call graph,
 // related, replay): first, on the real text, before the redaction hook scrubs it. Only when something is hidden (a hook in
@@ -57,7 +57,7 @@ export function loadOf(s: Sess, m: Mark): LoadRow | null {
   const k = s.path + "\t" + m.ref + "\t" + String(m.t0) + "\t" + String(m.t1) + "\t" + String(m.tok); const hit = ROWS.get(k); if (hit) return hit;
   if (!Number.isInteger(i) || i < 0) return null;
   for (const a of accsOf(s)) {
-    const l = i < a.sk.length ? a.sk[i] as SkLoad : null;
+    const l = i < skOf(a).length ? a.sk[i] as SkLoad : null;
     if (!l || (m.kind === "skill:load" && l.t !== m.t0) || (m.kind === "skill:unload" && l.end !== m.t0)) continue;
     const row = skillLoads([a], [s.path])[i]; if (!row) return null;
     if (ROWS.size > ROWS_MAX) ROWS.clear();
@@ -105,7 +105,7 @@ H.detailHead.push((s: Sess, evs: Ev[], i: number, w: number): string[] => {
 // the skills in context at time t (replay's status): how many, and their size per request
 export function openAt(s: Sess, t: number): { n: number; tok: number } {
   let n = 0; let tok = 0; if (t <= 0) return { n, tok };
-  for (const a of accsOf(s)) for (const l of a.sk) {
+  for (const a of accsOf(s)) for (const l of skOf(a)) {
     if (l.name === LISTING || l.t <= 0 || l.t > t || (l.end > 0 && l.end <= t) || skillVis(l.name).mode === "omit") continue;
     n++; if (l.S > 0) tok += l.S;
   }

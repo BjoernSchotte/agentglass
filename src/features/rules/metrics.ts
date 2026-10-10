@@ -6,7 +6,7 @@ import type { Rows } from "../usage/rows.ts";
 import { type SkQ, callMatches, skillRowsFrom, skillOk } from "../query/eval.ts";
 import { type Obs, type MVal, absent, approvalWait, commandAge, stalledFor, spinningFor, repeatRun, toolName } from "../detect.ts";
 import { type Rule, HOST_METRICS, SKILL_METRICS, paramDefault } from "./config.ts";
-import type { Acc, SkLoad } from "../usage/record.ts";
+import { type Acc, type SkLoad, skOf } from "../usage/record.ts";
 import { accsOf } from "../usage/ledger.ts";
 import { skillLoads } from "../skills/model.ts";
 import { skillVis } from "../skills/vis.ts";
@@ -51,13 +51,13 @@ export function skillMetric(metric: string, as: Acc[], ps: ((q: SkQ) => boolean)
   if (metric === "skill_context_share") {
     const a = as[0]; if (!a || a.lastCtx <= 0) return absent();
     let sz = 0; let at = 0; let top = ""; let tv = -1; // scoped: the matching skills' share (no listing)
-    for (const l of a.sk) { if (l.end !== 0 || l.pend || l.S <= 0 || (scoped && (l.name === LISTING || !counts(l.name)))) continue; sz += l.S; if (l.t > at) at = l.t; if (l.name !== LISTING && l.S > tv && skillVis(l.name).mode !== "omit") { tv = l.S; top = skillVis(l.name).shown; } }
+    for (const l of skOf(a)) { if (l.end !== 0 || l.pend || l.S <= 0 || (scoped && (l.name === LISTING || !counts(l.name)))) continue; sz += l.S; if (l.t > at) at = l.t; if (l.name !== LISTING && l.S > tv && skillVis(l.name).mode !== "omit") { tv = l.S; top = skillVis(l.name).shown; } }
     if (sz <= 0) return absent();
     const m = val(Math.min(1, sz / a.lastCtx), at); m.skill = top; return m;
   }
   let best = -1; let name = ""; let at = 0;
   if (metric === "skill_reloads") {
-    for (const a of as) for (let i = 0; i < a.sk.length; i++) {
+    for (const a of as) for (let i = 0; i < skOf(a).length; i++) {
       const l = a.sk[i] as SkLoad; if (l.name === LISTING || l.n > 1 || skillVis(l.name).mode === "omit" || !counts(l.name)) continue;
       let n = 1; for (let j = 0; j < i; j++) { const x = a.sk[j] as SkLoad; if (x.name === l.name && x.n === 1 && x.t <= l.t && (x.end === 0 || x.end > l.t)) n++; }
       if (n > best || (n === best && l.t > at)) { best = n; name = l.name; at = l.t; }

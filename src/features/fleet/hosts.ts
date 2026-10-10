@@ -16,7 +16,7 @@ import { type CostNow, type Ent, type Extra, budget, costWithX, extraOf, sumDays
 import type { SessAcc } from "../usage/pricerows.ts";
 import { PGEN } from "../usage/pricing.ts";
 import { ledger } from "../usage/ledger.ts";
-import { type Acc, L, todayKey, lastDays } from "../usage/record.ts";
+import { type Acc, L, todayKey, lastDays, skOf } from "../usage/record.ts";
 import { modeOf } from "../usage/bill-live.ts";
 import { ownIdsBy, rowsBy, forgetIds } from "../usage/msgrows.ts";
 import { hashId } from "./ownc.ts";
@@ -271,7 +271,7 @@ export function skillSets(hs: RemoteHost[], x: Exact | null, localName: string, 
 // every host's skill versions (A10): this machine's loads, the hosts' sessions' skills[] entries (newest hash per session)
 export function skillHashes(hs: RemoteHost[], localName: string): HostHash[] {
   const o: HostHash[] = [];
-  for (const a of ledger.values()) for (const l of a.sk) { if (!l.hash || l.trig === "listing" || l.stub) continue; const v = skillVis(l.name); if (v.mode !== "omit") o.push({ host: localName, name: v.shown, hash: l.hash, at: l.t }); }
+  for (const a of ledger.values()) for (const l of skOf(a)) { if (!l.hash || l.trig === "listing" || l.stub) continue; const v = skillVis(l.name); if (v.mode !== "omit") o.push({ host: localName, name: v.shown, hash: l.hash, at: l.t }); }
   for (const rh of hs) {
     const r = rh.report; if (!r) continue;
     for (const sr of r.sessions) { const at = Date.parse(str(sr.s["updated"])); for (const v of arr(sr.s["skills"])) { const e = obj(v); if (!e) continue; const h = str(e["hash"]); const n = str(e["name"]); if (!h || !n) continue; const vn = skillVis(n); if (vn.mode !== "omit") o.push({ host: rh.cfg.name, name: vn.shown, hash: h, at }); } } // as the host sent it, then this machine's rules

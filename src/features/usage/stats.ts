@@ -9,7 +9,7 @@ import { C, CSI, RST, fg, bg, heat } from "../../ui/theme.ts";
 import { put, box, badge, gauge, spin } from "../../ui/screen.ts";
 import { openTranscript } from "../../ui/transcript.ts";
 import { ledger, accOf, accsOf, pending, copyKey, LGEN } from "./ledger.ts";
-import { type Acc, type Day, type RlWin, L, todayKey, lastDays, startOfDay, skillUsesOf, newDay, heavy } from "./record.ts";
+import { type Acc, type Day, type RlWin, L, todayKey, lastDays, startOfDay, skillUsesOf, newDay, heavy, skOf, hasSk } from "./record.ts";
 import { pricesFrom } from "./pricing.ts";
 import { type Rec, type Cnt, HB, EDGE, newCnt, pct, fmtMs, mcpServer, hb } from "./calls.ts";
 import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag, split, unpricedLine, projText, estTopOf } from "./costs.ts";
@@ -102,7 +102,7 @@ function aggF(days: string[], f: Compiled): Agg {
       const hs = m ? m.hours : d.hours;
       for (let hh = 0; hh < 24; hh++) g.hours[hh] = numAt(g.hours, hh, 0) + numAt(hs, hh, 0);
     }
-    if (any && days.length === 1 && a.sk.length) skHours(g.sk, a, days[0] ?? "");
+    if (any && days.length === 1 && hasSk(a)) skHours(g.sk, a, days[0] ?? "");
     if (any && !s.parent && (s.twins === 0 || !once.has(copyKey(s)))) { if (s.twins > 0) once.add(copyKey(s)); r.sess++; tot.sess++; const mk = s.bill + "\t" + s.plan + "\t" + (s.billSrc === "config" ? "*" : ""); if (r.modes.indexOf(mk) < 0) r.modes.push(mk); }
     if (st > g.busyTools) { g.busyTools = st; g.busyCost = sc; g.busy = s; }
   }
@@ -112,7 +112,7 @@ function aggF(days: string[], f: Compiled): Agg {
 
 // the hours of day dk a log loaded skills in (the listing and omitted skills are not marked)
 function skHours(hs: number[], a: Acc, dk: string): void {
-  for (const l of a.sk) {
+  for (const l of skOf(a)) {
     if (l.t <= 0 || l.name === LISTING || skillVis(l.name).mode === "omit") continue;
     const lo = localOf(l.t); if (lo.day === dk) hs[lo.hour] = numAt(hs, lo.hour, 0) + 1;
   }
@@ -791,7 +791,7 @@ H.previewSections.push((s: Sess, w: number): string[] => {
 // out (it rides in nearly every session); logs without load records (older detection) list their counted uses
 const SKP = new Map<string, string>();
 function skillLine(s: Sess, as: Acc[], w: number): string {
-  let off = 0; for (const a of as) off += a.off + a.sk.length;
+  let off = 0; for (const a of as) off += a.off + skOf(a).length;
   // kept while the session's logs did not grow and prices did not change (L.ver moves with every other session's booking)
   const mk = s.path + "\t" + String(off) + "\t" + String(LGEN.reapply) + "\t" + String(VIS.gen) + "\t" + String(w); const hit = SKP.get(mk); if (hit !== undefined) return hit;
   const ids: string[] = []; for (let i = 0; i < as.length; i++) ids.push("");

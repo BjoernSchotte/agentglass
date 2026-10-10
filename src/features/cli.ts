@@ -16,7 +16,7 @@ import { planLabel } from "./usage/billing.ts";
 import { REDACT } from "./redact-on.ts";
 import { paneOfPid } from "../mux/index.ts";
 import { accsOf } from "./usage/ledger.ts";
-import { type Acc, type SkLoad, newAcc } from "./usage/record.ts";
+import { type Acc, type SkLoad, newAcc, skOf } from "./usage/record.ts";
 import { newRows } from "./usage/rows.ts";
 import { skillVis } from "./skills/vis.ts";
 import { skillsJson, skillLoadsJson } from "./skills/json.ts";
@@ -300,10 +300,10 @@ function skillWatch(s: Sess, l: string, show: boolean, cf: CliFilter | null): WS
   if (!a) { if (WSKILL.size > 2000) WSKILL.clear(); a = newAcc(); a.ro = true; a.sub = s.parent !== ""; WSKILL.set(s.path, a); }
   let hit = a.skr.size > 0 || a.pk !== ""; if (!hit) for (const m of SK_MARKS) if (l.indexOf(m) >= 0) { hit = true; break; }
   if (!hit) return outL;
-  const n0 = a.sk.length;
+  const n0 = skOf(a).length;
   harnessOf(s.h).usage(a, l);
   a.days.clear(); a.rows = newRows(); // only the skill state is kept
-  for (let i = 0; i < a.sk.length; i++) {
+  for (let i = 0; i < skOf(a).length; i++) {
     const x = a.sk[i] as SkLoad;
     const isNew = i >= n0; const k = s.path + "\t" + String(i); const isEnd = x.end !== 0 && !WENDED.has(k);
     if (!isNew && !isEnd) continue;
