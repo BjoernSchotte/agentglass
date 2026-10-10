@@ -8,7 +8,7 @@ function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console
 const dir = "/tmp/agentglass-cf-check-" + String(process.pid); mkdirSync(dir, { recursive: true });
 const f = dir + "/ledger.jsonl";
 const big = "x".repeat(5 * 1048576); // a line over the 4 MB window
-ok("write", writeCache(f, { v: 15, prices: "P", kiro: 0, rl: null }, (put) => { put("/a", { off: 1 }); put("/b", { off: 2, s: big }); put("/c", { off: 3 }); put("/e", {}); }), "false");
+ok("write", writeCache(f, { v: 15, prices: "P", kiro: 0, rl: null, sk: 0 }, (put) => { put("/a", { off: 1 }); put("/b", { off: 2, s: big }); put("/c", { off: 3 }); put("/e", {}); }), "false");
 function tmps(): string { return readdirSync(dir).filter((n: string) => isTmpOf(f, n)).join(","); }
 ok("no tmp left", tmps() === "", tmps());
 const got: string[] = [];
@@ -35,9 +35,9 @@ ok("missing file", readCache(dir + "/none.jsonl", (h) => true, (p: string, o: Ob
 // two writers at once (a TUI and a CLI run saving the same cache): each renames a whole file of its own, the last one
 // wins; a shared temp name let the second truncate the first's file mid-write and spliced lines of both into the cache
 const pad = "z".repeat(2 * 1048576); // past the 1 MB write buffer: the outer writer flushes after the inner one renamed
-const outer = writeCache(f, { v: 15, prices: "P", kiro: 0, rl: null }, (put) => {
+const outer = writeCache(f, { v: 15, prices: "P", kiro: 0, rl: null, sk: 0 }, (put) => {
   put("/o1", { off: 1 });
-  ok("inner writer", writeCache(f, { v: 15, prices: "P", kiro: 0, rl: null }, (p2) => { p2("/i1", { off: 5 }); p2("/i2", { off: 6 }); }), "false");
+  ok("inner writer", writeCache(f, { v: 15, prices: "P", kiro: 0, rl: null, sk: 0 }, (p2) => { p2("/i1", { off: 5 }); p2("/i2", { off: 6 }); }), "false");
   put("/o2", { off: 2, s: pad });
 });
 const g7: string[] = []; const r7 = readCache(f, (h) => true, (p: string, o: Obj) => { g7.push(p + ":" + String(o["off"])); });
@@ -45,7 +45,7 @@ ok("concurrent writers: one whole file", outer && g7.join(",") === "/o1:1,/o2:2"
 ok("concurrent writers: no tmp left", tmps() === "", tmps());
 // an unwritable dir: false, nothing left behind
 const ro = dir + "/ro"; mkdirSync(ro); chmodSync(ro, 0o500);
-const w = writeCache(ro + "/ledger.jsonl", { v: 15, prices: "P", kiro: 0, rl: null }, (put) => { put("/a", { off: 1 }); });
+const w = writeCache(ro + "/ledger.jsonl", { v: 15, prices: "P", kiro: 0, rl: null, sk: 0 }, (put) => { put("/a", { off: 1 }); });
 ok("unwritable: false", !w || process.getuid?.() === 0, String(w));
 chmodSync(ro, 0o700);
 rmSync(dir, { recursive: true, force: true });

@@ -7,8 +7,8 @@ import { CODEX, readText, readBytes, listDir, listDirCached } from "../util/fs.t
 import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
-import { type Acc, L, bucket, tool, pend, tokens, reasoning, turn, skill, isoMs, num, patchLines, stamp, skillLoad, skillUnload, skillListing, skillRead, skillReadDone } from "../features/usage/record.ts";
-import { skillReadCmd } from "../features/usage/skillrec.ts";
+import { type Acc, L, bucket, tool, pend, tokens, reasoning, turn, skill, isoMs, num, patchLines, stamp, skillLoad, skillUnload, skillListing, skillReads, skillReadSegs } from "../features/usage/record.ts";
+import { skillReadCmds, outSegs } from "../features/usage/skillrec.ts";
 import { MQ_TURN } from "../features/usage/facts.ts";
 import { type Pend, done, extend, normFull, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import { isErr } from "../features/callgraph/model.ts";
@@ -232,10 +232,18 @@ function readOut(a: Acc, l: string, id: string): void {
   const out = p["output"]; const t = typeof out === "string" ? str(out) : blockText(out);
   let cut = false; for (const m of CUT_MARKS) if (t.indexOf(m) >= 0) cut = true;
   const iso = str(o["timestamp"]);
-  skillReadDone(a, bucket(a, 0, iso), id, 0, iso, t, cut);
+  // the text without the call's envelope ("Chunk ID …", "Script completed\nWall time 0.2 seconds\nOutput:\n"): its wall
+  // time would make every read of the same file another version; exec's per-command results by their "output" fields
+  const h = t.slice(0, 600); const oi = h.indexOf("\nOutput:\n");
+  const env = oi >= 0 && /^(Chunk ID|Script |Wall time|Process exited|Exit code)/.test(h);
+  const segs = outSegs(t); // an older shell tool's output: {"output": "<text>", "metadata": {…duration…}}
+  skillReadSegs(a, bucket(a, 0, iso), id, 0, iso, env ? t.slice(oi + 9) : t.startsWith("{\"output\":\"") && segs.length ? segs[0] ?? "" : t, segs, cut);
 }
-function skillCalls(a: Acc, id: string, cmds: string[]): void {
-  for (const c of cmds) { const sp = skillReadCmd(c); if (sp) { skillRead(a, id, sp); return; } }
+// js: the commands of Codex's JS exec (its output holds one result per command); else one shell command
+function skillCalls(a: Acc, id: string, cmds: string[], js: boolean): void {
+  const ps: string[] = []; const ci: number[] = []; let k = 0;
+  for (const c of cmds) { for (const p of skillReadCmds(c)) if (ps.indexOf(p) < 0) { ps.push(p); ci.push(k); } k++; }
+  if (ps.length) skillReads(a, id, ps, ci, js ? cmds.length : 0);
 }
 function listing(a: Acc, l: string): void {
   const o = parseJson(l); const p = o ? obj(o["payload"]) : null; if (!o || !p) return;
@@ -306,7 +314,7 @@ function usage(a: Acc, l: string): void {
     const st = tool(a, d, name, a.model, MQ_TURN); // Codex fixes the model per turn: the latest turn_context is exact
     const id = str(p["call_id"]); const tms = isoMs(iso);
     const inp = str(p["input"]);
-    if (t === "local_shell_call") { const act = obj(p["action"]); const c = argv(act ? act["command"] : null); pend(a, d, st, name, id, tms, iso, c, [c]); skillCalls(a, id, [c]); return; }
+    if (t === "local_shell_call") { const act = obj(p["action"]); const c = argv(act ? act["command"] : null); pend(a, d, st, name, id, tms, iso, c, [c]); skillCalls(a, id, [c], false); return; }
     if (t === "function_call") {
       const raw = str(p["arguments"]); const args = parseJson(raw);
       if (args && (name === "wait" || name === "write_stdin")) { // a poll of a yielded run: which one
@@ -316,7 +324,7 @@ function usage(a: Acc, l: string): void {
       } else if (YIELDS.has(a.p)) ydOf(a).last = tms;
       const c = args && SHELL.indexOf(name) >= 0 ? argv(args["cmd"] ?? args["command"]) : "";
       pend(a, d, st, name, id, tms, iso, c || toolArg(name, args, raw), c ? [c] : []);
-      if (c) skillCalls(a, id, [c]);
+      if (c) skillCalls(a, id, [c], false);
       if (name === "apply_patch" && args) patchLines(a, d, name, str(args["input"]));
       return;
     }
@@ -324,7 +332,7 @@ function usage(a: Acc, l: string): void {
     const cmds = execCmds(inp);
     if (YIELDS.has(a.p)) ydOf(a).last = tms;
     pend(a, d, st, name, id, tms, iso, cmds.length ? cmds.join(" ; ") : inp, cmds);
-    if (cmds.length) skillCalls(a, id, cmds);
+    if (cmds.length) skillCalls(a, id, cmds, true);
     // newer Codex calls tools.apply_patch("*** Begin Patch\n…") from inside its JS `exec` tool: patches are escaped string literals
     let at = inp.indexOf("*** Begin Patch");
     while (at >= 0) {

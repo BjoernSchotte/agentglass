@@ -22,7 +22,10 @@ export interface SkLoad {
   h1: number; h2: number; pg: number; cid: string; // cid = the tool call that loaded it (Skill, activate_skill, skill, a SKILL.md read), "" none
 }
 // a SKILL.md read waiting for its output (by call id, not persisted): the path, the call line's place in the log, its turn
-export interface SkRead { path: string; off: number; tu: number }
+// ps = more SKILL.md paths of one call (cat a b; Codex's exec running several commands), in output order; ci = the command
+// each path (path, then ps) was read by, nc = the call's commands (Codex exec; [] and 0 elsewhere)
+export interface SkRead { path: string; off: number; tu: number; ps: string[]; ci: number[]; nc: number }
+export const NO_PS: string[] = []; export const NO_CI: number[] = []; // a read of one file: shared, never written
 
 // UTF-8 bytes per token of a skill text (spec Decision 2, Open question 8), per tokenizer family. Measured 2026-10-09 on five
 // public SKILL.md texts (5.6–18.7 KB of markdown with code and JSON): a request's context with the text minus one without.
@@ -146,8 +149,11 @@ function words(seg: string): string[] {
 }
 // the SKILL.md path a shell command line reads: a reading program (after cd …&&, sudo, rtk, env assignments; never after a
 // pipe; rtk proxy too) with a path argument skillPath() names; "" for anything else (ls, find, wc, an editor)
-export function skillReadCmd(cmd: string): string {
-  if (cmd.indexOf("SKILL.md") < 0) return "";
+export function skillReadCmd(cmd: string): string { return skillReadCmds(cmd)[0] ?? ""; }
+// every SKILL.md path the command line reads, in output order (cat a/SKILL.md b/SKILL.md, cat a && cat b), each once
+export function skillReadCmds(cmd: string): string[] {
+  const out: string[] = [];
+  if (cmd.indexOf("SKILL.md") < 0) return out;
   for (const line of cmd.split("\n")) {
     for (const part of line.split(/&&|\|\||;/)) {
       const seg = part.split("|")[0] ?? ""; // a pipe's later stages read their stdin
@@ -157,10 +163,85 @@ export function skillReadCmd(cmd: string): string {
       const prog = w[i] ?? ""; const base = prog.slice(prog.lastIndexOf("/") + 1);
       const rtkRead = i > 0 && w[i - 1] === "rtk" && base === "read";
       if (READERS.indexOf(base) < 0 && !rtkRead) continue;
-      for (let j = i + 1; j < w.length; j++) { const a = w[j] ?? ""; if (!a.startsWith("-") && a.endsWith("SKILL.md") && skillPath(a)) return a; }
+      for (let j = i + 1; j < w.length; j++) { const a = w[j] ?? ""; if (!a.startsWith("-") && a.endsWith("SKILL.md") && skillPath(a) && out.indexOf(a) < 0) out.push(a); }
     }
   }
-  return "";
+  return out;
+}
+// where the text of skill nm starts in out at or after from: its front matter, a "---" line and then "key: value" lines
+// (indented ones continue a value) up to the closing "---", one of them "name: <nm>"; a head-style "==> path <==" line
+// right before it belongs to it; a "---" glued to the previous file's last line (no newline at its end) counts. -1 none
+function fmStart(out: string, nm: string, from: number): number {
+  const base = nm.slice(nm.lastIndexOf(":") + 1);
+  let p = from;
+  while (p < out.length) {
+    const i = out.indexOf("---", p); if (i < 0) return -1;
+    p = i + 3;
+    const e = out.indexOf("\n", i); if (e < 0) return -1;
+    if (out.slice(i, e).trim() !== "---") continue;
+    let hit = false; let q = e + 1;
+    for (let n = 0; n < 60 && q < out.length; n++) { // the front matter's lines
+      const z = out.indexOf("\n", q); const ln = out.slice(q, z < 0 ? out.length : z); q = z < 0 ? out.length : z + 1;
+      const t = ln.trim();
+      if (t === "---") break;
+      if (!/^[A-Za-z0-9_-]+:/.test(ln) && !/^[ \t]/.test(ln)) { hit = false; break; } // body text: not a front matter
+      if (t.startsWith("name:") && t.slice(5).trim().split("\"").join("").split("'").join("") === base) hit = true;
+    }
+    if (!hit) continue;
+    if (i > 0 && out.charAt(i - 1) !== "\n") return i;
+    const h = out.lastIndexOf("\n", i - 2); const prev = out.slice(h + 1, i - 1);
+    return prev.startsWith("==> ") && prev.trimEnd().endsWith(" <==") && h + 1 >= from ? h + 1 : i;
+  }
+  return -1;
+}
+// one command's output of several SKILL.md files, split per file (names in output order): exact at each file's front
+// matter (the first from its own, when found: output of other commands before it is not its text); else in proportion to
+// the sizes known (w: bytes of an earlier load of each, ≤ 0 unknown: all alike), est
+export function splitReads(out: string, names: string[], w: number[]): { parts: string[]; est: boolean } {
+  const parts: string[] = []; const f0 = fmStart(out, names[0] ?? "", 0); let cur = f0 > 0 ? f0 : 0; let ok = true;
+  for (let k = 1; k < names.length && ok; k++) { const b = fmStart(out, names[k] ?? "", cur + 1); if (b < 0) ok = false; else { parts.push(out.slice(cur, b)); cur = b; } }
+  if (ok) { parts.push(out.slice(cur)); return { parts, est: false }; }
+  let all = true; let tot = 0; for (let k = 0; k < names.length; k++) { const x = w[k] ?? 0; if (x <= 0) all = false; tot += x; }
+  const out2: string[] = []; let at = 0; let acc = 0;
+  for (let k = 0; k < names.length; k++) {
+    acc += all ? w[k] ?? 0 : 1;
+    const e = k === names.length - 1 ? out.length : Math.round(out.length * acc / (all ? tot : names.length));
+    out2.push(out.slice(at, e)); at = e;
+  }
+  return { parts: out2, est: true };
+}
+// the text of each SKILL.md one call read (names in output order, see SkRead for ci/nc). raw = the call's output; segs = the
+// "output" fields in it: with one per command (Codex's exec printing each result) each command's output goes to the files
+// it read (split as above); else raw is split (one file of a plain read: all of it)
+export function readTexts(raw: string, segs: string[], names: string[], ci: number[], nc: number, w: number[]): { parts: string[]; est: boolean } {
+  const js = nc > 0 && ci.length === names.length; // commands known (Codex's exec)
+  if (!js || segs.length !== nc) return names.length === 1 && !js ? { parts: [raw], est: false } : splitReads(raw, names, w);
+  const parts: string[] = []; for (let k = 0; k < names.length; k++) parts.push("");
+  let est = false; const done: number[] = [];
+  for (let k = 0; k < names.length; k++) {
+    const c = (ci[k] ?? 0) + 0; if (done.indexOf(c) >= 0) continue;
+    done.push(c);
+    const ix: number[] = []; const gn: string[] = []; const gw: number[] = [];
+    for (let j = k; j < names.length; j++) if ((ci[j] ?? 0) === c) { ix.push(j); gn.push(names[j] ?? ""); gw.push((w[j] ?? 0) + 0); }
+    const sp = gn.length === 1 ? { parts: [segs[c] ?? ""], est: false } : splitReads(segs[c] ?? "", gn, gw);
+    if (sp.est) est = true;
+    for (let j = 0; j < ix.length; j++) parts[(ix[j] ?? 0) + 0] = sp.parts[j] ?? "";
+  }
+  return { parts, est };
+}
+// the string values of "output" fields in a tool output (Codex's exec prints each command's result object: chunk_id,
+// exit_code, output …), decoded, in order; [] when there are none
+export function outSegs(t: string): string[] {
+  const out: string[] = []; const key = "\"output\":\"";
+  let i = t.indexOf(key);
+  while (i >= 0) {
+    const s0 = i + key.length - 1; let e = s0 + 1;
+    while (e < t.length) { const c = t.charAt(e); if (c === "\\") { e += 2; continue; } if (c === "\"") break; e++; }
+    if (e >= t.length) break;
+    try { const v: unknown = JSON.parse(t.slice(s0, e + 1)); if (typeof v === "string") out.push(v); } catch (x) { /* not JSON text: skip it */ }
+    i = t.indexOf(key, e + 1);
+  }
+  return out;
 }
 
 // SkLoad.hb until a harness-priced request books into it (most loads are table-priced): shared, never written
@@ -226,6 +307,21 @@ function book(l: SkLoad, g: number[], slot: number, tail0: boolean, row: number[
   row[SA_HU] = (row[SA_HU] ?? 0) + u; if (tail) row[SA_HT] = (row[SA_HT] ?? 0) + u; if (slot === SA_L) row[SA_HL] = (row[SA_HL] ?? 0) + u;
 }
 
+// the sizes of the loads sent with this request (§3.2): each from its text by the request's tokenizer, bounded together by
+// the context's growth gl. Estimates above the growth shrink in proportion (largest remainder, Σ = gl): taken in load order
+// a few % of overshoot each starved the last of several parallel loads to 0. gl <= 0 (cache expiry, model switch): no bound
+function sizeNew(sk: SkLoad[], model: string, gl: number): void {
+  let tot = 0;
+  for (const l of sk) if (l.end === 0 && l.pend && l.S >= 0) { l.S = sizeEst(l.bytes, model); tot += l.S; }
+  if (gl <= 0 || tot <= gl) return; // the hot path: nothing new, or it fits
+  const nw: SkLoad[] = []; for (const l of sk) if (l.end === 0 && l.pend && l.S >= 0) nw.push(l);
+  const fr: number[] = []; let left = gl;
+  for (const l of nw) { const x = l.S * gl / tot; const f = Math.floor(x); l.S = f; left -= f; fr.push(x - f); }
+  for (; left > 0; left--) { // the rest, one token each, to the largest fractions (ties: load order)
+    let k = 0; for (let i = 1; i < fr.length; i++) if ((fr[i] ?? 0) > (fr[k] ?? 0)) k = i;
+    const l = nw[k] as SkLoad; l.S = l.S + 1; fr[k] = -1;
+  }
+}
 // one request: b = its [in, cacheRead, write5m, write1h] (mutated: what is left after the skills), nOut its output,
 // ctx/lastCtx its context and the previous request's; tq = human prompts so far; w = per-bucket weights [in, cr, w5, w1,
 // out] for a harness-priced request's $ share (usd > 0; token counts when the model has no price). Implicit drop (§3.4),
@@ -246,14 +342,11 @@ export function attribute(sk: SkLoad[], sa: Map<string, number[]>, model: string
     l.short += want - n; l.nq++;
     book(l, g, SA_C, tq > l.tu, saRow(sa, l.name, rp, model), hp, usd, w, wReq);
   }
-  let gl = ctx - lastCtx; // the context's growth: an upper bound for the new loads' sizes, shared in load order
-  const bounded = gl > 0; // none (cache expiry, model switch): the size from the text stands
+  sizeNew(sk, model, ctx - lastCtx);
   for (const l of sk) { // sent with this request
     if (l.end !== 0 || !l.pend) continue;
     l.pend = false; l.mdl = pooled(model); l.prov = pooled(prov);
     if (l.S < 0) continue; // size unknown: counted, never priced
-    l.S = sizeEst(l.bytes, model); // the tokenizer is known now
-    if (bounded) { if (l.S > gl) l.S = gl > 0 ? gl : 0; gl -= l.S; }
     const n = take(b, l.S, LOAD_ORDER, g);
     l.short += l.S - n;
     book(l, g, SA_L, tq > l.tu, saRow(sa, l.name, rp, model), hp, usd, w, wReq);

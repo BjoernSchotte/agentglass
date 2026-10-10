@@ -182,7 +182,13 @@ Other harnesses (90 days, same scripts; M8):
 `head`, `tail`, `less`, `bat`, `rg`, `grep` with a path argument) of a path whose basename is `SKILL.md` and whose
 parent's parent is a `skills` directory (any depth: `~/.codex/skills/x/SKILL.md`, `<plugin>/skills/x/SKILL.md`). Name =
 the parent directory (plugin skills: `<plugin>:<dir>` when the path holds `plugins/…/<plugin>/…/skills/`). Size = the
-call's output. Several reads of the same path in the same turn while the first is pending or open (`sed -n 1,200p`,
+call's output. One shell call that reads several SKILL.md files (`cat a/SKILL.md b/SKILL.md`, `cat a && cat b`) is a load
+of each, its output split at each file's front matter (`---`, `name: <dir>`; exact), else in proportion to the bytes of
+earlier loads of those files in the log, else alike (both ≈). Codex's JS `exec` runs several commands in one call and
+prints one result object per command: each command's `output` field is the text of the files it read (another command's
+output is no skill's). A Codex read's text is the file's, without the envelope (`Chunk ID …`, `Script completed\nWall
+time …\nOutput:`, an older shell tool's `{"output": …, "metadata"}`): its wall time made every read another version.
+Several reads of the same path in the same turn while the first is pending or open (`sed -n 1,200p`,
 then `200,400p`) grow one load (tier ≈: parts may overlap); a read in a later turn is a new load (a reload). A read by
 a harness that also has a skill tool (Claude `Skill`) right after that tool's load of the same name is part of it, not
 a second load. This fixes Codex skill counts (today 0 of 314 rollouts; M8: 90) and makes them a `model` use in
@@ -216,7 +222,12 @@ and measured, then dropped (never stored).
 **3.2 The load request** (the first request booked with `pend = true`). Let `g = ctx(r) − ctx(r−1)` (the context growth;
 `ctx(r−1)` of the previous request of this log, `0` if none). Then `S = min(S_est, max(g, 0))` when `g > 0`, else
 `S_est` (a cache-expiry or model switch made `g` meaningless; the tier stays as for the harness). Several loads pending
-at the same request share `g` in load order (each takes `min(S_est_i, g_left)`).
+at the same request (parallel loads of one message) share `g`: when `Σ S_est > g` each gets `S_est_i × g / Σ S_est`
+(largest remainder, `Σ S = g`). Taken in load order instead, a few % of overshoot each starved the last load to 0
+(live: pi 4 loads, OpenCode 2: the last got 0 tokens, 0 requests, $0). Caches of dev builds before this fix (VERSION 19
+too) carry no head `sk` (`codec.ts SK_SPLIT`): on load, only a log with ≥ 2 sized loads of one `rq0` of which one has
+`S < S_est`, or a Codex rollout with a SKILL.md read (its text held the envelope, §2), re-indexes, once; the next save
+writes the head (no `VERSION` bump).
 The skill's tokens in this request are taken from the request's buckets in the order **write5m → write1h → in →
 cacheRead** (a new text is written to the cache). This is the load cost. `pend = false`.
 

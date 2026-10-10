@@ -1,7 +1,7 @@
 // agentglass — self-check for skill attribution (skill-usage spec §3): scriptc build src/features/usage/skillrec.check.ts -o sr && ./sr
 // SPDX-License-Identifier: Apache-2.0
 import { type Acc, newAcc, bucket, tokens, usageExact, turn, skillLoad, skillUnload, skillRead, skillReadDone, skillListing, skillUsesOf } from "./record.ts";
-import { type SkLoad, skillPath, skillReadCmd, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU, bptOf } from "./skillrec.ts";
+import { type SkLoad, skillPath, skillReadCmd, skillReadCmds, splitReads, readTexts, outSegs, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU, bptOf } from "./skillrec.ts";
 
 let bad = 0;
 function ok(what: string, c: boolean, info: string): void { if (!c) { bad++; console.log("FAIL " + what + (info ? ": " + info : "")); } }
@@ -40,6 +40,23 @@ eq("cmd after pipe", skillReadCmd("echo x | cat /x/skills/a/SKILL.md"), "");
 eq("cmd before pipe", skillReadCmd("cat /x/skills/a/SKILL.md | head -5"), "/x/skills/a/SKILL.md");
 eq("cmd env + rtk", skillReadCmd("LC_ALL=C rtk read \"/x/skills/b c/SKILL.md\""), "/x/skills/b c/SKILL.md");
 eq("cmd multi-line", skillReadCmd("git status\nnl -ba /x/skills/z/SKILL.md"), "/x/skills/z/SKILL.md");
+eq("cmds cat a b", skillReadCmds("cat /x/skills/a/SKILL.md /x/skills/b/SKILL.md && sed -n 1,9p /y/skills/c/SKILL.md; cat /x/skills/a/SKILL.md").join(" "), "/x/skills/a/SKILL.md /x/skills/b/SKILL.md /y/skills/c/SKILL.md");
+// one output of several SKILL.md files: split at each front matter (head's "==> path <==" lines go with the next file);
+// a "name:" line in a body, or a "---" rule, is no front matter; without front matters in proportion to w, or alike
+{
+  const A = "---\nname: a\ndescription: >\n  two\n  lines\n---\nbody a\n---\nname: b\n(not front matter)\n";
+  const Bt = "---\nname: \"b\"\n---\nbody b\n";
+  const s1 = splitReads(A + Bt, ["a", "b"], [0, 0]); eq("split exact", s1.parts.join("|") + " " + String(s1.est), A + "|" + Bt + " false");
+  const hd = "==> /x/skills/a/SKILL.md <==\n" + A + "\n==> /x/skills/b/SKILL.md <==\n" + Bt;
+  const s2 = splitReads(hd, ["a", "p:b"], [0, 0]); eq("split head", s2.parts.join("|"), "==> /x/skills/a/SKILL.md <==\n" + A + "\n|==> /x/skills/b/SKILL.md <==\n" + Bt);
+  const s3 = splitReads("x".repeat(90), ["a", "b", "c"], [600, 300, 0]); eq("split alike", s3.parts.map((t: string) => String(t.length)).join(",") + " " + String(s3.est), "30,30,30 true");
+  const s4 = splitReads("x".repeat(90), ["a", "b", "c"], [600, 300, 300]); eq("split by sizes", s4.parts.map((t: string) => String(t.length)).join(","), "45,23,22");
+  const s5 = splitReads("other output\n" + A + Bt, ["a", "b"], [0, 0]); eq("split: what comes before the first is not its", s5.parts.join("|"), A + "|" + Bt);
+  eq("outSegs", outSegs('{"i":0,"result":{"exit_code":0,"output":"---\\nname: a\\n\\"q\\""}}\n{"i":1,"result":{"output":"x"}}').join("|"), "---\nname: a\n\"q\"|x");
+  const t3 = readTexts("raw", ["A", "ls", "B" + "C"], ["a", "b"], [0, 2], 3, [0, 0]); eq("readTexts per command", t3.parts.join("|") + " " + String(t3.est), "A|BC false");
+  const t4 = readTexts("raw", ["A", "B"], ["a"], [0], 3, [0]); eq("readTexts: results ≠ commands → raw", t4.parts.join("|"), "raw");
+  const t5 = readTexts("{\"output\":\"x\"}", ["x"], ["a"], [], 0, [0]); eq("readTexts: a plain read is its output", t5.parts.join("|"), "{\"output\":\"x\"}");
+}
 eq("cmd bare SKILL.md", skillReadCmd("sed -n '1,260p' SKILL.md"), "");
 eq("cmd rtk proxy", skillReadCmd("rtk proxy cat /h/.agents/skills/x/SKILL.md"), "/h/.agents/skills/x/SKILL.md");
 eq("cmd several files", skillReadCmd("cat /h/RTK.md /h/.codex/skills/y/SKILL.md"), "/h/.codex/skills/y/SKILL.md");
@@ -206,6 +223,53 @@ for (const [m, want] of [["claude-sonnet-5-5", 2.6], ["claude-opus-4-7", 2.6], [
   ok("pending size: the default divisor", (n.sk[0] as SkLoad).S === 723, String((n.sk[0] as SkLoad).S));
   tokens(n, dn, "claude-sonnet-5-5", 10, 5, 20000, 1500, 0);
   ok("sent: Claude 5's divisor", (n.sk[0] as SkLoad).S === 1000 && ((n.sk[0] as SkLoad).lt[2] ?? 0) === 1000, String((n.sk[0] as SkLoad).S));
+}
+
+// loads sent with one request share its growth g (§3.2): Σ S = min(g, Σ estimates), each 0 ≤ S ≤ its estimate and within a
+// token of est × g / Σ est (largest remainder); a bigger estimate never gets less; the carry of the next request is S each.
+// A load of unknown size and one unloaded before the request take no share
+{
+  const SZ: number[][] = [[1000, 100], [1000, 500, 500, 100], [7, 7, 7], [1, 1, 1, 1, 1, 1, 1], [5000, 0, 3], [333, 333, 334], [2, 999]];
+  const GS = [1, 2, 3, 10, 99, 500, 1099, 1100, 1999, 2100, 5000, 9000];
+  for (const sz of SZ) for (const g of GS) {
+    const p = newAcc(); const dp = bucket(p, 0, iso);
+    tokens(p, dp, M, 0, 5, 0, 8000, 0);
+    let k = 0; for (const v of sz) { skillLoad(p, "p" + String(k), "model", 1, iso, "x".repeat(Math.round(v * 3.6)), true, "", false); k++; }
+    skillLoad(p, "unknown", "model", 1, iso, "", false, "", false);
+    skillLoad(p, "gone", "model", 1, iso, "x".repeat(3600), true, "", false); (p.sk[p.sk.length - 1] as SkLoad).pend = false; (p.sk[p.sk.length - 1] as SkLoad).end = 1; (p.sk[p.sk.length - 1] as SkLoad).why = "clear";
+    tokens(p, dp, M, 0, 5, 8000, g, 0);
+    tokens(p, dp, M, 0, 5, 8000 + g, 0, 0);
+    const at = "share [" + sz.join(",") + "] in " + String(g);
+    let est = 0; for (let i = 0; i < sz.length; i++) est += (p.sk[i] as SkLoad).bytes < 0 ? 0 : Math.ceil((p.sk[i] as SkLoad).bytes / 3.6);
+    let tot = 0; let lt = 0; let off = "";
+    for (let i = 0; i < sz.length; i++) {
+      const l = p.sk[i] as SkLoad; const e = Math.ceil(l.bytes / 3.6); const want = est > g ? e * g / est : e;
+      tot += l.S; lt += sum4(l.lt);
+      if (l.S < 0 || l.S > e || Math.abs(l.S - want) >= 1 || sum4(l.ct) !== l.S) off += " " + l.name + " S " + String(l.S) + " est " + String(e) + " ct " + String(sum4(l.ct));
+      for (let j = 0; j < sz.length; j++) { const m = p.sk[j] as SkLoad; if (Math.ceil(m.bytes / 3.6) > e && m.S < l.S) off += " " + m.name + "<" + l.name; }
+    }
+    eq(at + ": Σ S", String(tot), String(Math.min(g, est)));
+    eq(at + ": Σ load tokens", String(lt), String(Math.min(g, est)));
+    eq(at + ": each share", off, "");
+    const u = p.sk[sz.length] as SkLoad; const x = p.sk[sz.length + 1] as SkLoad;
+    eq(at + ": no share for unknown or gone", String(sum4(u.lt) + sum4(u.ct) + sum4(x.lt) + sum4(x.ct)), "0");
+    inv(p, at); saMatches(p, at);
+  }
+  // alone: its estimate, cut to the growth
+  for (const g of [100, 556, 10000]) {
+    const q = newAcc(); const dq = bucket(q, 0, iso); tokens(q, dq, M, 0, 5, 0, 8000, 0);
+    skillLoad(q, "solo", "model", 1, iso, "x".repeat(2000), true, "", false);
+    tokens(q, dq, M, 0, 5, 8000, g, 0);
+    eq("alone in " + String(g), String((q.sk[0] as SkLoad).S), String(Math.min(g, 556)));
+  }
+  // an open load carried in the same request takes no part of the growth: the new ones share it
+  {
+    const c = newAcc(); const dc = bucket(c, 0, iso); tokens(c, dc, M, 0, 5, 0, 8000, 0);
+    skillLoad(c, "old", "model", 1, iso, "x".repeat(3600), true, "", false); tokens(c, dc, M, 0, 5, 8000, 1000, 0);
+    skillLoad(c, "n1", "model", 2, iso, "x".repeat(3600), true, "", false); skillLoad(c, "n2", "model", 2, iso, "x".repeat(1800), true, "", false);
+    tokens(c, dc, M, 0, 5, 9000, 900, 0);
+    eq("carry + new loads", [c.sk[0], c.sk[1], c.sk[2]].map((l) => String((l as SkLoad).S) + "/" + String(sum4((l as SkLoad).ct))).join(" "), "1000/1000 600/0 300/0");
+  }
 }
 
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }

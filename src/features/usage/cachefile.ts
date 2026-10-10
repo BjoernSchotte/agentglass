@@ -11,7 +11,7 @@ import { readBytes } from "../../util/fs.ts";
 function num(v: unknown): number { return typeof v === "number" ? (v as number) : 0; }
 
 export const FILE_FORMAT = 2; // 1 = ledger.json (one object, cache.ts reads it once to migrate)
-export interface Head { v: number; prices: string; kiro: number; rl: Obj | null } // kiro: the credit rate kiro sessions were booked at
+export interface Head { v: number; prices: string; kiro: number; rl: Obj | null; sk: number } // kiro: the credit rate kiro sessions were booked at; sk: the skill split (codec.ts SK_SPLIT)
 const WIN = 4194304; const MAX_WIN = 67108864; // windows grow ×4 for a long line, up to 64 MB
 const NL = 10;
 
@@ -45,7 +45,7 @@ export function readCache(path: string, onHead: (h: Head) => boolean, onSession:
     for (const l of text.split("\n")) {
       if (head) {
         head = false; const o = parse(l);
-        if (!o || o["f"] !== FILE_FORMAT || !onHead({ v: num(o["v"]), prices: str(o["prices"]), kiro: num(o["kiro"]), rl: obj(o["rl"]) })) return r;
+        if (!o || o["f"] !== FILE_FORMAT || !onHead({ v: num(o["v"]), prices: str(o["prices"]), kiro: num(o["kiro"]), rl: obj(o["rl"]), sk: num(o["sk"]) })) return r;
         continue;
       }
       if (!l) continue;
@@ -73,7 +73,7 @@ export function writeCache(path: string, head: Head, each: (put: (path: string, 
     fd = openSync(tmp, "w");
     const f = fd; let buf: string[] = []; let len = 0;
     const out = (s: string): void => { buf.push(s); len += s.length; if (len >= 1048576) { writeSync(f, buf.join("")); buf = []; len = 0; } };
-    out(JSON.stringify({ v: head.v, f: FILE_FORMAT, prices: head.prices, kiro: head.kiro, saved: Date.now(), rl: head.rl }) + "\n");
+    out(JSON.stringify({ v: head.v, f: FILE_FORMAT, prices: head.prices, kiro: head.kiro, saved: Date.now(), rl: head.rl, sk: head.sk }) + "\n");
     each((p: string, o: Obj): void => {
       const body = JSON.stringify(o);
       out('{"path":' + JSON.stringify(p) + (body.length > 2 ? "," + body.slice(1) : "}") + "\n");

@@ -8,7 +8,7 @@ import { DICT, ROWS, intern, nameOf, dayKey } from "./facts.ts";
 import { type Rows, newRows, push, addId, addCmd, KIND_PROG, KIND_FILE } from "./rows.ts";
 import { numAt } from "../../util/text.ts";
 import { own, pooledList } from "../../util/own.ts";
-import { type SkLoad, type SkRead, NO_HB, newLoad, growLoad, attribute, saRow, skillPath, SA_LU, SA_LM, SA_LC, SK_CAP, LISTING } from "./skillrec.ts";
+import { type SkLoad, type SkRead, NO_HB, NO_PS, NO_CI, newLoad, growLoad, attribute, saRow, skillPath, readTexts, SA_LU, SA_LM, SA_LC, SK_CAP, LISTING } from "./skillrec.ts";
 export { dayKey };
 export type { SkLoad };
 
@@ -523,23 +523,41 @@ export function skillListing(a: Acc, ms: number, iso: string, text: string, name
   a.lst = pooledList(keep); // most logs list the same skills: one shared array
 }
 // a SKILL.md read (spec §2): the call side remembers the path; the output side loads it as a model load
-export function skillRead(a: Acc, callId: string, path: string): void {
-  if (!callId || !skillPath(path)) return;
+export function skillRead(a: Acc, callId: string, path: string): void { skillReads(a, callId, [path], NO_CI, 0); }
+// several SKILL.md files one call reads (cat a b; Codex's exec running several commands): paths in output order, ci = the
+// command of each, nc = the call's commands (NO_CI, 0: not known)
+export function skillReads(a: Acc, callId: string, paths: string[], ci: number[], nc: number): void {
+  const ps: string[] = []; const cs: number[] = [];
+  for (let k = 0; k < paths.length; k++) { const p = paths[k] ?? ""; if (skillPath(p)) { ps.push(own(p)); cs.push((ci[k] ?? 0) + 0); } }
+  if (!callId || !ps.length) return;
   if (a.skr === NO_SKR) a.skr = new Map<string, SkRead>();
   if (a.skr.size > 64) a.skr.clear(); // outputs that never came
-  a.skr.set(own(callId), { path: own(path), off: lineAt(a), tu: a.tq });
+  a.skr.set(own(callId), { path: ps[0] ?? "", off: lineAt(a), tu: a.tq, ps: ps.length > 1 ? ps.slice(1) : NO_PS, ci: ci.length === paths.length ? cs : NO_CI, nc });
 }
-export function skillReadDone(a: Acc, d: Day, callId: string, ms: number, iso: string, out: string, cut: boolean): void {
+export function skillReadDone(a: Acc, d: Day, callId: string, ms: number, iso: string, out: string, cut: boolean): void { skillReadSegs(a, d, callId, ms, iso, out, NO_PS, cut); }
+// the output of a read call: one file's text, or several (readTexts: split per command output segs, front matter, sizes
+// of earlier loads in this log, ≈ unless exact)
+export function skillReadSegs(a: Acc, d: Day, callId: string, ms: number, iso: string, out: string, segs: string[], cut: boolean): void {
   const r = a.skr.get(callId); if (!r) return;
   a.skr.delete(callId);
-  const name = skillPath(r.path); if (!name) return;
-  const dir = r.path.slice(0, r.path.lastIndexOf("/"));
+  const paths = [r.path].concat(r.ps); const names: string[] = []; const w: number[] = [];
+  for (const p of paths) {
+    const nm = skillPath(p); const dir = p.slice(0, p.lastIndexOf("/")); let b = 0;
+    if (paths.length > 1) for (let i = skOf(a).length - 1; i >= 0; i--) { const l = a.sk[i] as SkLoad; if (l.name === nm && l.dir === dir && l.bytes > 0 && !l.est) { b = l.bytes; break; } }
+    names.push(nm); w.push(b);
+  }
+  const sp = readTexts(out, segs, names, r.ci, r.nc, w);
+  for (let k = 0; k < paths.length; k++) readLoad(a, d, paths[k] ?? "", r.off, callId, ms, iso, sp.parts[k] ?? "", cut || sp.est);
+}
+function readLoad(a: Acc, d: Day, path: string, off: number, callId: string, ms: number, iso: string, out: string, cut: boolean): void {
+  const name = skillPath(path); if (!name) return;
+  const dir = path.slice(0, path.lastIndexOf("/"));
   for (let i = skOf(a).length - 1; i >= 0; i--) { // the same skill in this turn: a tool load being sent (part of it), or a read of the same file (grown)
     const l = a.sk[i]; if (!l || l.name !== name || l.end !== 0 || l.tu !== a.tq) continue;
     if (!l.rd && l.pend) return; // the harness's skill tool loaded it right before this read
     if (l.rd && l.dir === dir) { skillGrow(a, name, out); l.est = true; return; }
   }
-  const l = skillLoad(a, name, "model", ms, iso, out, true, dir, cut, r.off); l.rd = true; l.cid = own(callId);
+  const l = skillLoad(a, name, "model", ms, iso, out, true, dir, cut, off); l.rd = true; l.cid = own(callId);
   skill(d, "model", name);
 }
 // a harness skill tool's call (Claude Skill): its text comes on a later line (skillCallText), loaded as a model load
@@ -549,7 +567,7 @@ export function skillCall(a: Acc, callId: string, name: string): void {
   for (const k of done) a.skr.delete(k); // texts of earlier calls are complete
   if (a.skr === NO_SKR) a.skr = new Map<string, SkRead>();
   if (a.skr.size > 64) a.skr.clear();
-  a.skr.set(own("S:" + callId), { path: own(name), off: lineAt(a), tu: -2 });
+  a.skr.set(own("S:" + callId), { path: own(name), off: lineAt(a), tu: -2, ps: NO_PS, ci: NO_CI, nc: 0 });
 }
 // that call's text (several lines: the first loads, later ones grow it while it is not sent yet); false = not a skill call's
 export function skillCallText(a: Acc, callId: string, ms: number, iso: string, text: string, dir: string, stub: boolean): boolean {

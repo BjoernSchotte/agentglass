@@ -12,7 +12,7 @@ import { loadHead, titleOf } from "../model/sessions.ts";
 import { type Found, resolveRef } from "../model/sessref.ts";
 import { sourceOf, parseEvents, window } from "../harness/index.ts";
 import { kindIds, kindSet, shellFam } from "../model/kinds.ts";
-import { famOf } from "../model/marks.ts";
+import { famOf, marksOf } from "../model/marks.ts";
 import { toolName, toolArg } from "./callgraph/model.ts";
 import { caret } from "./query/parse.ts";
 import { addCmd, opt } from "./clihelp.ts";
@@ -41,13 +41,15 @@ export function readAll(s: Sess): Ev[] {
   }
   return evs;
 }
-// a call's target without content: a shell call's family, a file or web tool's path / url / pattern, an MCP tool's name
-function target(s: Sess, e: Ev, call: Ev | null, kinds: string[]): string {
+// a call's target without content: a shell call's family, a file or web tool's path / url / pattern, an MCP tool's name,
+// the skill a skill tool loaded (sk: call id → its name through skillVis, from the skill marks)
+function target(s: Sess, e: Ev, call: Ev | null, kinds: string[], sk: Map<string, string>): string {
   const c = e.kind === "tool" ? e : call; if (!c) return "";
   const name = toolName(c); const arg = toolArg(c);
   for (const k of kinds) if (k.startsWith("shell:")) return display("prog", shellFam(name, arg), s);
   for (const k of kinds) if (k.startsWith("mcp:")) return display("tool", name, s);
   for (const k of kinds) if (k === "edit" || k === "read" || k === "read:search") return display("file", oneLine(arg, 200), s);
+  if (kinds.indexOf("skill:load") >= 0 && c.id) return sk.get(c.id) ?? "";
   return "";
 }
 export interface EvList { matched: number; total: number; events: Obj[] }
@@ -59,6 +61,7 @@ export function listEvents(s: Sess, evs: Ev[], limit: number, content: boolean):
   let from = 0;
   if (limit > 0 && matched > limit) { let k = 0; from = evs.length; while (from > 0 && k < limit) { from--; if (m[from] + 0 === 1) k++; } }
   const calls = new Map<string, number>(); for (let i = 0; i < evs.length; i++) { const e = evs[i]; if (e.kind === "tool" && e.id) calls.set(e.id, i); }
+  const sk = new Map<string, string>(); for (const mk of marksOf(s, ["skill"])) if (mk.kind === "skill:load" && mk.anchor.startsWith("call=") && mk.label) { const k = mk.anchor.slice(5); const was = sk.get(k); sk.set(k, was ? was + ", " + mk.label : mk.label); } // cat a b: one call, both
   const gapObj = (g: Gap): Obj => { const ks: Obj = {}; const names: string[] = []; for (const k of g.kinds.keys()) names.push(k); names.sort((a: string, b: string): number => (g.kinds.get(b) ?? 0) - (g.kinds.get(a) ?? 0) || (a < b ? -1 : 1)); for (const k of names) ks[k] = g.kinds.get(k) ?? 0; return { gap: g.hidden, kinds: ks }; };
   const o: Obj[] = [];
   if (from > 0) { // everything before the last limit matches, shown or not, as one gap
@@ -71,7 +74,7 @@ export function listEvents(s: Sess, evs: Ev[], limit: number, content: boolean):
     const e = evs[i]; const ks = kindSet(ids[i] + 0);
     let call: Ev | null = null; if (e.kind === "result" && e.id) { const j = calls.get(e.id); if (j !== undefined && j + 0 < evs.length) call = evs[j + 0]; }
     const c = e.kind === "tool" ? e : call; const id = (e.kind === "tool" || e.kind === "result") && e.id ? e.id : "";
-    o.push({ i, ts: e.ts || null, kind: e.kind, kinds: ks.slice(), tool: c ? display("tool", toolName(c), s) : null, id: id || null, target: target(s, e, call, ks) || null,
+    o.push({ i, ts: e.ts || null, kind: e.kind, kinds: ks.slice(), tool: c ? display("tool", toolName(c), s) : null, id: id || null, target: target(s, e, call, ks, sk) || null,
       text: content ? oneLine(e.kind === "tool" ? toolArg(e) : e.text, 500) : null, link: canonicalUrl(s, id ? "call" : e.ts ? "ts" : "", id || e.ts) });
     i++;
   }
