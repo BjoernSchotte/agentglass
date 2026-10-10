@@ -5,13 +5,13 @@
     "period": "all",
     "rows": [
         {
-            "carry": 8553,
+            "carry": 8514,
             "carryUsd": 0.0021,
             "hashes": [
                 "dcb547f1b1b4dd9f",
-                "4ccdd7cc4243cca2"
+                "baadfcc6c232b09c"
             ],
-            "load": 4039,
+            "load": 4013,
             "loadsCompact": 1,
             "loadsModel": 1,
             "loadsUser": 2,
@@ -19,7 +19,7 @@
             "perSess": 0.00445,
             "scope": "project",
             "sessions": 3,
-            "share": 0.052499,
+            "share": 0.052228,
             "sizeP50": 1000,
             "tail": 0,
             "tailUsd": 0,

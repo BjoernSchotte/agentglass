@@ -1,5 +1,5 @@
 skill            loads sess   size   carry   tail  share        $   $/sess  tier
-alpha                4    3   1.0k    8.6k      0  5.2 %  ≈$0.01+  ≈$0.00+     ≈
+alpha                4    3   1.0k    8.5k      0  5.2 %  ≈$0.01+  ≈$0.00+     ≈
 beta                 3    2    500    2.5k      0  2.6 %    $0.01    $0.01
 delta                1    1    500       0      0  0.3 %    $0.00    $0.00
 (listing)            3    2     69    1.2k   1.2k  0.8 %   $0.00+   $0.00+
