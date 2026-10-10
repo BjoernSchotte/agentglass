@@ -206,6 +206,43 @@ The command's environment is reduced to `PATH`, `HOME`, locale, desktop-bus and 
 `AGENTGLASS_RULE`, `AGENTGLASS_SEVERITY`, `AGENTGLASS_STATE`, `AGENTGLASS_SESSION`, `AGENTGLASS_HARNESS`,
 `AGENTGLASS_VALUE`; it is killed after 10 s.
 
+## Protocol `agentglass-serve/1` (`agentglass serve --stdio`)
+
+`agentglass serve --stdio [--redact] [--read-only]` speaks a persistent JSON-lines protocol on stdin/stdout; it is
+the data source of `agentglass-web` and open to integrations. Its number is `proto` (now **1**), separate from
+`contract`; the session rows inside it are contract rows. Additive changes (a method, a topic, a field, an error code)
+keep `proto`; consumers ignore what they do not know. The process exits 0 when stdin closes; warnings go to stderr.
+
+- **Framing**: one JSON object per line (UTF-8, `\n`), at most 4 MiB; a longer line is dropped and answered with
+  `{"id":null,"err":{"code":"oversize",…}}`, and the stream continues.
+- **Requests** `{"id": <string|number>, "m": "<method>", "p": {…}}` → `{"id":…, "ok": {…}}` or
+  `{"id":…, "err": {"code", "msg", "hint"?}}` (`id` null when the line had none). Answers come in request order.
+- **`hello` first**: `{"m":"hello","p":{"client":"…","want":1}}` → `{proto, contract, version, readOnly, redact, caps}`;
+  `want` above `proto` → `proto` error ("update agentglass"); any other method before `hello` → `proto` error.
+
+| Method | Params | Result |
+|---|---|---|
+| `meta` | none | `{version, contract, proto, caps[], readOnly, redact, harnesses[], teams[]}` |
+| `sessions.list` | `filter` (the filter language), `limit` 1–1000 (200), `cursor`, `subagents` bool | `{data: [--json rows], at (ms), gen, next: cursor\|null}` |
+| `sessions.get` | `ref` (required): `<harness>:<id>`, an id or a unique prefix of 6+ characters | the `session <ref>` object (`via` = `"ref"`) |
+| `sub` | `topic`: `sessions`; `filter`, `limit`, `subagents` as `sessions.list`; `from` (an event id) | `{sub, resumed}`, then events |
+| `unsub` | `sub` | `{}` |
+
+- **Rows**: `sessions.list` rows equal `agentglass --json` rows for the same filter (the conformance test compares
+  them). `gen` moves only when the rows' inputs moved; `next` pages newest first, after the last row shown.
+- **Events** `{"sub": "s1", "ev": "<epoch>-<seq>", "k": "snapshot"|"patch"|"hb", "d": {…}}`: `snapshot`
+  `d = {data, at, gen, next: null}` (the topic's rows, each with a `key`), `patch` `d = {upsert: [rows], remove: [keys]}`,
+  `hb` (no `d`) after 25 s without an event. A row's `key` is `<harness>:<id>` (copies of one session in one list:
+  `<harness>:<id>@<path>`); order rows by `updated`, newest first. Patches follow the engine's cadence (1.5 s while
+  subscribed; no cadence without subscriptions).
+- **Resume**: `sub` with `from` = the last event id seen. The process keeps each topic's last 1,000 events (10 minutes):
+  inside → the missed events, `resumed: true`; outside, another process (`epoch`) or a topic that was closed meanwhile →
+  a `snapshot`, `resumed: false`. A topic closes with its last `unsub`.
+- **Errors** (`code`): `proto`, `bad_request` (not a request object), `unknown_method`, `oversize`, `bad_param`,
+  `bad_filter` (`msg` names the column, `hint` the caret line), `not_found`, `ambiguous`, `no_team`, `read_only`
+  (`cmd`/`confirm`: commands are not in this release), `internal`.
+- `--redact` applies to every answer and event, as for `--json`.
+
 ## MCP server (`agentglass-mcp`)
 
 `agentglass-mcp` is a stdio MCP server (newline-delimited JSON-RPC 2.0, protocol versions `2025-11-25`, `2025-06-18`,
