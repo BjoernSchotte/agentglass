@@ -58,7 +58,8 @@ inside an agent shell.
 | `cwd` | string | the session's working directory |
 | `live` | bool | an agent process runs it |
 | `pid` | number | the agent's process id, 0 when not live |
-| `status` | string | how the process was linked or what the agent's registry says (e.g. `open`, `busy`, `idle`); `""` when not live — free text, do not switch on it |
+| `status` | string | how the process was linked or what the agent's registry says (e.g. `open`, `busy`, `idle`); `""` when not live — free text, do not switch on it; use `state` |
+| `state` | string | `busy` (mid-turn), `idle`, `attention`, `stuck` or `ended` — the same as the filter's `state` attribute, for every harness |
 | `costUsd` | number\|null | API-equivalent cost in USD; null = not priced |
 | `twins` | number | other rows that are this same session (Claude: one session under several project dirs); 0 = none |
 | `attention` | bool | an alert at the degraded level is active and not acknowledged (approval, turn finished, …) |

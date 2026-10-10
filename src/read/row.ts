@@ -19,11 +19,11 @@ import { gitJson, peers } from "../features/vcs/json.ts";
 import { labelOf } from "../model/project.ts";
 import { keyShown } from "../features/repos/cli.ts";
 import { type CliFilter, cliSelect } from "../features/query/cli.ts";
-import { livePid } from "../features/query/eval.ts";
+import { livePid, stateOf } from "../features/query/eval.ts";
 import { type Alert } from "../features/rules/engine.ts";
 import { alertsOf } from "../features/watchdog.ts";
 
-export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "mux", "parent", "kind", "subagents", "twins",
+export const JSON_FIELDS = ["id", "harness", "title", "cwd", "branch", "remote", "model", "path", "updated", "bytes", "live", "pid", "status", "state", "mux", "parent", "kind", "subagents", "twins",
   "activity", "tokens", "costUsd", "costEstimatedUsd", "billing", "unpricedTokens", "unpricedCredits", "tools", "linesAdded", "linesRemoved", "attention", "stuck", "skills", "repo", "alerts", "git"];
 interface JAl { rule: string; severity: string; value: number; unit: string; threshold: number; since: string; message: string; labels: { [k: string]: string }; acked: boolean }
 function jalerts(as: Alert[]): JAl[] {
@@ -36,7 +36,7 @@ export function jsonSess(s: Sess): Obj {
   const skills = skillsJson(accsOf(s)); // first: a hidden skill's name is scrubbed from the title too
   return {
     id: s.id, harness: s.h, title: scrub(titleOf(s)), cwd: s.cwd, branch: s.branch, remote: s.remote ? s.remote : null, model: s.model, path: display("path", s.path, s),
-    updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status, mux: muxJson(s),
+    updated: new Date(s.mtime).toISOString(), bytes: s.size, live: livePid(s) > 0, pid: s.pid, status: s.status, state: stateOf(s), mux: muxJson(s),
     parent: s.parent ? s.parent : null, kind: s.kind, subagents: s.subs.length, twins: s.twins, activity: scrub(activity(s)),
     tokens: { in: s.inTok, out: s.outTok, cacheRead: s.cacheRTok, cacheWrite: s.cacheWTok },
     costUsd: s.cost < 0 ? null : s.cost, costEstimatedUsd: Math.round(estTopOf(accsOf(s)).usd * 1e6) / 1e6, billing: { mode: s.bill || "unknown", plan: planLabel(s.plan, REDACT), source: s.billSrc },

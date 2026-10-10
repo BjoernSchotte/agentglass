@@ -42,14 +42,14 @@ ok("instructions ≤ 600", ins.length <= 600 && insAll.length <= 600 && ins.inde
 
 // ── argv mapping ──
 const A = (c: Call): string => J(c.argv);
-const SF = "id,harness,title,project,updated,live,status,costUsd,attention,stuck";
+const SF = "id,harness,title,project,updated,live,status,state,costUsd,attention,stuck";
 const s5 = plan("sessions", { since: "7d", live: true, limit: 5, cursor: encodeCursor(10) }, d);
 ok("sessions argv", A(s5) === J(["sessions", "--since", "7d", "--live", "--limit", "16", "--format", "json", "--fields", SF]) && s5.offset === 10 && s5.limit === 5 && s5.err === "", J(s5));
 const sd = plan("sessions", {}, d);
 ok("sessions defaults", A(sd) === J(["sessions", "--since", "24h", "--limit", "21", "--format", "json", "--fields", SF]) && sd.limit === 20, A(sd));
 ok("sessions harness filter", A(plan("sessions", { harness: "pi", filter: "cost > 2" }, d)) === J(["sessions", "--since", "24h", "--harness", "pi", "--filter=cost > 2", "--limit", "21", "--format", "json", "--fields", SF]), A(plan("sessions", { harness: "pi", filter: "cost > 2" }, d)));
 ok("sessions fields", A(plan("sessions", { fields: ["id", "model"] }, d)).indexOf("\"--fields\",\"id,model\"") > 0, A(plan("sessions", { fields: ["id", "model"] }, d)));
-const SESSF = "id,harness,title,cwd,live,status,updated,costUsd,costBasis,tokens,turns,wallMs,activeMs,models,tools,errors,files,repeats,attention,stuck,alerts,via";
+const SESSF = "id,harness,title,cwd,live,status,state,updated,costUsd,costBasis,tokens,turns,wallMs,activeMs,models,tools,errors,files,repeats,attention,stuck,alerts,via";
 ok("session current", A(plan("session", {}, d)) === J(["session", "current", "--format", "json", "--fields", SESSF]), A(plan("session", {}, d)));
 ok("session ref root", A(plan("session", { ref: "claude:abc123", root: true }, d)) === J(["session", "claude:abc123", "--root", "--format", "json", "--fields", SESSF]), A(plan("session", { ref: "claude:abc123", root: true }, d)));
 ok("errors", A(plan("errors", {}, d)) === J(["errors", "--since", "24h", "--limit", "21", "--format", "json", "--fields", "ts,harness,session,tool,arg,durationMs"]), A(plan("errors", {}, d)));

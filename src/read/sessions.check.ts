@@ -38,7 +38,11 @@ if (mode === "--child-plain") {
   const r0: Obj = p ? p.data[0] ?? {} : {};
   const tk = obj(r0["tokens"]) ?? {};
   eq("--json fields", JSON.stringify([r0["harness"], r0["title"], r0["live"], tk["in"]]), JSON.stringify(["claude", TITLES[2], false, 1000]));
-  eq("at is now", p && Math.abs(p.at - Date.now()) < 60000 ? "ok" : "off", "ok");
+  // state: the filter's state attribute (status is free text, e.g. pi's "open" while it works)
+  eq("state", str(r0["state"]), "ended");
+  const st = readSessions(Q("state is ended", 0, "")).page;
+  eq("state = filter state", st ? ids(st.data) : "", "aaaaaaa3,aaaaaaa2,aaaaaaa1");
+  eq("at is now", p &&Math.abs(p.at - Date.now()) < 60000 ? "ok" : "off", "ok");
   // pages of 2 cover the list exactly once, newest first
   const p1 = readSessions(Q("", 2, "")).page;
   const c1 = p1 && p1.next !== null ? p1.next : "";

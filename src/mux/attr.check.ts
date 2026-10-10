@@ -36,6 +36,6 @@ const j = jsonSess(live); const m = j["mux"] as { [k: string]: unknown } | null;
 ok("--json mux", m !== null && m["kind"] === "herdr" && m["pane"] === "w7:p1A" && m["status"] === "working", JSON.stringify(m));
 ok("--json mux labels hidden under --redact (check.sh sets it)", m !== null && m["workspace"] === null && m["tab"] === null, JSON.stringify(m));
 ok("--json mux of an ended session: null", jsonSess(ended)["mux"] === null, "");
-ok("mux right after status", JSON_FIELDS.indexOf("mux") === JSON_FIELDS.indexOf("status") + 1, JSON_FIELDS.join(","));
+ok("mux right after status, state", JSON_FIELDS.indexOf("state") === JSON_FIELDS.indexOf("status") + 1 && JSON_FIELDS.indexOf("mux") === JSON_FIELDS.indexOf("state") + 1, JSON_FIELDS.join(","));
 console.log(bad ? bad + " failed" : "mux attr: all checks passed");
 if (bad) process.exit(1);
