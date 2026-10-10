@@ -82,7 +82,9 @@ export const H = {
 };
 // a reader that keeps lean events (callgraph/model.ts lean(): no replies, thinking or full text) parses with lean on: the
 // events hooks may skip work on what it drops
-export const READ = { lean: false };
+// focus: the session family a one-shot command reads ("<harness>:<root id>"; resolveRef sets it): skills.hide indexes that
+// family before its first line (marks.ts KNOWN), not every family a list or the TUI touches
+export const READ = { lean: false, focus: "" };
 // skills.hide in open views: n = the hidden names learnt so far, a count that only grows (s: the session shown; its names
 // are looked up first); rescrub = events read when it was at, scrubbed in place for the names learnt since (a subagent's load
 // the ledger indexes after the view opened), full texts too when full; true when a text changed. Stock: nothing hides

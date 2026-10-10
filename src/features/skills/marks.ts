@@ -6,7 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
-import { H } from "../../hooks.ts";
+import { H, READ } from "../../hooks.ts";
 import { type Mark, registerMarks, marksOf, famOf } from "../../model/marks.ts";
 import { toolKinds, markAt } from "../../model/kinds.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
@@ -21,7 +21,6 @@ import { type LoadRow, skillLoads, tierOf } from "./model.ts";
 import { skillVis, VIS } from "./vis.ts";
 import { KNOWN, INSTALLED } from "./watchvis.ts"; // its events hook: every event reader follows skills.hide
 import { sessions, loadHead } from "../../model/sessions.ts";
-import { TERM } from "../../term.ts";
 import { openSkillView, recordLines } from "./view.ts";
 
 function iso(t: number): string { return t > 0 ? new Date(t).toISOString() : ""; }
@@ -49,7 +48,7 @@ registerMarks({ kind: "skill", glyph: "✧", color: (): string => fg(C.cyan), of
 // the inventory reads: the user's, plugins', and the projects of the sessions seen) and the skills every log in the ledger
 // loaded or listed — not only this session's: a prompt names a skill a day before its load, or only a subagent loads it.
 // Per rule change the whole ledger, then the logs it read since (MOVED); a cached log's names from its stored name pool (no
-// load decoded). A one-shot reader (the CLI) first indexes the session's family (parent, subagents): line 1 is scrubbed
+// load decoded). A one-shot command first indexes its own session's family (READ.focus: parent, subagents): line 1 is scrubbed
 const KN = { gen: -1, mg: -1, at: 0, size: -1, busy: false, seen: new Set<string>(), off: new Map<string, number>(), fam: new Set<string>(), repos: new Set<string>() };
 function add(o: string[], n: string): void { if (n && !KN.seen.has(n)) { KN.seen.add(n); o.push(n); } }
 function knownIn(o: string[], p: string, a: Acc): void {
@@ -58,7 +57,9 @@ function knownIn(o: string[], p: string, a: Acc): void {
   for (const n of a.lst) add(o, n);
 }
 function family(s: Sess): void {
-  const root = s.parent ? s.parent : s.id; if (KN.fam.has(s.h + ":" + root)) return; KN.fam.add(s.h + ":" + root);
+  const root = s.parent ? s.parent : s.id; const key = s.h + ":" + root;
+  if (!S.cli || READ.focus !== key || KN.fam.has(key)) return; // a one-shot command's own session only: a list or a TUI never waits
+  KN.fam.add(key);
   for (const k of sessions.values()) if (k.h === s.h && (k.id === root || k.parent === root)) { loadHead(k); complete(k); } // cached: the bytes since
 }
 KNOWN.of = (s: Sess | null): string[] => {
@@ -69,7 +70,7 @@ KNOWN.of = (s: Sess | null): string[] => {
     for (const x of sessions.values()) if (x.cwd) KN.repos.add(x.cwd);
     for (const n of INSTALLED.of([...KN.repos].sort())) add(o, n);
   }
-  if (s && !TERM.tui) family(s);
+  if (s) family(s);
   if (s && s.cwd && !KN.repos.has(s.cwd)) { KN.repos.add(s.cwd); for (const n of INSTALLED.project(s.cwd)) add(o, n); } // a project seen since
   if (KN.mg !== MOVED.gen || KN.size !== ledger.size) for (const [p, a] of ledger) knownIn(o, p, a); // a cache loaded, a log added or gone
   else for (; KN.at < MOVED.log.length; KN.at++) { const a = ledger.get(MOVED.log[KN.at] ?? ""); if (a) knownIn(o, MOVED.log[KN.at] ?? "", a); }
