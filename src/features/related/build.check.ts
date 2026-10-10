@@ -11,10 +11,13 @@ import { ledger, accOf } from "../usage/ledger.ts";
 import { LOG } from "../rules/engine.ts";
 import { type Build, anchorTime, candidates, startBuild, stepBuild, repoll, CAP_BYTES } from "./build.ts";
 import type { RelEv } from "./model.ts";
+import { setVis } from "../skills/vis.ts";
+import "../skills/watchvis.ts"; // the binary has it: the skills.hide events hook
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 P.sync = true;
+setVis([], false); // no skill hidden (the checks run with AGENTGLASS_REDACT=1; redact.ts is not loaded here)
 const D = "/tmp/agentglass-related-keepme-" + String(process.pid); // keepme: content stays real under the checks' redaction
 rmSync(D, { recursive: true, force: true });
 function repo(p: string): void { mkdirSync(p + "/.git/logs", { recursive: true }); writeFileSync(p + "/.git/config", "[core]\n"); writeFileSync(p + "/.git/HEAD", "ref: refs/heads/main\n"); }
@@ -143,6 +146,7 @@ eq("reuse: anchor session done without reads", br ? String(br.next) + " " + Stri
 
 // event hooks that rewrite content (--redact): rows still match the real files, and the transcript's (fake) events are not reused
 reset();
+H.fakes.push((): boolean => true); // as redact.ts does
 H.events.push((s: Sess | null, evs: Ev[], from: number) => { for (let i = from; i < evs.length; i++) { const e = evs[i]; if (e && e.kind === "tool") { e.text = "Edit\u0000/fake/x.ts"; e.full = "{\"file_path\":\"/fake/x.ts\"}"; } } });
 const qe = (dt: number, id: string): string => call(dt, id, "Edit", "{\"file_path\":\"" + D + "/proj/src/q.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}");
 const ha = sess("ha", D + "/proj", [user(-700000, "early"), qe(0, "q1")], true);
@@ -155,7 +159,39 @@ if (!bh) { bad++; console.log("FAIL hooks: no build"); } else {
   eq("hooks: conflict on the real file", bh.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.mark + ":" + (r.files[0]?.rel ?? "")).join(" "), "conflict:src/q.ts conflict:src/q.ts");
   eq("hooks: the shown text is the hooked one", bh.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.text).join(" "), "/fake/x.ts /fake/x.ts");
 }
-H.events.length = 0;
+H.events.pop(); H.fakes.length = 0;
+// skills.hide without --redact: commit subjects stay, the open transcript serves (no re-read), an omitted skill's
+// load (Skill call, SKILL.md read) has no row and no other row names it
+reset();
+setVis([{ match: "secret", mode: "omit" }], false);
+const sk = (dt: number, id: string): string[] => [call(dt, id, "Skill", "{\"skill\":\"secret\"}"), res(dt + 100, id, "Launching skill: secret"),
+  call(dt + 200, id + "r", "Read", "{\"file_path\":\"/h/.claude/skills/secret/SKILL.md\"}"), res(dt + 300, id + "r", "SECRETSKILLTEXT body")];
+const banner = (dt: number, id: string): string[] => [call(dt, id, "Bash", "{\"command\":\"git commit -m fix\"}"), res(dt + 100, id, "[main 3f2a91c] fix login redirect\n 1 file changed")];
+const sa = sess("sa", D + "/proj", [user(-700000, "early"), user(0, "mid")].concat(sk(1000, "s1"), banner(2000, "c1")), true);
+sess("sb", D + "/proj", [user(500, "b")].concat(sk(1500, "s2"), banner(3000, "c2")), true);
+const sEvs = evsOf(sa);
+const bs = startBuild(sa, sEvs, 1, 10, 10);
+if (!bs) { bad++; console.log("FAIL skills.hide: no build"); } else {
+  eq("skills.hide: the transcript's events serve (no read of the anchor)", String(bs.bytes === 0 || bs.cur.get(sa.path) === undefined), "true");
+  run(bs);
+  eq("skills.hide: commit subjects kept", bs.rows.filter((r: RelEv) => r.kind === "commit" && r.sess !== "").map((r: RelEv) => r.text).join(" | "), "3f2a91c fix login redirect | 3f2a91c fix login redirect");
+  eq("skills.hide: no row of the omitted skill", bs.rows.filter((r: RelEv) => (r.text + r.evText).indexOf("secret") >= 0 || (r.text + r.evText).indexOf("SECRETSKILLTEXT") >= 0).length + "", "0");
+}
+// a name rule rewrites a path naming the skill in the anchor's transcript: its log is read, the conflict is found on the
+// real file, the rows show the fake
+reset();
+setVis([{ match: "acme-*", mode: "name" }], false);
+const ae = (dt: number, id: string): string => call(dt, id, "Edit", "{\"file_path\":\"" + D + "/proj/src/acme-x.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}");
+const na = sess("na", D + "/proj", [user(-700000, "early"), user(0, "mid"), ae(1000, "e1")], true);
+sess("nb", D + "/proj", [user(500, "b"), ae(60000, "e2")], true);
+const nEvs = evsOf(na);
+const bn = startBuild(na, nEvs, 1, 10, 10);
+if (!bn) { bad++; console.log("FAIL skills.hide name: no build"); } else {
+  run(bn);
+  eq("skills.hide name: conflict on the real file", bn.rows.filter((r: RelEv) => r.kind === "write").map((r: RelEv) => r.mark + ":" + (r.files[0]?.rel ?? "")).join(" "), "conflict:src/acme-x.ts conflict:src/acme-x.ts");
+  eq("skills.hide name: no row shows the name", String(bn.rows.filter((r: RelEv) => (r.text + r.evText).indexOf("acme-x") >= 0).length), "0");
+}
+setVis([], false);
 // a cwd behind a symlink (macOS /tmp → /private/tmp, a linked ~/code): the identity's top is the real path, the agent
 // logs the linked one; files still map to the project (rel), not to absolute paths outside it
 reset();

@@ -545,6 +545,7 @@ if (REDACT) {
   setup();
   H.meta.push(meta);
   H.agents.push(toolAgent);
+  H.fakes.push((): boolean => true);
   H.events.push((s: Sess | null, evs: Ev[], from: number) => {
     const keep = s !== null && kept(s);
     const title = s ? recOf(s).title : pick(TITLES, "?");

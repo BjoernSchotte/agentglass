@@ -6,7 +6,7 @@ import { type Ev, type Sess, type Harness, newSess } from "./types.ts";
 import { HARNESSES, harnessOf, sourceOf, window, parseEvents, busy, epochOf } from "../harness/index.ts";
 import { readBytes, KNOWN, LISTING } from "../util/fs.ts";
 import { S } from "../state.ts";
-import { H, applyMeta, remoteRows } from "../hooks.ts";
+import { H, applyMeta, remoteRows, memoKey } from "../hooks.ts";
 
 export const sessions = new Map<string, Sess>();
 KNOWN.mtime = (path: string): number => { const s = sessions.get(path); return s ? s.mtime : 0; };
@@ -129,8 +129,8 @@ function scanOnce(): void {
 // window must still hash the same (h), the log must not have shrunk below its size then (z), and a log shorter than its
 // window must still have that mtime (t; it may change anywhere). w = the window, or the log's size when shorter.
 // f = [field, value, …]: the HEAD_FIELDS the read changed, and "prompt" (the head's first one; set only while the
-// session has none, like a real read).
-export interface HeadMemo { w: number; h: number; z: number; t: number; x: string; f: string[] }
+// session has none, like a real read). v = memoKey() when it was kept (the hiding rules the read ran under).
+export interface HeadMemo { w: number; h: number; z: number; t: number; x: string; v: string; f: string[] }
 export const HEADS = { get: (s: Sess): HeadMemo | null => null, put: (s: Sess, m: HeadMemo): void => {} }; // cache.ts; off under --redact
 const HEAD_FIELDS = ["cwd", "title", "branch", "model", "remote", "name", "kind", "parent"];
 function fieldsOf(s: Sess): string[] { return [s.cwd, s.title, s.branch, s.model, s.remote, s.name, s.kind, s.parent]; }
@@ -153,7 +153,7 @@ export function loadHead(s: Sess): void {
   const src = sourceOf(s.h); const ad = harnessOf(s.h);
   const w = window(src, ad.headBytes);
   const m = HEADS.get(s);
-  if (m && (s.size >= w ? m.w === w && s.size >= m.z : m.w === s.size && m.t === mtimeOf(s)) && m.h === headHash(s.path, m.w)) {
+  if (m && m.v === memoKey() && (s.size >= w ? m.w === w && s.size >= m.z : m.w === s.size && m.t === mtimeOf(s)) && m.h === headHash(s.path, m.w)) {
     const sh = ad.setHeadState; if (m.x && sh) sh(s, m.x);
     for (let i = 0; i + 1 < m.f.length; i += 2) setField(s, m.f[i] ?? "", m.f[i + 1] ?? "");
     applyMeta(s);
@@ -165,19 +165,24 @@ export function loadHead(s: Sess): void {
     parseEvents(s.h, l, evs, s);
     if (!hp) for (const e of evs) if (e.kind === "user") { hp = firstLine(e.text, 200); if (!s.prompt) s.prompt = hp; break; }
   }
+  // the head's loads are noted now: its prompt and title without the names of hidden skills (skills.hide) — what a memo
+  // replay (keyed on the rules) restores, when nothing of this run has seen those loads
+  if (H.titles.length) { if (s.prompt === hp) s.prompt = titleShown(hp, s); hp = titleShown(hp, s); if (s.title) s.title = titleShown(s.title, s); }
   const f: string[] = []; const f1 = fieldsOf(s);
-  for (let i = 0; i < HEAD_FIELDS.length; i++) if (f1[i] !== f0[i]) { f.push(HEAD_FIELDS[i] ?? ""); f.push(own(f1[i] ?? "")); }
+  // what the read changed, and the log's own cwd, branch and model even when this run knew them before the read (the
+  // project cache, an earlier read): a run replaying the memo knows them only from here
+  for (let i = 0; i < HEAD_FIELDS.length; i++) if (f1[i] !== f0[i] || (i === 0 || i === 2 || i === 3) && f1[i]) { f.push(HEAD_FIELDS[i] ?? ""); f.push(own(f1[i] ?? "")); }
   if (hp) { f.push("prompt"); f.push(own(hp)); }
   const hs = ad.headState;
   const hw = Math.min(w, s.size);
-  HEADS.put(s, { w: hw, h: headHash(s.path, hw), z: s.size, t: mtimeOf(s), x: hs ? hs(s) : "", f });
+  HEADS.put(s, { w: hw, h: headHash(s.path, hw), z: s.size, t: mtimeOf(s), x: hs ? hs(s) : "", v: memoKey(), f });
 }
 // the last events stay on the session until its next tail read: exact-size copies of their strings (util/own.ts)
 function keepEv(e: Ev): Ev { return { kind: e.kind, text: own(e.text), ts: own(e.ts), id: own(e.id), full: own(e.full) }; }
 // The tail's outcome is kept too, for a log of the same size and mtime: the fields it changed, a prompt it found (the head had
 // none), the adapter's state and the last event — enough for a one-shot list (lite: --json, sessions), which then reads no
 // tail of a log that has not grown. Never for a live session (its alarms need the recent events).
-export interface TailMemo { size: number; t: number; x: string; ev: Ev | null; f: string[] }
+export interface TailMemo { size: number; t: number; x: string; v: string; ev: Ev | null; f: string[] } // v as HeadMemo's
 export const TAILS = { get: (s: Sess): TailMemo | null => null, put: (s: Sess, m: TailMemo): void => {} }; // cache.ts; off under --redact
 export function loadTail(s: Sess, lite = false): void {
   if (s.tailSize === s.size || s.host) return;
@@ -185,7 +190,7 @@ export function loadTail(s: Sess, lite = false): void {
   const ad = harnessOf(s.h); const rf = ad.refresh; if (rf) { rf(s); applyMeta(s); }
   const src = sourceOf(s.h);
   const m = lite && s.pid <= 0 ? TAILS.get(s) : null;
-  if (m && m.size === s.size && m.t === mtimeOf(s)) {
+  if (m && m.size === s.size && m.t === mtimeOf(s) && m.v === memoKey()) {
     const sh = ad.setHeadState; if (m.x && sh) sh(s, m.x);
     for (let i = 0; i + 1 < m.f.length; i += 2) setField(s, m.f[i] ?? "", m.f[i + 1] ?? "");
     s.evs = m.ev ? [m.ev] : [];
@@ -202,9 +207,11 @@ export function loadTail(s: Sess, lite = false): void {
   for (let i = 0; i < HEAD_FIELDS.length; i++) if (f1[i] !== f0[i]) { f.push(HEAD_FIELDS[i] ?? ""); f.push(own(f1[i] ?? "")); }
   if (!p0 && s.prompt) { f.push("prompt"); f.push(own(s.prompt)); }
   const last = s.evs.length ? s.evs[s.evs.length - 1] : null; const hs = ad.headState;
-  TAILS.put(s, { size: s.size, t: mtimeOf(s), x: hs ? hs(s) : "", ev: last ? { kind: last.kind, text: last.text, ts: last.ts, id: last.id, full: "" } : null, f });
+  TAILS.put(s, { size: s.size, t: mtimeOf(s), x: hs ? hs(s) : "", v: memoKey(), ev: last ? { kind: last.kind, text: last.text, ts: last.ts, id: last.id, full: "" } : null, f });
 }
-export function titleOf(s: Sess): string { return titleFrom(s, s.title, s.prompt); }
+export function titleOf(s: Sess): string { return titleShown(titleFrom(s, s.title, s.prompt), s); }
+// a title or prompt as surfaces may show it (skills.hide scrubs the names of hidden skills; H.titles)
+function titleShown(t: string, s: Sess): string { let o = t; for (const f of H.titles) o = f(o, s); return o; }
 // the title from these title/prompt values (realMeta()'s under --redact: what filters match)
 export function titleFrom(s: Sess, title: string, prompt: string): string {
   if (title) return title; // an H.meta override wins over the harness's out-of-band title

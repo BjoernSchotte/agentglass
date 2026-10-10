@@ -4,6 +4,8 @@
 import { newAcc, bucket, tokens, turn, skillLoad } from "../usage/record.ts";
 import { type HostRow, hostRows } from "./fleet.ts";
 import { setVis } from "./vis.ts";
+import { sizeShown } from "./model.ts";
+import { rowJson } from "./cli.ts";
 import { type Obj, parse } from "../../util/json.ts";
 
 let bad = 0;
@@ -20,6 +22,10 @@ const rows = hostRows([{ host: "ws", accs: [a], ids: ["claude:s1"], sess: [], in
 ok("a row per (skill, host)", show(rows).startsWith("ws:alpha:1:") && show(rows).indexOf("vm:alpha:2:0.50") > 0 && show(rows).indexOf("vm:secret:1:0.20") > 0, show(rows));
 const vm = rows.filter((r: HostRow) => r.host === "vm" && r.row.name === "alpha")[0];
 ok("Part A: tokens, size, hash from skills[]", !!vm && vm.row.carry === 4000 && vm.row.sizeP50 === 1000 && vm.row.hashes.join() === "00000000000000aa" && vm.row.tier === "≈", JSON.stringify(vm ? vm.row : null));
+// a host that sent no size (hub-fed: OTLP without the load events' size): ? in the tables, null in --json, never 0
+const sec = rows.filter((r: HostRow) => r.host === "vm" && r.row.name === "secret")[0];
+ok("unknown size: ?", !!sec && sizeShown(sec.row, (n: number): string => String(n)) === "?" && rowJson(sec.row)["sizeP50"] === null, sec ? String(sec.row.sizeP50) : "none");
+ok("known size shown", !!vm && sizeShown(vm.row, (n: number): string => String(n)) === "1000", "");
 setVis([{ match: "secret", mode: "omit" }], false);
 const hid = show(hostRows([{ host: "vm", accs: [], ids: [], sess: partA, info: [] }], null, "cost"));
 ok("hidden here: omit folds into (hidden)", hid.indexOf("secret") < 0 && hid.indexOf("vm:(hidden):1:0.20") >= 0, hid);

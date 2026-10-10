@@ -27,7 +27,8 @@ import { resolveRef } from "../../model/sessref.ts";
 import { projectClause } from "../query/project.ts";
 import { type Scope, agentHost, agentScope, visible, cliError } from "../agentenv.ts";
 import { type Group, type Side, type Cmp, groupOfSession, groupOfExpr, groupClauses, compareGroups } from "./metrics.ts";
-import { toolRows, cntRows, fileLists } from "./sections.ts";
+import { toolRows, cntRows, fileLists, skillCmpRows } from "./sections.ts";
+import { HIDDEN } from "../skills/vis.ts";
 import { argVal } from "../../util/argv.ts";
 
 export const COMPARE_OPTS: OptRec[] = setOptions("compare", [
@@ -35,7 +36,7 @@ export const COMPARE_OPTS: OptRec[] = setOptions("compare", [
   opt("--b", "'<expr>'", "group B, e.g. 'day >= -6d' vs --a 'day >= -13d and day < -6d' (this week vs the last)", "", []),
   opt("--filter", "'<scope>'", "clauses both groups must also match (repeatable; pins are not applied)", "", []),
   opt("--no-subagents", "", "leave subagents out (by default a session group includes its subagents)", "", []),
-  opt("--json", "", "{a:{expr, n, metrics}, b:{…}, subagents, tools[], programs[], files{onlyA, onlyB, both}};\nmetrics.cost is the total, costByMode its split (api = real spend, the rest list-price\nestimates), billing the one mode or \"mixed\"; wallMs = first event → last activity,\nactiveMs = minutes with activity (a session: at most wallMs); unknown values (unpriced cost,\nuntimed calls) are null", "", []),
+  opt("--json", "", "{a:{expr, n, metrics}, b:{…}, subagents, tools[], programs[], files{onlyA, onlyB, both},\nskills[]: {skill, a:{loads, usd, sessions}, b:{…}, chi2} (skills.hide applies: a fake name,\nomitted skills in one \"(hidden)\" row)};\nmetrics.cost is the total, costByMode its split (api = real spend, the rest list-price\nestimates), billing the one mode or \"mixed\"; wallMs = first event → last activity,\nactiveMs = minutes with activity (a session: at most wallMs); unknown values (unpriced cost,\nuntimed calls) are null", "", []),
 ]);
 export const COMPARE_HELP = `usage: agentglass compare <session> <session> [--no-subagents] [--json]
        agentglass compare --a '<expr>' --b '<expr>' [--filter '<scope>']… [--no-subagents] [--json]
@@ -140,9 +141,13 @@ function toJson(c: Cmp): Obj {
   }
   const programs: Obj[] = []; for (const r of cntRows(c, "prog")) programs.push({ program: shown("program", r.key), a: { n: r.nA, err: r.errA }, b: { n: r.nB, err: r.errB } });
   const fl = fileLists(c); const names = (xs: { shown: string }[]): string[] => xs.map((f: { shown: string }): string => display("file", f.shown, null));
+  // the TUI's skills section (skill-usage §6.10). skillVis: skillCmpRows (sections.ts) gives the shown names, omitted
+  // skills in the (hidden) row
+  const skills: Obj[] = []; const usd = (x: number, unk: boolean): number | null => x === 0 && unk ? null : r6(x);
+  for (const r of skillCmpRows(c).rows) skills.push({ skill: r.name, a: { loads: r.loadsA, usd: usd(r.usdA, r.unkA), sessions: r.sessA }, b: { loads: r.loadsB, usd: usd(r.usdB, r.unkB), sessions: r.sessB }, chi2: r.chi2 < 0 ? null : Math.round(r.chi2 * 10) / 10 });
   return {
     a: { expr: print(c.A.cs), n: c.a.n, metrics: metricsOf(c.a) }, b: { expr: print(c.B.cs), n: c.b.n, metrics: metricsOf(c.b) }, subagents: c.subs,
-    tools, programs, files: { onlyA: names(fl.onlyA), onlyB: names(fl.onlyB), both: names(fl.both) },
+    tools, programs, files: { onlyA: names(fl.onlyA), onlyB: names(fl.onlyB), both: names(fl.both) }, skills,
   };
 }
 
@@ -165,17 +170,31 @@ function text(c: Cmp, scope: Clause[], tty: boolean): void {
     const d = rpad(m.d, dw);
     out(lpad(m.label, lw) + "  " + rpad(m.a, aw) + "  " + rpad(m.b, bw) + "  " + (m.tone > 0 ? col(d, C.red) : m.tone < 0 ? col(d, C.green) : d) + "  " + m.r);
   }
-  const tr = toolRows(c, new Set<string>()); if (!tr.rows.length) return;
-  out("");
-  out(col("tools" + (tr.significance ? " · ● share differs (χ² ≥ 6.63)" : " · small samples, no significance"), C.dim));
-  let tw = 4; for (const r of tr.rows.slice(0, 15)) tw = Math.min(30, Math.max(tw, width(shown("tool", r.label))));
-  out(col(lpad("tool", tw) + "  " + rpad("calls A", 7) + "  " + rpad("calls B", 7) + "  " + rpad("share A", 7) + "  " + rpad("share B", 7) + "  " + rpad("Δpp", 7) + "  " + rpad("err A", 6) + "  " + rpad("err B", 6), C.dim));
-  for (const r of tr.rows.slice(0, 15)) {
-    const pp = (r.dpp > 0 ? "+" : r.dpp < 0 ? "−" : "") + Math.abs(r.dpp).toFixed(1);
-    const er = (n: number, e: number): string => n > 0 ? ((e / n) * 100).toFixed(0) + "%" : "–";
-    out(lpad((r.server ? "⧉ " : "") + shown("tool", r.label), tw) + "  " + rpad(String(r.nA), 7) + "  " + rpad(String(r.nB), 7) + "  " + rpad((r.shA * 100).toFixed(1) + "%", 7) + "  " + rpad((r.shB * 100).toFixed(1) + "%", 7) + "  " +
-      rpad(pp, 7) + "  " + rpad(er(r.nA, r.errA), 6) + "  " + rpad(er(r.nB, r.errB), 6) + (r.sig ? "  ●" : ""));
+  const tr = toolRows(c, new Set<string>());
+  if (tr.rows.length) {
+    out("");
+    out(col("tools" + (tr.significance ? " · ● share differs (χ² ≥ 6.63)" : " · small samples, no significance"), C.dim));
+    let tw = 4; for (const r of tr.rows.slice(0, 15)) tw = Math.min(30, Math.max(tw, width(shown("tool", r.label))));
+    out(col(lpad("tool", tw) + "  " + rpad("calls A", 7) + "  " + rpad("calls B", 7) + "  " + rpad("share A", 7) + "  " + rpad("share B", 7) + "  " + rpad("Δpp", 7) + "  " + rpad("err A", 6) + "  " + rpad("err B", 6), C.dim));
+    for (const r of tr.rows.slice(0, 15)) {
+      const pp = (r.dpp > 0 ? "+" : r.dpp < 0 ? "−" : "") + Math.abs(r.dpp).toFixed(1);
+      const er = (n: number, e: number): string => n > 0 ? ((e / n) * 100).toFixed(0) + "%" : "–";
+      out(lpad((r.server ? "⧉ " : "") + shown("tool", r.label), tw) + "  " + rpad(String(r.nA), 7) + "  " + rpad(String(r.nB), 7) + "  " + rpad((r.shA * 100).toFixed(1) + "%", 7) + "  " + rpad((r.shB * 100).toFixed(1) + "%", 7) + "  " +
+        rpad(pp, 7) + "  " + rpad(er(r.nA, r.errA), 6) + "  " + rpad(er(r.nB, r.errB), 6) + (r.sig ? "  ●" : ""));
+    }
   }
+  skillText(c, col);
+}
+// the skills section, as the TUI's (loads and $ per side; omitted skills in the (hidden) row, always last)
+function skillText(c: Cmp, col: (s: string, k: string) => string): void {
+  const sk = skillCmpRows(c); if (!sk.rows.length) return;
+  const usd = (x: number, unk: boolean): string => x === 0 && unk ? "?" : "$" + x.toFixed(2);
+  let sw = 5; for (const r of sk.rows.slice(0, 15)) sw = Math.min(30, Math.max(sw, width(r.name)));
+  out("");
+  out(col("skills" + (sk.significance ? " · ● the share of sessions loading it differs (χ² ≥ 6.63)" : " · small samples, no significance"), C.dim));
+  out(col(lpad("skill", sw) + "  " + rpad("loads A", 7) + "  " + rpad("loads B", 7) + "  " + rpad("$ A", 9) + "  " + rpad("$ B", 9), C.dim));
+  for (const r of sk.rows.slice(0, 15)) out((r.name === HIDDEN ? col(lpad(r.name, sw), C.dim) : lpad(r.name, sw)) + "  " + rpad(String(r.loadsA), 7) + "  " + rpad(String(r.loadsB), 7) + "  " + rpad(usd(r.usdA, r.unkA), 9) + "  " + rpad(usd(r.usdB, r.unkB), 9) + (r.sig ? "  ●" : ""));
+  if (sk.rows.length > 15) out(col("+" + String(sk.rows.length - 15) + " more (--json lists all)", C.dim));
 }
 
 function compare(args: string[]): void {

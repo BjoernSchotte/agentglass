@@ -19,7 +19,7 @@ import { accsOf, callsOf } from "../usage/ledger.ts";
 import { callCutoff } from "../usage/callcache.ts";
 import { type Acc, lastDays, startOfDay } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
-import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows } from "./model.ts";
+import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows, sizeShown } from "./model.ts";
 import { type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviseHosts, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
 import { rowFam, famKind, famName } from "../wait/family.ts";
 import { identSync } from "../query/project.ts";
@@ -133,7 +133,7 @@ const COLS: Col[] = [
   { h: "/", w: 4, drop: 1, f: (r: SkillRow) => r.name === LISTING ? "·" : String(r.loadsUser) },
   { h: "⚙", w: 4, drop: 1, f: (r: SkillRow) => r.name === LISTING ? "·" : String(r.loadsModel) },
   { h: "sess", w: 5, drop: 9, f: (r: SkillRow) => String(r.sessions) },
-  { h: "size", w: 7, drop: 9, f: (r: SkillRow) => r.tier === "?" && r.sizeP50 === 0 ? "?" : tok(r.sizeP50) },
+  { h: "size", w: 7, drop: 9, f: (r: SkillRow) => sizeShown(r, tok) },
   { h: "load", w: 7, drop: 1, f: (r: SkillRow) => tok(r.load) },
   { h: "carry", w: 8, drop: 9, f: (r: SkillRow) => tok(r.carry) },
   { h: "tail", w: 7, drop: 2, f: (r: SkillRow) => tok(r.tail) },
@@ -202,7 +202,7 @@ export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: M
 // --name: a skill as shown (a fake under --redact matches; its real name only where it is shown as is)
 function named(o: Opts, shown: string): boolean { return !o.name || shown === o.name; }
 function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
-export function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
+export function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50 < 0 ? null : r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
 
 function table(o: Opts, set: Set0): void {
   const days = periodDays(o.period);

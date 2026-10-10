@@ -156,7 +156,8 @@ function lanes(out: Span[]): Span[][] {
 function numOf(a: number[], i: number): number { let v = 0; for (const x of a.slice(i, i + 1)) v = x; return v; }
 
 // ── skill lanes (skill-usage §6.2): each load a band from load to unload (open: to end) on lanes under the turns, one lane
-// per concurrently open skill, at most max; the loads that find no lane are counted in more ──
+// per concurrently open skill, at most max; the loads that find no lane are counted in more. skillVis: the marks come from
+// marksOf (view.ts), their labels already the shown names, omitted skills not among them ──
 export interface Band { t0: number; t1: number; label: string; open: boolean; ref: string }
 export function skillLanes(marks: Mark[], end: number, max: number): { lanes: Band[][]; more: number } {
   const lanes: Band[][] = []; const ends: number[] = []; let more = 0;

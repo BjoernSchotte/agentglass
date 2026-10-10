@@ -56,11 +56,17 @@ export function parseRaw(h: string, line: string, out: Ev[], s: Sess | null): vo
   harnessOf(h).parse(o, out, s);
   if (s) applyMeta(s);
 }
-// copies of raw events with the H.events hooks applied (what parseEvents would have produced); raw stays untouched
+// copies of raw events with the H.events hooks applied (what parseEvents would have produced); raw stays untouched.
+// Position i is raw[i]'s copy: one a hook dropped (an omitted skill's call or result) is an empty event (kind "")
 export function hookedCopy(s: Sess | null, raw: Ev[]): Ev[] {
   const out = raw.map((e: Ev): Ev => ({ kind: e.kind, text: e.text, ts: e.ts, id: e.id, full: e.full }));
-  if (out.length) for (const f of H.events) f(s, out, 0);
-  return out;
+  if (!out.length) return out;
+  const refs = out.slice();
+  for (const f of H.events) f(s, out, 0);
+  if (out.length === refs.length) return out;
+  const r: Ev[] = []; let k = 0; // hooks drop, never add or reorder: walk both
+  for (const e of refs) { if (k < out.length && out[k] === e) { r.push(e); k++; } else r.push({ kind: "", text: "", ts: e.ts, id: "", full: "" }); }
+  return r;
 }
 export function busy(s: Sess): boolean { const f = harnessOf(s.h).busy; return f ? f(s) : turnBusy(s, false); }
 // the user's claude/codex are often shell functions: AGENTGLASS_<ID> overrides the command

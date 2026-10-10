@@ -13,8 +13,10 @@ import { renderFooter } from "./footer.ts";
 import { VF_STORE, vfSet, vfClear, mask, resetForTest } from "./evfilter.ts";
 import { replaying } from "../features/replay.ts";
 import "../features/evkinds.ts";
+import { setVis } from "../features/skills/vis.ts";
 
 let bad = 0;
+setVis([], false); // redact.ts is not loaded here: real skill names (the checks run with AGENTGLASS_REDACT=1, which skillVis reads)
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
 function ok(w: string, c: boolean): void { if (!c) { bad++; console.log("FAIL " + w); } }
 
