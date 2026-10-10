@@ -344,7 +344,7 @@ export function reportsOf(a: Agg, now: number, all: boolean, maxAgeDays: number)
       let lv = x.live;
       if (lv && !fresh) lv = { key: lv.key, at: lv.at, live: false, busy: false, attention: lv.attention, approval: false, stuck: lv.stuck, alerts: [] };
       const prov: string[][] = []; for (const p of x.prov.keys()) prov.push([p, x.prov.get(p) ?? "unknown"]);
-      rows.push({ s: jsonOf(x, lv), key: x.key, days: dayRows(x), own: oc, prov });
+      rows.push({ s: jsonOf(x, lv), key: x.key, days: dayRows(x), own: oc, prov, dd: false });
       if (lv) { const al: Obj[] = []; for (const v of x.alerts.values()) al.push(v); lives.push({ key: lv.key, at: lv.at, live: lv.live, busy: lv.busy, attention: lv.attention, approval: lv.approval, stuck: lv.stuck, alerts: al }); }
     }
     rows.sort((p, q) => str(q.s["updated"]) < str(p.s["updated"]) ? -1 : 1);
