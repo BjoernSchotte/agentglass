@@ -208,5 +208,52 @@ for (const [m, want] of [["claude-sonnet-5-5", 2.6], ["claude-opus-4-7", 2.6], [
   ok("sent: Claude 5's divisor", (n.sk[0] as SkLoad).S === 1000 && ((n.sk[0] as SkLoad).lt[2] ?? 0) === 1000, String((n.sk[0] as SkLoad).S));
 }
 
+// loads sent with one request share its growth g (§3.2): Σ S = min(g, Σ estimates), each 0 ≤ S ≤ its estimate and within a
+// token of est × g / Σ est (largest remainder); a bigger estimate never gets less; the carry of the next request is S each.
+// A load of unknown size and one unloaded before the request take no share
+{
+  const SZ: number[][] = [[1000, 100], [1000, 500, 500, 100], [7, 7, 7], [1, 1, 1, 1, 1, 1, 1], [5000, 0, 3], [333, 333, 334], [2, 999]];
+  const GS = [1, 2, 3, 10, 99, 500, 1099, 1100, 1999, 2100, 5000, 9000];
+  for (const sz of SZ) for (const g of GS) {
+    const p = newAcc(); const dp = bucket(p, 0, iso);
+    tokens(p, dp, M, 0, 5, 0, 8000, 0);
+    let k = 0; for (const v of sz) { skillLoad(p, "p" + String(k), "model", 1, iso, "x".repeat(Math.round(v * 3.6)), true, "", false); k++; }
+    skillLoad(p, "unknown", "model", 1, iso, "", false, "", false);
+    skillLoad(p, "gone", "model", 1, iso, "x".repeat(3600), true, "", false); (p.sk[p.sk.length - 1] as SkLoad).pend = false; (p.sk[p.sk.length - 1] as SkLoad).end = 1; (p.sk[p.sk.length - 1] as SkLoad).why = "clear";
+    tokens(p, dp, M, 0, 5, 8000, g, 0);
+    tokens(p, dp, M, 0, 5, 8000 + g, 0, 0);
+    const at = "share [" + sz.join(",") + "] in " + String(g);
+    let est = 0; for (let i = 0; i < sz.length; i++) est += (p.sk[i] as SkLoad).bytes < 0 ? 0 : Math.ceil((p.sk[i] as SkLoad).bytes / 3.6);
+    let tot = 0; let lt = 0; let off = "";
+    for (let i = 0; i < sz.length; i++) {
+      const l = p.sk[i] as SkLoad; const e = Math.ceil(l.bytes / 3.6); const want = est > g ? e * g / est : e;
+      tot += l.S; lt += sum4(l.lt);
+      if (l.S < 0 || l.S > e || Math.abs(l.S - want) >= 1 || sum4(l.ct) !== l.S) off += " " + l.name + " S " + String(l.S) + " est " + String(e) + " ct " + String(sum4(l.ct));
+      for (let j = 0; j < sz.length; j++) { const m = p.sk[j] as SkLoad; if (Math.ceil(m.bytes / 3.6) > e && m.S < l.S) off += " " + m.name + "<" + l.name; }
+    }
+    eq(at + ": Σ S", String(tot), String(Math.min(g, est)));
+    eq(at + ": Σ load tokens", String(lt), String(Math.min(g, est)));
+    eq(at + ": each share", off, "");
+    const u = p.sk[sz.length] as SkLoad; const x = p.sk[sz.length + 1] as SkLoad;
+    eq(at + ": no share for unknown or gone", String(sum4(u.lt) + sum4(u.ct) + sum4(x.lt) + sum4(x.ct)), "0");
+    inv(p, at); saMatches(p, at);
+  }
+  // alone: its estimate, cut to the growth
+  for (const g of [100, 556, 10000]) {
+    const q = newAcc(); const dq = bucket(q, 0, iso); tokens(q, dq, M, 0, 5, 0, 8000, 0);
+    skillLoad(q, "solo", "model", 1, iso, "x".repeat(2000), true, "", false);
+    tokens(q, dq, M, 0, 5, 8000, g, 0);
+    eq("alone in " + String(g), String((q.sk[0] as SkLoad).S), String(Math.min(g, 556)));
+  }
+  // an open load carried in the same request takes no part of the growth: the new ones share it
+  {
+    const c = newAcc(); const dc = bucket(c, 0, iso); tokens(c, dc, M, 0, 5, 0, 8000, 0);
+    skillLoad(c, "old", "model", 1, iso, "x".repeat(3600), true, "", false); tokens(c, dc, M, 0, 5, 8000, 1000, 0);
+    skillLoad(c, "n1", "model", 2, iso, "x".repeat(3600), true, "", false); skillLoad(c, "n2", "model", 2, iso, "x".repeat(1800), true, "", false);
+    tokens(c, dc, M, 0, 5, 9000, 900, 0);
+    eq("carry + new loads", [c.sk[0], c.sk[1], c.sk[2]].map((l) => String((l as SkLoad).S) + "/" + String(sum4((l as SkLoad).ct))).join(" "), "1000/1000 600/0 300/0");
+  }
+}
+
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok skill attribution");
