@@ -3,6 +3,7 @@
 import type { Ev } from "../../model/types.ts";
 import type { Mark } from "../../model/marks.ts";
 import { newCursor, feed } from "./turns.ts";
+import { own } from "../../util/own.ts";
 
 export const K_TURN = 0; export const K_TOOL = 1; export const K_AGENT = 2;
 export const CATS = ["shell", "edit", "read", "web", "agent", "mcp", "other"];
@@ -35,6 +36,21 @@ export function isErr(text: string): boolean {
   const t = text.trimStart().slice(0, 200);
   if (/^(<tool_use_error>|error|\[(error|failed|denied|cancel|timeout))/i.test(t) || /^Exit code:? [1-9]/.test(t) || /^Process exited with code [1-9]/.test(t) || /^The user doesn't want to proceed/.test(t)) return true;
   return /"exit_code":\s*[1-9]/.test(text.slice(-300)); // codex: {"output": …, "metadata": {"exit_code": n}}
+}
+// ── lean events: what the graph, its kinds (model/kinds.ts) and its filter read of an event, in exact-size strings
+// (util/own.ts: kept as parsed, every event pinned up to 64 KB; 1.4 GB on a session with 175 subagents). A call's text
+// (name + argument), markers and ids whole; a result's text cut to the head and tail isErr reads, its error reading
+// kept; a prompt cut to LEAN chars; replies and thinking empty; full dropped (↵ and r read the session in full).
+// prev: the event before (a line's events share their timestamp: one copy) ──
+export const LEAN = 1024;
+export function lean(e: Ev, prev: Ev | null): Ev {
+  const k = e.kind; let t = e.text;
+  if (k === "assistant" || k === "thinking") t = "";
+  else if (k === "result" && t.length > 1024) {
+    const c = t.slice(0, 512) + " … " + t.slice(-300); const er = isErr(t);
+    t = isErr(c) === er ? c : er ? "[error] " + c : t;
+  } else if (k === "user" && t.length > LEAN) t = t.slice(0, LEAN) + "…";
+  return { kind: k, text: own(t), ts: prev && prev.ts === e.ts ? prev.ts : own(e.ts), id: own(e.id), full: "" };
 }
 function span(t0: number, depth: number, kind: number, name: string, arg: string, src: number, ev: number, parent: number): Span {
   return { t0, t1: t0, depth, row: 0, kind, cat: kind === K_TURN ? -1 : kind === K_AGENT ? 4 : catOf(name), name, arg, id: "", err: -1, open: false, est: false, src, ev, parent, ix: 0 };

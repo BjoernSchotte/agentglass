@@ -208,6 +208,8 @@ function outcomes(evs: Ev[], m: Uint8Array): void {
   }
   if (last >= 0) m[last] = 1;
 }
+// a view that lets go of evs drops their masks too
+export function forgetMasks(evs: Ev[]): void { for (let j = MASKS.length - 1; j >= 0; j--) if (MASKS[j].evs === evs) MASKS.splice(j, 1); }
 export function shown(view: string, s: Sess, evs: Ev[], i: number): boolean { if (i < 0 || i >= evs.length) return false; return mask(view, s, evs)[i] + 0 === 1; }
 // shown / total over evs
 export function matchCount(view: string, s: Sess, evs: Ev[]): { shown: number; total: number } {

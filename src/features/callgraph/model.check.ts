@@ -1,7 +1,8 @@
 // agentglass — self-check for the call-graph model: scriptc build src/features/callgraph/model.check.ts -o cgc && ./cgc
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev } from "../../model/types.ts";
-import { type Src, buildGraph, aggregate, summary, catOf, isErr, dur } from "./model.ts";
+import { type Src, buildGraph, aggregate, summary, catOf, isErr, dur, lean, LEAN } from "./model.ts";
+import { evKindList } from "../../model/kinds.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -58,5 +59,21 @@ eq("isErr", [isErr("Exit code: 2\nboom"), isErr("Exit code 127\nx"), isErr("Exit
 // codex "turn aborted" ends the turn at its own timestamp (shared TurnCursor rule)
 const ab = buildGraph([src([ev("meta", "turn started", 0, ""), ev("user", "go", 0, ""), ev("tool", "exec\u0000sleep 9", 1, "s"), ev("meta", "turn aborted", 4, ""), ev("assistant", "late", 9, "")], "", "")], T);
 eq("codex aborted", ab.spans.filter((s) => s.kind === 0).map((s) => s.name + ":" + dur(s.t1 - s.t0)).join(","), "turn 1:4.0s,turn 2:0ms");
+// lean events: the graph, the kinds and the error reading as on the full ones; long texts cut, replies and full dropped
+const pad = (n: number): string => { let o = ""; while (o.length < n) o += "lorem ipsum "; return o.slice(0, n); };
+const full: Ev[] = [ev("user", "build " + pad(5000), 0, ""), ev("thinking", pad(3000), 1, ""), ev("assistant", pad(3000), 1, ""),
+  ev("tool", "Bash\u0000npm test " + pad(3000), 2, "t1"), ev("result", pad(9000) + '{"output":"x","metadata":{"exit_code":2}}', 3, "t1"),
+  ev("tool", "Read\u0000/w/a.ts", 4, "t2"), ev("result", "<tool_use_error>nope " + pad(9000), 5, "t2"),
+  ev("tool", "Bash\u0000ls", 6, "t3"), ev("result", "   \n".repeat(80) + "Exit code 1\n" + pad(9000), 7, "t3"),
+  ev("tool", "Bash\u0000pwd", 8, "t4"), ev("result", pad(9000), 9, "t4"), ev("meta", "⟲ completed · " + pad(2000) + " compact", 10, "")];
+for (const e of full) e.full = pad(4000);
+const ln: Ev[] = []; for (const e of full) ln.push(lean(e, ln.length ? ln[ln.length - 1] : null));
+const shape = (evs: Ev[]): string => { const g2 = buildGraph([src(evs, "", "")], T); return g2.spans.map((x) => x.kind + ":" + x.name + ":" + x.err + ":" + (x.t1 - x.t0) + ":" + (x.kind === 1 ? x.arg : "")).join(",") + " " + aggregate(g2).map((a) => a.name + ":" + a.count + ":" + a.err).join(","); };
+const kinds = (evs: Ev[]): string => { const o: string[] = []; for (let i = 0; i < evs.length; i++) { const e = evs[i]; let call: Ev | null = null; if (e.kind === "result") for (const x of evs) if (x.kind === "tool" && x.id === e.id) call = x; o.push(evKindList(e, call).join("+")); } return o.join(","); };
+eq("lean: same graph", shape(ln), shape(full));
+eq("lean: same kinds", kinds(ln), kinds(full));
+eq("lean: errors", ln.filter((e) => e.kind === "result").map((e) => String(isErr(e.text))).join(","), "true,true,true,false");
+eq("lean: cut", String(ln[0].text.length <= LEAN + 1) + " " + ln[1].text + ln[2].text + " " + String(ln[4].text.length < 1000) + " " + String(ln[3].text === full[3].text) + " " + String(ln[11].text === full[11].text), "true  true true true");
+eq("lean: no full, one ts per line", String(ln.every((e) => e.full === "")) + " " + String(ln[1].ts === ln[2].ts), "true true");
 console.log(bad ? bad + " FAILED" : "ok");
 process.exit(bad ? 1 : 0);
