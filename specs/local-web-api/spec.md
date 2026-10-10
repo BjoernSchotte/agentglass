@@ -20,7 +20,7 @@ table).
    one-time link.
 5. **The web UI** (React, shadcn/ui, cmdk, lucide, IBM Plex): a Linear-style shell (collapsible sidebar, theme
    switch, ⌘K palette, TUI-like keys) with live views; this spec defines the shell, the first live views and the
-   interaction model; the visualization libraries are **pending research** (section 12).
+   interaction model and the verified visualization stack (section 12).
 
 ## Why (user value)
 - The TUI is the fastest way to watch agents in a terminal; a browser is better for wide tables, zoomable timelines,
@@ -191,7 +191,7 @@ packages/api-contract   JSON Schema (draft 2020-12) per resource, event and comm
                         a fixture HOME and validate every response, event and the CLI `--json` goldens
 packages/ui             shadcn/ui components (source, copied in), Tailwind preset, design tokens (CSS variables), IBM
                         Plex fonts (subset woff2, OFL), icons via lucide-react
-packages/viz            visualizations (pending research, section 12), lazy-loaded per route
+packages/viz            visualizations (section 12: uPlot, ECharts, custom timeline, sigma, React Flow, tables), lazy per route
 packages/web            React app (Vite + TypeScript), routes, state, cmdk palette; builds static assets
 packages/bff            agentglass-web: Bun.serve, auth, SSE/WS, stdio client, embeds packages/web/dist
 src/                    unchanged home of agentglass (scriptc): read model, `serve --stdio`, `web` launcher
@@ -203,12 +203,24 @@ src/                    unchanged home of agentglass (scriptc): read model, `ser
   command, plus negative cases).
 
 ### 7. The web UI
-**Stack** (user decision): React 19, Vite, TypeScript, shadcn/ui (Radix primitives + Tailwind), `cmdk` (shadcn's
+**Stack** (user decision; React version settled by the research, Decision 14): React 19.2.x, Vite, TypeScript, shadcn/ui (Radix primitives + Tailwind), `cmdk` (shadcn's
 Command) for the palette, lucide-react icons, TanStack Router (typed search params: the URL holds the filter, period,
 time range and selection — deep links mirror the TUI's `agentglass://` `f=`/`view=`), TanStack Query for request
 caching over the socket. No CSS-in-JS runtime. Fonts: **IBM Plex Sans + IBM Plex Mono** (Decision 8), self-hosted,
 subset to Latin + Latin-1 Supplement + punctuation/arrows used by the TUI, weights Sans 400/500/600, Mono 400/500,
 `font-variant-numeric: tabular-nums` for every number column.
+
+**React 19 constraints** (research 2026-10-10, section "React 18 vs 19"):
+- shadcn/ui's current registry (Tailwind v4 style) passes `ref` as a prop and has no `forwardRef`; on React 18 the
+  ref is dropped and Radix `asChild` triggers (Tooltip, Popover around our Button) break. React 18 would mean the
+  older v3 component set and Tailwind v3: not chosen.
+- Do not enable the React Compiler on TanStack Table v9 components (`"use no memo"` in those files): open issues
+  TanStack/table #6577, #6524 (and #6601, a v9 rerender issue).
+- Do not wrap React Flow in React 19.2 `<Activity>` (xyflow #6044: the store resets when a flow is hidden).
+- Framework-agnostic libraries (uPlot, ECharts, sigma, graphology) are mounted imperatively in `useEffect` by our own
+  thin wrappers that call `destroy()` / `dispose()` / `kill()` in cleanup (StrictMode double mount safe).
+- Versions checked 2026-10-10: cmdk 1.1.1, radix-ui 1.7.0, @tanstack/react-query 5.104.1, zustand 5.0.15 — all with
+  React `^18 || ^19` peers.
 
 **Layout (Linear-style)**:
 ```
@@ -323,32 +335,52 @@ subset to Latin + Latin-1 Supplement + punctuation/arrows used by the TUI, weigh
   `agentglass`.
 - **Dependabot**: npm ecosystem on the root with groups `react` (react, react-dom, @types/react*), `ui` (@radix-ui/*,
   tailwindcss, lucide-react, cmdk, class-variance-authority, tailwind-merge), `build` (vite, typescript, vitest,
-  @vitejs/*, playwright), `viz` (pending), weekly; GitHub Actions group as today; Bun bumped by hand (`.bun-version`).
+  @vitejs/*, playwright), `viz` (uplot, echarts, sigma, graphology*, @xyflow/react, dagre, @tanstack/react-table,
+  @tanstack/react-virtual; sigma and uplot pinned exactly and bumped by hand after reading their changelogs), weekly; GitHub Actions group as today; Bun bumped by hand (`.bun-version`).
 - **Supply chain**: no postinstall scripts allowed except an allowlist (`pnpm.onlyBuiltDependencies`), lockfile
   reviewed in PRs, `pnpm audit --prod` in CI (high/critical fail), no CDN at runtime.
 
-### 12. Visualizations (libraries pending research)
-Use cases, interaction and budgets are fixed here; the concrete libraries are **pending research** (a verification of
-versions, maintenance, licences and sizes as of October 2026 is running; the result is folded into this section and
-Decision 12 before the viz slice starts).
-- **Time series** (tokens/cost over time, spikes, sparklines): canvas, ≥ 100 k points, drag-to-zoom, range select,
-  cursors synced across charts.
-- **Heatmaps and distributions** (hour × weekday, calendar days, skill × session matrices, stacked bars, wait
-  histograms p50/p95, token → skill → cost flows): canvas renderer, brush + data zoom, modular imports only.
-- **Session timeline / call graph / swimlanes** (skills lanes, subagent spans, kind-filtered gaps; tens of thousands
-  of spans): a custom Canvas2D renderer in `packages/viz` (speedscope/Perfetto-like): virtualised drawing, zoom
-  around the cursor (wheel/pinch), drag-pan, box-select, minimap, `[`/`]` navigation, hit-testing through a spatial
-  index, layout in a Web Worker (OffscreenCanvas where available); data = the lean call-graph events (#110) from
-  `graph.get`.
-- **Relationship graphs** (skills co-loaded, MCP servers ↔ sessions ↔ repos, members ↔ rooms ↔ repos): WebGL, layout
-  in a worker, search and neighbour highlight, click-through to filtered views.
-- **Small diagrams** (one session's agent → subagent tree, team/room topology, the share-policy editor).
-- **Tables**: virtualised (100 k rows), column resize, sticky headers, filters in the TUI's expression language.
-- Not for large data: SVG-per-mark libraries (Recharts, Nivo); shadcn's chart wrapper (Recharts) at most for small
-  KPI cards, or not at all for consistency.
+### 12. Visualizations
+Libraries verified by a research pass on 2026-10-10 (versions, activity, licences, gzip sizes and React peers from
+the npm `latest` manifests and the projects' repositories; the facts are copied here). The use cases, interaction
+model and budgets were fixed first, and the libraries were chosen to meet them.
+
+| use case | library (version 2026-10-10) | licence | gzip | notes |
+|---|---|---|---|---|
+| time series: tokens/cost over time, spikes, sparklines; ≥ 100 k points, drag-zoom, range select, synced cursors | **uPlot** 1.6.32 | MIT | 22 KB | canvas; `cursor.sync` syncs cursor and select across charts; 1.7.0 is imminent and changes the legend DOM and `clearCache()` — pin exactly, own wrapper; one maintainer (small, vendorable) |
+| heatmaps (hour × weekday, calendar), skill × session matrices, bars/stacked bars, histograms and p50/p95 boxplots, sankey (tokens → skills → cost) | **Apache ECharts** 6.1.0, modular imports, canvas renderer, dataZoom + brush + visualMap | Apache-2.0 | ~170–220 KB | the largest item: lazy-loaded per route only; `echarts.connect(group)` + brush/dataZoom events for linking; v6 changed the default theme (`echarts/theme/v5.js` gives the old look) |
+| session timeline / flame chart / swimlanes (skills lanes, subagent spans, kind-filtered gaps; tens of thousands of spans) | **custom Canvas2D renderer** in `packages/viz` | ours | — | DevTools-FlameChart/speedscope ideas: interval index for hit-testing, level-of-detail merging of sub-pixel spans, an overlay layer for selection/hover, HiDPI, layout in a Web Worker (OffscreenCanvas where available); WebGL2 instanced rects only if profiling demands it; no maintained library fits (flame-chart-js is dead and React ≤ 18); optional "Open in Perfetto" export |
+| relationship graphs (skills co-loaded, MCP servers ↔ sessions ↔ repos, members ↔ rooms ↔ repos) | **sigma.js** 4.0.0 + **graphology** 0.26.0, ForceAtlas2 layout in a worker, our own React hook | MIT | 111 KB (both) | sigma 4 shipped 2026-10-08 (WebGL SDF labels, drag, parallel edges; breaks v3 APIs): pin exactly, expect 4.0.x fixes; `@react-sigma/core` 5.0.6 still peers `sigma ^3`, so no react-sigma; needs WebGL2 → list-view fallback "graph unavailable"; alternative for very large graphs `@cosmos.gl/graph` 3.5.1 (MIT) |
+| small diagrams (one session's agent → subagent tree, team/room topology, share-policy editor) | **@xyflow/react** 12.12.0 + **dagre** | MIT | 59 KB | never inside `<Activity>` (#6044) |
+| tables (100 k rows, column resize, sticky headers, filters in the TUI's expression language) | **TanStack Table** v9 (9.2.8; new `useTable`/`tableFeatures` API, not v8 tutorials) + **TanStack Virtual** 3.14.14 | MIT | 21 KB | React Compiler off on table components; a `./legacy` entry exists if v9 blocks |
+| small KPI cards | ECharts (one library fewer) or plain numbers | — | — | shadcn's chart component is Recharts 3 (SVG; ~10 k points already take seconds, recharts #1465): not used for data views; default: not at all |
+
+- **Rejected on licence**: Cosmograph / `@cosmograph/react` (CC-BY-NC-4.0, React ≤ 18), Highcharts (commercial),
+  amCharts 5 (free only with a logo), MUI X Charts (zoom/pan is Pro), AG Grid Enterprise, lightweight-charts
+  (attribution link required); elkjs (EPL/GPL) not needed because dagre is enough.
+- **No WebGPU dependency**: WebGPU reaches ~88 % globally, but Firefox on Linux ships it only in Nightly, and Chrome
+  on Linux only for Intel Gen12+ or recent NVIDIA under Wayland; many agentglass users run Linux. WebGL2 is the
+  baseline; WebGPU only behind feature detection, nowhere critical.
+- **Theming**: shadcn v4 tokens are `oklch()`. Canvas 2D accepts oklch (uPlot gets resolved strings), but zrender
+  (ECharts) parses only rgb/rgba/hsl/hsla/hex/named, and sigma/cosmos take hex or numbers. One `resolveTokens()` in
+  `packages/ui` turns the current theme's tokens into hex/rgb (drawn on a 1×1 canvas and read back), and every viz
+  adapter re-applies them on a theme change (`setOption`/`setTheme` for ECharts).
+- **Linking (crossfilter)**: one shared brush/time-range store in React (zustand), mirrored in the URL; uPlot
+  `cursor.sync` and `echarts.connect` within a route. Aggregation stays in agentglass (the read model), not in the
+  browser: no DuckDB-WASM, Mosaic or `crossfilter2` (last release 2020).
+- **Accessibility**: canvas is opaque to screen readers. Every chart has a text summary (min/max/p50/p95), a "view as
+  table" toggle (TanStack Table), keyboard focus and arrow-key cursor movement (timeline: `[`/`]` like the TUI), and
+  palettes that never rely on hue alone (ECharts `aria` decals where available).
+- **Mounting**: imperative wrappers (create in `useEffect`, `destroy`/`dispose`/`kill` in cleanup), resize through
+  `ResizeObserver`, data updates without re-creating the instance.
 - **Budgets**: first meaningful chart ≤ 300 ms from cached data (served aggregate → paint); 60 fps pan/zoom on 50 k
-  spans (M1 / a 2020 x64 laptop); JS gzip: shell (React, router, query, ui, cmdk) ≤ 160 KB, each route chunk ≤ 80 KB
-  plus its viz chunk ≤ 250 KB, fonts ≤ 120 KB; no route loads a viz library it does not draw.
+  spans (M1 / a 2020 x64 laptop); JS gzip: shell (React, router, query, ui, cmdk) ≤ 160 KB; each route chunk ≤ 80 KB
+  plus its viz chunk ≤ 250 KB (ECharts at ~170–220 KB is the ceiling case; the whole viz set is ~430 KB, and no route
+  loads more than it draws); fonts ≤ 120 KB.
+- **Risks** (accepted, with mitigations): sigma 4 is two days old (exact pin, list fallback, 3.0.3 as a fallback);
+  uPlot has one maintainer (small, MIT, vendorable); four rendering stacks need four theming adapters (one
+  `resolveTokens()`); the custom timeline is real engineering work (its own step in W9); TanStack Table v9 is two
+  months old (`./legacy`).
 
 ## Failure modes
 - **`agentglass-web` missing / wrong version**: `agentglass web` prints the install line; a protocol mismatch (`want`
@@ -405,7 +437,7 @@ Decision 12 before the viz slice starts).
 
 ## Out of scope
 - Remote access other than an SSH tunnel; TLS for the local server; multi-user hosting.
-- The full visualization set (library choice pending; views arrive per slice); mobile layout beyond "usable".
+- Views beyond those in the slices; mobile layout beyond "usable".
 - Editing transcripts, starting new agents from the browser, any command on another machine.
 - A web UI inside the TUI process (Decision 4).
 
@@ -435,7 +467,7 @@ Each: question · options · decision · why · cost if wrong.
 6. **No runtime dependency for the CLI/TUI.** Decision: `packages/` never enters `build.sh`; `agentglass-web` ships as
    its own archive and formula. Why: the CLI stays one small binary; people who never open a browser download
    nothing more. Cost if wrong: two installs for web users (`install.sh --web` makes it one flag).
-7. **Assets embedded in the Bun binary.** Options: embedded; installed next to it and found by path. **Decision:
+7. **Assets embedded in the Bun binary** (user decision). Options: embedded; installed next to it and found by path. **Decision:
    embedded** (measured: `with { type: "file" }` imports compile in). Why: one file per target, no path lookup, no
    version skew between UI and BFF. Cost if wrong: every UI change rebuilds the binary (CI does anyway).
 8. **Fonts.** Options: Inter + JetBrains Mono; IBM Plex Sans + Plex Mono. **Decision: IBM Plex Sans + Mono**,
@@ -449,16 +481,26 @@ Each: question · options · decision · why · cost if wrong.
     JSON Schema files** → generated TS types, conformance tests against the scriptc server and the CLI goldens. Why:
     language-neutral (scriptc cannot import npm), validatable at runtime in tests, documents the CLI contract too.
     Cost if wrong: schema files to maintain beside the code; the conformance test catches drift.
-11. **Commands: read-only by default in the first release; typed set; two-step confirm; own machine only.** Why:
+11. **Commands: read-only by default in the first release; typed set; two-step confirm; own machine only** (typed set, confirm, invariant: user requirements; read-only default: decided here as the user asked to consider it). Why:
     the web is new attack surface on a machine running agents with shell access; a read-only first release ships the
     value (seeing) without the risk (acting); the serve process enforces it, not only the BFF. Cost if wrong: users
     pass `--allow-commands` once (or set `web.commands`).
-12. **Visualization libraries: pending research.** The use cases, interaction model and budgets of section 12 are
-    decided; the libraries are chosen from the research result before the viz slice, recorded here with versions,
-    licences, sizes and costs.
+12. **Visualization libraries** (user-proposed stack, verified by research 2026-10-10). Options per use case and
+    the rejected ones are in section 12. **Decision:** uPlot (time series), ECharts 6 modular (heatmaps,
+    distributions, sankey), a custom Canvas2D renderer (timeline/flame/swimlanes), sigma 4 + graphology with our own
+    hook (graphs), @xyflow/react + dagre (small diagrams), TanStack Table v9 + Virtual (tables); no Recharts for data
+    views; WebGL2 baseline, no WebGPU. Why: each is the canvas/WebGL tool that meets the 100 k-point / 50 k-span
+    budgets under a permissive licence; framework-agnostic ones are wrapped so React upgrades do not touch them.
+    Cost if wrong: four rendering stacks to theme and maintain; the young majors (sigma 4, Table v9) may need fixes
+    — exact pins and fallbacks (sigma 3.0.3, Table `./legacy`, list views).
 13. **Test tools.** vitest for React packages (Vite-native), `bun test` for BFF and contract, Playwright (Chromium
     only) for one smoke suite. Why: each tool where it is native; one browser keeps CI time small. Cost if wrong:
     Firefox/WebKit-only bugs found by users; adding a browser is one config line.
+
+14. **React 19.2.x, not 18** (research 2026-10-10; the user allowed 18 if needed). Why: every pick supports 19;
+    shadcn's current components need it (ref as prop; Radix `asChild` breaks on 18); no pick needs 18. Constraints:
+    React Compiler off on TanStack Table views; no `<Activity>` around React Flow. Cost if wrong: none known;
+    downgrading means shadcn's older component set and Tailwind v3.
 
 ## Open questions (technical verification during implementation)
 1. Bun's `bun-linux-x64-baseline` binary on debian:12 glibc 2.36 and on an older CPU without AVX2 (CI runner with

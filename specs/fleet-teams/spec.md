@@ -688,7 +688,7 @@ Each: question · options · decision · why · cost if wrong.
       are ~10× smaller. 64 keeps the tested budget; teams beyond that want a different tool.
     - Cost if wrong: raising the cap after the bench is a constant.
 
-21. **Display names: who sets them, how they are protected.**
+21. **Display names: who sets them, how they are protected** (user requirement; mechanism decided here).
     - Options: (a) chosen by the member, signed with their key, sealed with the team key; (b) set by the admin in the
       manifest; (c) taken from git/OS without asking.
     - **Decision: (a)**, default proposed from `git config user.name`, editable, pseudonyms allowed, `team rename-me`.

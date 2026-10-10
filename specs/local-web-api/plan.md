@@ -4,9 +4,9 @@
 
 **Goal:** A shared read model in agentglass, a persistent `agentglass serve --stdio` protocol (requests, resumable subscriptions, a typed command channel), a hardened Bun-compiled `agentglass-web` (static UI embedded, loopback HTTP API, WebSocket + SSE), `agentglass web` as the launcher, and a React web UI (Linear-style shell, live views) — built slice by slice together with [fleet-teams](../fleet-teams/plan.md).
 
-**Architecture:** scriptc side: `src/read/` (one pure function per resource; the CLI `--json` commands call them), `src/util/jsonl.ts` (the MCP framer, shared), `src/serve/` (`proto.ts` dispatcher, `subs.ts` topic rings and patches, `cmd.ts` typed commands with risk classes, nonces, idempotency, audit), `src/features/web-cli.ts` (`agentglass web`, `serve`). JavaScript side (pnpm workspace, Bun runtime): `packages/api-contract` (JSON Schema → TS types, conformance tests), `packages/ui` (shadcn components, tokens, IBM Plex), `packages/viz` (pending research), `packages/web` (React, Vite, TanStack Router/Query, cmdk), `packages/bff` (`agentglass-web`: Bun.serve, auth, WS/SSE, stdio client, embedded assets).
+**Architecture:** scriptc side: `src/read/` (one pure function per resource; the CLI `--json` commands call them), `src/util/jsonl.ts` (the MCP framer, shared), `src/serve/` (`proto.ts` dispatcher, `subs.ts` topic rings and patches, `cmd.ts` typed commands with risk classes, nonces, idempotency, audit), `src/features/web-cli.ts` (`agentglass web`, `serve`). JavaScript side (pnpm workspace, Bun runtime): `packages/api-contract` (JSON Schema → TS types, conformance tests), `packages/ui` (shadcn components, tokens, IBM Plex), `packages/viz` (uPlot, ECharts 6 modular, custom Canvas2D timeline, sigma 4 + graphology, @xyflow/react, TanStack Table v9), `packages/web` (React, Vite, TanStack Router/Query, cmdk), `packages/bff` (`agentglass-web`: Bun.serve, auth, WS/SSE, stdio client, embedded assets).
 
-**Tech Stack:** scriptc 0.1.7 (agentglass), Bun (pinned in `.bun-version`; measured 1.3.14) for the BFF build/runtime, pnpm (pinned via `packageManager`), React 19, Vite, TypeScript, Tailwind, shadcn/ui (Radix), cmdk, lucide-react, TanStack Router/Query, vitest, Playwright (Chromium).
+**Tech Stack:** scriptc 0.1.7 (agentglass), Bun (pinned in `.bun-version`; measured 1.3.14) for the BFF build/runtime, pnpm (pinned via `packageManager`), React 19.2.x, Vite, TypeScript, Tailwind, shadcn/ui (Radix), cmdk, lucide-react, TanStack Router/Query, vitest, Playwright (Chromium).
 
 **Spec:** [spec.md](spec.md) — read it first (Measurements, Decisions, Open questions). Also [../fleet-teams/spec.md](../fleet-teams/spec.md) sections 9–11 for the team dimensions.
 
@@ -141,13 +141,13 @@ export function gen(resource: string): number;                     // bumped whe
 - [ ] **Step 1: Failing checks:** each read function equals its CLI golden (`cost --json`, `wait --json`, `skills --json`, `events --json`, `fleet status --json`); `events.list {kind}` honours the kind filter and presets; `graph.get` returns the lean columnar events of #110 within a window; `alerts` topic pushes a rule firing. Web tests per route (render from fixtures, filter in URL, keyboard). Expected: FAIL.
 - [ ] **Step 2: Implement. Step 3: Run** all. **Step 4: Commit** per resource (`feat(read): …`), one PR for S3a.
 
-### Task W9: Visualizations (S3, after the library research)
+### Task W9: Visualizations (S3, after W8)
 
 **Files:** `packages/viz/*`, chart components in the routes of W8, a Web Worker for the timeline layout.
 
-- [ ] **Step 0:** fold the research result into spec section 12 and Decision 12 (libraries, versions, licences, sizes, costs); add the Dependabot `viz` group.
+- [ ] **Step 0: Pins and adapters.** Libraries are decided (spec section 12, Decisions 12 and 14). Add exact pins: `uplot@1.6.32`, `echarts@6.1.0`, `sigma@4.0.0`, `graphology@0.26.0` (+ `graphology-layout-forceatlas2`), `@xyflow/react@12.12.0`, `dagre`, `@tanstack/react-table@9.2.8`, `@tanstack/react-virtual@3.14.14`, `zustand@5.0.15`; the Dependabot `viz` group; `packages/ui` `resolveTokens()` (oklch → hex/rgb via a 1×1 canvas) with a vitest check that every token resolves in both themes. Re-check versions on npm and record newer patches in the PR (uPlot 1.7.0 if shipped: adapt the legend wrapper).
 - [ ] **Step 1: Failing tests:** budget check per route chunk (≤ 80 KB + viz ≤ 250 KB gzip); a 50 k-span synthetic call graph renders, zooms around the cursor and box-selects (Playwright, a frame-time probe: p95 ≤ 16.7 ms during a scripted pan); brushing a time range on one chart filters the table of the same route; reduced motion disables transitions. Expected: FAIL.
-- [ ] **Step 2: Implement** (time series, heatmaps/distributions, timeline/call graph renderer, relationship graph, small diagrams, virtualised tables — per spec section 12). **Step 3: Run.** **Step 4: Commit** `feat(viz): …` per component; S3b PR.
+- [ ] **Step 2: Implement** per spec section 12, one component per commit, each an imperative wrapper with cleanup (StrictMode test: mount → unmount → mount leaves one canvas/WebGL context): `TimeSeries` (uPlot, `cursor.sync`), `Heatmap`/`Bars`/`Distribution`/`Sankey`/`Calendar` (ECharts modular, lazy chunk, `echarts.connect`), `Timeline` (custom Canvas2D: interval index, LOD merge, overlay, HiDPI, worker layout, minimap, box-select, `[`/`]`), `Graph` (sigma 4 + graphology, FA2 in a worker, WebGL2 check → list fallback), `Diagram` (@xyflow/react + dagre, never in `<Activity>`), `DataTable` (TanStack Table v9 + Virtual, `"use no memo"`); each chart with a text summary and "view as table". **Step 3: Run.** **Step 4: Commit** `feat(viz): …` per component; S3b PR.
 
 ### Task W10: Sharing and activity in the web (S4)
 
