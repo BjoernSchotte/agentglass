@@ -173,7 +173,7 @@ function wordAt(t: string, i: number, n: number): number {
   // a strong rule matches the whole word ("acme-x:15" under "acme-*"); else the name ("acme-x" of it, a ref's name)
   const w = t.slice(i + sk, e); const nm = ne < e ? t.slice(i + sk, ne) : w;
   if (GL.anyStrong && w.length >= 2 && fresh(w) && hides(w, true)) note(w);
-  else if (nm.length >= 2 && fresh(nm) && hides(nm, !isRef)) note(nm);
+  else if (nm.length >= 2 && fresh(nm) && hides(nm, !isRef)) note(nm, !isRef || hides(nm, true)); // a guessed "p:x" hides no dir "x"
   return e;
 }
 // the start of the word holding position p (word characters and the ":"s between them), -1 if p is in none

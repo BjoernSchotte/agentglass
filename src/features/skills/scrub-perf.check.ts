@@ -60,6 +60,9 @@ setVis([{ match: "*", mode: "name" }], false);
   const ke: Ev[] = [{ kind: "user", text: "review kp:review and solo-sk, then x-solo-sk-2", ts: "", id: "", full: "" }];
   hideEvents(ks, ke, 0); KNOWN.of = k0;
   eq("known names: a plugin skill's dir stays a word", ke[0] ? ke[0].text : "", "review " + skillVis("kp:review").shown + " and " + skillVis("solo-sk").shown + ", then x-" + skillVis("solo-sk").shown + "-2"); }
+// a "p:x" only guessed to be a plugin skill ("Note:the", "multiSelect:false") hides itself, not its "dir" as a word
+setVis([{ match: "*", mode: "name" }], false);
+eq("* name: a guessed p:x hides no dir", scrub("Note:the end, the end"), skillVis("Note:the").shown + " end, the end");
 // a word only guessed to be a skill from its shape ("/deploy", "$TMP" under "*") hides as a word, never as a part of one
 setVis([{ match: "*", mode: "name" }], false);
 eq("* name: a reference's word is no part of another", scrub("run /deploy, then deploy and x-deploy-y, $TMP_DIR or $TMP"), "run /" + skillVis("deploy").shown + ", then " + skillVis("deploy").shown + " and x-deploy-y, $" + skillVis("TMP_DIR").shown + " or $" + skillVis("TMP").shown);
