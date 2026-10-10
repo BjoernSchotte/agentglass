@@ -9,6 +9,7 @@ import { type Ev, type Sess, newSess } from "../../model/types.ts";
 import { setVis, skillVis, type HideRule } from "./vis.ts";
 import { hideEvents, scrub, SCRUB_STAT, INSTALLED, KNOWN } from "./watchvis.ts";
 import { READ } from "../../hooks.ts";
+import { fit, width } from "../../util/text.ts";
 
 let bad = 0;
 function ok(what: string, c: boolean, info: string): void { if (!c) { bad++; console.log("FAIL " + what + (info ? ": " + info.slice(0, 300) : "")); } }
@@ -30,6 +31,10 @@ setVis([{ match: "my-sk", mode: "name" }, { match: "my-sk-ab", mode: "omit" }, {
   eq("an underscore name, overlapping a hyphenated one", scrub("a_sk_2_b my-sk_2"), "a_" + f2 + "_b " + fm + f2); }
 setVis([{ match: "acme:*", mode: "name" }, { match: "xyz", mode: "name" }], false);
 eq("text edges", scrub("xyz"), fx);
+eq("a cut word that reads as a name goes", scrub("load xyz… and xyzs"), "load " + fx + "… and xyzs");
+// a cut after the scrub (a TUI column, an OTLP field) that leaves a word's head equal to a hidden name: it goes too
+{ const f = fit(scrub("load xyzs now"), 9); ok("a column cut mid-word does not leave a hidden name", f.indexOf("xyz") < 0 && width(f) === 9, JSON.stringify(f)); }
+eq("a column cut at a word end keeps the text", fit(scrub("load abc now"), 9), "load abc…");
 setVis([{ match: "(odd)", mode: "omit" }, { match: "a.b", mode: "name" }], false);
 eq("a name that starts with a non-word char", scrub("see (odd) here"), "see (hidden) here");
 eq("a name with a dot", scrub("use a.b, not a.bc"), "use " + skillVis("a.b").shown + ", not a.bc");

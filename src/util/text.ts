@@ -16,15 +16,26 @@ export function cw(c: number): number {
 }
 export function width(s: string): number { let w = 0; for (const ch of s) w += cw(cpOf(ch)); return w; }
 export function clean(s: string): string { return s.replace(/\t/g, "  ").replace(/[\u0000-\u001f\u007f-\u009f]/g, " "); } // C1 too: \u009b is a CSI on some terminals
+// a cut inside a word leaves the word's head, which may read as something the text hid (a hidden skill's name):
+// skills/watchvis.ts scrubs it again. Identity until then (util stays free of features)
+export const CUT = { word: (s: string): string => s, busy: false };
+function wordCh(ch: string): boolean { const c = ch.charCodeAt(0); return c > 127 || (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95; }
 // truncate to w columns (with …) and pad with spaces to exactly w
 export function fit(s: string, w: number): string {
   if (w <= 0) return "";
-  let out = ""; let n = 0;
+  let out = ""; let n = 0; let prev = ""; let next = "";
   const full = width(s) <= w;
   for (const ch of s) {
     const c = cw(cpOf(ch));
-    if (!full && n + c > w - 1) { out += "…"; n += 1; break; }
-    out += ch; n += c;
+    if (!full && n + c > w - 1) { next = ch; break; }
+    out += ch; n += c; prev = ch;
+  }
+  if (!full) {
+    if (prev && next && !CUT.busy && wordCh(prev) && wordCh(next)) { // once: the rescrubbed head is cut plainly
+      const r = CUT.word(out);
+      if (r !== out) { CUT.busy = true; try { return fit(r + "…", w); } finally { CUT.busy = false; } }
+    }
+    out += "…"; n += 1;
   }
   return n < w ? out + " ".repeat(w - n) : out;
 }

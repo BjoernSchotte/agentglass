@@ -4,7 +4,7 @@
 import { newSess } from "../../model/types.ts";
 import { type XTurn, type XSpan } from "./types.ts";
 import { type BuildOpts, newSessB, finish } from "./build.ts";
-import { encodeRequest } from "./encode.ts";
+import { encodeRequest, titleAttr } from "./encode.ts";
 import { cfgFrom } from "./config.ts";
 import { setVis } from "../skills/vis.ts";
 import { readFileSync } from "node:fs";
@@ -81,6 +81,14 @@ function eq(what: string, got: string, want: string): void { if (got !== want) {
   eq("hub: skills[] after a restore", back.map((o: Obj) => figs(o, false) + pick(o, false)).sort().join(" "), hub.map((o: Obj) => figs(o, false) + pick(o, false)).sort().join(" "));
   eq("hub: a re-sent turn", again.map((o: Obj) => figs(o, false)).sort().join(" "), hub.map((o: Obj) => figs(o, false)).sort().join(" "));
   hub = [];
+}
+// a field cut at its limit after the scrub must not leave a word's head that reads as a hidden name ("xyzs" → "xyz")
+{
+  setVis([{ match: "xyz", mode: "omit" }], false);
+  const tc = cfgFrom({}); tc.titles = true;
+  const a = titleAttr("a".repeat(252) + " xyzs tail", tc)[0];
+  eq("a cut title leaves no hidden name", a ? String(a.s.endsWith("xyz")) : "no attr", "false");
+  setVis([], false);
 }
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("otlp skill events: all checks passed");

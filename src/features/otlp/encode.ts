@@ -49,7 +49,8 @@ export function vcsOf(cwd: string, branch: string, remote: string): Attr[] {
 }
 
 // ── attributes per span (spec 3.3/3.4) ──
-function cut(s: string, n: number): string { return s.length > n ? s.slice(0, n) : s; }
+// a cut field ends in a word's head, which may read as a hidden skill's name ("xyzs" → "xyz"): scrubbed again
+function cut(s: string, n: number): string { return s.length > n ? scrub(s.slice(0, n)) : s; }
 // the project key a receiver groups by (otlp-complete 3.4): as --json shows it; under --redact a salted hash, so sessions
 // still group by project without the name leaving
 export function repoKeyAttr(key: string): Attr[] { return key ? [attrS("agentglass.repo.key", REDACT ? sha256Hex("agentglass/repo/v1|" + key).slice(0, 16) : key)] : []; }
