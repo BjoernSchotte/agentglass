@@ -7,7 +7,7 @@ import { type SessQ, PROTO, CAPS, readMeta, readSessions, readSession } from "..
 import { CONTRACT } from "../features/version.ts";
 import { BUILD } from "../build-info.ts";
 import { REDACT } from "../features/redact-on.ts";
-import { type Hub, LIMIT_DEF, LIMIT_MAX, newHub, openTopic, attach, detach } from "./subs.ts";
+import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach } from "./subs.ts";
 
 // hello: a hello was answered; fresh: called before a request that reads the engine (main.ts: discover() when stale)
 export interface Srv { readOnly: boolean; hello: boolean; hub: Hub; now: () => number; out: (line: string) => void; fresh: () => void }
@@ -75,6 +75,7 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     if (topic !== "sessions") return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions");
     const r = sessQ(p); if (r.bad) return errL(id, "bad_param", r.bad, "");
     if (r.q.cursor) return errL(id, "bad_param", "a subscription has no cursor", "");
+    if (sv.hub.subs.size >= SUBS_MAX) return errL(id, "too_many", String(SUBS_MAX) + " subscriptions are open", "unsub one first");
     sv.fresh();
     const now = sv.now();
     const ot = openTopic(sv.hub, r.q, now); const t = ot.t;

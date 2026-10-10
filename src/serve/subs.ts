@@ -10,6 +10,7 @@ export const RING_MS = 600000;
 export const HB_MS = 25000;
 export const LIMIT_DEF = 200;
 export const LIMIT_MAX = 1000;
+export const SUBS_MAX = 64; // per process: a client that never unsubscribes cannot grow it without bound
 
 // one pushed event: seq = the process-wide sequence (ids "<epoch>-<seq>" never repeat in a run, across topics)
 export interface REv { seq: number; at: number; k: string; d: string /* the payload's JSON */ }

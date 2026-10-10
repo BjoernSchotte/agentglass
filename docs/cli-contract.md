@@ -240,7 +240,8 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
   inside → the missed events, `resumed: true`; outside, another process (`epoch`) or a topic that was closed meanwhile →
   a `snapshot`, `resumed: false`. A topic closes with its last `unsub`.
 - **Errors** (`code`): `proto`, `bad_request` (not a request object), `unknown_method`, `oversize`, `bad_param`,
-  `bad_filter` (`msg` names the column, `hint` the caret line), `not_found`, `ambiguous`, `no_team`, `read_only`
+  `bad_filter` (`msg` names the column, `hint` the caret line), `not_found`, `ambiguous`, `no_team`, `too_many` (64
+  subscriptions per process are open: `unsub` one first), `read_only`
   (`cmd`/`confirm`: commands are not in this release), `internal`.
 - `--redact` applies to every answer and event, as for `--json`.
 

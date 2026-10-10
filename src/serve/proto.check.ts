@@ -23,7 +23,9 @@ function turn(id: string, k: number, text: string): string {
   return "{\"type\":\"user\",\"sessionId\":\"" + id + "\",\"cwd\":\"/w/spc\",\"timestamp\":\"" + day + "T00:00:0" + String(k) + ".000Z\",\"message\":{\"role\":\"user\",\"content\":\"" + text + "\"}}\n";
 }
 mkdirSync(dir, { recursive: true });
-writeFileSync(file(0), turn(IDS[0] ?? "", 1, "first topic")); writeFileSync(file(1), turn(IDS[1] ?? "", 1, "second topic"));
+writeFileSync(file(0), turn(IDS[0] ?? "", 1, "first topic"));
+const w0 = Date.now(); while (Date.now() < w0 + 20) { /* newest first must not depend on two writes in one ms */ }
+writeFileSync(file(1), turn(IDS[1] ?? "", 1, "second topic"));
 discover();
 
 const clock = { t: 1700000000000 };
@@ -119,6 +121,13 @@ out.length = 0;
 for (const f of push(F, big)) onLine(sv, f.line, f.oversize);
 for (const f of push(F, tail)) onLine(sv, f.line, f.oversize);
 eq("oversize then on", String(out.length) + " " + errCode(obj(JSON.parse(out[0] ?? "{}")) ?? {}) + " " + String((obj(JSON.parse(out[1] ?? "{}")) ?? {})["id"]), "2 oversize 18");
+
+// a bounded number of subscriptions per process (the BFF holds one per browser view): beyond it too_many, unsub frees one
+let last: Obj = {}; for (let i = 0; i < 80; i++) { last = one("{\"id\":" + String(100 + i) + ",\"m\":\"sub\",\"p\":{\"topic\":\"sessions\",\"limit\":" + String(1 + i) + "}}"); }
+eq("subs capped", String(sv.hub.subs.size) + " " + errCode(last), "64 too_many");
+const anySub = [...sv.hub.subs.keys()][0] ?? "";
+one("{\"id\":190,\"m\":\"unsub\",\"p\":{\"sub\":\"" + anySub + "\"}}");
+eq("unsub frees one", str(ok(one("{\"id\":191,\"m\":\"sub\",\"p\":{\"topic\":\"sessions\"}}"))["sub"]) ? "ok" : "no", "ok");
 
 console.log(bad ? bad + " failed" : "serve/proto: all checks passed");
 if (bad) process.exit(1);
