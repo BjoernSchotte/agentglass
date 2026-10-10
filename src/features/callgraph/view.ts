@@ -4,7 +4,7 @@ import { clean, fit, fitStyled, fillTo, width, cw, cpOf, numAt, home, ESC_RE } f
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say, type TV, type Mode } from "../../state.ts";
 import { remoteOnly } from "../../model/remote.ts";
-import { H } from "../../hooks.ts";
+import { H, READ } from "../../hooks.ts";
 import { harnessOf, sourceOf, window, parseEvents, epochOf } from "../../harness/index.ts";
 import { FILE_SOURCE } from "../../harness/source.ts";
 import { titleOf, subActive, current } from "../../model/sessions.ts";
@@ -55,7 +55,8 @@ function readEvs(s: Sess, a: number, z: number, slim: boolean, out: Ev[]): numbe
     if (r.next <= at) { if (at + step >= z) break; step = step * 2; continue; } // no whole line in the step
     step = base;
     const evs: Ev[] = slim ? [] : out;
-    for (const l of r.lines) parseEvents(s.h, l, evs, s);
+    READ.lean = slim; // lean() drops replies and full texts: the hiding hook only notes the skill names they hold
+    try { for (const l of r.lines) parseEvents(s.h, l, evs, s); } finally { READ.lean = false; }
     if (slim) for (const e of evs) out.push(lean(e, out.length ? out[out.length - 1] : null));
     at = r.next;
   }

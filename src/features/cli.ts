@@ -20,7 +20,7 @@ import { type Acc, type SkLoad, newAcc, skOf } from "./usage/record.ts";
 import { newRows } from "./usage/rows.ts";
 import { skillVis } from "./skills/vis.ts";
 import { skillsJson, skillLoadsJson } from "./skills/json.ts";
-import { callVis, note, scrub } from "./skills/watchvis.ts";
+import { note, scrub } from "./skills/watchvis.ts";
 import { estTopOf } from "./usage/costs.ts";
 import { type CmdRec, type OptRec, addCmd, opt, textHelp, jsonHelp, cmdText, cmdOf } from "./clihelp.ts";
 import { type Scope, agentHost, agentScope, visible, hostObj, cliError, parseDur } from "./agentenv.ts";
@@ -264,7 +264,8 @@ function emit(s: Sess, kind: string, tool: string | null, text: string, ts: stri
   lastOut = Date.now();
 }
 // a result is filtered with its call's name and arguments (call id → [tool, args]); bounded per run. A call that loads a
-// hidden skill (skills.hide, --redact) shows as callVis says: dropped, its name faked, its result's text hidden
+// hidden skill (skills.hide, --redact) arrives as the events hook left it (skills/watchvis.ts hideEvents): dropped, its name
+// faked, its result's text hidden — not again here (a fake taken for a name would be faked once more)
 const calls = new Map<string, string[]>();
 function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const i = e.text.indexOf("\u0000");
@@ -276,10 +277,8 @@ function emitEv(s: Sess, e: Ev, cf: CliFilter | null): void {
   const x = evxOf(e, call, null); // its kinds (a result: its call's, plus error when it failed)
   if (cf && !cliWatchEv(cf, s, x)) return;
   const id = e.kind === "tool" || e.kind === "result" ? e.id : "";
-  const cv = callVis(e.kind === "tool" ? tool : pc ? pc[0] ?? "" : "", e.kind === "tool" ? args : pc ? pc[1] ?? "" : "");
-  if (cv.drop) return;
-  if (e.kind !== "tool") { emit(s, e.kind, null, cv.hide || e.text, e.ts, id, x.kinds); return; }
-  emit(s, "tool", tool, cv.args, e.ts, id, x.kinds);
+  if (e.kind !== "tool") { emit(s, e.kind, null, e.text, e.ts, id, x.kinds); return; }
+  emit(s, "tool", tool, args, e.ts, id, x.kinds);
 }
 
 // skill loads in the stream: each watched log's new lines also go through its harness's usage() into a small per-log
