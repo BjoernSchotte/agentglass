@@ -193,9 +193,9 @@ export function kindIds(s: Sess, evs: Ev[]): Int32Array {
 // per event of evs (after kindIds): a result's call event and every call's interned text (results: their call's), -1 none
 export interface KPairs { pair: Int32Array; tid: Int32Array }
 export function kindPairs(s: Sess, evs: Ev[]): KPairs { kindIds(s, evs); const m = memoOf(s, evs); return { pair: m.pair, tid: m.tid }; }
-// changes whenever kindIds(…, evs) rewrote its ids (new events, other marks): a memo over them keys on it (-1 none yet)
 // a view that lets go of evs drops their memo too (else it lives until MEMO_MAX newer arrays pushed it out)
 export function forgetKinds(evs: Ev[]): void { for (let i = MEMO.length - 1; i >= 0; i--) if (MEMO[i].evs === evs) MEMO.splice(i, 1); }
+// changes whenever kindIds(…, evs) rewrote its ids (new events, other marks): a memo over them keys on it (-1 none yet)
 export function kindVer(evs: Ev[]): number { for (const m of MEMO) if (m.evs === evs) return m.ver; return -1; }
 // spec §5a: the kind set of s.evs[i]
 export function evKinds(s: Sess, i: number): number { if (i < 0 || i >= s.evs.length) return 0; return kindIds(s, s.evs)[i] + 0; }
