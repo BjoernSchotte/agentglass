@@ -56,9 +56,10 @@ PY
 
 # --version --json
 run --version --json > "$t/v.json"
-eq "version types" "$(types "$t/v.json" version:string,contract:number)" ok
+eq "version types" "$(types "$t/v.json" version:string,contract:number,crypto:string)" ok
+eq "team crypto linked and working" "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["crypto"])' "$t/v.json")" "monocypher 4.0.2"
 eq "contract" "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["contract"])' "$t/v.json")" 1
-eq "version help" "$(helped --version version,contract)" ok
+eq "version help" "$(helped --version version,contract,crypto)" ok
 
 # --json: the fields, typed (json and jsonl), csv headers incl. the flattened mux columns, the help list
 SF="id:string,harness:string,title:string,cwd:string,live:bool,pid:number,status:string,costUsd:number|null,attention:bool,stuck:string|null,alerts:array"

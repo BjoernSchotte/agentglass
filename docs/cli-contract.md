@@ -38,6 +38,7 @@ Types below: `string`, `number`, `bool`, `object|null`, `string|null`, `number|n
 |---|---|---|
 | `version` | string | the agentglass version (CalVer, e.g. `2026.10.6`) |
 | `contract` | number | this contract's number |
+| `crypto` | string | the team crypto library when its self-test passes (`monocypher 4.0.2`), else `crypto: …` naming what failed |
 
 Exit 0.
 

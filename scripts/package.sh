@@ -8,6 +8,9 @@ got=$(./agentglass --version)
 ./agentglass --json --limit 1 >/dev/null
 # macOS builds read processes through libproc (build.sh adds --ffi): one without it would silently spawn ps and lsof again
 case "$target" in darwin-*) nm -u ./agentglass | grep -q '_proc_listallpids' || { echo "package.sh: $target binary has no libproc binding (build.sh --ffi)" >&2; exit 1; } ;; esac
+# every target links the team crypto (build.sh --ffi src/features/team/crypto/ffi.json): a binary without it cannot read a team
+# (NM overrides the tool: tests)
+"${NM:-nm}" ./agentglass | grep -q ' T _\{0,1\}ag_lock$' || { echo "package.sh: $target binary has no team crypto (build.sh --ffi)" >&2; exit 1; }
 # Linux builds promise glibc 2.36+ (Debian 12): refuse a binary that needs anything newer
 case "$target" in linux-*) sh "$(dirname "$0")/glibc-floor.sh" ./agentglass 2.36 || { echo "package.sh: $target binary needs a newer glibc than 2.36" >&2; exit 1; } ;; esac
 # the MCP server (spec mcp-server §11) ships in every archive: build.sh builds it beside agentglass, for every target
