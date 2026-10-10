@@ -9,7 +9,7 @@ unset AGENTGLASS_CONFIG AGENTGLASS_RULES AGENTGLASS_CACHE_DIR AGENTGLASS_REDACT 
 export AGENTGLASS_AGENT=0
 command -v python3 > /dev/null 2>&1 || { echo "skills-hide-known: skipped (needs python3)"; exit 0; }
 here=$(cd "$(dirname "$0")/.." && pwd); t=$(mktemp -d)
-trap 'rm -rf "$t"' EXIT
+trap '[ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; rm -rf "$t"' EXIT
 fail=0
 mkdir -p "$t/bin"
 if [ -n "${AGENTGLASS_BIN:-}" ]; then cp "$AGENTGLASS_BIN" "$t/bin/agentglass"
@@ -56,19 +56,19 @@ has() { case "$2" in *"$3"*) ;; *) echo "FAIL $1: no '$3' in: $(printf '%s' "$2"
 hasnt() { case "$2" in *"$3"*) echo "FAIL $1: '$3' present: $(printf '%s' "$2" | grep -o ".\{0,80\}$3.\{0,40\}" | head -2)"; fail=1 ;; esac; }
 
 # without rules: the names show (the fixture is right)
-r=$(CFG=none CACHE=c0 run events "claude:$P" --json --content)
+r=$( (CFG=none CACHE=c0 run events "claude:$P" --json --content) )
 for w in zorbent quillow vexmark; do has "no rules: events" "$r" "$w"; done
 # cold cache: the subagent's load and the installed skill hide the prompt's names from its first line
-r=$(CACHE=c1 run events "claude:$P" --json --content)
+r=$( (CACHE=c1 run events "claude:$P" --json --content) )
 for w in zorbent quillow; do hasnt "cold: events" "$r" "$w"; done
 has "cold: prose stays" "$r" "plan the import"; has "cold: prose stays" "$r" "to tidy up"
-r=$(CACHE=c1 run session "claude:$P" --json); for w in zorbent quillow; do hasnt "cold: session" "$r" "$w"; done
+r=$( (CACHE=c1 run session "claude:$P" --json) ); for w in zorbent quillow; do hasnt "cold: session" "$r" "$w"; done
 # warm: the ledger indexed O, its load hides vexmark in P too
-CACHE=c1 run skills --period all > /dev/null
-r=$(CACHE=c1 run events "claude:$P" --json --content)
+(CACHE=c1 run skills --period all > /dev/null)
+r=$( (CACHE=c1 run events "claude:$P" --json --content) )
 for w in zorbent quillow vexmark ZORBENTTEXT; do hasnt "warm: events" "$r" "$w"; done
 has "warm: prose stays" "$r" "now"
-r=$(CACHE=c1 run session "claude:$P" --json); for w in zorbent quillow vexmark; do hasnt "warm: session" "$r" "$w"; done
+r=$( (CACHE=c1 run session "claude:$P" --json) ); for w in zorbent quillow vexmark; do hasnt "warm: session" "$r" "$w"; done
 
 [ "$fail" = 0 ] && echo "skills-hide-known: ok"
 exit "$fail"
