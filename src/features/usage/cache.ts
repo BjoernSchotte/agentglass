@@ -57,7 +57,7 @@ let skOld = false; // written before SK_SPLIT: a log whose parallel skill loads 
 function install(path: string, o: Obj): void {
   if (kiroOff && isKiroLog(path)) return;
   if (skStale(o)) return; // skill loads in a pre-release layout: re-index this log
-  if (skOld && skSplitStale(o)) return;
+  if (skOld && skSplitStale(o, path.endsWith(".jsonl") && path.indexOf("/rollout-") >= 0)) return;
   const a = accIn(o);
   if (!ROWS.on) { ledger.set(path, a); return; } // no rows built (checks): the day buckets alone are consistent with off
   ledger.set(path, a); written.set(path, a.off); unread.add(path); // its calls file, as is, until asked for or it grows

@@ -137,17 +137,19 @@ function skOut(sk: SkLoad[]): Obj {
 }
 // a pre-release VERSION 19 cache stored the loads as columns: that log re-indexes (cache.ts)
 export function skStale(o: Obj): boolean { const s = obj(o["sk"]); return s !== null && s["x"] === undefined; }
-// the skill split (cache head "sk"): 1 = loads sent with one request share its growth in proportion (§3.2). A VERSION 19
-// cache without it (dev builds before 2026.10.12) shared it in load order, which starved the last of several parallel
-// loads: a log with such a request re-indexes, once (the next save writes the head with SK_SPLIT)
+// the skill split (cache head "sk"): 1 = loads sent with one request share its growth in proportion (§3.2), and a Codex
+// SKILL.md read is the file's text (no envelope; several files of one call each their own). A VERSION 19 cache without it
+// (dev builds before 2026.10.12) has the old numbers in such logs: they re-index, once (the next save writes the head)
 export const SK_SPLIT = 1;
 // ≥ 2 loads sent with one request (the same rq0: requests booked before each) of which one got less than its estimate
-// (the bound cut it): its split may be wrong. Read from the stored columns, no SkLoad built
-export function skSplitStale(o: Obj): boolean {
+// (the bound cut it): its split may be wrong; codex: a Codex rollout with a SKILL.md read. Read from the stored columns,
+// no SkLoad built
+export function skSplitStale(o: Obj, codex: boolean): boolean {
   const v = o["sk"]; const s = typeof v === "string" ? obj(parse(str(v))) : null; if (!s) return false;
   const x = nums(s["x"]); const mp = strsIn(s["mp"]);
   const n = new Map<number, number>(); const cut = new Set<number>();
   for (let i = 0; i + SKW <= x.length; i += SKW) {
+    if (codex && (at(x, i + 11) & 16) !== 0) return true;
     const bytes = at(x, i + 6); if (bytes < 0 || at(x, i + 18) > 1 || (at(x, i + 11) & 4) !== 0) continue; // size unknown, folded, not sent
     const rq = at(x, i + 5); n.set(rq, (n.get(rq) ?? 0) + 1);
     const m = mp[at(x, i + 23)] ?? ""; const tab = m.indexOf("\t");

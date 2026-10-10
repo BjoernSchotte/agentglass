@@ -185,10 +185,10 @@ function catLines(texts: string[], g: number, prior: boolean): string[] {
     const at = "codex cat a b c (" + mode + ")";
     eq(at + ": loads", ls.map((l: SkLoad) => l.name).join(","), "big,mid,mid2");
     let S = 0; for (const l of ls) S += l.S; eq(at + ": Σ S = growth", String(S), "1000");
-    const hdr = "Chunk ID: 1a2b\nProcess exited with code 0\nOutput:\n".length;
+    const hdr = 0; // the envelope ("Chunk ID …\nOutput:\n") is no part of the text
     if (mode === "front matter") {
       eq(at + ": bytes", ls.map((l: SkLoad) => String(l.bytes)).join(","), String(sizes[0] + hdr) + "," + String(sizes[1]) + "," + String(sizes[2]));
-      eq(at + ": versions", ls.slice(1).map((l: SkLoad) => l.hash).join(","), skillHash(ft[1] ?? "") + "," + skillHash(ft[2] ?? ""));
+      eq(at + ": versions", ls.map((l: SkLoad) => l.hash).join(","), skillHash(ft[0] ?? "") + "," + skillHash(ft[1] ?? "") + "," + skillHash(ft[2] ?? ""));
       eq(at + ": exact", ls.map((l: SkLoad) => String(l.est)).join(","), "false,false,false");
     } else if (mode === "earlier loads") {
       const b = ls.map((l: SkLoad) => l.bytes); const all = sizes[0] + sizes[1] + sizes[2] + hdr;
@@ -200,6 +200,41 @@ function catLines(texts: string[], g: number, prior: boolean): string[] {
     }
     eq(at + ": skills --check", skillCheck([a], ["s"]).join("; "), "");
   }
+}
+// Codex's JS exec runs several commands in one call (Promise.allSettled) and prints each result object: each command's
+// "output" is the text of the files it read (one cat of two files split at the front matter), another command's output
+// is no skill's; the envelope's wall time changes no version
+{
+  const sizes = [3600, 1800, 360];
+  const ft: string[] = []; for (let i = 0; i < 3; i++) ft.push(fm(NAMES[i] ?? "", sizes[i] ?? 0));
+  const P = (i: number): string => "/h/.codex/skills/" + (NAMES[i] ?? "") + "/SKILL.md";
+  const res = (i: number, o: string): string => J({ i, result: { chunk_id: "c" + String(i), wall_time_seconds: 0.01, exit_code: 0, original_token_count: 99, output: o } });
+  const out: string[] = [];
+  const ev = (s: number, p: unknown): string => J({ timestamp: iso(s), type: "event_msg", payload: p });
+  const tot = [0, 0];
+  const tc = (s: number, inp: number, ca: number): string => { tot[0] = (tot[0] ?? 0) + inp; tot[1] = (tot[1] ?? 0) + ca; return ev(s, { type: "token_count", info: {
+    total_token_usage: { input_tokens: tot[0], cached_input_tokens: tot[1], cache_write_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: (tot[0] ?? 0) + 20 },
+    last_token_usage: { input_tokens: inp, cached_input_tokens: ca, cache_write_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: inp + 20 } } }); };
+  out.push(J({ timestamp: iso(0), type: "session_meta", payload: { id: "c0de0000-0000-4000-8000-0000000000ac", cwd: "/w/app", originator: "codex_cli_rs" } }));
+  out.push(J({ timestamp: iso(0), type: "turn_context", payload: { cwd: "/w/app", model: "gpt-5.5" } }));
+  out.push(J({ timestamp: iso(1), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "use the skills" }] } }));
+  const js = "const r = await Promise.allSettled([\n  tools.exec_command({cmd: \"cat " + P(0) + "\"}),\n  tools.exec_command({cmd: \"git ls-files\"}),\n  tools.exec_command({cmd: \"cat " + P(1) + " " + P(2) + "\"}),\n]);\nr.forEach((x, i) => text(JSON.stringify({i, result: x.value})));";
+  out.push(J({ timestamp: iso(2), type: "response_item", payload: { type: "custom_tool_call", status: "completed", call_id: "call_js", name: "exec", input: js } }));
+  out.push(tc(3, 8000, 0));
+  out.push(J({ timestamp: iso(4), type: "response_item", payload: { type: "custom_tool_call_output", call_id: "call_js", output: [{ type: "input_text", text: "Script completed\nWall time 0.2 seconds\nOutput:\n" },
+    { type: "input_text", text: res(0, ft[0] ?? "") + "\n" }, { type: "input_text", text: res(1, "src/a.ts\nsrc/b.ts\n".repeat(200)) + "\n" }, { type: "input_text", text: res(2, (ft[1] ?? "") + (ft[2] ?? "")) + "\n" }] } }));
+  out.push(tc(5, 9000, 8000));
+  // a later turn reads big again, alone, with another wall time: the same version
+  out.push(J({ timestamp: iso(10), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "again" }] } }));
+  out.push(J({ timestamp: iso(11), type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: "call_again", arguments: J({ cmd: "cat " + P(0) }) } }));
+  out.push(tc(12, 9000, 9000));
+  out.push(J({ timestamp: iso(13), type: "response_item", payload: { type: "function_call_output", call_id: "call_again", output: "Chunk ID: 77aa\nWall time: 0.0731 seconds\nProcess exited with code 0\nOriginal token count: 999\nOutput:\n" + (ft[0] ?? "") } }));
+  out.push(tc(14, 10000, 9000));
+  const a = newAcc(); for (const l of out) codex.usage(a, l);
+  const at = "codex exec of 3 commands";
+  eq(at + ": loads", a.sk.filter((l: SkLoad) => l.name !== "(listing)").map((l: SkLoad) => l.name + " " + String(l.bytes) + " " + String(l.est) + " " + l.hash).join("; "),
+    "big 3600 false " + skillHash(ft[0] ?? "") + "; mid 1800 false " + skillHash(ft[1] ?? "") + "; mid2 360 false " + skillHash(ft[2] ?? "") + "; big 3600 false " + skillHash(ft[0] ?? ""));
+  eq(at + ": skills --check", skillCheck([a], ["s"]).join("; "), "");
 }
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok parallel skill loads");

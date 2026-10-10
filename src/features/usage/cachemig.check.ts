@@ -41,18 +41,20 @@ for (const v of [18, 17, 19]) {
 // SK_SPLIT: loads sent with one request (same rq0) shared its growth in load order before; a log where the bound cut one of
 // them re-indexes, once; a log whose parallel loads fit, or with one cut load alone, keeps its entry
 const M = "claude-sonnet-4-5";
-function skAcc(rqs: number[], cut: number[]): Obj {
+function skAcc(rqs: number[], cut: number[], rd: boolean): Obj {
   const a = newAcc(); a.off = 100; tokens(a, bucket(a, 0, "2026-10-01T09:30:00.000Z"), M, 10, 1, 0, 0, 0);
   for (let i = 0; i < rqs.length; i++) {
     a.rq = (rqs[i] ?? 0) + 0; // + 0: a bare array read stored into the fresh record lost its later fields (scriptc)
     const l = skillLoad(a, "s" + String(i), "model", 0, "2026-10-01T09:30:00.000Z", "LOREM".repeat(400), true, "", false);
-    l.pend = false; l.mdl = M; l.S = sizeEst(l.bytes, M) - (cut[i] ?? 0);
+    l.pend = false; l.mdl = M; l.S = sizeEst(l.bytes, M) - (cut[i] ?? 0); l.rd = rd;
   }
   return accOut(a, 64);
 }
-const SK: string[][] = [["/w/par-cut.jsonl", "re-indexes"], ["/w/par-fit.jsonl", "loads"], ["/w/one-cut.jsonl", "loads"], ["/w/seq-cut.jsonl", "loads"]];
+const SK: string[][] = [["/w/par-cut.jsonl", "re-indexes"], ["/w/par-fit.jsonl", "loads"], ["/w/one-cut.jsonl", "loads"], ["/w/seq-cut.jsonl", "loads"],
+  ["/w/.codex/sessions/rollout-1.jsonl", "re-indexes"], ["/w/.codex/sessions/rollout-2.jsonl", "loads"], ["/w/pi-read.jsonl", "loads"]]; // Codex: a SKILL.md read re-indexes (its text had the envelope)
 const skS: Record<string, Obj> = {};
-skS["/w/par-cut.jsonl"] = skAcc([3, 3], [0, 40]); skS["/w/par-fit.jsonl"] = skAcc([3, 3], [0, 0]); skS["/w/one-cut.jsonl"] = skAcc([3], [40]); skS["/w/seq-cut.jsonl"] = skAcc([2, 3], [0, 40]);
+skS["/w/par-cut.jsonl"] = skAcc([3, 3], [0, 40], false); skS["/w/par-fit.jsonl"] = skAcc([3, 3], [0, 0], false); skS["/w/one-cut.jsonl"] = skAcc([3], [40], false); skS["/w/seq-cut.jsonl"] = skAcc([2, 3], [0, 40], false);
+skS["/w/.codex/sessions/rollout-1.jsonl"] = skAcc([3], [0], true); skS["/w/.codex/sessions/rollout-2.jsonl"] = skAcc([3], [0], false); skS["/w/pi-read.jsonl"] = skAcc([3], [0], true);
 if (existsSync(join(cacheDir(), "ledger.json"))) unlinkSync(join(cacheDir(), "ledger.json"));
 for (const sk of [0, SK_SPLIT]) {
   writeCache(join(cacheDir(), "ledger.jsonl"), { v: VERSION, prices: pricesSig(), kiro: 0, rl: null, sk }, (put) => { for (const p of Object.keys(skS)) put(p, skS[p] as Obj); });

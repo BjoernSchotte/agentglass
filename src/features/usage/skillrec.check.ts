@@ -1,7 +1,7 @@
 // agentglass — self-check for skill attribution (skill-usage spec §3): scriptc build src/features/usage/skillrec.check.ts -o sr && ./sr
 // SPDX-License-Identifier: Apache-2.0
 import { type Acc, newAcc, bucket, tokens, usageExact, turn, skillLoad, skillUnload, skillRead, skillReadDone, skillListing, skillUsesOf } from "./record.ts";
-import { type SkLoad, skillPath, skillReadCmd, skillReadCmds, splitReads, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU, bptOf } from "./skillrec.ts";
+import { type SkLoad, skillPath, skillReadCmd, skillReadCmds, splitReads, readTexts, outSegs, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU, bptOf } from "./skillrec.ts";
 
 let bad = 0;
 function ok(what: string, c: boolean, info: string): void { if (!c) { bad++; console.log("FAIL " + what + (info ? ": " + info : "")); } }
@@ -51,6 +51,11 @@ eq("cmds cat a b", skillReadCmds("cat /x/skills/a/SKILL.md /x/skills/b/SKILL.md 
   const s2 = splitReads(hd, ["a", "p:b"], [0, 0]); eq("split head", s2.parts.join("|"), "==> /x/skills/a/SKILL.md <==\n" + A + "\n|==> /x/skills/b/SKILL.md <==\n" + Bt);
   const s3 = splitReads("x".repeat(90), ["a", "b", "c"], [600, 300, 0]); eq("split alike", s3.parts.map((t: string) => String(t.length)).join(",") + " " + String(s3.est), "30,30,30 true");
   const s4 = splitReads("x".repeat(90), ["a", "b", "c"], [600, 300, 300]); eq("split by sizes", s4.parts.map((t: string) => String(t.length)).join(","), "45,23,22");
+  const s5 = splitReads("other output\n" + A + Bt, ["a", "b"], [0, 0]); eq("split: what comes before the first is not its", s5.parts.join("|"), A + "|" + Bt);
+  eq("outSegs", outSegs('{"i":0,"result":{"exit_code":0,"output":"---\\nname: a\\n\\"q\\""}}\n{"i":1,"result":{"output":"x"}}').join("|"), "---\nname: a\n\"q\"|x");
+  const t3 = readTexts("raw", ["A", "ls", "B" + "C"], ["a", "b"], [0, 2], 3, [0, 0]); eq("readTexts per command", t3.parts.join("|") + " " + String(t3.est), "A|BC false");
+  const t4 = readTexts("raw", ["A", "B"], ["a"], [0], 3, [0]); eq("readTexts: results ≠ commands → raw", t4.parts.join("|"), "raw");
+  const t5 = readTexts("{\"output\":\"x\"}", ["x"], ["a"], [], 0, [0]); eq("readTexts: a plain read is its output", t5.parts.join("|"), "{\"output\":\"x\"}");
 }
 eq("cmd bare SKILL.md", skillReadCmd("sed -n '1,260p' SKILL.md"), "");
 eq("cmd rtk proxy", skillReadCmd("rtk proxy cat /h/.agents/skills/x/SKILL.md"), "/h/.agents/skills/x/SKILL.md");

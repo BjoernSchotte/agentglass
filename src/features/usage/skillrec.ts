@@ -22,8 +22,10 @@ export interface SkLoad {
   h1: number; h2: number; pg: number; cid: string; // cid = the tool call that loaded it (Skill, activate_skill, skill, a SKILL.md read), "" none
 }
 // a SKILL.md read waiting for its output (by call id, not persisted): the path, the call line's place in the log, its turn
-export interface SkRead { path: string; off: number; tu: number; ps: string[] } // ps = more SKILL.md paths of one command (cat a b), in output order
-export const NO_PS: string[] = []; // SkRead.ps of a read of one file: shared, never written
+// ps = more SKILL.md paths of one call (cat a b; Codex's exec running several commands), in output order; ci = the command
+// each path (path, then ps) was read by, nc = the call's commands (Codex exec; [] and 0 elsewhere)
+export interface SkRead { path: string; off: number; tu: number; ps: string[]; ci: number[]; nc: number }
+export const NO_PS: string[] = []; export const NO_CI: number[] = []; // a read of one file: shared, never written
 
 // UTF-8 bytes per token of a skill text (spec Decision 2, Open question 8), per tokenizer family. Measured 2026-10-09 on five
 // public SKILL.md texts (5.6–18.7 KB of markdown with code and JSON): a request's context with the text minus one without.
@@ -193,9 +195,10 @@ function fmStart(out: string, nm: string, from: number): number {
   return -1;
 }
 // one command's output of several SKILL.md files, split per file (names in output order): exact at each file's front
-// matter; else in proportion to the sizes known (w: bytes of an earlier load of each, ≤ 0 unknown: all alike), est
+// matter (the first from its own, when found: output of other commands before it is not its text); else in proportion to
+// the sizes known (w: bytes of an earlier load of each, ≤ 0 unknown: all alike), est
 export function splitReads(out: string, names: string[], w: number[]): { parts: string[]; est: boolean } {
-  const parts: string[] = []; let cur = 0; let ok = true;
+  const parts: string[] = []; const f0 = fmStart(out, names[0] ?? "", 0); let cur = f0 > 0 ? f0 : 0; let ok = true;
   for (let k = 1; k < names.length && ok; k++) { const b = fmStart(out, names[k] ?? "", cur + 1); if (b < 0) ok = false; else { parts.push(out.slice(cur, b)); cur = b; } }
   if (ok) { parts.push(out.slice(cur)); return { parts, est: false }; }
   let all = true; let tot = 0; for (let k = 0; k < names.length; k++) { const x = w[k] ?? 0; if (x <= 0) all = false; tot += x; }
@@ -206,6 +209,39 @@ export function splitReads(out: string, names: string[], w: number[]): { parts: 
     out2.push(out.slice(at, e)); at = e;
   }
   return { parts: out2, est: true };
+}
+// the text of each SKILL.md one call read (names in output order, see SkRead for ci/nc). raw = the call's output; segs = the
+// "output" fields in it: with one per command (Codex's exec printing each result) each command's output goes to the files
+// it read (split as above); else raw is split (one file of a plain read: all of it)
+export function readTexts(raw: string, segs: string[], names: string[], ci: number[], nc: number, w: number[]): { parts: string[]; est: boolean } {
+  const js = nc > 0 && ci.length === names.length; // commands known (Codex's exec)
+  if (!js || segs.length !== nc) return names.length === 1 && !js ? { parts: [raw], est: false } : splitReads(raw, names, w);
+  const parts: string[] = []; for (let k = 0; k < names.length; k++) parts.push("");
+  let est = false; const done: number[] = [];
+  for (let k = 0; k < names.length; k++) {
+    const c = (ci[k] ?? 0) + 0; if (done.indexOf(c) >= 0) continue;
+    done.push(c);
+    const ix: number[] = []; const gn: string[] = []; const gw: number[] = [];
+    for (let j = k; j < names.length; j++) if ((ci[j] ?? 0) === c) { ix.push(j); gn.push(names[j] ?? ""); gw.push((w[j] ?? 0) + 0); }
+    const sp = gn.length === 1 ? { parts: [segs[c] ?? ""], est: false } : splitReads(segs[c] ?? "", gn, gw);
+    if (sp.est) est = true;
+    for (let j = 0; j < ix.length; j++) parts[(ix[j] ?? 0) + 0] = sp.parts[j] ?? "";
+  }
+  return { parts, est };
+}
+// the string values of "output" fields in a tool output (Codex's exec prints each command's result object: chunk_id,
+// exit_code, output …), decoded, in order; [] when there are none
+export function outSegs(t: string): string[] {
+  const out: string[] = []; const key = "\"output\":\"";
+  let i = t.indexOf(key);
+  while (i >= 0) {
+    const s0 = i + key.length - 1; let e = s0 + 1;
+    while (e < t.length) { const c = t.charAt(e); if (c === "\\") { e += 2; continue; } if (c === "\"") break; e++; }
+    if (e >= t.length) break;
+    try { const v: unknown = JSON.parse(t.slice(s0, e + 1)); if (typeof v === "string") out.push(v); } catch (x) { /* not JSON text: skip it */ }
+    i = t.indexOf(key, e + 1);
+  }
+  return out;
 }
 
 // SkLoad.hb until a harness-priced request books into it (most loads are table-priced): shared, never written
