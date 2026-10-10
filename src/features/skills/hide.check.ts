@@ -90,6 +90,7 @@ const SC: PanelScope = { origin: "test", label: (): string => "all", days: (): s
 openSkillsPanel(SC, "");
 const pn = panelLines(120, 30).join("\n") + panelLines(80, 24).join("\n");
 hidden("Stats panel", pn); ok("Stats panel: fake and (hidden)", pn.indexOf(fake) >= 0 && pn.indexOf("(hidden)") >= 0, pn);
+ok("Stats panel: the (hidden) row says how many skills it holds", pn.indexOf("(hidden) 1 skill") >= 0, pn);
 S.mode = "list";
 let pv = ""; for (const f of H.previewSections) for (const l of f(s, 100)) pv += plain(l) + "\n";
 hidden("preview", pv); ok("preview: skills line", pv.indexOf("skills") >= 0 && pv.indexOf(fake) >= 0, pv);

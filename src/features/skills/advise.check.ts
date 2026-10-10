@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviceLines, parseAdvise, visAdvice, ADVISE_DEFAULTS } from "./advise.ts";
+import { type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviceLines, advJson, parseAdvise, visAdvice, ADVISE_DEFAULTS } from "./advise.ts";
 import { type InvSkill, inventory, frontOf } from "./inventory.ts";
 import type { SkillRow, LoadRow } from "./model.ts";
 import { setVis, parseHide } from "./vis.ts";
@@ -80,7 +80,7 @@ ok("frontmatter folded description", (frontOf("---\ndescription: >\n  ab\n  cd\n
 // ordering by $ at stake, rendering, hiding
 const mix = advise([row("fat", { m: 3, s: 3, size: 4000, usd: 10, tail: 8 }), row("lost", { m: 3, s: 3 })], l4, ctx, [], C, none);
 ok("ordered by severity", ids(mix) === "A1:fat,A4:lost", ids(mix));
-ok("rendered", adviceLines(mix[0] as Advice).join("\n") === "A1 carried too long · fat · $8.00 / 30 days\n   tail carry $8.00 of $10.00 (80 %) over 3 sessions\n   size 4.0k tok, carried 5.0k tok after loading\n   → split SKILL.md: keep the decision part, move details to references/ read on demand", adviceLines(mix[0] as Advice).join("\n"));
+ok("rendered", adviceLines(mix[0] as Advice).join("\n") === "A1 carried too long · fat · ≈ $8.00/30 d, from 30 days\n   tail carry $8.00 of $10.00 (80 %) over 3 sessions\n   size 4.0k tok, carried 5.0k tok after loading\n   → split SKILL.md: keep the decision part, move details to references/ read on demand", adviceLines(mix[0] as Advice).join("\n"));
 setVis(parseHide([{ match: "fat", mode: "omit" }, { match: "lost", mode: "name" }]).rules, false);
 const hv = visAdvice(mix);
 ok("hidden advice", hv.length === 1 && hv[0] !== undefined && (hv[0] as Advice).skill !== "lost" && (hv[0] as Advice).skill.length === 4, ids(hv));
@@ -115,6 +115,12 @@ ok("config", pc.cfg.minSizeTok === 500 && pc.cfg.tailShare === 0.6 && pc.cfg.min
   ok("A8 fires on the cheaper of the pair", ids(a8) === "A8:tests", ids(a8));
   ok("A8 evidence names the other", a8.length === 1 && ((a8[0] as Advice).evidence[0] ?? "") === "loaded together with tdd in 5 turns (overlap 71 % of the turns either was loaded in)", a8.length ? (a8[0] as Advice).evidence[0] ?? "" : "");
   ok("A8 headline names both skills", a8.length === 1 && (adviceLines(a8[0] as Advice)[0] ?? "").indexOf(" · tests + tdd") > 0, a8.length ? adviceLines(a8[0] as Advice)[0] ?? "" : "");
+  // $ at stake: an estimate scaled to 30 days, labelled with the days it comes from (1 day observed: ×30)
+  const a81 = advise([row("tdd", { m: 6, s: 6, usd: 3 }), row("tests", { m: 6, s: 6, usd: 1 })], l8, { days: 1, listed: new Map<string, number>(), requests: 1000 }, [], C, none).filter((a: Advice) => a.id === "A8");
+  const h81 = a81.length ? adviceLines(a81[0] as Advice)[0] ?? "" : "";
+  const j81 = a81.length ? advJson(a81[0] as Advice) : null;
+  ok("A8 --json: basisDays 1 next to severityUsd", j81 !== null && j81["basisDays"] === 1 && typeof j81["severityUsd"] === "number" && (j81["severityUsd"] as number) > 0, JSON.stringify(j81));
+  ok("A8 $ labelled as an estimate from 1 day", a81.length === 1 && (a81[0] as Advice).days === 1 && /· ≈ \$[0-9.]+\/30 d, from 1 day$/.test(h81), h81);
   setVis(parseHide([{ match: "tdd", mode: "name" }]).rules, false);
   const a8n = advise([row("tdd", { m: 6, s: 6, usd: 3 }), row("tests", { m: 6, s: 6, usd: 1 })], l8, ctx, [], C, none).filter((a: Advice) => a.id === "A8");
   const h8 = a8n.length ? adviceLines(a8n[0] as Advice)[0] ?? "" : "";

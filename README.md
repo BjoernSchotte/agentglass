@@ -525,6 +525,7 @@ agentglass skills --period 7d --sort tail
 agentglass skills --session last        # one session's timeline: each load, its trigger, turn, size, carry, when it left
 agentglass skills show brainstorming    # the text its newest load put into the context
 agentglass skills advise                # A1 carried too long … A9 outcome in its turns; A10 across hosts: agentglass fleet skills
+                                        # $ at stake: an estimate, "≈ $x/30 d, from n days" scaled from the period observed
 agentglass skills --check               # the invariants over your ledger; exit 3 on a violation
 agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'   # per session: name, source, n, loads, tokens, $
 ```
@@ -554,7 +555,7 @@ rows, logs): it keeps where the text is in the log and reads it when a view asks
 |---|---|
 | `content` (a bare string) | name and numbers shown, the text hidden (`text hidden by skills.hide`) |
 | `name` | as `content`, and the name replaced by a stable fake of the same length |
-| `omit` | no row, mark, transcript line, filter value, advice, OTLP event or fleet row; its tokens and $ go into one `(hidden) n skills` row, so totals stay true |
+| `omit` | no row, mark, transcript line, filter value, advice, OTLP event or fleet row; its tokens and $ go into one `(hidden) n skills` row, so totals stay true (`--json`: that row is named `(hidden)`, `hidden` = n) |
 
 `--redact` and `skills.hide` combine, the stricter wins. Paths that send data elsewhere apply the rules first and keep
 their own opt-in for text: OTLP export and `--watch --otlp` send names, trigger, sizes, hash, scope and $, the text only

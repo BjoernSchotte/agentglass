@@ -21,7 +21,7 @@ import { type SkillRow, type LoadRow, skillTable, skillLoads, visRows, sizeShown
 import { type Advice, adviceLines } from "./advise.ts";
 import { periodAdvice } from "./cli.ts";
 import { type HostRow, SKILL_FLEET } from "./fleet.ts";
-import { skillVis, HIDDEN } from "./vis.ts";
+import { skillVis, HIDDEN, hiddenLabel } from "./vis.ts";
 import { openSkillView } from "./view.ts";
 import { addActions, keyAction, tabNamed } from "../palette/actions.ts";
 
@@ -107,10 +107,10 @@ function colsFor(w0: number, host: boolean): { cols: Col[]; nw: number } {
   return { cols, nw: Math.max(14, Math.min(30, w - sum(cols))) };
 }
 function headLine(w: number, host: boolean): string { const x = colsFor(w, host); let h = fit("skill", x.nw) + (host ? fit(" host", HW) : ""); for (const c of x.cols) h += lp(c.h, c.w); return fg(C.dim) + fitStyled(h, w) + RST; }
-function rowLine(r: SkillRow, host: string, w: number, on: boolean, b: Bill | ""): string {
+function rowLine(r: SkillRow, host: string, w: number, on: boolean, b: Bill | "", hidden: number): string {
   const x = colsFor(w, host !== ""); const sb = on ? bg(C.sel) : "";
   const nc = r.name === HIDDEN || r.name === LISTING ? C.sub : C.cyan;
-  let l = sb + fg(nc) + (on ? CSI + "1m" : "") + fit(clean(r.name), x.nw) + RST + sb;
+  let l = sb + fg(nc) + (on ? CSI + "1m" : "") + fit(clean(r.name === HIDDEN ? hiddenLabel(hidden) : r.name), x.nw) + RST + sb;
   if (host) l += fg(host === SKILL_FLEET.local() ? C.sub : C.text) + fit(" " + clean(host), HW) + RST + sb;
   for (const c of x.cols) l += fg(c.c) + lp(c.f(r, b), c.w) + RST + sb;
   return l;
@@ -189,7 +189,7 @@ function build(W: number, Ht: number): string[] {
   if (si < P.top) P.top = si; else if (si >= P.top + room) P.top = si - room + 1;
   P.top = Math.max(0, Math.min(P.top, Math.max(0, d.rows.length - room)));
   P.y0 = 2 + out.length; P.n = Math.min(room, d.rows.length - P.top);
-  for (let i = P.top; i < d.rows.length && i < P.top + room; i++) out.push((i === si ? fg(C.accent) + "▌" + RST : " ") + rowLine(d.rows[i], d.hosts[i] ?? "", iw - 1, i === si, d.bill));
+  for (let i = P.top; i < d.rows.length && i < P.top + room; i++) out.push((i === si ? fg(C.accent) + "▌" + RST : " ") + rowLine(d.rows[i], d.hosts[i] ?? "", iw - 1, i === si, d.bill, !d.hosts[i] || d.hosts[i] === SKILL_FLEET.local() ? d.hidden : 0));
   if (al.length) { while (out.length < 2 + room) out.push(""); for (const l of al.slice(0, Math.max(0, Ht - 4 - out.length))) out.push(l); }
   return out;
 }
