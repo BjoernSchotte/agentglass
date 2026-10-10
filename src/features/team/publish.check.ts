@@ -5,6 +5,8 @@
 //   scriptc build --ffi src/features/team/crypto/ffi.json src/features/team/publish.check.ts -o pc && HOME=$(mktemp -d) ./pc
 // SPDX-License-Identifier: Apache-2.0
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { REDACT } from "../redact-on.ts";
 import { join } from "node:path";
 import { HOME } from "../../util/fs.ts";
 import { randomBytes } from "../../util/rand.ts";
@@ -59,6 +61,15 @@ function opened(name: string): string[] {
   return out;
 }
 
+// scripts/check.sh runs checks under AGENTGLASS_REDACT=1: there publishing refuses, and the checks run again in a child
+if (REDACT) {
+  const rr = publishRoom(mb, T, room, share, me, DEV, now, false);
+  ok("under --redact: not published", rr.name === "" && rr.err.indexOf("--redact") >= 0 && mb.list("rooms/" + R).length === 0, rr.err);
+  if (bad) process.exit(1);
+  const r = execFileSync("sh", ["-c", "AGENTGLASS_REDACT=0 '" + process.execPath + "' 2>&1; echo \"rc=$?\""], { encoding: "utf8" });
+  process.stdout.write(r.slice(0, r.lastIndexOf("rc=")));
+  process.exit(r.trim().endsWith("rc=0") ? 0 : 1);
+}
 // --dry-run: the plaintext, nothing written
 const dry = publishRoom(mb, T, room, share, me, DEV, now, true);
 ok("dry run: no error", dry.err === "", dry.err);

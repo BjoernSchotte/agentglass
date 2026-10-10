@@ -19,6 +19,7 @@ import { type MemberKeys, teamDir, roomKey } from "./keys.ts";
 import { type Mailbox, roomFile } from "./mailbox.ts";
 import { sealFile } from "./sealed.ts";
 import { sha256Hex } from "../../util/sha256.ts";
+import { REDACT } from "../redact-on.ts";
 
 export const TEAM_DAYS = 7; // the list window of a room stream (cost days go further, as fleet's)
 export interface Published { name: string; bytes: number; plain: string[]; err: string }
@@ -43,6 +44,8 @@ function myFiles(mb: Mailbox, room: string, member: string, device: string): Dro
 // err "" = nothing to do (the share is off or paused)
 export function publishRoom(mb: Mailbox, team: string, room: Room, share: RoomShare, me: MemberKeys, device: string, now: number, dry: boolean, personal = false): Published {
   if (!share.on || share.paused || share.room !== room.id) return { name: "", bytes: 0, plain: [], err: "" };
+  // --redact fakes titles and names for a screencast: a room stream carries the real ones within its scope (spec 6)
+  if (REDACT) return { name: "", bytes: 0, plain: [], err: "not published under --redact (a room stream carries real names within its scope)" };
   const key = roomKey(team, room.id, room.epoch);
   if (!key) return { name: "", bytes: 0, plain: [], err: "no key for room " + room.id + " epoch " + String(room.epoch) + " (team sync fetches it)" };
   const sd = join(teamDir(), team, "state"); const sf = join(sd, room.id + ".json");
