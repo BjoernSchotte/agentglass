@@ -101,6 +101,14 @@ ok("acc fields", b.t0 === a.t0 && b.uc === 7 && b.bill === "metered" && b.plan =
   skillLoad(w, "gamma", "user", 7, si, T, true, "", false);
   if (dw) tokens(w, dw, "claude-sonnet-4-5", 0, 10, 9000, 0, 0);
   ok("writers decode first", w.sk.length === 6 && (w.sk[5] as SkLoad).name === "gamma" && !!dw && dw.sav === "" && dw.sa.size >= dx.sa.size && dw.sa.has("gamma\t\t"), String(w.sk.length) + " " + (dw ? [...dw.sa.keys()].join("|") : ""));
+  // a damaged text (cut short, not an object) reads as no loads/rows and is not written back; a writer still books
+  const bo = parse(js2.split(JSON.stringify(skt)).join(JSON.stringify(skt.slice(0, 40))).split(JSON.stringify(sat)).join(JSON.stringify("[1,2]"))) ?? {};
+  const bz = accIn(bo); const bzd = bz.days.get(dk0); const bzo = accOut(bz, 64); const bzdo = (bzo["days"] as Obj)[dk0] as Obj;
+  ok("damaged text: undecoded it is written back as read", bzo["sk"] === skt.slice(0, 40) && bzdo["sa"] === "[1,2]", String(bzo["sk"]) + " " + String(bzdo["sa"]));
+  ok("damaged text: no loads, no rows", skOf(bz).length === 0 && !hasSk(bz) && !!bzd && saOf(bzd).size === 0, "");
+  const bzo2 = accOut(bz, 64); ok("damaged text: dropped once decoded", bzo2["sk"] === undefined && ((bzo2["days"] as Obj)[dk0] as Obj)["sa"] === undefined, "");
+  skillLoad(bz, "delta", "user", 8, si, T, true, "", false); if (bzd) tokens(bz, bzd, "claude-sonnet-4-5", 0, 10, 900, 0, 0);
+  ok("damaged text: a writer books from empty", bz.sk.length === 1 && !!bzd && bzd.sa.has("delta\t\t"), String(bz.sk.length));
   ok("pre-release columns re-index", skStale(parse("{\"sk\":{\"nm\":[\"a\"],\"i\":[0]}}") ?? {}) && !skStale(parse(js2) ?? {}) && !skStale(parse(zs) ?? {}), "");
 }
 // an older 9-element t: uc defaults to 0

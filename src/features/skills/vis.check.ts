@@ -140,5 +140,11 @@ for (const f3 of all) {
   ok("reads skill data, listed in VIS_SURFACES or VIS_DATA: " + f3, VIS_SURFACES.indexOf(f3) >= 0 || VIS_DATA.indexOf(f3) >= 0);
 }
 ok("the walk found the skill modules", seen >= 20);
+// the cache's undecoded skill text (Acc.skv, Day.sav) is the codec's alone: every other module reads loads and rows
+// through skOf/saOf, so what it shows passed the decoder and the surface's skillVis (a raw read would skip both)
+for (const f4 of all) {
+  if (f4 === "src/features/usage/record.ts" || f4 === "src/features/usage/codec.ts") continue;
+  ok("no raw skill cache text outside record/codec: " + f4, !/\.skv\b|\.sav\b|\bSKV\./.test(readFileSync(f4, "utf-8")));
+}
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok skill visibility");
