@@ -226,6 +226,21 @@ function book(l: SkLoad, g: number[], slot: number, tail0: boolean, row: number[
   row[SA_HU] = (row[SA_HU] ?? 0) + u; if (tail) row[SA_HT] = (row[SA_HT] ?? 0) + u; if (slot === SA_L) row[SA_HL] = (row[SA_HL] ?? 0) + u;
 }
 
+// the sizes of the loads sent with this request (§3.2): each from its text by the request's tokenizer, bounded together by
+// the context's growth gl. Estimates above the growth shrink in proportion (largest remainder, Σ = gl): taken in load order
+// a few % of overshoot each starved the last of several parallel loads to 0. gl <= 0 (cache expiry, model switch): no bound
+function sizeNew(sk: SkLoad[], model: string, gl: number): void {
+  let tot = 0;
+  for (const l of sk) if (l.end === 0 && l.pend && l.S >= 0) { l.S = sizeEst(l.bytes, model); tot += l.S; }
+  if (gl <= 0 || tot <= gl) return; // the hot path: nothing new, or it fits
+  const nw: SkLoad[] = []; for (const l of sk) if (l.end === 0 && l.pend && l.S >= 0) nw.push(l);
+  const fr: number[] = []; let left = gl;
+  for (const l of nw) { const x = l.S * gl / tot; const f = Math.floor(x); l.S = f; left -= f; fr.push(x - f); }
+  for (; left > 0; left--) { // the rest, one token each, to the largest fractions (ties: load order)
+    let k = 0; for (let i = 1; i < fr.length; i++) if ((fr[i] ?? 0) > (fr[k] ?? 0)) k = i;
+    const l = nw[k] as SkLoad; l.S = l.S + 1; fr[k] = -1;
+  }
+}
 // one request: b = its [in, cacheRead, write5m, write1h] (mutated: what is left after the skills), nOut its output,
 // ctx/lastCtx its context and the previous request's; tq = human prompts so far; w = per-bucket weights [in, cr, w5, w1,
 // out] for a harness-priced request's $ share (usd > 0; token counts when the model has no price). Implicit drop (§3.4),
@@ -246,14 +261,11 @@ export function attribute(sk: SkLoad[], sa: Map<string, number[]>, model: string
     l.short += want - n; l.nq++;
     book(l, g, SA_C, tq > l.tu, saRow(sa, l.name, rp, model), hp, usd, w, wReq);
   }
-  let gl = ctx - lastCtx; // the context's growth: an upper bound for the new loads' sizes, shared in load order
-  const bounded = gl > 0; // none (cache expiry, model switch): the size from the text stands
+  sizeNew(sk, model, ctx - lastCtx);
   for (const l of sk) { // sent with this request
     if (l.end !== 0 || !l.pend) continue;
     l.pend = false; l.mdl = pooled(model); l.prov = pooled(prov);
     if (l.S < 0) continue; // size unknown: counted, never priced
-    l.S = sizeEst(l.bytes, model); // the tokenizer is known now
-    if (bounded) { if (l.S > gl) l.S = gl > 0 ? gl : 0; gl -= l.S; }
     const n = take(b, l.S, LOAD_ORDER, g);
     l.short += l.S - n;
     book(l, g, SA_L, tq > l.tu, saRow(sa, l.name, rp, model), hp, usd, w, wReq);

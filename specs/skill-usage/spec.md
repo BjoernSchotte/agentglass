@@ -216,7 +216,9 @@ and measured, then dropped (never stored).
 **3.2 The load request** (the first request booked with `pend = true`). Let `g = ctx(r) − ctx(r−1)` (the context growth;
 `ctx(r−1)` of the previous request of this log, `0` if none). Then `S = min(S_est, max(g, 0))` when `g > 0`, else
 `S_est` (a cache-expiry or model switch made `g` meaningless; the tier stays as for the harness). Several loads pending
-at the same request share `g` in load order (each takes `min(S_est_i, g_left)`).
+at the same request (parallel loads of one message) share `g`: when `Σ S_est > g` each gets `S_est_i × g / Σ S_est`
+(largest remainder, `Σ S = g`). Taken in load order instead, a few % of overshoot each starved the last load to 0
+(live: pi 4 loads, OpenCode 2: the last got 0 tokens, 0 requests, $0).
 The skill's tokens in this request are taken from the request's buckets in the order **write5m → write1h → in →
 cacheRead** (a new text is written to the cache). This is the load cost. `pend = false`.
 
