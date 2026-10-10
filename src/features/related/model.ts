@@ -92,6 +92,7 @@ export function toRelShown(evs: Ev[], shown: Ev[], red: boolean, sess: string, h
     const e = evs[i]; const v = i < shown.length ? shown[i] : e;
     const t = ms(e.ts) || st.last;
     if (t > st.last) st.last = t;
+    if (v.kind === "") continue; // hidden (skills.hide omit): no row, and its result marks none
     if (e.kind === "result") { result(e, red, t, sess, h, top, self, t0, t1, st, out); continue; }
     if (e.kind !== "user" && e.kind !== "tool") continue;
     if (!t || t < t0 || t > t1) continue;

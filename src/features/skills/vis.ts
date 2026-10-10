@@ -106,7 +106,18 @@ export function textHiddenWhy(name: string): string {
   return VIS.redact && !hideRules().some((r: HideRule) => globMatch(r.match, name)) ? "text hidden (--redact)" : "text hidden by skills.hide";
 }
 
-// modules that print skill names or text: each must call skillVis (vis.check.ts reads them); later surfaces add theirs
+// modules that print skill names or text: each must call skillVis (or textShown, or a source below that did); vis.check.ts
+// reads them, and fails on a module that reads skill data (SKILL_DATA_RE) without being listed here or in VIS_DATA
 export const VIS_SURFACES: string[] = ["src/features/skills/cli.ts", "src/features/skills/advise.ts", "src/features/skills/text.ts", "src/features/skills/model.ts", "src/features/skills/json.ts", "src/features/skills/watchvis.ts", "src/features/skills/marks.ts", "src/features/cli.ts",
   "src/features/query/eval.ts", "src/features/compare/sections.ts", "src/features/repos/tab.ts", "src/features/skills/panel.ts", "src/features/skills/view.ts", "src/features/usage/stats.ts",
-  "src/features/wait/tab.ts", "src/features/rules/metrics.ts", "src/features/otlp/build.ts", "src/features/fleet/snap.ts", "src/features/fleet/hosts.ts"];
+  "src/features/wait/tab.ts", "src/features/rules/metrics.ts", "src/features/otlp/build.ts", "src/features/fleet/snap.ts", "src/features/fleet/hosts.ts",
+  "src/features/callgraph/model.ts", "src/features/callgraph/view.ts", "src/features/query/agg.ts", "src/features/query/ui.ts", "src/features/related/build.ts", "src/features/related/view.ts",
+  "src/features/replay.ts", "src/features/skills/fleet.ts", "src/features/compare/cli.ts"];
+// calls that hand out skill data already through skillVis: the skill marks (skillMarks), the filter's skill rows, the read
+// model's visible rows and loads, the hooked events; or a "skillVis: <why>" comment for a pure function over such data
+export const VIS_SOURCES = ["skillVis: ", "skillVis(", "textShown(", "visRows(", "visLoads(", "marksOf(", "skillRows(", "skillsAt(", "openAt(", "hideEvents", "callVis(", "scrub("];
+// modules that read skill data but print none: the engine and its storage, a parser's unload, the event kinds, the fleet's
+// and hub's merges (names stay as the sending host showed them; this machine's surfaces apply its own rules on top)
+export const VIS_DATA: string[] = ["src/features/usage/codec.ts", "src/features/usage/record.ts", "src/features/usage/skillrec.ts", "src/model/kinds.ts",
+  "src/harness/kiro.ts", "src/features/fleet/merge.ts", "src/features/fleet/model.ts", "src/features/hub/map.ts", "src/features/skills/vis.ts"];
+export const SKILL_DATA_RE = /\bSkLoad\b|\bskillRows\(|\bskillsAt\(|"skill:load"|\bvisRows\(|\bvisLoads\(|\bskillLoads\(|\bskillTable\(|\bskillMarks\(|\bloadsAt\(|\bopenAt\(|\.sa\b|\.sk\b/;

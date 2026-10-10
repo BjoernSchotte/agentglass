@@ -3,7 +3,7 @@
 // §6.6). ↵ lists the sessions that loaded it, a shows its advice (§8), v the text of its newest load. With a fleet shown
 // (Stats), one row per skill and host: copies of a log on 2+ hosts counted once (§6.15, features/fleet/tui.ts)
 // SPDX-License-Identifier: Apache-2.0
-import { clean, fit, fitStyled, fillTo, width, wrap } from "../../util/text.ts";
+import { clean, fit, fitStyled, fillTo, vwidth, width, wrap } from "../../util/text.ts";
 import type { Sess } from "../../model/types.ts";
 import { sessions } from "../../model/sessions.ts";
 import { S, say, type Mode } from "../../state.ts";
@@ -17,7 +17,7 @@ import { kfmt, grp, money } from "../usage/costs.ts";
 import { type Bill, asBill } from "../usage/billing.ts";
 import { type Compiled, skillRows, skillRowMatches } from "../query/eval.ts";
 import { addClause, localFor, setLocal, shownClause } from "../query/scope.ts";
-import { type SkillRow, type LoadRow, skillTable, skillLoads, visRows } from "./model.ts";
+import { type SkillRow, type LoadRow, skillTable, skillLoads, visRows, sizeShown } from "./model.ts";
 import { type Advice, adviceLines } from "./advise.ts";
 import { periodAdvice } from "./cli.ts";
 import { type HostRow, SKILL_FLEET } from "./fleet.ts";
@@ -88,7 +88,7 @@ const COLS: Col[] = [
   { h: "/", w: 4, drop: 1, c: C.sub, f: (r: SkillRow, b: Bill | ""): string => r.name === LISTING ? "·" : String(r.loadsUser) },
   { h: "⚙", w: 4, drop: 1, c: C.sub, f: (r: SkillRow, b: Bill | ""): string => r.name === LISTING ? "·" : String(r.loadsModel) },
   { h: "sess", w: 5, drop: 9, c: C.text, f: (r: SkillRow, b: Bill | ""): string => grp(r.sessions) },
-  { h: "size", w: 7, drop: 9, c: C.sub, f: (r: SkillRow, b: Bill | ""): string => r.tier === "?" && r.sizeP50 === 0 ? "?" : kfmt(r.sizeP50) },
+  { h: "size", w: 7, drop: 9, c: C.sub, f: (r: SkillRow, b: Bill | ""): string => sizeShown(r, kfmt) },
   { h: "load", w: 7, drop: 1, c: C.sub, f: (r: SkillRow, b: Bill | ""): string => kfmt(r.load) },
   { h: "carry", w: 8, drop: 9, c: C.text, f: (r: SkillRow, b: Bill | ""): string => kfmt(r.carry) },
   { h: "tail", w: 7, drop: 2, c: C.sub, f: (r: SkillRow, b: Bill | ""): string => kfmt(r.tail) },
@@ -115,14 +115,21 @@ function rowLine(r: SkillRow, host: string, w: number, on: boolean, b: Bill | ""
   for (const c of x.cols) l += fg(c.c) + lp(c.f(r, b), c.w) + RST + sb;
   return l;
 }
-// the summary line: how many skills, their $ and tokens, how much of it is carry, the sort
-function summary(d: PData): string {
+// the summary line: how many skills, their $ and tokens, how much of it is carry, the sort. Narrow (80 columns with a
+// hidden row, the listing, a filter): the tokens go first, then the sessions, then the words — the sort hint stays
+function summary(d: PData, w: number): string {
   const dot = fg(C.dim) + " · " + RST;
   const nm = new Set<string>(); let lst = false; for (const r of d.rows) { if (r.name === LISTING) lst = true; else if (r.name !== HIDDEN) nm.add(r.name); }
   const n = nm.size; const hs: string[] = []; for (const h of d.hosts) if (hs.indexOf(h) < 0) hs.push(h);
-  return fg(C.text) + CSI + "1m" + String(n) + RST + fg(C.sub) + (n === 1 ? " skill" : " skills") + (hs.length ? " on " + String(hs.length) + (hs.length === 1 ? " host" : " hosts") : "") + (d.hidden ? " + " + String(d.hidden) + " hidden" : "") + (lst ? " + listing" : "") + RST + dot +
-    fg(C.yellow) + money(d.usd, d.bill) + RST + fg(C.sub) + " in " + grp(d.sessions) + (d.sessions === 1 ? " session" : " sessions") + (d.named ? " with matching skills" : "") + RST + dot +
-    fg(C.text) + kfmt(d.tok) + RST + fg(C.sub) + " tok, carry " + (d.tok > 0 ? String(Math.round((d.carry / d.tok) * 100)) : "0") + " %" + RST + dot + fg(C.sub) + "sorted by " + RST + fg(C.accent) + (SORT_NAMES[P.sort] ?? "$") + RST + fg(C.dim) + " (s)" + RST;
+  const head = (short: boolean): string => fg(C.text) + CSI + "1m" + String(n) + RST + fg(C.sub) + (n === 1 ? " skill" : " skills") + (hs.length ? " on " + String(hs.length) + (short ? "h" : hs.length === 1 ? " host" : " hosts") : "") +
+    (d.hidden ? (short ? " +" + String(d.hidden) + " hid" : " + " + String(d.hidden) + " hidden") : "") + (lst ? (short ? " +lst" : " + listing") : "") + RST;
+  const usd = fg(C.yellow) + money(d.usd, d.bill) + RST;
+  const sess = fg(C.sub) + " in " + grp(d.sessions) + (d.sessions === 1 ? " session" : " sessions") + (d.named ? " with matching skills" : "") + RST;
+  const tok = fg(C.text) + kfmt(d.tok) + RST + fg(C.sub) + " tok, carry " + (d.tok > 0 ? String(Math.round((d.carry / d.tok) * 100)) : "0") + " %" + RST;
+  const sort = (short: boolean): string => fg(C.sub) + (short ? "" : "sorted by ") + RST + fg(C.accent) + (SORT_NAMES[P.sort] ?? "$") + RST + fg(C.dim) + " (s)" + RST;
+  for (const t of [head(false) + dot + usd + sess + dot + tok + dot + sort(false), head(false) + dot + usd + sess + dot + sort(false), head(false) + dot + usd + dot + sort(false),
+    head(true) + dot + usd + dot + sort(true)]) if (vwidth(t) <= w) return t;
+  return fitStyled(head(true), Math.max(1, w - vwidth(dot + usd + dot + sort(true)))) + dot + usd + dot + sort(true);
 }
 
 // ── advice (a): computed once per panel data for every skill (the CLI's periodAdvice: A1–A9 over this machine's logs,
@@ -161,7 +168,7 @@ function selRow(d: PData): SkillRow | null { const i = selIdx(d); return i < d.r
 function build(W: number, Ht: number): string[] {
   const sc = P.sc; const d = data(); if (!sc || !d) return [];
   const iw = W - 4; const out: string[] = [];
-  out.push(summary(d));
+  out.push(summary(d, iw));
   if (!d.rows.length) {
     out.push("");
     out.push(fg(C.dim) + (d.named ? "no skill matches the filter in this period" : "no skill loads in this period") + " — " + (sc.keys.length ? sc.keys.map((k: string[]): string => k[0] ?? "").join("/") + " switch the period, " : "") + "esc back" + RST);

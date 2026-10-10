@@ -3,6 +3,7 @@
 // (GOLDEN_WRITE=1 rewrites panel-80.golden and panel-120.golden: review them)
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync, writeFileSync } from "node:fs";
+import { width } from "../../util/text.ts";
 import type { Sess } from "../../model/types.ts";
 import { S } from "../../state.ts";
 import { H } from "../../hooks.ts";
@@ -42,6 +43,10 @@ for (const [name, ls] of [["panel-80.golden", g80], ["panel-120.golden", g120]] 
   for (let i = 0; i < Math.max(ls.length, want.length); i++) eq(name + " line " + String(i + 1), ls[i] ?? "(none)", want[i] ?? "(none)");
 }
 eq("80: the narrow columns", has(g80, " / ") || has(g80, "  tail") ? "kept" : "dropped", "dropped");
+// the summary line fits the box and always ends on the sort hint (a hidden row, the listing, a filter lengthen it)
+setVis([{ match: "beta", mode: "omit" }], false); openSkillsPanel(SC, "");
+for (const w of [60, 80]) { const l0 = panelLines(w, 24)[0] ?? ""; eq("summary at " + String(w) + ": fits, sort hint kept", String(width(l0) <= w - 4) + " " + String(l0.trimEnd().endsWith("(s)")) + " " + String(l0.indexOf("1 hidden") >= 0), "true true true"); }
+setVis([], false); openSkillsPanel(SC, "");
 eq("120: every column", has(g120, "  tail") && has(g120, " ⚙") ? "kept" : "dropped", "kept");
 // keys: s cycles the sort, a toggles advice, v views the newest load, ↵ filters the session list
 panelKey("s"); eq("sort", panelState().sort, "loads");

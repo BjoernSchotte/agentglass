@@ -1,10 +1,11 @@
 // agentglass — self-check for skill visibility (skills.hide, --redact): scriptc build src/features/skills/vis.check.ts -o vc && ./vc
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, readFileSync } from "node:fs";
-import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, listingShown, VIS_SURFACES, type HideRule } from "./vis.ts";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, listingShown, VIS_SURFACES, VIS_SOURCES, VIS_DATA, SKILL_DATA_RE, type HideRule } from "./vis.ts";
 import { fakeSkill } from "../redact.ts";
 import { callSkill, callVis, scrub, hideEvents } from "./watchvis.ts";
-import type { Ev } from "../../model/types.ts";
+import { type Ev, newSess } from "../../model/types.ts";
+import { titleOf } from "../../model/sessions.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -100,15 +101,44 @@ eq("listing without hidden skills", listingShown("- pub: shown\n  more of pub\n-
   setVis([], false);
   const free: Ev[] = [E("tool", "Skill\u0000secret", "c9", "")]; hideEvents(null, free, 0);
   eq("events: no rules, no change", free.map((e: Ev): string => e.text).join(""), "Skill\u0000secret");
+  // a "*" rule hides a prose word only once it is known as a skill: the batch's loads are noted first, so a prompt that
+  // names one before its load is scrubbed too; OpenCode's "skill: <name>" meta event is a load (omit drops it)
+  setVis(parseHide([{ match: "*", mode: "omit" }]).rules, false);
+  const wk: Ev[] = [E("user", "fix it, maybe with zeta-sk", "", ""), E("meta", "skill: oc-sk", "", ""), E("user", "then oc-sk again", "", ""), E("tool", "Skill\u0000zeta-sk", "w1", "")];
+  hideEvents(null, wk, 0);
+  eq("* omit: prose before the load, meta load dropped", wk.map((e: Ev): string => e.kind + " " + e.text).join(" | "), "user fix it, maybe with (hidden) | user then (hidden) again");
+  setVis(parseHide([{ match: "oc-*", mode: "name" }]).rules, false);
+  const om: Ev[] = [E("meta", "skill: oc-sk", "", "")]; hideEvents(null, om, 0);
+  eq("name: OpenCode's meta load shows the fake", om.map((e: Ev): string => e.text).join(""), "skill: " + skillVis("oc-sk").shown);
+}
+// titles (titleOf, every surface) are scrubbed like event texts: a harness's own title too
+{
+  setVis(parseHide([{ match: "acme-*", mode: "name" }]).rules, false);
+  const ts0 = newSess("claude", "t1", "/nonexistent/t1.jsonl", false); ts0.title = "review acme-x output";
+  eq("title scrubbed", titleOf(ts0), "review " + skillVis("acme-x").shown + " output");
+  setVis([], false);
+  eq("no rules: title as is", titleOf(ts0), "review acme-x output");
 }
 setVis([], false);
 
-// every surface module that exists calls skillVis or textShown (or the read model's visRows / visLoads, which do)
+// every surface module calls skillVis or textShown, or takes its skills from a source that did
 for (const f2 of VIS_SURFACES) {
+  ok("surface exists: " + f2, existsSync(f2));
   if (!existsSync(f2)) continue;
   const t = readFileSync(f2, "utf-8");
-  ok("surface uses skillVis: " + f2, t.indexOf("skillVis(") >= 0 || t.indexOf("textShown(") >= 0 || t.indexOf("visRows(") >= 0 || t.indexOf("visLoads(") >= 0);
+  ok("surface uses skillVis: " + f2, VIS_SOURCES.some((x: string) => t.indexOf(x) >= 0));
 }
-
+// every module that reads skill data is a listed surface or data layer (a new surface must be listed, and so checked)
+function walk(d: string, out: string[]): void {
+  for (const n of readdirSync(d)) { const p2 = d + "/" + n; if (statSync(p2).isDirectory()) walk(p2, out); else if (n.endsWith(".ts") && !n.endsWith(".check.ts") && n.indexOf("fixture") < 0) out.push(p2); }
+}
+const all: string[] = []; walk("src", all);
+let seen = 0;
+for (const f3 of all) {
+  if (!SKILL_DATA_RE.test(readFileSync(f3, "utf-8"))) continue;
+  seen++;
+  ok("reads skill data, listed in VIS_SURFACES or VIS_DATA: " + f3, VIS_SURFACES.indexOf(f3) >= 0 || VIS_DATA.indexOf(f3) >= 0);
+}
+ok("the walk found the skill modules", seen >= 20);
 if (bad) { console.log(String(bad) + " failed"); process.exit(1); }
 console.log("ok skill visibility");
