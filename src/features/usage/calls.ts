@@ -15,7 +15,8 @@ export interface Cnt { n: number; err: number; add: number; del: number }
 // name = the tool's name as booked (retool renames it); sp = its session's Acc.sp: done() leaves the call's [start, end] there for the active-time intervals (record.ts flushSpans)
 // cmd = its full shell command line(s) ("" none), id = call id, end = result time (0 unknown);
 // dn = its session's Acc.dn: done() appends the call there, for the git-linkage scraper of the same line (vcs.ts)
-export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; rows: Rows | null; ri: number; sp: number[]; name: string; cmd: string; id: string; end: number; dn: Pend[] }
+// day, shk: where st and sh live (the day key, the counters' keys): a pending call is cached and re-linked (codec.ts)
+export interface Pend { t: number; ts: string; arg: string; st: TS; sh: Cnt[]; rows: Rows | null; ri: number; sp: number[]; name: string; cmd: string; id: string; end: number; dn: Pend[]; day: string; shk: string[] }
 
 // duration histogram: bucket 0 = < 10 ms, bucket k = [EDGE[k-1], EDGE[k]), the last one ≥ 30 min (roughly ×2.5 per step)
 export const EDGE = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 180000, 600000, 1800000];

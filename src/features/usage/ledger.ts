@@ -14,6 +14,7 @@ import { type Rows, newRows } from "./rows.ts";
 import { scrape } from "./vcs.ts";
 import { OWN, reconcile, release } from "./owners.ts";
 import { DEBUG_PARTS } from "../../util/selfmem.ts";
+import { pendIn } from "./codec.ts";
 
 export const ledger = new Map<string, Acc>();
 
@@ -82,6 +83,7 @@ function sidecar(s: Sess, a: Acc): void { const f = harnessOf(s.h).usageSidecar;
 
 // one chunk (≤ CHUNK bytes) of new log lines; returns bytes consumed (0 = nothing to do right now)
 function step(s: Sess, a: Acc): number {
+  if (a.pdr.length) pendIn(a); // cached pending calls: a result in the new lines books their duration
   const src = sourceOf(s.h);
   if (src !== FILE_SOURCE) { // record-cursor source (database rows): whole records, no byte skipping
     const r = src.lines(s, a.off, Math.min(s.size, a.off + window(src, CHUNK)));
