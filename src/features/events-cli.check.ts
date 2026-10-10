@@ -6,6 +6,11 @@ import { parseEvents } from "../harness/index.ts";
 import { type Obj } from "../util/json.ts";
 import { mask, vfSet, vfOf, preset } from "../ui/evfilter.ts";
 import { listEvents, cliView } from "./events-cli.ts";
+import { sessions } from "../model/sessions.ts";
+import { ledger, accOf, applyAcc } from "./usage/ledger.ts";
+import { L, skillLoad } from "./usage/record.ts";
+import { setVis } from "./skills/vis.ts";
+import "./skills/marks.ts"; // registers the skill marks (the binary loads it with every feature)
 
 let bad = 0;
 function eq(w: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + w + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -42,5 +47,19 @@ vfSet("events", "event.kind is shell");
 eq("limit", idx(listEvents(s, evs, 2, false).events), "~9,9,10");
 // presets as in the TUI: errors + causes (the failing call; the reply before it when there is one)
 preset("events", 4); eq("preset errors", cli(), "1,2"); eq("preset expr", vfOf("events").expr, "event.kind is error");
+// a skill tool's events name the skill (OpenCode's skill tool, Claude's Skill …), from the ledger's load of that call,
+// through skillVis: a hidden name shows its fake, an omitted one nothing
+setVis([], false); // the suite runs with AGENTGLASS_REDACT=1: names shown as they are here, fakes below
+sessions.clear(); ledger.clear(); sessions.set(s.path, s);
+const ac = accOf(s); ac.off = s.size;
+skillLoad(ac, "brainstorming", "model", T + 4000, iso(4), "LOREM", true, "", false).cid = "s1";
+applyAcc(s, ac); L.ver++;
+function skTarget(): string { vfSet("events", "event.kind is skill"); const o: string[] = []; for (const x of listEvents(s, evs, 0, false).events) if (x["gap"] === undefined) o.push(String(x["kind"]) + " " + String(x["target"])); return o.join(", "); }
+eq("skill events name the skill", skTarget(), "tool brainstorming, result brainstorming");
+setVis([{ match: "brainstorming", mode: "name" }], false);
+eq("hidden name: its fake", String(skTarget().indexOf("brainstorming") < 0 && skTarget().indexOf("null") < 0), "true");
+setVis([{ match: "brainstorming", mode: "omit" }], false);
+eq("omitted: no name", skTarget(), "tool null, result null");
+setVis([], false);
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("events cli: ok");

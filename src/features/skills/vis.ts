@@ -112,7 +112,7 @@ export const VIS_SURFACES: string[] = ["src/features/skills/cli.ts", "src/featur
   "src/features/query/eval.ts", "src/features/compare/sections.ts", "src/features/repos/tab.ts", "src/features/skills/panel.ts", "src/features/skills/view.ts", "src/features/usage/stats.ts",
   "src/features/wait/tab.ts", "src/features/rules/metrics.ts", "src/features/otlp/build.ts", "src/features/fleet/snap.ts", "src/features/fleet/hosts.ts",
   "src/features/callgraph/model.ts", "src/features/callgraph/view.ts", "src/features/query/agg.ts", "src/features/query/ui.ts", "src/features/related/build.ts", "src/features/related/view.ts",
-  "src/features/replay.ts", "src/features/skills/fleet.ts", "src/features/compare/cli.ts"];
+  "src/features/replay.ts", "src/features/skills/fleet.ts", "src/features/compare/cli.ts", "src/features/events-cli.ts"];
 // calls that hand out skill data already through skillVis: the skill marks (skillMarks), the filter's skill rows, the read
 // model's visible rows and loads, the hooked events; or a "skillVis: <why>" comment for a pure function over such data
 export const VIS_SOURCES = ["skillVis: ", "skillVis(", "textShown(", "visRows(", "visLoads(", "marksOf(", "skillRows(", "skillsAt(", "openAt(", "hideEvents", "callVis(", "scrub("];

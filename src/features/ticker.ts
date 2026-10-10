@@ -68,7 +68,7 @@ H.headerFlex.push((w) => {
   if (!built) build();
   slot = w;
   if (w <= 0) return "";
-  if (!ch.length) return fitStyled(fg(C.dim) + "no live agents", w);
+  if (!ch.length) return w >= 14 ? fg(C.dim) + "no live agents" + RST : ""; // whole or not at all: the stats say "● 0 live" too
   if (content <= w) return fitStyled(cells(0, content), content);
   // marquee window [off, off + w) over the looping text
   const len = ch.length;

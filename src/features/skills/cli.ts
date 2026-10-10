@@ -201,7 +201,7 @@ export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: M
 }
 // --name: a skill as shown (a fake under --redact matches; its real name only where it is shown as is)
 function named(o: Opts, shown: string): boolean { return !o.name || shown === o.name; }
-function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
+function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, pair: a.pair || null, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
 export function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50 < 0 ? null : r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
 
 function table(o: Opts, set: Set0): void {

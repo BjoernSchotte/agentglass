@@ -13,7 +13,8 @@ import { skillVis } from "./vis.ts";
 import { LISTING, SKILL_BPT, CLAUDE_BPT, GEMINI_BPT } from "../usage/skillrec.ts";
 
 // severity = $ at stake per 30 days (for ordering); sessions = up to 10 session ids the evidence comes from
-export interface Advice { id: string; skill: string; severity: number; evidence: string[]; suggestion: string; sessions: string[] }
+// pair = the other skill of a pair (A8), as shown; "" for advice about one skill
+export interface Advice { id: string; skill: string; pair: string; severity: number; evidence: string[]; suggestion: string; sessions: string[] }
 interface Ver { h: string; t: number; ls: LoadRow[] }
 interface VerStat { ps: number; size: number; tail: number; err: number; cov: number; n: number } // err -1 = no call rows; cov of n sessions have call rows kept
 // phase B: A7 idleShare of ≥ idleLoads judged model loads; A8 Jaccard ≥ overlap over ≥ overlapTurns shared loading turns;
@@ -78,14 +79,14 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
     const share = r.usd > 0 ? r.tailUsd / r.usd : 0;
     if (r.sizeP50 >= cfg.minSizeTok && share >= cfg.tailShare && r.sessions >= cfg.minSessions) {
       const user = r.loadsUser > r.loadsModel;
-      out.push({ id: "A1", skill: r.name, severity: r.tailUsd * per30,
+      out.push({ id: "A1", skill: r.name, pair: "", severity: r.tailUsd * per30,
         evidence: ["tail carry " + usd(r.tailUsd) + " of " + usd(r.usd) + " (" + pct(share) + ") over " + String(r.sessions) + " sessions", "size " + tok(r.sizeP50) + " tok, carried " + tok(r.carry) + " tok after loading"],
         suggestion: "split SKILL.md: keep the decision part, move details to references/ read on demand" + (user ? "; or start a new session after the task it was loaded for" : ""), sessions: ids(ls) });
     }
     // A2 never auto-loaded
     const ul = ls.filter((l) => l.trig === "user");
     if (r.loadsUser >= cfg.minUserLoads && r.loadsModel === 0 && distinct(ul) >= cfg.minSessions) {
-      out.push({ id: "A2", skill: r.name, severity: r.usd * per30 * 0.1,
+      out.push({ id: "A2", skill: r.name, pair: "", severity: r.usd * per30 * 0.1,
         evidence: ["invoked by hand " + String(r.loadsUser) + "× in " + String(distinct(ul)) + " sessions, never loaded by the model"],
         suggestion: "add the phrasing you use to the description; or mark it manual-only (disable-model-invocation: true) to silence this", sessions: ids(ul) });
     }
@@ -97,7 +98,7 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
     }
     if (distinct(dup) >= cfg.reloadSessions) {
       let du = 0; for (const x of dup) du += x.usd;
-      out.push({ id: "A3", skill: r.name, severity: du * per30,
+      out.push({ id: "A3", skill: r.name, pair: "", severity: du * per30,
         evidence: ["loaded again while in context " + String(dup.length) + "× in " + String(distinct(dup)) + " sessions, the copies cost " + usd(du)],
         suggestion: "the model re-invoked a skill it already had: say so in the skill (\"already loaded? continue\"), or narrow its description", sessions: ids(dup) });
     }
@@ -105,7 +106,7 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
     const rel = ls.filter((l) => l.rel);
     if (rel.length >= cfg.compactLoads) {
       let lu = 0; for (const x of rel) lu += x.usd - x.carryUsd;
-      out.push({ id: "A4", skill: r.name, severity: lu * per30,
+      out.push({ id: "A4", skill: r.name, pair: "", severity: lu * per30,
         evidence: ["loaded again after a compaction " + String(rel.length) + "× (" + usd(lu) + " of loads)"],
         suggestion: "it is needed after compaction: make it shorter, or move the long-running part to a sub-agent", sessions: ids(rel) });
     }
@@ -127,7 +128,7 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
           return { ps: u / Math.max(1, distinct(v)), size: p50(sz), tail: u > 0 ? tl / u : 0, err: n > 0 ? er / n : -1, cov: kept.length, n: distinct(v) };
         };
         const x = st(a.ls); const y = st(b.ls);
-        out.push({ id: "A5", skill: r.name, severity: Math.abs(y.ps - x.ps) * distinct(b.ls) * per30,
+        out.push({ id: "A5", skill: r.name, pair: "", severity: Math.abs(y.ps - x.ps) * distinct(b.ls) * per30,
           evidence: ["version " + a.h.slice(0, 8) + " → " + b.h.slice(0, 8) + " (first seen " + new Date(b.t).toISOString().slice(0, 10) + ")",
             "sessions " + String(distinct(a.ls)) + " → " + String(distinct(b.ls)) + " · size " + tok(x.size) + " → " + tok(y.size) + " tok · $/session " + usd(x.ps) + " → " + usd(y.ps) + " · tail " + pct(x.tail) + " → " + pct(y.tail) + errText(x, y)],
           suggestion: (y.ps > x.ps ? "the new version costs more per session" : "the new version costs less per session") + ": compare the two periods (agentglass compare) before keeping it", sessions: ids(b.ls) });
@@ -147,7 +148,7 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
       judged++; if (c.n === 0) { idle++; iu += l.usd; idl.push(l); }
     }
     if (judged >= cfg.idleLoads && idle / judged >= cfg.idleShare) {
-      out.push({ id: "A7", skill: r.name, severity: iu * per30,
+      out.push({ id: "A7", skill: r.name, pair: "", severity: iu * per30,
         evidence: ["loaded by the model " + String(judged) + "×, then no tool call in that turn " + String(idle) + "× (" + pct(idle / judged) + "), " + usd(iu) + " for those loads"],
         suggestion: "narrow its description: the model pulls it in for requests it does not help with (a skill meant to answer without tools, e.g. one that asks questions: ignore this)", sessions: ids(idl) });
     }
@@ -169,7 +170,7 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
     const ux = usdOf.get(x) ?? 0; const uy = usdOf.get(y) ?? 0; const small = ux <= uy ? x : y; const big = small === x ? y : x;
     const vb = skillVis(big); if (vb.mode === "omit") continue; // the other one is hidden: its name may not appear
     const sess: string[] = []; for (const l of of.get(small) ?? []) if (sess.indexOf(l.sess) < 0 && sess.length < 10 && inTurn.has(big + "\t" + l.sess + "#" + String(l.turn))) sess.push(l.sess);
-    out.push({ id: "A8", skill: small, severity: Math.min(ux, uy) * jac * per30,
+    out.push({ id: "A8", skill: small, pair: vb.shown, severity: Math.min(ux, uy) * jac * per30,
       evidence: ["loaded together with " + vb.shown + " in " + String(both) + " turns (overlap " + pct(jac) + " of the turns either was loaded in)"],
       suggestion: "merge the two, or reference one from the other so only one is loaded", sessions: sess });
   }
@@ -181,13 +182,13 @@ export function advise(rows: SkillRow[], loads: LoadRow[], ctx: AdviseIn, inv: I
   const told = new Set<string>();
   for (const [n, s] of ctx.listed) {
     if (loaded.has(n)) continue; told.add(n);
-    out.push({ id: "A6", skill: n, severity: each * per30, evidence: ["in the skill listing of " + String(s) + " sessions, never loaded in " + String(ctx.days) + " days; its share of the listing ≈ " + usd(each)],
+    out.push({ id: "A6", skill: n, pair: "", severity: each * per30, evidence: ["in the skill listing of " + String(s) + " sessions, never loaded in " + String(ctx.days) + " days; its share of the listing ≈ " + usd(each)],
       suggestion: "uninstall or disable it: its description rides along on every request (in subagents the listing is larger still)", sessions: [] });
   }
   for (const s of inv) {
     if (loaded.has(s.name) || told.has(s.name) || s.manual) continue; told.add(s.name);
     const t = Math.ceil(s.descBytes / (s.harness === "claude" ? CLAUDE_BPT : s.harness === "gemini" ? GEMINI_BPT : SKILL_BPT)); // the harness's current models' tokenizer
-    out.push({ id: "A6", skill: s.name, severity: 0, evidence: ["installed (" + s.harness + ", " + s.scope + "), never loaded in " + String(ctx.days) + " days; its description ≈ " + tok(t) + " tok per request, ≈ " + tok(t * ctx.requests) + " tok in the period"],
+    out.push({ id: "A6", skill: s.name, pair: "", severity: 0, evidence: ["installed (" + s.harness + ", " + s.scope + "), never loaded in " + String(ctx.days) + " days; its description ≈ " + tok(t) + " tok per request, ≈ " + tok(t * ctx.requests) + " tok in the period"],
       suggestion: "uninstall or disable it if you do not use it: its description rides along on every request", sessions: [] });
   }
   out.sort((x, y) => y.severity - x.severity || (x.id < y.id ? -1 : x.id > y.id ? 1 : x.skill < y.skill ? -1 : x.skill > y.skill ? 1 : 0));
@@ -204,7 +205,7 @@ export const ADVICE_IDS = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9",
 export const ADVICE_NAMES = ["carried too long", "never auto-loaded", "loaded twice in one context", "lost to compaction", "version changed", "listed, never loaded",
   "loaded, then nothing", "overlap", "outcome (correlation, not cause)", "versions differ across hosts"];
 export function adviceLines(a: Advice): string[] {
-  const out = [a.id + " " + (ADVICE_NAMES[ADVICE_IDS.indexOf(a.id)] ?? "") + " · " + a.skill + (a.severity > 0 ? " · " + usd(a.severity) + " / 30 days" : "")];
+  const out = [a.id + " " + (ADVICE_NAMES[ADVICE_IDS.indexOf(a.id)] ?? "") + " · " + a.skill + (a.pair ? " + " + a.pair : "") + (a.severity > 0 ? " · " + usd(a.severity) + " / 30 days" : "")];
   for (const e of a.evidence) out.push("   " + e);
   out.push("   → " + a.suggestion);
   return out;
@@ -248,7 +249,7 @@ export function adviseB(rows: SkillRow[], loads: LoadRow[], inp: OutcomeIn, host
     }
     if (rest.turns < cfg.outcomeTurns || (sk.tests + rest.tests === 0 && sk.n + rest.n === 0)) continue;
     const per = (x: Side): string => (x.commits / Math.max(1, x.turns)).toFixed(2);
-    out.push({ id: "A9", skill: r.name, severity: 0,
+    out.push({ id: "A9", skill: r.name, pair: "", severity: 0,
       evidence: ["turns that loaded it " + String(sk.turns) + " vs the same projects' other turns " + String(rest.turns) + " (correlation, not cause)",
         "test runs passed " + rate(sk.ok, sk.tests) + " vs " + rate(rest.ok, rest.tests) + " · commits per turn " + per(sk) + " vs " + per(rest) + " · call errors " + rate(sk.err, sk.n) + " vs " + rate(rest.err, rest.n)],
       suggestion: "informational: compare the two groups before changing the skill (agentglass compare)", sessions: ids(spans) });
@@ -267,7 +268,7 @@ export function adviseB(rows: SkillRow[], loads: LoadRow[], inp: OutcomeIn, host
     for (const x of hn) { const h = newest.get(name + "\t" + x); if (!h) continue; cur.push(h); if (hashes.indexOf(h.hash) < 0) hashes.push(h.hash); }
     if (hashes.length < 2 || cur.length < 2) continue;
     const ev: string[] = []; for (const h of cur) ev.push(h.host + ": " + h.hash.slice(0, 8) + " (last loaded " + new Date(h.at).toISOString().slice(0, 10) + ")");
-    out.push({ id: "A10", skill: name, severity: 0, evidence: [String(hashes.length) + " versions on " + String(cur.length) + " hosts in " + String(cfg.driftDays) + " days"].concat(ev),
+    out.push({ id: "A10", skill: name, pair: "", severity: 0, evidence: [String(hashes.length) + " versions on " + String(cur.length) + " hosts in " + String(cfg.driftDays) + " days"].concat(ev),
       suggestion: "align the versions (the same SKILL.md on every host), or the hosts' costs and advice are not comparable", sessions: [] });
   }
   out.sort((x, y) => y.severity - x.severity || (x.id < y.id ? -1 : x.id > y.id ? 1 : x.skill < y.skill ? -1 : x.skill > y.skill ? 1 : 0));

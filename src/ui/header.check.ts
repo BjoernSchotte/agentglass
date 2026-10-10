@@ -7,6 +7,7 @@ import { renderHeader, tabX0, tabX1 } from "./header.ts";
 import { sessions } from "../model/sessions.ts";
 import { cpuHist } from "../model/procs.ts";
 import { newSess } from "../model/types.ts";
+import "../features/ticker.ts"; // the flexible widget: what the live agents do, or "no live agents"
 
 let bad = 0;
 function ok(w: string, c: boolean, got: string): void { if (!c) { bad++; console.log("FAIL " + w + ": " + got); } }
@@ -61,6 +62,15 @@ for (const alarms of [false, true]) {
 }
 ok("badge, alarms, 80: the compact count", header(80).indexOf("●0") >= 0 && header(80).indexOf("live") < 0, header(80));
 ok("badge, alarms, 120: the long count", header(120).indexOf("● 0 live") >= 0, header(120));
+// no live agent: the ticker's "no live agents" shows whole or not at all (the stats say "● 0 live" anyway), never cut to
+// "no live a…" (--redact's badge left it 9–13 columns at 160)
+for (const badge of [false, true]) for (const alarms of [false, true]) {
+  H.headerWidgets.length = 0; H.headerBadge.length = 0;
+  if (alarms) H.headerWidgets.push((w: number) => "⚠ 3"); H.headerWidgets.push((w: number) => (w >= 14 ? "≈$101.08 today" : ""));
+  if (badge) H.headerBadge.push(() => " REDACTED ");
+  for (let W = 60; W <= 220; W++) { const h = header(W); ok("no live agents whole or gone at " + String(W) + (badge ? ", badge" : "") + (alarms ? ", alarms" : ""), h.indexOf("no live") < 0 || h.indexOf("no live agents") >= 0, h); }
+}
+H.headerWidgets.length = 0; H.headerBadge.length = 0;
 // no jump or flicker: the stats keep their step while a count gains a digit (9 → 10 live) or cpu moves (9.9% → 10.1%)
 function shape(h: string): string { return (h.indexOf("live") >= 0 ? "L" : h.indexOf("●") >= 0 ? "l" : "-") + (h.indexOf("busy") >= 0 ? "B" : "-") + (h.indexOf("cpu") >= 0 ? "C" : "-") + (h.indexOf("Processes") >= 0 ? "T" : "t") + (h.indexOf("today") >= 0 ? "$" : "-"); }
 for (let i = 0; i < 10; i++) { const s = newSess("claude", "j" + String(i), "/j/" + String(i) + ".jsonl", false); s.pid = 1000 + i; sessions.set(s.path, s); }

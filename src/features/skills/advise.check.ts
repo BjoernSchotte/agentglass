@@ -114,6 +114,11 @@ ok("config", pc.cfg.minSizeTok === 500 && pc.cfg.tailShare === 0.6 && pc.cfg.min
   const a8 = advise([row("tdd", { m: 6, s: 6, usd: 3 }), row("tests", { m: 6, s: 6, usd: 1 }), row("lint", { m: 6, s: 6 }), row("fmt", { m: 6, s: 6 })], l8, ctx, [], C, none).filter((a: Advice) => a.id === "A8");
   ok("A8 fires on the cheaper of the pair", ids(a8) === "A8:tests", ids(a8));
   ok("A8 evidence names the other", a8.length === 1 && ((a8[0] as Advice).evidence[0] ?? "") === "loaded together with tdd in 5 turns (overlap 71 % of the turns either was loaded in)", a8.length ? (a8[0] as Advice).evidence[0] ?? "" : "");
+  ok("A8 headline names both skills", a8.length === 1 && (adviceLines(a8[0] as Advice)[0] ?? "").indexOf(" · tests + tdd") > 0, a8.length ? adviceLines(a8[0] as Advice)[0] ?? "" : "");
+  setVis(parseHide([{ match: "tdd", mode: "name" }]).rules, false);
+  const a8n = advise([row("tdd", { m: 6, s: 6, usd: 3 }), row("tests", { m: 6, s: 6, usd: 1 })], l8, ctx, [], C, none).filter((a: Advice) => a.id === "A8");
+  const h8 = a8n.length ? adviceLines(a8n[0] as Advice)[0] ?? "" : "";
+  ok("A8 headline: a hidden partner by its fake", h8.indexOf(" · tests + ") > 0 && h8.indexOf("tdd") < 0, h8);
   setVis(parseHide([{ match: "tdd", mode: "omit" }]).rules, false);
   ok("A8: a hidden partner is not named", advise([row("tdd", { m: 6, s: 6, usd: 3 }), row("tests", { m: 6, s: 6, usd: 1 })], l8, ctx, [], C, none).filter((a: Advice) => a.id === "A8").length === 0, "");
   setVis([], false);
