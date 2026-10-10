@@ -146,6 +146,7 @@ team activity [--team <t>] [--room <r>] [--since 7d]   joins, leaves, renames, s
 team leave [--team <t>] [--keep]       leave; by default asks every peer to delete what it holds of me
 team sync [--every 1m..24h]            one publish + fetch, or a loop (servers without a TUI)
 team service [--write]                 the systemd --user unit / launchd agent for `team sync --every 5m`
+team server init [--dir <path>]        writes the team server's compose.yaml, Caddyfile and .env template (OIDC placeholders); nothing else
 team doctor                            mailbox, permissions, keys, clock, peers, crypto self-test, sync-tool conflicts
 ```
 The `--team` default is the only team; with several teams, commands that need one name the choices in the error.
@@ -464,7 +465,11 @@ manager, a wall screen) and one relay that is always reachable. The **per-develo
   server, caches) and a `tmpfs` `/tmp`, all capabilities dropped, `no-new-privileges`, seccomp `RuntimeDefault`;
   `HEALTHCHECK` in exec form (`agentglass-web --healthcheck`); the binaries are the release binaries of the same
   version (copied, not rebuilt), verified against their checksums in the Dockerfile.
-- **docker compose** (S6, `deploy/compose/`): services `relay` and `web` (same image, shared volume), an optional
+- **`agentglass team server init [--dir ./agentglass-team-server]`** writes `compose.yaml` (pinned image digest of
+  this agentglass version), `Caddyfile`, `.env.example` with OIDC/oauth2-proxy placeholders and a README into the
+  directory (refuses to overwrite existing files without `--force`); it starts nothing, pulls nothing, contacts no
+  one. `docker compose up -d` starts the server; the README lists the join step for the server device.
+- **docker compose** (S6, `deploy/compose/`, the templates `team server init` writes): services `relay` and `web` (same image, shared volume), an optional
   `caddy` (automatic TLS, `forward_auth` to an `oauth2-proxy` service for identity — the trusted-proxy auth mode of
   4b) and an `.env.example`; `docker compose up` gives HTTPS with Let's Encrypt or a tailnet certificate.
 - **Helm chart** (S7, `deploy/helm/agentglass-team-server/`, published as an OCI chart on GHCR): one Deployment
@@ -794,6 +799,12 @@ Each: question · options · decision · why · cost if wrong.
     - Why: relay and web share file-based state on one volume with one writer; scaling out needs object storage and
       locking, not justified for teams of ≤ 64 devices (Decision 20).
     - Cost if wrong: a pod restart is a short outage; members keep working locally and catch up through their chains.
+31. **`team server init` writes files only.**
+    - Options: (a) write compose + Caddyfile + `.env` template; (b) also run `docker compose up`; (c) only document.
+    - **Decision: (a)** (lead decision 2026-10-10).
+    - Why: one command to a correct, pinned setup; starting containers and pulling images is the operator's step to
+      review (ports, domains, secrets). Local agentglass stays native (local-web-api Decisions 15, 18).
+    - Cost if wrong: one extra command (`docker compose up -d`).
 
 ## Open questions (technical verification during implementation)
 1. Monocypher on macOS arm64/x64 with `--backend c` and the libproc manifest in one build (Linux measured; macOS

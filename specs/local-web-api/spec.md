@@ -84,8 +84,9 @@ browser ⇄ (http://127.0.0.1:<port>, cookie)  agentglass-web  (Bun binary: stat
                                                    privacy, subscriptions, commands; same caches as the TUI)
 ```
 - `agentglass web [--port N] [--no-open] [--allow-commands] [--redact]`: finds `agentglass-web` next to its own
-  binary, then on `PATH`; missing → exit 2 with the install line for this platform (`brew install
-  bjoernschotte/tap/agentglass-web`, or `install.sh --web`). Starts it (detached, logs to `~/.agentglass/logs/
+  binary, then on `PATH` (an npm global install puts it there); missing → exit 2 printing the exact install commands
+  for this platform (`brew install bjoernschotte/tap/agentglass-web`, `npm i -g agentglass-web` / `npx
+  agentglass-web`, `curl … install.sh | sh -s -- --web`) — it never downloads anything by itself. Starts it (detached, logs to `~/.agentglass/logs/
   web.log` 0600), passes its own path; `agentglass-web` starts the serve child. A running instance (lock
   `run/web.lock` with port and pid) is reused: `agentglass web` only mints a new one-time link (section 4).
 - The serve child is a headless agentglass: discovery, ledger, watch cadence, fleet/team feeds — the TUI's engine
@@ -350,9 +351,19 @@ subset to Latin + Latin-1 Supplement + punctuation/arrows used by the TUI, weigh
   darwin-x64 (`bun-darwin-x64-baseline`, older CPUs) and darwin-arm64 (measured: all four build from one host), a
   smoke run of the linux-x64 binary, archives `agentglass-web-<target>.tar.gz`, checksums, build-provenance
   attestations like the main archives; macOS signing as the main binary gets (if any).
-- **Install**: tap formula `agentglass-web` (depends on `agentglass`), its `test do` runs `agentglass-web --version`
-  and a loopback start/stop; the formula-proof workflow covers it. `install.sh --web` downloads it next to
-  `agentglass`.
+- **Install channels** (all deliver the native binary; Decision 18):
+  - Homebrew: tap formula `agentglass-web` (depends on `agentglass`); `test do` runs `agentglass-web --version` and a
+    loopback start/stop; the formula-proof workflow covers it.
+  - npm: `npx agentglass-web`, `bunx agentglass-web`, `npm i -g agentglass-web`. The package `agentglass-web` holds a
+    tiny JS launcher (`bin`) and `optionalDependencies` on four platform packages (`agentglass-web-linux-x64`,
+    `-linux-arm64`, `-darwin-arm64`, `-darwin-x64-baseline`), each with `os`/`cpu` fields and the Bun-compiled
+    binary — the esbuild/biome pattern. No `postinstall` or other lifecycle script; the launcher resolves the
+    platform package with `require.resolve` and `exec`s the binary (with a clear error naming the missing platform
+    package when `--omit=optional` was used). Published from the release workflow with npm trusted publishing (OIDC,
+    no token) and `--provenance`; versions equal the agentglass release. The package needs `agentglass` itself:
+    started without it on `PATH` (and without `--agentglass`), it prints the install commands for agentglass.
+  - `install.sh --web`: downloads the release archive next to `agentglass` and verifies its checksum.
+  - Not Docker for local use (Decision 15).
 - **Dependabot**: npm ecosystem on the root with groups `react` (react, react-dom, @types/react*), `ui` (@radix-ui/*,
   tailwindcss, lucide-react, cmdk, class-variance-authority, tailwind-merge), `build` (vite, typescript, vitest,
   @vitejs/*, playwright), `viz` (uplot, echarts, sigma, graphology*, @xyflow/react, dagre, @tanstack/react-table,
@@ -537,6 +548,15 @@ Each: question · options · decision · why · cost if wrong.
 17. **Auth on the server: trusted proxy first (S6), built-in OIDC later (S7).** Why: oauth2-proxy + Caddy is a solved,
     audited path for small teams; built-in OIDC removes a moving part for enterprises once the server has run in the
     field. Cost if wrong: one extra container in compose until S7.
+18. **Install channels for `agentglass-web`** (user idea, lead decision 2026-10-10). Options: Homebrew only; +
+    `install.sh`; + an npm package (per-platform `optionalDependencies`); + a local container. **Decision: Homebrew,
+    npm (`npx`/`bunx`/`npm i -g`) and `install.sh --web`, all native; `agentglass web` never downloads by itself.**
+    Why: web developers reach for `npx`; the optionalDependencies pattern installs only the matching binary without
+    install scripts (no code runs at install), and provenance links each package to the release workflow; native,
+    not a container, for the reasons of Decision 15; self-download would be an unreviewed network fetch of an
+    executable. Cost if wrong: one more registry and release step (five npm packages per release, trusted-publisher
+    setup on npmjs.com, name squatting to watch); an `--omit=optional` install yields a launcher without a binary —
+    the launcher names the fix.
 
 ## Open questions (technical verification during implementation)
 1. Bun's `bun-linux-x64-baseline` binary on debian:12 glibc 2.36 and on an older CPU without AVX2 (CI runner with
