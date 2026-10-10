@@ -6,17 +6,18 @@ import { S, say, type TV, type Mode } from "../../state.ts";
 import { remoteOnly } from "../../model/remote.ts";
 import { H } from "../../hooks.ts";
 import { harnessOf, sourceOf, window, parseEvents, epochOf } from "../../harness/index.ts";
+import { FILE_SOURCE } from "../../harness/source.ts";
 import { titleOf, subActive, current } from "../../model/sessions.ts";
 import { openDetail } from "../../ui/detail.ts";
 import { C, CSI, RST, fg, bg } from "../../ui/theme.ts";
 import { put, box, spin } from "../../ui/screen.ts";
-import { type Graph, type Agg, type Summary, type Src, type Span, type Band, K_TURN, K_AGENT, CATS, SORTS, HIDDEN_ROW, SKILL_ROW, buildGraph, aggregate, sortAggs, summary, dur, skillLanes, skillAgg } from "./model.ts";
+import { type Graph, type Agg, type Summary, type Src, type Span, type Band, K_TURN, K_AGENT, CATS, SORTS, HIDDEN_ROW, SKILL_ROW, buildGraph, aggregate, sortAggs, summary, dur, skillLanes, skillAgg, laneCap, lean } from "./model.ts";
 import { type Mark, marksOf } from "../../model/marks.ts";
 import { loadOf } from "../skills/marks.ts";
 import { openSkillView } from "../skills/view.ts";
-import { kindIds, kindSet, kindsIn } from "../../model/kinds.ts";
+import { kindIds, kindSet, kindsIn, forgetKinds } from "../../model/kinds.ts";
 import { famOf } from "../../model/marks.ts";
-import { mask as vfMask, test as vfTest, active as vfActive, fstate, filterKey, barOpen, chipBar, setCount, emptyText as vfEmpty } from "../../ui/evfilter.ts";
+import { mask as vfMask, test as vfTest, active as vfActive, fstate, filterKey, barOpen, chipBar, setCount, emptyText as vfEmpty, forgetMasks } from "../../ui/evfilter.ts";
 
 const VIEW = "callgraph";
 
@@ -27,42 +28,86 @@ const INK = "16;16;20"; // label text on a colored bar
 const B = CSI + "1m";
 const empty: Graph = { spans: [], rows: [], t0: 0, t1: 1, noTiming: false };
 const G = {
-  root: null as Sess | null, tvs: [] as TV[], spawn: [] as string[], nsubs: 0, tick: 0,
+  root: null as Sess | null, tvs: [] as TV[], from: [] as number[], full: null as TV | null, spawn: [] as string[], nsubs: 0, tick: 0, gen: 0, // from: each TV's first byte
   g: empty, aggs: [] as Agg[], sum: { wall: 0, active: 0, turns: 0, tools: 0, agents: 0, longest: -1 } as Summary,
   tab: 0, v0: 0, vw: 1, fitted: true, sel: -1, rtop: 0, aggKey: "",
   backMode: "list" as Mode, backTv: null as TV | null, inDetail: false,
   tsort: 0, tsel: 0, ttop: 0, topen: new Set<string>(), flat: [] as Agg[], lvl: [] as number[],
   hitY: [] as number[], hitX0: [] as number[], hitX1: [] as number[], hitI: [] as number[],
-  sk: [] as Band[][], skMore: 0, skMarks: [] as Mark[], skY: [] as number[], skX0: [] as number[], skX1: [] as number[], skRef: [] as string[], // skill lanes, their hit boxes
+  sk: [] as Band[][], skMore: 0, skMax: -1, skMarks: [] as Mark[], skY: [] as number[], skX0: [] as number[], skX1: [] as number[], skRef: [] as string[], // skill lanes, their hit boxes
 };
-const SK_LANES = 3;
+const SK_LANES = 3; // skill lanes at least; more while the chart leaves rows free below (laneCap)
 
-// ── loading: the same bounded tail the transcript reads (last 6 MB), one TV per session so ↵ can drill into it ──
-function loadTV(s: Sess): TV {
+// ── loading: the same bounded tail the transcript reads (last 6 MB), one TV per session. The graph keeps lean events
+// (model.ts lean(): a 27 MB session with 175 subagents held 1.4 GB as parsed); ↵ and r read that one session in full
+// from the same offsets (fullTV), so event indices match ──
+function newTV(s: Sess, evs: Ev[], off: number): TV {
+  return { s, evs, off, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1, items: [], xr: [], fk: "" };
+}
+// s's events from cursor a to z (each line's hooks applied as parseEvents does), lean or as parsed, into out; the next
+// cursor. Lean: a file in 256 KB steps (a longer line: a larger one) — what a step parses is freed before the next, so
+// the events kept do not pin the pages of a whole 6 MB parse (glibc keeps them: 144 MB → 50 MB on 175 subagents)
+function readEvs(s: Sess, a: number, z: number, slim: boolean, out: Ev[]): number {
+  const src = sourceOf(s.h); const base = slim && src === FILE_SOURCE ? 262144 : Math.max(1, z - a);
+  let at = a; let step = base;
+  while (at < z) {
+    const r = src.lines(s, at, Math.min(z, at + step));
+    if (r.next <= at) { if (at + step >= z) break; step = step * 2; continue; } // no whole line in the step
+    step = base;
+    const evs: Ev[] = slim ? [] : out;
+    for (const l of r.lines) parseEvents(s.h, l, evs, s);
+    if (slim) for (const e of evs) out.push(lean(e, out.length ? out[out.length - 1] : null));
+    at = r.next;
+  }
+  return at;
+}
+function loadTV(s: Sess, k: number): TV {
   const src = sourceOf(s.h);
   const st = src.stat(s);
   const size = st ? st.size : s.size; // else gone
-  const r = src.lines(s, src.align(s, Math.max(0, size - window(src, 6291456))), size);
+  const a = src.align(s, Math.max(0, size - window(src, 6291456)));
   const evs: Ev[] = [];
-  for (const l of r.lines) parseEvents(s.h, l, evs, s);
-  return { s, evs, off: r.next, ep: epochOf(s), scroll: 0, follow: false, expand: false, lines: [], lw: 0, ln: -1, lexp: false, cur: -1, lineEv: [], lineStart: [], focusKind: "", focusTs: "", focusText: "", limit: -1, from: -1, items: [], xr: [], fk: "" };
+  const tv = newTV(s, evs, readEvs(s, a, size, true, evs));
+  while (G.from.length <= k) G.from.push(0);
+  G.from[k] = a;
+  return tv;
 }
 // the parent's tool call that spawned subagent s, if the harness records it
 function spawnOf(s: Sess): string { const f = harnessOf(s.h).spawnOf; return f ? f(s) : ""; }
-function load(s: Sess): void {
-  G.root = s; G.tvs = [loadTV(s)]; G.spawn = [""];
-  for (const c of s.subs) { G.tvs.push(loadTV(c)); G.spawn.push(spawnOf(c)); }
+// fresh: read every session; else keep the sessions already read (a new subagent reads only itself)
+function load(s: Sess, fresh: boolean): void {
+  const old = new Map<string, number>();
+  if (!fresh && G.root === s) for (let k = 0; k < G.tvs.length; k++) old.set(G.tvs[k].s.path, k);
+  const tvs = G.tvs; const from = G.from;
+  G.root = s; G.tvs = []; G.from = []; G.spawn = []; G.full = null;
+  const all = [s]; for (const c of s.subs) all.push(c);
+  for (let k = 0; k < all.length; k++) {
+    const x = all[k]; const j = old.get(x.path) ?? -1;
+    if (j >= 0) { G.tvs.push(tvs[j]); while (G.from.length <= k) G.from.push(0); G.from[k] = numAt(from, j, 0); }
+    else G.tvs.push(loadTV(x, k));
+    G.spawn.push(k ? spawnOf(x) : "");
+  }
   G.nsubs = s.subs.length;
+}
+// ↵ and r: session k with its events as parsed (the same bytes as its lean ones); one kept at a time while the graph is open
+function fullTV(k: number): TV | null {
+  const t = tvAt(k); if (!t) return null;
+  const f = G.full;
+  if (f && f.s === t.s && f.off === t.off) return f;
+  const evs: Ev[] = [];
+  const tv = newTV(t.s, evs, readEvs(t.s, numAt(G.from, k, 0), t.off, false, evs));
+  G.full = tv;
+  return tv;
 }
 function spanAt(i: number): Span | null { return i >= 0 && i < G.g.spans.length ? G.g.spans[i] : null; }
 // ── the event-kind filter (ui/evfilter.ts, view "callgraph"): hidden tool and subagent spans are not drawn; their time
 // stays empty with a dim ┄n tick per lane, the axis and the turns stay; the tree folds them into one ┄ n hidden row ──
 const HID = { key: "", hide: [] as boolean[], shown: 0, total: 0 };
-function hidden(i: number): boolean { syncHidden(); return i >= 0 && i < HID.hide.length && HID.hide[i] === true; }
+// hidden(i) reads the last syncHidden(): every entry point (frame, key, the chip bar's count) syncs once, not per span
+function hidden(i: number): boolean { return i >= 0 && i < HID.hide.length && HID.hide[i] === true; }
 function syncHidden(): void {
   const on = vfActive(VIEW);
-  let k = on ? fstate(VIEW) + "|" + String(G.g.spans.length) : "";
-  if (on) for (const t of G.tvs) k += "|" + String(t.evs.length);
+  const k = on ? fstate(VIEW) + "|" + String(G.gen) : ""; // gen: the spans and events changed (rebuild)
   if (k === HID.key && HID.hide.length === G.g.spans.length) return;
   HID.key = k; HID.hide = []; HID.shown = 0; HID.total = 0;
   const ms: Uint8Array[] = []; for (const t of G.tvs) ms.push(on ? vfMask(VIEW, t.s, t.evs) : new Uint8Array(0));
@@ -86,14 +131,18 @@ function spanKinds(sp: Span): string[] {
   const t = tvAt(sp.src); if (!t || sp.ev < 0 || sp.ev >= t.evs.length) return [];
   return kindSet(kindIds(t.s, t.evs)[sp.ev] + 0);
 }
-// the kinds of every loaded event (the chip bar)
+// the kinds of every loaded event (the chip bar), once per rebuild: kinds.ts keeps memos for a few arrays, not 176
+const GK = { key: "", m: new Map<string, number>() };
 function graphKinds(): Map<string, number> {
+  const key = String(G.gen); if (GK.key === key) return GK.m;
   const m = new Map<string, number>();
   for (const t of G.tvs) for (const [k, n] of kindsIn(t.s, t.evs)) m.set(k, (m.get(k) ?? 0) + n);
+  GK.key = key; GK.m = m;
   return m;
 }
 // ] [ with a filter: the next / previous shown span in time (any lane)
 function nextShown(d: number): number {
+  syncHidden();
   const cur = spanAt(G.sel); const t0 = cur ? cur.t0 : d > 0 ? -Infinity : Infinity;
   let best = -1; let bt = 0;
   for (let i = 0; i < G.g.spans.length; i++) {
@@ -109,8 +158,8 @@ function rebuild(): void {
   const old = spanAt(G.sel);
   const srcs: Src[] = [];
   for (let k = 0; k < G.tvs.length; k++) { const t = G.tvs[k]; srcs.push({ evs: t.evs, live: subActive(t.s), kind: t.s.kind, spawn: G.spawn[k] ?? "" }); }
-  G.g = buildGraph(srcs, Date.now()); HID.key = "-";
-  const r = G.root; G.skMarks = r ? marksOf(r, ["skill:load"]) : []; const sl = skillLanes(G.skMarks, G.g.t1, SK_LANES); G.sk = sl.lanes; G.skMore = sl.more;
+  G.g = buildGraph(srcs, Date.now()); G.gen++; HID.key = "-";
+  const r = G.root; G.skMarks = r ? marksOf(r, ["skill:load"]) : []; G.skMax = -1; layLanes();
   aggs();
   G.sum = summary(G.g);
   G.sel = -1;
@@ -136,24 +185,34 @@ function aggs(): void {
 // the selected span's session, its events and the event index (related events' r); null = nothing selected
 export function graphAnchor(): { s: Sess; evs: Ev[]; i: number } | null {
   const sp = spanAt(G.sel); if (!sp || sp.ev < 0) return null;
-  const t = tvAt(sp.src); return t && sp.ev < t.evs.length ? { s: t.s, evs: t.evs, i: sp.ev } : null;
+  const t = fullTV(sp.src); return t && sp.ev < t.evs.length ? { s: t.s, evs: t.evs, i: sp.ev } : null;
 }
 // checks: the selection, the spans, the last frame's hit boxes (span → first column) and the tree's rows
 export function cgState(): { sel: number; spans: Span[]; hitI: number[]; hitX0: number[]; hitY: number[]; tree: string[] } {
   const tree: string[] = []; for (const a of G.aggs) tree.push(a.name + " " + String(a.count));
   return { sel: G.sel, spans: G.g.spans, hitI: G.hitI.slice(), hitX0: G.hitX0.slice(), hitY: G.hitY.slice(), tree };
 }
+export function cgSelect(i: number): void { if (spanAt(i)) { G.sel = i; G.tab = 0; reveal(); } }
 // the call graph of a session (the c key; repo-view's project detail); esc returns to where it was opened
 export function openGraph(s: Sess): void { open(s); }
 function open(s: Sess): void {
-  load(s);
+  release();
+  load(s, true);
   G.backMode = S.mode; G.backTv = S.tv; G.inDetail = false;
   G.sel = -1; G.fitted = true; G.rtop = 0; G.tsel = 0; G.ttop = 0; G.topen.clear();
   rebuild();
   S.fview = NAME; S.mode = "view";
   if (!G.g.spans.length) say("info", "no turns or tool calls in this session yet");
 }
-function back(): void { S.mode = G.backMode; S.tv = G.backTv; G.root = null; G.tvs = []; G.g = empty; }
+function back(): void { S.mode = G.backMode; S.tv = G.backTv; release(); }
+// closing (or opening another session) lets go of everything the graph read or derived: events, spans, their memos
+function release(): void {
+  const f = G.full; const ts = G.tvs.slice(); if (f) ts.push(f);
+  for (const t of ts) { forgetKinds(t.evs); forgetMasks(t.evs); }
+  G.root = null; G.tvs = []; G.from = []; G.full = null; G.spawn = []; G.g = empty; G.aggs = []; G.flat = []; G.lvl = [];
+  G.sk = []; G.skMarks = []; G.hitY = []; G.hitX0 = []; G.hitX1 = []; G.hitI = []; G.skY = []; G.skX0 = []; G.skX1 = []; G.skRef = [];
+  HID.key = ""; HID.hide = []; GK.key = ""; GK.m = new Map<string, number>();
+}
 function live(): boolean { for (const t of G.tvs) if (subActive(t.s)) return true; return false; }
 // every 2s: tail new lines (and newly spawned subagents) into the open graph
 function refresh(): void {
@@ -161,16 +220,14 @@ function refresh(): void {
   if (!r || S.mode !== "view" || S.fview !== NAME) return;
   G.tick++;
   if (G.tick % 4) return;
-  if (r.subs.length !== G.nsubs) { load(r); rebuild(); return; }
-  for (const t of G.tvs) if (epochOf(t.s) !== t.ep) { load(r); rebuild(); return; } // a source switched transport: start over
+  if (r.subs.length !== G.nsubs) { load(r, false); rebuild(); return; } // a new subagent: read only it
+  for (const t of G.tvs) if (epochOf(t.s) !== t.ep) { load(r, true); rebuild(); return; } // a source switched transport: start over
   let grew = false;
   for (const t of G.tvs) {
     const src = sourceOf(t.s.h);
     const st = src.stat(t.s);
     if (!st || st.size <= t.off) continue;
-    const rl = src.lines(t.s, t.off, Math.min(st.size, t.off + window(src, 16777216)));
-    for (const l of rl.lines) parseEvents(t.s.h, l, t.evs, t.s);
-    t.off = rl.next; grew = true;
+    t.off = readEvs(t.s, t.off, Math.min(st.size, t.off + window(src, 16777216)), true, t.evs); grew = true;
   }
   if (grew || live()) rebuild();
 }
@@ -213,8 +270,8 @@ function step(d: number): void {
 function drill(i: number): void {
   const s = spanAt(i);
   if (!s || s.ev < 0) return;
-  const tv = tvAt(s.src);
-  if (!tv) return;
+  const tv = fullTV(s.src);
+  if (!tv || s.ev >= tv.evs.length) return;
   S.tv = tv; tv.cur = s.ev; tv.follow = false;
   G.inDetail = true;
   openDetail(s.ev);
@@ -388,8 +445,15 @@ function skillAt(ref: string): void {
   const r = G.root; if (!r) return;
   for (const m of G.skMarks) if (m.ref === ref) { const x = loadOf(r, m); if (x) openSkillView(r, x); return; }
 }
+// the skill lanes for the chart's height: the rows the spans leave free (≥ SK_LANES), so "+n" folds only what cannot show
+function layLanes(): void {
+  const max = laneCap(Math.max(1, S.H - 9), G.g.rows.length, SK_LANES);
+  if (max === G.skMax) return;
+  const sl = skillLanes(G.skMarks, G.g.t1, max); G.sk = sl.lanes; G.skMore = sl.more; G.skMax = max;
+}
 function renderFlame(): void {
   const Ht = S.H; const y0 = 5; const rh = Math.max(1, Ht - 9);
+  layLanes();
   G.hitY.length = 0; G.hitX0.length = 0; G.hitX1.length = 0; G.hitI.length = 0;
   G.skY.length = 0; G.skX0.length = 0; G.skX1.length = 0; G.skRef.length = 0;
   const grid = ruler(4);
@@ -493,11 +557,12 @@ H.keys.push((mode: string, k: string): boolean => {
     return true;
   }
   if (mode !== "view" || S.fview !== NAME) return false;
+  syncHidden();
   if (k === "?" || k === "r") return false; // r: related events around the selected span (features/related)
   if ((k === "]" || k === "[") && !vfActive(VIEW) && G.tab === 0) { step(k === "]" ? 1 : -1); return true; } // no filter: the span beside it on the row
   const sel = spanAt(G.sel);
   const fk = filterKey(VIEW, k, graphKinds, sel ? spanKinds(sel) : [], nextShown);
-  if (fk >= -1) { if (fk >= 0) { G.sel = fk; G.tab = 0; reveal(); } else if (spanAt(G.sel) && hidden(G.sel)) { const nx = nextShown(1); G.sel = nx >= 0 ? nx : nextShown(-1); } return true; }
+  if (fk >= -1) { syncHidden(); if (fk >= 0) { G.sel = fk; G.tab = 0; reveal(); } else if (spanAt(G.sel) && hidden(G.sel)) { const nx = nextShown(1); G.sel = nx >= 0 ? nx : nextShown(-1); } return true; }
   if (k === "esc" || k === "q" || k === "backspace") { back(); return true; }
   if (k === "tab") { G.tab = 1 - G.tab; return true; }
   if (G.tab === 1) {
