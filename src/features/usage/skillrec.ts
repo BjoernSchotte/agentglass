@@ -22,7 +22,8 @@ export interface SkLoad {
   h1: number; h2: number; pg: number; cid: string; // cid = the tool call that loaded it (Skill, activate_skill, skill, a SKILL.md read), "" none
 }
 // a SKILL.md read waiting for its output (by call id, not persisted): the path, the call line's place in the log, its turn
-export interface SkRead { path: string; off: number; tu: number }
+export interface SkRead { path: string; off: number; tu: number; ps: string[] } // ps = more SKILL.md paths of one command (cat a b), in output order
+export const NO_PS: string[] = []; // SkRead.ps of a read of one file: shared, never written
 
 // UTF-8 bytes per token of a skill text (spec Decision 2, Open question 8), per tokenizer family. Measured 2026-10-09 on five
 // public SKILL.md texts (5.6–18.7 KB of markdown with code and JSON): a request's context with the text minus one without.
@@ -146,8 +147,11 @@ function words(seg: string): string[] {
 }
 // the SKILL.md path a shell command line reads: a reading program (after cd …&&, sudo, rtk, env assignments; never after a
 // pipe; rtk proxy too) with a path argument skillPath() names; "" for anything else (ls, find, wc, an editor)
-export function skillReadCmd(cmd: string): string {
-  if (cmd.indexOf("SKILL.md") < 0) return "";
+export function skillReadCmd(cmd: string): string { return skillReadCmds(cmd)[0] ?? ""; }
+// every SKILL.md path the command line reads, in output order (cat a/SKILL.md b/SKILL.md, cat a && cat b), each once
+export function skillReadCmds(cmd: string): string[] {
+  const out: string[] = [];
+  if (cmd.indexOf("SKILL.md") < 0) return out;
   for (const line of cmd.split("\n")) {
     for (const part of line.split(/&&|\|\||;/)) {
       const seg = part.split("|")[0] ?? ""; // a pipe's later stages read their stdin
@@ -157,10 +161,51 @@ export function skillReadCmd(cmd: string): string {
       const prog = w[i] ?? ""; const base = prog.slice(prog.lastIndexOf("/") + 1);
       const rtkRead = i > 0 && w[i - 1] === "rtk" && base === "read";
       if (READERS.indexOf(base) < 0 && !rtkRead) continue;
-      for (let j = i + 1; j < w.length; j++) { const a = w[j] ?? ""; if (!a.startsWith("-") && a.endsWith("SKILL.md") && skillPath(a)) return a; }
+      for (let j = i + 1; j < w.length; j++) { const a = w[j] ?? ""; if (!a.startsWith("-") && a.endsWith("SKILL.md") && skillPath(a) && out.indexOf(a) < 0) out.push(a); }
     }
   }
-  return "";
+  return out;
+}
+// where the text of skill nm starts in out at or after from: its front matter, a "---" line and then "key: value" lines
+// (indented ones continue a value) up to the closing "---", one of them "name: <nm>"; a head-style "==> path <==" line
+// right before it belongs to it; a "---" glued to the previous file's last line (no newline at its end) counts. -1 none
+function fmStart(out: string, nm: string, from: number): number {
+  const base = nm.slice(nm.lastIndexOf(":") + 1);
+  let p = from;
+  while (p < out.length) {
+    const i = out.indexOf("---", p); if (i < 0) return -1;
+    p = i + 3;
+    const e = out.indexOf("\n", i); if (e < 0) return -1;
+    if (out.slice(i, e).trim() !== "---") continue;
+    let hit = false; let q = e + 1;
+    for (let n = 0; n < 60 && q < out.length; n++) { // the front matter's lines
+      const z = out.indexOf("\n", q); const ln = out.slice(q, z < 0 ? out.length : z); q = z < 0 ? out.length : z + 1;
+      const t = ln.trim();
+      if (t === "---") break;
+      if (!/^[A-Za-z0-9_-]+:/.test(ln) && !/^[ \t]/.test(ln)) { hit = false; break; } // body text: not a front matter
+      if (t.startsWith("name:") && t.slice(5).trim().split("\"").join("").split("'").join("") === base) hit = true;
+    }
+    if (!hit) continue;
+    if (i > 0 && out.charAt(i - 1) !== "\n") return i;
+    const h = out.lastIndexOf("\n", i - 2); const prev = out.slice(h + 1, i - 1);
+    return prev.startsWith("==> ") && prev.trimEnd().endsWith(" <==") && h + 1 >= from ? h + 1 : i;
+  }
+  return -1;
+}
+// one command's output of several SKILL.md files, split per file (names in output order): exact at each file's front
+// matter; else in proportion to the sizes known (w: bytes of an earlier load of each, ≤ 0 unknown: all alike), est
+export function splitReads(out: string, names: string[], w: number[]): { parts: string[]; est: boolean } {
+  const parts: string[] = []; let cur = 0; let ok = true;
+  for (let k = 1; k < names.length && ok; k++) { const b = fmStart(out, names[k] ?? "", cur + 1); if (b < 0) ok = false; else { parts.push(out.slice(cur, b)); cur = b; } }
+  if (ok) { parts.push(out.slice(cur)); return { parts, est: false }; }
+  let all = true; let tot = 0; for (let k = 0; k < names.length; k++) { const x = w[k] ?? 0; if (x <= 0) all = false; tot += x; }
+  const out2: string[] = []; let at = 0; let acc = 0;
+  for (let k = 0; k < names.length; k++) {
+    acc += all ? w[k] ?? 0 : 1;
+    const e = k === names.length - 1 ? out.length : Math.round(out.length * acc / (all ? tot : names.length));
+    out2.push(out.slice(at, e)); at = e;
+  }
+  return { parts: out2, est: true };
 }
 
 // SkLoad.hb until a harness-priced request books into it (most loads are table-priced): shared, never written

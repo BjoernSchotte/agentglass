@@ -8,7 +8,7 @@ import { numAt } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { C, CSI, RST, fg, bg } from "../ui/theme.ts";
 import { type Acc, L, bucket, tool, pend, tokens, reasoning, turn, skill, isoMs, num, patchLines, stamp, skillLoad, skillUnload, skillListing, skillRead, skillReadDone } from "../features/usage/record.ts";
-import { skillReadCmd } from "../features/usage/skillrec.ts";
+import { skillReadCmds } from "../features/usage/skillrec.ts";
 import { MQ_TURN } from "../features/usage/facts.ts";
 import { type Pend, done, extend, normFull, argv, execCmds, exitCodes, codexFailed } from "../features/usage/calls.ts";
 import { isErr } from "../features/callgraph/model.ts";
@@ -235,7 +235,8 @@ function readOut(a: Acc, l: string, id: string): void {
   skillReadDone(a, bucket(a, 0, iso), id, 0, iso, t, cut);
 }
 function skillCalls(a: Acc, id: string, cmds: string[]): void {
-  for (const c of cmds) { const sp = skillReadCmd(c); if (sp) { skillRead(a, id, sp); return; } }
+  const ps: string[] = []; for (const c of cmds) for (const p of skillReadCmds(c)) if (ps.indexOf(p) < 0) ps.push(p);
+  if (ps.length) skillRead(a, id, ps[0] ?? "", ps.slice(1));
 }
 function listing(a: Acc, l: string): void {
   const o = parseJson(l); const p = o ? obj(o["payload"]) : null; if (!o || !p) return;

@@ -10,6 +10,7 @@ import { opencode } from "./opencode.ts";
 import { gemini } from "./gemini.ts";
 import { type Acc, type SkLoad, newAcc } from "../features/usage/record.ts";
 import { skillLoads, skillCheck } from "../features/skills/model.ts";
+import { skillHash } from "../features/usage/skillrec.ts";
 
 let bad = 0;
 function eq(what: string, got: string, want: string): void { if (got !== want) { bad++; console.log("FAIL " + what + ": got " + JSON.stringify(got) + " want " + JSON.stringify(want)); } }
@@ -139,6 +140,64 @@ for (const c of CASES) {
     let pos = 0; let unp = 0; for (const r of rows) { if (r.usd > 0) pos++; if (r.unpriced) unp++; }
     eq(at + ": every load has a $ share", String(c.table ? pos : unp), String(n));
     if (c.priced) { let hu = 0; for (const l of a.sk) hu += l.hu; eq(at + ": reported $ shares ≤ the requests'", String(hu > 0 && hu <= 0.025 + 1e-9), "true"); }
+    eq(at + ": skills --check", skillCheck([a], ["s"]).join("; "), "");
+  }
+}
+// Codex: one command reads several SKILL.md files (cat a b): one output, split per file at each front matter (exact: bytes
+// and version hash of each file); without front matter in proportion to the sizes of earlier loads in the log, else alike (≈)
+// (mid's text ends with a newline, big's does not: the next "---" is glued to its last line)
+function fm(nm: string, bytes: number): string { const h = "---\nname: " + nm + "\ndescription: d\n---\n"; const nl = nm === "mid" ? "\n" : ""; return h + "LOREM" + "x".repeat(bytes - h.length - 5 - nl.length) + nl; }
+function catLines(texts: string[], g: number, prior: boolean): string[] {
+  const out: string[] = [];
+  const ev = (s: number, p: unknown): string => J({ timestamp: iso(s), type: "event_msg", payload: p });
+  const tot = [0, 0, 0]; // running totals: Codex books a token_count by its total_token_usage
+  const tc = (s: number, inp: number, ca: number): string => { tot[0] = (tot[0] ?? 0) + inp; tot[1] = (tot[1] ?? 0) + ca; tot[2] = (tot[2] ?? 0) + 20; return ev(s, { type: "token_count", info: {
+    total_token_usage: { input_tokens: tot[0], cached_input_tokens: tot[1], cache_write_input_tokens: 0, output_tokens: tot[2], reasoning_output_tokens: 0, total_tokens: (tot[0] ?? 0) + (tot[2] ?? 0) },
+    last_token_usage: { input_tokens: inp, cached_input_tokens: ca, cache_write_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: inp + 20 } } }); };
+  const call = (s: number, id: string, cmd: string): string => J({ timestamp: iso(s), type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: id, arguments: J({ cmd }) } });
+  const res = (s: number, id: string, o: string): string => J({ timestamp: iso(s), type: "response_item", payload: { type: "function_call_output", call_id: id, output: o } });
+  out.push(J({ timestamp: iso(0), type: "session_meta", payload: { id: "c0de0000-0000-4000-8000-0000000000ab", cwd: "/w/app", originator: "codex_cli_rs" } }));
+  out.push(J({ timestamp: iso(0), type: "turn_context", payload: { cwd: "/w/app", model: "gpt-5.5" } }));
+  let ctx = 8000;
+  if (prior) { // an earlier turn read both, one each
+    out.push(J({ timestamp: iso(1), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "first" }] } }));
+    for (let i = 0; i < texts.length; i++) { out.push(call(2, "p" + String(i), "cat /h/.codex/skills/" + (NAMES[i] ?? "") + "/SKILL.md")); out.push(tc(3, ctx, 0)); out.push(res(4, "p" + String(i), texts[i] ?? "")); ctx += 3000; out.push(tc(5, ctx, ctx - 3000)); }
+    out.push(J({ timestamp: iso(6), type: "event_msg", payload: { type: "context_compacted" } }));
+    out.push(J({ timestamp: iso(6), type: "compacted", payload: { message: "" } }));
+    ctx = 8000;
+  }
+  out.push(J({ timestamp: iso(10), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "use the skills" }] } }));
+  const paths: string[] = []; for (let i = 0; i < texts.length; i++) paths.push("/h/.codex/skills/" + (NAMES[i] ?? "") + "/SKILL.md");
+  out.push(call(11, "call_cat", "cat " + paths.join(" ")));
+  out.push(tc(12, ctx, 0));
+  out.push(res(13, "call_cat", "Chunk ID: 1a2b\nProcess exited with code 0\nOutput:\n" + texts.join("")));
+  out.push(tc(14, ctx + g, ctx));
+  return out;
+}
+{
+  const sizes = [3600, 1800, 360];
+  const ft: string[] = []; for (let i = 0; i < 3; i++) ft.push(fm(NAMES[i] ?? "", sizes[i] ?? 0));
+  const plain: string[] = []; for (let i = 0; i < 3; i++) plain.push(text(sizes[i] ?? 0));
+  for (const mode of ["front matter", "earlier loads", "alike"]) {
+    const texts = mode === "front matter" ? ft : plain;
+    const a = newAcc(); for (const l of catLines(texts, 1000, mode === "earlier loads")) codex.usage(a, l);
+    const ls: SkLoad[] = []; for (const l of a.sk) if (l.cid === "call_cat") ls.push(l);
+    const at = "codex cat a b c (" + mode + ")";
+    eq(at + ": loads", ls.map((l: SkLoad) => l.name).join(","), "big,mid,mid2");
+    let S = 0; for (const l of ls) S += l.S; eq(at + ": Σ S = growth", String(S), "1000");
+    const hdr = "Chunk ID: 1a2b\nProcess exited with code 0\nOutput:\n".length;
+    if (mode === "front matter") {
+      eq(at + ": bytes", ls.map((l: SkLoad) => String(l.bytes)).join(","), String(sizes[0] + hdr) + "," + String(sizes[1]) + "," + String(sizes[2]));
+      eq(at + ": versions", ls.slice(1).map((l: SkLoad) => l.hash).join(","), skillHash(ft[1] ?? "") + "," + skillHash(ft[2] ?? ""));
+      eq(at + ": exact", ls.map((l: SkLoad) => String(l.est)).join(","), "false,false,false");
+    } else if (mode === "earlier loads") {
+      const b = ls.map((l: SkLoad) => l.bytes); const all = sizes[0] + sizes[1] + sizes[2] + hdr;
+      eq(at + ": bytes in proportion", String(Math.abs((b[0] ?? 0) - Math.round(all * 3600 / 5760)) <= 1 && Math.abs((b[2] ?? 0) - (all - Math.round(all * 5400 / 5760))) <= 1), "true");
+      eq(at + ": marked ≈", ls.map((l: SkLoad) => String(l.est)).join(","), "true,true,true");
+    } else {
+      const b = ls.map((l: SkLoad) => l.bytes); const all = sizes[0] + sizes[1] + sizes[2] + hdr;
+      eq(at + ": bytes alike", String(Math.abs((b[0] ?? 0) - all / 3) <= 1 && Math.abs((b[1] ?? 0) - all / 3) <= 1), "true");
+    }
     eq(at + ": skills --check", skillCheck([a], ["s"]).join("; "), "");
   }
 }

@@ -61,7 +61,7 @@ export function listEvents(s: Sess, evs: Ev[], limit: number, content: boolean):
   let from = 0;
   if (limit > 0 && matched > limit) { let k = 0; from = evs.length; while (from > 0 && k < limit) { from--; if (m[from] + 0 === 1) k++; } }
   const calls = new Map<string, number>(); for (let i = 0; i < evs.length; i++) { const e = evs[i]; if (e.kind === "tool" && e.id) calls.set(e.id, i); }
-  const sk = new Map<string, string>(); for (const mk of marksOf(s, ["skill"])) if (mk.kind === "skill:load" && mk.anchor.startsWith("call=")) sk.set(mk.anchor.slice(5), mk.label);
+  const sk = new Map<string, string>(); for (const mk of marksOf(s, ["skill"])) if (mk.kind === "skill:load" && mk.anchor.startsWith("call=") && mk.label) { const k = mk.anchor.slice(5); const was = sk.get(k); sk.set(k, was ? was + ", " + mk.label : mk.label); } // cat a b: one call, both
   const gapObj = (g: Gap): Obj => { const ks: Obj = {}; const names: string[] = []; for (const k of g.kinds.keys()) names.push(k); names.sort((a: string, b: string): number => (g.kinds.get(b) ?? 0) - (g.kinds.get(a) ?? 0) || (a < b ? -1 : 1)); for (const k of names) ks[k] = g.kinds.get(k) ?? 0; return { gap: g.hidden, kinds: ks }; };
   const o: Obj[] = [];
   if (from > 0) { // everything before the last limit matches, shown or not, as one gap

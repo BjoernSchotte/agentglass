@@ -1,7 +1,7 @@
 // agentglass — self-check for skill attribution (skill-usage spec §3): scriptc build src/features/usage/skillrec.check.ts -o sr && ./sr
 // SPDX-License-Identifier: Apache-2.0
 import { type Acc, newAcc, bucket, tokens, usageExact, turn, skillLoad, skillUnload, skillRead, skillReadDone, skillListing, skillUsesOf } from "./record.ts";
-import { type SkLoad, skillPath, skillReadCmd, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU, bptOf } from "./skillrec.ts";
+import { type SkLoad, skillPath, skillReadCmd, skillReadCmds, splitReads, skillHash, SA_L, SA_C, SA_T, SA_LU, SA_LM, SA_LC, SA_HU, bptOf } from "./skillrec.ts";
 
 let bad = 0;
 function ok(what: string, c: boolean, info: string): void { if (!c) { bad++; console.log("FAIL " + what + (info ? ": " + info : "")); } }
@@ -40,6 +40,18 @@ eq("cmd after pipe", skillReadCmd("echo x | cat /x/skills/a/SKILL.md"), "");
 eq("cmd before pipe", skillReadCmd("cat /x/skills/a/SKILL.md | head -5"), "/x/skills/a/SKILL.md");
 eq("cmd env + rtk", skillReadCmd("LC_ALL=C rtk read \"/x/skills/b c/SKILL.md\""), "/x/skills/b c/SKILL.md");
 eq("cmd multi-line", skillReadCmd("git status\nnl -ba /x/skills/z/SKILL.md"), "/x/skills/z/SKILL.md");
+eq("cmds cat a b", skillReadCmds("cat /x/skills/a/SKILL.md /x/skills/b/SKILL.md && sed -n 1,9p /y/skills/c/SKILL.md; cat /x/skills/a/SKILL.md").join(" "), "/x/skills/a/SKILL.md /x/skills/b/SKILL.md /y/skills/c/SKILL.md");
+// one output of several SKILL.md files: split at each front matter (head's "==> path <==" lines go with the next file);
+// a "name:" line in a body, or a "---" rule, is no front matter; without front matters in proportion to w, or alike
+{
+  const A = "---\nname: a\ndescription: >\n  two\n  lines\n---\nbody a\n---\nname: b\n(not front matter)\n";
+  const Bt = "---\nname: \"b\"\n---\nbody b\n";
+  const s1 = splitReads(A + Bt, ["a", "b"], [0, 0]); eq("split exact", s1.parts.join("|") + " " + String(s1.est), A + "|" + Bt + " false");
+  const hd = "==> /x/skills/a/SKILL.md <==\n" + A + "\n==> /x/skills/b/SKILL.md <==\n" + Bt;
+  const s2 = splitReads(hd, ["a", "p:b"], [0, 0]); eq("split head", s2.parts.join("|"), "==> /x/skills/a/SKILL.md <==\n" + A + "\n|==> /x/skills/b/SKILL.md <==\n" + Bt);
+  const s3 = splitReads("x".repeat(90), ["a", "b", "c"], [600, 300, 0]); eq("split alike", s3.parts.map((t: string) => String(t.length)).join(",") + " " + String(s3.est), "30,30,30 true");
+  const s4 = splitReads("x".repeat(90), ["a", "b", "c"], [600, 300, 300]); eq("split by sizes", s4.parts.map((t: string) => String(t.length)).join(","), "45,23,22");
+}
 eq("cmd bare SKILL.md", skillReadCmd("sed -n '1,260p' SKILL.md"), "");
 eq("cmd rtk proxy", skillReadCmd("rtk proxy cat /h/.agents/skills/x/SKILL.md"), "/h/.agents/skills/x/SKILL.md");
 eq("cmd several files", skillReadCmd("cat /h/RTK.md /h/.codex/skills/y/SKILL.md"), "/h/.codex/skills/y/SKILL.md");

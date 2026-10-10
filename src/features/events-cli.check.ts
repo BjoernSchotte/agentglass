@@ -61,5 +61,9 @@ eq("hidden name: its fake", String(skTarget().indexOf("brainstorming") < 0 && sk
 setVis([{ match: "brainstorming", mode: "omit" }], false);
 eq("omitted: no name", skTarget(), "tool null, result null");
 setVis([], false);
+// one call that read two skills (Codex cat a b): both names
+skillLoad(ac, "tdd", "model", T + 4000, iso(4), "LOREM", true, "", false).cid = "s1";
+applyAcc(s, ac); L.ver++;
+eq("one call, two skills", skTarget(), "tool brainstorming, tdd, result brainstorming, tdd");
 if (bad) { console.log(String(bad) + " failure(s)"); process.exit(1); }
 console.log("events cli: ok");

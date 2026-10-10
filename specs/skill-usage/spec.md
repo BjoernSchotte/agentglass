@@ -182,7 +182,9 @@ Other harnesses (90 days, same scripts; M8):
 `head`, `tail`, `less`, `bat`, `rg`, `grep` with a path argument) of a path whose basename is `SKILL.md` and whose
 parent's parent is a `skills` directory (any depth: `~/.codex/skills/x/SKILL.md`, `<plugin>/skills/x/SKILL.md`). Name =
 the parent directory (plugin skills: `<plugin>:<dir>` when the path holds `plugins/…/<plugin>/…/skills/`). Size = the
-call's output. Several reads of the same path in the same turn while the first is pending or open (`sed -n 1,200p`,
+call's output. One shell call that reads several SKILL.md files (`cat a/SKILL.md b/SKILL.md`, `cat a && cat b`) is a load
+of each, its output split at each file's front matter (`---`, `name: <dir>`; exact), else in proportion to the bytes of
+earlier loads of those files in the log, else alike (both ≈). Several reads of the same path in the same turn while the first is pending or open (`sed -n 1,200p`,
 then `200,400p`) grow one load (tier ≈: parts may overlap); a read in a later turn is a new load (a reload). A read by
 a harness that also has a skill tool (Claude `Skill`) right after that tool's load of the same name is part of it, not
 a second load. This fixes Codex skill counts (today 0 of 314 rollouts; M8: 90) and makes them a `model` use in
