@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Teams, rooms and members on top of fleet's snapshots: each device publishes per-room, sender-projected, sealed and signed snapshots into a team mailbox (a synced folder; phase 2 an `agentglass receive` relay) and reads the others'; invite codes, a one-screen consent, leave with a wipe request, key rotation on removal; a Team tab, `agentglass team …` CLI, filter keys `member`/`room`; phase 2 hub relay, wait data and an MCP `team` tool.
+**Goal:** Teams, rooms and members on top of fleet's snapshots: each device publishes per-room, sender-projected, sealed and signed snapshots into a team mailbox (a synced folder; phase 2 an `agentglass receive` relay) and reads the others'; invite codes, a one-screen consent, leave with a wipe request, key rotation on removal; a Team tab, `agentglass team …` CLI, filter keys `member`/`room`, display names bound to member keys and a signed activity log, the same data in the web UI (local-web-api), team commands from the browser as R3; phase 2 hub relay, wait data and an MCP `team` tool.
 
 **Architecture:** `src/features/team/` — `crypto/` (vendored Monocypher 4.0.2 + `agcrypto.c` wrapper + `ffi.json`, bound by `crypto.ts`), `code.ts` (invite codes, ids), `policy.ts` (room scope, share policy, `teamRow()` projection), `manifest.ts` (signed public part + sealed private part, chain rules), `sealed.ts` (`agentglass-team/v1` file format), `keys.ts` (key store under `AGENTGLASS_TEAM_DIR`), `mailbox.ts` (layout, dir transport; phase 2 hub transport), `publish.ts` (room snapshots through `buildSnap(…, scope)`), `sync.ts` (admission, epochs, leave, publish, fetch), `feed.ts` (a `HostFeed` per room×member×device, room union, per-member exact merge), `cli.ts`, `tab.ts`. Fleet's `buildSnap()` gains a scope (selection, projection, ownership limit, changed-day deltas) and `applySnap()` merges `dd` day rows; fleet's own calls are unchanged (golden).
 
@@ -10,7 +10,7 @@
 
 **Spec:** [spec.md](spec.md) — read it first, including "Measurements", "Decisions" and "Open questions". Also [../fleet/spec.md](../fleet/spec.md) sections 1, 12, 13, 15 and [../otlp-hub/spec.md](../otlp-hub/spec.md) sections 9–11 (phase 2).
 
-**Cross-spec order:** fleet (shipped), otlp-hub (shipped), skill-usage (shipped), agent-wait (shipped), mcp-server (phase 2 Task 14 needs it merged). No ledger `VERSION` bump (no cached data changes).
+**Cross-spec order:** fleet, otlp-hub, skill-usage, agent-wait (shipped); [local-web-api](../local-web-api/plan.md) is built with this plan slice by slice (table below); mcp-server merged before T14. No ledger `VERSION` bump (no cached data changes).
 
 ## Global Constraints
 
@@ -24,22 +24,31 @@
 - Fleet behaviour is a contract: `buildSnap(days, base, now)` without a scope produces byte-identical lines to before (Task 3 golden), `fleet drop`/`dirFeed`/`fleet snapshot` unchanged.
 - Listeners in tests (phase 2) bind `127.0.0.1` port 0 only, killed by their own pid in `trap`.
 - Commits: conventional commits ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Branches: integration branch `feat/fleet-teams` from `origin/main` in `../agentglass-fleet-teams`; parallel tasks in `../agentglass-fleet-teams-t<N>` on `feat/fleet-teams-t<N>`, merged back in task order. Phase 1 is one PR; phase 2 a second PR.
+- Branches: integration branch `feat/fleet-teams` from `origin/main` in `../agentglass-fleet-teams`; parallel tasks in `../agentglass-fleet-teams-t<N>` on `feat/fleet-teams-t<N>`, merged back in task order. One PR per slice (shared with local-web-api's tasks of that slice).
 
-## Waves (parallel vs sequential)
+## Slices (shared with local-web-api; parallel vs sequential)
 
-| Wave | Tasks | Run | Needs |
+Built together with [local-web-api](../local-web-api/plan.md), slice by slice (user decision 2026-10-10): each slice
+goes read model → protocol/stream → TUI + web view → tests, and merges as one PR.
+
+| Slice | After it, a member sees | local-web-api tasks | fleet-teams tasks |
 |---|---|---|---|
-| 0 | T0 worktree, probes | alone | — |
-| 1 | T1 crypto · T2 codes, ids, policy, projection · T3 snapshot scope + changed-day deltas | **parallel** | — |
-| 2 | T4 key store, manifest, sealed files | alone | T1, T2 |
-| 3 | T5 mailbox (dir) + publish | alone | T3, T4 |
-| 4 | T6 sync: admission, epochs, leave · T7 viewer feeds, room union, per-member merge, bench | **parallel** | T5 |
-| 5 | T8 CLI · T9 Team tab, filter keys, my devices in Sessions | **parallel** | T8: T6, T7 · T9: T7 |
-| 6 | T10 end-to-end, docs, real-life verification | alone | phase 1 |
-| 7 (phase 2) | T11 hub relay routes · T13 wait line + Team wait grouping | **parallel** | T11: T4, T5 · T13: T3, T9 |
-| 8 (phase 2) | T12 hub mailbox client + join over a hub · T14 MCP `team` tool | **parallel** | T12: T11 · T14: T8, mcp-server merged |
-| 9 (phase 2) | T15 end-to-end over a hub, docs | alone | phase 2 |
+| S1 | own live sessions in the browser (TUI unchanged) | W0, W1 → W2 → (W3 ∥ W4 ∥ W5) → W6 | T0; T1 ∥ T2 ∥ T3 (no UI yet, parallel with W1–W5) |
+| S2 | a teammate: members, devices, cost, presence in the Team tab and on the web Team page | W7 | T4 → T5 → (T6 ∥ T7) → T16 → (T8a ∥ T9a) |
+| S3 | breadth: Stats, Alerts, Fleet, Skills, Wait, events with kind filter, team groupings | W8, then W9 (viz, after research) | T9b |
+| S4 | consent and sharing in TUI and browser: what I share, dry run, rename, leave, doctor, service, activity log | W10 | T8b ∥ T9c |
+| S5 | commands from the browser (opt-in), audit, TUI toast | W11 → W12 | T17 |
+| S6 | phase 2: hub relay, wait per room, MCP `team` | — | T11 ∥ T13, then T12 ∥ T14, then T15 |
+
+`∥` = parallel (separate worktrees), `→` = sequential. T10 (end-to-end, docs) runs at the end of S4 for phase 1.
+
+Task splits for slicing: **T8a** (S2) = `team create`, `invite`, `join` with the consent screen (name, device label,
+rooms; non-interactive flags; agent-mode refusal), `sync`, `report`, `sessions`, `status`; **T8b** (S4) = `share`
+(add/remove/pause/level, `--dry-run`), `leave`, `remove`, `admin`, `admit`, `rooms`, `doctor`, `service`,
+`rename-me`, `activity`. **T9a** (S2) = the Team tab with the member grouping, presence, header widget, filter key
+`member`; **T9b** (S3) = groupings harness/repo/room/skill/model, `$/COMMIT`, room budget line, filter key `room`;
+**T9c** (S4) = the `s` share panel, `l` activity overlay, `n` rename, `i` invite overlay, toasts. Each split keeps
+the steps of its task restricted to its commands/keys; T8's test script grows per split.
 
 ## Review Focus
 
@@ -64,7 +73,7 @@
 
 ---
 
-### Task 1: Crypto through FFI (wave 1, parallel)
+### Task 1: Crypto through FFI (S1, parallel)
 
 **Files:** Create `src/features/team/crypto/monocypher.c`, `monocypher.h` (unmodified 4.0.2), `LICENCE.monocypher.md`, `agcrypto.c`, `ffi.json`, `src/features/team/crypto.ts`, `src/features/team/crypto.check.ts`. Modify `build.sh:9-13`, `scripts/check.sh:14-16,76,134` (crypto marker + manifest), `scripts/build-tls.sh` (pass the manifest), `scripts/package.sh:9-10` (symbol guard), `README.md` licence section (Monocypher: 2-clause BSD / CC0, vendored unmodified).
 
@@ -97,7 +106,7 @@ export const CRYPTO_LIB = "monocypher 4.0.2";
 
 ---
 
-### Task 2: Invite codes, ids, room scope, share policy, projection (wave 1, parallel; pure)
+### Task 2: Invite codes, ids, room scope, share policy, projection (S1, parallel; pure)
 
 **Files:** Create `src/features/team/code.ts`, `src/features/team/policy.ts`, `src/features/team/code.check.ts`, `src/features/team/policy.check.ts`, `src/features/team/testdata/row-numbers.golden.json`, `row-titles.golden.json`.
 
@@ -127,7 +136,7 @@ export const LEVEL_FIELDS: Record<string, string[]>;                       // th
 
 ---
 
-### Task 3: Snapshot scope and changed-day deltas in fleet's builder (wave 1, parallel)
+### Task 3: Snapshot scope and changed-day deltas in fleet's builder (S1, parallel)
 
 **Files:** Modify `src/features/fleet/snapshot.ts:133-211` (`buildSnap`), `src/features/fleet/snap.ts:43-60,101+` (`sessOut`/`sessIn`, `applySnap`), `src/features/fleet/snapshot.check.ts`, `src/features/fleet/snap.check.ts`; Create `src/features/fleet/testdata/snap-noscope.golden` (lines of a fixture build, generation ids normalised).
 
@@ -154,7 +163,7 @@ export function buildSnap(days: number, base: Gen | null, now: number, scope: Sn
 
 ---
 
-### Task 4: Key store, manifest, sealed files (wave 2)
+### Task 4: Key store, manifest, sealed files (S2, first)
 
 **Files:** Create `src/features/team/keys.ts`, `manifest.ts`, `sealed.ts`, and `keys.check.ts`, `manifest.check.ts`, `sealed.check.ts` (all `// check: crypto`).
 
@@ -190,7 +199,7 @@ export function openFile(b: Uint8Array, m: Manifest, keyOf: (room: string, epoch
 
 ---
 
-### Task 5: Mailbox (folder) and publish (wave 3)
+### Task 5: Mailbox (folder) and publish (S2, after T4)
 
 **Files:** Create `src/features/team/mailbox.ts`, `publish.ts`, `mailbox.check.ts`, `publish.check.ts` (`// check: crypto`). Reuse `nextKind`/`prune` from `src/features/fleet/drop.ts:37-60` (export a variant taking a name parser if needed).
 
@@ -210,7 +219,7 @@ export function publishRoom(mb: Mailbox, team: string, room: Room, share: RoomSh
 
 ---
 
-### Task 6: Sync — admission, epochs, leave (wave 4, parallel with T7)
+### Task 6: Sync — admission, epochs, leave (S2, parallel with T7)
 
 **Files:** Create `src/features/team/sync.ts`, `src/features/team/state.ts` (team list, policy.json read/write), `sync.check.ts` (`// check: crypto`).
 
@@ -235,7 +244,7 @@ export function leaveTeam(t: TeamState, keep: boolean, now: number): string;
 
 ---
 
-### Task 7: Viewer feeds, room union, per-member merge, bench (wave 4, parallel with T6)
+### Task 7: Viewer feeds, room union, per-member merge, bench (S2, parallel with T6)
 
 **Files:** Create `src/features/team/feed.ts`, `src/features/team/view.ts`, `feed.check.ts`, `bench.check.ts` (`// check: crypto`, `// check: timing`). Modify `src/features/fleet/hosts.ts` only to export what `exactMerge`/`fleetCost` need for synthetic `RemoteHost`s (no behaviour change).
 
@@ -255,13 +264,13 @@ export function viewTick(until: number): boolean;                               
 
 ---
 
-### Task 8: CLI (wave 5, parallel with T9)
+### Task 8: CLI (T8a in S2, T8b in S4; parallel with T9a / T9c)
 
 **Files:** Create `src/features/team/cli.ts`, `src/features/team/consent.ts` (the join screen: TTY render + key loop + JSON form), `src/features/team/doctor.ts`, `src/features/team/service.ts`; `scripts/team.test.sh`; Modify `src/main.ts` (import `./features/team/cli.ts` beside fleet's), `src/features/clihelp.ts` (help entries), `docs/cli-contract.md` (team JSON shapes).
 
 **Interfaces — Produces:** the commands of spec section 2 through `addCmd()`/`rec()` (as `src/features/fleet/cli.ts:356-394`), each with `--json`; `team report --json` and `team sessions --json` shapes of spec 11, `team status --json` = `{teams: [{id, name, mailbox, kind, me: {id, name, device}, admin, rooms: [{id, name, scope, level, epoch, budget, share: {on, repos, level, since, paused, lastPublishAt, lastBytes}}], members: [...], pending: n, problems: [...]}]}`.
 
-- [ ] **Step 1: Failing test** `scripts/team.test.sh` (uses `AGENTGLASS_BIN`; two temp HOMEs A and B with fixture sessions in `github.com/acme/api` and `github.com/acme/secret`, full isolation set per HOME, one temp folder):
+- [ ] **Step 1: Failing test** `scripts/team.test.sh` (items 1–4 in T8a; 5–8 and the `rename-me`/`activity` cases in T8b) (uses `AGENTGLASS_BIN`; two temp HOMEs A and B with fixture sessions in `github.com/acme/api` and `github.com/acme/secret`, full isolation set per HOME, one temp folder):
   1. A: `team create acme --dir $F --room backend=github.com/acme/api --json` → `ok`, `invite` code present.
   2. B: `team join $CODE --dir $F --name bob --json` (agent mode, no `--yes`) → exit 2, JSON screen lists room `backend`, `you have` contains `github.com/acme/api`, not `secret`.
   3. B: `team join $CODE --dir $F --name bob --share backend --dry-run --json` → `plain` lines; none contains `secret`, `/home/`, a title (level numbers).
@@ -277,7 +286,7 @@ export function viewTick(until: number): boolean;                               
 
 ---
 
-### Task 9: Team tab, filter keys, my devices in Sessions (wave 5, parallel with T8)
+### Task 9: Team tab, filter keys, my devices in Sessions (T9a S2, T9b S3, T9c S4)
 
 **Files:** Create `src/features/team/tab.ts`, `tab.check.ts`; Modify `src/main.ts` (import after `./features/wait/tab.ts`, so the tab is 6th), `src/features/query/attrs.ts` (keys `member`, `room` after `host`, `attrs.ts:80`), `src/ui/help.ts` (Team section), `src/features/fleet/hosts.ts` (my devices' team rows join `FLEET.hosts` as `kind: "team"` hosts with the device name, deduplicated against `fleet.hosts` by device id).
 
@@ -290,7 +299,7 @@ export function viewTick(until: number): boolean;                               
 
 ---
 
-### Task 10: End-to-end, docs, real-life verification (wave 6, alone)
+### Task 10: End-to-end, docs, real-life verification (end of S4, alone)
 
 **Files:** Modify `README.md` (Teams section: create/invite/join/leave in four commands, Syncthing recipe incl. `.stignore` for `.*.tmp` if Task 0/Open question 3 requires it, privacy statement, metadata visible to the mailbox, keys without passphrase), `docs/cli-contract.md`, `specs/ROADMAP.md` (status), `specs/fleet-teams/spec.md` (Rulings folded into Decisions/Open questions).
 
@@ -302,9 +311,35 @@ export function viewTick(until: number): boolean;                               
 
 ---
 
+---
+
+### Task 16: Display names and the activity log (S2, after T6 ∥ T7)
+
+**Files:** Create `src/features/team/names.ts`, `src/features/team/activity.ts`, `names.check.ts`, `activity.check.ts` (`// check: crypto`); Modify `sync.ts` (publish my claim at join and on rename; read claims and member events), `consent.ts` (name + device-label fields, default from `git config --global user.name`), `src/features/redact.ts` (`fakeMember`, `fakeDevice` on the `fakeAgent` pattern, `redact.ts:152`).
+
+**Interfaces — Produces:**
+```ts
+export interface NameClaim { member: string; name: string; devices: Record<string, string>; seq: number; at: number }
+export function signClaim(c: NameClaim, k: MemberKeys, teamKey: Uint8Array): Uint8Array;
+export function readClaim(b: Uint8Array, m: Manifest, teamKey: Uint8Array): { c: NameClaim | null; err: string };
+export function displayNames(m: Manifest, claims: NameClaim[]): Map<string, string>;   // collisions → "anna·3f2a"
+export interface Act { at: number; actor: string; kind: string; room: string; text: string }   // kind: joined|left|removed|renamed|shares|paused|resumed|room|rotated|admin
+export function activity(t: TeamState, since: number): Act[];
+```
+
+- [ ] **Step 1: Failing checks:** a claim signed by another member → `err "not signed by member"`; seq 2 beats seq 1, an older seq after a newer one is ignored; two `Anna`s → `Anna` (earlier manifest order) and `Anna·<4 hex>`; a rename changes the name on past rows (attribution by id); `--redact` (`AGENTGLASS_REDACT=1`) → stable fakes for names and labels; activity from a fixture history (join, share on, pause, rename, removal, rotation) renders the spec 5a lines in time order; a forged `activity/` file is dropped; a 91-day-old event is gone. Grep check: build a fleet snapshot and an OTLP export dry run on the fixture → no member name. Expected: FAIL.
+- [ ] **Step 2: Implement. Step 3: Run.** Expected: pass. **Step 4: Commit** `feat(team): display names bound to member keys and the activity log`.
+
+### Task 17: Team commands through the command channel (S5, after local-web-api W11)
+
+**Files:** Modify `src/serve/cmd.ts` (R3 commands `team.join`, `team.share`, `team.leave`, `team.invite`, `team.renameMe` calling `sync.ts`/`state.ts`; the confirm summary = the consent preview object of `readCard`/`team share --dry-run`), `packages/api-contract/schema/command-team-*.json`, `packages/web/src/routes/team/*` (join/share/leave dialogs showing the preview).
+
+- [ ] **Step 1: Failing check:** read-only → `read_only`; `team.share {room, add: [repo]}` → `confirm` whose summary lists the repo, level, recipients by name and history start → `confirm` → policy changed, next publish includes it; `team.leave` summary carries the honest wipe sentence; invariant: no team command writes into another member's mailbox paths or names another member's device; a command whose target is a team member's session → `remote_session`. Web test: the share dialog renders the preview verbatim. Expected: FAIL.
+- [ ] **Step 2: Implement. Step 3: Run** with W11/W12's suites. **Step 4: Commit** `feat(team): team commands from the web with consent previews`.
+
 ## Phase 2
 
-### Task 11: Hub relay routes on `agentglass receive` (wave 7, parallel with T13)
+### Task 11: Hub relay routes on `agentglass receive` (S6, parallel with T13)
 
 **Files:** Create `src/features/hub/team.ts`, `team.check.ts` (`// check: crypto`); Modify `src/features/hub/server.ts:204-230` (route `/team/v1/` before the OTLP paths), `src/features/hub/config.ts` (`receive.team.enabled`, `receive.team.maxMB` default 2048), `src/features/hub/tokens.ts` (token flag `team`: `agentglass receive token add <name> --team`), `src/features/hub/store.ts` (team tree under the disk budget and retention).
 
@@ -314,26 +349,26 @@ export function viewTick(until: number): boolean;                               
 - [ ] **Step 2: Implement**; `scripts/hub-team.test.sh`: `agentglass receive --listen 127.0.0.1:0 --team` with the port written to a file, curl checks of the status codes above, killed by pid in `trap`.
 - [ ] **Step 3: Run** both. Expected: pass. **Step 4: Commit** `feat(hub): team mailbox relay with signed requests`.
 
-### Task 12: Hub mailbox client and join over a hub (wave 8, parallel with T14)
+### Task 12: Hub mailbox client and join over a hub (S6, parallel with T14)
 
 **Files:** Modify `src/features/team/mailbox.ts` (`hubMailbox(url, signer)` via the existing curl-config HTTP path, `src/util/http.ts`, and the TLS settings of `otlp.tls`), `src/features/team/cli.ts` (`--hub`), `scripts/team.test.sh` (a hub variant).
 
 - [ ] **Step 1: Failing test:** `team create acme --hub http://127.0.0.1:$PORT` (with a team token from `receive token add acme --team`, passed via stdin or a 0600 file, never argv) → invite code holds the URL; B `team join $CODE --share backend --yes` with no `--dir` → admitted, published; A sees B; A `team remove bob` → B's `GET` → 403 and B's `team doctor` says "removed from acme". Expected: FAIL.
 - [ ] **Step 2: Implement** (listing cached per sync; files cached sealed under `<teamDir>/<team>/cache/`; `del` for own files on leave). **Step 3: Run.** Expected: `team.test.sh: ok (dir, hub)`. **Step 4: Commit** `feat(team): hub mailbox — join with one code`.
 
-### Task 13: Wait data in team streams (wave 7, parallel with T11)
+### Task 13: Wait data in team streams (S6, parallel with T11)
 
 **Files:** Modify `src/features/team/publish.ts` (a `wait` line: the device's `wait --json` object over the room's selection, families/kinds only, the hook `PULL_WAIT` of `src/features/fleet/pull.ts:33-46` with a session predicate), `src/features/fleet/snap.ts` (parse `wait` lines into `HostReport.wait`), `src/features/team/view.ts`, `src/features/team/tab.ts` (`b` adds `wait`).
 
 - [ ] **Step 1: Failing check:** a fixture with `pnpm test` calls in a selected session and `make deploy` in an unselected one → the wait line has `pnpm test`, not `make deploy`, and no command line text; the tab's wait grouping shows p50/p95 per member. Expected: FAIL. **Step 2: Implement. Step 3: Run.** Expected: pass. **Step 4: Commit** `feat(team): wait families per room`.
 
-### Task 14: MCP `team` tool (wave 8)
+### Task 14: MCP `team` tool (S6)
 
 **Files:** Modify `src/mcp/tools.ts` (tool `team` after `fleet`, `tools.ts:121`), `src/mcp/tools.check.ts`, the golden `tools/list`, `docs/cli-contract.md`.
 
 - [ ] **Step 1: Failing check:** `tools/list` contains `team` with its schema; a call maps to `agentglass team report --json --room <the calling session's repo's room>` in agent mode; without a team → a clear "no team" result, not an error; size cap and cursor as the other tools; `numbers` rooms never return titles. Expected: FAIL. **Step 2: Implement. Step 3: Run** `src/mcp/*.check.ts`. Expected: pass. **Step 4: Commit** `feat(mcp): team tool`.
 
-### Task 15: Phase 2 end-to-end and docs (wave 9, alone)
+### Task 15: Phase 2 end-to-end and docs (S6, alone)
 
 - [ ] **Step 1:** Hub over `tailscale serve` documented (no live tailnet test in CI); local end-to-end with receive on 127.0.0.1 port 0 and two HOMEs; record join-to-first-view time.
 - [ ] **Step 2:** README hub section, `docs/cli-contract.md`, ROADMAP status. **Step 3: Commit** `docs(team): hub relay, wait and MCP`.

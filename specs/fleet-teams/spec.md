@@ -2,7 +2,9 @@
 
 Status: **draft** (2026-10-10). Roadmap: [../ROADMAP.md](../ROADMAP.md) — Round 3 (after 2026.10.10). Builds on
 [fleet](../fleet/spec.md) (snapshots, `dir` drops, exact merge, the `HostFeed` → `HostReport` model) and
-[otlp-hub](../otlp-hub/spec.md) (`agentglass receive`). Two phases: **Phase 1** (sections 1–12) is teams over a shared
+[otlp-hub](../otlp-hub/spec.md) (`agentglass receive`); depends on [local-web-api](../local-web-api/spec.md) for the
+read model, the `serve --stdio` protocol and the web UI (team, room and member are optional dimensions there; the two
+plans share one slice table and are built together). Two phases: **Phase 1** (sections 1–12) is teams over a shared
 folder; **Phase 2** (sections 13–15) adds the hub relay, wait data and the MCP tool.
 
 ## Goal
@@ -17,7 +19,12 @@ a company-wide collector, or each other beyond what they chose:
 3. **End-to-end sealed.** Snapshots are encrypted per room and signed per member; the folder, the sync service and the
    relay see only opaque ids, sizes and times. Removing a member rotates the room keys: their access to future data
    ends.
-4. **Minutes to a team view.** `agentglass team create` prints one invite code; `agentglass team join <code>` shows one
+4. **Names, not ids.** A member appears under the display name they chose at join (a pseudonym is fine), bound to
+   their key; sessions, cost, skills and wait are attributed to them in the TUI, the web UI, `--json` and the API;
+   joins, leaves, renames and sharing changes show up in the team's activity log.
+5. **TUI and browser.** Everything in the Team tab is also in `agentglass web` (local-web-api), from the same read
+   model.
+6. **Minutes to a team view.** `agentglass team create` prints one invite code; `agentglass team join <code>` shows one
    consent screen (what leaves, to whom, from when), publishes, and the Team tab shows the group within the next sync.
 
 ## Why (user value)
@@ -107,9 +114,10 @@ and joins members by session key (section 9); (4) crypto through a vendored C li
 
 ### 1. Concepts
 - **Team**: id (16 hex, random), name, a root admin key (the creator's), a mailbox. A person can be in several teams.
-- **Member**: a person: name (chosen at join, ≤ 32 characters), an EdDSA signing key and an X25519 key. Member id =
+- **Member**: a person: a display name (section 5a), an EdDSA signing key and an X25519 key. Member id =
   first 16 hex of BLAKE2b(signing public key).
-- **Device**: one machine + user of a member. Device id per team = first 16 hex of
+- **Device**: one machine + user of a member, with a label chosen at join (default `<os>-<4 hex of the device id>`,
+  e.g. `mac-7f3a`; never the hostname). Device id per team = first 16 hex of
   SHA-256("agentglass/team/v1|" + team id + "|" + `hostId()`): two teams cannot link the same device, and no team
   learns the fleet/OTLP `hostId`.
 - **Room**: id (16 hex), name, **scope** (repo patterns), **level** (`numbers` | `titles`), optional monthly budget,
@@ -133,6 +141,8 @@ team report [--team <t>] [--room <r>] [--member <m>] [--by member|device|harness
 team sessions [--team <t>] [--room <r>] [--member <m>] [--filter '<expr>'] [--limit N]
 team rooms [add <name> <pattern>… | edit <room> [--scope …] [--level …] [--budget <usd>] | remove <room>]   (admins)
 team members | team remove <member> | team admin add|remove <member> | team admit [<request> [--reject]]   (admins)
+team rename-me <name> [--team <t>]     change my display name (signed; shown in the activity log)
+team activity [--team <t>] [--room <r>] [--since 7d]   joins, leaves, renames, sharing changes, rooms, key rotations
 team leave [--team <t>] [--keep]       leave; by default asks every peer to delete what it holds of me
 team sync [--every 1m..24h]            one publish + fetch, or a loop (servers without a TUI)
 team service [--write]                 the systemd --user unit / launchd agent for `team sync --every 5m`
@@ -173,7 +183,7 @@ the mailbox kind and, for a hub, its URL; for a folder, its name (for auto-detec
 2. Read the invite card (sealed with a key derived from the invite secret: team name, admin names, member count and
    names, rooms with scope, level, budget) and show **one consent screen** (TTY; `--json` prints it as an object):
 ```
-Join acme as bjoern on this machine (laptop-7f3a)
+Join acme as  [Björn Schotte______]  (from git config user.name — any name or a pseudonym)  on  [linux-7f3a]
 Rooms you can share into (nothing is shared until you pick):
   [ ] backend   github.com/acme/api, github.com/acme/web    level: numbers
         you have: github.com/acme/api  14 sessions (claude 9, codex 5) since 2026-09-01
@@ -187,7 +197,7 @@ History: from 2026-09-01 (this month + 16 days; --since now: from now on)
 Where: ~/Sync/agentglass-acme (encrypted; the folder and Syncthing cannot read it)
 Space to toggle · d dry run (exactly what would leave) · enter join · esc cancel
 ```
-   `--share` / `--repos` / `--since` / `--yes` answer the screen non-interactively; in agent mode (`AGENTGLASS_AGENT`)
+   `--name` / `--device-label` / `--share` / `--repos` / `--since` / `--yes` answer the screen non-interactively; in agent mode (`AGENTGLASS_AGENT`)
    without `--yes` the command prints the screen as JSON and exits 2 ("a person must consent: run it in a terminal or
    pass --yes after reading this").
 3. `d` / `--dry-run`: builds the room snapshots exactly as the publisher would and prints the plaintext lines (the
@@ -215,6 +225,8 @@ welcome/<memberId>-<deviceId>.key                    sealed to the joiner: team 
 keys/<roomId>/<epoch>/<memberId>.key                 room key of that epoch, sealed to that member
 rooms/<roomId>/<memberId>-<deviceId>.base-<gen>.agt  sealed snapshot (section 7); .delta-<n>-<gen>.agt as fleet drop
 leave/<memberId>.tomb                                signed leave notice
+names/<memberId>.name                                display-name claim: sealed with the team key, signed by the member
+activity/<memberId>-<seq>.act                        member events (share on/off for a room, pause), sealed + signed
 ```
 Each file has exactly one writer (a device writes only its own `rooms/*/<me>-<device>.*`, its own join/leave files;
 admins write manifest, invites, welcome, keys). Writes are tmp + rename (`.name.tmp`, as `drop.ts:71-73`). Names not
@@ -235,10 +247,31 @@ names, room names, scopes, levels, budgets.
   known, not expired, uses left, MAC over the request with the invite secret, device not already in the team (a
   device belongs to one member: two people on one Unix account are refused with that reason). Then: manifest n+1
   with the member/device, room keys of the granted rooms sealed into `welcome/`, invite uses decremented. `--approve`
-  invites queue the request; the admin's TUI shows a toast "join request: bjoern (laptop-7f3a) → `team admit`".
+  invites queue the request; the admin's TUI shows a toast "join request: Björn (linux-7f3a) → `team admit`".
 - Removal and leave: manifest n+1 marks the member removed; every room they held gets epoch e+1 with a new key
   sealed to the remaining members, and the team key (private part) is replaced the same way. Publishers use the newest epoch they hold for new files; readers keep old epoch
   keys to read files already written (bases roll daily, so old epochs fall out of use within a day).
+
+### 5a. Display names and the activity log
+- **Choice**: at join the consent screen proposes `git config --global user.name` (else the login name), editable;
+  any 1–32 characters without control characters; a pseudonym is fine. `team rename-me <name>` changes it later.
+  Device labels likewise (`team rename-me --device <label>`).
+- **Bound to the key**: a name is a claim `{member, name, device labels, seq, at}` signed with the member's signing
+  key and sealed with the team key (`names/<memberId>.name`); readers accept the highest `seq` with a valid signature
+  of that member's key from the manifest. Nobody else can name or rename a member; the relay and the folder cannot
+  read names.
+- **Collisions**: two members claiming the same name (case-insensitive) are shown as `anna` (the earlier member by
+  manifest order) and `anna·3f2a` (the later, with 4 hex of the member id); `team doctor` and the Team tab say so.
+- **Attribution by id**: sessions, cost, skills and wait belong to the member id; the name is resolved at display
+  time, so a rename applies to the whole history.
+- **Activity log**: derived and signed events — from manifest versions (joined, removed, admin granted, room
+  created/edited, key rotated; signed by an admin), name claims (renamed; signed by the member), member events
+  (`activity/`: shares into room X on/off, paused/resumed — only the fact, never the repos; signed by the member),
+  leave notices. Shown newest first: "Anna joined room web · 10:42", "bjoern renamed to Björn · 11:03", "carol
+  paused room backend · 14:20". Kept 90 days; `team activity --json`, the Team tab (`l` log), the web activity view.
+- **Privacy**: names appear only in that team's views (TUI Team tab, its rows' member column, `team` CLI, the web
+  team pages, the API's team resources); never in OTLP, fleet streams, other teams or logs. `--redact` replaces
+  member names and device labels with stable fakes (the `fakeAgent` pool pattern, `src/features/redact.ts:152`).
 
 ### 6. What a room stream carries (the sender's projection)
 The publisher selects and projects; the viewer never filters what it was not meant to get.
@@ -315,7 +348,9 @@ environment, logs or `--json`; buffers wiped after use where the wrapper allows.
 - Limits: at most 64 devices and 16 rooms per team view; beyond that the newest-active devices are shown and the
   header says how many were left out. Re-pricing and time-zone re-bucketing as fleet (`fleet.reprice`, spec 14).
 
-### 10. TUI: the Team tab (key `6`, after Wait; only when a team exists)
+### 10. TUI: the Team tab (key `6`, after Wait; only when a team exists) — and the web Team page
+The web UI's Team, Rooms and activity pages (local-web-api section 10) show the same read model; this section
+defines the TUI.
 80 columns, the period keys of Repos/Wait:
 ```
  Team acme · room all ▾ · this week · 4 of 5 members online · synced 40 s ago                 ? keys
@@ -326,7 +361,7 @@ environment, logs or `--json`; buffers wiped after use where the wrapper allows.
  dan         0/1      ○ 3 h ago  —          $9.40         —  gemini 100%        0
  ───────────────────────────────────────────────────────────────────────────────────
  backend budget $400/month: $261 spent · projected $372 · ok
- d w m a period · b by member ▸ harness ▸ repo ▸ room ▸ skill ▸ model · ↵ sessions · s what I share · i invite
+ d w m a period · b by member ▸ harness ▸ repo ▸ room ▸ skill ▸ model · ↵ sessions · s share · l log · i invite
 ```
 - `b` cycles the grouping; `↵` opens the selected group's sessions (read-only rows: no transcript, no send/resume;
   the detail pane shows the shared fields and "shared by alice in room backend"). `/` filters with the filter
@@ -337,6 +372,7 @@ environment, logs or `--json`; buffers wiped after use where the wrapper allows.
   publish (time, size), paused or not; keys inside: `space` pause/resume a room, `a` add a matching repo, `x` remove
   one, `d` dry run into `$PAGER`. Changes apply to the next publish; removing a repo deletes nothing already sent
   (said in the panel).
+- `l` activity log (section 5a) as an overlay; `n` rename me.
 - `i` invite (admins): the invite text of section 3 in an overlay; `y` copies the code.
 - Toasts: a join request (admins), a new repo that matches a room ("github.com/acme/new matches room backend — `s`
   to share it"), a member left/removed, a room near/over budget (once a day, `OS.notify` too unless
@@ -351,6 +387,12 @@ environment, logs or `--json`; buffers wiped after use where the wrapper allows.
 - `team report --json`: `{team, room, period, by, rows: [{key, sessions, live, tokens, costUsd, byMode, unpriced,
   commits, costPerCommit, skills, harnesses}], members: [{name, devices, online, lastSyncAt}], budget, stale: [...]}`
   — stable under the CLI contract (golden in `docs/cli-contract.md`).
+- API (local-web-api): `team.status`, `team.report`, `team.sessions`, `team.activity`, topics `team:<team>/<room>`
+  and `presence`; every team row carries `member: {id, name}` and `device: {id, label}`.
+- Commands touching the team (join, share, leave, invite, rename-me) go through local-web-api's typed command
+  channel as risk class R3 (two-step confirm whose summary is this spec's consent preview); they act on this
+  machine's membership only. No command is ever sent to or executed on another member's machine — team streams carry
+  data, never commands (invariant, tested).
 - Team data is never exported over OTLP by the viewer (it is other people's data); `export` keeps exporting local
   sessions only.
 
@@ -430,11 +472,15 @@ repo. Same size cap, cursor and redaction rules as mcp-server; no other member's
 - **Revocation**: removal rotates room keys (future data); on a hub, read access ends at once; on a folder, the
   removed member keeps folder access until someone removes them from the sync share — `team remove` says so and
   `doctor` reminds. Leave requests deletion from peers (best effort, stated).
+- **Names**: chosen by the member, pseudonyms welcome, visible only inside the team, faked under `--redact`, never
+  in outward paths (5a).
 - **Unlinkable ids**: device ids and session ids are per team; a member's teams cannot be correlated by ids.
 - **Metadata visible to the mailbox**: team/room/member/device ids, file sizes and times (activity patterns). Stated
   in the README.
 
 ## Interactions with other specs
+- **local-web-api**: provides the read model, `serve --stdio`, `agentglass-web` and the web UI; this spec adds the
+  team dimensions, team resources and R3 commands. Built together, slice by slice (shared slice table in both plans).
 - **fleet**: reuses `HostFeed`/`HostReport`, the snapshot codec and `applySnap` (extended with `dd` day merges),
   `drop.ts` chain rules (`nextKind`, `prune`), `dirFeed`'s chain walk, `exactMerge`; `buildSnap()` gains a scope
   argument (selection, projection, ownership limit, changed-day deltas) — fleet's own calls pass none and behave as
@@ -473,6 +519,11 @@ repo. Same size cap, cursor and redaction rules as mcp-server; no other member's
 - **Leave/wipe**: tombstone → peer deletes the cached files and rows on its next sync; `--keep` keeps them.
 - **Merge**: the same Claude session copied between two of one member's devices counts once; the same session key in
   two members counts once; a session in two rooms of one device counts once in the all-rooms view.
+- **Names** (`names.check.ts`): a claim signed by another member's key → ignored; a higher `seq` wins; the
+  collision display `anna` / `anna·3f2a`; rename applies to past rows; `--redact` fakes names and labels; no name in
+  any OTLP span, fleet snapshot or log line (grep).
+- **Activity**: events derived from manifest versions, claims, member events and tombstones in time order; a forged
+  member event is dropped.
 - **Bench** (`team/bench.check.ts`, `// check: timing`): 10 members × 3 devices × 300 sessions (synthetic, sealed with
   real crypto in a temp mailbox): CLI `team report --json` ≤ 5 s and ≤ 400 MB RSS on the CI runner; TUI steady state
   adds ≤ 150 MB for 30 one-repo streams of this machine's size (measured once, recorded in the PR).
@@ -636,6 +687,39 @@ Each: question · options · decision · why · cost if wrong.
     - Why: the measured CLI merge of 30 one-repo streams of this extreme host takes 12 s and 566 MB; typical streams
       are ~10× smaller. 64 keeps the tested budget; teams beyond that want a different tool.
     - Cost if wrong: raising the cap after the bench is a constant.
+
+21. **Display names: who sets them, how they are protected.**
+    - Options: (a) chosen by the member, signed with their key, sealed with the team key; (b) set by the admin in the
+      manifest; (c) taken from git/OS without asking.
+    - **Decision: (a)**, default proposed from `git config user.name`, editable, pseudonyms allowed, `team rename-me`.
+    - Why: the user wants members to appear under the name they chose; only the key holder can claim it (no peer can
+      spoof or rename another); sealing keeps names away from the folder/relay. (b) makes admins gatekeepers of
+      identity; (c) leaks a real name a person may not want in this team.
+    - Cost if wrong: two members can pick the same name — shown with an id suffix, never silently merged.
+22. **Activity log from signed facts only.**
+    - Options: (a) derived from manifest versions, name claims, member events and leave notices; (b) a free-form
+      shared log file.
+    - **Decision: (a).**
+    - Why: every line is attributable to a key and cannot be forged by another member; a shared append-only file
+      would conflict in sync folders. Sharing events say "shares into room X" without repos (the repos are private
+      policy).
+    - Cost if wrong: an event type nobody signs (e.g. "budget passed") is computed locally by each viewer instead.
+23. **Depend on local-web-api; build slice by slice.**
+    - Options: (a) team-only web endpoints; (b) the generic local API with team dimensions, both specs built
+      together; (c) teams first, web later.
+    - **Decision: (b)** (user decision 2026-10-10).
+    - Why: the web UI must work without teams; one read model serves CLI, TUI and browser; slices give members
+      something real in TUI and browser early (S1 own sessions, S2 teammates).
+    - Cost if wrong: team work waits for W1–W6 of local-web-api in S1; fleet-teams T1–T3 run in parallel with them.
+24. **Team commands from the browser: own membership only.**
+    - Decision: join/share/leave/invite/rename-me as R3 commands with the consent preview as the confirm summary; no
+      command addresses another member's machine, and team streams never carry commands.
+    - Why: a team channel that could run anything on a peer would turn shared analytics into remote control.
+    - Cost if wrong: nothing to lose; asking a teammate stays a chat message.
+25. **Device labels instead of hostnames.**
+    - Decision: a label chosen at join (default `<os>-<4 hex>`), never the hostname.
+    - Why: hostnames often name people, customers or employers; the `numbers` level already drops them.
+    - Cost if wrong: one more field on the consent screen.
 
 ## Open questions (technical verification during implementation)
 1. Monocypher on macOS arm64/x64 with `--backend c` and the libproc manifest in one build (Linux measured; macOS
