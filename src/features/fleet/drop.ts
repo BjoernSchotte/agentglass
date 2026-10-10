@@ -46,16 +46,20 @@ export function nextKind(files: DropFile[], st: PeerState, now: number): { full:
   return { full: false, n: maxN + 1 };
 }
 // deltas older than the newest base and bases older than the previous one go once they are a day old
-export function prune(dir: string, files: DropFile[], now: number): string[] {
+export function pruneable(files: DropFile[], now: number): string[] {
   const bases: DropFile[] = []; for (const f of files) if (f.base) bases.push(f);
   if (!bases.length) return [];
   const newest = bases[bases.length - 1]; const prev = bases.length > 1 ? bases[bases.length - 2] : null;
-  const gone: string[] = [];
+  const old: string[] = [];
   for (const f of files) {
     if (now - f.at < DAY || !newest) continue;
-    const old = f.base ? !!prev && f.at < prev.at : f.at < newest.at;
-    if (old) { try { unlinkSync(join(dir, f.name)); gone.push(f.name); } catch (e) { /* gone */ } }
+    if (f.base ? !!prev && f.at < prev.at : f.at < newest.at) old.push(f.name);
   }
+  return old;
+}
+export function prune(dir: string, files: DropFile[], now: number): string[] {
+  const gone: string[] = [];
+  for (const n of pruneable(files, now)) { try { unlinkSync(join(dir, n)); gone.push(n); } catch (e) { /* gone */ } }
   return gone;
 }
 // one run: the snapshot written into dir (tmp, then rename), the peer state "drop" acknowledged after the rename

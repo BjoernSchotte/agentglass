@@ -56,9 +56,17 @@ function genIn(v: unknown): Gen | null {
   const m = new Map<string, string>(); const s = obj(o["sig"]) ?? {}; for (const k of Object.keys(s)) m.set(k, str(s[k]));
   return { gen: g, sig: m };
 }
-export function loadPeer(peer: string): PeerState {
-  const r = readWhole(peerFile(peer), 64 * 1048576); const o = r.text ? parse(r.text) : null;
+export function loadPeer(peer: string): PeerState { return loadPeerFile(peerFile(peer)); }
+// a peer state file anywhere (a team room's state lives in its team directory)
+export function loadPeerFile(f: string): PeerState {
+  const r = readWhole(f, 64 * 1048576); const o = r.text ? parse(r.text) : null;
   return o ? { acked: genIn(o["acked"]), pending: genIn(o["pending"]) } : { acked: null, pending: null };
+}
+// the new pending generation into f, atomically; false when it could not be written
+export function writePeerFile(f: string, st: PeerState, next: Gen): boolean {
+  st.pending = next;
+  const tmp = f + "." + String(process.pid) + ".tmp";
+  try { writeFileSync(tmp, JSON.stringify({ acked: genOut(st.acked), pending: genOut(st.pending) }), { mode: 0o600 }); renameSync(tmp, f); return true; } catch (e) { return false; }
 }
 // which generation the next snapshot is relative to (spec 12.3); st moves on (pending → acked) when the viewer applied it
 export function baseFor(st: PeerState, ack: string, full: boolean): Gen | null {
@@ -70,9 +78,7 @@ export function baseFor(st: PeerState, ack: string, full: boolean): Gen | null {
 // the new pending generation, atomically; at most MAX_PEERS peer files (the oldest go: that viewer gets a full one)
 export function savePeer(peer: string, st: PeerState, next: Gen): void {
   const d = peersDir(); try { mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { return; }
-  st.pending = next;
-  const f = peerFile(peer); const tmp = f + "." + String(process.pid) + ".tmp";
-  try { writeFileSync(tmp, JSON.stringify({ acked: genOut(st.acked), pending: genOut(st.pending) }), { mode: 0o600 }); renameSync(tmp, f); } catch (e) { return; }
+  if (!writePeerFile(peerFile(peer), st, next)) return;
   let fs: { n: string; t: number }[] = [];
   try { for (const n of readdirSync(d)) if (n.endsWith(".json")) { let t = 0; try { t = statSync(join(d, n)).mtimeMs; } catch (e) { t = 0; } fs.push({ n, t }); } } catch (e) { fs = []; }
   if (fs.length <= MAX_PEERS) return;
