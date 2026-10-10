@@ -17,6 +17,8 @@ export interface HideRule { match: string; mode: string }
 export const MODES = ["show", "content", "name", "omit"]; // in order of strictness
 function rank(m: string): number { const i = MODES.indexOf(m); return i < 0 ? 0 : i; }
 export const HIDDEN = "(hidden)"; // the row omitted skills fold into
+// that row's label on a table, with how many skills it holds ("(hidden) 3 skills"); its name (--json, keys) stays HIDDEN
+export function hiddenLabel(n: number): string { return n > 0 ? HIDDEN + " " + String(n) + (n === 1 ? " skill" : " skills") : HIDDEN; }
 
 // glob over the name: * any run, ? one character; case-sensitive (plugin: prefixes are part of the name)
 export function globMatch(pat: string, s: string): boolean {

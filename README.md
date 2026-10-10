@@ -525,6 +525,7 @@ agentglass skills --period 7d --sort tail
 agentglass skills --session last        # one session's timeline: each load, its trigger, turn, size, carry, when it left
 agentglass skills show brainstorming    # the text its newest load put into the context
 agentglass skills advise                # A1 carried too long … A9 outcome in its turns; A10 across hosts: agentglass fleet skills
+                                        # $ at stake: an estimate, "≈ $x/30 d, from n days" scaled from the period observed
 agentglass skills --check               # the invariants over your ledger; exit 3 on a violation
 agentglass --json | jq '.[] | select(.skills|length>0) | {title, skills}'   # per session: name, source, n, loads, tokens, $
 ```
@@ -554,15 +555,19 @@ rows, logs): it keeps where the text is in the log and reads it when a view asks
 |---|---|
 | `content` (a bare string) | name and numbers shown, the text hidden (`text hidden by skills.hide`) |
 | `name` | as `content`, and the name replaced by a stable fake of the same length |
-| `omit` | no row, mark, transcript line, filter value, advice, OTLP event or fleet row; its tokens and $ go into one `(hidden) n skills` row, so totals stay true |
+| `omit` | no row, mark, transcript line, filter value, advice, OTLP event or fleet row; its tokens and $ go into one `(hidden) n skills` row, so totals stay true (`--json`: that row is named `(hidden)`, `hidden` = n) |
 
 `--redact` and `skills.hide` combine, the stricter wins. Paths that send data elsewhere apply the rules first and keep
 their own opt-in for text: OTLP export and `--watch --otlp` send names, trigger, sizes, hash, scope and $, the text only
 with `--content`; fleet reports carry names, sizes, hash and $, never text; the hub stores what the sender sent; the MCP
 server's `skills` / `events` tools return text only when the server runs with `--content`.
-The names of skills hidden with `name` or `omit` are also replaced in titles, prompts and event text. A rule with fewer
-than 3 literal characters (`*`, `a*`) replaces a word only where it is written as a skill reference (`/x`, `$x`,
-`/skill:x`, `skills/x/`, `p:x`) or once agentglass knows it as a loaded skill, so plain prose keeps its words.
+The names of skills hidden with `name` or `omit` are also replaced in titles, prompts and event text, as a word or as a
+`-`/`_` part of one (`ts-x-1`, `x_v2`; never inside a run of letters: `xs`, `subx` stay). A rule with fewer than 3
+literal characters (`*`, `a*`) replaces a word only where it is written as a skill reference (`/x`, `$x`, `/skill:x`,
+`skills/x/`, `p:x`) or once agentglass knows it as a skill: installed (yours, plugins', your projects') or loaded or
+listed in any session it has read, subagents included. Plain prose keeps its other words; under `*` a skill named like a
+common word (`review`) is hidden in prose too, as a part of a word only from 5 characters (`dry-run` stays). The TUI
+replaces a name it learns later (a subagent read after the transcript opened) on screen with the next frame.
 
 ## Git linkage
 

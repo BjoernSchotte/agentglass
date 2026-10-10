@@ -52,9 +52,11 @@ fake=$(runq skills --period all --json | python3 -c 'import json,sys; r=[x["name
 grep -q '"sk":"' "$t/cache/ledger.jsonl" && grep -q '"sa":"' "$t/cache/ledger.jsonl" || { echo "FAIL the cache keeps skill loads and rows as text"; fail=1; }
 
 # ── local CLI surfaces under the rules ──
-r=$(run skills --period all); hidden "skills" "$r"; has "skills: fake" "$r" "$fake"; has "skills: (hidden) row" "$r" "(hidden)"; has "skills: content mode keeps the name" "$r" "notes"
+r=$(run skills --period all); hidden "skills" "$r"; has "skills: fake" "$r" "$fake"; has "skills: (hidden) row" "$r" "(hidden) 1 skill"; has "skills: content mode keeps the name" "$r" "notes"
 r=$(COLUMNS=80 run skills --period all); hidden "skills 80 cols" "$r"
 r=$(run skills --period all --json); hidden "skills --json" "$r"
+printf '%s' "$r" | python3 -c 'import json,sys; d=json.load(sys.stdin); rs=[x["name"] for x in d["rows"]]; assert "(hidden)" in rs and d["hidden"] == 1, (rs, d["hidden"])' ||
+  { echo "FAIL skills --json: the (hidden) row keeps its name, hidden = 1"; fail=1; }
 r=$(runq skills --period all --json)
 printf '%s' "$r" > "$t/hide-rows.json"
 eq_tok=$(python3 - "$t/all.json" "$t/hide-rows.json" << 'PY'

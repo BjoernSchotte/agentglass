@@ -7,9 +7,9 @@ import { type Obj, parse, str } from "../../util/json.ts";
 import { execCmds } from "../usage/calls.ts";
 import { skillPath, skillReadCmd, fnvFeed, FNV1 } from "../usage/skillrec.ts";
 import type { Ev, Sess } from "../../model/types.ts";
-import { H, READ } from "../../hooks.ts";
+import { H, READ, HIDE } from "../../hooks.ts";
 import { type HideRule, skillVis, hideRules, globMatch, textHiddenWhy, HIDDEN, VIS } from "./vis.ts";
-import { inventory } from "./inventory.ts";
+import { inventory, projectSkills } from "./inventory.ts";
 
 // the skill a call loads, from its tool name and its argument text as the stream prints it; "" = none
 export function callSkill(tool: string, args: string): string {
@@ -34,12 +34,27 @@ const FAKES = new Set<string>();
 // the leading words' length range and first characters (ASCII; others always looked up): most words skip the lookup
 const LEADS = { min: 1 << 30, max: 0, first: new Uint8Array(128) };
 let seeded = false; let scrubGen = -1;
+// PART: the hidden names known to be skills (a rule names it, a load, KNOWN), not guessed from a reference's shape under a
+// broad rule ("/tmp", "$PATH"): only these are also hidden as a "-"/"_" part of a word — under a broad rule only from 5
+// characters: shorter skill names are mostly words ("run", "init") that identifiers hold for themselves ("dry-run",
+// "__init__"), thousands of parts in a large session for no skill reference. LEARNT: every such name (LSET), in the order
+// noted, for views read before them (HIDE.n counts from the first; a rule change starts over past the old count): a known
+// skill's name the TUI learns late is scrubbed from what it shows
+const PART = new Set<string>(); const LEARNT: string[] = []; const LSET = new Set<string>();
+// PART's names' length range and first characters (ASCII; others always looked up): most parts of words skip the lookups
+const PF = { min: 1 << 30, max: 0, first: new Uint8Array(128) };
+function partAdd(nm: string): void {
+  PART.add(nm); if (nm.length < PF.min) PF.min = nm.length; if (nm.length > PF.max) PF.max = nm.length;
+  const f = nm.charCodeAt(0); if (f < 128) PF.first[f] = 1;
+} const LN = { base: 0, on: false, rule: false };
 // work counters (scrub-perf.check.ts bounds them): characters visited, glob matches tried, name compares
 export const SCRUB_STAT = { chars: 0, glob: 0, cmp: 0 };
 function seed(): void { // rules without a glob name their skills already: titles are scrubbed before the first load is seen
-  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; SUF.clear(); FAKES.clear(); LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
+  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; SUF.clear(); FAKES.clear(); LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; PART.clear(); PF.min = 1 << 30; PF.max = 0; for (let c = 0; c < 128; c++) PF.first[c] = 0; LSET.clear(); LN.base += LEARNT.length + 1; LEARNT.length = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
   if (seeded) return; seeded = true;
+  const on = LN.on; LN.on = true; LN.rule = true;
   for (const r of hideRules()) if (r.match.indexOf("*") < 0 && r.match.indexOf("?") < 0) note(r.match);
+  LN.on = on; LN.rule = false;
 }
 function put(real: string, rep: string): void {
   const had = SCRUB.has(real); SCRUB.set(real, rep); FAKES.add(rep); if (had) return;
@@ -52,8 +67,10 @@ function put(real: string, rep: string): void {
   if (i < ls.length && ls[i] === n) return;
   ls.splice(i, 0, n); BY.set(lead, ls);
 }
-// remember a skill name the stream met; true when the skill is hidden in any way (its text must not show)
-export function note(name: string): boolean {
+// remember a skill name the stream met; true when the skill is hidden in any way (its text must not show). dir: a plugin
+// skill's dir too (its SKILL.md path names it); not for a name known only by name (KNOWN: installed, listed), whose dir
+// alone ("review" of p:review) is no skill and stays a prose word
+export function note(name: string, dir = true): boolean {
   if (!name) return false;
   seed();
   const v = skillVis(name);
@@ -62,14 +79,17 @@ export function note(name: string): boolean {
     if (name.length >= 2) { put(name, rep); SUF.delete(name); }
     // a plugin skill's dir in its SKILL.md path; a skill of that name keeps its own fake, whichever is seen first
     const c = name.lastIndexOf(":"); const d = name.slice(c + 1);
-    if (c > 0 && name.length - c > 2 && !SCRUB.has(d)) { put(d, rep); SUF.add(d); }
+    if (dir && c > 0 && name.length - c > 2 && !SCRUB.has(d)) { put(d, rep); SUF.add(d); }
+  }
+  if (LN.on && SCRUB.has(name) && !SUF.has(name) && !LSET.has(name)) { // a skill's name, surely
+    LSET.add(name); LEARNT.push(name); if (LN.rule || name.length >= 5) partAdd(name);
   }
   return v.mode !== "show";
 }
-// a word character: letters, digits, _ and - (a table: the passes ask once per character)
+// a word character: letters, digits, _ and - (a table: the passes ask once per character; 2 = "-" or "_")
 const WC = new Uint8Array(128);
-for (let c = 0; c < 128; c++) WC[c] = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 45 ? 1 : 0;
-function wc(c: number): boolean { return c < 128 && WC[c] === 1; }
+for (let c = 0; c < 128; c++) WC[c] = c === 95 || c === 45 ? 2 : (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) ? 1 : 0;
+function wc(c: number): boolean { return c < 128 && WC[c] !== 0; }
 function word(c: string): boolean { return c.length > 0 && wc(c.charCodeAt(0)); }
 function alpha(c: number): boolean { return (c >= 97 && c <= 122) || (c >= 65 && c <= 90); }
 // what may precede a slash command: white space (as \s), ( < > " ' `
@@ -122,14 +142,16 @@ function hides(w: string, strong: boolean): boolean {
   GW.add(w); if (v & 1) GS.add(w); if (v) GA.add(w);
   return strong ? (v & 1) !== 0 : v !== 0;
 }
-// installed plugin skills whose name has a ":" before a non-letter ("p:3d"): ref() reads those as a file:line, so they are
-// looked up by name (the inventory, scanned at most once per hour; only under a broad rule and for such a word)
-export const INSTALLED = { of: (): string[] => { const o: string[] = []; for (const s of inventory([])) o.push(s.name); return o; } };
+// the installed skills' names (user, plugins, and these projects'; the inventory scans at most once per hour). Plugin skills
+// whose name has a ":" before a non-letter ("p:3d"): ref() reads those as a file:line, so they are looked up by name (only
+// under a broad rule and for such a word); marks.ts's KNOWN notes them all
+export const INSTALLED = { of: (repos: string[]): string[] => { const o: string[] = []; for (const s of inventory(repos)) o.push(s.name); return o; },
+  project: (repo: string): string[] => { const o: string[] = []; for (const s of projectSkills(repo)) o.push(s.name); return o; } };
 const ODDREF = new Set<string>(); let oddGen = -1;
 function oddRef(w: string): boolean {
   if (oddGen !== VIS.gen) {
     oddGen = VIS.gen; ODDREF.clear();
-    for (const nm of INSTALLED.of()) for (let c = nm.indexOf(":"); c > 0; c = nm.indexOf(":", c + 1)) if (!alpha(nm.charCodeAt(c + 1))) { ODDREF.add(nm); break; }
+    for (const nm of INSTALLED.of([])) for (let c = nm.indexOf(":"); c > 0; c = nm.indexOf(":", c + 1)) if (!alpha(nm.charCodeAt(c + 1))) { ODDREF.add(nm); break; }
   }
   return ODDREF.has(w);
 }
@@ -151,7 +173,7 @@ function wordAt(t: string, i: number, n: number): number {
   // a strong rule matches the whole word ("acme-x:15" under "acme-*"); else the name ("acme-x" of it, a ref's name)
   const w = t.slice(i + sk, e); const nm = ne < e ? t.slice(i + sk, ne) : w;
   if (GL.anyStrong && w.length >= 2 && fresh(w) && hides(w, true)) note(w);
-  else if (nm.length >= 2 && fresh(nm) && hides(nm, !isRef)) note(nm);
+  else if (nm.length >= 2 && fresh(nm) && hides(nm, !isRef)) note(nm, !isRef || hides(nm, true)); // a guessed "p:x" hides no dir "x"
   return e;
 }
 // the start of the word holding position p (word characters and the ":"s between them), -1 if p is in none
@@ -188,8 +210,36 @@ function globWords(t: string): void {
     }
   }
 }
-// the text with every hidden name (as a whole word) replaced: one pass over the text's words, the longest hidden name
-// starting at a word wins
+// a "-" or "_": inside a word it parts an identifier's components ("ts-<name>-1", "<name>_v2")
+function sep(c: number): boolean { return c < 128 && WC[c] === 2; }
+// the longest hidden name starting at i, a word's start or (inner) a "-"/"_" component's (the word ends at e): its end (-1:
+// none), its replacement in AT.rep; ls = the word's last "-"/"_" (-1: none). A name ends where its word does, or (a skill's name: PART) at a "-"/"_" in it; never
+// inside a run of letters: "ts-<name>-1" and "<name>_v2" hold it, "<name>s" and "x<name>" do not
+const AT = { rep: "" };
+function nameAt(t: string, i: number, e: number, n: number, inner: boolean, ls: number): number {
+  const f = t.charCodeAt(i);
+  if (f < 128 && (inner ? !PF.first[f] : !LEADS.first[f])) return -1; // a part starts a skill's name only
+  if (e - i >= LEADS.min && e - i <= LEADS.max) { // names led by the rest of the word ("x-y", "p:x" past it)
+    const lead = t.slice(i, e); const ls = BY.get(lead);
+    if (ls) for (const l of ls) {
+      SCRUB_STAT.cmp++;
+      const ke = i + l; if (ke > n) continue; // past the text
+      const at = ke < n && wc(t.charCodeAt(ke)); if (at && !sep(t.charCodeAt(ke))) continue; // no end
+      const nm = ke === e ? lead : t.slice(i, ke); const rep = SCRUB.get(nm);
+      if (rep !== undefined && (!(inner || at) || PART.has(nm))) { AT.rep = rep; return ke; }
+    }
+  }
+  if (ls > i && (f >= 128 || PF.first[f])) for (let b = Math.min(ls, i + PF.max); b >= i + PF.min; b--) { // a skill's name ending at a "-"/"_"
+    if (!sep(t.charCodeAt(b))) continue;
+    SCRUB_STAT.cmp++;
+    const nm = t.slice(i, b); if (!PART.has(nm)) continue;
+    const rep = SCRUB.get(nm); if (rep !== undefined) { AT.rep = rep; return b; }
+  }
+  return -1;
+}
+// the text with every hidden name (a word; a skill's name also as "-"/"_" components of one) replaced: one pass over the text's words and
+// their components, the longest hidden name starting at one wins; a hidden name starting inside it and ending past it
+// ("a.b" in "X:a.b" after "X:a") goes too
 export function scrub(t: string): string {
   seed();
   if (!t) return t;
@@ -201,15 +251,22 @@ export function scrub(t: string): string {
     const r: string[] = []; let last = 0; let i = 0; // parts, joined once: += would copy the text per name
     while (i < n) {
       if (!wc(t.charCodeAt(i))) { i++; continue; }
-      let e = i + 1; while (e < n && wc(t.charCodeAt(e))) e++;
-      const f = t.charCodeAt(i);
-      const lead = e - i < LEADS.min || e - i > LEADS.max || (f < 128 && !LEADS.first[f]) ? "" : t.slice(i, e);
-      const ls = lead ? BY.get(lead) : undefined;
-      if (ls) for (const l of ls) {
-        SCRUB_STAT.cmp++;
-        const ke = i + l; if (ke > n || (ke < n && wc(t.charCodeAt(ke)))) continue; // past the text, or no word's end
-        const rep = SCRUB.get(ke === e ? lead : t.slice(i, ke));
-        if (rep !== undefined) { r.push(t.slice(last, i)); r.push(rep); last = ke; e = ke; break; }
+      let e = i + 1; let ls = -1;
+      while (e < n) { const ch = t.charCodeAt(e); const k = ch < 128 ? WC[ch] : 0; if (!k) break; if (k === 2) ls = e; e++; }
+      let c = i; // a component's start
+      while (c < e) {
+        let ke = nameAt(t, c, e, n, c > i, ls);
+        if (ke < 0) { if (ls < c) break; while (c < e && !sep(t.charCodeAt(c))) c++; while (c < e && sep(t.charCodeAt(c))) c++; continue; } // the next part
+        r.push(t.slice(last, c)); r.push(AT.rep);
+        for (let j = c + 1; j < ke; j++) { // the words and components inside the name: one may start an overlapping one
+          const pj = t.charCodeAt(j - 1);
+          if (!wc(t.charCodeAt(j)) || sep(t.charCodeAt(j)) || (wc(pj) && !sep(pj))) continue;
+          let we = j + 1; let wl = -1; while (we < n && wc(t.charCodeAt(we))) { if (sep(t.charCodeAt(we))) wl = we; we++; }
+          const oe = nameAt(t, j, we, n, wc(pj), wl); if (oe > ke) { r.push(AT.rep); ke = oe; }
+        }
+        last = ke;
+        if (ke >= e) { e = ke; break; }
+        c = ke; while (c < e && sep(t.charCodeAt(c))) c++;
       }
       i = e;
     }
@@ -237,15 +294,41 @@ export function callVis(tool: string, args: string): { drop: boolean; args: stri
   return { drop: false, args: tool === "Skill" || tool === "activate_skill" ? v.shown : scrub(args), hide: v.mode === "show" ? "" : "(" + textHiddenWhy(n) + ")" };
 }
 
-// the skills a session's ledger knows it loaded, names not yet noted only (features/skills/marks.ts sets it): a broad glob
-// rule ("*", "a*") hides a prose word only once it is known as a skill, and a title or prompt may name one long before
-// the load is read
-export const KNOWN = { of: (s: Sess): string[] => [] };
+// the skill names agentglass knows (installed, or loaded or listed by any log in the ledger), new ones only
+// (features/skills/marks.ts sets it; s: the session being read): a broad glob rule ("*", "a*") hides a prose word only
+// once it is known as a skill, and a title or prompt may name one long before its load is read, or in another log
+export const KNOWN = { of: (s: Sess | null): string[] => [] };
 let weakGen = -1; let weakOn = false;
 function known(s: Sess | null): void {
   if (weakGen !== VIS.gen) { weakGen = VIS.gen; weakOn = hideRules().some((r: HideRule) => (r.mode === "name" || r.mode === "omit") && /[*?]/.test(r.match) && r.match.replace(/[*?]/g, "").length < 3); }
-  if (s && weakOn) for (const n of KNOWN.of(s)) note(n);
+  if (!weakOn) return;
+  const ns = KNOWN.of(s); // may read logs (a one-shot reader's family): their events hooks note too
+  const on = LN.on; LN.on = true; for (const n of ns) note(n, false); LN.on = on;
 }
+function hasAny(x: string, ns: string[], all: boolean): boolean {
+  if (!x) return false; if (all) return true;
+  for (const nm of ns) if (x.indexOf(nm) >= 0) return true;
+  return false;
+}
+// a text scrubbed again (the fakes it holds stay); the new text, or the same when nothing changed
+function again(x: string, ns: string[], all: boolean): string { return hasAny(x, ns, all) ? scrub(x) : x; }
+HIDE.n = (s: Sess | null): number => { if (!hiding()) return 0; seed(); known(s); return LN.base + LEARNT.length; };
+// a few new names: a native search per name and text; many (a rule change, a first sweep): every text scrubbed again
+HIDE.rescrub = (evs: Ev[], at: number, full: boolean): boolean => {
+  if (!hiding()) return false;
+  seed();
+  const k = at - LN.base; if (k >= LEARNT.length) return false;
+  const all = k < 0 || LEARNT.length - k > 32; const ns = all ? [] : LEARNT.slice(k);
+  let ch = false;
+  for (const e of evs) {
+    if (e.kind === "tool") { // its argument text: the tool's name stays (hideEvents)
+      const j = e.text.indexOf("\u0000");
+      if (j >= 0) { const a = e.text.slice(j + 1); const b = again(a, ns, all); if (b !== a) { e.text = e.text.slice(0, j + 1) + b; ch = true; } }
+    } else { const b = again(e.text, ns, all); if (b !== e.text) { e.text = b; ch = true; } }
+    if (full && e.full && !e.full.startsWith("@file:") && e.full.length < 1048576) { const b = again(e.full, ns, all); if (b !== e.full) { e.full = b; ch = true; } }
+  }
+  return ch;
+};
 // OpenCode logs a skill the user activates as a meta event "skill: <name>" (harness/opencode.ts): a load like a Skill call
 function metaSkill(e: Ev): string { return e.kind === "meta" && e.text.startsWith("skill: ") ? e.text.slice(7).trim() : ""; }
 function callOf(e: Ev): string[] { const j = e.text.indexOf("\u0000"); return j >= 0 ? [e.text.slice(0, j), e.text.slice(j + 1)] : [e.text, ""]; }
@@ -263,10 +346,12 @@ export function hideEvents(s: Sess | null, evs: Ev[], from: number): void {
   const p = s ? s.path : ""; let w = from; let rw = false;
   if (rwGen !== VIS.gen) { rwGen = VIS.gen; REWROTE.clear(); }
   known(s);
+  const on = LN.on; LN.on = true;
   for (let i = from; i < evs.length; i++) {
     const e = evs[i]; if (!e) continue;
     if (e.kind === "tool") { const c = callOf(e); note(callSkill(c[0] ?? "", c[1] ?? "")); } else note(metaSkill(e));
   }
+  LN.on = on;
   for (let i = from; i < evs.length; i++) {
     const e = evs[i]; if (!e) continue;
     const sm = metaSkill(e);

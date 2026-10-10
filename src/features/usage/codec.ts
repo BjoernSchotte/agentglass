@@ -177,6 +177,11 @@ function skIn(v: unknown): SkLoad[] {
   return out.length ? out : NO_SK;
 }
 SKV.loads = (raw: string): SkLoad[] => skIn(parse(raw)); SKV.rows = (raw: string): Map<string, number[]> => saIn(parse(raw));
+// the skill names of loads stored as text, no load decoded: the name pool skOut writes first, else the whole object
+SKV.names = (raw: string): string[] => {
+  const k = raw.startsWith("{\"nm\":[") ? raw.indexOf("],\"dr\":") : -1;
+  const o = parse(k > 0 ? raw.slice(0, k + 1) + "}" : raw); return o ? poolIn(o["nm"]) : [];
+};
 // keepIds: claude dedupe only needs the ids near the resume offset
 export function accOut(a: Acc, keepIds = 64): Obj {
   const days: Obj = {};

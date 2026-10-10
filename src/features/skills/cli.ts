@@ -20,11 +20,11 @@ import { callCutoff } from "../usage/callcache.ts";
 import { type Acc, lastDays, startOfDay, skOf } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows, sizeShown } from "./model.ts";
-import { type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviseHosts, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
+import { advJson, type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviseHosts, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
 import { rowFam, famKind, famName } from "../wait/family.ts";
 import { identSync } from "../query/project.ts";
 import { type InvSkill, inventory } from "./inventory.ts";
-import { skillVis } from "./vis.ts";
+import { skillVis, HIDDEN, hiddenLabel } from "./vis.ts";
 import { shownText } from "./text.ts";
 
 const PERIODS = ["today", "7d", "30d", "all"]; const SORTS = ["cost", "loads", "tail", "size", "share", "persess"];
@@ -60,7 +60,9 @@ const HELP = `usage: agentglass skills [--period today|7d|30d|all] [--sort ${SOR
   show     the text a load put into the context (the newest load of <name> in the period, or load i of a session's
            timeline); hidden by --redact and skills.hide rules (content | name | omit) in ~/.agentglass/config.json
 
-  --json          {period, rows[{${SKILL_FIELDS.join(",")}}], hidden, advice[]}; --session: {session, loads[]} with text
+  --json          {period, rows[{${SKILL_FIELDS.join(",")}}], hidden, advice[{id,skill,pair,severityUsd,basisDays,…}]}
+                  (rows: omitted skills in one row named (hidden), hidden = how many; severityUsd: ≈ $/30 d from
+                  basisDays observed days); --session: {session, loads[]} with text
   --period P      ${PERIODS.join(" | ")} (default 30d)
   --sort K        ${SORTS.join(" | ")} (default cost)
   --harness h     only this harness (${harnessIds().join(", ")})
@@ -143,14 +145,15 @@ const COLS: Col[] = [
   { h: "tier", w: 6, drop: 9, f: (r: SkillRow) => r.tier === "exact" ? "" : r.tier },
 ];
 // the table at width w: the name column takes what the others leave (≥ 14), narrow terminals drop load, / and ⚙, then tail
-export function tableLines(rows: SkillRow[], w: number): string[] {
+// hidden: how many skills the (hidden) row holds (0: not known, e.g. a fleet row)
+export function tableLines(rows: SkillRow[], w: number, hidden = 0): string[] {
   let cols = COLS.slice();
   const width = (cs: Col[]): number => { let n = 0; for (const c of cs) n += c.w; return n; };
   for (const lvl of [1, 2]) if (width(cols) + 14 > w) cols = cols.filter((c: Col) => c.drop > lvl);
   const nw = Math.max(14, Math.min(28, w - width(cols)));
   let h = rp("skill", nw); for (const c of cols) h += lp(c.h, c.w);
   const outL = [h.trimEnd()];
-  for (const r of rows) { let l = rp(r.name, nw); for (const c of cols) l += lp(c.f(r), c.w); outL.push(l.trimEnd()); }
+  for (const r of rows) { let l = rp(r.name === HIDDEN ? hiddenLabel(hidden) : r.name, nw); for (const c of cols) l += lp(c.f(r), c.w); outL.push(l.trimEnd()); }
   return outL;
 }
 function adviceIn(set: Set0, rows: SkillRow[], loads: LoadRow[], o: Opts): Advice[] { return periodAdvice(set.accs, set.ids, set.tops, set.bySess, rows, loads, periodLen(o.period), o.harness); }
@@ -201,7 +204,6 @@ export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: M
 }
 // --name: a skill as shown (a fake under --redact matches; its real name only where it is shown as is)
 function named(o: Opts, shown: string): boolean { return !o.name || shown === o.name; }
-function advJson(a: Advice): Obj { return { id: a.id, skill: a.skill, pair: a.pair || null, severityUsd: round(a.severity), evidence: a.evidence, suggestion: a.suggestion, sessions: a.sessions }; }
 export function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50 < 0 ? null : r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
 
 function table(o: Opts, set: Set0): void {
@@ -212,7 +214,7 @@ function table(o: Opts, set: Set0): void {
   const v = visRows(all.slice()); if (o.name) v.rows = v.rows.filter((r: SkillRow) => named(o, r.name));
   if (o.json) { out(JSON.stringify({ period: o.period, rows: v.rows.map(rowJson), hidden: v.hidden, advice: adv.slice(0, o.advice).map(advJson), notes: "tokens are measured request tokens; a skill's share is bounded by its text size and the context growth; ≈ inferred or cut, ? unknown size (not priced); $ at current list prices" })); return; }
   if (!v.rows.length) { out("no skill loads " + periodText(o.period) + (set.tops.length ? " (" + String(set.tops.length) + " sessions)" : "") + " — skills are counted from Claude, Codex, pi, OpenCode and Gemini logs"); return; }
-  for (const l of tableLines(v.rows, termWidth())) out(l);
+  for (const l of tableLines(v.rows, termWidth(), v.hidden)) out(l);
   if (adv.length) { out(""); for (const a of adv.slice(0, 3)) out(adviceLines(a)[0] ?? ""); if (adv.length > 3) out("… " + String(adv.length - 3) + " more: agentglass skills advise"); }
 }
 function adviseCmd(o: Opts, set: Set0): void {

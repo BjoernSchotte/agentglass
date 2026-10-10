@@ -6,20 +6,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev, Sess } from "../../model/types.ts";
 import { S, say } from "../../state.ts";
-import { H } from "../../hooks.ts";
+import { H, READ } from "../../hooks.ts";
 import { type Mark, registerMarks, marksOf, famOf } from "../../model/marks.ts";
 import { toolKinds, markAt } from "../../model/kinds.ts";
 import { C, CSI, RST, fg } from "../../ui/theme.ts";
 import { clean, fitStyled } from "../../util/text.ts";
-import { accsOf } from "../usage/ledger.ts";
-import { type Acc, type SkLoad, skOf } from "../usage/record.ts";
+import { accsOf, ledger, complete, MOVED } from "../usage/ledger.ts";
+import { type Acc, type SkLoad, skOf, skNames } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { kfmt, money } from "../usage/costs.ts";
 import { asBill } from "../usage/billing.ts";
 import { toolName, toolArg } from "../callgraph/model.ts";
 import { type LoadRow, skillLoads, tierOf } from "./model.ts";
 import { skillVis, VIS } from "./vis.ts";
-import { KNOWN } from "./watchvis.ts"; // its events hook: every event reader follows skills.hide
+import { KNOWN, INSTALLED } from "./watchvis.ts"; // its events hook: every event reader follows skills.hide
+import { sessions, loadHead } from "../../model/sessions.ts";
 import { openSkillView, recordLines } from "./view.ts";
 
 function iso(t: number): string { return t > 0 ? new Date(t).toISOString() : ""; }
@@ -43,11 +44,37 @@ export function skillMarks(as: Acc[]): Mark[] {
 // changes when the ledger read more of the session at the same log size (its marks then differ), or the hiding rules did
 function gen(s: Sess): number { let g = 0; for (const a of accsOf(s)) g += a.off + skOf(a).length; return g + VIS.gen * 7919; }
 registerMarks({ kind: "skill", glyph: "✧", color: (): string => fg(C.cyan), of: (s: Sess): Mark[] => skillMarks(accsOf(s)), gen });
-// the session's loaded skill names for watchvis.ts (broad glob rules), once per ledger read and rules
-const knownAt = new Map<string, number>();
-KNOWN.of = (s: Sess): string[] => {
-  const g = gen(s); if (knownAt.get(s.path) === g) return [];
-  knownAt.set(s.path, g); const o: string[] = []; for (const a of accsOf(s)) for (const l of skOf(a)) o.push(l.name);
+// every skill name agentglass knows, for watchvis.ts (broad glob rules), new ones only: the installed skills (every scope
+// the inventory reads: the user's, plugins', and the projects of the sessions seen) and the skills every log in the ledger
+// loaded or listed — not only this session's: a prompt names a skill a day before its load, or only a subagent loads it.
+// Per rule change the whole ledger, then the logs it read since (MOVED); a cached log's names from its stored name pool (no
+// load decoded). A one-shot command first indexes its own session's family (READ.focus: parent, subagents): line 1 is scrubbed
+const KN = { gen: -1, mg: -1, at: 0, size: -1, busy: false, seen: new Set<string>(), off: new Map<string, number>(), fam: new Set<string>(), repos: new Set<string>() };
+function add(o: string[], n: string): void { if (n && !KN.seen.has(n)) { KN.seen.add(n); o.push(n); } }
+function knownIn(o: string[], p: string, a: Acc): void {
+  if (KN.off.get(p) === a.off) return; KN.off.set(p, a.off);
+  for (const n of skNames(a)) add(o, n);
+  for (const n of a.lst) add(o, n);
+}
+function family(s: Sess): void {
+  const root = s.parent ? s.parent : s.id; const key = s.h + ":" + root;
+  if (!S.cli || READ.focus !== key || KN.fam.has(key)) return; // a one-shot command's own session only: a list or a TUI never waits
+  KN.fam.add(key);
+  for (const k of sessions.values()) if (k.h === s.h && (k.id === root || k.parent === root)) { loadHead(k); complete(k); } // cached: the bytes since
+}
+KNOWN.of = (s: Sess | null): string[] => {
+  const o: string[] = []; if (KN.busy) return o;
+  KN.busy = true;
+  if (KN.gen !== VIS.gen) {
+    KN.gen = VIS.gen; KN.seen.clear(); KN.off.clear(); KN.fam.clear(); KN.repos.clear(); KN.size = -1;
+    for (const x of sessions.values()) if (x.cwd) KN.repos.add(x.cwd);
+    for (const n of INSTALLED.of([...KN.repos].sort())) add(o, n);
+  }
+  if (s) family(s);
+  if (s && s.cwd && !KN.repos.has(s.cwd)) { KN.repos.add(s.cwd); for (const n of INSTALLED.project(s.cwd)) add(o, n); } // a project seen since
+  if (KN.mg !== MOVED.gen || KN.size !== ledger.size) for (const [p, a] of ledger) knownIn(o, p, a); // a cache loaded, a log added or gone
+  else for (; KN.at < MOVED.log.length; KN.at++) { const a = ledger.get(MOVED.log[KN.at] ?? ""); if (a) knownIn(o, MOVED.log[KN.at] ?? "", a); }
+  KN.mg = MOVED.gen; KN.at = MOVED.log.length; KN.size = ledger.size; KN.busy = false;
   return o;
 };
 

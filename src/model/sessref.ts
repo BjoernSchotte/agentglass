@@ -3,7 +3,7 @@
 import type { Sess } from "./types.ts";
 import { sessions, loadHead } from "./sessions.ts";
 import { isHarness } from "../harness/index.ts";
-import { realCwd } from "../hooks.ts";
+import { realCwd, READ } from "../hooks.ts";
 import { OWN } from "../features/usage/owners.ts";
 import { currentSession, projectKey, realDir } from "../features/agentenv.ts";
 
@@ -11,7 +11,7 @@ import { currentSession, projectKey, realDir } from "../features/agentenv.ts";
 // via: how s was found — the current session's resolution ("env:<VAR>", "ancestor:pid N", both joined by "+"), else "ref"
 export interface Found { s: Sess | null; code: number; cands: Sess[]; err: string; msg: string; hint: string; via: string }
 export const MIN_PREFIX = 6;
-function found(s: Sess, via = "ref"): Found { return { s, code: 0, cands: [], err: "", msg: "", hint: "", via }; }
+function found(s: Sess, via = "ref"): Found { READ.focus = s.h + ":" + (s.parent ? s.parent : s.id); return { s, code: 0, cands: [], err: "", msg: "", hint: "", via }; }
 function none(code: number, msg: string, hint: string): Found { return { s: null, code, cands: [], err: code === 2 ? "usage" : "not_found", msg, hint, via: "" }; }
 // copies of one session (same harness and id: a Claude session under two project dirs, a project moved or copied with its
 // ~/.claude dir) stand for it as: the live copy (the one its process writes, procs.ts), then the one at home (owners.ts

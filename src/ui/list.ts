@@ -4,7 +4,7 @@ import { base } from "../util/json.ts";
 import { width, vwidth, clean, fit, fitStyled, fillTo, ago, bytes, home, localHM, localDay } from "../util/text.ts";
 import type { Ev, Sess } from "../model/types.ts";
 import { S } from "../state.ts";
-import { H, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
+import { H, HIDE, BADGE_SLOT, enrich, boxChips, emptyText, rowPrefix } from "../hooks.ts";
 import { loadHead, loadTail, titleOf, working, activity, subActive, activeSubs, isOpen, parentOf, sessAt, current, isLive, FRESH } from "../model/sessions.ts";
 import { paneOfPid, paneText, paneTextIn } from "../mux/index.ts";
 import { herdrRow } from "../mux/rowstate.ts";
@@ -24,8 +24,12 @@ export const prevKids: Sess[] = [];
 // tail read makes a new one), at the same width and colors: formatting them was the bulk of a frame
 // With the preview's event-kind filter (ui/evfilter.ts, view "preview": linked views or the palette set it) the last 25 shown
 // events, each run of hidden ones between them as one dim gap line
-const ACT = { evs: [] as Ev[], n: -1, w: -1, theme: "", fk: "", lines: [] as string[], ev: [] as number[] };
+const ACT = { evs: [] as Ev[], n: -1, w: -1, theme: "", fk: "", lines: [] as string[], ev: [] as number[], hn: -1 };
 export function actLines(s: Sess, w: number): string[] {
+  // skills.hide: a tail read's events may predate a hidden name the ledger learnt since (a subagent's load): scrubbed again,
+  // all names on a new read (60 short texts), then the names learnt since
+  const hn = HIDE.n(s);
+  if (hn !== ACT.hn || ACT.evs !== s.evs) { if (HIDE.rescrub(s.evs, ACT.evs === s.evs ? ACT.hn : -1, false)) ACT.n = -1; ACT.hn = hn; }
   const theme = C.text + C.cyan + C.dim + C.sel + C.sub + C.line + C.yellow + C.purple; // every color evLines uses: a theme may change any one
   const act = vfActive("preview"); const fk = act ? fstate("preview") + "|" + String(kindIds(s, s.evs).length) + ":" + String(kindVer(s.evs)) : "";
   if (ACT.evs === s.evs && ACT.n === s.evs.length && ACT.w === w && ACT.theme === theme && ACT.fk === fk) return ACT.lines;

@@ -4,7 +4,7 @@ import { width, clean, fit, wrap, fitStyled, fillTo, localHM, bytes, home, numAt
 import type { Ev, Sess } from "../model/types.ts";
 import { S, say, type TV } from "../state.ts";
 import { remoteOnly } from "../model/remote.ts";
-import { H, enrich } from "../hooks.ts";
+import { H, HIDE, enrich } from "../hooks.ts";
 import { parseEvents, sourceOf, window, epochOf } from "../harness/index.ts";
 import { titleOf, parentOf, subActive, activeSubs, restat } from "../model/sessions.ts";
 import { C, CSI, RST, fg, bg } from "./theme.ts";
@@ -79,6 +79,17 @@ export function markLine(s: Sess, m: Mark, w: number): string {
   const k = markKind(m.kind.split(":")[0] ?? ""); const col = k ? k.color() : C.purple;
   return fitStyled(fg(col) + (k ? k.glyph : "◆") + " " + clean(m.label) + RST + fg(C.dim) + " · " + m.kind + (m.sub ? " · " + m.sub : "") + RST, w);
 }
+// skills.hide: the hidden names the open transcript's events were scrubbed for (HIDE.n when its read began); a name learnt
+// since (a subagent's load indexed after it opened) is scrubbed from them on the next frame. True: a text changed
+const HV = { t: null as TV | null, n: 0 };
+export function tvRescrub(t: TV): boolean {
+  const hn = HIDE.n(t.s);
+  if (HV.t !== t) { HV.t = t; HV.n = hn; return false; } // a view another reader built (the call graph's): from now on
+  if (hn === HV.n) return false;
+  const ch = HIDE.rescrub(t.evs, HV.n, true); HV.n = hn;
+  if (ch) t.ln = -1; // laid out again
+  return ch;
+}
 // events laid out: all, or the first t.limit (replay)
 export function shown(t: TV): number { return t.limit < 0 ? t.evs.length : Math.min(t.limit, t.evs.length); }
 export function renderTranscript(): void {
@@ -95,6 +106,7 @@ export function renderTranscript(): void {
     for (const l of r.lines) parseEvents(s.h, l, t.evs, s);
     t.off = r.next;
   }
+  tvRescrub(t);
   const W = S.W; const H = S.H;
   const iw = W - 4;
   const n = shown(t);
@@ -222,6 +234,7 @@ function meta(text: string): Ev { return { kind: "meta", text, ts: "", id: "", f
 // (re)start reading: at the last 6 MB, or (t.from) a 6 MB window from 64 KB before the link's event, then the tail
 function tvStart(t: TV): void {
   const s = t.s; const src = sourceOf(s.h);
+  HV.t = t; HV.n = HIDE.n(s); // what its events are scrubbed for: the names known before the read
   const start = Math.max(0, s.size - window(src, 6291456));
   t.evs = []; t.off = start; t.ep = s.ep; t.ln = -1;
   if (t.from > 0 && t.from < start) {

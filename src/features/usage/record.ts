@@ -106,8 +106,10 @@ export function nlines(s: string): number { if (!s) return 0; const n = s.split(
 export const NO_SA = new Map<string, number[]>(); export const NO_SK: SkLoad[] = []; export const NO_LST: string[] = []; export const NO_SKR = new Map<string, SkRead>();
 // a warm start keeps every log's skill loads and every day's skill rows as the cache's text (codec.ts sets the decoders):
 // decoded they take several times that, and most are a listing nobody looks at. A reader or writer decodes one on first use
-export const SKV = { loads: (raw: string): SkLoad[] => NO_SK, rows: (raw: string): Map<string, number[]> => NO_SA };
+export const SKV = { loads: (raw: string): SkLoad[] => NO_SK, rows: (raw: string): Map<string, number[]> => NO_SA, names: (raw: string): string[] => [] };
 export function skOf(a: Acc): SkLoad[] { if (a.skv) { const raw = a.skv; a.skv = ""; a.sk = SKV.loads(raw); } return a.sk; }
+// the loads' skill names, none decoded (a cached log's from its stored name pool)
+export function skNames(a: Acc): string[] { if (a.skv) return SKV.names(a.skv); const o: string[] = []; for (const l of a.sk) o.push(l.name); return o; }
 export function saOf(d: Day): Map<string, number[]> { if (d.sav) { const raw = d.sav; d.sav = ""; d.sa = SKV.rows(raw); } return d.sa; }
 // a day's skill rows to write into (shared empties swapped for its own map)
 export function saW(d: Day): Map<string, number[]> { const sa = saOf(d); if (sa !== NO_SA) return sa; const m = new Map<string, number[]>(); d.sa = m; return m; }

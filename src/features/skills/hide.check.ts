@@ -16,8 +16,10 @@ import { sessions, loadHead, loadTail, titleOf } from "../../model/sessions.ts";
 import { marksOf } from "../../model/marks.ts";
 import { ledger, complete, accsOf } from "../usage/ledger.ts";
 import { accIn, accOut } from "../usage/codec.ts";
+import { skNames, skOf } from "../usage/record.ts";
 import { parse } from "../../util/json.ts";
 import { openTranscript, renderTranscript } from "../../ui/transcript.ts";
+import { actLines } from "../../ui/list.ts";
 import { skillLanes, skillAgg } from "../callgraph/model.ts";
 import { skillRows as relSkillRows, startBuild, stepBuild } from "../related/build.ts";
 import type { RelEv } from "../related/model.ts";
@@ -32,7 +34,7 @@ import { type PanelScope, openSkillsPanel, panelLines } from "./panel.ts";
 import { openSkillView, skillViewLines } from "./view.ts";
 import { loadOf, openAt } from "./marks.ts";
 import { setVis, skillVis, type HideRule } from "./vis.ts";
-import "./watchvis.ts";
+import { KNOWN } from "./watchvis.ts";
 import "../../harness/index.ts";
 import "../replay.ts";
 
@@ -89,6 +91,7 @@ const SC: PanelScope = { origin: "test", label: (): string => "all", days: (): s
 openSkillsPanel(SC, "");
 const pn = panelLines(120, 30).join("\n") + panelLines(80, 24).join("\n");
 hidden("Stats panel", pn); ok("Stats panel: fake and (hidden)", pn.indexOf(fake) >= 0 && pn.indexOf("(hidden)") >= 0, pn);
+ok("Stats panel: the (hidden) row says how many skills it holds", pn.indexOf("(hidden) 1 skill") >= 0, pn);
 S.mode = "list";
 let pv = ""; for (const f of H.previewSections) for (const l of f(s, 100)) pv += plain(l) + "\n";
 hidden("preview", pv); ok("preview: skills line", pv.indexOf("skills") >= 0 && pv.indexOf(fake) >= 0, pv);
@@ -132,7 +135,30 @@ const wsurf: [string, () => string][] = [
   ["view skill", (): string => { let v = ""; for (const m of marksOf(s, ["skill:load"])) { const l = loadOf(s, m); if (l) { openSkillView(s, l); v += skillViewLines(100).join("\n"); S.mode = "list"; } } return v; }],
 ];
 for (const [what, f] of wsurf) { ok("warm start: " + what + " reads cache text", warm(), ""); const t = f(); ok("warm start: " + what + " output", t.length > 0, ""); hidden("warm start: " + what, t); }
+{ // the names of a warm start's loads come from the cache text's name pool, no load decoded (KNOWN, marks.ts)
+  const b = warm() ? ledger.get(s.path) : undefined; const ns = b ? skNames(b) : [];
+  ok("warm start: skNames from the name pool", ["pub", "acme-x", "secret", "notes"].every((n: string) => ns.indexOf(n) >= 0) && b !== undefined && b.skv !== "", ns.join(","));
+  ok("warm start: skNames = the decoded names", b !== undefined && ns.join(",") === skOf(b).map((l) => l.name).filter((n: string, i: number, a: string[]) => a.indexOf(n) === i).join(","), ns.join(",")); }
 ok("warm start: Stats panel fake and (hidden)", warm() && ((): boolean => { openSkillsPanel(SC, ""); const t = panelLines(120, 30).join("\n"); S.mode = "list"; return t.indexOf(fake) >= 0 && t.indexOf("(hidden)") >= 0; })(), "");
+
+// ── a name the TUI learns after a view read its events (a subagent's load indexed later): scrubbed on the next frame ──
+setVis([{ match: "*", mode: "name" }], false);
+{ const id = "s-late"; sessions.clear(); ledger.clear();
+  const P = join(dir, id + ".jsonl");
+  writeFileSync(P, '{"parentUuid":null,"isSidechain":false,"promptId":"p1","type":"user","sessionId":"s-late","cwd":"/w/keepme","timestamp":"2026-10-01T09:00:02.000Z","uuid":"s-late-u1","message":{"role":"user","content":"use late-sk now, then ts-late-sk-1"}}\n');
+  const sl: Sess = newSess("claude", id, P, false); sl.size = statSync(P).size; sl.mtime = Date.now(); sl.cwd = "/w/keepme"; sessions.set(P, sl);
+  complete(sl); loadHead(sl); loadTail(sl);
+  openTranscript(sl); renderTranscript(); const tl0 = S.tv ? S.tv.lines.map(plain).join("\n") : "";
+  const pv0 = actLines(sl, 100).map(plain).join("\n");
+  ok("late name: shown while unknown (prose)", tl0.indexOf("late-sk now") >= 0 && pv0.indexOf("late-sk now") >= 0, tl0);
+  const k0 = KNOWN.of; const extra = ["late-sk"];
+  KNOWN.of = (x: Sess | null): string[] => k0(x).concat(extra.splice(0));
+  renderTranscript(); const tl1 = S.tv ? S.tv.lines.map(plain).join("\n") : ""; const ev1 = S.tv ? evText(S.tv.evs) : "";
+  const fl = skillVis("late-sk").shown; const pv1 = actLines(sl, 100).map(plain).join("\n");
+  ok("late name: the transcript's lines scrubbed on the next frame", tl1.indexOf("late-sk") < 0 && tl1.indexOf(fl + " now") >= 0 && tl1.indexOf("ts-" + fl + "-1") >= 0, tl1);
+  ok("late name: its events too", ev1.indexOf("late-sk") < 0, ev1);
+  ok("late name: the preview's lines", pv1.indexOf("late-sk") < 0 && pv1.indexOf(fl) >= 0, pv1);
+  KNOWN.of = k0; S.mode = "list"; }
 
 // ── without rules nothing is hidden locally ──
 setVis([], false);
