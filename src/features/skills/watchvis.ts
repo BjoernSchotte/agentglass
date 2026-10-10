@@ -29,18 +29,20 @@ const SCRUB = new Map<string, string>();
 const BY = new Map<string, number[]>(); const ODD: string[] = [];
 // SUF: entries that are only a plugin skill's dir ("xyz" of acme:xyz): a skill of that name, noted later, takes its own fake
 const SUF = new Set<string>();
+// FAKES: what scrub put in (the fakes): a text scrubbed twice (a title, then its JSON line) keeps them, no word of them is noted
+const FAKES = new Set<string>();
 // the leading words' length range and first characters (ASCII; others always looked up): most words skip the lookup
 const LEADS = { min: 1 << 30, max: 0, first: new Uint8Array(128) };
 let seeded = false; let scrubGen = -1;
 // work counters (scrub-perf.check.ts bounds them): characters visited, glob matches tried, name compares
 export const SCRUB_STAT = { chars: 0, glob: 0, cmp: 0 };
 function seed(): void { // rules without a glob name their skills already: titles are scrubbed before the first load is seen
-  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; SUF.clear(); LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
+  if (scrubGen !== VIS.gen) { scrubGen = VIS.gen; SCRUB.clear(); BY.clear(); ODD.length = 0; SUF.clear(); FAKES.clear(); LEADS.min = 1 << 30; LEADS.max = 0; for (let c = 0; c < 128; c++) LEADS.first[c] = 0; globsOf(); seeded = false; } // other rules: what they hide, from scratch
   if (seeded) return; seeded = true;
   for (const r of hideRules()) if (r.match.indexOf("*") < 0 && r.match.indexOf("?") < 0) note(r.match);
 }
 function put(real: string, rep: string): void {
-  const had = SCRUB.has(real); SCRUB.set(real, rep); if (had) return;
+  const had = SCRUB.has(real); SCRUB.set(real, rep); FAKES.add(rep); if (had) return;
   let e = 0; while (e < real.length && wc(real.charCodeAt(e))) e++;
   if (!e) { ODD.push(real); return; }
   const lead = real.slice(0, e); const ls = BY.get(lead) ?? []; const n = real.length;
@@ -132,7 +134,7 @@ function oddRef(w: string): boolean {
   return ODDREF.has(w);
 }
 // a name not noted as itself yet (a plugin skill's dir only is: a skill of that name takes its own fake)
-function fresh(w: string): boolean { return !SCRUB.has(w) || SUF.has(w); }
+function fresh(w: string): boolean { return (!SCRUB.has(w) || SUF.has(w)) && !FAKES.has(w); }
 // the word starting at i (word characters, a ":" between them: "p:x"): noted when a rule hides it; returns its end. Its
 // ":<digit>…" tail is a line or port ("acme:deploy:15", "p:x:3:7"): the name before it is the candidate
 function wordAt(t: string, i: number, n: number): number {
@@ -295,8 +297,8 @@ export function hideEvents(s: Sess | null, evs: Ev[], from: number): void {
 }
 // every reader of events follows skills.hide / --redact like the skill lines do: the TUI (transcript, detail, search, copy,
 // call graph, related, replay), events, session, errors, related, OTLP and MCP (through the CLI). First, on the real text,
-// before the redaction hook scrubs it; free without rules (hideEvents returns at once). --watch applies callVis per line
-// on top (idempotent: a fake stays itself). Titles (titleOf, every surface) are scrubbed the same way
+// before the redaction hook scrubs it; free without rules (hideEvents returns at once). --watch prints the hooked events; a
+// text scrubbed again (a title, then its JSON line) keeps its fakes (FAKES). Titles (titleOf, every surface) are scrubbed the same way
 export function hiding(): boolean { return VIS.redact || hideRules().length > 0; }
 H.events.unshift(hideEvents);
 H.hides.push(hiding);

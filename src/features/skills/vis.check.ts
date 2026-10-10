@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { parseHide, setVis, skillVis, textShown, textHiddenWhy, globMatch, listingShown, VIS_SURFACES, VIS_SOURCES, VIS_DATA, SKILL_DATA_RE, type HideRule } from "./vis.ts";
-import { fakeSkill } from "../redact.ts";
+import { fakeSkill, skillFakeOf } from "../redact.ts";
 import { callSkill, callVis, scrub, hideEvents } from "./watchvis.ts";
 import { type Ev, newSess } from "../../model/types.ts";
 import { titleOf } from "../../model/sessions.ts";
@@ -47,7 +47,8 @@ setVis(parseHide([{ match: "notes", mode: "content" }, { match: "secret", mode: 
 const f = skillVis("my-team-skill").shown;
 ok("redact fakes", f !== "my-team-skill" && f.length === "my-team-skill".length && f === fakeSkill("my-team-skill"));
 eq("redact stable", skillVis("my-team-skill").shown, f);
-eq("redact: a fake stays itself (scrubbed call text)", skillVis(f).shown, f);
+// a real skill named like another's fake is faked too, never shown as it is
+ok("redact: a name that is another's fake is faked", skillVis(f).shown !== f && skillVis(f).shown.length === f.length);
 ok("redact plugin whole", skillVis("acme:deploy").shown.length === 11 && skillVis("acme:deploy").shown.indexOf("acme") < 0);
 eq("redact builtin", skillVis("claude-api").mode + "|" + skillVis("claude-api").shown, "content|claude-api");
 eq("redact listing", skillVis("(listing)").shown, "(listing)");
@@ -55,6 +56,12 @@ eq("redact + content rule → name", skillVis("notes").mode, "name");
 eq("redact + omit rule → omit", skillVis("secret").mode, "omit");
 eq("why redact", textHiddenWhy("pub"), "text hidden (--redact)");
 ok("redact no text", !textShown("pub", false, false) && !textShown("pub", true, true));
+// a fake is derived from the name alone, whatever was faked first (fleet, OTLP and hub consumers compare them): many short
+// names share their few candidates, the order they are met in picks none of them
+{ let diff = 0; const ns: string[] = []; for (let i = 0; i < 400; i++) ns.push("s" + String(i));
+  for (const n of ns) if (fakeSkill(n) !== skillFakeOf(n)) diff++;
+  for (const n of ns.slice().reverse()) if (skillVis(n).shown !== skillFakeOf(n)) diff++;
+  eq("redact fakes do not depend on the order names are met", String(diff), "0"); }
 
 // --watch event lines: the skill a call loads, and what its line shows
 setVis(parseHide([{ match: "sec*", mode: "omit" }, { match: "acme-x", mode: "name" }, "notes"]).rules, false);

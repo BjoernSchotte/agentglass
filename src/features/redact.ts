@@ -165,18 +165,21 @@ export function fakeAgent(real: string): string {
   addWord("a" + real, "a" + out, true); // Claude team subagents: id a<name>-<hex>, transcript agent-a<name>-<hex>.jsonl
   return out;
 }
-// a user-defined skill name → a stable fake of the same length (a plugin:name as a whole), one per real name
-const skillMemo = new Map<string, string>(); const skillUsed = new Set<string>();
+// a user-defined skill name → a fake of the same length (a plugin:name as a whole), derived from the name alone: the same on
+// every run and host whatever else was seen first (fleet, OTLP and hub consumers compare them); two names may share one
+export function skillFakeOf(real: string): string {
+  const n = real.length; const k = real.toLowerCase();
+  for (let i = 0; i < 64; i++) { const c = stretch(pick(AGENT_POOL, "skill\t" + k + String(i)) + "-" + pick(AGENT_POOL, "skill#" + k + String(i)), n); if (c !== k && !BUILTIN_SKILLS.has(c)) return c; }
+  return "x" + stretch("skill", n).slice(1); // a name no candidate differs from
+}
+// a name that equals another's fake is faked too (a real skill "index" never shows): text is hidden once, where it is read
+// (skills/watchvis.ts), and a second scrub leaves the fakes it put alone
+const skillMemo = new Map<string, string>();
 export function fakeSkill(real: string): string {
   if (!real || BUILTIN_SKILLS.has(real)) return real;
   const hit = skillMemo.get(real); if (hit !== undefined) return hit;
-  if (skillUsed.has(real)) return real; // already a fake: text the scrubber rewrote (a --watch call line) keeps it, not a fake of it
-  const n = real.length; const k = real.toLowerCase();
-  const free = (c: string): boolean => c !== k && !skillUsed.has(c) && !BUILTIN_SKILLS.has(c);
-  let out = "";
-  for (let i = 0; i < 64 && !out; i++) { const c = stretch(pick(AGENT_POOL, "skill\t" + k + String(i)) + "-" + pick(AGENT_POOL, "skill#" + k + String(i)), n); if (free(c)) out = c; }
-  if (!out) out = stretch("skill", n);
-  skillMemo.set(real, out); skillUsed.add(out);
+  const out = skillFakeOf(real); const k = real.toLowerCase();
+  skillMemo.set(real, out);
   if (k.length >= 3 && !common.has(k) && !GENERIC.has(k)) addWord(real, out, true); // its name in tool arguments and screen text
   return out;
 }

@@ -37,6 +37,9 @@ eq("* omit: installed p:3d, tools:2fa:12 go; a file:line stays", scrub("use p:3d
 setVis([{ match: "*", mode: "name" }], false);
 scrub("load acme:xyz"); eq("a skill met after a plugin skill's dir takes its own fake", scrub("then /xyz"), "then /" + skillVis("xyz").shown);
 eq("the plugin skill keeps its fake", scrub("load acme:xyz"), "load " + skillVis("acme:xyz").shown);
+// a text scrubbed twice (a title, then its JSON line) keeps the fakes the first scrub put in
+setVis([{ match: "*", mode: "name" }], false);
+{ const s1 = scrub("run /deploy-x, $other-y and p:q-z then /deploy-x"); eq("scrub twice = once", scrub(s1), s1); ok("scrub hid the refs", s1.indexOf("deploy-x") < 0 && s1.indexOf("other-y") < 0 && s1.indexOf("p:q-z") < 0, s1); }
 // a lean reader (the call graph) drops replies and full texts: the names in them still hide the texts it keeps
 setVis([{ match: "*", mode: "name" }], false);
 { const ls: Sess = newSess("claude", "lean", "/k/lean.jsonl", false);
