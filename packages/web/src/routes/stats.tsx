@@ -2,18 +2,21 @@
 // budget (cost.get = `agentglass cost --json`), and per harness and per model for the period (cost.get by = the
 // `cost --by` rows). The period and the filter live in the URL. While the background index still counts logs, the
 // figures show what is booked so far with "counting…" and refresh every 2 s until it is done.
-import { useEffect, useState } from "react";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+// A By-model row opens that model's drill-down (W8.8, ?model= in the URL): one cost.get {by: session, model} — only
+// the model's tokens and cost — grouped here by project, each project's sessions below it; a session opens its drawer.
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { Cost, CostRows } from "@agentglass/api-contract";
 import { Button, Kbd, cn } from "@agentglass/ui";
-import { useLive } from "../app.tsx";
+import { useLive, useNow, ago } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
 
-export interface StatsSearch { p?: string; f?: string }
+export interface StatsSearch { p?: string; f?: string; model?: string; sort?: string; proj?: string }
 const PERIODS: [string, string, string][] = [["d", "today", "today"], ["w", "7 days", "7d"], ["m", "this month", ""]];
 export function validateStats(s: Record<string, unknown>): StatsSearch {
   const o: StatsSearch = {}; if (typeof s.p === "string" && PERIODS.some(([k]) => k === s.p)) o.p = s.p; if (typeof s.f === "string" && s.f) o.f = s.f;
+  if (typeof s.model === "string" && s.model) o.model = s.model; if (s.sort === "cache") o.sort = "cache"; if (typeof s.proj === "string") o.proj = s.proj;
   return o;
 }
 // the period's since for cost.get: this month = its first day (local), as the TUI counts a month
@@ -54,7 +57,7 @@ function Budget({ b }: { b: NonNullable<Cost["budget"]> }) {
     </section>
   );
 }
-function Table({ label, data, model }: { label: string; data: CostRows | undefined; model?: boolean }) {
+function Table({ label, data, model, open, onOpen }: { label: string; data: CostRows | undefined; model?: boolean; open?: string; onOpen?: (k: string) => void }) {
   const rows = data?.rows ?? [];
   return (
     <section aria-label={label}>
@@ -63,20 +66,83 @@ function Table({ label, data, model }: { label: string; data: CostRows | undefin
         <table className="w-full table-fixed border-collapse">
           <colgroup><col /><col className="w-24" /><col className="w-20" /><col className="w-20" /><col className="w-24" /><col className="w-20" /></colgroup>
           <thead className="text-left text-[11px] uppercase tracking-wide text-muted"><tr><th className="py-1 pl-2 font-medium">{model ? "Model" : "Harness"}</th><th className="num font-medium">Cost</th><th className="num font-medium">In</th><th className="num font-medium">Out</th><th className="num font-medium">Cache read</th><th className="num pr-2 font-medium">Sessions</th></tr></thead>
-          <tbody>{rows.map((r) => (
-            <tr key={r.key} className={cn("h-7 border-b border-border-subtle", r.key === "total" && "font-semibold")}>
+          <tbody>{rows.map((r) => { const can = !!onOpen && r.key !== "total"; const on = open === r.key; return (
+            <tr key={r.key} aria-expanded={can ? on : undefined} tabIndex={can ? 0 : undefined} title={can ? "where " + r.key + "'s cost came from" : undefined}
+              onClick={can ? () => onOpen(r.key) : undefined} onKeyDown={can ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(r.key); } } : undefined}
+              className={cn("h-7 border-b border-border-subtle", r.key === "total" && "font-semibold", can && "cursor-pointer hover:bg-surface-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent", on && "bg-surface-2")}>
               <td className="truncate pl-2" style={!model && r.key !== "total" ? { color: "var(--h-" + r.key + ", var(--text))" } : undefined}>{r.key}{model && r.priceSource && r.priceSource !== "unpriced" && r.key !== "total" && <span className="text-muted"> · {r.priceSource}</span>}</td>
               <td className="num text-cost">{usd(r.costUsd, !!r.estimated, r.unpricedTokens > 0)}</td>
-              <td className="num">{tok(r.in)}</td><td className="num">{tok(r.out)}</td><td className="num">{tok(r.cacheRead)}</td><td className="num pr-2">{r.sessions}</td>
-            </tr>))}</tbody>
+              <td className="num">{tok(r.in)}</td><td className="num">{tok(r.out)}</td><td className="num">{tok(r.cacheRead)}</td><td className="num pr-2">{r.sessions}{can && <span className="text-muted" aria-hidden> {on ? "▾" : "›"}</span>}</td>
+            </tr>); })}</tbody>
         </table>)}
+    </section>
+  );
+}
+
+type Row = CostRows["rows"][number];
+interface Proj { name: string; cost: number; unpriced: number; est: boolean; cacheRead: number; tokens: number; rows: Row[] }
+// the model's session rows by project (cost or cache read first); each project's sessions in the same order
+export function byProject(rows: Row[], sort: string): Proj[] {
+  const m = new Map<string, Proj>(); const val = (r: { cost: number; cacheRead: number }) => (sort === "cache" ? r.cacheRead : r.cost);
+  for (const r of rows) {
+    if (r.key === "total") continue;
+    const n = r.project || "(no project)"; let p = m.get(n);
+    if (!p) { p = { name: n, cost: 0, unpriced: 0, est: false, cacheRead: 0, tokens: 0, rows: [] }; m.set(n, p); }
+    p.cost += r.costUsd ?? 0; p.unpriced += r.unpricedTokens; p.cacheRead += r.cacheRead; p.tokens += r.in + r.out + r.cacheRead + r.cacheWrite; p.rows.push(r);
+  }
+  const ps = [...m.values()]; const rv = (r: Row) => (sort === "cache" ? r.cacheRead : r.costUsd ?? 0);
+  for (const p of ps) p.rows.sort((a, b) => rv(b) - rv(a));
+  return ps.sort((a, b) => val(b) - val(a) || a.name.localeCompare(b.name));
+}
+const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) + "%" : "·");
+function Drill({ model, since, filter, label, sort, proj, set, onClose }: { model: string; since: string; filter: string; label: string; sort: string; proj: string | undefined; set: (p: StatsSearch) => void; onClose: () => void }) {
+  const live = useLive(); const now = useNow(30_000);
+  const q = useQuery({ queryKey: ["cost", "session", since, filter, model], retry: false, refetchInterval: (x: { state: { data?: { pending: number } } }) => (x.state.data && x.state.data.pending > 0 ? 2000 : 60_000),
+    queryFn: () => live.request<CostRows>("cost.get", { by: "session", since, model, ...(filter ? { filter } : {}) }) });
+  const d = q.data; const err = q.error as ApiFail | null; const tot = d?.rows.find((r) => r.key === "total");
+  const ps = useMemo(() => byProject(d?.rows ?? [], sort), [d, sort]);
+  const all = tot ? tot.in + tot.out + tot.cacheRead + tot.cacheWrite : 0;
+  const top = ps[0]?.name; const open = (n: string) => (proj === undefined ? n === top : proj === n);
+  useEffect(() => { const k = (e: KeyboardEvent) => { const t = e.target as HTMLElement | null; if (e.key === "Escape" && !(t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA"))) onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); });
+  const th = (k: string, l: string) => <th aria-sort={sort === k || (k === "cost" && sort !== "cache") ? "descending" : "none"} className="num font-medium"><button type="button" className="uppercase tracking-wide hover:text-text" onClick={() => set({ sort: k === "cache" ? "cache" : undefined })}>{l}</button></th>;
+  return (
+    <section aria-label={"Where " + model + "'s cost came from"} className="rounded border border-border-subtle bg-surface p-3">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h2 className="text-[13px] font-semibold"><span className="mono">{model}</span> <span className="font-normal text-muted">· {label}</span></h2>
+        {tot && <span className="text-[12px] text-muted"><span className="text-cost">{usd(tot.costUsd, false, tot.unpricedTokens > 0)}</span> · {tot.sessions} sessions · {ps.length} projects · cache read {tok(tot.cacheRead)} ({pct(tot.cacheRead, all)} of its tokens)</span>}
+        <Button className="ml-auto" variant="ghost" onClick={onClose} aria-label="Close the drill-down">close <Kbd>esc</Kbd></Button>
+      </div>
+      {err ? <pre role="alert" className="mono mt-2 whitespace-pre-wrap text-[12px] text-error">{err.err?.msg ?? err.message}</pre>
+        : !d ? <p className="mt-2 text-muted" aria-live="polite">Reading the sessions…</p>
+        : !ps.length ? <p className="mt-2 text-muted">No session used {model} in this period{filter ? " matching the filter" : ""}.</p> : (
+        <table aria-label={"Projects using " + model} className="mt-2 w-full table-fixed border-collapse">
+          <colgroup><col /><col className="w-28" /><col className="w-24" /><col className="w-28" /><col className="w-20" /></colgroup>
+          <thead className="text-left text-[11px] uppercase tracking-wide text-muted"><tr><th className="py-1 pl-2 font-medium">Project · session</th>{th("cost", "Cost")}{th("cache", "Cache read")}<th className="num font-medium">Share</th><th className="num pr-2 font-medium">Last</th></tr></thead>
+          <tbody>{ps.map((p) => { const o = open(p.name); const share = sort === "cache" ? pct(p.cacheRead, tot?.cacheRead ?? 0) : pct(p.cost, tot?.costUsd ?? 0); return (<Fragment key={p.name}>
+            <tr aria-expanded={o} tabIndex={0} onClick={() => set({ proj: o ? "" : p.name })} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set({ proj: o ? "" : p.name }); } }}
+              className="h-7 cursor-pointer border-b border-border-subtle font-medium hover:bg-surface-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent">
+              <td className="truncate pl-2"><span className="text-muted" aria-hidden>{o ? "▾ " : "› "}</span>{p.name} <span className="font-normal text-muted">· {p.rows.length} {p.rows.length === 1 ? "session" : "sessions"}</span></td>
+              <td className="num text-cost">{usd(p.cost, false, p.unpriced > 0)}</td><td className="num">{tok(p.cacheRead)}</td><td className="num">{share}</td><td className="num pr-2" />
+            </tr>
+            {o && p.rows.map((r) => { const h = r.key.slice(0, r.key.indexOf(":")); return (
+              <tr key={r.key} className="h-7 border-b border-border-subtle text-[12px]">
+                <td className="truncate pl-6" title={(r.cwd ?? "") + (r.root ? " · subagent of " + r.root : "")}>
+                  <Link to="/sessions" search={{ sel: r.key } as never} className="hover:underline"><span style={{ color: "var(--h-" + h + ", var(--text-muted))" }}>{h}</span> {r.title || r.key.slice(h.length + 1, h.length + 9)}</Link>
+                  {r.root && <span className="text-muted"> · subagent</span>}<span className="mono text-muted"> · {r.cwd}</span></td>
+                <td className="num text-cost">{usd(r.costUsd, false, r.unpricedTokens > 0)}</td><td className="num">{tok(r.cacheRead)}</td>
+                <td className="num text-muted">{sort === "cache" ? pct(r.cacheRead, tot?.cacheRead ?? 0) : pct(r.costUsd ?? 0, tot?.costUsd ?? 0)}</td>
+                <td className="num pr-2 text-muted">{r.last ? ago(now - Date.parse(r.last)) : "·"}</td>
+              </tr>); })}
+          </Fragment>); })}</tbody>
+        </table>)}
+      {d && d.pending > 0 && <p role="status" className="mt-1 text-[12px] text-muted">⟳ {d.pending} {d.pending === 1 ? "log is" : "logs are"} still being counted</p>}
     </section>
   );
 }
 
 export function StatsView() {
   const live = useLive(); const nav = useNavigate(); const search = useSearch({ strict: false }) as StatsSearch;
-  const period = search.p ?? "w"; const filter = search.f ?? ""; const since = sinceOf(period);
+  const period = search.p ?? "w"; const filter = search.f ?? ""; const since = sinceOf(period); const model = search.model;
   const [text, setText] = useState(filter); useEffect(() => setText(filter), [filter]);
   const set = (p: StatsSearch) => void nav({ to: "/stats", search: { ...search, ...p } as never, replace: true });
   // counting: the background index has logs left; ask again every 2 s until every log is counted
@@ -115,8 +181,9 @@ export function StatsView() {
       {ferr && <pre role="alert" className="mono whitespace-pre-wrap text-[12px] text-error">{ferr.err?.msg}{ferr.err?.hint ? "\n" + ferr.err.hint : ""}</pre>}
       <div className="grid gap-5 lg:grid-cols-2">
         <Table label="By harness" data={byH.data} />
-        <Table label="By model" data={byM.data} model />
+        <Table label="By model" data={byM.data} model open={model} onOpen={(k) => set({ model: model === k ? undefined : k, proj: undefined })} />
       </div>
+      {model && <Drill model={model} since={since} filter={filter} label={PERIODS.find(([k]) => k === period)?.[1] ?? ""} sort={search.sort ?? "cost"} proj={search.proj} set={set} onClose={() => set({ model: undefined, proj: undefined, sort: undefined })} />}
     </div>
   );
 }

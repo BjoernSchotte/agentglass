@@ -91,7 +91,7 @@ export interface CallGraph {
 }
 
 /**
- * cost.get with by, since or filter: the `agentglass cost --by` rows (a final total row) plus by, since, pending, at
+ * cost.get with by, since, filter or model: the `agentglass cost --by` rows (a final total row) plus by, since, model, pending, at
  */
 export interface CostRows {
   rows: {
@@ -106,10 +106,34 @@ export interface CostRows {
     priceSource?: string | null;
     estimated?: boolean;
     workspaceId?: string | null;
+    /**
+     * by session: the session's title
+     */
+    title?: string | null;
+    /**
+     * by session: the project (repo name)
+     */
+    project?: string | null;
+    /**
+     * by session: the session's directory
+     */
+    cwd?: string | null;
+    /**
+     * by session: a subagent's top-level session (harness:id), null for a top-level one
+     */
+    root?: string | null;
+    /**
+     * by session: the session's last write (ISO 8601)
+     */
+    last?: string | null;
   }[];
   source: "ledger";
   by: "day" | "model" | "harness" | "project" | "session" | "workspace";
   since: string;
+  /**
+   * the model the rows are restricted to (cost --model)
+   */
+  model?: string;
   /**
    * logs of the window the background index has not counted to their end yet (their booked part is in the figures)
    */

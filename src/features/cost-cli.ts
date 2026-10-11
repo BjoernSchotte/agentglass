@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
 import { H, screenOut } from "../hooks.ts";
+import type { Sess } from "../model/types.ts";
 import { S, say } from "../state.ts";
 import { harnessIds } from "../harness/index.ts";
 import { home } from "../util/text.ts";
@@ -10,7 +11,7 @@ import { discover } from "./cli.ts";
 import { agentHost, agentScope, hostObj, cliError } from "./agentenv.ts";
 import { jsonHelp, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs } from "./format.ts";
-import { BY, COST_FIELDS, MODEL_FIELDS, WS_FIELDS, costRows, qopts, qfilter, printEnvelope } from "./queries.ts";
+import { BY, COST_FIELDS, MODEL_FIELDS, SESS_COST_FIELDS, WS_FIELDS, costRows, qopts, qfilter, printEnvelope } from "./queries.ts";
 import { dayKey, todayKey } from "./usage/record.ts";
 import { MODES } from "./usage/billing.ts";
 import { type ModeSum, money, kfmt, grp, unpricedLine } from "./usage/costs.ts";
@@ -18,7 +19,7 @@ import { type CostNow, budget } from "./usage/summary.ts";
 import { json, summary } from "../read/cost.ts";
 
 const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
-       agentglass cost [--since today|<n>d|YYYY-MM-DD] [--by day|model|harness|project|session|workspace] [--format F] [--fields a,b]
+       agentglass cost [--since today|<n>d|YYYY-MM-DD] [--by day|model|harness|project|session|workspace] [--model m] [--format F] [--fields a,b]
 
   costs today, over the last 7 days and this month, by billing mode:
     spend = API key (real spend)   plan = subscription (list-price equivalent)
@@ -37,11 +38,14 @@ const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
     (--by model adds priceSource = user|alias|gateway|community|built-in|harness|unpriced and estimated = alias-priced)
     (--by workspace: key = the herdr workspace label — its id under --redact — or (none); adds workspaceId, null for
     (none); a live session counts for its pane's workspace, an ended one for the workspace whose worktree holds its dir)
+    (--by session adds title, project, cwd, root = the top-level session of a subagent (harness:id, else null) and last)
     (costUsd is null, never 0, for a row whose tokens are all unpriced; csv/jsonl/table print bare rows,
     json the {rows, source, scope} envelope); inside an agent only the current project (--all-projects: every one)
   --format json|jsonl|csv|table   (default: json in an agent or with --json, else table on a terminal)
   --fields a,b,c                  only these columns
-  --filter '<expr>'               only matching sessions, days and calls (the filter language; repeatable)`;
+  --filter '<expr>'               only matching sessions, days and calls (the filter language; repeatable)
+  --model m                       only this model's tokens and cost (a key of --by model): where a model's cost came from,
+                                  e.g. agentglass cost --since 30d --by session --model claude-opus-4-7`;
 const WORDS = ["spend", "plan", "cloud", "gateway", "unknown"];
 
 let rc = 0; // the exit code a failed write (closed reader, full disk) still reports: --check's 3 survives `| head`
@@ -81,9 +85,10 @@ function text(c: CostNow): void {
 // without --by/--since: the summary (json or its text table); with them: rows per day/model/harness/project/session
 function cost(args: string[]): void {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(agentHost().on || fmtArgs(args).fmt === "json" ? jsonHelp("cost", hostObj(true)) : HELP); process.exit(0); }
-  const o = qopts("cost", args, ["--json", "--check", "--harness", "--since", "--by", "--filter", "--pinned"], false);
-  const rowsForm = o.by !== "" || o.since !== "" || o.filters.length > 0 || o.pinned;
+  const o = qopts("cost", args, ["--json", "--check", "--harness", "--since", "--by", "--model", "--filter", "--pinned"], false);
+  const rowsForm = o.by !== "" || o.since !== "" || o.model !== "" || o.filters.length > 0 || o.pinned;
   if (o.by && BY.indexOf(o.by) < 0) fail("--by must be one of " + BY.join(", "));
+  if (o.model && o.by === "model") fail("--model with --by model is one row: pick another --by (session, project, day, …)");
   if (!rowsForm && (o.f.fmt === "csv" || o.f.fmt === "jsonl" || o.f.fields.length)) cliError("usage", (o.f.fields.length ? "--fields" : o.f.fmt) + " needs rows: add --by " + BY.join("|"), "e.g. agentglass cost --by model --format " + (o.f.fmt || "csv"), 2);
   S.cli = true;
   if (budget.bad) say("warn", "config budget." + budget.bad.split(",").join(" / budget.") + " invalid — ignored");
@@ -99,21 +104,22 @@ function cost(args: string[]): void {
   }
   const since = o.since ? dayKey(new Date(o.sinceMs)) : todayKey();
   const by = o.by || "day";
-  const rows = costRows(since, by, sc, qfilter(o));
+  const rows = costRows(since, by, sc, qfilter(o), (s: Sess): boolean => false, o.model);
   const f: Fmt = { fmt: o.f.fmt || (o.json ? "json" : ""), fields: o.f.fields };
   const code = o.check && summary(o.harness).bs.state === "over" ? 3 : 0; // before printing: a failed write keeps it
-  const cols = by === "model" ? MODEL_FIELDS : by === "workspace" ? WS_FIELDS : COST_FIELDS;
-  printEnvelope(rows, "ledger", sc, f, cols, cols, code);
+  const cols = by === "model" ? MODEL_FIELDS : by === "workspace" ? WS_FIELDS : by === "session" ? SESS_COST_FIELDS : COST_FIELDS;
+  printEnvelope(rows, "ledger", sc, f, by === "session" ? COST_FIELDS.concat(["project"]) : cols, cols, code);
   process.exit(code);
 }
 
 addCmd({ cmd: "cost", usage: "agentglass cost [--json] [--check]", summary: "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget; --since/--by: rows per day|model|harness|project|session|workspace)",
   options: [opt("--json", "", "the summary as JSON", "", []), opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds()), opt("--check", "", "exit 3 when the month is over budget (after printing)", "", []),
     opt("--since", "today|<n>d|YYYY-MM-DD", "rows from that day on (alone: --by day)", "today", []), opt("--by", BY.join("|"), "one row per key (alone: --since today)", "day", BY),
+    opt("--model", "<model>", "only this model's tokens and cost (a key of --by model)", "", []),
     opt("--filter", "'<expr>'", "rows of the matching sessions, days and calls only (repeatable)", "", []), opt("--pinned", "", "also apply the filter pinned in the TUI", "", []),
     opt("--format", "json|jsonl|csv|table", "output format (csv/jsonl need rows)", "json in an agent or with --json, else table on a terminal", ["json", "jsonl", "csv", "table"]), opt("--fields", "a,b,c", "only these columns of the rows", "", []),
     opt("--all-projects", "", "inside an agent: rows of every project (default: the current one)", "", []), opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", [])],
-  fields: COST_FIELDS.concat(["workspaceId"]), group: "cmd" });
+  fields: COST_FIELDS.concat(["workspaceId", "title", "project", "cwd", "root", "last"]), group: "cmd" });
 H.cli.unshift((args: string[]): boolean => { // before cli.ts's flag handlers: `cost --json` is this command's flag
   if (args[0] !== "cost") return false;
   cost(args);

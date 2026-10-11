@@ -106,6 +106,9 @@ run cost --since today --by workspace --format json --fields key,workspaceId,cos
 eq "cost --by workspace types" "$(types "$t/c.json" key:string,workspaceId:string\|null,costUsd:number)" ok
 eq "cost help" "$(helped cost key,costUsd)" ok
 eq "cost help workspaceId" "$(helped cost workspaceId)" ok
+run cost --since today --by session --model claude-sonnet-4-5 --format json --fields key,title,project,root,costUsd > "$t/c.json"
+eq "cost --by session --model types" "$(types "$t/c.json" key:string,title:string\|null,project:string\|null,root:string\|null,costUsd:number\|null)" ok
+rc=0; run cost --by model --model x > /dev/null 2>&1 || rc=$?; eq "cost --model with --by model" $rc 2
 
 # wait: the report object, its rows (a fake HOME without shell calls: the object's top-level fields), --check's exit
 run wait --json > "$t/w.json"

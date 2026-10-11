@@ -88,3 +88,8 @@ test("the drawer: the index's answer at once, turns when the transcript is read"
   await within(d).findByText("Tools"); expect(d.textContent).toContain("40 calls");
   expect(d.textContent).toContain("reading the transcript…"); expect(d.textContent).not.toContain("10 min");
 });
+test("the drawer: a session outside the live list (old, a subagent) comes from sessions.get", async () => {
+  await app(live(false, { ...ROW, key: "claude:old", id: "old", title: "an old opus run", costUsd: 31, via: "ref", parent: "s1" }), "/sessions?sel=claude:old");
+  const d = await screen.findByRole("dialog");
+  await within(d).findAllByText("an old opus run"); expect(d.textContent).toContain("$31.00");
+});

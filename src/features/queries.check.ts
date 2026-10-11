@@ -150,6 +150,17 @@ eq("cost total = totals(), call filter", rowTotal(["tool is Edit"]), aggTotal(["
 eq("cost: --filter harness = --harness", JSON.stringify(costRows("2026-09-01", "harness", all, fl(["harness is codex"], ""))), JSON.stringify(costRows("2026-09-01", "harness", all, fl([], "codex"))));
 eq("cost: by project = repo names, not paths", String([...keyed(costRows("2026-09-01", "project", all, NOF)).keys()].every((k: string) => k.indexOf("/") < 0)), "true");
 eq("cost: project scope drops other projects", String(pj.has("claude:" + SID2)) + "|" + String(pj.has("claude:m-1")) + "|" + String(pj.has("codex:cx-9")), "false|false|true");
+// --model: only that model's part of each day (cx-9 used gpt-x and sonnet the same day)
+const ms = keyed(costRows("2026-09-01", "session", all, NOF, (s: Sess): boolean => false, "claude-sonnet-4-5"));
+const cxr = ms.get("codex:cx-9");
+eq("cost --model: only the model's tokens", cxr ? String(cxr["in"]) + "," + String(cxr["out"]) + "," + String(cxr["unpricedTokens"]) : "-", "1000,0,0");
+function figs(o: Obj | undefined): string { if (!o) return "-"; const x = o; return ["in", "out", "cacheRead", "costUsd", "sessions"].map((k: string) => String(x[k])).join(","); }
+eq("cost --model: total = the by-model row", figs(ms.get("total")), figs(keyed(bm).get("claude-sonnet-4-5")));
+const ug = keyed(costRows("2026-09-01", "project", all, NOF, (s: Sess): boolean => false, "gpt-x")).get("total"); const ugm = keyed(bm).get("gpt-x");
+eq("cost --model: an unpriced model", ug ? String(ug["costUsd"]) + "," + String(ug["unpricedTokens"]) : "-", "null," + (ugm ? String(ugm["unpricedTokens"]) : "?"));
+eq("cost --model: an unknown model has only the total", costRows("2026-09-01", "session", all, NOF, (s: Sess): boolean => false, "nope").map((r) => str(r["key"]) + ":" + String(r["sessions"])).join(","), "total:0");
+// (the suite runs redacted: project and cwd are the shown, faked ones)
+eq("cost --by session: where the session is", cxr ? [typeof cxr["project"], typeof cxr["cwd"], String(cxr["root"]), typeof cxr["title"], typeof cxr["last"], String(str(cxr["project"]).indexOf("/") < 0 && str(cxr["project"]).length > 0)].join("|") : "-", "string|string|null|string|string|true");
 
 // ── --since ──
 const now = Date.parse("2026-10-03T15:30:00.000Z");
