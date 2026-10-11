@@ -227,6 +227,40 @@ export interface EventsList {
   at: number;
 }
 
+/**
+ * fleet.hosts: `agentglass fleet status --json` from the cached host reports (serve never pulls) plus at
+ */
+export interface FleetStatus {
+  localName: string;
+  hostId: string;
+  hosts: {
+    name: string;
+    kind: string;
+    target: string;
+    enabled: boolean;
+    okAgeSec: number | null;
+    code: string;
+    err: string;
+    version: string;
+    hostId: string;
+    redact: boolean;
+    tzOffsetMin: number;
+    os: string;
+    sessions: number;
+    live: number;
+    overlap: number;
+    sharing: string;
+    dupOf: string | null;
+    skewSec: number;
+    exact: boolean;
+    liveAgeSec: number | null;
+    feedOf: string | null;
+    feeds: string[];
+    via: string | null;
+  }[];
+  at: number;
+}
+
 export interface Hello {
   proto: number;
   contract: number;
@@ -250,6 +284,10 @@ export interface Meta {
     name: string;
     [k: string]: unknown;
   }[];
+  /**
+   * fleet hosts configured (fleet.hosts in config.json); the web shows Fleet only with some
+   */
+  fleetHosts: number;
   [k: string]: unknown;
 }
 

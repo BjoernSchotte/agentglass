@@ -1,10 +1,10 @@
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, Dialog, DialogContent, Kbd } from "@agentglass/ui";
-import { SECTIONS } from "./shortcuts.ts";
+import { shown } from "./shortcuts.ts";
 export interface PaletteItem { id: string; label: string; group: string; keys?: string; run: () => void; disabled?: string }
-// navigation, theme, open session, recent: the caller passes what applies (team sections only with a team)
-export function paletteItems(o: { go: (to: string) => void; theme: (t: string) => void; hasTeam: boolean; sessions: { key: string; title: string; harness: string }[]; open: (key: string) => void }): PaletteItem[] {
+// navigation, theme, open session, recent: the caller passes what applies (team sections only with a team, fleet only with hosts)
+export function paletteItems(o: { go: (to: string) => void; theme: (t: string) => void; hasTeam: boolean; hasFleet: boolean; sessions: { key: string; title: string; harness: string }[]; open: (key: string) => void }): PaletteItem[] {
   const items: PaletteItem[] = [];
-  SECTIONS.filter((s) => !s.team || o.hasTeam).forEach((s, i) => items.push({ id: "go-" + s.id, label: "Go to " + s.label, group: "Navigation", keys: "g " + s.key + " · " + (i + 1), run: () => o.go(s.to) }));
+  shown(o.hasTeam, o.hasFleet).forEach((s, i) => items.push({ id: "go-" + s.id, label: "Go to " + s.label, group: "Navigation", keys: "g " + s.key + " · " + (i + 1), run: () => o.go(s.to) }));
   for (const t of ["system", "dark", "light"]) items.push({ id: "theme-" + t, label: "Theme: " + t, group: "Theme", run: () => o.theme(t) });
   for (const s of o.sessions.slice(0, 50)) items.push({ id: "open-" + s.key, label: "Open " + (s.title || s.key), group: "Sessions", keys: s.harness, run: () => o.open(s.key) });
   return items;

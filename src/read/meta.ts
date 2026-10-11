@@ -10,10 +10,11 @@ import { REDACT } from "../features/redact-on.ts";
 import { BUILD } from "../build-info.ts";
 import { CONTRACT } from "../features/version.ts";
 import { teamsMeta } from "./team.ts";
+import { fleetHosts } from "./fleet.ts";
 
 export const PROTO = 1; // agentglass-serve/<n> (docs/cli-contract.md)
 // what the resources of this release serve (the command channel, "cmd", arrives with the typed commands)
-export const CAPS = ["sessions", "events", "cost", "wait", "alerts", "team"];
+export const CAPS = ["sessions", "events", "cost", "wait", "alerts", "fleet", "team"];
 
 // the inputs of the sessions rows: the set (SG), the ledger's booked messages (L), git attribution, and per session
 // what a row shows from its log and process (size, time, pid, status, flags)
@@ -35,7 +36,8 @@ export function gen(resource: string): number {
   SIG.set(resource, sig); G.set(resource, g + 1);
   return g + 1;
 }
-// version, contract, protocol, capabilities, privacy, the harnesses this build reads and this machine's teams ({id, name})
+// version, contract, protocol, capabilities, privacy, the harnesses this build reads, this machine's teams ({id, name})
+// and how many fleet hosts it has configured
 export function readMeta(readOnly: boolean): Obj {
-  return { version: BUILD.version, contract: CONTRACT, proto: PROTO, caps: CAPS, readOnly, redact: REDACT, harnesses: harnessIds(), teams: teamsMeta() };
+  return { version: BUILD.version, contract: CONTRACT, proto: PROTO, caps: CAPS, readOnly, redact: REDACT, harnesses: harnessIds(), teams: teamsMeta(), fleetHosts: fleetHosts() };
 }

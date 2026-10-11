@@ -196,6 +196,21 @@ p.stdin.close()
 try: rc = p.wait(timeout=2)
 except subprocess.TimeoutExpired: rc = None; p.kill()
 ok("stdin closed while subscribed: exit 0 within 2 s (got %s)" % rc, rc == 0)
+# fleet.hosts = fleet status --json over the cached reports, with a dir host configured; serve never removes a spool file
+# of a host that is no longer configured (the CLI's fleet status does: it is not serve's to clean)
+env3 = dict(env, AGENTGLASS_CONFIG=t + "/fleet-config.json", AGENTGLASS_FLEET_DIR=t + "/fleet3")
+os.makedirs(t + "/sync", exist_ok=True); os.makedirs(t + "/fleet3", mode=0o700, exist_ok=True)
+open(t + "/fleet-config.json", "w").write(json.dumps({"fleet": {"hosts": [{"name": "nas", "dir": t + "/sync"}]}}))
+open(t + "/fleet3/gone.jsonl", "w").write("{}\n")
+p = subprocess.Popen([t + "/ag", "serve", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env3); buf = b""
+req(1, "hello", {"want": 1})
+fl = req(2, "fleet.hosts", {}); me = req(3, "meta", {})
+ok("serve kept the spool file of an unconfigured host", os.path.exists(t + "/fleet3/gone.jsonl"))
+cli = json.loads(subprocess.run([t + "/ag", "fleet", "status", "--json"], env=env3, capture_output=True).stdout)
+def fOf(x): return {k: [{kk: vv for kk, vv in h.items() if kk not in ("okAgeSec", "liveAgeSec")} for h in v] if k == "hosts" else v for k, v in x.items() if k != "at"}
+ok("fleet.hosts = fleet status --json (%s)" % json.dumps(fl)[:300], fl and fOf(fl["ok"]) == fOf(cli) and fl["ok"]["hosts"][0]["name"] == "nas")
+ok("meta.fleetHosts", me and me["ok"].get("fleetHosts") == 1)
+p.stdin.close(); p.wait(timeout=5)
 for f in fail: print("FAIL " + f)
 sys.exit(1 if fail else 0)
 PY

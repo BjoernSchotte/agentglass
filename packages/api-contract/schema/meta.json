@@ -11,7 +11,8 @@
     "readOnly",
     "redact",
     "harnesses",
-    "teams"
+    "teams",
+    "fleetHosts"
   ],
   "properties": {
     "version": {
@@ -58,6 +59,11 @@
           }
         }
       }
+    },
+    "fleetHosts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "fleet hosts configured (fleet.hosts in config.json); the web shows Fleet only with some"
     }
   }
 }

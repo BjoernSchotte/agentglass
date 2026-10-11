@@ -11,6 +11,7 @@ import eventsList from "../schema/events-list.json" with { type: "json" };
 import costRows from "../schema/cost-rows.json" with { type: "json" };
 import error from "../schema/error.json" with { type: "json" };
 import event from "../schema/event.json" with { type: "json" };
+import fleetStatus from "../schema/fleet-status.json" with { type: "json" };
 import hello from "../schema/hello.json" with { type: "json" };
 import meta from "../schema/meta.json" with { type: "json" };
 import page from "../schema/page.json" with { type: "json" };
@@ -27,7 +28,7 @@ import waitSchema from "../schema/wait.json" with { type: "json" };
 import topicPage from "../schema/topic-page.json" with { type: "json" };
 import presenceRow from "../schema/presence-row.json" with { type: "json" };
 
-export const SCHEMAS = { "alert-row": alertRow, "alerts-list": alertsList, cost, "cost-rows": costRows, "events-list": eventsList, error, event, hello, meta, page, patch, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow, wait: waitSchema };
+export const SCHEMAS = { "alert-row": alertRow, "alerts-list": alertsList, cost, "cost-rows": costRows, "events-list": eventsList, error, "fleet-status": fleetStatus, event, hello, meta, page, patch, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow, wait: waitSchema };
 export type SchemaName = keyof typeof SCHEMAS;
 let ajv: Ajv2020 | null = null;
 function compiled(): Ajv2020 {
