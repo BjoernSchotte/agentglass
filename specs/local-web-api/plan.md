@@ -190,7 +190,20 @@ loads, carry, cost share, tier marks, and the advice list.
 the Repos tab rows. No page yet for graph (W9); Repos page as a table.
 
 Done when: every check via `sh scripts/check.sh`, `serve.test.sh`, `team.test.sh`, `pnpm -r typecheck test build`,
-e2e, and the footprint stays as measured for S1 (idle serve + BFF ≤ 40 MB, ≤ 1 % CPU) with all pages open.
+e2e, and the footprint stays as measured: agentglass-web ≤ 40 MB; serve not above main's on the same history (the
+engine's state: on the 3,400-session reference history main idles at 223 MB subscribed), ≤ 1 % CPU idle.
+
+**Memory rulings (2026-10-11, measured on the reference history, serve subscribed)**
+- *Freed memory goes back to the system.* scriptc's runtime frees through libc malloc, which keeps freed pages: a big
+  read stayed in RSS for good (six events reads of a 147 MB log: 201 → 290 MB). `platform/trim.c` (malloc_trim /
+  zone pressure relief, in the always-linked FFI manifest) runs after startup, after every sliced read and when RSS
+  grew 16 MB (at most every 10 s): the same reads end at 190 MB.
+- *Events of a big log: its last 8 MB.* A log's events cost ~10x its bytes while listed (32 MB of tail: +380 MB).
+- *The ledger's day heavy texts are kept compressed in serve* (`usage/hvzip.ts`, 51 MB of text → 14 MB, packed in the
+  background at ~8 % of a core for about a minute, each day verified to round-trip before its text goes; the cache
+  file is unchanged and its texts saved byte-identical): steady 223 MB (main) → 188 MB.
+- Not done: the rest of the ledger (ownership texts `mo`, ids, memos) and the session model; the TUI keeps texts
+  uncompressed (its 5-minute saves would unpack every day).
 
 ### Task W9: Visualizations (S3, after W8)
 

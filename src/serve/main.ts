@@ -17,6 +17,9 @@ import { newFramer, push } from "../util/jsonl.ts";
 import { discover } from "../read/index.ts";
 import { LAZY } from "../read/row.ts";
 import { summaryInc } from "../features/usage/summary.ts";
+import { trimNow, trimIdle } from "../platform/heap.ts";
+import { zipOn, zipStep } from "../features/usage/hvzip.ts";
+import { HEAVY } from "../features/usage/record.ts";
 import { BG, indexTick, indexing, indexState } from "../features/usage/ledger.ts";
 import { rules } from "../features/rules/state.ts";
 import { flags } from "../features/rules/engine.ts";
@@ -75,8 +78,9 @@ function flagStep(now: number): void {
 // one engine step while subscribed: logs, processes, view, flags; then patches and heartbeats
 function tick(sv: Srv): void {
   E.timer = false;
-  if (!sv.hub.subs.size) { // no subscriber: only the background index runs on (a read answered with pending logs), then rest
-    indexTick(); if (behind()) { E.timer = true; setTimeout(() => { tick(sv); }, INDEX_MS); }
+  if (!sv.hub.subs.size) { // no subscriber: only the background work runs on (the index, packing day texts), then rest
+    indexTick(); trimIdle(Date.now());
+    if (busy()) { E.timer = true; setTimeout(() => { tick(sv); }, INDEX_MS); }
     return;
   }
   // the background index (a cold start, a resume far behind): a paced step each INDEX_MS, the rows out once a second
@@ -92,21 +96,29 @@ function tick(sv: Srv): void {
   let team = false;
   if (teamTopics(sv.hub) && now - E.teamAt >= TEAM_SYNC_MS) { E.teamAt = now; for (const t of loadTeams()) syncOnce(t, now, false); team = true; }
   step(sv.hub, now, team); beat(sv.hub, now);
+  zipArm(); trimIdle(now);
   arm(sv);
 }
-// logs the ledger has not indexed to their end: the background index has work
-function behind(): boolean { return indexState().left > 0; }
-function arm(sv: Srv): void { if (E.timer || (!sv.hub.subs.size && !behind())) return; E.timer = true; setTimeout(() => { tick(sv); }, indexing() ? INDEX_MS : TICK_MS); }
+// background work left: logs the ledger has not indexed to their end
+function busy(): boolean { return indexState().left > 0; }
+const ZIP_MS = 20; // per step, a step every INDEX_MS while texts are left: ~8 % of a core; a large history packs in about a minute
+// day texts (re)packed by the ledger: packed in the background on their own pace, then the memory goes back to the system
+const Z = { busy: false, timer: false };
+function zipArm(): void { if (Z.timer || HEAVY.texts <= 0) return; Z.timer = true; setTimeout(zip, INDEX_MS); }
+function zip(): void { Z.timer = false; const done = zipStep(ZIP_MS); if (done && Z.busy) trimNow(Date.now()); Z.busy = !done; if (!done) zipArm(); }
+function arm(sv: Srv): void { if (E.timer || (!sv.hub.subs.size && !busy())) return; E.timer = true; setTimeout(() => { tick(sv); }, indexing() ? INDEX_MS : TICK_MS); }
 
 function serveCli(args: string[]): void {
   const m = badArg(args.slice(1), [], ["--stdio", "--redact", "--read-only"], []); if (m) cliError("usage", m, "agentglass serve --help", 2);
   if (args.indexOf("--stdio") < 0) cliError("usage", "serve needs --stdio (the only transport)", USAGE, 2);
   S.cli = true; // warnings go to stderr, never into the protocol
-  LAZY.on = true; BG.on = true; summaryInc(); // rows of logs not indexed yet answer at once (pending); the ledger indexes in the background
+  LAZY.on = true; BG.on = true; summaryInc(); zipOn(); // rows of logs not indexed yet answer at once (pending); the ledger indexes in the background
   discover(); E.disc = Date.now(); E.slow = E.disc; E.procs = E.disc;
   flagStep(E.disc);
   const sv = newSrv(true, hex(randomBytes(2)), (): number => Date.now(), send, fresh);
   indexTick(); arm(sv); // the background index starts at once (its totals come from this first step), with or without subscribers
+  trimNow(Date.now()); // what loading left behind goes back to the system
+  zipArm(); // the loaded day texts pack in the background
   const F = newFramer();
   process.stdin.on("data", (d: Uint8Array) => { for (const f of push(F, d)) onLine(sv, f.line, f.oversize); arm(sv); });
   process.stdin.on("end", () => { process.exit(0); }); // the ledger cache is saved on exit (usage/cache.ts)

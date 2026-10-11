@@ -13,6 +13,7 @@ import type { Sess } from "../model/types.ts";
 import { detailReady, detailStep } from "../features/queries.ts";
 const INLINE_MS = 30;
 import { whenRead, whenDone } from "./detail.ts";
+import { trimIdle } from "../platform/heap.ts";
 import { readCost } from "../read/cost.ts";
 import { alertRows } from "../read/alerts.ts";
 import { type EvRead, TAIL_BYTES, viewFor, evRead, evStep, eventsJson } from "../read/events.ts";
@@ -127,7 +128,7 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     if (!s) return errL(id, f.code === 4 ? "ambiguous" : f.code === 2 ? "bad_param" : "not_found", f.msg, f.hint);
     const r: EvRead = evRead(s, TAIL_BYTES);
     const answer = (): string => { viewFor(fl, pr); const o = eventsJson(r, Math.floor(lim), pr); o["at"] = sv.now(); return okL(id, o); }; // the controller is shared: set again right before listing
-    if (evStep(r, INLINE_MS)) return answer();
+    if (evStep(r, INLINE_MS)) { const a = answer(); trimIdle(sv.now()); return a; }
     whenDone("events\t" + id, (ms: number): boolean => evStep(r, ms), (): void => { sv.out(answer()); });
     return "";
   }

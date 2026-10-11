@@ -5,6 +5,7 @@
 import type { Sess } from "../model/types.ts";
 import { detailStep } from "../features/queries.ts";
 import { saveSums } from "../features/callgraph/runsum.ts";
+import { trimNow } from "../platform/heap.ts";
 
 export const SLICE_MS = 100; export const GAP_MS = 10;
 // step(budget ms): read on; true = done
@@ -21,6 +22,7 @@ function step(): void {
     const rest: Wait[] = []; const now: Wait[] = [];
     for (const x of Q.list) (x.key === w.key ? now : rest).push(x);
     Q.list = rest; for (const x of now) x.done();
+    if (!Q.list.length) trimNow(Date.now()); // what the read held (a log's events: ~10x its bytes) goes back to the system
   }
   arm();
 }

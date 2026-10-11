@@ -163,6 +163,7 @@ all="$([ -z "$bin" ] || echo bin) $([ -z "${CHECK_RELEASE_OUT:-}" ] || echo rele
 all="$all $(for f in $tests; do echo "test:$f"; done) $(for f in $checks; do echo "check:$f"; done)"
 [ -z "$CHECK_FFI" ] || all="$all cc:src/platform/darwin/libproc.c"
 all="$all cc:src/features/team/crypto/agcrypto.c"
+all="$all cc:src/platform/trim.c"
 if [ -n "$changed" ]; then # keep the jobs the change reaches; say which and why
   # each git must succeed: a failed diff (no merge base, a shallow clone) must not shrink the selection
   git diff --name-only --no-renames "$base...HEAD" > "$CHECK_OUT/changed" ||

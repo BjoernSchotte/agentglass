@@ -10,7 +10,8 @@ import { complete } from "../hooks.ts";
 import { loadHead, titleOf } from "../model/sessions.ts";
 import { sourceOf, parseEvents, window } from "../harness/index.ts";
 import { S } from "../state.ts";
-import { VF_STORE, vfSet, vfOf, preset, resetForTest } from "../ui/evfilter.ts";
+import { VF_STORE, vfSet, vfOf, preset, resetForTest, forgetMasks } from "../ui/evfilter.ts";
+import { forgetKinds } from "../model/kinds.ts";
 import { listEvents } from "../features/events-cli.ts";
 import { type Err } from "./sessions.ts";
 
@@ -44,10 +45,12 @@ export function evStep(r: EvRead, budget: number): boolean {
   }
   return true;
 }
-// the `events --json` object over a read (the controller set by viewFor first); truncated: the read began at a tail
+// the `events --json` object over a read (the controller set by viewFor first); truncated: the read began at a tail.
+// The read's events are let go after it (a second listing needs a new read)
 export function eventsJson(r: EvRead, limit: number, presetName: string): Obj {
   const l = listEvents(r.s, r.evs, limit, false);
   const evs = l.events;
   if (r.from > 0) evs.unshift({ unread: r.from }); // the bytes before the tail: not read
+  forgetKinds(r.evs); forgetMasks(r.evs); r.evs = []; // the kinds and mask memos would keep the last 8 reads' events alive
   return { session: { harness: r.s.h, id: r.s.id, title: titleOf(r.s) }, filter: vfOf(VIEW).expr || null, preset: presetName || null, matched: l.matched, total: l.total, events: evs, truncated: r.from > 0 };
 }

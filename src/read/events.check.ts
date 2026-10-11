@@ -11,6 +11,7 @@ import { sessions } from "../model/sessions.ts";
 import type { Sess } from "../model/types.ts";
 import { readAll, listEvents } from "../features/events-cli.ts";
 import { viewFor, evRead, evStep, eventsJson } from "./events.ts";
+import { kindVer } from "../model/kinds.ts";
 import "../features/redact.ts";
 import "../features/skills/marks.ts";
 
@@ -35,8 +36,10 @@ const s = found as Sess;
 eq("viewFor errors preset", viewFor("", "errors") === null ? "ok" : "err", "ok");
 const want = JSON.stringify(listEvents(s, readAll(s), 0, false).events);
 const r = evRead(s, 0); let steps = 0; while (!evStep(r, 1)) steps++;
-eq("whole read = readAll listing", JSON.stringify(eventsJson(r, 0, "errors")["events"]), want);
-eq("whole read: not truncated", String(eventsJson(r, 0, "errors")["truncated"]), "false");
+const held = r.evs; const whole = eventsJson(r, 0, "errors");
+eq("whole read = readAll listing", JSON.stringify(whole["events"]), want);
+eq("whole read: not truncated", String(whole["truncated"]), "false");
+eq("the read lets its events go (no kinds memo, an empty read)", String(kindVer(held)) + " " + String(r.evs.length), "-1 0");
 
 // a tail of a third of the log: {unread} first, truncated, fewer events, none from before the tail
 const tail = Math.floor(log.length / 3);
