@@ -11,7 +11,10 @@ export function fakeLive(teams: { id: string; name: string }[] = [], answers: Re
         const q = JSON.parse(s); const reply = (o: unknown) => queueMicrotask(() => w.onmessage?.({ data: JSON.stringify(o) })); send = reply;
         if (q.m === "meta") reply({ id: q.id, ok: { version: "test", contract: 1, proto: 1, caps: [], readOnly: true, redact: false, harnesses: ["claude"], teams } });
         else if (q.m === "sub") { const sid = "c" + ++n; sids.set(q.p.topic, sid); const rows = q.p.topic === "sessions" ? [ROW] : topics[q.p.topic] ?? []; reply({ id: q.id, ok: { sub: sid, resumed: false } }); reply({ sub: sid, ev: "e-" + n, k: "snapshot", d: { data: rows, at: Date.now(), gen: 1, next: null } }); }
-        else if (q.m in answers) { const a = answers[q.m]; reply({ id: q.id, ok: typeof a === "function" ? (a as (p: Record<string, unknown>) => unknown)(q.p ?? {}) : a }); }
+        else if (q.m in answers) { // a function may throw an ApiFail: the error answer
+          const a = answers[q.m];
+          try { reply({ id: q.id, ok: typeof a === "function" ? (a as (p: Record<string, unknown>) => unknown)(q.p ?? {}) : a }); } catch (e) { reply({ id: q.id, err: (e as { err?: unknown }).err ?? { code: "internal", msg: String(e) } }); }
+        }
         else reply({ id: q.id, ok: {} });
       },
       close() {} };

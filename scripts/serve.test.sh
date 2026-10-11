@@ -37,10 +37,10 @@ AGENTGLASS_REDACT=0
 EOF
 run() { env -i $(cat "$t/env") "$t/ag" "$@"; }
 run --json > "$t/golden.json"
-run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"
+run events "claude:$B" --json > "$t/events.json"; run events "claude:$B" --preset prompts --json > "$t/events-p.json"; run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"
 rc=0; run serve > /dev/null 2> "$t/err" || rc=$?
 [ "$rc" = 2 ] || { echo "FAIL serve without --stdio: exit $rc"; cat "$t/err"; exit 1; }
-python3 - "$t" "$d/$A.jsonl" "$A" << 'PY'
+python3 - "$t" "$d/$A.jsonl" "$A" "$B" << 'PY'
 import json, os, select, subprocess, sys, time
 t, log, A = sys.argv[1], sys.argv[2], sys.argv[3]
 env = dict(l.split("=", 1) for l in open(t + "/env").read().splitlines() if l)
@@ -83,6 +83,18 @@ ok("cost.get since+filter = cost --since 7d --filter rows (by day)", cf and cf["
 for i, (pp, code) in enumerate([({"by": "week"}, "bad_param"), ({"since": "yesterday-ish"}, "bad_param"), ({"filter": "harness is"}, "bad_filter"), ({"harness": "nope"}, "bad_param"), ({"by": 3}, "bad_param")]):
     e = req(30 + i, "cost.get", pp)
     ok("cost.get %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
+# events.list = events --json (plus truncated, at); filter/preset errors before any read; no content over the protocol
+def evOf(x): return {k: v for k, v in x.items() if k not in ("truncated", "at")}
+B = sys.argv[4]
+ev = req(50, "events.list", {"ref": "claude:" + B})
+ok("events.list = events --json", ev and evOf(ev["ok"]) == json.load(open(t + "/events.json")) and ev["ok"]["truncated"] is False)
+evp = req(51, "events.list", {"ref": "claude:" + B, "preset": "prompts"})
+ok("events.list preset = events --preset --json", evp and evOf(evp["ok"]) == json.load(open(t + "/events-p.json")))
+for i, (pp, code) in enumerate([({"ref": "claude:" + B, "filter": "event.kind is"}, "bad_filter"), ({"ref": "claude:" + B, "preset": "nope"}, "bad_param"),
+                                ({"ref": "claude:" + B, "preset": "all", "filter": "event.kind is skill"}, "bad_param"), ({"ref": "claude:" + B, "content": True}, "bad_param"),
+                                ({"ref": "claude:ffffffff-0000"}, "not_found"), ({}, "bad_param"), ({"ref": "claude:" + B, "limit": 0}, "bad_param")]):
+    e = req(52 + i, "events.list", pp)
+    ok("events.list %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
 s = req(3, "sub", {"topic": "sessions"})
 ok("sub " + json.dumps(s), s and s.get("ok", {}).get("sub") == "s1")
 snap = read(lambda x: x.get("sub") == "s1" and x.get("k") == "snapshot", 5)
@@ -133,6 +145,17 @@ def seen(x):
 read(seen, 15)
 ok("first full detail: meta first, then the detail (got %s)" % order, order == [3, 2])
 ok("first full detail of the big log: all its turns", 2 in got and got[2].get("ok", {}).get("turns") == BIG_TURNS and got[2]["ok"].get("via") == "ref")
+# events of the big log: read in slices; meta asked after it answers first
+p.stdin.write((json.dumps({"id": 60, "m": "events.list", "p": {"ref": "claude:" + BIG, "preset": "prompts", "limit": 5}}) + "\n" + json.dumps({"id": 61, "m": "meta"}) + "\n").encode()); p.stdin.flush()
+order = []; got = {}
+def seen2(x):
+    if x.get("id") in (60, 61): order.append(x["id"]); got[x["id"]] = x
+    return len(order) == 2
+read(seen2, 20)
+ok("events.list of the big log: meta first (got %s)" % order, order == [61, 60])
+e60 = got.get(60, {}).get("ok", {})
+evs60 = e60.get("events", [])
+ok("events.list of the big log (15 MB): its last 8 MB, unread head first, the last 5 shown", e60.get("truncated") is True and "unread" in (evs60[0] if evs60 else {}) and 0 < e60.get("matched", 0) < 2 * BIG_TURNS and len([x for x in evs60 if "kind" in x]) == 5)
 # no subscription: the background index still runs until every log is counted
 end = time.time() + 15; c = None; i = 41
 while time.time() < end:

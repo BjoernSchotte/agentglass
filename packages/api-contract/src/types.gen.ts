@@ -185,6 +185,48 @@ export type ApiEvent = {
   [k: string]: unknown;
 };
 
+/**
+ * events.list: `agentglass events <ref> --json` (no text over the protocol: text is null) plus truncated and at
+ */
+export interface EventsList {
+  session: {
+    harness: string;
+    id: string;
+    title: string;
+  };
+  filter: string | null;
+  preset: string | null;
+  matched: number;
+  total: number;
+  events: (
+    | {
+        i: number;
+        ts: string | null;
+        kind: string;
+        kinds: string[];
+        tool: string | null;
+        id: string | null;
+        target: string | null;
+        text: string | null;
+        link: string;
+      }
+    | {
+        gap: number;
+        kinds: {
+          [k: string]: number;
+        };
+      }
+    | {
+        /**
+         * bytes before the tail that was read (a log over 8 MB)
+         */
+        unread: number;
+      }
+  )[];
+  truncated: boolean;
+  at: number;
+}
+
 export interface Hello {
   proto: number;
   contract: number;

@@ -12,9 +12,10 @@ import { findSession } from "../model/sessref.ts";
 import type { Sess } from "../model/types.ts";
 import { detailReady, detailStep } from "../features/queries.ts";
 const INLINE_MS = 30;
-import { whenRead } from "./detail.ts";
+import { whenRead, whenDone } from "./detail.ts";
 import { readCost } from "../read/cost.ts";
 import { alertRows } from "../read/alerts.ts";
+import { type EvRead, TAIL_BYTES, viewFor, evRead, evStep, eventsJson } from "../read/events.ts";
 import { indexState, indexing } from "../features/usage/ledger.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
@@ -114,6 +115,22 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     const st = indexState(); d["at"] = sv.now(); if (indexing() || num(d["pending"], 0) > 0) d["indexing"] = { done: st.done, total: st.total };
     return okL(id, d);
   }
+  if (m === "events.list") { // events --json of one session (no text); read inline when small, else in slices; a big log: its tail
+    const ref = str(p["ref"]); if (!ref) return errL(id, "bad_param", "ref is required", "<harness>:<id>, an id or a unique prefix of 6+ characters");
+    for (const k of ["filter", "preset"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    if (p["content"] !== undefined) return errL(id, "bad_param", "content is not served over the protocol in this release", "the CLI: agentglass events <ref> --content");
+    const fl = str(p["filter"]); const pr = str(p["preset"]); if (fl && pr) return errL(id, "bad_param", "preset and filter exclude each other (a preset is a filter)", "");
+    const lim = num(p["limit"], 500); if (!(lim >= 1 && lim <= 5000)) return errL(id, "bad_param", "limit must be 1–5000", "");
+    const ve = viewFor(fl, pr); if (ve) return errL(id, ve.code, ve.msg, ve.hint); // a typo answers before any log is read
+    sv.fresh();
+    const f = findSession(ref, (x: Sess): boolean => true); const s = f.s;
+    if (!s) return errL(id, f.code === 4 ? "ambiguous" : f.code === 2 ? "bad_param" : "not_found", f.msg, f.hint);
+    const r: EvRead = evRead(s, TAIL_BYTES);
+    const answer = (): string => { viewFor(fl, pr); const o = eventsJson(r, Math.floor(lim), pr); o["at"] = sv.now(); return okL(id, o); }; // the controller is shared: set again right before listing
+    if (evStep(r, INLINE_MS)) return answer();
+    whenDone("events\t" + id, (ms: number): boolean => evStep(r, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
   if (m === "alerts.list") { // the alert transitions of this process, newest first; since (ms) and limit (1–1000, 200)
     const since = num(p["since"], 0); const lim = num(p["limit"], LIMIT_DEF);
     if (!(lim >= 1 && lim <= LIMIT_MAX)) return errL(id, "bad_param", "limit must be 1–" + String(LIMIT_MAX), "");
@@ -124,7 +141,7 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
   if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, cost.get, alerts.list, sub, unsub, team.status, team.report, team.sessions, team.activity");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, alerts.list, sub, unsub, team.status, team.report, team.sessions, team.activity");
 }
 // team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
 function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {
