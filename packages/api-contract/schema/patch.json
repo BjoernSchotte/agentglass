@@ -1,0 +1,6 @@
+{ "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "patch", "title": "ApiPatch", "type": "object",
+  "required": ["upsert", "remove"],
+  "properties": {
+    "upsert": { "type": "array", "items": { "$ref": "session" } },
+    "remove": { "type": "array", "items": { "type": "string" } }
+  } }

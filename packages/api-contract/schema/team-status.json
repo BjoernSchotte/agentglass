@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "team-status",
+  "title": "TeamStatus",
+  "type": "object",
+  "required": [
+    "teams"
+  ],
+  "properties": {
+    "teams": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "mailbox",
+          "kind",
+          "me",
+          "admin",
+          "joined",
+          "rooms",
+          "members",
+          "pending",
+          "problems"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mailbox": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "me": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "device"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "device": {
+                "type": "string"
+              }
+            }
+          },
+          "admin": {
+            "type": "boolean"
+          },
+          "joined": {
+            "type": "boolean"
+          },
+          "pending": {
+            "type": "number"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rooms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "scope",
+                "level",
+                "epoch",
+                "budget",
+                "share"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "level": {
+                  "enum": [
+                    "numbers",
+                    "titles"
+                  ]
+                },
+                "epoch": {
+                  "type": "number"
+                },
+                "budget": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "share": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "devices",
+                "online",
+                "sessions"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "devices": {
+                  "type": "number"
+                },
+                "online": {
+                  "type": "boolean"
+                },
+                "sessions": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

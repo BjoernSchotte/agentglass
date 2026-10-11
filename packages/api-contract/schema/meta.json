@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "meta",
+  "title": "Meta",
+  "type": "object",
+  "required": [
+    "version",
+    "contract",
+    "proto",
+    "caps",
+    "readOnly",
+    "redact",
+    "harnesses",
+    "teams"
+  ],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "contract": {
+      "type": "integer"
+    },
+    "proto": {
+      "type": "integer"
+    },
+    "caps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "readOnly": {
+      "type": "boolean"
+    },
+    "redact": {
+      "type": "boolean"
+    },
+    "harnesses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "teams": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

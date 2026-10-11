@@ -1,0 +1,10 @@
+{ "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "hello", "title": "Hello", "type": "object",
+  "required": ["proto", "contract", "version", "readOnly", "redact", "caps"],
+  "properties": {
+    "proto": { "type": "integer", "minimum": 1 },
+    "contract": { "type": "integer" },
+    "version": { "type": "string" },
+    "readOnly": { "type": "boolean" },
+    "redact": { "type": "boolean" },
+    "caps": { "type": "array", "items": { "type": "string" } }
+  } }

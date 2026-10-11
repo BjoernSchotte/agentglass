@@ -1,0 +1,7 @@
+{ "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "error", "title": "ApiError", "type": "object",
+  "required": ["code", "msg"],
+  "properties": {
+    "code": { "type": "string", "description": "proto, bad_request, unknown_method, oversize, bad_param, bad_filter, not_found, ambiguous, no_team, too_many, read_only, internal (more may be added)" },
+    "msg": { "type": "string" },
+    "hint": { "type": "string" }
+  } }

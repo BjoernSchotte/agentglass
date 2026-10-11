@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "team-sessions",
+  "title": "TeamSessions",
+  "type": "object",
+  "required": [
+    "team",
+    "room",
+    "rows"
+  ],
+  "properties": {
+    "team": {
+      "type": "string"
+    },
+    "room": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "filter": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "member",
+          "device",
+          "rooms",
+          "mine",
+          "id",
+          "harness"
+        ],
+        "properties": {
+          "member": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "device": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          },
+          "rooms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mine": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "string"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tokens": {
+            "type": "object",
+            "required": [
+              "in",
+              "out",
+              "cacheRead",
+              "cacheWrite"
+            ],
+            "properties": {
+              "in": {
+                "type": "number"
+              },
+              "out": {
+                "type": "number"
+              },
+              "cacheRead": {
+                "type": "number"
+              },
+              "cacheWrite": {
+                "type": "number"
+              }
+            }
+          },
+          "costUsd": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "key",
+              "label"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "worktree": {
+                "type": "string"
+              },
+              "top": {
+                "type": "string"
+              },
+              "remote": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
