@@ -76,7 +76,16 @@ export function SessionsView() {
     window.addEventListener("ag:key", on); return () => window.removeEventListener("ag:key", on);
   });
   const onScroll = () => { const top = (list.current?.scrollTop ?? 0) < 8; if (top === SESSIONS.frozen) SESSIONS.freeze(!top); };
-  const sel = search.sel ? SESSIONS.rows.get(search.sel) : undefined;
+  // a session outside the live list (older than its 500 rows, a subagent — Stats' model drill-down links them): its row
+  // from sessions.get; a gone one says so instead of an empty drawer
+  const inList = search.sel ? SESSIONS.rows.get(search.sel) : undefined; const [far, setFar] = useState<{ key: string; row?: SessionRow; err?: string } | null>(null);
+  useEffect(() => {
+    const k = search.sel; if (!k || inList || !SESSIONS.ready || far?.key === k) return;
+    let gone = false; setFar({ key: k });
+    live.request<SessionRow>("sessions.get", { ref: k, detail: "fast" }).then((row) => { if (!gone) setFar({ key: k, row }); }, (e: ApiFail) => { if (!gone) setFar({ key: k, err: e.err?.msg ?? e.message }); });
+    return () => { gone = true; };
+  }, [live, search.sel, inList, SESSIONS.ready]);
+  const sel = inList ?? (far && far.key === search.sel ? far.row : undefined);
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2">
@@ -87,6 +96,7 @@ export function SessionsView() {
         </form>
       </div>
       {err && <pre role="alert" className="mono whitespace-pre-wrap border-b border-border-subtle px-4 py-1.5 text-[12px] text-error">{err}</pre>}
+      {far?.err && far.key === search.sel && <p role="alert" className="border-b border-border-subtle px-4 py-1.5 text-[12px] text-error">{search.sel}: {far.err}</p>}
       {SESSIONS.indexing && (() => { const g = gauge(SESSIONS.indexing); return (
         <div className="border-b border-border-subtle px-4 py-1.5 text-[12px] text-muted" title="agentglass reads each session log once and keeps the result in its cache (~/.agentglass/cache), shared with the TUI; it uses at most a fifth of one core, newest sessions first. Costs marked … are still being counted.">
           <div className="mb-1 flex items-center gap-2"><span className="text-attention">⟳</span><span>{g.text}</span><span className="ml-auto">costs marked … are still being counted</span></div>

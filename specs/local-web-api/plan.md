@@ -190,6 +190,18 @@ loads, carry, cost share, tier marks, and the advice list.
 **W8.7 `graph.get {ref, window?}` and `repos.list {period?}`.** Columnar call-graph events (#110) for W9's timeline;
 the Repos tab rows. No page yet for graph (W9); Repos page as a table.
 
+**W8.8 Model drill-down (2026-10-11, the user's ask: an old model with a large cache-read bill — which sessions and
+projects caused it).** `cost --by session|project --model <name>`: only that model's tokens and cost of each day bucket
+count (`Day.mt` / `Day.um`, already in the ledger: nothing new is indexed); `--model` with `--by model` is a usage
+error. `--by session` rows add `title`, `project`, `cwd`, `root` (the top-level session's `harness:id`, null for a
+top-level one) and `last` (the session's last write) — what a reader needs to find the session. `cost.get` takes
+`model`. Web: a By-model row on Stats opens the model's drill-down (`?model=` in the URL) — one `cost.get
+{by: session, model}` request, grouped by project in the page: projects with cost, cache read and sessions, each
+project's sessions below it (title, harness, cache read, cost, last); a session opens its drawer. TUI: `s` on a row of
+the Stats price panel (`$`) lists the same, projects and their sessions, for the Stats period; ↵ on a session opens
+its transcript, esc goes back to the models. Tests: costRows per-model sums (a session with two models), the field
+set, `serve.test.sh` against the CLI, web tests, the panel's lines.
+
 Done when: every check via `sh scripts/check.sh`, `serve.test.sh`, `team.test.sh`, `pnpm -r typecheck test build`,
 e2e, and the footprint stays as measured: agentglass-web ≤ 40 MB; serve not above main's on the same history (the
 engine's state: on the 3,400-session reference history main idles at 223 MB subscribed), ≤ 1 % CPU idle.

@@ -113,9 +113,9 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     return "";
   }
   if (m === "cost.get") { // cost --json / cost --by rows; a cold start answers at once with pending logs and the index's progress
-    for (const k of ["harness", "by", "since", "filter"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    for (const k of ["harness", "by", "since", "filter", "model"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
     sv.fresh();
-    const r = readCost({ harness: str(p["harness"]), by: str(p["by"]), since: str(p["since"]), filter: str(p["filter"]) }); const d = r.data; const e = r.err;
+    const r = readCost({ harness: str(p["harness"]), by: str(p["by"]), since: str(p["since"]), filter: str(p["filter"]), model: str(p["model"]) }); const d = r.data; const e = r.err;
     if (!d || e) return errL(id, e ? e.code : "internal", e ? e.msg : "no answer", e ? e.hint : "");
     const st = indexState(); d["at"] = sv.now(); if (indexing() || num(d["pending"], 0) > 0) d["indexing"] = { done: st.done, total: st.total };
     return okL(id, d);

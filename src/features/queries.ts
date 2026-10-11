@@ -5,7 +5,8 @@ import { writeSync } from "node:fs";
 import { type Obj, base } from "../util/json.ts";
 import { H, complete, display, realCwd, screenOut } from "../hooks.ts";
 import { S } from "../state.ts";
-import { sessions, loadHead, loadTail, subActive, parentOf } from "../model/sessions.ts";
+import { sessions, loadHead, loadTail, subActive, parentOf, titleOf } from "../model/sessions.ts";
+import { scrub } from "./skills/watchvis.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
 import { type LogSum, stateOf, sumStep, sumOut, caughtUp } from "./callgraph/runsum.ts";
 import { accOf, rowsOf, callsOf, copyKey, copiesOf } from "./usage/ledger.ts";
@@ -288,6 +289,7 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
   return { rows, source: srcs.join("+") };
 }
 
+function sessKey(s: Sess, m: Map<string, Sess>): string { const k = s.h + ":" + s.id; m.set(k, s); return k; }
 // ── cost rows ────────────────────────────────────────────────────────────────
 export const BY = ["day", "model", "harness", "project", "session", "workspace"];
 // Rows by key (cost desc; days in date order) + a final "total" row, summed from the ledger's day buckets (per model Day.mt /
@@ -295,7 +297,8 @@ export const BY = ["day", "model", "harness", "project", "session", "workspace"]
 // and, with call clauses, holds a matching call row (totals() of the shared aggregation counts the same days);
 // keys from the shared dimensions (project = the repo's name); costUsd null for all-unpriced rows
 // skip: a log not to read to its end here (serve's lazy read: what it booked so far counts)
-export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter, skip: (s: Sess) => boolean = (s: Sess): boolean => false): Obj[] {
+// model: only that model's part of each day (Day.mt / Day.um) counts — which sessions and projects a model's cost came from
+export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter, skip: (s: Sess) => boolean = (s: Sess): boolean => false, model = ""): Obj[] {
   const acc = new Map<string, number[]>(); // key → [in, out, cacheRead, cacheWrite, cost, unpriced]
   const who = new Map<string, number>(); const seen = new Set<string>(); // key → sessions (copyKey: a session's copies count once)
   const tot = [0, 0, 0, 0, 0, 0]; const all = new Set<string>();
@@ -306,6 +309,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
     const ks = k + "\u0000" + copyKey(s); if (!seen.has(ks)) { seen.add(ks); who.set(k, (who.get(k) ?? 0) + 1); }
   };
   const f = cf.f; const from = midnightOf(sinceKey);
+  const bySess = new Map<string, Sess>(); // --by session: key → the session (its title, project, cwd, parent)
   const wsId = new Map<string, string>(); // --by workspace: key → herdr workspace id ("" = none)
   const wsKey = (s: Sess): string => { const w = workspaceOf(s); const k = !w.id ? "(none)" : REDACT ? w.id : w.label || w.id; wsId.set(k, w.id); return k; }; // labels are user text: ids under --redact
   const cands: Sess[] = []; const kept: SessAcc[] = []; // by model: the kept days, for each model's price source
@@ -325,15 +329,16 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
     for (const [k, d] of a.days) {
       if (k < sinceKey) continue;
       if (f.needsCalls ? !hit.has(s.path + "\t" + k) : !dayMatches(f, s, k, d)) continue;
-      const v = [d.inTok, d.outTok, d.cr, d.cw, d.cost, d.unk];
-      if (d.inTok + d.outTok + d.cr + d.cw + d.unk === 0 && d.cost === 0) continue;
+      let v = [d.inTok, d.outTok, d.cr, d.cw, d.cost, d.unk];
+      if (model) { const r = d.mt.get(model); const u = d.um.get(model) ?? 0; if (!r && !u) continue; v = r ? [r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0, u] : [0, 0, 0, 0, 0, u]; }
+      if ((v[0] ?? 0) + (v[1] ?? 0) + (v[2] ?? 0) + (v[3] ?? 0) + (v[5] ?? 0) === 0 && (v[4] ?? 0) === 0) continue;
       used = true; if (by === "model") ka.days.set(k, d);
       sum(tot, v);
       if (by === "model") {
         const ms = new Set<string>();
         for (const [m, r] of d.mt) { ms.add(m); add(m, s, [r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0, d.um.get(m) ?? 0]); }
         for (const [m, n] of d.um) if (!ms.has(m)) add(m, s, [0, 0, 0, 0, 0, n]);
-      } else add(by === "day" ? k : by === "session" ? s.h + ":" + s.id : by === "workspace" ? wsKey(s) : sessDim(by, s)[0] || "(unknown)", s, v);
+      } else add(by === "day" ? k : by === "session" ? sessKey(s, bySess) : by === "workspace" ? wsKey(s) : sessDim(by, s)[0] || "(unknown)", s, v);
     }
     if (used) { all.add(copyKey(s)); if (by === "model") kept.push({ a: ka, h: s.h }); }
   }
@@ -342,6 +347,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
     const c = r[4] ?? 0; const unk = r[5] ?? 0;
     const o: Obj = { key: k, in: r[0] ?? 0, out: r[1] ?? 0, cacheRead: r[2] ?? 0, cacheWrite: r[3] ?? 0, costUsd: c === 0 && unk > 0 ? null : r6(c), unpricedTokens: unk, sessions: n };
     if (by === "workspace") { const id = k === "total" ? "" : wsId.get(k) ?? ""; o["workspaceId"] = id ? id : null; }
+    if (by === "session") { const s = k === "total" ? undefined : bySess.get(k); if (s && !s.headDone) loadHead(s); const p = s && s.parent ? parentOf(s) : null; o["title"] = s ? scrub(titleOf(s)) : null; o["project"] = s ? repoShown(s) : null; o["cwd"] = s ? display("cwd", s.cwd, s) : null; o["root"] = p ? p.h + ":" + p.id : null; o["last"] = s ? new Date(s.mtime).toISOString() : null; }
     if (by === "model") { const pr = srcs.get(k); o["priceSource"] = pr ? pr.src : k === "total" ? null : "unpriced"; o["estimated"] = k === "total" ? [...srcs.values()].some((x: PRow) => x.est > 0) : !!pr && pr.est > 0; }
     return o;
   };
@@ -357,12 +363,12 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
 // ── CLI ──────────────────────────────────────────────────────────────────────
 // rc: the exit code a failed write (closed reader, full disk) still reports (cost --check: 3 over budget)
 function out(text: string, rc = 0): void { try { writeSync(1, screenOut(text) + "\n"); } catch (e) { process.exit(rc); } }
-export interface QOpts { ref: string; root: boolean; since: string; sinceMs: number; cwd: string; limit: number; live: boolean; subs: boolean; harness: string; by: string; check: boolean; json: boolean; f: Fmt; filters: string[]; pinned: boolean }
-const VAL = ["--since", "--cwd", "--limit", "--harness", "--format", "--fields", "--by", "--filter"];
+export interface QOpts { ref: string; root: boolean; since: string; sinceMs: number; cwd: string; limit: number; live: boolean; subs: boolean; harness: string; by: string; model: string; check: boolean; json: boolean; f: Fmt; filters: string[]; pinned: boolean }
+const VAL = ["--since", "--cwd", "--limit", "--harness", "--format", "--fields", "--by", "--model", "--filter"];
 const ALWAYS = ["--agent", "--no-agent", "--redact", "--all-projects", "--project-only", "--format", "--fields"];
 // one command's options; anything not in allowed (or ALWAYS) is a usage error
 export function qopts(cmd: string, args: string[], allowed: string[], refOk: boolean): QOpts {
-  const o: QOpts = { ref: "", root: false, since: "", sinceMs: 0, cwd: "", limit: 0, live: false, subs: false, harness: "", by: "", check: false, json: false, f: fmtArgs(args), filters: [], pinned: false };
+  const o: QOpts = { ref: "", root: false, since: "", sinceMs: 0, cwd: "", limit: 0, live: false, subs: false, harness: "", by: "", model: "", check: false, json: false, f: fmtArgs(args), filters: [], pinned: false };
   const bad = (m: string): never => cliError("usage", m, "agentglass " + cmd + " --help", 2);
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
@@ -380,6 +386,7 @@ export function qopts(cmd: string, args: string[], allowed: string[], refOk: boo
     else if (a === "--since") { o.since = v; o.sinceMs = parseSince(v, Date.now()); if (o.sinceMs < 0) bad("--since must be today, <n>h, <n>d or YYYY-MM-DD"); }
     else if (a === "--cwd") o.cwd = realDir(v);
     else if (a === "--by") o.by = v;
+    else if (a === "--model") o.model = v;
     else if (a === "--filter") o.filters.push(v);
     else if (a === "--pinned") o.pinned = true;
   }
@@ -401,6 +408,7 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Resolved {
 }
 export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
 export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]); // --by model: where each model's price comes from, alias-priced (≈)
+export const SESS_COST_FIELDS = COST_FIELDS.concat(["title", "project", "cwd", "root", "last"]); // --by session: where the session is
 export const WS_FIELDS = COST_FIELDS.concat(["workspaceId"]); // --by workspace: the herdr workspace id (null for (none) and total)
 function envelope(rows: Obj[], source: string, sc: Scope): string { return JSON.stringify({ rows, source, scope: sc.name }); }
 // json → the {rows, source, scope} envelope (compact inside an agent and in pipes); other formats → bare rows

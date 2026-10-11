@@ -1018,6 +1018,7 @@ agentglass sessions --since 7d --format table                       # json | jso
 agentglass --json --format csv --fields id,harness,costUsd,tokens_in > sessions.csv
 agentglass --json --live --fields id,mux_kind,mux_pane,mux_status --format csv  # the pane of every live agent
 agentglass cost --since 7d --by workspace --format csv --fields key,workspaceId,costUsd  # cost per herdr workspace
+agentglass cost --since 30d --by session --model claude-opus-4-7     # which sessions one model's cost came from
 agentglass events last --preset errors                              # a session's failing calls and the reply before each
 agentglass wait --by kind --since 30d                               # what agents wait on: tests, lint, CI, you, the model
 agentglass wait --check --kind test || echo "3+ heavy runs here"    # for agents, before a test run (exit 3)

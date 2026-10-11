@@ -12,7 +12,7 @@ import { fxBase, fxSession, isoAt } from "../query/fixture.ts";
 import { PRICES_FILE, setGateway } from "./pricing.ts";
 import { loadGateway, gatewayEnv } from "./gwprices.ts";
 import { type PRow } from "./pricerows.ts";
-import { PP, panelRows, panelLines, panelKey, suggestAlias } from "./pricepanel.ts";
+import { PP, MD, type DRow, panelRows, panelLines, panelKey, suggestAlias, drillRows, drillLines } from "./pricepanel.ts";
 import { todayKey } from "./record.ts";
 
 let bad = 0;
@@ -138,6 +138,25 @@ ok("x on a broken file", S.toast.indexOf("fix it first") >= 0 && mode() !== "con
 panelKey("enter", days); onInput("ctrl-u"); for (const ch of Array.from("1 1")) onInput(ch); onInput("enter");
 ok("write on a broken file: error, file as it was", S.toast.indexOf("not valid JSON") >= 0 && readFileSync(PRICES_FILE, "utf8") === "{\"a\": 1,,}", S.toast);
 writeFileSync(PRICES_FILE, "{}");
+// s: the model's sessions by project (W8.8); ↵ opens one, c sorts by cache read, esc goes back to the models
+PP.open = true; PP.sel = panelRows(days).findIndex((r: PRow) => r.model === "claude-sonnet-5-5");
+ok("s handled", panelKey("s", days), "not handled");
+ok("s opens the drill-down", MD.model === "claude-sonnet-5-5", MD.model);
+const sid = (r: DRow | undefined): string => { if (!r) return ""; const x = r.s; return x ? x.id : ""; };
+let dr = drillRows(MD.model, days, MD.cache);
+ok("a project heading, then its sessions", dr.length === 2 && dr[0]?.s === null && (dr[0]?.proj ?? "") === "pi" && sid(dr[1]) === "p1" && (dr[0]?.n ?? 0) === 1, dr.map((r: DRow) => r.proj + ":" + (r.s ? r.s.id : "-")).join(" "));
+ok("the session is selected", MD.sel === 1, String(MD.sel));
+ok("only the model's part", Math.abs((dr[1]?.cost ?? 0) - 0.5) < 1e-9 && MD.tot.n === 1, String(dr[1]?.cost));
+const dl = drillLines(dr, 100, 10, MD.sel, 0).map(strip);
+ok("drill lines", dl.length === 3 && (dl[1] ?? "").indexOf("pi · 1 session") >= 0 && (dl[2] ?? "").indexOf("p1") < 0 && (dl[2] ?? "").indexOf("$0.50") >= 0 && (dl[2] ?? "").indexOf("100%") >= 0, dl.join("|"));
+ok("drill lines fit", drillLines(dr, 40, 10, MD.sel, 0).every((l: string) => vwidth(strip(l)) <= 40 - 2), drillLines(dr, 40, 10, MD.sel, 0).map(strip).join("|"));
+panelKey("up", days); ok("headings are skipped", MD.sel === 1, String(MD.sel));
+panelKey("c", days); ok("c: by cache read", MD.cache && MD.sel === 1, String(MD.cache));
+panelKey("c", days);
+const unk = drillRows("no-such-model", days, false); ok("an unused model: no rows", unk.length === 0, String(unk.length));
+panelKey("enter", days); ok("↵ opens the session", S.tv !== null && (S.tv ? S.tv.s.id : "") === "p1", S.tv ? S.tv.s.id : "none");
+S.tv = null; S.mode = "list";
+panelKey("esc", days); ok("esc: back to the models", MD.model === "" && PP.open, MD.model);
 // close
 panelKey("$", days); ok("$ closes", !PP.open, "open");
 const acts: Action[] = H.actions.filter((a: Action) => a.id === "prices.panel");

@@ -16,7 +16,7 @@ import { kfmt, grp, type ModeSum, newSum, addDay, total, single, money, moneyTag
 import { type Bill, type GW, type Allow, MODES, tag, asBill, planLabel, gaugeWins, claudeWins } from "./billing.ts";
 import { modeOf, allowance } from "./bill-live.ts";
 import { type CostNow, costNow, budget, sourceCounts } from "./summary.ts";
-import { PP, renderPanel, panelKey, setStatsGo } from "./pricepanel.ts";
+import { PP, MD, renderPanel, panelKey, setStatsGo } from "./pricepanel.ts";
 import "./progress.ts"; // the header indexing gauge (registers itself)
 import { REDACT } from "../redact-on.ts";
 import { CONFIG_FILE } from "../../util/config.ts";
@@ -853,7 +853,8 @@ H.headerWidgets.push((w: number): string => {
 H.footerHints.push((mode: string): string[][] => {
   if (mode !== "list" || !mine()) return [];
   if (dKey) return [["↑↓", "call"], ["↵", "open session"], ["esc", "back"], ["d", "today"], ["w", "7 days"], ["/", "filter"]];
-  if (PP.open) return [["↑↓", "model"], ["↵", "price"], ["a", "alias"], ["x", "remove"], ["$", "close"], ["d", "today"], ["w", "7 days"]];
+  if (PP.open && MD.model) return [["↑↓", "session"], ["↵", "open"], ["c", MD.cache ? "by cost" : "by cache read"], ["esc", "models"], ["d", "today"], ["w", "7 days"]];
+  if (PP.open) return [["↑↓", "model"], ["s", "sessions"], ["↵", "price"], ["a", "alias"], ["x", "remove"], ["$", "close"], ["d", "today"], ["w", "7 days"]];
   return [["↑↓", "tool"], ["↵", "details"], ["S", "skills"], ["$", "prices"], ["␣", "expand MCP/skills"], ["d", "today"], ["w", "7 days"], ["/", "filter"], ["p", "pin"], ["P", "pins"], ["B", "budget"]];
 });
 H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], ["w  →", "last 7 days"], ["↑↓ jk", "select a tool (top tools)"], ["␣  → ←", "expand / fold an MCP server or the skills group"],
@@ -862,6 +863,7 @@ H.helpSections.push({ name: "stats", ctx: "Stats", keys: [["d  ←", "today"], [
   ["B", "budget: current state and the config path"], ["t", "triage the Stats filter's calls (drill-down: that tool's errors)"], ["C", "compare this period with the previous one (today vs yesterday, 7 days vs the 7 before)"],
   ["/  p  P", "filter Stats (tool is Bash, repo is x, day >= -3d…) · pin it · edit pins"],
   ["$", "prices: every model of the period with its price source; ↵ set a price, a alias, x remove (see prices below)"],
+  ["$ s", "a model's sessions by project: where its cost came from (c: by cache read, ↵ open, esc back)"],
   ["", "costs = API list price (" + pricesFrom() + "); prices.json, aliases and gateway configs override it"],
   ["", "cost tags: spend = API key (real), plan = list-price equivalent, cloud = Bedrock/Vertex/Foundry, gw = gateway, ? = unknown; * = assumed from current config"],
   ["", "projection: today from the 14-day hourly profile, month from the 14-day mean; history = what is still on disk"]] });
