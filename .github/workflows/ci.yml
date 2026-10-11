@@ -79,7 +79,7 @@ jobs:
       - run: pnpm --filter @agentglass/web exec playwright install --with-deps chromium
       - run: pnpm --filter @agentglass/web e2e
         env: { AGENTGLASS_BIN: "${{ github.workspace }}/agentglass", AGENTGLASS_WEB_BIN: "${{ github.workspace }}/packages/bff/dist/agentglass-web" }
-      - run: sh scripts/build-web.sh 0.0.0-ci linux-x64
+      - run: sh scripts/build-web.sh 0.0.0-ci linux-x64 && sh scripts/npm.test.sh 0.0.0-ci
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }

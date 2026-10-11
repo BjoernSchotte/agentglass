@@ -4,7 +4,7 @@ name: formula
 # the first place it fails
 on:
   pull_request:
-    paths: ["scripts/formula.sh", "scripts/formula-proof.sh", "scripts/verify-release-assets.sh", ".github/workflows/release.yml", ".github/workflows/formula.yml"]
+    paths: ["scripts/formula.sh", "scripts/formula-proof.sh", "scripts/formula-web.sh", "scripts/formula-web-proof.sh", "scripts/verify-release-assets.sh", ".github/workflows/release.yml", ".github/workflows/formula.yml"]
   workflow_dispatch:
 permissions: { contents: read }
 concurrency: { group: "formula-${{ github.ref }}", cancel-in-progress: true }
@@ -36,3 +36,9 @@ jobs:
       - name: brew audit, install, test
         if: steps.render.outputs.skip != '1'
         run: sh scripts/formula-proof.sh agentglass.rb
+      # agentglass-web: from the first release that ships its archives (release-dry-run.yml proves it on new ones)
+      - name: agentglass-web formula
+        if: steps.render.outputs.skip != '1'
+        run: |
+          if [ -f assets/agentglass-web-linux-x64.tar.gz ]; then sh scripts/formula-web.sh assets "$(grep -o 'version "[^"]*"' agentglass.rb | cut -d'"' -f2)" > agentglass-web.rb && sh scripts/formula-web-proof.sh agentglass-web.rb
+          else echo "::notice::the last release predates agentglass-web: its formula is proven by release-dry-run.yml"; fi
