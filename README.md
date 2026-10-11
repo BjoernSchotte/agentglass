@@ -42,7 +42,7 @@ agents show at once. Dev channel, pinned versions and building from source: [Ins
 - **Explore:** [Repos](#repos) · [What do my agents wait on?](#what-do-my-agents-wait-on) · [Skills: what they cost](#skills-what-they-cost) · [Git linkage](#git-linkage) · [Filters](#filters) · [Filtering events](#filtering-events) · [Triage](#triage) · [Compare](#compare) · [Related events](#related-events) · [Palette and links](#palette-and-links)
 - **Alerts:** [Alert rules](#alert-rules)
 - **Beyond one machine:** [Several machines (fleet)](#several-machines-fleet) · [Send to an OTLP backend](#send-to-an-otlp-backend) · [OTLP: several hosts](#otlp-several-hosts) · [`agentglass receive` hub](#otlp-a-hub-for-hosts-you-cannot-reach-agentglass-receive)
-- **Integrations:** [herdr](#herdr) · [Inside coding agents](#inside-coding-agents) · [MCP server](#mcp-server) · [Scriptable](#scriptable) · [Custom agent commands](#custom-agent-commands)
+- **Integrations:** [Web UI](#web-ui) · [herdr](#herdr) · [Inside coding agents](#inside-coding-agents) · [MCP server](#mcp-server) · [Scriptable](#scriptable) · [Custom agent commands](#custom-agent-commands)
 - **Reference:** [Privacy mode](#privacy-mode) · [Tiny, fast, local](#tiny-fast-local) · [Supported harnesses](#supported-harnesses) · [Adding a harness](#adding-a-harness) · [Exit codes](#exit-codes) · [License](#license)
 
 ## Why it slaps
@@ -1610,6 +1610,27 @@ export AGENTGLASS_PALETTE_FILE="/tmp/ag-palette.json"   # the palette's recent p
 export AGENTGLASS_THEME_FILE="/tmp/ag-theme"   # the theme T persists (default ~/.agentglass/theme)
 export AGENTGLASS_OTLP_DIR="/tmp/ag-otlp"     # OTLP export state, lock and request bodies (default ~/.agentglass/otlp)
 ```
+
+## Web UI
+
+`agentglass web` opens the web UI in your browser: the live session list with the filter language, a detail drawer, a
+command palette (`⌘K`), keyboard navigation (`?` lists the keys), dark and light themes — and, in a team, the Team page.
+It is a second, optional binary, `agentglass-web`, installed beside `agentglass`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BjoernSchotte/agentglass/main/install.sh | sh -s -- --web
+agentglass web            # starts it (or reuses the running one) and opens a one-time link
+agentglass web --no-open  # prints the link instead · --stop ends it · --redact for screencasts
+```
+
+- **Local only**: it listens on `127.0.0.1` and refuses any other Host; there is no option to expose it. Remote access is
+  an SSH tunnel (`ssh -L 8080:127.0.0.1:<port> host`).
+- **One-time links**: each `agentglass web` mints a token that works once, for 2 minutes; the browser trades it for an
+  HttpOnly, SameSite=Strict cookie. Pages from other origins (another port included) cannot use the API or the socket.
+- **Read-only**: the web UI shows; it sends nothing to agents in this release.
+- **Same data as the TUI**: `agentglass-web` reads nothing itself — it asks `agentglass serve --stdio`, so privacy
+  settings and `--redact` apply exactly as in the TUI. Its log (`~/.agentglass/logs/web.log`) holds method, path,
+  status and time only.
 
 ## Supported harnesses
 

@@ -18,7 +18,7 @@ case "$1 $2" in
 esac
 EOG
 chmod +x "$t/bin/gh"
-for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do echo "b $p" > "$t/out/agentglass-$p.tar.gz"; done
+for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do echo "b $p" > "$t/out/agentglass-$p.tar.gz"; echo "w $p" > "$t/out/agentglass-web-$p.tar.gz"; done
 sh "$here/release-assets.sh" "$t/out" stable v2026.9.1 2026.9.1 0123456789abcdef0123456789abcdef01234567 >/dev/null
 echo notes > "$t/notes.md"
 run() { echo "$1" > "$t/state"; : > "$t/log"; shift

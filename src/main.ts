@@ -77,6 +77,7 @@ import "./features/fleet/cli.ts";
 import "./features/team/cli.ts";
 import "./features/mcp-cli.ts";
 import "./serve/main.ts"; // agentglass serve --stdio: the protocol agentglass-web reads
+import "./features/web-cli.ts"; // agentglass web: starts agentglass-web, a one-time link
 import "./features/fleet/tui.ts";
 import "./features/hub/receive.ts";
 

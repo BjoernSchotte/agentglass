@@ -20,7 +20,10 @@ jobs:
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           TAG=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
-          mkdir -p assets && gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D assets && sh scripts/verify-release-assets.sh assets
+          mkdir -p assets && gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D assets
+          # releases before agentglass-web carry 4 archives: their checksums still verify, the full 8-archive set from the next one on
+          if [ -f assets/agentglass-web-linux-x64.tar.gz ]; then sh scripts/verify-release-assets.sh assets
+          else echo "::notice::$TAG predates agentglass-web: checksums only"; (cd assets && sha256sum -c SHA256SUMS); fi
           echo "$TAG" >> "$GITHUB_STEP_SUMMARY"
           # the formula installs agentglass-mcp from every archive; a release from before it shipped cannot carry this
           # formula (release-dry-run.yml proves it on freshly built archives instead) — once one has, this runs again
