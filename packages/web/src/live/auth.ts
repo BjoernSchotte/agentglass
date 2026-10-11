@@ -12,3 +12,9 @@ export async function bootstrap(loc: Location = location, h: History = history, 
   if (r.ok) return { csrf: ((await r.json()) as { csrf: string }).csrf, err: "" };
   return { csrf: "", err: "This link was used or has expired. Run agentglass web again for a new one." };
 }
+// a new link pasted into a tab that is already open changes only the fragment: no reload, no request — the page must see
+// it itself (else it keeps showing the old error or the old session). onToken: start over with the new token.
+export function watchToken(onToken: () => void, w: Window = window): () => void {
+  const on = () => { if (/(?:^#|&)t=[A-Za-z0-9_-]+/.test(w.location.hash)) onToken(); };
+  w.addEventListener("hashchange", on); return () => w.removeEventListener("hashchange", on);
+}
