@@ -278,6 +278,13 @@ function resolveVals(a: Attr, c: Clause): { vals: string[]; err: string } {
   }
   return { vals: out, err: "" };
 }
+// one clause → its canonical key and value predicate (the team view evaluates its rows' own values with it)
+export function clauseMatcher(c: Clause): { key: string; m: ((v: Val) => boolean) | null; err: string } {
+  const a = attrOf(c.key);
+  if (!a) { const sg = suggest(c.key); return { key: "", m: null, err: "unknown key \"" + c.key + "\"" + (sg ? " — did you mean " + sg + "?" : "") }; }
+  const r = resolveVals(a, c); if (r.err) return { key: a.key, m: null, err: r.err };
+  return { key: a.key, m: matcher(a, c, r.vals), err: "" };
+}
 // does the counted period reach before cutoff (the oldest local day that keeps call rows)? dayKeys: the clauses' days
 // (null = no day clause), period: the view's days oldest first ([] = all history), oldest: the oldest known day
 export function beyondRetention(dayKeys: string[] | null, period: string[], oldest: string, cutoff: string): boolean {

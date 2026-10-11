@@ -39,7 +39,7 @@ run() { # machine agent? args… — the full isolation set of that machine
 jq1() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
 
 # 1. A creates the team with room backend → an invite
-c=$(run A 0 team create acme --dir "$F" --room backend=github.com/acme/api --name anna --json)
+c=$(run A 0 team create acme --dir "$F" --room backend=github.com/acme/api --budget backend=50 --name anna --json)
 eq "create ok" "$(printf %s "$c" | jq1 'd["ok"]')" "True"
 code=$(printf %s "$c" | jq1 'd["invite"]["code"]')
 has "invite code" "$code" "agt1-"
@@ -73,6 +73,19 @@ ss=$(run A 0 team sessions --member bob --json)
 eq "sessions: bob's api session only" "$(printf %s "$ss" | jq1 'len(d["rows"])')" "1"
 hasnt "sessions: no cwd" "$ss" "\"cwd\""
 hasnt "sessions: no title" "$ss" "\"title\""
+# groupings, the filter, the budget (fleet-teams T9b)
+eq "report by model" "$(run A 0 team report --by model --json | jq1 '[x["key"] for x in d["rows"]]')" "['claude-sonnet-4-5']"
+eq "report by room" "$(run A 0 team report --by room --json | jq1 '[x["key"] for x in d["rows"]]')" "['backend']"
+eq "report --filter member is bob" "$(run A 0 team report --filter 'member is bob' --json | jq1 '[x["key"] for x in d["rows"]]')" "['bob']"
+eq "report --filter harness is codex: no rows" "$(run A 0 team report --filter 'harness is codex' --json | jq1 'len(d["rows"])')" "0"
+eq "sessions --filter member is me: bob's own (B)" "$(run B 0 team sessions --filter 'member is me' --json | jq1 '[x["member"]["name"] for x in d["rows"]]')" "['bob']"
+eq "sessions --filter member is me: none of anna's (A)" "$(run A 0 team sessions --filter 'member is me' --json | jq1 'len(d["rows"])')" "0"
+set +e; fe=$(run A 0 team report --filter 'cwd ~ acme' --json 2>&1); rc=$?; set -e
+eq "--filter on a key rows lack: exit 2" "$rc" "2"
+has "--filter error names the team keys" "$fe" "team keys"
+eq "report: backend budget" "$(run A 0 team report --json | jq1 '[(b["room"], b["usd"], b["spentUsd"] > 0) for b in d["budget"]]')" "[('backend', 50, True)]"
+set +e; run A 0 team create x --dir "$t/x" --room a=github.com/x/a --budget b=5 --json > /dev/null 2>&1; rc=$?; set -e
+eq "--budget on an unknown room: exit 2" "$rc" "2"
 st=$(run A 0 team --json)
 has "status: the team" "$st" "\"acme\""
 has "status: bob a member" "$st" "\"bob\""
@@ -87,6 +100,9 @@ for l in sys.stdin:
 cli=$(run A 0 team report --by member --json | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))')
 eq "team.report = team report --json" "$(printf '%s\n' "$sr" | head -1)" "$cli"
 eq "meta.teams lists the team" "$(printf '%s\n' "$sr" | tail -1)" "teams 1"
+pf=$(SERVE_FLAGS="" proto A '{"id":2,"m":"team.report","p":{"filter":"tool is Bash"}}' '{"id":3,"m":"team.sessions","p":{"filter":"member is bob"}}')
+has "team.report: a bad filter is bad_filter" "$pf" "\"bad_filter\""
+has "team.sessions: filter member is bob" "$pf" "\"name\":\"bob\""
 home C 3333333333333333
 nt=$(SERVE_FLAGS="" proto C '{"id":2,"m":"team.report","p":{}}' '{"id":3,"m":"meta"}')
 has "no team: no_team" "$nt" "\"no_team\""
