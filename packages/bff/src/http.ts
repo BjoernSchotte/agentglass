@@ -3,12 +3,12 @@
 // (fallback, Last-Event-ID resume). The only data source is the serve child (Upstream); web.log lines carry method,
 // path without query, status and time — never tokens, cookies or values.
 import type { Server, ServerWebSocket } from "bun";
-import { Auth, hostOk, originOk, same, rand } from "./auth.ts";
+import { Auth, hostOk, originOk, namesOf, same, rand } from "./auth.ts";
 import { Upstream, type Ev, type Obj, type Reply, type Listener } from "./stdio.ts";
 import { BODY_MAX, FRAME_MAX, STREAMS_MAX, REQ_PER_S, QUEUE_MAX, HB_MS, Rate } from "./limits.ts";
 
 export interface Asset { file: string | Blob; type: string }
-export interface Opts { port: number; hostname?: string; up: Upstream; auth: Auth; assets: Map<string, Asset>; log?: (line: string) => void }
+export interface Opts { port: number; hostname?: string; names?: string[]; up: Upstream; auth: Auth; assets: Map<string, Asset>; log?: (line: string) => void }
 export const HEADERS: Record<string, string> = {
   "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
   "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
@@ -31,7 +31,7 @@ function paramsOf(u: URL): Obj {
 }
 
 export function startServer(o: Opts): { server: Server<WsData>; port: number; stop: () => void } {
-  const rate = new Rate(REQ_PER_S); let streams = 0;
+  const rate = new Rate(REQ_PER_S); let streams = 0; const names = o.names ?? namesOf("127.0.0.1", {}, "");
   const log = (m: string, path: string, status: number, t0: number) => o.log?.(new Date().toISOString() + " " + m + " " + path + " " + status + " " + (performance.now() - t0).toFixed(1) + "ms");
   let port = o.port;
   const server: Server<WsData> = Bun.serve<WsData>({
@@ -78,10 +78,10 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
   }
 
   async function route(req: Request, u: URL, srv: Server<WsData>): Promise<Response | undefined> {
-    if (!hostOk(req.headers.get("host"), port)) return fail(421, "bad_host", "wrong Host");
+    if (!hostOk(req.headers.get("host"), port, names)) return fail(421, "bad_host", "wrong Host");
     const api = u.pathname.startsWith("/api/");
     if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "POST") return fail(405, "bad_request", "method not allowed");
-    if (req.method === "POST" && !originOk(req.headers.get("origin"), port)) return fail(403, "bad_origin", "foreign Origin");
+    if (req.method === "POST" && !originOk(req.headers.get("origin"), port, names)) return fail(403, "bad_origin", "foreign Origin");
     if (!api) return await asset(u.pathname);
     let body: Obj = {};
     if (req.method === "POST") {
@@ -102,7 +102,7 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
     if (o.up.down) return fail(503, "internal", "agentglass serve is down: restart agentglass web");
     const p = u.pathname;
     if (p === "/api/v1/ws") {
-      if (!originOk(req.headers.get("origin"), port)) return fail(403, "bad_origin", "foreign Origin");
+      if (!originOk(req.headers.get("origin"), port, names)) return fail(403, "bad_origin", "foreign Origin");
       if (streams >= STREAMS_MAX) return fail(503, "too_many", STREAMS_MAX + " streams are open");
       return srv.upgrade(req, { data: { sid: s.id, subs: new Map(), n: 0 } }) ? undefined : fail(400, "bad_request", "WebSocket upgrade failed");
     }

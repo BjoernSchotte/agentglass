@@ -22,7 +22,7 @@ import { OS } from "../platform/index.ts";
 
 export const TOKEN_MS = 120000;
 export const WAIT_MS = 10000;
-const USAGE = "agentglass web [--port N] [--no-open] [--redact] [--json] | agentglass web --stop";
+const USAGE = "agentglass web [--port N] [--host 0.0.0.0] [--no-open] [--redact] [--json] | agentglass web --stop";
 
 // agentglass-web beside this binary, else on PATH; "" = not installed
 export function webBin(self: string, path: string): string {
@@ -42,7 +42,8 @@ export function lockOf(run: string): Lock | null {
   let o: Obj | null = null; try { o = parse(readFileSync(join(run, "web.lock"), "utf8")); } catch (e) { return null; }
   if (!o) return null;
   const pid = typeof o["pid"] === "number" ? o["pid"] : 0; const port = typeof o["port"] === "number" ? o["port"] : 0;
-  const host = o["host"] === "[::1]" ? "[::1]" : "127.0.0.1";
+  // the link's host as agentglass-web wrote it: loopback, or (--host 0.0.0.0) this machine's address or name
+  const h = typeof o["host"] === "string" ? o["host"] : ""; const host = /^(\[[0-9a-f:]+\]|[a-z0-9.-]{1,253})$/i.test(h) ? h : "127.0.0.1";
   return pid > 0 && port > 0 && isAlive(pid) ? { pid, port, host } : null;
 }
 // a new one-time token: its sha256 and expiry appended to run/web.tokens (expired lines dropped), the token returned
@@ -67,22 +68,24 @@ function val(a: string[], k: string): string { const i = a.indexOf(k); return i 
 
 function webCli(a: string[]): void {
   const json = a.indexOf("--json") >= 0 || agentHost().on; const noOpen = a.indexOf("--no-open") >= 0 || json;
-  for (const x of a) if (x.startsWith("-") && ["--port", "--no-open", "--redact", "--json", "--stop"].indexOf(x) < 0) cliError("usage", "unknown option " + x, USAGE, 2);
+  for (const x of a) if (x.startsWith("-") && ["--port", "--host", "--no-open", "--redact", "--json", "--stop"].indexOf(x) < 0) cliError("usage", "unknown option " + x, USAGE, 2);
   if (a.indexOf("--stop") >= 0) { // the running one, by its lock's pid
     const s = lockOf(RUN_DIR);
     if (s) { try { process.kill(s.pid, "SIGTERM"); } catch (e) { /* gone */ } const end = Date.now() + 3000; while (Date.now() < end && isAlive(s.pid)) nap(100); }
     process.stdout.write(json ? JSON.stringify({ stopped: s !== null }) + "\n" : s ? "agentglass web: stopped\n" : "agentglass web: not running\n"); return;
   }
+  const bind = val(a, "--host"); if (a.indexOf("--host") >= 0 && ["127.0.0.1", "::1", "0.0.0.0", "::"].indexOf(bind) < 0) cliError("usage", "--host must be 127.0.0.1, ::1, 0.0.0.0 or ::", USAGE, 2);
   const port = val(a, "--port"); if (a.indexOf("--port") >= 0 && !/^\d{1,5}$/.test(port)) cliError("usage", "--port needs a number 0–65535", USAGE, 2);
   try { mkdirSync(RUN_DIR, { recursive: true, mode: 0o700 }); chmodSync(RUN_DIR, 0o700); } catch (e) { /* lock read says why */ }
   let lk = lockOf(RUN_DIR); const reused = lk !== null;
+  if (lk && bind && (bind === "0.0.0.0" || bind === "::") !== !/^(127\.0\.0\.1|\[::1\])$/.test(lk.host)) process.stderr.write("agentglass web: one is already running on " + lk.host + " — --stop it first to change --host\n");
   if (!lk) {
     const bin = webBin(process.execPath, process.env["PATH"] ?? "");
     if (!bin) cliError("not_installed", "agentglass-web is not installed (the web UI is a separate binary)", "install it with one of:\n  " + installLines(process.platform).join("\n  "), 2);
     const logs = join(HOME, ".agentglass", "logs"); try { mkdirSync(logs, { recursive: true, mode: 0o700 }); } catch (e) { /* exists */ }
     const log = join(logs, "web.log"); const fd = openSync(log, "a"); try { chmodSync(log, 0o600); } catch (e) { /* not ours */ }
     const args = ["--agentglass", process.execPath, "--run-dir", RUN_DIR, "--log", log];
-    if (port) args.push("--port", port); if (a.indexOf("--redact") >= 0 || process.env["AGENTGLASS_REDACT"] === "1") args.push("--redact");
+    if (port) args.push("--port", port); if (bind) args.push("--host", bind); if (a.indexOf("--redact") >= 0 || process.env["AGENTGLASS_REDACT"] === "1") args.push("--redact");
     const ch = spawn(bin, args, { stdio: ["ignore", "ignore", fd], detached: true }); closeSync(fd);
     const pid = ch.pid ?? 0; ch.unref();
     const end = Date.now() + WAIT_MS;
@@ -101,7 +104,7 @@ function webCli(a: string[]): void {
   process.stderr.write("agentglass web: open this link (it works once, for 2 minutes)" + (reused ? "; the server was already running" : "") + "\n");
 }
 
-addCmd({ cmd: "web", usage: USAGE, summary: "the web UI in your browser (starts agentglass-web on 127.0.0.1, a one-time link)", options: [opt("--port", "N", "the port (default: a free one)", "", []), opt("--no-open", "", "print the link instead of opening the browser", "", []), opt("--redact", "", "fake titles, projects and content", "", []), opt("--json", "", "{url, port, pid, reused}", "", []), opt("--stop", "", "stop the running agentglass-web", "", [])], fields: [], group: "cmd" });
+addCmd({ cmd: "web", usage: USAGE, summary: "the web UI in your browser (starts agentglass-web on 127.0.0.1, a one-time link)", options: [opt("--port", "N", "the port (default: a free one)", "", []), opt("--host", "0.0.0.0", "listen on all interfaces (other devices on your network; plain HTTP: trusted networks only)", "127.0.0.1", []), opt("--no-open", "", "print the link instead of opening the browser", "", []), opt("--redact", "", "fake titles, projects and content", "", []), opt("--json", "", "{url, port, pid, reused}", "", []), opt("--stop", "", "stop the running agentglass-web", "", [])], fields: [], group: "cmd" });
 H.cli.unshift((args: string[]): boolean => {
   if (args[0] !== "web") return false;
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) {

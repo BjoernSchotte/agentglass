@@ -1,7 +1,7 @@
 // agentglass-web (local-web-api W4): auth boundary, Host/Origin/CSRF, limits, shared subscriptions, slow clients,
 // headers and logs — an in-process server on 127.0.0.1:0 over a fake serve child
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { Auth } from "../src/auth.ts";
+import { Auth, namesOf, hostOk, originOk } from "../src/auth.ts";
 import { Upstream } from "../src/stdio.ts";
 import { startServer, HEADERS } from "../src/http.ts";
 import { fake, type Fake } from "./fake.ts";
@@ -53,6 +53,13 @@ test("the session reads the API through the child", async () => {
   const r = await fetch(base + "/api/v1/sessions", { headers: { Cookie: cookie } });
   expect(r.status).toBe(200); expect(((await r.json()) as { data: unknown[] }).data.length).toBe(1);
   expect(r.headers.get("cache-control")).toBe("no-store");
+});
+test("--host 0.0.0.0: this machine's addresses and hostname pass, others do not", () => {
+  const n = namesOf("0.0.0.0", { eth0: [{ address: "192.168.1.20", family: "IPv4", internal: false }, { address: "fe80::1", family: "IPv6", internal: false }], lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }] }, "box");
+  expect(hostOk("192.168.1.20:8080", 8080, n)).toBe(true); expect(hostOk("box.local:8080", 8080, n)).toBe(true); expect(hostOk("localhost:8080", 8080, n)).toBe(true);
+  expect(hostOk("evil.example:8080", 8080, n)).toBe(false); expect(hostOk("[fe80::1]:8080", 8080, n)).toBe(false);
+  expect(originOk("http://192.168.1.20:8080", 8080, n)).toBe(true); expect(originOk("http://192.168.1.20:9999", 8080, n)).toBe(false); expect(originOk("http://evil.example:8080", 8080, n)).toBe(false);
+  expect(namesOf("127.0.0.1", { eth0: [{ address: "192.168.1.20", family: "IPv4", internal: false }] }, "box")).toEqual(["127.0.0.1", "localhost", "[::1]"]);
 });
 test("wrong Host → 421 (DNS rebinding)", async () => {
   const r = await fetch(base + "/", { headers: { Host: "evil.example:" + srv.port } });
@@ -122,9 +129,9 @@ test("body over 64 KB → 413", async () => {
   const r = await fetch(base + "/api/v1/commands", { method: "POST", headers: { Cookie: cookie, ...origin(), "X-AG-CSRF": csrf }, body: "x".repeat(65 * 1024) });
   expect(r.status).toBe(413);
 });
-test("60 requests in a second → 429", async () => {
+test("120 requests at once → 429 (more than two one-second windows can take)", async () => {
   const { cookie } = await login();
-  const rs = await Promise.all(Array.from({ length: 60 }, () => fetch(base + "/api/v1/meta", { headers: { Cookie: cookie } })));
+  const rs = await Promise.all(Array.from({ length: 120 }, () => fetch(base + "/api/v1/meta", { headers: { Cookie: cookie } })));
   expect(rs.some((r) => r.status === 429)).toBe(true);
 });
 test("the page: a fresh style nonce in the meta tag and the CSP, per response", async () => {

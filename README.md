@@ -1623,8 +1623,10 @@ agentglass web            # starts it (or reuses the running one) and opens a on
 agentglass web --no-open  # prints the link instead · --stop ends it · --redact for screencasts
 ```
 
-- **Local only**: it listens on `127.0.0.1` and refuses any other Host; there is no option to expose it. Remote access is
-  an SSH tunnel (`ssh -L 8080:127.0.0.1:<port> host`).
+- **Local by default**: it listens on `127.0.0.1`. `agentglass web --host 0.0.0.0` opens it to your network (the link
+  then names this machine's address); Host and Origin must still be one of this machine's addresses or its hostname.
+  That is plain HTTP — links and cookies travel unencrypted — so only on networks you trust; elsewhere use an SSH
+  tunnel (`ssh -L 8080:127.0.0.1:<port> host`).
 - **One-time links**: each `agentglass web` mints a token that works once, for 2 minutes; the browser trades it for an
   HttpOnly, SameSite=Strict cookie. Pages from other origins (another port included) cannot use the API or the socket.
 - **Read-only**: the web UI shows; it sends nothing to agents in this release.

@@ -40,11 +40,24 @@ export class Auth {
     return null;
   }
 }
-// Host must name this server on loopback (DNS rebinding → 421)
-export function hostOk(host: string | null, port: number): boolean {
-  return host === "127.0.0.1:" + port || host === "localhost:" + port || host === "[::1]:" + port;
+// the names this server answers to: loopback always; bound to all interfaces (--host 0.0.0.0 / ::) also this machine's
+// addresses and hostname — any other Host is DNS rebinding (421), any other Origin a foreign page (403)
+export function namesOf(bind: string, ifaces: Record<string, { address: string; family: string | number; internal: boolean }[] | undefined>, hostname: string): string[] {
+  const o = ["127.0.0.1", "localhost", "[::1]"];
+  if (bind !== "0.0.0.0" && bind !== "::") return o;
+  for (const list of Object.values(ifaces)) for (const i of list ?? []) {
+    if (i.internal) continue;
+    const v6 = i.family === "IPv6" || i.family === 6; if (v6 && bind !== "::") continue;
+    o.push(v6 ? "[" + i.address.split("%")[0] + "]" : i.address);
+  }
+  if (hostname) { o.push(hostname.toLowerCase()); if (!hostname.includes(".")) o.push(hostname.toLowerCase() + ".local"); }
+  return o;
 }
-// Origin on non-GET requests and upgrades: this server's own origin only
-export function originOk(origin: string | null, port: number): boolean {
-  return origin === "http://127.0.0.1:" + port || origin === "http://localhost:" + port || origin === "http://[::1]:" + port;
+export function hostOk(host: string | null, port: number, names: string[] = namesOf("127.0.0.1", {}, "")): boolean {
+  if (!host) return false; const h = host.toLowerCase();
+  return names.some((n) => h === n + ":" + port);
+}
+export function originOk(origin: string | null, port: number, names: string[] = namesOf("127.0.0.1", {}, "")): boolean {
+  if (!origin) return false; const h = origin.toLowerCase();
+  return names.some((n) => h === "http://" + n + ":" + port);
 }
