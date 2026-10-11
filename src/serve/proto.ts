@@ -8,6 +8,10 @@ import { CONTRACT } from "../features/version.ts";
 import { BUILD } from "../build-info.ts";
 import { REDACT } from "../features/redact-on.ts";
 import { statusObj, reportObj, sessionsObj, activityObj, pickTeam, roomId, filterErr, BYS, PERIODS } from "../read/team.ts";
+import { findSession } from "../model/sessref.ts";
+import type { Sess } from "../model/types.ts";
+import { memoOf, memoAny, memoPut, detailBytes } from "../read/sessions.ts";
+import { detailInChild, INLINE_BYTES } from "./detail.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
 // hello: a hello was answered; fresh: called before a request that reads the engine (main.ts: discover() when stale)
@@ -67,7 +71,24 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "sessions.get") {
     const ref = str(p["ref"]); if (!ref) return errL(id, "bad_param", "ref is required", "<harness>:<id>, an id or a unique prefix of 6+ characters");
     sv.fresh();
-    const r = readSession(ref); const d = r.data;
+    if (p["detail"] !== undefined && p["detail"] !== "fast" && p["detail"] !== "full") return errL(id, "bad_param", "detail: fast | full", "");
+    // a big session's full detail comes from a child process (serve stays responsive); answered when it is done
+    if (p["detail"] !== "fast") {
+      const f = findSession(ref, (x: Sess): boolean => true); const s = f.s;
+      if (s && !memoOf(s) && detailBytes(s) > INLINE_BYTES) {
+        const key = s.h + ":" + s.id; const old = memoAny(s);
+        if (old) { // moved since (a live session): the last one now, marked stale; a child refreshes it for the next ask
+          detailInChild(key, { done: (o: Obj | null, err: string): void => { if (o) memoPut(s, o); } });
+          const st: Obj = {}; for (const k of Object.keys(old)) st[k] = old[k]; st["stale"] = true;
+          return okL(id, st);
+        }
+        detailInChild(key, { done: (o: Obj | null, err: string): void => {
+          if (o) { memoPut(s, o); sv.out(okL(id, o)); } else sv.out(errL(id, "internal", "the session's detail failed: " + err, "agentglass session " + key));
+        } });
+        return "";
+      }
+    }
+    const r = readSession(ref, p["detail"] === "fast"); const d = r.data;
     if (!d) return errL(id, r.err ? r.err.code : "not_found", r.err ? r.err.msg : "no session " + ref, r.err ? r.err.hint : "");
     return okL(id, d);
   }

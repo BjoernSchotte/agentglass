@@ -123,17 +123,20 @@ function resultTexts(evs: Ev[]): Map<string, string> { const m = new Map<string,
 // models/tools/errors/files/repeats cover the session and its subagents (complete() reads only these)
 // A session with copies (twins, ledger.ts copiesOf): models, tools, errors and files are over every copy and their
 // subagents (each message is booked by one of them), as its figures are; turns, timing and repeats are this copy's log's
-export function sessionObj(s: Sess): Obj {
+// fast: only what the index holds (models, tools, errors without their text, files, subagents, cost basis) — no pass
+// over the transcripts, so a 100 MB session answers in milliseconds; turns, wallMs, activeMs are null, repeats [] and
+// errors[].text null (serve's sessions.get {detail: "fast"}, the web drawer's first answer)
+export function sessionObj(s: Sess, fast = false): Obj {
   const fam = [s]; for (const k of kidsOf(s)) if (parentOf(k) === s) fam.push(k); // this copy's subagents (twins: each has its own)
   const agg: Sess[] = []; const seen = new Set<string>();
   for (const c of copiesOf(s)) for (const x of [c].concat(kidsOf(c))) if (!seen.has(x.path)) { seen.add(x.path); agg.push(x); }
-  for (const x of fam) { loadHead(x); loadTail(x); }
+  for (const x of fam) { loadHead(x); if (!fast) loadTail(x); }
   for (const x of agg) complete(x);
   const evs: Ev[][] = []; const srcs: Src[] = [];
-  for (let i = 0; i < fam.length; i++) { const x = fam[i]; const e = allEvents(x); evs.push(e); srcs.push({ evs: e, live: i === 0 ? x.pid > 0 : subActive(x), kind: x.kind, spawn: i === 0 ? "" : spawnOf(x) }); }
-  const sm = summary(buildGraph(srcs, Date.now()));
+  if (!fast) for (let i = 0; i < fam.length; i++) { const x = fam[i]; const e = allEvents(x); evs.push(e); srcs.push({ evs: e, live: i === 0 ? x.pid > 0 : subActive(x), kind: x.kind, spawn: i === 0 ? "" : spawnOf(x) }); }
   const o = jsonSess(s); o["costUsd"] = s.cost < 0 ? null : r6(s.cost);
-  o["turns"] = sm.turns; o["wallMs"] = Math.round(sm.wall); o["activeMs"] = Math.round(sm.active);
+  if (fast) { o["turns"] = null; o["wallMs"] = null; o["activeMs"] = null; }
+  else { const sm = summary(buildGraph(srcs, Date.now())); o["turns"] = sm.turns; o["wallMs"] = Math.round(sm.wall); o["activeMs"] = Math.round(sm.active); }
   o["models"] = modelRows(agg, null);
   o["tools"] = toolRows(agg, 15);
   const texts = new Map<string, string>();

@@ -78,6 +78,14 @@ t0 = time.time()
 pt = read(lambda x: x.get("k") == "patch" and any(r.get("id") == A for r in x["d"]["upsert"]), 3) # a warm log: stat'ed every scan
 ok("patch for the grown log within 3 s", pt is not None)
 if pt: print("serve: patch after %.2f s" % (time.time() - t0))
+# sessions.get: inline = the CLI's session object; detail fast: index only; a big one (AGENTGLASS_DETAIL_INLINE=0 below)
+# from a child process, answered after a later request
+full = req(5, "sessions.get", {"ref": "claude:" + A})
+ok("sessions.get full: turns and via", full and full["ok"].get("via") == "ref" and isinstance(full["ok"].get("turns"), int))
+fast = req(6, "sessions.get", {"ref": "claude:" + A, "detail": "fast"})
+ok("sessions.get fast: no transcript figures", fast and fast["ok"].get("detail") == "fast" and fast["ok"].get("turns") is None and fast["ok"].get("models") is not None)
+bad = req(7, "sessions.get", {"ref": "claude:" + A, "detail": "slow"})
+ok("sessions.get bad detail", bad and bad.get("err", {}).get("code") == "bad_param")
 u = req(4, "unsub", {"sub": "s1"})
 ok("unsub", u and u.get("ok") == {})
 p.stdin.close(); t1 = time.time()
@@ -86,6 +94,22 @@ except subprocess.TimeoutExpired: p.kill(); rc = "timeout"
 ok("exit 0 within 2 s (got %s)" % rc, rc == 0)
 err = p.stderr.read().decode()
 ok("stderr quiet: " + err[:200], err.strip() == "")
+# the child path: every full detail from a child process; meta, asked after it, answers before it
+env2 = dict(env, AGENTGLASS_DETAIL_INLINE="0")
+p = subprocess.Popen([t + "/ag", "serve", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env2); buf = b""
+req(1, "hello", {"want": 1})
+p.stdin.write((json.dumps({"id": 2, "m": "sessions.get", "p": {"ref": "claude:" + A}}) + "\n" + json.dumps({"id": 3, "m": "meta"}) + "\n").encode()); p.stdin.flush()
+order = []; got = {}
+def seen(x):
+    if x.get("id") in (2, 3): order.append(x["id"]); got[x["id"]] = x
+    return len(order) == 2
+read(seen, 15)
+ok("child detail: meta first, then the detail (got %s)" % order, order == [3, 2])
+ok("child detail = the inline one (turns, models, via)", 2 in got and full and got[2]["ok"].get("turns") == full["ok"].get("turns") and got[2]["ok"].get("models") == full["ok"].get("models") and got[2]["ok"].get("via") == "ref")
+p.stdin.close()
+try: p.wait(timeout=5)
+except subprocess.TimeoutExpired: p.kill()
+ok("no detail file left in the run dir", not [f for f in os.listdir(env["AGENTGLASS_RUN_DIR"]) if f.startswith("detail-")])
 for f in fail: print("FAIL " + f)
 sys.exit(1 if fail else 0)
 PY

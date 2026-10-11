@@ -139,7 +139,7 @@ function Phase({ status }: { status: string }) {
 }
 // the drawer: what the list row knows at once, then the session's detail (sessions.get: turns, models, tools, files,
 // errors, subagents, skills, commits) — a big or busy session may take a few seconds, so that part says it is loading
-type Detail = Omit<SessionDetail, "tools" | "subagents" | "skills" | "git"> & { turns?: number; activeMs?: number; wallMs?: number; models?: { model: string; in: number; out: number }[];
+type Detail = Omit<SessionDetail, "tools" | "subagents" | "skills" | "git"> & { turns?: number | null; activeMs?: number | null; wallMs?: number | null; models?: { model: string; in: number; out: number }[];
   tools?: { name: string; calls: number; errors: number }[]; files?: { path: string; add: number; del: number }[]; errors?: { ts: string; tool: string; arg: string }[];
   subagents?: { id: string; kind: string; costUsd: number | null }[]; skills?: { name: string }[]; git?: { commits?: unknown[] } | null };
 function dur(ms: number): string { const m = Math.round(ms / 60000); return m < 60 ? m + " min" : m < 1440 ? (m / 60).toFixed(1) + " h" : (m / 1440).toFixed(1) + " d"; }
@@ -149,7 +149,15 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 }
 function Detail({ row, onClose }: { row: SessionRow | undefined; onClose: () => void }) {
   const live = useLive(); const now = useNow(); const [d, setD] = useState<Detail | null>(null); const [err, setErr] = useState("");
-  useEffect(() => { setD(null); setErr(""); if (row) live.request<Detail>("sessions.get", { ref: row.harness + ":" + row.id }).then(setD, (e: ApiFail) => setErr(e.message)); }, [live, row?.harness, row?.id]);
+  const [full, setFull] = useState(false);
+  // two answers: the index's at once (detail: fast), then the full one (turns, timing, repeats: a pass over the transcript)
+  useEffect(() => {
+    setD(null); setErr(""); setFull(false); if (!row) return;
+    let gone = false; const ref = row.harness + ":" + row.id;
+    live.request<Detail>("sessions.get", { ref, detail: "fast" }).then((x) => { if (!gone) setD((cur) => cur ?? x); }, (e: ApiFail) => { if (!gone) setErr(e.message); });
+    live.request<Detail>("sessions.get", { ref }).then((x) => { if (!gone) { setD(x); setFull(true); } }, () => {});
+    return () => { gone = true; };
+  }, [live, row?.harness, row?.id]);
   if (!row) return <Dialog open={false} onOpenChange={() => {}}><span /></Dialog>;
   const gl = glyph(row); const tk = row.tokens;
   const facts: [string, React.ReactNode][] = [
@@ -170,8 +178,10 @@ function Detail({ row, onClose }: { row: SessionRow | undefined; onClose: () => 
           <p className="mt-4 flex items-center gap-2 text-muted" aria-live="polite"><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-border border-t-accent" aria-hidden />Loading details…</p>
         ) : <>
           <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-y-1.5">
-            {d.turns !== undefined && <div className="contents"><dt className="text-muted">Turns</dt><dd className="mono text-[12px]">{d.turns}</dd></div>}
-            {d.activeMs !== undefined && <div className="contents"><dt className="text-muted">Active</dt><dd className="mono text-[12px]">{dur(d.activeMs)}{d.wallMs ? " of " + dur(d.wallMs) : ""}</dd></div>}
+            {!full ? <div className="contents"><dt className="text-muted">Turns</dt><dd className="flex items-center gap-1.5 text-[12px] text-muted"><span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-border border-t-accent" aria-hidden />reading the transcript…</dd></div> : <>
+              {d.turns != null && <div className="contents"><dt className="text-muted">Turns</dt><dd className="mono text-[12px]">{d.turns}{(d as { stale?: boolean }).stale && <span className="text-muted" title="the session moved on since these were read; reopen for the latest"> · as of a moment ago</span>}</dd></div>}
+              {d.activeMs != null && <div className="contents"><dt className="text-muted">Active</dt><dd className="mono text-[12px]">{dur(d.activeMs)}{d.wallMs ? " of " + dur(d.wallMs) : ""}</dd></div>}
+            </>}
             {d.git?.commits && <div className="contents"><dt className="text-muted">Commits</dt><dd className="mono text-[12px]">{d.git.commits.length}</dd></div>}
           </dl>
           {!!d.models?.length && <Block title="Models"><ul>{d.models.map((m) => <li key={m.model} className="mono flex justify-between text-[12px]"><span>{m.model}</span><span className="text-muted">{n(m.in)} in · {n(m.out)} out</span></li>)}</ul></Block>}

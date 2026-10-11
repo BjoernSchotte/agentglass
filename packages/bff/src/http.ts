@@ -111,7 +111,7 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
     if (req.method !== "GET") return fail(404, "not_found", "no such route");
     if (p === "/api/v1/meta") return replyResponse(await o.up.request("meta"));
     if (p === "/api/v1/sessions") return replyResponse(await o.up.request("sessions.list", paramsOf(u)));
-    if (p.startsWith("/api/v1/sessions/")) return replyResponse(await o.up.request("sessions.get", { ref: decodeURIComponent(p.slice(17)) }));
+    if (p.startsWith("/api/v1/sessions/")) { const dt = u.searchParams.get("detail"); return replyResponse(await o.up.request("sessions.get", { ref: decodeURIComponent(p.slice(17)), ...(dt ? { detail: dt } : {}) })); }
     const tm = /^\/api\/v1\/team\/(status|report|sessions|activity)$/.exec(p);
     if (tm) return replyResponse(await o.up.request("team." + tm[1], paramsOf(u)));
     return fail(404, "not_found", "no such route");
