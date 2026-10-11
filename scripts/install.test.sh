@@ -74,4 +74,16 @@ for pct in 25 50 75 90 95; do
   HOME="$t/home2" sh "$t/cut.sh" --prefix "$t/p5" > "$t/cut.out" 2>&1 || true
   if grep -q "agentglass:" "$t/cut.out" || [ -e "$t/p5" ] || [ -e "$t/home2" ]; then echo "FAIL installer cut at $pct% still ran: $(head -2 "$t/cut.out" | tr '\n' ' ')"; fail=1; fi
 done
+# --web: agentglass-web from the same release, checked against the same SHA256SUMS; a release without it fails clearly
+d="$t/dl/v2026.9.7"; mkdir -p "$d/x"; printf '#!/bin/sh\necho 2026.9.7\n' > "$d/x/agentglass"; printf '#!/bin/sh\necho agentglass-web 2026.9.7\n' > "$d/x/agentglass-web"; chmod 755 "$d/x/"*
+tar -czf "$d/$asset" -C "$d/x" agentglass; tar -czf "$d/agentglass-web-$os-$arch.tar.gz" -C "$d/x" agentglass-web; rm -rf "$d/x"
+(cd "$d" && $H "$asset" "agentglass-web-$os-$arch.tar.gz" > SHA256SUMS)
+must --prefix "$t/p7" --version 2026.9.7 --web
+eq "web binary installed" "$("$t/p7/agentglass-web" 2>/dev/null)" "agentglass-web 2026.9.7"
+must --prefix "$t/p8" --version 2026.9.7; [ ! -e "$t/p8/agentglass-web" ] || { echo "FAIL agentglass-web installed without --web"; fail=1; }
+echo x >> "$d/agentglass-web-$os-$arch.tar.gz"
+if run --prefix "$t/p9" --version 2026.9.7 --web; then echo "FAIL web checksum mismatch accepted"; fail=1; fi
+grep -qi "checksum mismatch for agentglass-web" "$t/out" && [ ! -e "$t/p9/agentglass-web" ] || { echo "FAIL web checksum: $(cat "$t/out")"; fail=1; }
+if run --prefix "$t/p10" --version 2026.9.1 --web; then echo "FAIL --web on a release without it accepted"; fail=1; fi
+grep -q "do not have it" "$t/out" || { echo "FAIL old release message: $(cat "$t/out")"; fail=1; }
 [ $fail = 0 ] && echo "install.sh: all tests passed"; exit $fail

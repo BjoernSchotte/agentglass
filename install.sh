@@ -3,6 +3,7 @@
 #   sh -s -- --channel dev          newest daily dev build instead of the newest stable release
 #   sh -s -- --version 2026.9.1     a specific release (or a dev-… tag)
 #   sh -s -- --prefix ~/bin         install directory (default ~/.local/bin)
+#   sh -s -- --web                  also agentglass-web, the web UI (agentglass web), from the same release
 # needs curl, tar and sha256sum (or shasum); verifies SHA256SUMS; replaces the binary atomically
 set -eu
 
@@ -11,7 +12,7 @@ main() {
 REPO="BjoernSchotte/agentglass"
 API="${AGENTGLASS_RELEASES_API:-https://api.github.com/repos/$REPO/releases?per_page=100}"
 BASE="${AGENTGLASS_DOWNLOAD_BASE:-https://github.com/$REPO/releases/download}"
-channel=stable; want=""; prefix="$HOME/.local/bin"
+channel=stable; want=""; prefix="$HOME/.local/bin"; web=0
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
@@ -19,7 +20,8 @@ while [ $# -gt 0 ]; do
     --channel) channel="${2:-}"; shift 2 ;;
     --version) want="${2:-}"; shift 2 ;;
     --prefix) prefix="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,6p' "$0" 2>/dev/null || true; exit 0 ;;
+    --web) web=1; shift ;;
+    -h|--help) sed -n '2,7p' "$0" 2>/dev/null || true; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
 done
@@ -79,6 +81,19 @@ fi
 if tar -xzf "$tmp/$asset" -C "$tmp/x" agentglass-receive-tls 2>/dev/null && [ -f "$tmp/x/agentglass-receive-tls" ]; then
   chmod 755 "$tmp/x/agentglass-receive-tls"
   cp "$tmp/x/agentglass-receive-tls" "$new" 2>/dev/null && mv -f "$new" "$prefix/agentglass-receive-tls" || { rm -f "$new"; echo "note: agentglass-receive-tls not installed (built-in HTTPS for agentglass receive)"; }
+fi
+
+# --web: agentglass-web from the same release, verified against the same SHA256SUMS, next to agentglass (where agentglass web looks)
+if [ "$web" = 1 ]; then
+  wa="agentglass-web-$os-$arch.tar.gz"
+  curl -fsSL --retry 2 -o "$tmp/$wa" "$BASE/$tag/$wa" || die "cannot download $BASE/$tag/$wa (releases before agentglass-web do not have it)"
+  we=$(awk -v f="$wa" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1 }' "$tmp/SHA256SUMS")
+  [ -n "$we" ] && [ "$(hash "$tmp/$wa")" = "$we" ] || die "checksum mismatch for $wa — agentglass-web not installed"
+  tar -xzf "$tmp/$wa" -C "$tmp/x" agentglass-web || die "archive does not contain agentglass-web"
+  chmod 755 "$tmp/x/agentglass-web"
+  "$tmp/x/agentglass-web" --version >/dev/null 2>&1 || die "the downloaded agentglass-web does not run here"
+  cp "$tmp/x/agentglass-web" "$new" 2>/dev/null && mv -f "$new" "$prefix/agentglass-web" || { rm -f "$new"; die "cannot write to $prefix"; }
+  echo "agentglass-web installed to $prefix/agentglass-web — start it with: agentglass web"
 fi
 
 version=$("$prefix/agentglass" --version 2>/dev/null || echo unknown)

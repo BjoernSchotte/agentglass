@@ -32,7 +32,7 @@ run() { # machine agent? args… — the full isolation set of that machine
   w=$1; ag=$2; shift 2
   env HOME="$t/$w" AGENTGLASS_AGENT="$ag" AGENTGLASS_CACHE_DIR="$t/$w/cache" AGENTGLASS_CONFIG="$t/$w/config.json" AGENTGLASS_RULES="$t/$w/rules.json" \
     AGENTGLASS_RUN_DIR="$t/$w/run" AGENTGLASS_PALETTE_FILE="$t/$w/palette.json" AGENTGLASS_THEME_FILE="$t/$w/theme" AGENTGLASS_PRICES="$t/$w/prices.json" \
-    AGENTGLASS_OTLP_DIR="$t/$w/otlp" AGENTGLASS_FLEET_DIR="$t/$w/fleet" AGENTGLASS_HUB_DIR="$t/$w/hub" AGENTGLASS_TEAM_DIR="$t/$w/team" AGENTGLASS_NOTIFY=0 \
+    AGENTGLASS_OTLP_DIR="$t/$w/otlp" AGENTGLASS_FLEET_DIR="$t/$w/fleet" AGENTGLASS_HUB_DIR="$t/$w/hub" AGENTGLASS_TEAM_DIR="$t/$w/team" AGENTGLASS_NOTIFY=0 AGENTGLASS_TEAM_SYNC_MS="${TEAM_SYNC_MS:-}" \
     "$t/bin/agentglass" "$@"
 }
 # jq1 <expr>: a fixed Python expression of this script over the JSON on stdin (the expressions are the test's own, never data)
@@ -110,5 +110,21 @@ has "no team: meta.teams []" "$nt" "\"teams\":[]"
 rd=$(SERVE_FLAGS="--redact" proto A '{"id":2,"m":"team.sessions","p":{}}')
 hasnt "--redact: no member name" "$rd" "\"bob\""
 has "--redact: rows still there" "$rd" "\"rows\":[{"
+# 6. live team topics (W7): A subscribes presence and team:acme/backend; B publishes a new session → A gets a patch
+# stdin is a pipe, as from agentglass-web (a FIFO's close is not seen on macOS while timers run); it closes when $t/close appears
+{ printf '%s\n' '{"id":1,"m":"hello","p":{"want":1}}' '{"id":2,"m":"sub","p":{"topic":"presence"}}' '{"id":3,"m":"sub","p":{"topic":"team:acme/backend"}}' '{"id":4,"m":"sub","p":{"topic":"team:acme/nope"}}'
+  until [ -e "$t/close" ]; do sleep 0.1; done; } | (TEAM_SYNC_MS=500; export TEAM_SYNC_MS; run A 0 serve --stdio > "$t/sv.out" 2> "$t/sv.err") & spid=$!
+# team rows carry the team's session ids (hashed): b-api is the row with 100000 input tokens, b-api2 the one with 5000
+i=0; until grep -q '"sub":"s2".*"k":"snapshot".*"in":100000' "$t/sv.out" 2>/dev/null || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done
+i=0; until grep -q '"id":4,' "$t/sv.out" 2>/dev/null || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done
+has "presence snapshot: bob" "$(grep '"k":"snapshot"' "$t/sv.out" | head -2)" '"name":"bob"'
+has "team topic snapshot: bob's api session" "$(grep '"sub":"s2".*"k":"snapshot"' "$t/sv.out")" '"in":100000'
+has "a room that does not exist: not_found" "$(cat "$t/sv.out")" '"id":4,"err":{"code":"not_found"'
+repo B api b-api2 5000; run B 0 team sync --json > /dev/null
+i=0; until grep -q '"sub":"s2".*"k":"patch".*"in":5000' "$t/sv.out" 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done
+has "team topic: B's new session arrives as a patch" "$(grep '"sub":"s2".*"k":"patch"' "$t/sv.out" || true)" '"in":5000'
+hasnt "team topic rows: no cwd, no path" "$(grep '"sub":"s2"' "$t/sv.out")" '"cwd"'
+touch "$t/close"; i=0; while kill -0 $spid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+kill -0 $spid 2>/dev/null && { echo "FAIL serve did not exit when stdin closed (subscribed)"; tail -5 "$t/sv.err"; kill $spid; fail=1; }
 [ $fail = 0 ] && echo "team.test.sh: ok"
 exit $fail

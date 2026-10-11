@@ -15,3 +15,14 @@ updates:
         update-types: [minor, patch]
     commit-message:
       prefix: ci
+  # the web workspace (local-web-api §11): grouped weekly; Bun is bumped by hand (.bun-version)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      react: { patterns: ["react", "react-dom", "@types/react", "@types/react-dom"] }
+      ui: { patterns: ["radix-ui", "@radix-ui/*", "tailwindcss", "@tailwindcss/*", "lucide-react", "cmdk", "class-variance-authority", "tailwind-merge", "clsx", "@tanstack/react-router", "@tanstack/react-query", "get-nonce"] }
+      build: { patterns: ["vite", "typescript", "vitest", "@vitejs/*", "@playwright/test", "jsdom", "@testing-library/*", "@types/*", "json-schema-to-typescript", "ajv"] }
+    commit-message:
+      prefix: build

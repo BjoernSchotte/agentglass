@@ -1,0 +1,39 @@
+{
+  "name": "@agentglass/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "build": "vite build",
+    "size": "node scripts/size.mjs",
+    "e2e": "playwright test -c e2e"
+  },
+  "dependencies": {
+    "@agentglass/api-contract": "workspace:*",
+    "@agentglass/ui": "workspace:*",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "@tanstack/react-router": "1.170.42",
+    "@tanstack/react-query": "5.104.1",
+    "lucide-react": "1.55.0",
+    "get-nonce": "1.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.2",
+    "@tailwindcss/vite": "4.3.3",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.3",
+    "jsdom": "30.1.2",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/node": "24.19.2",
+    "@playwright/test": "1.64.0"
+  }
+}

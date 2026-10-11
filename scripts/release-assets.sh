@@ -1,5 +1,5 @@
 #!/bin/sh
-# write SHA256SUMS + build-metadata.json next to the 4 archives: release-assets.sh <dir> <channel> <tag> <version> <source-sha>
+# write SHA256SUMS + build-metadata.json next to the 8 archives (agentglass-*, agentglass-web-*): release-assets.sh <dir> <channel> <tag> <version> <source-sha>
 set -e
 dir="$1"; channel="$2"; tag="$3"; version="$4"; sha="$5"
 if command -v sha256sum >/dev/null 2>&1; then H="sha256sum"; else H="shasum -a 256"; fi

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Ev } from "../../model/types.ts";
 import type { Mark } from "../../model/marks.ts";
-import { newCursor, feed } from "./turns.ts";
+import { type TurnCursor, newCursor, feed } from "./turns.ts";
 import { own } from "../../util/own.ts";
 
 export const K_TURN = 0; export const K_TOOL = 1; export const K_AGENT = 2;
@@ -66,49 +66,55 @@ function spread(out: Span[], p: number): void {
   for (let i = 0; i < kids.length; i++) { kids[i].t0 = c.t0 + i * slot; kids[i].t1 = kids[i].t0 + slot * 0.9; kids[i].est = true; }
 }
 // one session → spans appended to out. Top level (parent -1) gets turn spans; a subagent's tools hang under its agent span.
-export function sessionSpans(evs: Ev[], src: number, parent: number, depth: number, live: boolean, now: number, out: Span[]): void {
-  const pending = new Map<string, number>(); const anon: number[] = [];
-  let turn = -1; let last = 0;
-  const cur = newCursor();
-  const closeTurn = (): void => { if (turn >= 0) { if (out[turn].t1 < last) out[turn].t1 = last; spread(out, turn); } turn = -1; };
-  for (let i = 0; i < evs.length; i++) {
-    const e = evs[i];
-    const t = ms(e.ts) || last;
-    if (t > last) last = t;
-    const prev = cur.n; const wasPrompt = cur.open && cur.prompt;
-    const st = feed(cur, e, parent < 0); // shared turn rules (turns.ts)
-    if (st === "open") { // a prompt, codex "turn started" (its prompt follows), or activity while no turn is open
-      closeTurn();
-      turn = out.length;
-      const user = e.kind === "user"; const marker = e.kind === "meta";
-      const arg = user ? e.text : marker ? "" : prev ? "(no prompt logged)" : "(its prompt is before the loaded part of the log)";
-      out.push(span(t, depth, K_TURN, prev || user || marker ? "turn " + cur.n : "earlier turn", arg, src, user ? i : -1, -1));
-    } else if (e.kind === "user" && wasPrompt && turn >= 0) { out[turn].ev = i; out[turn].arg = e.text; } // prompt of a turn opened by "turn started"
-    else if (st === "close" && turn >= 0) {
-      const m = /· ([\d.]+)s/.exec(e.text); // fx: "turn complete · 44.3s", logged with the turn's last timestamp
-      const dur = m ? Number(m[1] ?? "0") * 1000 : 0;
-      if (dur > 0 && t - dur < out[turn].t0) out[turn].t0 = t - dur;
-      out[turn].t1 = t;
-      closeTurn();
-    }
-    if (e.kind === "tool") {
-      const p = parent >= 0 ? parent : turn;
-      const s = span(t, p >= 0 ? out[p].depth + 1 : depth, K_TOOL, toolName(e), toolArg(e), src, i, p);
-      s.id = e.id; s.open = true;
-      if (e.id) pending.set(e.id, out.length); else anon.push(out.length);
-      out.push(s);
-    } else if (e.kind === "result") {
-      let k = e.id ? pending.get(e.id) ?? -1 : -1;
-      if (k >= 0) pending.delete(e.id);
-      else if (anon.length) k = anon.shift() ?? -1;
-      else if (!e.id) for (const v of pending.values()) { k = v; break; } // no id to go by: the oldest open call
-      if (k >= 0) { const s = out[k]; s.t1 = Math.max(s.t0, t); s.open = false; s.err = isErr(e.text) ? 1 : 0; if (s.id) pending.delete(s.id); }
-    }
+// Step-wise (SpanSt, spanFeed per event, spanEnd at the log's end) so a running summary (runsum.ts) feeds the same rules
+// chunk by chunk from a cursor: the call graph and the session detail's turns and times come from one code path.
+export interface SpanSt { src: number; parent: number; depth: number; pending: Map<string, number>; anon: number[]; turn: number; last: number; cur: TurnCursor; i: number }
+export function newSpanSt(src: number, parent: number, depth: number): SpanSt { return { src, parent, depth, pending: new Map<string, number>(), anon: [], turn: -1, last: 0, cur: newCursor(), i: 0 }; }
+function closeTurn(st: SpanSt, out: Span[]): void { const t = st.turn; if (t >= 0) { const c = out[t]; if (c.t1 < st.last) c.t1 = st.last; spread(out, t); } st.turn = -1; }
+export function spanFeed(st: SpanSt, e: Ev, out: Span[]): void {
+  const i = st.i; st.i++;
+  const t = ms(e.ts) || st.last;
+  if (t > st.last) st.last = t;
+  const cur = st.cur; const prev = cur.n; const wasPrompt = cur.open && cur.prompt;
+  const step = feed(cur, e, st.parent < 0); // shared turn rules (turns.ts)
+  if (step === "open") { // a prompt, codex "turn started" (its prompt follows), or activity while no turn is open
+    closeTurn(st, out);
+    st.turn = out.length;
+    const user = e.kind === "user"; const marker = e.kind === "meta";
+    const arg = user ? e.text : marker ? "" : prev ? "(no prompt logged)" : "(its prompt is before the loaded part of the log)";
+    out.push(span(t, st.depth, K_TURN, prev || user || marker ? "turn " + cur.n : "earlier turn", arg, st.src, user ? i : -1, -1));
+  } else if (e.kind === "user" && wasPrompt && st.turn >= 0) { out[st.turn].ev = i; out[st.turn].arg = e.text; } // prompt of a turn opened by "turn started"
+  else if (step === "close" && st.turn >= 0) {
+    const m = /· ([\d.]+)s/.exec(e.text); // fx: "turn complete · 44.3s", logged with the turn's last timestamp
+    const dur = m ? Number(m[1] ?? "0") * 1000 : 0;
+    if (dur > 0 && t - dur < out[st.turn].t0) out[st.turn].t0 = t - dur;
+    out[st.turn].t1 = t;
+    closeTurn(st, out);
   }
-  const end = live ? Math.max(now, last) : last;
-  for (const s of out) if (s.src === src && s.open) s.t1 = Math.max(s.t0, end);
-  if (turn >= 0 && live) out[turn].t1 = Math.max(out[turn].t1, end);
-  closeTurn();
+  if (e.kind === "tool") {
+    const p = st.parent >= 0 ? st.parent : st.turn;
+    const s = span(t, p >= 0 ? out[p].depth + 1 : st.depth, K_TOOL, toolName(e), toolArg(e), st.src, i, p);
+    s.id = e.id; s.open = true;
+    if (e.id) st.pending.set(e.id, out.length); else st.anon.push(out.length);
+    out.push(s);
+  } else if (e.kind === "result") {
+    let k = e.id ? st.pending.get(e.id) ?? -1 : -1;
+    if (k >= 0) st.pending.delete(e.id);
+    else if (st.anon.length) k = st.anon.shift() ?? -1;
+    else if (!e.id) for (const v of st.pending.values()) { k = v; break; } // no id to go by: the oldest open call
+    if (k >= 0) { const s = out[k]; s.t1 = Math.max(s.t0, t); s.open = false; s.err = isErr(e.text) ? 1 : 0; if (s.id) st.pending.delete(s.id); }
+  }
+}
+export function spanEnd(st: SpanSt, live: boolean, now: number, out: Span[]): void {
+  const end = live ? Math.max(now, st.last) : st.last;
+  for (const s of out) if (s.src === st.src && s.open) s.t1 = Math.max(s.t0, end);
+  if (st.turn >= 0 && live) out[st.turn].t1 = Math.max(out[st.turn].t1, end);
+  closeTurn(st, out);
+}
+export function sessionSpans(evs: Ev[], src: number, parent: number, depth: number, live: boolean, now: number, out: Span[]): void {
+  const st = newSpanSt(src, parent, depth);
+  for (const e of evs) spanFeed(st, e, out);
+  spanEnd(st, live, now, out);
 }
 // the parent-session span a subagent hangs under: its spawning call by id, else the latest spawn-like call started before it, else the enclosing span
 function hostOf(out: Span[], spawn: string, t: number): number {

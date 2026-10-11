@@ -57,8 +57,9 @@ jobs:
         run: |
           mkdir -p assets && gh release download "$TAG" -D assets && sh scripts/verify-release-assets.sh assets
           sh scripts/formula.sh assets "$VERSION" > agentglass.rb
+          sh scripts/formula-web.sh assets "$VERSION" > agentglass-web.rb
       - name: brew audit, install, test (formula.yml runs the same proof on PRs)
-        run: sh scripts/formula-proof.sh agentglass.rb
+        run: sh scripts/formula-proof.sh agentglass.rb && sh scripts/formula-web-proof.sh agentglass-web.rb "" agentglass.rb
       - name: commit it to the tap
         env: { GH_TOKEN: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
         run: |
@@ -67,3 +68,36 @@ jobs:
           # a token without contents access to the tap: its own update (versions and checksums; the install block stays as it was)
           echo "::warning::could not commit Formula/agentglass.rb to the tap (HOMEBREW_TAP_TOKEN needs contents: write there) — falling back to update-formula.yml"
           gh workflow run update-formula.yml -R BjoernSchotte/homebrew-tap -f formula=agentglass -f tag="$TAG" -f repository=BjoernSchotte/agentglass
+      - name: commit agentglass-web to the tap
+        env: { GH_TOKEN: "${{ secrets.HOMEBREW_TAP_TOKEN }}" }
+        run: |
+          p=repos/BjoernSchotte/homebrew-tap/contents/Formula/agentglass-web.rb
+          old=$(gh api "$p" -q .sha 2> /dev/null || true)
+          gh api -X PUT "$p" -f message="Update agentglass-web to $TAG" -f content="$(base64 -w0 agentglass-web.rb)" ${old:+-f sha="$old"} > /dev/null ||
+            echo "::warning::could not commit Formula/agentglass-web.rb to the tap (HOMEBREW_TAP_TOKEN needs contents: write there)"
+  # npm (local-web-api §11): agentglass-web and its four platform packages at the release's version, through npm trusted
+  # publishing (OIDC, --provenance, no token). Off until the repository variable NPM_PUBLISH is "true": each package
+  # needs its trusted publisher (this repository, release.yml) configured on npmjs.com first.
+  npm:
+    needs: [meta, publish]
+    if: ${{ vars.NPM_PUBLISH == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, id-token: write }
+    env: { TAG: "${{ needs.meta.outputs.tag }}", VERSION: "${{ needs.meta.outputs.version }}" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ needs.meta.outputs.sha }}", persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 24, registry-url: "https://registry.npmjs.org" }
+      - run: npm i -g npm@11 # trusted publishing needs npm 11.5+
+      - name: pack from the published archives
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          mkdir -p assets && gh release download "$TAG" -p 'agentglass-web-*.tar.gz' -p SHA256SUMS -D assets
+          (cd assets && sha256sum -c --ignore-missing SHA256SUMS)
+          sh scripts/npm-pack.sh "$VERSION" assets npm-out
+      - name: publish (the platform packages first, then the launcher that depends on them)
+        run: |
+          for f in npm-out/agentglass-web-*-"$VERSION".tgz npm-out/agentglass-web-"$VERSION".tgz; do
+            npm publish --provenance --access public "$f"
+          done

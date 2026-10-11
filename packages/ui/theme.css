@@ -1,0 +1,9 @@
+/* Tailwind v4 mapping of the tokens (import after tailwindcss) */
+@theme inline {
+  --color-bg: var(--bg); --color-surface: var(--surface); --color-surface-2: var(--surface-2);
+  --color-border-subtle: var(--border-subtle); --color-border: var(--border);
+  --color-text: var(--text); --color-muted: var(--text-muted); --color-accent: var(--accent); --color-accent-fg: var(--accent-fg); --color-focus: var(--focus);
+  --color-live: var(--live); --color-attention: var(--attention); --color-stuck: var(--stuck); --color-error: var(--error); --color-cost: var(--cost);
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));

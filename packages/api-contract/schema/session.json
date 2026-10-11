@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session",
+  "title": "SessionRow",
+  "description": "an `agentglass --json` row (docs/cli-contract.md); `key` only in subscription events",
+  "type": "object",
+  "required": [
+    "id",
+    "harness",
+    "title",
+    "cwd",
+    "live",
+    "pid",
+    "status",
+    "state",
+    "costUsd",
+    "twins",
+    "attention",
+    "stuck",
+    "alerts",
+    "mux",
+    "updated"
+  ],
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "harness": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "remote": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "bytes": {
+      "type": "number"
+    },
+    "live": {
+      "type": "boolean"
+    },
+    "pid": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "busy",
+        "idle",
+        "attention",
+        "stuck",
+        "ended"
+      ]
+    },
+    "mux": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "kind",
+        "pane"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "pane": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "parent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "type": "string"
+    },
+    "subagents": {
+      "type": "number"
+    },
+    "twins": {
+      "type": "number"
+    },
+    "activity": {
+      "type": "string"
+    },
+    "tokens": {
+      "type": "object",
+      "required": [
+        "in",
+        "out",
+        "cacheRead",
+        "cacheWrite"
+      ],
+      "properties": {
+        "in": {
+          "type": "number"
+        },
+        "out": {
+          "type": "number"
+        },
+        "cacheRead": {
+          "type": "number"
+        },
+        "cacheWrite": {
+          "type": "number"
+        }
+      }
+    },
+    "costUsd": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "costEstimatedUsd": {
+      "type": "number"
+    },
+    "billing": {
+      "type": "object"
+    },
+    "unpricedTokens": {
+      "type": "number"
+    },
+    "unpricedCredits": {
+      "type": "number"
+    },
+    "tools": {
+      "type": "number"
+    },
+    "linesAdded": {
+      "type": "number"
+    },
+    "linesRemoved": {
+      "type": "number"
+    },
+    "attention": {
+      "type": "boolean"
+    },
+    "stuck": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "skills": {
+      "type": "array"
+    },
+    "repo": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "key",
+        "label"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        },
+        "top": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        }
+      }
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "rule",
+          "severity",
+          "message",
+          "acked"
+        ],
+        "properties": {
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "degraded",
+              "critical"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "acked": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "git": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "pending": {
+      "type": "boolean",
+      "description": "serve only: the log is not indexed to its end yet; tokens and cost are what is booked so far"
+    }
+  }
+}

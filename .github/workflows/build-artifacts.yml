@@ -49,3 +49,19 @@ jobs:
       - run: sh scripts/package.sh ${{ matrix.target }} "${{ inputs.version }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: { name: "agentglass-${{ matrix.target }}", path: "dist/agentglass-${{ matrix.target }}.tar.gz", retention-days: 7, if-no-files-found: error }
+  # agentglass-web (local-web-api §11): one Linux host cross-compiles the four targets with Bun (x64 as baseline builds),
+  # smoke-runs linux-x64 and packs agentglass-web-<target>.tar.gz; release.yml checksums and attests them with the rest
+  web:
+    name: build agentglass-web
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ inputs.ref }}" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 24 }
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with: { bun-version-file: .bun-version }
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: sh scripts/build-web.sh "${{ inputs.version }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with: { name: "agentglass-web", path: "dist/agentglass-web-*.tar.gz", retention-days: 7, if-no-files-found: error }

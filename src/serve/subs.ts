@@ -4,6 +4,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, str } from "../util/json.ts";
 import { type SessQ, readSessions, gen } from "../read/index.ts";
+import { indexing as busy, indexState } from "../features/usage/ledger.ts";
+import { pickTeam, roomId, teamTopicRows, presenceRows } from "../read/team.ts";
 
 export const RING_MAX = 1000;
 export const RING_MS = 600000;
@@ -17,7 +19,9 @@ export interface REv { seq: number; at: number; k: string; d: string /* the payl
 // rows: key → the row's JSON as last sent; order: the keys newest first; min: the oldest id a resume may name (the topic's
 // creation id, then the newest event dropped from the ring: everything after it is still there); g: the read model's
 // generation the rows were built at
-export interface Topic { key: string; q: SessQ; ring: REv[]; min: number; rows: Map<string, string>; order: string[]; g: number; at: number; n: number }
+// kind: "sessions" (q), "team" (a team's shared session rows in a room, "" = all rooms) or "presence" (its members'
+// devices online and live agents); team topics are rebuilt after a team sync (step's team flag), sessions on gen moves
+export interface Topic { key: string; kind: string; q: SessQ; team: string; room: string; ring: REv[]; min: number; rows: Map<string, string>; order: string[]; g: number; at: number; n: number }
 // last: when this sub was last sent anything (heartbeats go to the quiet ones)
 export interface Sub { id: string; topic: string; last: number }
 export interface Hub { epoch: string; seq: number; topics: Map<string, Topic>; subs: Map<string, Sub>; next: number; out: (line: string) => void }
@@ -36,28 +40,51 @@ function keyed(rows: Obj[]): string[] {
   return out;
 }
 export function topicKey(q: SessQ): string { return "sessions\t" + q.filter + "\t" + (q.subagents ? "1" : "0") + "\t" + String(q.limit); }
+// a team topic's name → its team and room ids: "team:<team>/<room>" (room "" or absent: all rooms), "presence" with
+// p.team; err: no_team / not_found / bad_param
+export function teamTopic(topic: string, team: string): { kind: string; team: string; room: string; err: string } {
+  const kind = topic === "presence" ? "presence" : "team";
+  let tr = team; let rr = "";
+  if (kind === "team") { const s = topic.slice(5); const i = s.indexOf("/"); tr = i >= 0 ? s.slice(0, i) : s; rr = i >= 0 ? s.slice(i + 1) : ""; }
+  const pt = pickTeam(tr); const t = pt.t;
+  if (!t || pt.err) return { kind, team: "", room: "", err: (pt.err ? pt.err.code : "no_team") + ": " + (pt.err ? pt.err.msg : "no team") };
+  const r = roomId(t, rr); if (r.err) return { kind, team: "", room: "", err: r.err.code + ": " + r.err.msg };
+  return { kind, team: t.id, room: r.id, err: "" };
+}
 // a topic's rows now (the read model's first page of its query); err: the query's error (a bad filter)
 interface Built { keys: string[]; rows: Obj[]; err: string }
-function build(q: SessQ): Built {
-  const r = readSessions(q); const p = r.page;
+function build(t: Topic, now: number): Built {
+  if (t.kind !== "sessions") { // rows carry their key already (member:device:id, or the member id)
+    const rows = t.kind === "team" ? teamTopicRows(t.team, t.room, now) : presenceRows(t.team, now);
+    const ks: string[] = []; for (const r of rows) ks.push(str(r["key"]));
+    return { keys: ks, rows, err: "" };
+  }
+  const q = t.q; const r = readSessions(q); const p = r.page;
   if (!p) return { keys: [], rows: [], err: r.err ? r.err.code + ": " + r.err.msg : "internal" };
   const ks = keyed(p.data);
   for (let i = 0; i < p.data.length; i++) (p.data[i] as Obj)["key"] = ks[i] ?? "";
   return { keys: ks, rows: p.data, err: "" };
 }
-export function openTopic(h: Hub, q: SessQ, now: number): { t: Topic | null; err: string } {
-  const key = topicKey(q);
+export function openTopic(h: Hub, q: SessQ, now: number, kind = "sessions", team = "", room = ""): { t: Topic | null; err: string } {
+  const key = kind === "sessions" ? topicKey(q) : kind + "\t" + team + "\t" + room;
   const had = h.topics.get(key); if (had) return { t: had, err: "" };
-  const b = build(q); if (b.err) return { t: null, err: b.err };
+  const t: Topic = { key, kind, q, team, room, ring: [], min: 0, rows: new Map<string, string>(), order: [], g: gen("sessions"), at: now, n: 0 };
+  const b = build(t, now); if (b.err) return { t: null, err: b.err };
   h.seq++; // the topic's creation id: its first snapshot names it, an id from before it (another incarnation) never resumes
-  const t: Topic = { key, q, ring: [], min: h.seq, rows: new Map<string, string>(), order: b.keys, g: gen("sessions"), at: now, n: 0 };
+  t.min = h.seq; t.order = b.keys;
   for (let i = 0; i < b.rows.length; i++) t.rows.set(b.keys[i] ?? "", JSON.stringify(b.rows[i] as Obj));
   h.topics.set(key, t);
   return { t, err: "" };
 }
 function snapshotD(t: Topic, now: number): string {
   const rs: string[] = []; for (const k of t.order) rs.push(t.rows.get(k) ?? "null");
-  return "{\"data\":[" + rs.join(",") + "],\"at\":" + String(now) + ",\"gen\":" + String(t.g) + ",\"next\":null}";
+  return "{\"data\":[" + rs.join(",") + "],\"at\":" + String(now) + ",\"gen\":" + String(t.g) + ",\"next\":null" + indexing(t) + "}";
+}
+// a cold start's progress in a sessions topic's events while the history indexes
+// bytes of history indexed and to index, bytes per second (0 = not measured yet): the TUI's ⟳ gauge
+function indexing(t: Topic): string {
+  if (t.kind !== "sessions" || !busy()) return "";
+  const st = indexState(); return ",\"indexing\":{\"done\":" + String(st.done) + ",\"total\":" + String(st.total) + ",\"bps\":" + String(Math.round(st.bps)) + "}";
 }
 // "<epoch>-<seq>" of this run → seq; -1 = another run's or not an id
 export function seqOf(h: Hub, from: string): number {
@@ -91,14 +118,13 @@ export function emit(h: Hub, t: Topic, k: string, d: string, now: number): void 
   for (const s of h.subs.values()) if (s.topic === t.key) { s.last = now; h.out(line(s.id, evId(h, h.seq), k, d)); }
 }
 // after an engine step: every topic whose inputs moved gets one patch with the rows that changed or came (upsert) and
-// the keys that left (remove); nothing when the rows came out the same
-export function step(h: Hub, now: number): number {
+// the keys that left (remove); nothing when the rows came out the same. team: a team sync ran (team topics rebuild)
+export function step(h: Hub, now: number, team = false): number {
   if (!h.topics.size) return 0;
   const g = gen("sessions"); let n = 0;
   for (const t of h.topics.values()) {
-    if (t.g === g) continue;
-    t.g = g;
-    const b = build(t.q); if (b.err) continue;
+    if (t.kind === "sessions") { if (t.g === g) continue; t.g = g; } else if (!team) continue;
+    const b = build(t, now); if (b.err) continue;
     const up: string[] = []; const seen = new Set<string>();
     for (let i = 0; i < b.rows.length; i++) {
       const k = b.keys[i] ?? ""; seen.add(k);
@@ -107,7 +133,7 @@ export function step(h: Hub, now: number): number {
     const rm: string[] = []; for (const k of t.order) if (!seen.has(k)) { rm.push(k); t.rows.delete(k); }
     t.order = b.keys;
     if (!up.length && !rm.length) continue;
-    emit(h, t, "patch", "{\"upsert\":[" + up.join(",") + "],\"remove\":" + JSON.stringify(rm) + "}", now); n++;
+    emit(h, t, "patch", "{\"upsert\":[" + up.join(",") + "],\"remove\":" + JSON.stringify(rm) + indexing(t) + "}", now); n++;
   }
   return n;
 }
@@ -117,3 +143,5 @@ export function beat(h: Hub, now: number): number {
   for (const s of h.subs.values()) if (now - s.last >= HB_MS) { s.last = now; h.out(line(s.id, evId(h, h.seq), "hb", "")); n++; }
   return n;
 }
+// is a team topic open? (the engine syncs the teams only then)
+export function teamTopics(h: Hub): boolean { for (const t of h.topics.values()) if (t.kind !== "sessions") return true; return false; }

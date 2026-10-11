@@ -8,7 +8,12 @@ import { CONTRACT } from "../features/version.ts";
 import { BUILD } from "../build-info.ts";
 import { REDACT } from "../features/redact-on.ts";
 import { statusObj, reportObj, sessionsObj, activityObj, pickTeam, roomId, filterErr, BYS, PERIODS } from "../read/team.ts";
-import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach } from "./subs.ts";
+import { findSession } from "../model/sessref.ts";
+import type { Sess } from "../model/types.ts";
+import { detailReady, detailStep } from "../features/queries.ts";
+const INLINE_MS = 30;
+import { whenRead } from "./detail.ts";
+import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
 // hello: a hello was answered; fresh: called before a request that reads the engine (main.ts: discover() when stale)
 export interface Srv { readOnly: boolean; hello: boolean; hub: Hub; now: () => number; out: (line: string) => void; fresh: () => void }
@@ -67,19 +72,31 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "sessions.get") {
     const ref = str(p["ref"]); if (!ref) return errL(id, "bad_param", "ref is required", "<harness>:<id>, an id or a unique prefix of 6+ characters");
     sv.fresh();
-    const r = readSession(ref); const d = r.data;
+    if (p["detail"] !== undefined && p["detail"] !== "fast" && p["detail"] !== "full") return errL(id, "bad_param", "detail: fast | full", "");
+    // a full detail whose logs the running summary has not read yet: read in slices, answered when caught up
+    if (p["detail"] !== "fast") {
+      const f = findSession(ref, (x: Sess): boolean => true); const s = f.s;
+      if (s && !detailReady(s) && !detailStep(s, INLINE_MS)) { // a small or slightly grown log reads within INLINE_MS
+        whenRead(s, (): void => { const r = readSession(ref, false); const d = r.data; sv.out(d ? okL(id, d) : errL(id, r.err ? r.err.code : "not_found", r.err ? r.err.msg : "no session " + ref, r.err ? r.err.hint : "")); });
+        return "";
+      }
+    }
+    const r = readSession(ref, p["detail"] === "fast"); const d = r.data;
     if (!d) return errL(id, r.err ? r.err.code : "not_found", r.err ? r.err.msg : "no session " + ref, r.err ? r.err.hint : "");
     return okL(id, d);
   }
   if (m === "sub") {
     const topic = str(p["topic"]);
-    if (topic !== "sessions") return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions");
+    const team = topic === "presence" || topic.startsWith("team:");
+    if (topic !== "sessions" && !team) return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions, team:<team>/<room>, presence");
     const r = sessQ(p); if (r.bad) return errL(id, "bad_param", r.bad, "");
     if (r.q.cursor) return errL(id, "bad_param", "a subscription has no cursor", "");
     if (sv.hub.subs.size >= SUBS_MAX) return errL(id, "too_many", String(SUBS_MAX) + " subscriptions are open", "unsub one first");
+    const tt = team ? teamTopic(topic, str(p["team"])) : { kind: "sessions", team: "", room: "", err: "" };
+    if (tt.err) return errL(id, tt.err.slice(0, tt.err.indexOf(":")), tt.err.slice(tt.err.indexOf(":") + 2), "");
     sv.fresh();
     const now = sv.now();
-    const ot = openTopic(sv.hub, r.q, now); const t = ot.t;
+    const ot = openTopic(sv.hub, r.q, now, tt.kind, tt.team, tt.room); const t = ot.t;
     if (!t) return errL(id, ot.err.startsWith("bad_filter") ? "bad_filter" : ot.err.startsWith("no_team") ? "no_team" : "internal", ot.err, "");
     const a = attach(sv.hub, t, str(p["from"]), now);
     sv.out(okL(id, { sub: a.id, resumed: a.resumed }));

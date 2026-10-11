@@ -1,0 +1,22 @@
+{
+  "name": "@agentglass/bff",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "embed": "bun scripts/embed.ts",
+    "pretypecheck": "bun scripts/embed.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "pretest": "bun scripts/embed.ts",
+    "test": "bun test",
+    "build": "bun scripts/embed.ts && bun build --compile --minify src/main.ts --outfile dist/agentglass-web"
+  },
+  "dependencies": {
+    "@agentglass/api-contract": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "@types/bun": "1.4.2",
+    "@agentglass/web": "workspace:*"
+  }
+}

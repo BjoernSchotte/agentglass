@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "team-report",
+  "title": "TeamReport",
+  "type": "object",
+  "required": [
+    "team",
+    "room",
+    "period",
+    "by",
+    "rows",
+    "members",
+    "budget",
+    "stale"
+  ],
+  "properties": {
+    "team": {
+      "type": "string"
+    },
+    "room": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "period": {
+      "enum": [
+        "d",
+        "w",
+        "m",
+        "a"
+      ]
+    },
+    "by": {
+      "enum": [
+        "member",
+        "device",
+        "harness",
+        "repo",
+        "room",
+        "skill",
+        "model"
+      ]
+    },
+    "filter": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "sessions",
+          "live",
+          "tokens",
+          "costUsd"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "number"
+          },
+          "live": {
+            "type": "number"
+          },
+          "tokens": {
+            "type": "number"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "unpriced": {
+            "type": "number"
+          },
+          "commits": {
+            "type": "number"
+          },
+          "costPerCommit": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "harnesses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "devices",
+          "online",
+          "lastSyncAt"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "devices": {
+            "type": "number"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "lastSyncAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "budget": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "room",
+              "usd",
+              "spentUsd",
+              "projectedUsd",
+              "state"
+            ],
+            "properties": {
+              "room": {
+                "type": "string"
+              },
+              "usd": {
+                "type": "number"
+              },
+              "spentUsd": {
+                "type": "number"
+              },
+              "projectedUsd": {
+                "type": "number"
+              },
+              "state": {
+                "enum": [
+                  "ok",
+                  "watch",
+                  "over"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "stale": {
+      "type": "array"
+    }
+  }
+}

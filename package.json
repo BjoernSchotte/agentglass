@@ -1,0 +1,13 @@
+{
+  "name": "agentglass-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "gen": "pnpm --filter @agentglass/api-contract gen",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "pnpm": { "onlyBuiltDependencies": [] }
+}

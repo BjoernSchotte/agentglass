@@ -48,10 +48,13 @@ export function readSessions(p: SessQ): SessR {
   return { page: { data: rowsOf(sel, false, false), at: Date.now(), gen: gen("sessions"), next: to < list.length && last ? cursorOf(last) : null }, err: null };
 }
 // one session in full; ref = <harness>:<id>, an id, or a unique prefix (no current/last: they mean the caller's cwd)
-export function readSession(ref: string): OneR {
+// fast: sessionObj's index-only answer; full: with the transcript figures, from each log's cursor (runsum.ts) — the
+// first ask of a big session reads it once (serve: in slices, serve/detail.ts), later asks only what was appended
+export function readSession(ref: string, fast = false): OneR {
   const f = findSession(ref, (s: Sess): boolean => true);
   const s = f.s;
   if (!s) return { data: null, err: { code: f.code === 4 ? "ambiguous" : f.code === 2 ? "bad_param" : "not_found", msg: f.msg, hint: f.hint } };
-  const o = sessionObj(s); o["via"] = "ref"; // as session <ref> prints it
+  const o = sessionObj(s, fast); o["via"] = "ref"; // as session <ref> prints it
+  if (fast) o["detail"] = "fast";
   return { data: o, err: null };
 }

@@ -1,6 +1,6 @@
 #!/bin/sh
 # render the stable Homebrew formula (BjoernSchotte/homebrew-tap Formula/agentglass.rb) from a release's assets:
-#   sh scripts/formula.sh <dir> <version>   (dir: the 4 archives + SHA256SUMS, as verify-release-assets.sh checks them)
+#   sh scripts/formula.sh <dir> <version>   (dir: the release archives + SHA256SUMS, as verify-release-assets.sh checks them)
 # Installs agentglass, agentglass-mcp (every archive has it: refused otherwise) and, from each archive that ships it, agentglass-receive-tls (otlp-hub 11.4: a target whose C-backend
 # build failed ships without it, so the install line is guarded per archive). Lists on stderr which archives carry it.
 set -e

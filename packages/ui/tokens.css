@@ -1,0 +1,27 @@
+/* agentglass design tokens (local-web-api §7): both themes, the TUI's semantic colours; text ≥ 4.5:1, glyphs ≥ 3:1
+   against --bg and --surface. data-theme on <html> is set by theme.js before first paint. */
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url("./fonts/IBMPlexSans-400.subset.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 500; font-display: swap; src: url("./fonts/IBMPlexSans-500.subset.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url("./fonts/IBMPlexSans-600.subset.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url("./fonts/IBMPlexMono-400.subset.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-display: swap; src: url("./fonts/IBMPlexMono-500.subset.woff2") format("woff2"); }
+
+:root, :root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #fbfbfc; --surface: #ffffff; --surface-2: #f3f4f6; --border-subtle: #ececef; --border: #d9dadf;
+  --text: #1b1c20; --text-muted: #5f6270; --accent: #4f46e5; --accent-fg: #ffffff; --focus: #6366f1;
+  --live: #15803d; --attention: #b45309; --stuck: #c2410c; --error: #b91c1c; --cost: #0f766e;
+  --h-claude: #c2410c; --h-codex: #1d4ed8; --h-pi: #7e22ce; --h-opencode: #0f766e; --h-gemini: #2563eb; --h-kiro: #a16207; --h-fx: #be185d;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0f12; --surface: #15161a; --surface-2: #1c1d22; --border-subtle: #22232a; --border: #2e3038;
+  --text: #e7e8ec; --text-muted: #9a9dab; --accent: #8b8cf8; --accent-fg: #0e0f12; --focus: #a5a6fb;
+  --live: #4ade80; --attention: #fbbf24; --stuck: #fb923c; --error: #f87171; --cost: #2dd4bf;
+  --h-claude: #fb923c; --h-codex: #60a5fa; --h-pi: #c084fc; --h-opencode: #2dd4bf; --h-gemini: #93c5fd; --h-kiro: #facc15; --h-fx: #f472b6;
+}
+html, body { background: var(--bg); color: var(--text); font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; font-size: 13px; line-height: 1.45; }
+.num, td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }

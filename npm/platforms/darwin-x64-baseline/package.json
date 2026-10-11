@@ -1,0 +1,11 @@
+{
+  "name": "agentglass-web-darwin-x64-baseline",
+  "version": "0.0.0",
+  "description": "agentglass-web for darwin-x64 (the binary of the agentglass-web package)",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/BjoernSchotte/agentglass.git" },
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": ["bin/agentglass-web", "LICENSE-OFL.txt"],
+  "preferUnplugged": true
+}

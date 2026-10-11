@@ -9,7 +9,7 @@ import type { Sess } from "../model/types.ts";
 import { planLabel } from "../features/usage/billing.ts";
 import { REDACT } from "../features/redact-on.ts";
 import { paneOfPid } from "../mux/index.ts";
-import { accsOf } from "../features/usage/ledger.ts";
+import { accsOf, ledger } from "../features/usage/ledger.ts";
 import { type Acc } from "../features/usage/record.ts";
 import { skillsJson, skillLoadsJson } from "../features/skills/json.ts";
 import { scrub } from "../features/skills/watchvis.ts";
@@ -70,11 +70,17 @@ export function pickSessions(cf: CliFilter | null, subs: boolean, keep: (s: Sess
 function sessByRef(id: string): Sess | null { const i = id.indexOf(":"); for (const x of sessions.values()) if (x.h === id.slice(0, i) && x.id === id.slice(i + 1)) return x; return null; }
 // the rows of sel: everything indexed first (git: each worktree's peers too), then the rows — the git attribution is built
 // once, not again for every session that changed the picture. loads: also each row's skillLoads (content: their text)
+// lazy (serve, whose ledger indexes in the background): a session whose log is not indexed to its end yet comes as a row
+// with pending: true and the figures booked so far (they grow as the index advances) — a cold start answers at once
+export const LAZY = { on: false };
+function indexed1(s: Sess): boolean { const a = ledger.get(s.path); return !!a && a.ep === s.ep && a.off >= s.size; }
+export function indexed(s: Sess): boolean { if (!indexed1(s)) return false; for (const c of s.subs) if (!indexed1(c)) return false; return true; }
 export function rowsOf(sel: Sess[], loads: boolean, content: boolean): Obj[] {
-  for (const s of sel) { loadHead(s); loadTail(s, true); complete(s); for (const c of s.subs) complete(c); peers(s); }
+  const wait = new Set<string>();
+  for (const s of sel) { if (LAZY.on && !indexed(s)) { loadHead(s); wait.add(s.path); continue; } loadHead(s); loadTail(s, true); complete(s); for (const c of s.subs) complete(c); peers(s); }
   const res: Obj[] = [];
   for (const s of sel) {
-    const r = jsonSess(s);
+    const r = jsonSess(s); if (wait.has(s.path)) r["pending"] = true;
     if (loads) { const as: Acc[] = []; const ids: string[] = []; const add = (x: Sess): void => { for (const a of accsOf(x)) { as.push(a); ids.push(x.h + ":" + x.id); } for (const c of x.subs) add(c); }; add(s); r["skillLoads"] = skillLoadsJson(s, as, ids, content, sessByRef); }
     res.push(r);
   }

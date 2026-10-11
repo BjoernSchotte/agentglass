@@ -18,6 +18,9 @@ on:
       - scripts/verify-release-assets.sh
       - scripts/formula.sh
       - scripts/formula-proof.sh
+      - scripts/formula-web.sh
+      - scripts/formula-web-proof.sh
+      - scripts/npm-pack.sh
   workflow_dispatch:
 permissions: { contents: read }
 concurrency: { group: "release-dry-run-${{ github.ref }}", cancel-in-progress: true }
@@ -54,5 +57,11 @@ jobs:
         run: |
           sh scripts/verify-release-assets.sh assets
           sh scripts/formula.sh assets "$VERSION" > agentglass.rb
+          sh scripts/formula-web.sh assets "$VERSION" > agentglass-web.rb
       - name: brew audit, install (from the local archives), test
-        run: sh scripts/formula-proof.sh agentglass.rb assets
+        run: sh scripts/formula-proof.sh agentglass.rb assets && sh scripts/formula-web-proof.sh agentglass-web.rb assets agentglass.rb
+      - name: the npm packages from the same archives, installed offline (nothing is published)
+        run: |
+          mkdir -p dist && cp assets/agentglass-web-*.tar.gz dist/
+          sh scripts/npm-pack.sh "$VERSION" dist npm-out && ls -l npm-out >> "$GITHUB_STEP_SUMMARY"
+          sh scripts/npm.test.sh "$VERSION"

@@ -9,3 +9,5 @@ specs/internals/
 src/build-info.ts
 dist/
 !testdata/otlp/fixtures/claude/.claude/
+node_modules/
+packages/*/dist/

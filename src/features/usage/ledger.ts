@@ -46,7 +46,9 @@ export function rowsOf(s: Sess): void {
 }
 // one-shot runs index a session whose rows turned out stale right away (the answer must be whole); the TUI leaves that to
 // its ticks (term.ts TERM.tui) rather than block a frame on reading a whole log
-function blocking(): boolean { return !TERM.tui; }
+// BG.on: a headless engine (agentglass serve) indexes in the background like the TUI, driven by its own cadence (indexTick)
+export const BG = { on: false };
+function blocking(): boolean { return !TERM.tui && !BG.on; }
 // the one way to read a session's call rows (filters, rules, triage, compare, Stats): reads its calls file first if this
 // run has not; no rows when it has none (yet). Callers must not keep the Rows or an index past their pass (prune compacts).
 const NONE = newRows();
@@ -346,6 +348,7 @@ function finish(s: Sess): void {
 }
 
 H.onTick.push(tick);
+export function indexTick(): void { tick(); } // serve: one paced step of the background index (≤ PACE.share of a core)
 
 H.enrich.push((s: Sess) => { L.prio = s.path; L.prioAt = Date.now(); }); // O(1): the next tick indexes this one first
 H.complete.push(complete);

@@ -78,6 +78,14 @@ t0 = time.time()
 pt = read(lambda x: x.get("k") == "patch" and any(r.get("id") == A for r in x["d"]["upsert"]), 3) # a warm log: stat'ed every scan
 ok("patch for the grown log within 3 s", pt is not None)
 if pt: print("serve: patch after %.2f s" % (time.time() - t0))
+# sessions.get: full = the CLI's session object; detail fast: index only; a first full ask with logs not read yet (a
+# fresh cache below) is read in slices and answered after a later request
+full = req(5, "sessions.get", {"ref": "claude:" + A})
+ok("sessions.get full: turns and via", full and full["ok"].get("via") == "ref" and isinstance(full["ok"].get("turns"), int))
+fast = req(6, "sessions.get", {"ref": "claude:" + A, "detail": "fast"})
+ok("sessions.get fast: no transcript figures", fast and fast["ok"].get("detail") == "fast" and fast["ok"].get("turns") is None and fast["ok"].get("models") is not None)
+bad = req(7, "sessions.get", {"ref": "claude:" + A, "detail": "slow"})
+ok("sessions.get bad detail", bad and bad.get("err", {}).get("code") == "bad_param")
 u = req(4, "unsub", {"sub": "s1"})
 ok("unsub", u and u.get("ok") == {})
 p.stdin.close(); t1 = time.time()
@@ -86,6 +94,38 @@ except subprocess.TimeoutExpired: p.kill(); rc = "timeout"
 ok("exit 0 within 2 s (got %s)" % rc, rc == 0)
 err = p.stderr.read().decode()
 ok("stderr quiet: " + err[:200], err.strip() == "")
+# a fresh cache and a big log (~15 MB): the running summary reads it in slices; meta, asked after it, answers before it;
+# the summary is kept in <cache>/detail.jsonl for the next process
+import tempfile
+BIG = "cccccc09-0000-4000-8000-000000000009"; BIG_TURNS = 3000
+with open(os.path.dirname(log) + "/" + BIG + ".jsonl", "w") as f:
+    pad = "x" * 2400
+    for k in range(BIG_TURNS):
+        ts = "2026-10-0%dT%02d:%02d:%02d.000Z" % (1 + k // 1000, (k // 60) % 24, k % 60, k % 60)
+        f.write(json.dumps({"type": "user", "sessionId": BIG, "cwd": "/w/srv", "timestamp": ts, "message": {"role": "user", "content": "step %d %s" % (k, pad)}}) + "\n")
+        f.write(json.dumps({"type": "assistant", "sessionId": BIG, "cwd": "/w/srv", "timestamp": ts, "message": {"id": "m%d" % k, "role": "assistant", "model": "claude-sonnet-4-5", "content": [{"type": "text", "text": pad}], "usage": {"input_tokens": 10, "output_tokens": 1}}}) + "\n")
+env2 = dict(env, AGENTGLASS_CACHE_DIR=tempfile.mkdtemp(dir=t))
+p = subprocess.Popen([t + "/ag", "serve", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env2); buf = b""
+req(1, "hello", {"want": 1})
+p.stdin.write((json.dumps({"id": 2, "m": "sessions.get", "p": {"ref": "claude:" + BIG}}) + "\n" + json.dumps({"id": 3, "m": "meta"}) + "\n").encode()); p.stdin.flush()
+order = []; got = {}
+def seen(x):
+    if x.get("id") in (2, 3): order.append(x["id"]); got[x["id"]] = x
+    return len(order) == 2
+read(seen, 15)
+ok("first full detail: meta first, then the detail (got %s)" % order, order == [3, 2])
+ok("first full detail of the big log: all its turns", 2 in got and got[2].get("ok", {}).get("turns") == BIG_TURNS and got[2]["ok"].get("via") == "ref")
+p.stdin.close()
+try: p.wait(timeout=5)
+except subprocess.TimeoutExpired: p.kill()
+ok("the running summary is kept: detail.jsonl", os.path.exists(env2["AGENTGLASS_CACHE_DIR"] + "/detail.jsonl"))
+# stdin closed while a subscription runs (agentglass-web gone): exit 0 within 2 s, the cadence must not hold it
+p = subprocess.Popen([t + "/ag", "serve", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env); buf = b""
+req(1, "hello", {"want": 1}); req(2, "sub", {"topic": "sessions"})
+p.stdin.close()
+try: rc = p.wait(timeout=2)
+except subprocess.TimeoutExpired: rc = None; p.kill()
+ok("stdin closed while subscribed: exit 0 within 2 s (got %s)" % rc, rc == 0)
 for f in fail: print("FAIL " + f)
 sys.exit(1 if fail else 0)
 PY
