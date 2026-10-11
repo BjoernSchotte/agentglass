@@ -137,6 +137,15 @@ eq("cost: unpriced model row", gxr ? String(gxr["costUsd"]) + "|" + String(gxr["
 const bd = costRows("2026-09-01", "day", all, NOF);
 eq("cost: one row per day + total", bd.map((r) => str(r["key"])).join(","), [dayKey(new Date(D1)), dayKey(new Date(D2)), "total"].filter((k: string, i: number, a: string[]) => a.indexOf(k) === i).join(","));
 eq("cost: since drops older days", String(keyed(costRows(dayKey(new Date(D2)), "day", all, NOF)).has(dayKey(new Date(D1)))), "false");
+// --until: days after it are left out; since = until = one day is that day alone
+const d1 = dayKey(new Date(D1)); const d2 = dayKey(new Date(D2));
+if (d1 !== d2) {
+  eq("cost: until drops later days", [...keyed(costRows("2026-09-01", "day", all, NOF, (s: Sess): boolean => false, "", d1)).keys()].join(","), d1 + ",total");
+  const one = keyed(costRows(d2, "day", all, NOF, (s: Sess): boolean => false, "", d2));
+  const inOf = (m: Map<string, Obj>, k: string): string => { const r = m.get(k); return r ? String(r["in"]) : "-"; };
+  eq("cost: since = until = one day", inOf(one, "total"), inOf(one, d2));
+  eq("cost: since = until = one day, one row", [...one.keys()].join(","), d2 + ",total");
+}
 const bh = keyed(costRows("2026-09-01", "harness", all, fl([], "codex")));
 eq("cost: --harness", [...bh.keys()].join(","), "codex,total");
 const pj = keyed(costRows("2026-09-01", "session", scopeOf(true, [], "", dir + "/p1"), NOF));

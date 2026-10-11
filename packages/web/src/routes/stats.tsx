@@ -12,11 +12,17 @@ import { Button, Kbd, cn } from "@agentglass/ui";
 import { useLive, useNow, ago } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
 import { type StatsSearch, STATS_PERIODS as PERIODS } from "./search.ts";
+import { Trend, dayLabel } from "./stats-trend.tsx";
 
 // the period's since for cost.get: this month = its first day (local), as the TUI counts a month
 export function sinceOf(p: string, now = new Date()): string {
   const x = PERIODS.find(([k]) => k === p); if (x && x[2]) return x[2];
   return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-01";
+}
+// the period's first day as YYYY-MM-DD (the trend's x axis starts there): today, 6 days back, the month's first
+export function firstDay(p: string, now = new Date()): string {
+  const d = new Date(now.getFullYear(), now.getMonth(), p === "m" ? 1 : now.getDate() - (p === "w" ? 6 : 0));
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 // the TUI's money: ≈ when part of it is priced through an alias, + when some usage has no price
 export function usd(u: number | null | undefined, est = false, unpriced = false): string {
@@ -89,10 +95,10 @@ export function byProject(rows: Row[], sort: string): Proj[] {
   return ps.sort((a, b) => val(b) - val(a) || a.name.localeCompare(b.name));
 }
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) + "%" : "·");
-function Drill({ model, since, filter, label, sort, proj, set, onClose }: { model: string; since: string; filter: string; label: string; sort: string; proj: string | undefined; set: (p: StatsSearch) => void; onClose: () => void }) {
+function Drill({ model, since, until, filter, label, sort, proj, set, onClose }: { model: string; since: string; until?: string; filter: string; label: string; sort: string; proj: string | undefined; set: (p: StatsSearch) => void; onClose: () => void }) {
   const live = useLive(); const now = useNow(30_000);
-  const q = useQuery({ queryKey: ["cost", "session", since, filter, model], retry: false, refetchInterval: (x: { state: { data?: { pending: number } } }) => (x.state.data && x.state.data.pending > 0 ? 2000 : 60_000),
-    queryFn: () => live.request<CostRows>("cost.get", { by: "session", since, model, ...(filter ? { filter } : {}) }) });
+  const q = useQuery({ queryKey: ["cost", "session", since, until, filter, model], retry: false, refetchInterval: (x: { state: { data?: { pending: number } } }) => (x.state.data && x.state.data.pending > 0 ? 2000 : 60_000),
+    queryFn: () => live.request<CostRows>("cost.get", { by: "session", since, model, ...(until ? { until } : {}), ...(filter ? { filter } : {}) }) });
   const d = q.data; const err = q.error as ApiFail | null; const tot = d?.rows.find((r) => r.key === "total");
   const ps = useMemo(() => byProject(d?.rows ?? [], sort), [d, sort]);
   const all = tot ? tot.in + tot.out + tot.cacheRead + tot.cacheWrite : 0;
@@ -136,18 +142,21 @@ function Drill({ model, since, filter, label, sort, proj, set, onClose }: { mode
 
 export function StatsView() {
   const live = useLive(); const nav = useNavigate(); const search = useSearch({ strict: false }) as StatsSearch;
-  const period = search.p ?? "w"; const filter = search.f ?? ""; const since = sinceOf(period); const model = search.model;
+  const period = search.p ?? "w"; const filter = search.f ?? ""; const model = search.model;
+  const range = search.from && search.to ? { since: search.from, until: search.to } : null; // brushed on the trend
+  const periodSince = sinceOf(period); const since = range ? range.since : periodSince; const until = range?.until;
   const [text, setText] = useState(filter); useEffect(() => setText(filter), [filter]);
   const set = (p: StatsSearch) => void nav({ to: "/stats", search: { ...search, ...p } as never, replace: true });
   // counting: the background index has logs left; ask again every 2 s until every log is counted
   const every = (q: { state: { data?: { pending: number } } }) => (q.state.data && q.state.data.pending > 0 ? 2000 : false);
   const sumQ = useQuery({ queryKey: ["cost"], queryFn: () => live.request<Cost>("cost.get"), refetchInterval: every });
-  const rowsQ = (by: string) => ({ queryKey: ["cost", by, since, filter], queryFn: () => live.request<CostRows>("cost.get", { by, since, ...(filter ? { filter } : {}) }), refetchInterval: every, retry: false });
+  const rowsQ = (by: string) => ({ queryKey: ["cost", by, since, until, filter], queryFn: () => live.request<CostRows>("cost.get", { by, since, ...(until ? { until } : {}), ...(filter ? { filter } : {}) }), refetchInterval: every, retry: false });
+  const byD = useQuery({ queryKey: ["cost", "day", periodSince, filter], queryFn: () => live.request<CostRows>("cost.get", { by: "day", since: periodSince, ...(filter ? { filter } : {}) }), refetchInterval: every, retry: false });
   const byH = useQuery(rowsQ("harness")); const byM = useQuery(rowsQ("model"));
   useEffect(() => { // d w m: the period, as in the TUI (not while typing)
     const keys = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null; if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
-      if (!e.metaKey && !e.ctrlKey && !e.altKey && ["d", "w", "m"].includes(e.key)) set({ p: e.key });
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && ["d", "w", "m"].includes(e.key)) set({ p: e.key, from: undefined, to: undefined });
     };
     window.addEventListener("keydown", keys); return () => window.removeEventListener("keydown", keys);
   });
@@ -158,7 +167,7 @@ export function StatsView() {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-[14px] font-semibold">Stats</h1>
         <div role="radiogroup" aria-label="Period" className="flex gap-0.5">
-          {PERIODS.map(([k, l]) => <Button key={k} role="radio" aria-checked={period === k} variant={period === k ? "outline" : "ghost"} onClick={() => set({ p: k })}>{l} <Kbd>{k}</Kbd></Button>)}
+          {PERIODS.map(([k, l]) => <Button key={k} role="radio" aria-checked={period === k} variant={period === k ? "outline" : "ghost"} onClick={() => set({ p: k, from: undefined, to: undefined })}>{l} <Kbd>{k}</Kbd></Button>)}
         </div>
         <form className="ml-auto flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); set({ f: text.trim() || undefined }); }}>
           <input aria-label="Filter" placeholder="filter, e.g. harness is claude" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { setText(""); set({ f: undefined }); } }} className="mono h-7 w-72 rounded border border-border bg-surface px-2 text-[12px]" />
@@ -173,11 +182,13 @@ export function StatsView() {
           {c.budget && <div className="md:col-span-3"><Budget b={c.budget} /></div>}
         </div>)}
       {ferr && <pre role="alert" className="mono whitespace-pre-wrap text-[12px] text-error">{ferr.err?.msg}{ferr.err?.hint ? "\n" + ferr.err.hint : ""}</pre>}
+      <Trend data={byD.data} since={firstDay(period)} range={range} onRange={(r) => set(r ? { from: r[0], to: r[1] } : { from: undefined, to: undefined })} />
+      {range && <p className="-mt-3 flex items-center gap-2 text-[12px]"><span className="rounded bg-surface-2 px-1.5 py-0.5">tables: {dayLabel(range.since)}{range.until !== range.since ? " – " + dayLabel(range.until) : ""}</span><Button variant="ghost" onClick={() => set({ from: undefined, to: undefined })}>clear range</Button></p>}
       <div className="grid gap-5 lg:grid-cols-2">
         <Table label="By harness" data={byH.data} />
         <Table label="By model" data={byM.data} model open={model} onOpen={(k) => set({ model: model === k ? undefined : k, proj: undefined })} />
       </div>
-      {model && <Drill model={model} since={since} filter={filter} label={PERIODS.find(([k]) => k === period)?.[1] ?? ""} sort={search.sort ?? "cost"} proj={search.proj} set={set} onClose={() => set({ model: undefined, proj: undefined, sort: undefined })} />}
+      {model && <Drill model={model} since={since} until={until} filter={filter} label={range ? dayLabel(range.since) + (range.until !== range.since ? " – " + dayLabel(range.until) : "") : PERIODS.find(([k]) => k === period)?.[1] ?? ""} sort={search.sort ?? "cost"} proj={search.proj} set={set} onClose={() => set({ model: undefined, proj: undefined, sort: undefined })} />}
     </div>
   );
 }

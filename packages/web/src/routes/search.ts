@@ -2,11 +2,13 @@
 // page's lazy chunk loads); the pages import their lists from here
 
 // stats
-export interface StatsSearch { p?: string; f?: string; model?: string; sort?: string; proj?: string }
+export interface StatsSearch { p?: string; f?: string; model?: string; sort?: string; proj?: string; from?: string; to?: string }
 export const STATS_PERIODS: [string, string, string][] = [["d", "today", "today"], ["w", "7 days", "7d"], ["m", "this month", ""]];
 export function validateStats(s: Record<string, unknown>): StatsSearch {
   const o: StatsSearch = {}; if (typeof s.p === "string" && STATS_PERIODS.some(([k]) => k === s.p)) o.p = s.p; if (typeof s.f === "string" && s.f) o.f = s.f;
   if (typeof s.model === "string" && s.model) o.model = s.model; if (s.sort === "cache") o.sort = "cache"; if (typeof s.proj === "string") o.proj = s.proj;
+  const day = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v); // a brushed range of days (both or none)
+  if (day(s.from) && day(s.to) && s.from <= s.to) { o.from = s.from; o.to = s.to; }
   return o;
 }
 

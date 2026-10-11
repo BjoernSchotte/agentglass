@@ -14,7 +14,7 @@ import { ledger } from "../features/usage/ledger.ts";
 import { modeOf } from "../features/usage/bill-live.ts";
 import type { Bill } from "../features/usage/billing.ts";
 import { startOfDay, dayKey, todayKey } from "../features/usage/record.ts";
-import { BY, costRows, parseSince } from "../features/queries.ts";
+import { BY, costRows, parseSince, untilKey } from "../features/queries.ts";
 import { filterOf } from "../features/query/cli.ts";
 import { harnessIds } from "../harness/index.ts";
 import { LAZY, farBehind, indexed } from "./row.ts";
@@ -63,23 +63,25 @@ export function summaryOf(top: Sess[]): CostNow {
   return costOfEnts(es);
 }
 
-// cost.get {harness?, by?, since?, filter?, model?}: without by/since/filter/model the summary, else the rows (by defaults to day,
+// cost.get {harness?, by?, since?, until?, filter?, model?}: without by/since/until/filter/model the summary, else the rows (by defaults to day,
 // since to today), as `cost` and `cost --by` print them; pending: logs of the window not counted to their end yet
-export interface CostQ { harness: string; by: string; since: string; filter: string; model: string }
+export interface CostQ { harness: string; by: string; since: string; until: string; filter: string; model: string }
 export interface CostR { data: Obj | null; err: Err | null }
 function bad(code: string, msg: string, hint: string): CostR { return { data: null, err: { code, msg, hint } }; }
 export function readCost(q: CostQ): CostR {
   if (q.harness && harnessIds().indexOf(q.harness) < 0) return bad("bad_param", "harness: " + harnessIds().join("|"), "");
-  if (!q.by && !q.since && !q.filter && !q.model) { const o = json(summary(q.harness)); o["pending"] = P.pending; return { data: o, err: null }; }
+  if (!q.by && !q.since && !q.until && !q.filter && !q.model) { const o = json(summary(q.harness)); o["pending"] = P.pending; return { data: o, err: null }; }
   const by = q.by || "day";
   if (BY.indexOf(by) < 0) return bad("bad_param", "by: " + BY.join("|"), "");
   if (q.model && by === "model") return bad("bad_param", "model: with by model it is one row — pick another by (session, project, …)", "");
   const ms = q.since ? parseSince(q.since, Date.now()) : 0; if (ms < 0) return bad("bad_param", "since: today, <n>h, <n>d or YYYY-MM-DD", "");
   const since = q.since ? dayKey(new Date(ms)) : todayKey(); // as cost --since
+  const until = q.until ? untilKey(q.until) : ""; if (q.until && !until) return bad("bad_param", "until: today or YYYY-MM-DD", "");
+  if (until && until < since) return bad("bad_param", "until: before since", "");
   const fr = filterOf(q.filter ? [q.filter] : [], q.harness, false, false, false); const cf = fr.cf;
   if (!cf) { const e = fr.err; const col = e ? e.col : 0; return bad("bad_filter", "filter: " + (e ? e.msg : "invalid filter") + " at column " + String(col + 1), fr.src ? fr.src + "\n" + " ".repeat(Math.max(0, col)) + "^" : ""); }
   let pending = 0;
-  const rows = costRows(since, by, { name: "all", key: "", cwd: "", warn: "" }, cf, (s: Sess): boolean => { const l = lazy(s); if (l) pending++; return l; }, q.model);
-  const o: Obj = { rows, source: "ledger", by, since, pending }; if (q.model) o["model"] = q.model;
+  const rows = costRows(since, by, { name: "all", key: "", cwd: "", warn: "" }, cf, (s: Sess): boolean => { const l = lazy(s); if (l) pending++; return l; }, q.model, until);
+  const o: Obj = { rows, source: "ledger", by, since, pending }; if (until) o["until"] = until; if (q.model) o["model"] = q.model;
   return { data: o, err: null };
 }

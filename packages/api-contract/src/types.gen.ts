@@ -131,6 +131,10 @@ export interface CostRows {
   by: "day" | "model" | "harness" | "project" | "session" | "workspace";
   since: string;
   /**
+   * the last day counted, when given (cost --until)
+   */
+  until?: string;
+  /**
    * the model the rows are restricted to (cost --model)
    */
   model?: string;
