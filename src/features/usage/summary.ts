@@ -137,6 +137,9 @@ export interface CostNow {
   budget: Budget; bs: BState;
 }
 const nows = new Map<string, { ver: number; at: number; c: CostNow }>();
+// a long-running reader (serve --stdio): the day sums are kept and only the days a booking touched are summed again, as
+// in the TUI — a month's summary is milliseconds, not a sum over every session each time the ledger moves
+export function summaryInc(): void { INC.on = true; nows.clear(); sums.clear(); }
 export const SUMMARY_TEST = { inc: (on: boolean): void => { INC.on = on; nows.clear(); sums.clear(); }, fresh: (): void => { nows.clear(); sums.clear(); }, resums: (): number => INC.resums };
 export function costNow(harness: string): CostNow {
   const hit = nows.get(harness);

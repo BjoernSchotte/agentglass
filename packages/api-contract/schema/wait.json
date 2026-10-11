@@ -1,0 +1,442 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wait",
+  "title": "Wait",
+  "description": "wait.get: `agentglass wait --json` (scope: no agent project) plus pending and at",
+  "type": "object",
+  "required": [
+    "period",
+    "previous",
+    "scope",
+    "retention",
+    "agentTime",
+    "rows",
+    "heavy",
+    "now",
+    "guard",
+    "warnings",
+    "pending",
+    "at"
+  ],
+  "properties": {
+    "period": {
+      "type": "object",
+      "required": [
+        "since",
+        "until",
+        "days"
+      ],
+      "properties": {
+        "since": {
+          "type": "string"
+        },
+        "until": {
+          "type": "string"
+        },
+        "days": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "previous": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "since",
+            "until"
+          ],
+          "properties": {
+            "since": {
+              "type": "string"
+            },
+            "until": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "filter",
+        "project",
+        "now"
+      ],
+      "properties": {
+        "filter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "now": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "retention": {
+      "type": "object",
+      "required": [
+        "days",
+        "complete"
+      ],
+      "properties": {
+        "days": {
+          "type": "number"
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "agentTime": {
+      "type": "object",
+      "required": [
+        "activeMs",
+        "toolMs",
+        "userMs",
+        "modelMs",
+        "pollingMs"
+      ],
+      "properties": {
+        "activeMs": {
+          "type": "number"
+        },
+        "toolMs": {
+          "type": "number"
+        },
+        "userMs": {
+          "type": "number"
+        },
+        "modelMs": {
+          "type": "number"
+        },
+        "pollingMs": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "kind",
+          "heavy",
+          "calls",
+          "timedCalls",
+          "totalMs",
+          "share",
+          "p50Ms",
+          "p95Ms",
+          "maxMs",
+          "errors",
+          "errorRate",
+          "prevTotalMs",
+          "trend",
+          "agents",
+          "peak",
+          "peakAt",
+          "atLeast2Ms",
+          "atLeast3Ms",
+          "slowdown",
+          "hist"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "heavy": {
+            "type": "boolean"
+          },
+          "calls": {
+            "type": "number"
+          },
+          "timedCalls": {
+            "type": "number"
+          },
+          "totalMs": {
+            "type": "number"
+          },
+          "share": {
+            "type": "number"
+          },
+          "p50Ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p95Ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "errors": {
+            "type": "number"
+          },
+          "errorRate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "prevTotalMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "trend": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "agents": {
+            "type": "number"
+          },
+          "peak": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "peakAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "atLeast2Ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "atLeast3Ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "slowdown": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "aloneP50Ms",
+                  "overlapP50Ms",
+                  "ratio",
+                  "alone",
+                  "overlapped"
+                ],
+                "properties": {
+                  "aloneP50Ms": {
+                    "type": "number"
+                  },
+                  "overlapP50Ms": {
+                    "type": "number"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "alone": {
+                    "type": "number"
+                  },
+                  "overlapped": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "hist": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "heavy": {
+      "type": "object",
+      "required": [
+        "peak",
+        "peakAt",
+        "atLeastMs",
+        "slowdown"
+      ],
+      "properties": {
+        "peak": {
+          "type": "number"
+        },
+        "peakAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "atLeastMs": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "slowdown": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "now": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "at",
+            "host",
+            "load1",
+            "cpus",
+            "memAvailPct",
+            "running",
+            "heavyRunning"
+          ],
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "load1": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "cpus": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "memAvailPct": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "running": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "session",
+                  "harness",
+                  "family",
+                  "kind",
+                  "heavy",
+                  "ageSec",
+                  "rssMb",
+                  "bg"
+                ],
+                "properties": {
+                  "session": {
+                    "type": "string"
+                  },
+                  "harness": {
+                    "type": "string"
+                  },
+                  "family": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "heavy": {
+                    "type": "boolean"
+                  },
+                  "ageSec": {
+                    "type": "number"
+                  },
+                  "rssMb": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "bg": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "heavyRunning": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "guard": {
+      "enum": [
+        null,
+        "retention",
+        "empty"
+      ]
+    },
+    "warnings": {
+      "type": "array"
+    },
+    "pending": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "at": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,7 +1,7 @@
 // agentglass — the ledger cache's JSON shape: Acc/Day ⇄ plain objects (IO lives in ./cache.ts)
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, obj, str, arr, parse } from "../../util/json.ts";
-import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy, heavy, NO_SA, NO_SK, NO_LST, NO_SKR, SKV } from "./record.ts";
+import { type Acc, type Day, type VRef, type RlWin, L, type Heavy, HEAVY, newHeavy, heavy, hvText, NO_SA, NO_SK, NO_LST, NO_SKR, SKV } from "./record.ts";
 import { type Rec, type TS, type Cnt, type Pend, HB } from "./calls.ts";
 import { own, pooled, pooledText } from "../../util/own.ts";
 import { moOut } from "./owners.ts";
@@ -79,7 +79,7 @@ function heavyOf(o: Obj): Heavy {
 }
 HEAVY.decode = heavyIn; HEAVY.encode = heavyOut;
 function dayOut(d: Day): Obj {
-  const o: Obj = { t: d.tools, hv: d.hx ? heavyOut(d.hx) : d.hv, k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del,
+  const o: Obj = { t: d.tools, hv: d.hx ? heavyOut(d.hx) : hvText(d), k: cntsOut(d.skills), tu: d.turns, h: d.hours, i: d.inTok, o: d.outTok, r: d.cr, w: d.cw, c: d.cost, u: d.unk, a: d.add, d: d.del,
     um: numMapOut(d.um), uc: d.uc, cp: numMapOut(d.cp), hc: d.hc, mt: rowsOut(d.mt), ak: d.act, tp: rowsOut(d.tp) };
   if (d.sav) o["sa"] = d.sav; else if (d.sa.size) o["sa"] = JSON.stringify(rowsOut(d.sa));
   return o;
@@ -94,7 +94,8 @@ function dayIn(o: Obj): Day {
   const hours = padTo(nums(o["h"]), 24);
   const hc = padTo(nums(o["hc"]), 24);
   const hv = str(o["hv"]);
-  return { tools: num(o["t"]), hx: hv ? null : heavyOf(o), hv: own(hv), skills: cntsIn(o["k"]), turns: num(o["tu"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
+  if (hv) HEAVY.texts++;
+  return { tools: num(o["t"]), hx: hv ? null : heavyOf(o), hv: own(hv), hz: null, skills: cntsIn(o["k"]), turns: num(o["tu"]), hours, inTok: num(o["i"]), outTok: num(o["o"]), cr: num(o["r"]), cw: num(o["w"]), cost: num(o["c"]), unk: num(o["u"]), add: num(o["a"]), del: num(o["d"]),
     um: numMapIn(o["um"]), uc: num(o["uc"]), cp: numMapIn(o["cp"]), hc: hc.length > 24 ? hc.slice(0, 24) : hc, mt: rowsIn(o["mt"], 5), act: actIn(o["ak"]), tp: rowsIn(o["tp"], 6),
     sa: typeof o["sa"] === "object" ? saIn(o["sa"]) : NO_SA, sav: typeof o["sa"] === "string" ? own(str(o["sa"])) : "" }; // object: a cache before the text form
 }

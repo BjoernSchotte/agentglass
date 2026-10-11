@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fleet-status",
+  "title": "FleetStatus",
+  "description": "fleet.hosts: `agentglass fleet status --json` from the cached host reports (serve never pulls) plus at",
+  "type": "object",
+  "required": [
+    "localName",
+    "hostId",
+    "hosts",
+    "at"
+  ],
+  "properties": {
+    "localName": {
+      "type": "string"
+    },
+    "hostId": {
+      "type": "string"
+    },
+    "hosts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "target",
+          "enabled",
+          "okAgeSec",
+          "code",
+          "err",
+          "version",
+          "hostId",
+          "redact",
+          "tzOffsetMin",
+          "os",
+          "sessions",
+          "live",
+          "overlap",
+          "sharing",
+          "dupOf",
+          "skewSec",
+          "exact",
+          "liveAgeSec",
+          "feedOf",
+          "feeds",
+          "via"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "okAgeSec": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "err": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "hostId": {
+            "type": "string"
+          },
+          "redact": {
+            "type": "boolean"
+          },
+          "tzOffsetMin": {
+            "type": "number"
+          },
+          "os": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "number"
+          },
+          "live": {
+            "type": "number"
+          },
+          "overlap": {
+            "type": "number"
+          },
+          "sharing": {
+            "type": "string"
+          },
+          "dupOf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skewSec": {
+            "type": "number"
+          },
+          "exact": {
+            "type": "boolean"
+          },
+          "liveAgeSec": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "feedOf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "feeds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "via": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "at": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

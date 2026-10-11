@@ -74,6 +74,11 @@ function sessByRef(id: string): Sess | null { const i = id.indexOf(":"); for (co
 // with pending: true and the figures booked so far (they grow as the index advances) — a cold start answers at once
 export const LAZY = { on: false };
 function indexed1(s: Sess): boolean { const a = ledger.get(s.path); return !!a && a.ep === s.ep && a.off >= s.size; }
+// far behind: the index has more than FAR_BYTES of this log (or its subagents') still to read — history, not a live
+// log's last appends (those a read catches up at once)
+const FAR_BYTES = 1048576;
+function left1(s: Sess): number { const a = ledger.get(s.path); return !a || a.ep !== s.ep ? s.size : Math.max(0, s.size - a.off); }
+export function farBehind(s: Sess): boolean { let n = left1(s); for (const c of s.subs) n += left1(c); return n > FAR_BYTES; }
 export function indexed(s: Sess): boolean { if (!indexed1(s)) return false; for (const c of s.subs) if (!indexed1(c)) return false; return true; }
 export function rowsOf(sel: Sess[], loads: boolean, content: boolean): Obj[] {
   const wait = new Set<string>();

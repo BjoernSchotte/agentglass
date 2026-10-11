@@ -19,12 +19,13 @@ export type { SkLoad };
 // tp = table-priced tokens per "<local hour>\t<provider key>\t<booked model key>" → [in, out, cacheRead, write5m, write1h, usd]
 //   (usd -1 = unpriced): what reprice() re-prices in place when a price changes; harness-reported costs and kiro credits stay out
 // act = active minutes, flat sorted merged [s0,e0,s1,e1,…] local minutes of the day (e exclusive, ≤ ACT_MAX intervals)
-// hx = the heavy part (heavy()); hv = that part as the cache stored it (JSON text), until something asks for it
+// hx = the heavy part (heavy()); hv = that part as the cache stored it (JSON text), until something asks for it; hz = hv
+//   compressed (a long-running reader, HEAVY.zip: serve), "" in hv then
 // sa = per-skill tokens "<skill>\t<provider>\t<model as booked>" → 18 slots (skillrec.ts SA_*): loads by trigger, load/carry/tail
 //   tokens per bucket, harness-priced $ (rows whose provider starts with "=": never re-priced); read through saOf():
 //   sav = sa as the cache stored it (JSON text), until something asks for it
 export interface Day {
-  tools: number; hx: Heavy | null; hv: string; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
+  tools: number; hx: Heavy | null; hv: string; hz: Uint8Array | null; skills: Map<string, Cnt>; turns: number; hours: number[]; inTok: number; outTok: number; cr: number; cw: number; cost: number; unk: number; add: number; del: number;
   um: Map<string, number>; uc: number; cp: Map<string, number>; hc: number[]; mt: Map<string, number[]>; act: number[]; tp: Map<string, number[]>;
   sa: Map<string, number[]>; sav: string;
 }
@@ -32,12 +33,15 @@ export interface Day {
 // --json) reads them back as text and writes that text out again; heavy() decodes a day's on first use (HEAVY: codec.ts)
 export interface Heavy { tt: Map<string, TS>; prog: Map<string, Cnt>; cmds: Map<string, Cnt>; files: Map<string, Cnt> }
 export function newHeavy(): Heavy { return { tt: new Map<string, TS>(), prog: new Map<string, Cnt>(), cmds: new Map<string, Cnt>(), files: new Map<string, Cnt>() }; }
-export const HEAVY = { decode: (raw: string): Heavy => newHeavy(), encode: (h: Heavy): string => "" };
-export function heavy(d: Day): Heavy { let h = d.hx; if (!h) { h = d.hv ? HEAVY.decode(d.hv) : newHeavy(); d.hx = h; d.hv = ""; } return h; }
+// zip/unzip: none by default; serve installs them (usage/hvzip.ts) and compresses the texts in the background (~3.7x)
+export const HEAVY = { decode: (raw: string): Heavy => newHeavy(), encode: (h: Heavy): string => "", zip: null as ((t: string) => Uint8Array) | null, unzip: (z: Uint8Array): string => "", texts: 0 };
+// the day's heavy part as JSON text: the cache's text, or its compressed form ("" = none)
+export function hvText(d: Day): string { const z = d.hz; return d.hv ? d.hv : z ? HEAVY.unzip(z) : ""; }
+export function heavy(d: Day): Heavy { let h = d.hx; if (!h) { const t = hvText(d); h = t ? HEAVY.decode(t) : newHeavy(); d.hx = h; d.hv = ""; d.hz = null; } return h; }
 // read-only look without keeping what it decoded (the day stays text): for passes over many days (call-row decoding)
 // back to text (one-shot runs, once a session is read to its end): the decoded maps are several times their text, and the
 // save writes this text as is instead of encoding them then
-export function packHeavy(d: Day): void { const h = d.hx; if (!h) return; const t = HEAVY.encode(h); if (!t) return; d.hv = own(t); d.hx = null; } // "": no codec in this program
+export function packHeavy(d: Day): void { const h = d.hx; if (!h) return; const t = HEAVY.encode(h); if (!t) return; d.hv = own(t); d.hx = null; HEAVY.texts++; } // "": no codec in this program
 // every day of a session back to text except those a pending call still books into: its result (a later read) updates
 // the TS and Cnt objects it holds from that day's maps, which a re-decode would not see
 export function packAcc(a: Acc): void {
@@ -49,7 +53,10 @@ export function packAcc(a: Acc): void {
     if (!busy) packHeavy(d);
   }
 }
-export function peekHeavy(d: Day): Heavy { const h = d.hx; return h ? h : d.hv ? HEAVY.decode(d.hv) : newHeavy(); }
+export function peekHeavy(d: Day): Heavy { const h = d.hx; if (h) return h; const t = hvText(d); return t ? HEAVY.decode(t) : newHeavy(); }
+// for a pass over many days: the TUI keeps what it decoded (it redoes such passes every few seconds); a reader that packs
+// the texts (serve: HEAVY.zip) looks without keeping, so one aggregate does not unpack the history into memory for good
+export function heavyLook(d: Day): Heavy { return HEAVY.zip ? peekHeavy(d) : heavy(d); }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Map<string, number>; days: Map<string, Day>; model: string; // claude: booked message id → its output_tokens booked so far
@@ -130,7 +137,7 @@ export function stamp(a: Acc, bill: string, plan: string, src: string): void {
 }
 export function zeros(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }
 export function newDay(): Day {
-  return { tools: 0, hx: newHeavy(), hv: "", skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
+  return { tools: 0, hx: newHeavy(), hv: "", hz: null, skills: new Map<string, Cnt>(), turns: 0, hours: zeros(24), inTok: 0, outTok: 0, cr: 0, cw: 0, cost: 0, unk: 0, add: 0, del: 0,
     um: new Map<string, number>(), uc: 0, cp: new Map<string, number>(), hc: zeros(24), mt: new Map<string, number[]>(), act: [], tp: new Map<string, number[]>(), sa: NO_SA, sav: "" };
 }
 // timestamp → day bucket + local hour; the conversion is cached per UTC hour prefix (lines arrive in order)

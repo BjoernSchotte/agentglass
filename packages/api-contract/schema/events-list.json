@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "events-list",
+  "title": "EventsList",
+  "description": "events.list: `agentglass events <ref> --json` (no text over the protocol: text is null) plus truncated and at",
+  "type": "object",
+  "required": [
+    "session",
+    "filter",
+    "preset",
+    "matched",
+    "total",
+    "events",
+    "truncated",
+    "at"
+  ],
+  "properties": {
+    "session": {
+      "type": "object",
+      "required": [
+        "harness",
+        "id",
+        "title"
+      ],
+      "properties": {
+        "harness": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "filter": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "preset": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "matched": {
+      "type": "integer"
+    },
+    "total": {
+      "type": "integer"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "i",
+              "ts",
+              "kind",
+              "kinds",
+              "tool",
+              "id",
+              "target",
+              "text",
+              "link"
+            ],
+            "properties": {
+              "i": {
+                "type": "integer"
+              },
+              "ts": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "tool": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "target": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "gap",
+              "kinds"
+            ],
+            "properties": {
+              "gap": {
+                "type": "integer"
+              },
+              "kinds": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "unread"
+            ],
+            "properties": {
+              "unread": {
+                "type": "integer",
+                "description": "bytes before the tail that was read (a log over 8 MB)"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "at": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

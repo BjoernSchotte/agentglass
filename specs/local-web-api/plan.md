@@ -142,6 +142,73 @@ export function gen(resource: string): number;                     // bumped whe
 - [ ] **Step 1: Failing checks:** each read function equals its CLI golden (`cost --json`, `wait --json`, `skills --json`, `events --json`, `fleet status --json`); `events.list {kind}` honours the kind filter and presets; `graph.get` returns the lean columnar events of #110 within a window; `alerts` topic pushes a rule firing. Web tests per route (render from fixtures, filter in URL, keyboard). Expected: FAIL.
 - [ ] **Step 2: Implement. Step 3: Run** all. **Step 4: Commit** per resource (`feat(read): …`), one PR for S3a.
 
+#### W8 breakdown (2026-10-11, before implementation)
+
+One branch `feat/web-s3a`, one commit per resource (read → protocol → schema → web route → tests), one PR. Every
+resource follows the same five steps; the order is by value to the user.
+
+**Rules for every resource**
+- `src/read/<r>.ts` returns the object the CLI's `--json` prints (the CLI command calls it; its check compares the two
+  byte for byte on the hermetic fixture). Params are validated in `proto.ts` (`bad_param` with the allowed values).
+- **Never block the serve loop.** A read whose sessions the ledger's background indexer (`BG`) has not reached yet
+  answers at once from what is indexed, with `indexing {done, total}` and `partial: true`; the web shows the numbers
+  with "counting… n of m" and re-requests when the sessions topic's `indexing` reaches `done`. Reads that walk logs
+  (wait, skills, events) go through the sliced queue of `serve/detail.ts` (`whenRead`, 100 ms slices) as
+  `sessions.get` does.
+- Schema in `packages/api-contract/schema/<r>.json`, types regenerated, conformance test against a recorded answer.
+- Web route: table/KPI cards only (charts are W9), filter and period in the URL, keys `d w m a` where the TUI has
+  them, empty and loading states with the reason, a vitest render test from a fixture.
+- `scripts/serve.test.sh` gets one case per method (hermetic HOME, as now).
+
+**W8.1 `cost.get {period?, by?, filter?}` + Stats page.** Without `by`: `cost --json` (today/week/month by billing
+mode, estimated, unpriced, projection, budget). With `by: day|model|harness|project`: the `cost --by` rows. Stats
+page: KPI cards today / 7 days / month (≈ for estimated, `+` for unpriced), projection and budget bar, tables per
+harness and per model for the period. `stats.get` is this method with `by` (no separate resource: one aggregate,
+one code path).
+
+**W8.2 `alerts.list {since?}` + topic `alerts` + Alerts page.** serve runs the rules engine on its tick over live
+local sessions (`watchStep`, as `--watch` does; built-ins and `~/.agentglass/rules`), keeps the engine's `LOG`
+(500 transitions). `alerts.list` = the log newest first (rule, severity, state, value, threshold, session ref and
+title, at, message); the topic pushes each new transition. Page: live log, severity glyphs ⚠/◆, click opens the
+session drawer. No notify command runs in serve (the TUI and `--watch` own notifications).
+
+**W8.3 `events.list {ref, kind?, preset?, limit?, from?}` + Events tab in the session drawer.** `events --json`
+(shown events and `{gap, kinds}` runs) through `listEvents`; kind filter and presets as the CLI; `content` stays
+off over the web in this slice (titles and targets only, as `events` without `--content`). Drawer tab with the
+kind chips and presets, `[`/`]` previous/next event.
+
+**W8.4 `wait.get {by?, since?, filter?}` + Wait page.** `wait --json` via the stepwise `stepWait` in slices. Page:
+the now block (running, waiting), rows by family/kind/tool with overlap.
+
+**W8.5 `skills.get {period?, filter?}` + Skills page.** *(2026-10-11: left out of S3a by the user's slice choice —
+W8.4, W8.6, W8.7 — open for a later slice.)* `skills --json` (rows + advice) in slices. Page: table with
+loads, carry, cost share, tier marks, and the advice list.
+
+**W8.6 `fleet.hosts` + Fleet page.** `fleet status --json` from the cached host reports (no ssh pull from serve;
+`--refresh` stays a CLI action). Page and sidebar entry only when `meta` reports hosts.
+
+**W8.7 `graph.get {ref, window?}` and `repos.list {period?}`.** Columnar call-graph events (#110) for W9's timeline;
+the Repos tab rows. No page yet for graph (W9); Repos page as a table.
+
+Done when: every check via `sh scripts/check.sh`, `serve.test.sh`, `team.test.sh`, `pnpm -r typecheck test build`,
+e2e, and the footprint stays as measured: agentglass-web ≤ 40 MB; serve not above main's on the same history (the
+engine's state: on the 3,400-session reference history main idles at 223 MB subscribed), ≤ 1 % CPU idle.
+
+**Memory rulings (2026-10-11, measured on the reference history, serve subscribed)**
+- *Freed memory goes back to the system.* scriptc's runtime frees through libc malloc, which keeps freed pages: a big
+  read stayed in RSS for good (six events reads of a 147 MB log: 201 → 290 MB). `platform/trim.c` (malloc_trim /
+  zone pressure relief, in the always-linked FFI manifest) runs after startup, after every sliced read and when RSS
+  grew 16 MB (at most every 10 s): the same reads end at 190 MB.
+- *Events of a big log: its last 8 MB.* A log's events cost ~10x its bytes while listed (32 MB of tail: +380 MB).
+- *The ledger's day heavy texts are kept compressed in serve* (`usage/hvzip.ts`, 51 MB of text → 14 MB, packed in the
+  background at ~8 % of a core for about a minute, each day verified to round-trip before its text goes; the cache
+  file is unchanged and its texts saved byte-identical): steady 223 MB (main) → 188 MB.
+- *repos.list:* the session walk runs in slices (a first ask reads many heads: 0.5–1.2 s); the aggregation is one step
+  (0.2–0.5 s on 30 days of the reference history, mostly the day heavy texts unpacked). graph.get of a 462-source
+  session: 5.6 s in slices, 2.4 MB of columns.
+- Not done: the rest of the ledger (ownership texts `mo`, ids, memos) and the session model; the TUI keeps texts
+  uncompressed (its 5-minute saves would unpack every day).
+
 ### Task W9: Visualizations (S3, after W8)
 
 **Files:** `packages/viz/*`, chart components in the routes of W8, a Web Worker for the timeline layout.

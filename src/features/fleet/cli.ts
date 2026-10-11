@@ -17,7 +17,7 @@ import { agentHost, cliError, errLine } from "../agentenv.ts";
 import { type CmdRec, type OptRec, addCmd, opt, cmdOf, cmdText, helpOf, wantsHelp } from "../clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "../format.ts";
 import { discover, jsonSess, JSON_FIELDS, FILTER_OPT, FORMAT_OPT, FIELDS_OPT } from "../cli.ts";
-import { json, summary } from "../cost-cli.ts";
+import { json, summary } from "../../read/cost.ts";
 import { cliFilter, cliSelect } from "../query/cli.ts";
 import { peers } from "../vcs/json.ts";
 import { MODES } from "../usage/billing.ts";
@@ -64,7 +64,7 @@ export function makeFeeds(c: FleetCfg, spawn: (cmd: string, args: string[]) => n
 }
 function sleep(s: string): void { try { execFileSync("sleep", [s]); } catch (e) { /* interrupted */ } }
 // polls until the feed's report read settles (a CLI run reads a report whole: no frames to keep)
-function settle(fd: HostFeed): FeedState {
+export function settle(fd: HostFeed): FeedState {
   let st = fd.poll(Date.now()); let same = 0;
   for (let i = 0; i < 100000 && same < 3; i++) { const okAt = st.okAt; const code = st.code; st = fd.poll(Date.now()); same = st.okAt === okAt && st.code === code ? same + 1 : 0; }
   return st;
@@ -307,16 +307,21 @@ function status(args: string[]): void {
     for (const rh of FLEET.hosts) { const cp = cpOf(rh); if (!b || !cp) continue; try { execFileSync(b, ["-O", "exit", "-o", "ControlPath=" + cp, "--", rh.cfg.ssh], { stdio: "ignore", timeout: 5000 }); closed++; } catch (e) { /* no master running */ } }
   }
   if (asJson) {
-    const o: Obj[] = [];
-    for (const x of xs) o.push({ name: x.name, kind: x.kind, target: x.target, enabled: x.enabled, okAgeSec: x.okAgeSec >= 0 ? x.okAgeSec : null, code: x.code, err: x.err, version: x.version, hostId: x.hostId, redact: x.redact,
-      tzOffsetMin: x.tzOffsetMin, os: x.os, sessions: x.sessions, live: x.live, overlap: x.overlap, sharing: x.sharing, dupOf: x.dupOf || null, skewSec: x.skewSec, exact: x.exact, liveAgeSec: x.liveAgeSec >= 0 ? x.liveAgeSec : null,
-      feedOf: x.feedOf || null, feeds: x.feeds, via: x.via || null });
-    out(JSON.stringify(close ? { localName: c.localName, hostId: hostId(), hosts: o, closed } : { localName: c.localName, hostId: hostId(), hosts: o }));
+    const o = statusJson(c, xs); if (close) o["closed"] = closed;
+    out(JSON.stringify(o));
     process.exit(0);
   }
   for (const l of statusLines(c, xs, ov.size)) out(l);
   if (close) { out(""); out("closed " + String(closed) + " shared ssh connection" + (closed === 1 ? "" : "s")); }
   process.exit(0);
+}
+// the `fleet status --json` object (serve's fleet.hosts too)
+export function statusJson(c: FleetCfg, xs: HostStatus[]): Obj {
+  const o: Obj[] = [];
+  for (const x of xs) o.push({ name: x.name, kind: x.kind, target: x.target, enabled: x.enabled, okAgeSec: x.okAgeSec >= 0 ? x.okAgeSec : null, code: x.code, err: x.err, version: x.version, hostId: x.hostId, redact: x.redact,
+    tzOffsetMin: x.tzOffsetMin, os: x.os, sessions: x.sessions, live: x.live, overlap: x.overlap, sharing: x.sharing, dupOf: x.dupOf || null, skewSec: x.skewSec, exact: x.exact, liveAgeSec: x.liveAgeSec >= 0 ? x.liveAgeSec : null,
+    feedOf: x.feedOf || null, feeds: x.feeds, via: x.via || null });
+  return { localName: c.localName, hostId: hostId(), hosts: o };
 }
 // the text of fleet status (also the TUI's "fleet: status" view): this machine, then every host, problems first
 export function statusLines(c: FleetCfg, xs: HostStatus[], ov: number): string[] {

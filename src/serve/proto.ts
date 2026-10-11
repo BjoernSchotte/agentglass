@@ -12,7 +12,16 @@ import { findSession } from "../model/sessref.ts";
 import type { Sess } from "../model/types.ts";
 import { detailReady, detailStep } from "../features/queries.ts";
 const INLINE_MS = 30;
-import { whenRead } from "./detail.ts";
+import { whenRead, whenDone } from "./detail.ts";
+import { trimIdle } from "../platform/heap.ts";
+import { readCost } from "../read/cost.ts";
+import { alertRows } from "../read/alerts.ts";
+import { type EvRead, TAIL_BYTES, viewFor, evRead, evStep, eventsJson } from "../read/events.ts";
+import { waitStart, waitStep, waitOut } from "../read/wait.ts";
+import { readFleet } from "../read/fleet.ts";
+import { reposStart, reposStep, reposOut } from "../read/repos.ts";
+import { graphStart, graphStep, graphOut } from "../read/graph.ts";
+import { indexState, indexing } from "../features/usage/ledger.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
 // hello: a hello was answered; fresh: called before a request that reads the engine (main.ts: discover() when stale)
@@ -88,11 +97,11 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "sub") {
     const topic = str(p["topic"]);
     const team = topic === "presence" || topic.startsWith("team:");
-    if (topic !== "sessions" && !team) return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions, team:<team>/<room>, presence");
+    if (topic !== "sessions" && topic !== "alerts" && !team) return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions, alerts, team:<team>/<room>, presence");
     const r = sessQ(p); if (r.bad) return errL(id, "bad_param", r.bad, "");
     if (r.q.cursor) return errL(id, "bad_param", "a subscription has no cursor", "");
     if (sv.hub.subs.size >= SUBS_MAX) return errL(id, "too_many", String(SUBS_MAX) + " subscriptions are open", "unsub one first");
-    const tt = team ? teamTopic(topic, str(p["team"])) : { kind: "sessions", team: "", room: "", err: "" };
+    const tt = team ? teamTopic(topic, str(p["team"])) : { kind: topic, team: "", room: "", err: "" };
     if (tt.err) return errL(id, tt.err.slice(0, tt.err.indexOf(":")), tt.err.slice(tt.err.indexOf(":") + 2), "");
     sv.fresh();
     const now = sv.now();
@@ -103,10 +112,74 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     for (const l of a.lines) sv.out(l);
     return "";
   }
+  if (m === "cost.get") { // cost --json / cost --by rows; a cold start answers at once with pending logs and the index's progress
+    for (const k of ["harness", "by", "since", "filter"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    sv.fresh();
+    const r = readCost({ harness: str(p["harness"]), by: str(p["by"]), since: str(p["since"]), filter: str(p["filter"]) }); const d = r.data; const e = r.err;
+    if (!d || e) return errL(id, e ? e.code : "internal", e ? e.msg : "no answer", e ? e.hint : "");
+    const st = indexState(); d["at"] = sv.now(); if (indexing() || num(d["pending"], 0) > 0) d["indexing"] = { done: st.done, total: st.total };
+    return okL(id, d);
+  }
+  if (m === "events.list") { // events --json of one session (no text); read inline when small, else in slices; a big log: its tail
+    const ref = str(p["ref"]); if (!ref) return errL(id, "bad_param", "ref is required", "<harness>:<id>, an id or a unique prefix of 6+ characters");
+    for (const k of ["filter", "preset"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    if (p["content"] !== undefined) return errL(id, "bad_param", "content is not served over the protocol in this release", "the CLI: agentglass events <ref> --content");
+    const fl = str(p["filter"]); const pr = str(p["preset"]); if (fl && pr) return errL(id, "bad_param", "preset and filter exclude each other (a preset is a filter)", "");
+    const lim = num(p["limit"], 500); if (!(lim >= 1 && lim <= 5000)) return errL(id, "bad_param", "limit must be 1–5000", "");
+    const ve = viewFor(fl, pr); if (ve) return errL(id, ve.code, ve.msg, ve.hint); // a typo answers before any log is read
+    sv.fresh();
+    const f = findSession(ref, (x: Sess): boolean => true); const s = f.s;
+    if (!s) return errL(id, f.code === 4 ? "ambiguous" : f.code === 2 ? "bad_param" : "not_found", f.msg, f.hint);
+    const r: EvRead = evRead(s, TAIL_BYTES);
+    const answer = (): string => { viewFor(fl, pr); const o = eventsJson(r, Math.floor(lim), pr); o["at"] = sv.now(); return okL(id, o); }; // the controller is shared: set again right before listing
+    if (evStep(r, INLINE_MS)) { const a = answer(); trimIdle(sv.now()); return a; }
+    whenDone("events\t" + id, (ms: number): boolean => evStep(r, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
+  if (m === "wait.get") { // wait --json: the report runs in slices (later requests are not held), answered when done
+    for (const k of ["since", "by", "filter"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    sv.fresh();
+    const w = waitStart({ since: str(p["since"]) || "7d", by: str(p["by"]) || "family", filter: str(p["filter"]), limit: Math.floor(num(p["limit"], 20)) }, sv.now());
+    const e = w.err; if (e) return errL(id, e.code, e.msg, e.hint);
+    const answer = (): string => { const o = waitOut(w); o["at"] = sv.now(); return okL(id, o); };
+    if (waitStep(w, INLINE_MS)) return answer();
+    whenDone("wait\t" + id, (ms: number): boolean => waitStep(w, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
+  if (m === "repos.list") { // --json --repos: one row per project for the last days (0 = all history)
+    if (p["filter"] !== undefined && typeof p["filter"] !== "string") return errL(id, "bad_param", "filter must be a string", "");
+    const days = num(p["days"], 7); sv.fresh();
+    const r = reposStart(days, str(p["filter"])); const e = r.err; if (e) return errL(id, e.code, e.msg, e.hint);
+    const answer = (): string => { const o = reposOut(r); o["at"] = sv.now(); return okL(id, o); };
+    if (reposStep(r, INLINE_MS)) return answer();
+    whenDone("repos\t" + id, (ms: number): boolean => reposStep(r, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
+  if (m === "graph.get") { // the call graph as columns (no content); read source by source in slices
+    const ref = str(p["ref"]); if (!ref) return errL(id, "bad_param", "ref is required", "<harness>:<id>, an id or a unique prefix of 6+ characters");
+    const from = num(p["from"], 0); const to = num(p["to"], 0);
+    if (from < 0 || to < 0 || (from && to && to < from)) return errL(id, "bad_param", "from and to: times in ms, to after from", "");
+    sv.fresh();
+    const f = findSession(ref, (x: Sess): boolean => true); const s = f.s;
+    if (!s) return errL(id, f.code === 4 ? "ambiguous" : f.code === 2 ? "bad_param" : "not_found", f.msg, f.hint);
+    const g = graphStart(s, sv.now());
+    const answer = (): string => { const o = graphOut(g, from, to); o["at"] = sv.now(); return okL(id, o); };
+    if (graphStep(g, INLINE_MS)) { const a = answer(); trimIdle(sv.now()); return a; }
+    whenDone("graph\t" + id, (ms: number): boolean => graphStep(g, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
+  if (m === "fleet.hosts") { sv.fresh(); const o = readFleet(sv.now()); o["at"] = sv.now(); return okL(id, o); } // fleet status --json from the cached reports (no pull)
+  if (m === "alerts.list") { // the alert transitions of this process, newest first; since (ms) and limit (1–1000, 200)
+    const since = num(p["since"], 0); const lim = num(p["limit"], LIMIT_DEF);
+    if (!(lim >= 1 && lim <= LIMIT_MAX)) return errL(id, "bad_param", "limit must be 1–" + String(LIMIT_MAX), "");
+    if (p["since"] !== undefined && typeof p["since"] !== "number") return errL(id, "bad_param", "since must be a time in ms", "");
+    sv.fresh();
+    return okL(id, { data: alertRows(since, Math.floor(lim)), at: sv.now() });
+  }
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
   if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, wait.get, alerts.list, fleet.hosts, repos.list, graph.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
 }
 // team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
 function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {

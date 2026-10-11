@@ -1,10 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { PanelLeftClose, PanelLeftOpen, List, Users, Settings } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, List, Users, Settings, ChartColumn, BellRing, Hourglass, Server, FolderGit2 } from "lucide-react";
 import { Button, Kbd, cn } from "@agentglass/ui";
-import { SECTIONS } from "./shortcuts.ts";
-const ICON: Record<string, typeof List> = { sessions: List, team: Users, settings: Settings };
-export function Sidebar({ collapsed, onToggle, hasTeam, teamName }: { collapsed: boolean; onToggle: () => void; hasTeam: boolean; teamName: string }) {
-  const shown = SECTIONS.filter((s) => !s.team || hasTeam);
+import { shown as shownSections } from "./shortcuts.ts";
+const ICON: Record<string, typeof List> = { sessions: List, stats: ChartColumn, wait: Hourglass, repos: FolderGit2, alerts: BellRing, fleet: Server, team: Users, settings: Settings };
+export function Sidebar({ collapsed, onToggle, hasTeam, hasFleet, teamName }: { collapsed: boolean; onToggle: () => void; hasTeam: boolean; hasFleet: boolean; teamName: string }) {
+  const shown = shownSections(hasTeam, hasFleet);
   return (
     <nav aria-label="Sections" className={cn("flex h-full flex-col border-r border-border-subtle bg-surface", collapsed ? "w-12" : "w-52")}>
       <div className="flex h-11 items-center gap-2 px-3 font-semibold">{collapsed ? "◈" : <>◈ agentglass{hasTeam && <span className="truncate text-muted font-normal">· {teamName}</span>}</>}</div>

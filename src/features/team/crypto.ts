@@ -4,6 +4,7 @@
 // -2, nothing written) and never returns partial output. Random keys and nonces come from randomBytes (/dev/urandom).
 // SPDX-License-Identifier: Apache-2.0
 import { randomBytes, hex } from "../../util/rand.ts";
+import "../../platform/heap.ts"; // declares agTrim: every program built with crypto/ffi.json must (the manifest carries it)
 
 // 0 = ok, -1 = refused (invalid signature, failed open, low-order point), -2 = a wrong length
 declare function agSignKeypair(seed: Uint8Array, sk: Uint8Array, pk: Uint8Array): number;

@@ -3,6 +3,7 @@
 import { writeSync } from "node:fs";
 import { H, complete, display, screenOut } from "../../hooks.ts";
 import { sessions, scan, buildView, loadHead, loadTail, parentOf } from "../../model/sessions.ts";
+import type { Sess } from "../../model/types.ts";
 import { refreshProcs, refreshSlow } from "../../model/procs.ts";
 import { REDACT } from "../redact-on.ts";
 import { lastDays, startOfDay } from "../usage/record.ts";
@@ -56,24 +57,41 @@ const REPO_COLS = ["label", "sessions", "live", "costUsd", "commits", "activeMin
 // inside an agent only the sessions its scope shows (agent mode: output goes to the agent's model provider)
 export function reposCli(days: number, f: Compiled | null, cheap: Compiled | null, sc: Scope, fm: Fmt, legacyJson: boolean): void {
   scan(); refreshProcs(); refreshSlow(); buildView();
+  const r = repoPrep(days, f, cheap, sc, (s: Sess): boolean => false); repoPrepStep(r, 0);
+  const out = repoOut(r);
+  try { writeSync(1, screenOut(formatRows(out, fm, false, REPO_COLS, REPO_FIELDS, legacyJson)) + "\n"); } catch (e) { /* closed pipe */ }
+  for (const q of H.onQuit) q(); // keep the indexing work for the next run
+  process.exit(0);
+}
+// the --repos rows (cost first), in two steps so serve can slice the first: repoPrep walks the period's sessions (heads,
+// the ledger to their ends; lazy(s): a log not to read to its end here, serve's), repoOut aggregates
+export interface RepoPrep { list: Sess[]; i: number; allow: Set<string>; days: number; f: Compiled | null; cheap: Compiled | null; scoped: boolean; sc: Scope; lazy: (s: Sess) => boolean }
+export function repoPrep(days: number, f: Compiled | null, cheap: Compiled | null, sc: Scope, lazy: (s: Sess) => boolean): RepoPrep {
   const from = days > 0 ? startOfDay() - (days - 1) * 86400000 : 0;
-  const scoped = sc.name !== "all"; const allow = new Set<string>();
-  for (const s of sessions.values()) {
-    if (s.mtime < from) continue; // nothing written since before the period: no activity in it
-    if (scoped) { // a subagent whose log names no cwd is in scope with its parent
-      let ok = visible(s, sc); if (!ok && !s.cwd && s.parent) { const p = parentOf(s); ok = p !== null && visible(p, sc); }
-      if (!ok) continue; allow.add(s.path);
+  const list: Sess[] = []; for (const s of sessions.values()) if (s.mtime >= from) list.push(s); // nothing written since before the period: no activity in it
+  return { list, i: 0, allow: new Set<string>(), days, f, cheap, scoped: sc.name !== "all", sc, lazy };
+}
+// about budget ms of the walk (0 = to the end); true = done
+export function repoPrepStep(r: RepoPrep, budget: number): boolean {
+  const end = Date.now() + budget;
+  while (r.i < r.list.length) {
+    if (budget > 0 && Date.now() >= end) return false;
+    const s = r.list[r.i] as Sess; r.i++;
+    if (r.scoped) { // a subagent whose log names no cwd is in scope with its parent
+      let ok = visible(s, r.sc); if (!ok && !s.cwd && s.parent) { const p = parentOf(s); ok = p !== null && visible(p, r.sc); }
+      if (!ok) continue; r.allow.add(s.path);
     }
     if (!s.headDone) loadHead(s); // Claude/Codex cwd lives in the head
     if (!s.cwd) loadTail(s); // …or, behind huge first lines, in the tail
     const p = !s.cwd && s.parent ? parentOf(s) : null; if (p && !p.headDone) loadHead(p); // …or it is the parent's
-    if (cheap && cheap !== EMPTY && !sessMatches(cheap, s)) continue; // the ledger is completed only for survivors
-    complete(s);
+    if (r.cheap && r.cheap !== EMPTY && !sessMatches(r.cheap, s)) continue; // the ledger is completed only for survivors
+    if (!r.lazy(s)) complete(s);
   }
-  const dks = days > 0 ? lastDays(days) : allDays();
-  const rows = repoAggIn(dks, f ?? EMPTY, allow, scoped ? "scope:" + sc.key : "").slice().sort((x: RepoAgg, y: RepoAgg) => y.cost - x.cost || y.unk - x.unk || (x.label < y.label ? -1 : 1));
-  const out: Obj[] = []; for (const r of rows) out.push(obj(JSON.parse(JSON.stringify(repoJson(r)))) ?? {});
-  try { writeSync(1, screenOut(formatRows(out, fm, false, REPO_COLS, REPO_FIELDS, legacyJson)) + "\n"); } catch (e) { /* closed pipe */ }
-  for (const q of H.onQuit) q(); // keep the indexing work for the next run
-  process.exit(0);
+  return true;
+}
+export function repoOut(r: RepoPrep): Obj[] {
+  const dks = r.days > 0 ? lastDays(r.days) : allDays();
+  const rows = repoAggIn(dks, r.f ?? EMPTY, r.allow, r.scoped ? "scope:" + r.sc.key : "").slice().sort((x: RepoAgg, y: RepoAgg) => y.cost - x.cost || y.unk - x.unk || (x.label < y.label ? -1 : 1));
+  const out: Obj[] = []; for (const x of rows) out.push(obj(JSON.parse(JSON.stringify(repoJson(x)))) ?? {});
+  return out;
 }

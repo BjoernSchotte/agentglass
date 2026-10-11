@@ -127,23 +127,29 @@ function hostOf(out: Span[], spawn: string, t: number): number {
 }
 export function buildGraph(srcs: Src[], now: number): Graph {
   const out: Span[] = [];
-  for (let k = 0; k < srcs.length; k++) {
-    const sc = srcs[k];
-    if (k === 0) { sessionSpans(sc.evs, 0, -1, 0, sc.live, now, out); continue; }
-    let a = 0; let z = 0; let first = -1;
-    for (let i = 0; i < sc.evs.length; i++) { const t = ms(sc.evs[i].ts); if (!t) continue; if (!a) { a = t; first = i; } z = t; }
-    if (!a) continue;
-    if (sc.live) z = Math.max(z, now);
-    const host = hostOf(out, sc.spawn, a);
-    const d = host >= 0 ? out[host].depth + 1 : 0;
-    const ag = out.length;
-    const s = span(a, d, K_AGENT, sc.kind || "subagent", "", k, first, host);
-    s.t1 = z; s.open = sc.live;
-    if (z <= a && host >= 0) { s.t0 = out[host].t0; s.t1 = Math.max(out[host].t1, s.t0); s.est = true; } // no timing: fill the spawning call
-    out.push(s);
-    sessionSpans(sc.evs, k, ag, d + 1, sc.live, now, out);
-    spread(out, ag);
-  }
+  for (let k = 0; k < srcs.length; k++) graphAdd(out, k, srcs[k], now);
+  return graphEnd(out);
+}
+// one source into the spans (k 0: the session, later ones its subagents, in order): a caller that reads source by
+// source (serve's graph.get) lets each one's events go after it
+export function graphAdd(out: Span[], k: number, sc: Src, now: number): void {
+  if (k === 0) { sessionSpans(sc.evs, 0, -1, 0, sc.live, now, out); return; }
+  let a = 0; let z = 0; let first = -1;
+  for (let i = 0; i < sc.evs.length; i++) { const t = ms(sc.evs[i].ts); if (!t) continue; if (!a) { a = t; first = i; } z = t; }
+  if (!a) return;
+  if (sc.live) z = Math.max(z, now);
+  const host = hostOf(out, sc.spawn, a);
+  const d = host >= 0 ? out[host].depth + 1 : 0;
+  const ag = out.length;
+  const s = span(a, d, K_AGENT, sc.kind || "subagent", "", k, first, host);
+  s.t1 = z; s.open = sc.live;
+  if (z <= a && host >= 0) { s.t0 = out[host].t0; s.t1 = Math.max(out[host].t1, s.t0); s.est = true; } // no timing: fill the spawning call
+  out.push(s);
+  sessionSpans(sc.evs, k, ag, d + 1, sc.live, now, out);
+  spread(out, ag);
+}
+// the graph over every source's spans: its time range (nothing timed at all: one unit per turn) and lanes
+export function graphEnd(out: Span[]): Graph {
   let t0 = 0; let t1 = 0;
   for (const s of out) { if (!t0 || s.t0 < t0) t0 = s.t0; if (s.t1 > t1) t1 = s.t1; }
   let noTiming = false;
