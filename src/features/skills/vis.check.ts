@@ -141,7 +141,8 @@ function walk(d: string, out: string[]): void {
 }
 const all: string[] = []; walk("src", all);
 // modules whose ".sk" is something else: the team crypto's secret keys (SignKeys/BoxKeys.sk)
-const NOT_SKILL = ["src/features/team/crypto.ts"];
+const NOT_SKILL = ["src/features/team/crypto.ts", "src/features/team/keys.ts", "src/features/team/manifest.ts", "src/features/team/sealed.ts", "src/features/team/sync.ts",
+  "src/features/team/names.ts", "src/features/team/activity.ts"];
 let seen = 0;
 for (const f3 of all) {
   if (NOT_SKILL.indexOf(f3) >= 0 || !SKILL_DATA_RE.test(readFileSync(f3, "utf-8"))) continue;

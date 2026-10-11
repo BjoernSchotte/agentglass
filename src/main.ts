@@ -52,6 +52,7 @@ import "./mux/attr.ts";
 import "./features/usage/stats.ts";
 import "./features/repos/tab.ts";
 import "./features/wait/tab.ts"; // the 5th tab, after Repos
+import "./features/team/tab.ts"; // the 6th, once a team exists
 import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
 import "./features/vcs/view.ts";
 import "./features/query/ui.ts";
@@ -73,6 +74,7 @@ import "./features/prices.ts";
 import "./features/update.ts";
 import "./features/otlp/export.ts";
 import "./features/fleet/cli.ts";
+import "./features/team/cli.ts";
 import "./features/mcp-cli.ts";
 import "./serve/main.ts"; // agentglass serve --stdio: the protocol agentglass-web reads
 import "./features/fleet/tui.ts";

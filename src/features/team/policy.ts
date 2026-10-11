@@ -57,7 +57,7 @@ function anyScope(r: Room, key: string): boolean { for (const p of r.scope) if (
 export function inScope(r: Room, sh: RoomShare, identKey: string, startedMs: number): boolean {
   if (sh.room !== r.id || !sh.on || sh.paused || startedMs < sh.since) return false;
   const k = shareKey(identKey);
-  return k !== "" && sh.repos.indexOf(k) >= 0 && anyScope(r, k);
+  return k !== "" && (sh.repos.indexOf(k) >= 0 || sh.repos.indexOf("*") >= 0) && anyScope(r, k); // "*": all my repos (a personal team)
 }
 // the level a share publishes at: the member's, capped by the room's (titles only when both say titles)
 export function levelOf(r: Room, sh: RoomShare): "numbers" | "titles" { return r.level === "titles" && sh.level === "titles" ? "titles" : "numbers"; }

@@ -7,6 +7,7 @@ import { type SessQ, PROTO, CAPS, readMeta, readSessions, readSession } from "..
 import { CONTRACT } from "../features/version.ts";
 import { BUILD } from "../build-info.ts";
 import { REDACT } from "../features/redact-on.ts";
+import { statusObj, reportObj, sessionsObj, activityObj, pickTeam, roomId, BYS } from "../read/team.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach } from "./subs.ts";
 
 // hello: a hello was answered; fresh: called before a request that reads the engine (main.ts: discover() when stale)
@@ -86,6 +87,24 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     return "";
   }
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
+  if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, sub, unsub");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
+}
+// team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
+function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {
+  const now = sv.now();
+  if (m === "team.status") return okL(id, statusObj(now));
+  for (const k of ["team", "room", "member", "by", "period"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+  const pt = pickTeam(str(p["team"])); const t = pt.t; const e = pt.err;
+  if (!t || e) return errL(id, e ? e.code : "no_team", e ? e.msg : "no team", e ? e.hint : "");
+  const rr = roomId(t, str(p["room"])); if (rr.err) return errL(id, rr.err.code, rr.err.msg, "");
+  if (m === "team.report") {
+    const by = str(p["by"]) || "member"; const per = str(p["period"]) || "m";
+    if (BYS.indexOf(by) < 0 || ["d", "w", "m"].indexOf(per) < 0) return errL(id, "bad_param", "by: " + BYS.join("|") + ", period: d|w|m", "");
+    return okL(id, reportObj(t, rr.id, str(p["member"]), by, per, now));
+  }
+  if (m === "team.sessions") { const lim = num(p["limit"], 0); if (!(lim >= 0 && lim <= LIMIT_MAX)) return errL(id, "bad_param", "limit must be 0–" + String(LIMIT_MAX), ""); return okL(id, sessionsObj(t, rr.id, str(p["member"]), Math.floor(lim), now)); }
+  if (m === "team.activity") { const since = num(p["since"], 0); return okL(id, activityObj(t, since, now)); }
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "team.status, team.report, team.sessions, team.activity");
 }
