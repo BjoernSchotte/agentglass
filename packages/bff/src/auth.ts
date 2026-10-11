@@ -1,7 +1,7 @@
 // per-run auth (local-web-api §4): a one-time token (fragment → POST /api/v1/session, single use, 10 min) → an
 // HttpOnly SameSite=Strict cookie and a CSRF token; more tokens arrive as hashes in run/web.tokens (another
 // `agentglass web`); Host and Origin checks against DNS rebinding and cross-site requests. Constant-time compares.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { TOKEN_MS } from "./limits.ts";
 
 export function rand(bytes = 32): string { const b = new Uint8Array(bytes); crypto.getRandomValues(b); return Buffer.from(b).toString("base64url"); }
@@ -12,32 +12,49 @@ export function same(a: string, b: string): boolean {
   let d = 0; for (let i = 0; i < x.length; i++) d |= x[i]! ^ y[i]!; return d === 0;
 }
 export interface Sess { id: string; csrf: string; at: number }
+export const SESSION_MS = 30 * 86400000; // a browser stays signed in 30 days after its last visit (the cookie's Max-Age too)
+// tokens: run/web.tokens (lines "<sha256> <expiry>", from `agentglass web`; a used one is removed, so it stays used
+// across restarts); sessions: run/web.sessions (lines "<sha256 of the cookie> <csrf> <last seen>", 0600), so a restart
+// of agentglass-web does not sign the browser out. Only hashes of tokens and cookies are written.
 export class Auth {
   private tokens = new Map<string, number>(); // hash → expiry
   private used = new Set<string>();
-  readonly sessions = new Map<string, Sess>();
-  constructor(private tokensFile = "", private now: () => number = Date.now) {}
+  readonly sessions = new Map<string, Sess>(); // by the cookie's sha256
+  constructor(private tokensFile = "", private now: () => number = Date.now, private sessionsFile = "") { this.load(); }
   mint(): string { const t = rand(); this.tokens.set(sha256(t), this.now() + TOKEN_MS); return t; }
-  // a token → a session (once); "" when unknown, used or expired
+  // a token → a session (once); null when unknown, used or expired
   exchange(token: string): Sess | null {
     if (!token || token.length > 256) return null;
     const h = sha256(token); if (this.used.has(h)) return null;
     let exp = this.tokens.get(h) ?? 0;
-    if (!exp && this.tokensFile) exp = this.fromFile(h);
+    if (!exp && this.tokensFile) exp = this.fromFile(h, true);
     if (!exp || this.now() > exp) return null;
     this.used.add(h); this.tokens.delete(h);
-    const s: Sess = { id: rand(), csrf: rand(), at: this.now() }; this.sessions.set(s.id, s); return s;
+    const s: Sess = { id: rand(), csrf: rand(), at: this.now() }; this.sessions.set(sha256(s.id), s); this.save(); return s;
   }
-  // run/web.tokens: lines "<sha256 hex> <expiry ms>" written by `agentglass web` (0600, hashes only)
-  private fromFile(h: string): number {
+  // run/web.tokens: the line of h (its expiry), removed when take (single use, also for the next process)
+  private fromFile(h: string, take: boolean): number {
     let text = ""; try { text = readFileSync(this.tokensFile, "utf8"); } catch { return 0; }
-    for (const l of text.split("\n")) { const [x, e] = l.trim().split(/\s+/); if (x && same(x, h)) return Number(e) || 0; }
-    return 0;
+    let exp = 0; const keep: string[] = [];
+    for (const l of text.split("\n")) { const [x, e] = l.trim().split(/\s+/); if (!x) continue; if (same(x, h)) exp = Number(e) || 0; else keep.push(l.trim()); }
+    if (exp && take) try { writeFileSync(this.tokensFile, keep.length ? keep.join("\n") + "\n" : "", { mode: 0o600 }); } catch { /* read-only run dir: in memory only */ }
+    return exp;
+  }
+  private load(): void {
+    if (!this.sessionsFile) return;
+    let text = ""; try { text = readFileSync(this.sessionsFile, "utf8"); } catch { return; }
+    for (const l of text.split("\n")) { const [h, csrf, at] = l.trim().split(/\s+/); const t = Number(at); if (h && csrf && t && this.now() - t < SESSION_MS) this.sessions.set(h, { id: "", csrf, at: t }); }
+  }
+  private save(): void {
+    if (!this.sessionsFile) return;
+    const ls: string[] = []; for (const [h, s] of this.sessions) if (this.now() - s.at < SESSION_MS) ls.push(h + " " + s.csrf + " " + s.at);
+    try { writeFileSync(this.sessionsFile, ls.join("\n") + "\n", { mode: 0o600 }); chmodSync(this.sessionsFile, 0o600); } catch { /* in memory only */ }
   }
   session(cookie: string | null): Sess | null {
     const m = /(?:^|;\s*)agw=([A-Za-z0-9_-]+)/.exec(cookie ?? ""); if (!m) return null;
-    for (const [id, s] of this.sessions) if (same(id, m[1]!)) return s;
-    return null;
+    const s = this.sessions.get(sha256(m[1]!)); if (!s || this.now() - s.at >= SESSION_MS) return null;
+    if (this.now() - s.at > 3600000) { s.at = this.now(); this.save(); } // sliding: last seen, written at most hourly
+    return s;
   }
 }
 // the names this server answers to: loopback always; bound to all interfaces (--host 0.0.0.0 / ::) also this machine's

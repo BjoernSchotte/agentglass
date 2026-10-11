@@ -3,7 +3,7 @@
 // (fallback, Last-Event-ID resume). The only data source is the serve child (Upstream); web.log lines carry method,
 // path without query, status and time — never tokens, cookies or values.
 import type { Server, ServerWebSocket } from "bun";
-import { Auth, hostOk, originOk, namesOf, same, rand } from "./auth.ts";
+import { Auth, hostOk, originOk, namesOf, same, rand, SESSION_MS } from "./auth.ts";
 import { Upstream, type Ev, type Obj, type Reply, type Listener } from "./stdio.ts";
 import { BODY_MAX, FRAME_MAX, STREAMS_MAX, REQ_PER_S, QUEUE_MAX, HB_MS, Rate } from "./limits.ts";
 
@@ -92,7 +92,7 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
     if (u.pathname === "/api/v1/session" && req.method === "POST") {
       const s = o.auth.exchange(typeof body.token === "string" ? body.token : "");
       if (!s) return fail(401, "unauthorized", "the link was used or expired: run agentglass web again");
-      return json({ csrf: s.csrf }, 200, { "Set-Cookie": "agw=" + s.id + "; HttpOnly; SameSite=Strict; Path=/" });
+      return json({ csrf: s.csrf }, 200, { "Set-Cookie": "agw=" + s.id + "; HttpOnly; SameSite=Strict; Path=/; Max-Age=" + String(SESSION_MS / 1000) });
     }
     const s = o.auth.session(req.headers.get("cookie"));
     if (!s) return fail(401, "unauthorized", "no session: open the link agentglass web printed");

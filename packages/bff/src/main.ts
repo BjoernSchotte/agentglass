@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const up = new Upstream(spawnServe(bin, a.redact ? ["--redact"] : []));
   try { await up.start(); } catch (e) { die(String((e as Error).message), 1); }
   const tokens = a.runDir ? join(a.runDir, "web.tokens") : "";
-  const auth = new Auth(tokens);
+  const auth = new Auth(tokens, Date.now, a.runDir ? join(a.runDir, "web.sessions") : "");
   const log = a.log ? (l: string) => { try { if (!existsSync(a.log)) { mkdirSync(dirname(a.log), { recursive: true, mode: 0o700 }); writeFileSync(a.log, "", { mode: 0o600 }); } appendFileSync(a.log, l + "\n"); } catch { /* a log problem never stops the server */ } } : undefined;
   const wide = a.host === "0.0.0.0" || a.host === "::";
   const names = namesOf(a.host, networkInterfaces(), hostname());

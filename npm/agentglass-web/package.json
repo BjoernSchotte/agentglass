@@ -1,0 +1,17 @@
+{
+  "name": "agentglass-web",
+  "version": "0.0.0",
+  "description": "Web UI for agentglass: your coding agents' sessions live in the browser (loopback, one-time links)",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/BjoernSchotte/agentglass#web-ui",
+  "repository": { "type": "git", "url": "git+https://github.com/BjoernSchotte/agentglass.git" },
+  "bin": { "agentglass-web": "bin/agentglass-web.js" },
+  "files": ["bin/agentglass-web.js", "README.md"],
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {
+    "agentglass-web-linux-x64": "0.0.0",
+    "agentglass-web-linux-arm64": "0.0.0",
+    "agentglass-web-darwin-arm64": "0.0.0",
+    "agentglass-web-darwin-x64-baseline": "0.0.0"
+  }
+}

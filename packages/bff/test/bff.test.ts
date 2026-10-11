@@ -1,7 +1,7 @@
 // agentglass-web (local-web-api W4): auth boundary, Host/Origin/CSRF, limits, shared subscriptions, slow clients,
 // headers and logs — an in-process server on 127.0.0.1:0 over a fake serve child
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { Auth, namesOf, hostOk, originOk } from "../src/auth.ts";
+import { Auth, namesOf, hostOk, originOk, sha256 } from "../src/auth.ts";
 import { Upstream } from "../src/stdio.ts";
 import { startServer, HEADERS } from "../src/http.ts";
 import { fake, type Fake } from "./fake.ts";
@@ -39,9 +39,22 @@ test("token exchange: cookie flags, single use, expiry after 10 min", async () =
   const post = (tok: string) => fetch(base + "/api/v1/session", { method: "POST", headers: { ...origin(), "Content-Type": "application/json" }, body: JSON.stringify({ token: tok }) });
   const r = await post(t); expect(r.status).toBe(200);
   const c = r.headers.get("set-cookie") ?? "";
-  expect(c).toContain("HttpOnly"); expect(c).toContain("SameSite=Strict"); expect(c).toContain("Path=/");
+  expect(c).toContain("HttpOnly"); expect(c).toContain("SameSite=Strict"); expect(c).toContain("Path=/"); expect(c).toContain("Max-Age=2592000");
   expect((await post(t)).status).toBe(401);
   const t2 = auth.mint(); now += 601_000; expect((await post(t2)).status).toBe(401);
+});
+test("a restart keeps the browser signed in; a used token stays used; files hold hashes only", () => {
+  const dir = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agw-auth-")); const fs = require("node:fs");
+  const tf = dir + "/web.tokens", sf = dir + "/web.sessions"; const t0 = Date.now();
+  const tok = "tokenFromTheLauncher123"; fs.writeFileSync(tf, sha256(tok) + " " + (t0 + 600_000) + "\n");
+  const a = new Auth(tf, () => t0, sf); const s = a.exchange(tok)!; expect(s).not.toBeNull();
+  const files = fs.readFileSync(tf, "utf8") + fs.readFileSync(sf, "utf8");
+  expect(files).not.toContain(s.id); expect(files).not.toContain(tok); expect(fs.statSync(sf).mode & 0o777).toBe(0o600);
+  const b = new Auth(tf, () => t0 + 1000, sf); // the next process
+  expect(b.session("agw=" + s.id)?.csrf).toBe(s.csrf);
+  expect(b.exchange(tok)).toBeNull();
+  const c = new Auth(tf, () => t0 + 31 * 86400000, sf); expect(c.session("agw=" + s.id)).toBeNull(); // 30 days unused: gone
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 test("GET /api/v1/session: the cookie's CSRF token after a reload; none without a cookie", async () => {
   const { cookie, csrf } = await login();
