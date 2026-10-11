@@ -293,7 +293,7 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
 export function untilKey(v: string): string {
   if (v === "today") return todayKey();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return "";
-  const t = Date.parse(v + "T12:00:00"); return Number.isFinite(t) && dayKey(new Date(t)) === v ? v : "";
+  return midnightOf(v) >= 0 ? v : ""; // a real day: no Feb 30
 }
 function sessKey(s: Sess, m: Map<string, Sess>): string { const k = s.h + ":" + s.id; m.set(k, s); return k; }
 // ── cost rows ────────────────────────────────────────────────────────────────
