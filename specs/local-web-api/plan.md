@@ -261,7 +261,10 @@ calls and subagents as rows of spans; interval index for hit-testing, level-of-d
 canvas for hover/selection, HiDPI, wheel-zoom around the cursor, drag-pan, box-select (Shift-drag) → the selected
 spans listed under the canvas, `[`/`]` previous/next span, minimap; layout in a Web Worker (OffscreenCanvas where
 available). Playwright: a 50 k-span synthetic graph renders, zooms and box-selects; p95 frame ≤ 16.7 ms during a
-scripted pan.
+scripted pan. *(2026-10-11, ruling: no Web Worker — the index builds in 7.4 ms for 50 k spans and a full-width frame's LOD in
+1.1 ms on the main thread (model test); a worker would add a copy of the columns and a message round trip for
+nothing. Measured: p95 16.8 ms over a 120-frame pan in headless Chromium, i.e. no dropped frame; a real 26 k-span
+session with 192 subagents opens and pans smoothly.)*
 
 **W9.3 ECharts (6.1.0, modular, lazy chunk).** Stats: hour × weekday heatmap of cost (`cost --by hour`: weekday ×
 hour keys from the ledger's per-day hour costs `Day.hc` — nothing new indexed); Wait: p50/p95 distribution per command
