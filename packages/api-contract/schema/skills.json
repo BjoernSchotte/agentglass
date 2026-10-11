@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skills",
+  "title": "Skills",
+  "description": "skills.get: the `agentglass skills --json` object plus pending, at",
+  "type": "object",
+  "required": [
+    "period",
+    "rows",
+    "hidden",
+    "advice",
+    "notes",
+    "pending",
+    "at"
+  ],
+  "properties": {
+    "period": {
+      "enum": [
+        "today",
+        "7d",
+        "30d",
+        "all"
+      ]
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "loadsUser",
+          "loadsModel",
+          "loadsCompact",
+          "sessions",
+          "sizeP50",
+          "load",
+          "carry",
+          "tail",
+          "usd",
+          "carryUsd",
+          "tailUsd",
+          "perSess",
+          "share",
+          "tier",
+          "hashes",
+          "scope",
+          "unpriced"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "the skill; \"(hidden)\" sums the hidden ones"
+          },
+          "loadsUser": {
+            "type": "integer"
+          },
+          "loadsModel": {
+            "type": "integer"
+          },
+          "loadsCompact": {
+            "type": "integer"
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "sizeP50": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "median loaded size in tokens, null when unknown"
+          },
+          "load": {
+            "type": "number",
+            "description": "tokens of the load requests"
+          },
+          "carry": {
+            "type": "number",
+            "description": "tokens carried in later requests"
+          },
+          "tail": {
+            "type": "number",
+            "description": "carry after the skill's turn"
+          },
+          "usd": {
+            "type": "number"
+          },
+          "carryUsd": {
+            "type": "number"
+          },
+          "tailUsd": {
+            "type": "number"
+          },
+          "perSess": {
+            "type": "number"
+          },
+          "share": {
+            "type": "number",
+            "description": "share of the period's request tokens (0–1)"
+          },
+          "tier": {
+            "type": "string",
+            "description": "exact, ≈ (inferred or cut) or ? (unknown size, not priced)"
+          },
+          "hashes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "type": "string"
+          },
+          "unpriced": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "integer",
+      "description": "how many skills the (hidden) row sums"
+    },
+    "advice": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "skill",
+          "pair",
+          "severityUsd",
+          "basisDays",
+          "evidence",
+          "suggestion",
+          "sessions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "A1–A10"
+          },
+          "skill": {
+            "type": "string"
+          },
+          "pair": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severityUsd": {
+            "type": "number"
+          },
+          "basisDays": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "suggestion": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "notes": {
+      "type": "string"
+    },
+    "pending": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "logs of the period the background index has not counted to their end yet"
+    },
+    "at": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

@@ -10,13 +10,14 @@ import type { Sess } from "../../model/types.ts";
 import { ledger, indexing, unread, LAZY, accOf } from "./ledger.ts";
 import { REDACT } from "../redact-on.ts";
 import { type Acc, L } from "./record.ts";
+import { newRows } from "./rows.ts";
 import { ROWS } from "./facts.ts";
 import { pricesSig, kiroRate } from "./pricing.ts";
 import { repriceAll, PRICED } from "./repricer.ts";
 import { isKiroLog } from "../../harness/kiro.ts";
 import { VERSION, readable, num, accOut, accIn, rlOut, rlIn, skStale, skSplitStale, SK_SPLIT } from "./codec.ts";
 import { type Head, readCache, writeCache, isTmpOf } from "./cachefile.ts";
-import { CACHE_DIR, CALLS_DIR, CALLS, callCutoff, pathKey, prune, saveCallsX, loadCallsFrom, sweepCalls } from "./callcache.ts";
+import { CACHE_DIR, CALLS_DIR, CALLS, callCutoff, pathKey, prune, saveCallsX, loadCallsFrom, sweepCalls, fileOf } from "./callcache.ts";
 export { accOut, accIn }; // the ledger codec, for checks that round-trip an Acc
 
 // Every run reads a session's calls file only when something asks for its rows (ledger.ts callsOf) or right before the
@@ -104,6 +105,11 @@ function save(): void {
   if (existsSync(OLD)) { try { unlinkSync(OLD); } catch (e) { /* the newer FILE wins at the next load anyway */ } }
 }
 
+LAZY.drop = (path: string, a: Acc): boolean => {
+  if (a.pend.size > 0 || written.get(path) !== a.off || !existsSync(fileOf(CALLS_DIR, path))) return false; // the file is behind (or none): keep them
+  a.rows = newRows(); a.lastCall = -1; unread.add(path);
+  return true;
+};
 LAZY.rows = (path: string, a: Acc): boolean => {
   const rows = loadCallsFrom(CALLS_DIR, path, a);
   if (!rows) { written.delete(path); return false; } // stale or of an older format: the session indexes again, and its next save must write the file

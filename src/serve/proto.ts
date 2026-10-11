@@ -19,6 +19,7 @@ import { alertRows } from "../read/alerts.ts";
 import { type EvRead, TAIL_BYTES, viewFor, evRead, evStep, eventsJson } from "../read/events.ts";
 import { waitStart, waitStep, waitOut } from "../read/wait.ts";
 import { readFleet } from "../read/fleet.ts";
+import { skillsStart, skillsStepR, skillsOut } from "../read/skills.ts";
 import { reposStart, reposStep, reposOut } from "../read/repos.ts";
 import { graphStart, graphStep, graphOut } from "../read/graph.ts";
 import { indexState, indexing } from "../features/usage/ledger.ts";
@@ -155,6 +156,15 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     whenDone("repos\t" + id, (ms: number): boolean => reposStep(r, ms), (): void => { sv.out(answer()); });
     return "";
   }
+  if (m === "skills.get") { // skills --json: per skill loads, carry, tail, cost, share, the top advice; indexed in slices
+    for (const k of ["period", "sort", "harness", "repo", "filter"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    sv.fresh();
+    const r = skillsStart({ period: str(p["period"]), sort: str(p["sort"]), harness: str(p["harness"]), repo: str(p["repo"]), filter: str(p["filter"]), advice: num(p["advice"], 3) }); const e = r.err; if (e) return errL(id, e.code, e.msg, e.hint);
+    const answer = (): string => { const o = skillsOut(r); o["at"] = sv.now(); return okL(id, o); };
+    if (skillsStepR(r, INLINE_MS)) return answer();
+    whenDone("skills\t" + id, (ms: number): boolean => skillsStepR(r, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
   if (m === "graph.get") { // the call graph as columns (no content); read source by source in slices
     const ref = str(p["ref"]); if (!ref) return errL(id, "bad_param", "ref is required", "<harness>:<id>, an id or a unique prefix of 6+ characters");
     const from = num(p["from"], 0); const to = num(p["to"], 0);
@@ -179,7 +189,7 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
   if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, wait.get, alerts.list, fleet.hosts, repos.list, graph.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, wait.get, alerts.list, fleet.hosts, repos.list, skills.get, graph.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
 }
 // team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
 function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {

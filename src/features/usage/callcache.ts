@@ -311,7 +311,7 @@ export function prune(a: Acc, cutoff: number): boolean {
   return true;
 }
 
-function fileOf(dir: string, path: string): string { return join(dir, pathKey(path) + ".json"); }
+export function fileOf(dir: string, path: string): string { return join(dir, pathKey(path) + ".json"); }
 // atomic: a crash mid-write never leaves a torn file (and a torn one would fail its checks anyway)
 export function saveCallsTo(dir: string, path: string, a: Acc): boolean { return saveCallsX(dir, path, a) !== null; }
 // the same; the file's command list (global ids, its local order) or null when it was not written

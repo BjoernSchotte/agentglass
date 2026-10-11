@@ -14,10 +14,10 @@ import { discover } from "../cli.ts";
 import { agentHost, agentScope, visible, cliError, type Scope } from "../agentenv.ts";
 import { opt, helpOf, wantsHelp, addCmd } from "../clihelp.ts";
 import { termCols } from "../format.ts";
-import { cliFilter, cliSelect } from "../query/cli.ts";
-import { accsOf, callsOf } from "../usage/ledger.ts";
+import { type CliFilter, cliFilter, cliSelect } from "../query/cli.ts";
+import { accsOf, callsOf, rowsOf, unread } from "../usage/ledger.ts";
 import { callCutoff } from "../usage/callcache.ts";
-import { type Acc, lastDays, startOfDay, skOf } from "../usage/record.ts";
+import { type Acc, lastDays, startOfDay, skOf, hasSk } from "../usage/record.ts";
 import { LISTING } from "../usage/skillrec.ts";
 import { type SkillRow, type LoadRow, SKILL_FIELDS, skillTable, skillLoads, skillCheck, sizeFill, visRows, sizeShown } from "./model.ts";
 import { advJson, type Advice, type CallStat, type SpanStat, type HostHash, advise, adviseB, adviseHosts, adviseCfg, adviceLines, visAdvice } from "./advise.ts";
@@ -78,9 +78,11 @@ const HELP = `usage: agentglass skills [--period today|7d|30d|all] [--sort ${SOR
 let rc = 0;
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(rc); } }
 function fail(msg: string, hint = ""): never { cliError("usage", msg, hint, 2); }
-interface Opts { json: boolean; period: string; sort: string; harness: string; repo: string; filters: string[]; session: string; check: boolean; pos: string[]; name: string; advice: number }
+export interface Opts { json: boolean; period: string; sort: string; harness: string; repo: string; filters: string[]; session: string; check: boolean; pos: string[]; name: string; advice: number }
+export function newOpts(): Opts { return { json: false, period: "30d", sort: "cost", harness: "", repo: "", filters: [], session: "", check: false, pos: [], name: "", advice: 3 }; }
+export const SKILL_PERIODS = PERIODS; export const SKILL_SORTS = SORTS;
 function opts(args: string[]): Opts {
-  const o: Opts = { json: false, period: "30d", sort: "cost", harness: "", repo: "", filters: [], session: "", check: false, pos: [], name: "", advice: 3 };
+  const o: Opts = newOpts();
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
     const val = (): string => { const v = argVal(args, i); if (v === null) fail(a + " needs a value"); i++; return String(v); };
@@ -108,18 +110,41 @@ function periodLen(p: string): number { return p === "today" ? 1 : p === "7d" ? 
 
 // the period's sessions (top level, in scope and filter), each indexed to its end, with its copies' and subagents' records
 interface Set0 { accs: Acc[]; ids: string[]; tops: Sess[]; bySess: Map<string, Sess> }
-function gather(o: Opts, sc: Scope): Set0 {
-  discover();
+// in steps (serve reads them in slices): skillsPrep picks the sessions, skillsStep indexes them, skillsJson is --json
+// lazy: a log not to index here (serve: one the background index is far behind on, or one indexed already)
+// rows (serve): read the call rows the advice asks for (the families that loaded a skill) inside the slices, not in the
+// answer's one step; loaded: the sessions whose rows were read here (serve gives them back after the answer: dropRows)
+export interface SkPrep { o: Opts; set: Set0; k: number; lazy: (s: Sess) => boolean; rows: boolean; loaded: Sess[] }
+export function skillsPrep(o: Opts, sc: Scope, cf: CliFilter | null, lazy: (s: Sess) => boolean): SkPrep {
   const from = o.period === "all" ? 0 : startOfDay() - (periodLen(o.period) - 1) * 86400000;
   const cands: Sess[] = []; for (const s of sessions.values()) if (s.depth === 0 && s.mtime >= from && (!o.harness || s.h === o.harness)) cands.push(s);
-  const fs = o.filters.slice(); if (o.repo) fs.push("repo is " + JSON.stringify(o.repo));
-  const cf = fs.length ? cliFilter(fs, o.harness, false, false, false) : null;
   const tops: Sess[] = [];
   for (const s of cf ? cliSelect(cf, cands) : cands) if (visible(s, sc)) tops.push(s);
-  const r: Set0 = { accs: [], ids: [], tops, bySess: new Map<string, Sess>() };
-  const add = (s: Sess, id: string): void => { loadHead(s); complete(s); for (const a of accsOf(s)) { r.accs.push(a); r.ids.push(id); } r.bySess.set(s.h + ":" + s.id, s); for (const c of s.subs) add(c, id); };
-  for (const s of tops) add(s, s.h + ":" + s.id);
-  return r;
+  return { o, set: { accs: [], ids: [], tops, bySess: new Map<string, Sess>() }, k: 0, lazy, rows: false, loaded: [] };
+}
+// the filter expressions of --filter and --repo
+export function skillsFilters(o: Opts): string[] { const fs = o.filters.slice(); if (o.repo) fs.push("repo is " + JSON.stringify(o.repo)); return fs; }
+// about budget ms of indexing (0 = to the end); true = done
+export function skillsStep(p: SkPrep, budget: number): boolean {
+  const end = Date.now() + budget; const r = p.set;
+  const fam: Sess[] = []; let sk = false;
+  const add = (s: Sess, id: string): void => { loadHead(s); if (!p.lazy(s)) complete(s); for (const a of accsOf(s)) { r.accs.push(a); r.ids.push(id); if (hasSk(a)) sk = true; } r.bySess.set(s.h + ":" + s.id, s); fam.push(s); for (const c of s.subs) add(c, id); };
+  while (p.k < r.tops.length) {
+    if (budget > 0 && Date.now() >= end) return false;
+    const s = r.tops[p.k] as Sess; p.k++; fam.length = 0; sk = false; add(s, s.h + ":" + s.id);
+    if (p.rows && sk) for (const m of fam) {
+      if (unread.has(m.path)) { rowsOf(m); if (!unread.has(m.path)) p.loaded.push(m); }
+      const cr = callsOf(m); for (let i = 0; i < cr.n; i++) rowFam(cr, i); // the commands' families worked out here, not in the answer's one step
+    }
+  }
+  return true;
+}
+function gather(o: Opts, sc: Scope): Set0 {
+  discover();
+  const fs = skillsFilters(o);
+  const p = skillsPrep(o, sc, fs.length ? cliFilter(fs, o.harness, false, false, false) : null, (s: Sess): boolean => false);
+  skillsStep(p, 0);
+  return p.set;
 }
 
 // ── formatting ──
@@ -195,7 +220,14 @@ export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: M
   for (const s of set.tops) { const v: Sess[] = []; kids(s, v); tree.set(keyOf(s), v); }
   for (let k = 0; k < set.accs.length; k++) { const id = set.ids[k] ?? ""; const a = set.accs[k] as Acc; if (!a.sub) turns.set(id, (turns.get(id) ?? 0) + a.tq); }
   const repoOf = new Map<string, string>(); for (const s of set.tops) { const x = identSync(s); repoOf.set(keyOf(s), x && x.kind !== "none" ? x.key : ""); }
-  const oi = { sessions: [...tree.keys()], repo: (s: string): string => repoOf.get(s) ?? "", turns: (s: string): number => turns.get(s) ?? 0, span: (s: string, t0: number, t1: number): SpanStat => spanOf(tree.get(s) ?? [], t0, t1, cut) };
+  // A9 asks every session's whole span once per skill of its project: worked out once here (it was most of the advice's time)
+  const whole = new Map<string, SpanStat>();
+  const span = (s: string, t0: number, t1: number): SpanStat => {
+    if (t0 > 0 || t1 !== Infinity) return spanOf(tree.get(s) ?? [], t0, t1, cut);
+    let w = whole.get(s); if (!w) { w = spanOf(tree.get(s) ?? [], 0, Infinity, cut); whole.set(s, w); }
+    return w;
+  };
+  const oi = { sessions: [...tree.keys()], repo: (s: string): string => repoOf.get(s) ?? "", turns: (s: string): number => turns.get(s) ?? 0, span };
   const cfg = adviseCfg();
   const all = advise(rows, loads, { days, listed, requests: reqs }, inventory(repos).filter((x: InvSkill) => !harness || x.harness === harness), cfg, calls).concat(adviseB(rows, loads, oi, [], cfg, Date.now()));
   const out = visAdvice(all).concat(adviseHosts(hosts, cfg, Date.now())); // A10: the fleet's versions (names already shown)
@@ -206,13 +238,23 @@ export function periodAdvice(accs: Acc[], ids: string[], tops: Sess[], bySess: M
 function named(o: Opts, shown: string): boolean { return !o.name || shown === o.name; }
 export function rowJson(r: SkillRow): Obj { return { name: r.name, loadsUser: r.loadsUser, loadsModel: r.loadsModel, loadsCompact: r.loadsCompact, sessions: r.sessions, sizeP50: r.sizeP50 < 0 ? null : r.sizeP50, load: r.load, carry: r.carry, tail: r.tail, usd: round(r.usd), carryUsd: round(r.carryUsd), tailUsd: round(r.tailUsd), perSess: round(r.perSess), share: round(r.share), tier: r.tier, hashes: r.hashes, scope: r.scope, unpriced: r.unpriced }; }
 
-function table(o: Opts, set: Set0): void {
+interface Tab { v: { rows: SkillRow[]; hidden: number }; adv: Advice[] }
+function tab(o: Opts, set: Set0): Tab {
   const days = periodDays(o.period);
   const all = skillTable(set.accs, set.ids, days, o.sort);
   const loads = skillLoads(set.accs, set.ids);
   const adv = adviceIn(set, all, loads, o).filter((a: Advice) => named(o, a.skill));
   const v = visRows(all.slice()); if (o.name) v.rows = v.rows.filter((r: SkillRow) => named(o, r.name));
-  if (o.json) { out(JSON.stringify({ period: o.period, rows: v.rows.map(rowJson), hidden: v.hidden, advice: adv.slice(0, o.advice).map(advJson), notes: "tokens are measured request tokens; a skill's share is bounded by its text size and the context growth; ≈ inferred or cut, ? unknown size (not priced); $ at current list prices" })); return; }
+  return { v, adv };
+}
+// the skills --json object
+export function skillsJson(o: Opts, set: Set0): Obj {
+  const t = tab(o, set);
+  return { period: o.period, rows: t.v.rows.map(rowJson), hidden: t.v.hidden, advice: t.adv.slice(0, o.advice).map(advJson), notes: "tokens are measured request tokens; a skill's share is bounded by its text size and the context growth; ≈ inferred or cut, ? unknown size (not priced); $ at current list prices" };
+}
+function table(o: Opts, set: Set0): void {
+  if (o.json) { out(JSON.stringify(skillsJson(o, set))); return; }
+  const t = tab(o, set); const v = t.v; const adv = t.adv;
   if (!v.rows.length) { out("no skill loads " + periodText(o.period) + (set.tops.length ? " (" + String(set.tops.length) + " sessions)" : "") + " — skills are counted from Claude, Codex, pi, OpenCode and Gemini logs"); return; }
   for (const l of tableLines(v.rows, termWidth(), v.hidden)) out(l);
   if (adv.length) { out(""); for (const a of adv.slice(0, 3)) out(adviceLines(a)[0] ?? ""); if (adv.length > 3) out("… " + String(adv.length - 3) + " more: agentglass skills advise"); }
