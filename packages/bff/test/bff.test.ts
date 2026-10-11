@@ -1,0 +1,147 @@
+// agentglass-web (local-web-api W4): auth boundary, Host/Origin/CSRF, limits, shared subscriptions, slow clients,
+// headers and logs — an in-process server on 127.0.0.1:0 over a fake serve child
+import { test, expect, beforeEach, afterEach } from "bun:test";
+import { Auth } from "../src/auth.ts";
+import { Upstream } from "../src/stdio.ts";
+import { startServer, HEADERS } from "../src/http.ts";
+import { fake, type Fake } from "./fake.ts";
+
+let fk: Fake; let up: Upstream; let auth: Auth; let now = 1_000_000; let srv: ReturnType<typeof startServer>; let logs: string[];
+let base = ""; let host = "";
+beforeEach(async () => {
+  fk = fake(); now = Date.now(); up = new Upstream(fk.spawn); await up.start();
+  auth = new Auth("", () => now); logs = [];
+  srv = startServer({ port: 0, up, auth, assets: new Map([["/index.html", { file: new Blob(["<!doctype html><p>ui"]), type: "text/html" }]]), log: (l) => logs.push(l) });
+  base = "http://127.0.0.1:" + srv.port; host = "127.0.0.1:" + srv.port;
+});
+afterEach(() => { srv.stop(); up.stop(); });
+const origin = () => ({ Origin: base });
+async function login(): Promise<{ cookie: string; csrf: string }> {
+  const t = auth.mint();
+  const r = await fetch(base + "/api/v1/session", { method: "POST", headers: { ...origin(), "Content-Type": "application/json" }, body: JSON.stringify({ token: t }) });
+  expect(r.status).toBe(200);
+  const sc = r.headers.get("set-cookie") ?? "";
+  return { cookie: sc.split(";")[0]!, csrf: ((await r.json()) as { csrf: string }).csrf };
+}
+function ws(cookie: string, o = base): Promise<WebSocket> {
+  return new Promise((res, rej) => { const w = new WebSocket(base.replace("http", "ws") + "/api/v1/ws", { headers: { Cookie: cookie, Origin: o } } as never); w.onopen = () => res(w); w.onerror = () => rej(new Error("ws refused")); w.onclose = (e) => rej(new Error("closed " + e.code)); });
+}
+function next(w: WebSocket, f: (m: Record<string, unknown>) => boolean, ms = 3000): Promise<Record<string, unknown>> {
+  return new Promise((res, rej) => { const t = setTimeout(() => rej(new Error("timeout")), ms); w.addEventListener("message", (e) => { const m = JSON.parse(String(e.data)); if (f(m)) { clearTimeout(t); res(m); } }); });
+}
+
+test("no cookie → 401; the static shell needs none", async () => {
+  expect((await fetch(base + "/api/v1/sessions")).status).toBe(401);
+  expect((await fetch(base + "/")).status).toBe(200);
+});
+test("token exchange: cookie flags, single use, expiry after 2 min", async () => {
+  const t = auth.mint();
+  const post = (tok: string) => fetch(base + "/api/v1/session", { method: "POST", headers: { ...origin(), "Content-Type": "application/json" }, body: JSON.stringify({ token: tok }) });
+  const r = await post(t); expect(r.status).toBe(200);
+  const c = r.headers.get("set-cookie") ?? "";
+  expect(c).toContain("HttpOnly"); expect(c).toContain("SameSite=Strict"); expect(c).toContain("Path=/");
+  expect((await post(t)).status).toBe(401);
+  const t2 = auth.mint(); now += 121_000; expect((await post(t2)).status).toBe(401);
+});
+test("the session reads the API through the child", async () => {
+  const { cookie } = await login();
+  const r = await fetch(base + "/api/v1/sessions", { headers: { Cookie: cookie } });
+  expect(r.status).toBe(200); expect(((await r.json()) as { data: unknown[] }).data.length).toBe(1);
+  expect(r.headers.get("cache-control")).toBe("no-store");
+});
+test("wrong Host → 421 (DNS rebinding)", async () => {
+  const r = await fetch(base + "/", { headers: { Host: "evil.example:" + srv.port } });
+  expect(r.status).toBe(421);
+});
+test("POST with a foreign Origin → 403; without X-AG-CSRF → 403", async () => {
+  const { cookie } = await login();
+  expect((await fetch(base + "/api/v1/commands", { method: "POST", headers: { Cookie: cookie, Origin: "http://evil.example" }, body: "{}" })).status).toBe(403);
+  const r = await fetch(base + "/api/v1/commands", { method: "POST", headers: { Cookie: cookie, ...origin() }, body: "{}" });
+  expect(r.status).toBe(403); expect(((await r.json()) as { err: { code: string } }).err.code).toBe("bad_csrf");
+});
+test("WebSocket: no cookie → refused; foreign Origin → refused; with both → request through the child", async () => {
+  await expect(ws("agw=nope")).rejects.toThrow();
+  const { cookie } = await login();
+  await expect(ws(cookie, "http://evil.example")).rejects.toThrow();
+  const r1 = await fetch(base + "/api/v1/ws", { headers: { Cookie: cookie, Origin: "http://evil.example", Upgrade: "websocket", Connection: "Upgrade", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13" } });
+  expect(r1.status).toBe(403);
+  const r0 = await fetch(base + "/api/v1/ws", { headers: { Upgrade: "websocket", Connection: "Upgrade", Origin: base, "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13" } });
+  expect(r0.status).toBe(401);
+  const w = await ws(cookie);
+  const p = next(w, (m) => m.id === 1); w.send(JSON.stringify({ id: 1, m: "meta" }));
+  expect(((await p).ok as { version: string }).version).toBe("fake");
+  const q = next(w, (m) => m.id === 2); w.send(JSON.stringify({ id: 2, m: "shell", p: { argv: ["rm"] } }));
+  expect(((await q).err as { code: string }).code).toBe("unknown_method");
+  w.close();
+});
+test("two tabs subscribing sessions → one upstream sub; a patch reaches both; resume from the last id", async () => {
+  const { cookie } = await login();
+  const a = await ws(cookie); const b = await ws(cookie);
+  const sa = next(a, (m) => m.k === "snapshot"); a.send(JSON.stringify({ id: 1, m: "sub", p: { topic: "sessions" } }));
+  const snap = await sa;
+  const sb = next(b, (m) => m.k === "snapshot"); b.send(JSON.stringify({ id: 1, m: "sub", p: { topic: "sessions" } })); await sb;
+  expect(fk.subs).toBe(1);
+  const pa = next(a, (m) => m.k === "patch"); const pb = next(b, (m) => m.k === "patch"); fk.patch("changed");
+  const got = await pa; await pb;
+  expect(JSON.stringify(got)).toContain("changed");
+  // a third tab resumes after the snapshot: it gets the patch, not a snapshot
+  const c = await ws(cookie);
+  const pc = next(c, (m) => m.k === "patch"); const ack = next(c, (m) => m.id === 9);
+  c.send(JSON.stringify({ id: 9, m: "sub", p: { topic: "sessions", from: snap.ev } }));
+  expect(((await ack).ok as { resumed: boolean }).resumed).toBe(true); await pc;
+  expect(fk.subs).toBe(1);
+  a.close(); b.close(); c.close();
+});
+test("a slow WebSocket client over 2 MB is closed with 1013", async () => {
+  const { cookie } = await login(); const w = await ws(cookie);
+  const s = next(w, (m) => m.k === "snapshot"); w.send(JSON.stringify({ id: 1, m: "sub", p: { topic: "sessions" } })); await s;
+  const closed = new Promise<number>((r) => { w.onclose = (e) => r(e.code); });
+  const big = "x".repeat(256 * 1024);
+  for (let i = 0; i < 80; i++) fk.patch(big); // 20 MB: more than the loopback socket buffers take
+  const code = await Promise.race([closed, Bun.sleep(5000).then(() => -1)]);
+  expect(code).toBe(1013);
+});
+test("body over 64 KB → 413", async () => {
+  const { cookie, csrf } = await login();
+  const r = await fetch(base + "/api/v1/commands", { method: "POST", headers: { Cookie: cookie, ...origin(), "X-AG-CSRF": csrf }, body: "x".repeat(65 * 1024) });
+  expect(r.status).toBe(413);
+});
+test("60 requests in a second → 429", async () => {
+  const { cookie } = await login();
+  const rs = await Promise.all(Array.from({ length: 60 }, () => fetch(base + "/api/v1/meta", { headers: { Cookie: cookie } })));
+  expect(rs.some((r) => r.status === 429)).toBe(true);
+});
+test("every response has the security headers and no Access-Control-*", async () => {
+  const { cookie } = await login();
+  for (const r of [await fetch(base + "/"), await fetch(base + "/api/v1/meta", { headers: { Cookie: cookie } }), await fetch(base + "/api/v1/sessions")]) {
+    for (const [k, v] of Object.entries(HEADERS)) expect(r.headers.get(k)).toBe(v);
+    for (const k of r.headers.keys()) expect(k.toLowerCase().startsWith("access-control-")).toBe(false);
+  }
+});
+test("SSE: snapshot then patch with ids", async () => {
+  const { cookie } = await login();
+  const ac = new AbortController();
+  const r = await fetch(base + "/api/v1/stream?topic=sessions", { headers: { Cookie: cookie }, signal: ac.signal });
+  expect(r.headers.get("content-type")).toBe("text/event-stream");
+  const rd = r.body!.getReader(); const dec = new TextDecoder(); let text = "";
+  const until = async (s: string) => { const end = Date.now() + 3000; while (!text.includes(s) && Date.now() < end) { const c = await rd.read(); if (c.done) break; text += dec.decode(c.value); } };
+  await until("event: snapshot"); fk.patch("via sse"); await until("via sse");
+  expect(text).toMatch(/id: e1-\d+\nevent: snapshot/); expect(text).toContain("event: patch");
+  ac.abort();
+});
+test("web.log: method, path, status — no token, cookie or query values", async () => {
+  const t = auth.mint();
+  await fetch(base + "/api/v1/session", { method: "POST", headers: { ...origin() }, body: JSON.stringify({ token: t }) });
+  const { cookie } = await login();
+  await fetch(base + "/api/v1/sessions?filter=secretword", { headers: { Cookie: cookie } });
+  const all = logs.join("\n");
+  expect(all).toContain("GET /api/v1/sessions 200");
+  expect(all).not.toContain(t); expect(all).not.toContain(cookie.split("=")[1]!); expect(all).not.toContain("secretword");
+});
+test("the child dies → restarted, subscriptions come back", async () => {
+  const { cookie } = await login(); const w = await ws(cookie);
+  const s = next(w, (m) => m.k === "snapshot"); w.send(JSON.stringify({ id: 1, m: "sub", p: { topic: "sessions" } })); await s;
+  const again = next(w, (m) => m.k === "snapshot", 3000); fk.crash();
+  await again; expect(fk.started).toBe(2);
+  w.close();
+});
