@@ -130,7 +130,7 @@ writeFileSync(join(pp, "w1.jsonl"), line("w1", webDir, at(6), "mw1", 3000)); tou
 const keyOf = (s: Sess): string => { const id = identSync(s); return id ? id.key : ""; };
 function scope(dayDelta: boolean): SnapScope {
   return { pass: (s: Sess): boolean => keyOf(s) === "git:github.com/acme/api", row: (o: Obj): Obj => { const r: Obj = {}; for (const k of Object.keys(o)) if (k !== "title" && k !== "cwd") r[k] = o[k]; return r; },
-    head: (h: Obj): Obj => { const r: Obj = {}; for (const k of Object.keys(h)) if (k !== "hostName") r[k] = h[k]; r["room"] = "r1"; return r; }, ownAll: false, dayDelta, cost: true, allowance: false };
+    head: (h: Obj): Obj => { const r: Obj = {}; for (const k of Object.keys(h)) if (k !== "hostName") r[k] = h[k]; r["room"] = "r1"; return r; }, ownAll: false, dayDelta, cost: true, allowance: false, noOwn: false };
 }
 function dayList(r: SessRow | undefined): string { const o: string[] = []; if (r) for (const d of r.days ?? []) o.push(d.d); return o.join(","); }
 const sb = buildSnap(7, null, Date.now(), scope(true)); const sl = snapLines(sb.snap); const sq = round(sb.snap);
@@ -162,7 +162,7 @@ ok("dd delta applied = full row applied", daysOf(m1.sessions) === daysOf(m2.sess
 ok("applied rows have no dd", m1.sessions.every((r: SessRow) => !r.dd), "");
 // a scope with ownAll: true keeps the other Claude sessions' ownership rows (a personal team's room "all")
 {
-  const all = buildSnap(7, null, Date.now(), { pass: (s: Sess): boolean => true, row: (o: Obj): Obj => o, head: (h: Obj): Obj => h, ownAll: true, dayDelta: false, cost: false, allowance: true });
+  const all = buildSnap(7, null, Date.now(), { pass: (s: Sess): boolean => true, row: (o: Obj): Obj => o, head: (h: Obj): Obj => h, ownAll: true, dayDelta: false, cost: false, allowance: true, noOwn: false });
   ok("scope ownAll + pass all: same sessions as no scope", keys(round(all.snap)) === keys(round(buildSnap(7, null, Date.now()).snap)), keys(round(all.snap)));
 }
 
