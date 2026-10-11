@@ -52,10 +52,14 @@ class AgentglassWeb < Formula
     assert_match version.to_s, shell_output("#{bin}/agentglass-web --version")
     # a real start on loopback with the agentglass it depends on (an empty HOME: no sessions), then the page
     port = free_port
-    pid = spawn bin/"agentglass-web", "--agentglass", Formula["bjoernschotte/tap/agentglass"].opt_bin/"agentglass",
+    pid = spawn bin/"agentglass-web", "--agentglass", formula_opt_bin("bjoernschotte/tap/agentglass")/"agentglass",
                 "--port", port.to_s, out: testpath/"out", err: testpath/"err"
     begin
-      20.times { break if (testpath/"out").exist? && (testpath/"out").read.include?("url"); sleep 0.5 }
+      20.times do
+        break if (testpath/"out").exist? && (testpath/"out").read.include?("url")
+
+        sleep 0.5
+      end
       assert_match "\"port\":#{port}", (testpath/"out").read
       assert_match "agentglass", shell_output("curl -fsS http://127.0.0.1:#{port}/")
     ensure

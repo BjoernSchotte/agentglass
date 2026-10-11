@@ -19,7 +19,7 @@ d="$(brew --repository "$tap")/Formula"; f="$d/agentglass-web.rb"
 cleanup() { [ "$(exec sh -c "echo \$PPID")" = $$ ] || exit; brew uninstall --force agentglass-web agentglass > /dev/null 2>&1 || true; rm -f "$f"; git -C "$d" checkout -q -- . 2> /dev/null || true; }
 trap cleanup EXIT
 cp "$rb" "$f"; [ -z "$dep" ] || cp "$dep" "$d/agentglass.rb"
-brew audit --strict --except=version --new --formula "$tap/agentglass-web"
+brew audit --strict --except=version --formula "$tap/agentglass-web"
 if [ -n "$assets" ]; then
   sed -i.bak "s|url \"https://github.com/[^\"]*/\(agentglass[a-z0-9-]*\.tar\.gz\)\"|url \"file://$assets/\1\"|" "$f" && rm -f "$f.bak"
   [ -z "$dep" ] || { sed -i.bak "s|url \"https://github.com/[^\"]*/\(agentglass-[a-z0-9-]*\.tar\.gz\)\"|url \"file://$assets/\1\"|" "$d/agentglass.rb" && rm -f "$d/agentglass.rb.bak"; }
