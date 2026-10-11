@@ -238,6 +238,47 @@ engine's state: on the 3,400-session reference history main idles at 223 MB subs
 - [ ] **Step 1: Failing tests:** budget check per route chunk (≤ 80 KB + viz ≤ 250 KB gzip); a 50 k-span synthetic call graph renders, zooms around the cursor and box-selects (Playwright, a frame-time probe: p95 ≤ 16.7 ms during a scripted pan); brushing a time range on one chart filters the table of the same route; reduced motion disables transitions. Expected: FAIL.
 - [ ] **Step 2: Implement** per spec section 12, one component per commit, each an imperative wrapper with cleanup (StrictMode test: mount → unmount → mount leaves one canvas/WebGL context): `TimeSeries` (uPlot, `cursor.sync`), `Heatmap`/`Bars`/`Distribution`/`Sankey`/`Calendar` (ECharts modular, lazy chunk, `echarts.connect`), `Timeline` (custom Canvas2D: interval index, LOD merge, overlay, HiDPI, worker layout, minimap, box-select, `[`/`]`), `Graph` (sigma 4 + graphology, FA2 in a worker, WebGL2 check → list fallback), `Diagram` (@xyflow/react + dagre, never in `<Activity>`), `DataTable` (TanStack Table v9 + Virtual, `"use no memo"`); each chart with a text summary and "view as table". **Step 3: Run.** **Step 4: Commit** `feat(viz): …` per component; S3b PR.
 
+
+#### W9 breakdown (2026-10-11, before implementation)
+
+One branch `feat/web-viz` (on W8.5), one PR per sub-slice; each lands with its data, its component in `packages/viz`, its
+use in a page and its tests. A library is added (exact pin) by the slice that first draws with it — none unused in
+between. Order by value; each slice keeps the shell ≤ 160 KB and every route chunk within its budget.
+
+**W9.0 Foundation.** Route-level code splitting (every page a lazy chunk; the shell keeps Layout, Sessions, the live
+socket and the palette), `scripts/size.mjs` budgets per chunk (route ≤ 80 KB, viz ≤ 250 KB gzip) and a failing test
+first; `packages/viz` (workspace package) with `ChartFrame` (title, text summary min/max/p50/p95, "view as table"
+toggle, keyboard focus) and `resolveTokens()` in `packages/ui` (oklch → rgb through a 1×1 canvas, re-read on a theme
+change; vitest: every token resolves in both themes); reduced motion honoured.
+
+**W9.1 TimeSeries (uPlot 1.6.32) on Stats.** Cost and tokens per day over the period (`cost.get {by: day}` — exists),
+stacked by billing mode where known; drag selects a range → `?from=&to=` in the URL → the By-harness/By-model tables and
+the model drill-down use that range (`since` + a new `until`: `cost --until YYYY-MM-DD`). Synced cursors across the
+two series (`cursor.sync`). Summary and table view.
+
+**W9.2 Timeline (custom Canvas2D) in the session drawer.** A "Timeline" tab over `graph.get` columns: turns, tool
+calls and subagents as rows of spans; interval index for hit-testing, level-of-detail merge of sub-pixel spans, overlay
+canvas for hover/selection, HiDPI, wheel-zoom around the cursor, drag-pan, box-select (Shift-drag) → the selected
+spans listed under the canvas, `[`/`]` previous/next span, minimap; layout in a Web Worker (OffscreenCanvas where
+available). Playwright: a 50 k-span synthetic graph renders, zooms and box-selects; p95 frame ≤ 16.7 ms during a
+scripted pan.
+
+**W9.3 ECharts (6.1.0, modular, lazy chunk).** Stats: hour × weekday heatmap of cost (`cost --by hour`: weekday ×
+hour keys from the ledger's per-day hour costs `Day.hc` — nothing new indexed); Wait: p50/p95 distribution per command
+family (boxplot from the wait rows); Skills: carry vs tail bars per skill. `echarts.connect` within a route; theme
+through `resolveTokens()`; `aria` decals.
+
+**W9.4 Diagram (@xyflow/react 12.12.0 + dagre) in the session drawer.** The agent → subagent tree (`sessions.get`
+subagents) with kind, cost and duration per node; click opens the subagent's drawer. Never inside `<Activity>`.
+
+**W9.5 DataTable (TanStack Table v9 + Virtual) for Sessions.** The Sessions list virtualised (100 k rows), column
+resize, sticky header, the existing sort and filter; `"use no memo"`.
+
+**W9.6 Graph (sigma 4 + graphology, ForceAtlas2 in a worker).** Skills co-loaded (pairs from the skill loads per
+turn: a `skills.get` `pairs` field) and MCP servers ↔ repos; WebGL2 check → list fallback. Last: the newest library
+(sigma 4 shipped 2026-10-08) gets the most time to settle.
+
+
 ### Task W10: Sharing and activity in the web (S4)
 
 **Files:** `packages/web/src/routes/team/share.tsx` (What I share), `activity.tsx`; read model `team.share` (my policy per room: repos, level, since, paused, last publish), `team.preview {room}` (the consent screen data and dry-run lines).

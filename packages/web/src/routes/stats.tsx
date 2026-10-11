@@ -11,14 +11,8 @@ import type { Cost, CostRows } from "@agentglass/api-contract";
 import { Button, Kbd, cn } from "@agentglass/ui";
 import { useLive, useNow, ago } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
+import { type StatsSearch, STATS_PERIODS as PERIODS } from "./search.ts";
 
-export interface StatsSearch { p?: string; f?: string; model?: string; sort?: string; proj?: string }
-const PERIODS: [string, string, string][] = [["d", "today", "today"], ["w", "7 days", "7d"], ["m", "this month", ""]];
-export function validateStats(s: Record<string, unknown>): StatsSearch {
-  const o: StatsSearch = {}; if (typeof s.p === "string" && PERIODS.some(([k]) => k === s.p)) o.p = s.p; if (typeof s.f === "string" && s.f) o.f = s.f;
-  if (typeof s.model === "string" && s.model) o.model = s.model; if (s.sort === "cache") o.sort = "cache"; if (typeof s.proj === "string") o.proj = s.proj;
-  return o;
-}
 // the period's since for cost.get: this month = its first day (local), as the TUI counts a month
 export function sinceOf(p: string, now = new Date()): string {
   const x = PERIODS.find(([k]) => k === p); if (x && x[2]) return x[2];
