@@ -23,10 +23,11 @@ import teamActivity from "../schema/team-activity.json" with { type: "json" };
 import teamReport from "../schema/team-report.json" with { type: "json" };
 import teamSessions from "../schema/team-sessions.json" with { type: "json" };
 import teamStatus from "../schema/team-status.json" with { type: "json" };
+import waitSchema from "../schema/wait.json" with { type: "json" };
 import topicPage from "../schema/topic-page.json" with { type: "json" };
 import presenceRow from "../schema/presence-row.json" with { type: "json" };
 
-export const SCHEMAS = { "alert-row": alertRow, "alerts-list": alertsList, cost, "cost-rows": costRows, "events-list": eventsList, error, event, hello, meta, page, patch, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow };
+export const SCHEMAS = { "alert-row": alertRow, "alerts-list": alertsList, cost, "cost-rows": costRows, "events-list": eventsList, error, event, hello, meta, page, patch, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow, wait: waitSchema };
 export type SchemaName = keyof typeof SCHEMAS;
 let ajv: Ajv2020 | null = null;
 function compiled(): Ajv2020 {

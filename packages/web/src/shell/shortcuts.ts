@@ -6,6 +6,7 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: "/", label: "Filter (the TUI's filter language)", group: "List" },
   { keys: "g s", label: "Go to Sessions", group: "Navigation" },
   { keys: "g c", label: "Go to Stats (costs)", group: "Navigation" },
+  { keys: "g w", label: "Go to Wait", group: "Navigation" },
   { keys: "g a", label: "Go to Alerts", group: "Navigation" },
   { keys: "g t", label: "Go to Team", group: "Navigation" },
   { keys: "g ,", label: "Go to Settings", group: "Navigation" },
@@ -22,6 +23,7 @@ export interface Section { id: string; label: string; to: string; key: string; t
 export const SECTIONS: Section[] = [
   { id: "sessions", label: "Sessions", to: "/sessions", key: "s" },
   { id: "stats", label: "Stats", to: "/stats", key: "c" },
+  { id: "wait", label: "Wait", to: "/wait", key: "w" },
   { id: "alerts", label: "Alerts", to: "/alerts", key: "a" },
   { id: "team", label: "Team", to: "/team", key: "t", team: true },
   { id: "settings", label: "Settings", to: "/settings", key: "," },

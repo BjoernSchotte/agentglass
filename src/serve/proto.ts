@@ -17,6 +17,7 @@ import { trimIdle } from "../platform/heap.ts";
 import { readCost } from "../read/cost.ts";
 import { alertRows } from "../read/alerts.ts";
 import { type EvRead, TAIL_BYTES, viewFor, evRead, evStep, eventsJson } from "../read/events.ts";
+import { waitStart, waitStep, waitOut } from "../read/wait.ts";
 import { indexState, indexing } from "../features/usage/ledger.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
@@ -132,6 +133,16 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     whenDone("events\t" + id, (ms: number): boolean => evStep(r, ms), (): void => { sv.out(answer()); });
     return "";
   }
+  if (m === "wait.get") { // wait --json: the report runs in slices (later requests are not held), answered when done
+    for (const k of ["since", "by", "filter"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    sv.fresh();
+    const w = waitStart({ since: str(p["since"]) || "7d", by: str(p["by"]) || "family", filter: str(p["filter"]), limit: Math.floor(num(p["limit"], 20)) }, sv.now());
+    const e = w.err; if (e) return errL(id, e.code, e.msg, e.hint);
+    const answer = (): string => { const o = waitOut(w); o["at"] = sv.now(); return okL(id, o); };
+    if (waitStep(w, INLINE_MS)) return answer();
+    whenDone("wait\t" + id, (ms: number): boolean => waitStep(w, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
   if (m === "alerts.list") { // the alert transitions of this process, newest first; since (ms) and limit (1–1000, 200)
     const since = num(p["since"], 0); const lim = num(p["limit"], LIMIT_DEF);
     if (!(lim >= 1 && lim <= LIMIT_MAX)) return errL(id, "bad_param", "limit must be 1–" + String(LIMIT_MAX), "");
@@ -142,7 +153,7 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
   if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, alerts.list, sub, unsub, team.status, team.report, team.sessions, team.activity");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, wait.get, alerts.list, sub, unsub, team.status, team.report, team.sessions, team.activity");
 }
 // team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
 function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {

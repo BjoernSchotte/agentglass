@@ -88,6 +88,13 @@ test("GET /api/v1/sessions/{ref}/events: ref, filter, preset and limit reach eve
   expect(((await r.json()) as { params: unknown }).params).toEqual({ ref: "claude:a1", preset: "errors", limit: 50 });
 });
 
+test("GET /api/v1/wait: since as text, limit as a number, by and filter reach wait.get", async () => {
+  const { cookie } = await login();
+  const r = await fetch(base + "/api/v1/wait?since=7d&by=kind&limit=10&filter=harness%20is%20claude", { headers: { Cookie: cookie } });
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as { params: unknown }).params).toEqual({ since: "7d", by: "kind", filter: "harness is claude", limit: 10 });
+});
+
 test("--host 0.0.0.0: this machine's addresses and hostname pass, others do not", () => {
   const n = namesOf("0.0.0.0", { eth0: [{ address: "192.168.1.20", family: "IPv4", internal: false }, { address: "fe80::1", family: "IPv6", internal: false }], lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }] }, "box");
   expect(hostOk("192.168.1.20:8080", 8080, n)).toBe(true); expect(hostOk("box.local:8080", 8080, n)).toBe(true); expect(hostOk("localhost:8080", 8080, n)).toBe(true);

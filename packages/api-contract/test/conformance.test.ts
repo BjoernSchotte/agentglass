@@ -38,7 +38,9 @@ run("every answer and event conforms", async () => {
   s.send({ id: 10, m: "cost.get", p: { by: "model", since: "7d" } });
   s.send({ id: 11, m: "alerts.list" });
   s.send({ id: 12, m: "events.list", p: { ref: "aaaa0001" } });
-  for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) ok("response", await s.until(byId(id)));
+  s.send({ id: 13, m: "wait.get", p: { since: "30d" } });
+  for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) ok("response", await s.until(byId(id)));
+  ok("wait", (await s.until(byId(13))).ok);
   ok("events-list", (await s.until(byId(12))).ok);
   ok("alerts-list", (await s.until(byId(11))).ok);
   ok("cost", (await s.until(byId(9))).ok); ok("cost-rows", (await s.until(byId(10))).ok);

@@ -21,7 +21,7 @@ export function fake(): Fake {
         else if (q.m === "meta") ok({ version: "fake", contract: 1, proto: 1, caps: [], readOnly: true, redact: false, harnesses: ["claude"], teams: [] });
         else if (q.m === "sessions.list") ok({ data: [row("hello")], at: Date.now(), gen: 1, next: null });
         else if (q.m === "sessions.get") ok({ ...row("big"), files: Array.from({ length: 3000 }, (_, i) => ({ path: "/w/src/file-" + i + ".ts", add: i, del: 0 })) }); // ~150 KB
-        else if (q.m === "cost.get" || q.m === "alerts.list" || q.m === "events.list") ok({ params: q.p ?? null }); // echoes what reached the child
+        else if (q.m === "cost.get" || q.m === "alerts.list" || q.m === "events.list" || q.m === "wait.get") ok({ params: q.p ?? null }); // echoes what reached the child
         else if (q.m === "sub") { const s = "s" + ++n; open.set(s, 1); f.subs++; ok({ sub: s, resumed: false }); queueMicrotask(() => emit(s, "snapshot", { data: [row("hello")], at: Date.now(), gen: 1, next: null })); }
         else if (q.m === "unsub") { open.delete(String(q.p.sub)); ok({}); }
         else queueMicrotask(() => on(JSON.stringify({ id: q.id, err: { code: "unknown_method", msg: "no " + q.m } })));

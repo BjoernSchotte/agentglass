@@ -12,6 +12,9 @@ A=cccccc01-0000-4000-8000-000000000001; B=cccccc02-0000-4000-8000-000000000002
 day=$(date -u +%Y-%m-%d)
 turn() { printf '{"type":"user","sessionId":"%s","cwd":"/w/srv","timestamp":"%sT00:00:0%s.000Z","message":{"role":"user","content":"%s"}}\n' "$1" "$day" "$2" "$3"; }
 turn "$A" 1 "first serve topic" > "$d/$A.jsonl"; turn "$B" 1 "second serve topic" > "$d/$B.jsonl"
+# B ran a 40 s test today (wait.get)
+printf '{"type":"assistant","sessionId":"%s","cwd":"/w/srv","timestamp":"%sT00:00:03.000Z","message":{"id":"m-b0","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"pnpm test"}}],"usage":{"input_tokens":10,"output_tokens":1}}}\n' "$B" "$day" >> "$d/$B.jsonl"
+printf '{"type":"user","sessionId":"%s","cwd":"/w/srv","timestamp":"%sT00:00:43.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"ok"}]}}\n' "$B" "$day" >> "$d/$B.jsonl"
 # B has priced usage today (cost.get)
 printf '{"type":"assistant","sessionId":"%s","cwd":"/w/srv","timestamp":"%sT00:00:02.000Z","message":{"id":"m-b1","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":120000,"output_tokens":3000}}}\n' "$B" "$day" >> "$d/$B.jsonl"
 # the isolation set: nothing of the developer's agentglass state is read or written
@@ -37,7 +40,7 @@ AGENTGLASS_REDACT=0
 EOF
 run() { env -i $(cat "$t/env") "$t/ag" "$@"; }
 run --json > "$t/golden.json"
-run events "claude:$B" --json > "$t/events.json"; run events "claude:$B" --preset prompts --json > "$t/events-p.json"; run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"
+run events "claude:$B" --json > "$t/events.json"; run events "claude:$B" --preset prompts --json > "$t/events-p.json"; run wait --json > "$t/wait.json"; run wait --by kind --since 1d --json > "$t/wait-k.json"; run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"
 rc=0; run serve > /dev/null 2> "$t/err" || rc=$?
 [ "$rc" = 2 ] || { echo "FAIL serve without --stdio: exit $rc"; cat "$t/err"; exit 1; }
 python3 - "$t" "$d/$A.jsonl" "$A" "$B" << 'PY'
@@ -95,6 +98,18 @@ for i, (pp, code) in enumerate([({"ref": "claude:" + B, "filter": "event.kind is
                                 ({"ref": "claude:ffffffff-0000"}, "not_found"), ({}, "bad_param"), ({"ref": "claude:" + B, "limit": 0}, "bad_param")]):
     e = req(52 + i, "events.list", pp)
     ok("events.list %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
+# wait.get = wait --json (the now block is of its moment; plus pending, at)
+def wOf(x): # the run's own moment: now, the period's end and the previous window's start
+    o = {k: v for k, v in x.items() if k not in ("now", "pending", "at", "previous")}; o["period"] = {k: v for k, v in (o.get("period") or {}).items() if k != "until"}; return o
+w = req(70, "wait.get", {})
+wj = json.load(open(t + "/wait.json"))
+ok("wait.get = wait --json", w and wOf(w["ok"]) == wOf(wj) and w["ok"]["pending"] == 0 and isinstance(w["ok"].get("now"), dict))
+ok("wait.get: the pnpm test row (kind test, heavy)", w and any(r.get("key") == "pnpm test" and r.get("kind") == "test" and r.get("heavy") is True and r.get("calls") == 1 for r in w["ok"]["rows"]))
+wk = req(71, "wait.get", {"by": "kind", "since": "1d"})
+ok("wait.get by kind since 1d = wait --by kind --since 1d", wk and wOf(wk["ok"]) == wOf(json.load(open(t + "/wait-k.json"))))
+for i, (pp, code) in enumerate([({"by": "nope"}, "bad_param"), ({"since": "soon"}, "bad_param"), ({"filter": "tool is"}, "bad_filter"), ({"limit": 0}, "bad_param"), ({"by": 1}, "bad_param")]):
+    e = req(72 + i, "wait.get", pp)
+    ok("wait.get %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
 s = req(3, "sub", {"topic": "sessions"})
 ok("sub " + json.dumps(s), s and s.get("ok", {}).get("sub") == "s1")
 snap = read(lambda x: x.get("sub") == "s1" and x.get("k") == "snapshot", 5)

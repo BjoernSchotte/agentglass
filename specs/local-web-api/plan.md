@@ -180,7 +180,8 @@ kind chips and presets, `[`/`]` previous/next event.
 **W8.4 `wait.get {by?, since?, filter?}` + Wait page.** `wait --json` via the stepwise `stepWait` in slices. Page:
 the now block (running, waiting), rows by family/kind/tool with overlap.
 
-**W8.5 `skills.get {period?, filter?}` + Skills page.** `skills --json` (rows + advice) in slices. Page: table with
+**W8.5 `skills.get {period?, filter?}` + Skills page.** *(2026-10-11: left out of S3a by the user's slice choice —
+W8.4, W8.6, W8.7 — open for a later slice.)* `skills --json` (rows + advice) in slices. Page: table with
 loads, carry, cost share, tier marks, and the advice list.
 
 **W8.6 `fleet.hosts` + Fleet page.** `fleet status --json` from the cached host reports (no ssh pull from serve;

@@ -637,3 +637,91 @@ export interface TopicPage {
   };
   [k: string]: unknown;
 }
+
+/**
+ * wait.get: `agentglass wait --json` (scope: no agent project) plus pending and at
+ */
+export interface Wait {
+  period: {
+    since: string;
+    until: string;
+    days: number;
+  };
+  previous: null | {
+    since: string;
+    until: string;
+  };
+  scope: {
+    filter: string | null;
+    project: string | null;
+    now: string;
+  };
+  retention: {
+    days: number;
+    complete: boolean;
+  };
+  agentTime: {
+    activeMs: number;
+    toolMs: number;
+    userMs: number;
+    modelMs: number;
+    pollingMs: number;
+  };
+  rows: {
+    key: string;
+    kind: string;
+    heavy: boolean;
+    calls: number;
+    timedCalls: number;
+    totalMs: number;
+    share: number;
+    p50Ms: number | null;
+    p95Ms: number | null;
+    maxMs: number | null;
+    errors: number;
+    errorRate: number | null;
+    prevTotalMs: number | null;
+    trend: number | null;
+    agents: number;
+    peak: number | null;
+    peakAt: string | null;
+    atLeast2Ms: number | null;
+    atLeast3Ms: number | null;
+    slowdown: null | {
+      aloneP50Ms: number;
+      overlapP50Ms: number;
+      ratio: number;
+      alone: number;
+      overlapped: number;
+    };
+    hist: number[];
+  }[];
+  heavy: {
+    peak: number;
+    peakAt: string | null;
+    atLeastMs: number[];
+    slowdown: number | null;
+  };
+  now: null | {
+    at: string;
+    host: string;
+    load1: number | null;
+    cpus: number | null;
+    memAvailPct: number | null;
+    running: {
+      session: string;
+      harness: string;
+      family: string;
+      kind: string;
+      heavy: boolean;
+      ageSec: number;
+      rssMb: number | null;
+      bg: boolean;
+    }[];
+    heavyRunning: number;
+  };
+  guard: null | "retention" | "empty";
+  warnings: unknown[];
+  pending: number;
+  at: number;
+}
