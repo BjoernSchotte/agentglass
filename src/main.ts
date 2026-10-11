@@ -52,6 +52,7 @@ import "./mux/attr.ts";
 import "./features/usage/stats.ts";
 import "./features/repos/tab.ts";
 import "./features/wait/tab.ts"; // the 5th tab, after Repos
+import "./features/team/tab.ts"; // the 6th, once a team exists
 import "./features/compare/key.ts"; // before query/ui.ts: completion and the parser see the session key
 import "./features/vcs/view.ts";
 import "./features/query/ui.ts";

@@ -79,7 +79,7 @@ export function buildView(t: TeamState, room: string, now: number, lines: number
   for (const x of m.members) {
     if (x.removedAt) continue;
     const ds: TeamDevice[] = [];
-    for (const d of x.devices) { const dv = devs.get(x.id + "|" + d); const e = dv ?? { id: d, online: false, at: 0, live: 0, attention: 0, stuck: 0 }; e.online = e.at > 0 && now - e.at < ONLINE_MS; ds.push(e); }
+    for (const d of x.devices) { const dv = devs.get(x.id + "|" + d); const e = dv ?? { id: d, online: false, at: 0, live: 0, attention: 0, stuck: 0 }; e.online = (e.at > 0 && now - e.at < ONLINE_MS) || (x.id === t.me.id && d === t.device); ds.push(e); } // this machine is online, shared or not
     let sn = 0; for (const r of v.rows) if (r.member === x.id) sn++;
     v.members.push({ id: x.id, name: names.get(x.id) ?? "", mine: x.id === t.me.id, devices: ds, sessions: sn });
   }
