@@ -41,8 +41,10 @@ run("every answer and event conforms", async () => {
   expect(((await s.until(byId(7))).err as { code: string }).code).toBe("bad_filter");
   expect(((await s.until(byId(8))).err as { code: string }).code).toBe("no_team");
   const snap = await s.until((m) => m.k === "snapshot"); ok("event", snap);
+  for (const r of (snap.d as { data: unknown[] }).data) ok("session", r); // the sessions topic's rows are session rows
   fx.grow("the log grew");
   const patch = await s.until((m) => m.k === "patch"); ok("event", patch);
+  for (const r of (patch.d as { upsert: unknown[] }).upsert) ok("session", r);
   // every message of the run
   for (const m of s.msgs) ok("sub" in m ? "event" : "response", m);
   await s.close();

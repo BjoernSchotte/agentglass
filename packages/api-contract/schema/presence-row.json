@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "presence-row",
+  "title": "PresenceRow",
+  "type": "object",
+  "required": [
+    "key",
+    "id",
+    "name",
+    "mine",
+    "devices",
+    "online",
+    "live",
+    "attention",
+    "stuck",
+    "lastAt"
+  ],
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "mine": {
+      "type": "boolean"
+    },
+    "devices": {
+      "type": "integer"
+    },
+    "online": {
+      "type": "integer"
+    },
+    "live": {
+      "type": "integer"
+    },
+    "attention": {
+      "type": "integer"
+    },
+    "stuck": {
+      "type": "integer"
+    },
+    "lastAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

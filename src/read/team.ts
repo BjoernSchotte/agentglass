@@ -80,3 +80,22 @@ export function activityObj(t: TeamState, since: number, now: number): Obj {
   const o: Obj[] = []; for (const a of activity(t, since, now)) o.push({ at: new Date(a.at).toISOString(), actor: a.actor, kind: a.kind, room: a.room || null, text: a.text });
   return { team: t.id, events: o };
 }
+// subscription rows (serve topics team:<team>/<room> and presence): the same rows as team.sessions, keyed
+// member:device:id; presence: one row per member with devices online, live agents and the newest file's time
+function teamById(id: string): TeamState | null { for (const t of loadTeams()) if (t.id === id) return t; return null; }
+export function teamTopicRows(team: string, room: string, now: number): Obj[] {
+  const t = teamById(team); if (!t) return [];
+  const rows = sessionsObj(t, room, "", 0, now)["rows"] as Obj[];
+  for (const r of rows) { const m = r["member"] as Obj; const d = r["device"] as Obj; r["key"] = String(m["id"]) + ":" + String(d["id"]) + ":" + String(r["id"]); }
+  return rows;
+}
+export function presenceRows(team: string, now: number): Obj[] {
+  const t = teamById(team); if (!t) return [];
+  const v = buildView(t, "", now, 0); const o: Obj[] = [];
+  for (const m of v.members) {
+    let on = 0; let live = 0; let att = 0; let st = 0; let at = 0;
+    for (const d of m.devices) { if (d.online) on++; live += d.live; att += d.attention; st += d.stuck; if (d.at > at) at = d.at; }
+    o.push({ key: m.id, id: m.id, name: m.name, mine: m.mine, devices: m.devices.length, online: on, live, attention: att, stuck: st, lastAt: at ? new Date(at).toISOString() : null });
+  }
+  return o;
+}

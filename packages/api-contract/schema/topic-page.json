@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "topic-page",
+  "title": "TopicPage",
+  "description": "a subscription snapshot: the topic's rows, each with a key (sessions: session rows; team:<team>/<room>: team.sessions rows; presence: presence rows)",
+  "type": "object",
+  "required": [
+    "data",
+    "at",
+    "gen",
+    "next"
+  ],
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "at": {
+      "type": "number"
+    },
+    "gen": {
+      "type": "number"
+    },
+    "next": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

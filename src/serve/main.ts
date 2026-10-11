@@ -21,7 +21,9 @@ import { watched, looker, observeWith, watchStep, forgetSession, ledgerRule } fr
 import { complete as ledgerComplete } from "../features/usage/ledger.ts";
 import { LIVE, collectLive } from "../features/wait/live.ts";
 import { type Srv, newSrv, onLine } from "./proto.ts";
-import { step, beat } from "./subs.ts";
+import { step, beat, teamTopics } from "./subs.ts";
+import { loadTeams } from "../features/team/state.ts";
+import { syncOnce } from "../features/team/sync.ts";
 
 const USAGE = "agentglass serve --stdio [--redact] [--read-only]";
 const HELP = `${USAGE}
@@ -38,7 +40,9 @@ addCmd({ cmd: "serve", usage: USAGE, summary: "the JSON-lines protocol agentglas
 const TICK_MS = 1500; // the watch cadence (H.onWatch while agents are live): a subscriber sees a grown log within ~1.5 s
 const SLOW_MS = 5000; // slow process facts, as the TUI
 const FRESH_MS = 1000; // a request reads state at most this old (no subscription: no cadence, discovery on demand)
-const E = { disc: 0, slow: 0, procs: 0, timer: false, ledAt: new Map<string, number>() };
+// as the TUI's Team tab: publish, fetch, admit — only while a team topic is subscribed (AGENTGLASS_TEAM_SYNC_MS: tests)
+const TEAM_SYNC_MS = Number(process.env["AGENTGLASS_TEAM_SYNC_MS"] ?? "") || 60000;
+const E = { disc: 0, slow: 0, procs: 0, timer: false, ledAt: new Map<string, number>(), teamAt: 0 };
 
 // sync write: a closed reader ends the process quietly; the screen filters run as on every CLI line (--redact scrubs)
 function send(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
@@ -69,7 +73,9 @@ function tick(sv: Srv): void {
   if (now - E.slow >= SLOW_MS) { refreshSlow(); E.slow = now; }
   buildView(); E.disc = now;
   if (pr) flagStep(now); // after a process pass (also when the last agent ended: its flags clear)
-  step(sv.hub, now); beat(sv.hub, now);
+  let team = false;
+  if (teamTopics(sv.hub) && now - E.teamAt >= TEAM_SYNC_MS) { E.teamAt = now; for (const t of loadTeams()) syncOnce(t, now, false); team = true; }
+  step(sv.hub, now, team); beat(sv.hub, now);
   arm(sv);
 }
 function arm(sv: Srv): void { if (E.timer || !sv.hub.subs.size) return; E.timer = true; setTimeout(() => { tick(sv); }, TICK_MS); }

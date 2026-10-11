@@ -8,7 +8,7 @@ import { CONTRACT } from "../features/version.ts";
 import { BUILD } from "../build-info.ts";
 import { REDACT } from "../features/redact-on.ts";
 import { statusObj, reportObj, sessionsObj, activityObj, pickTeam, roomId, BYS } from "../read/team.ts";
-import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach } from "./subs.ts";
+import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
 // hello: a hello was answered; fresh: called before a request that reads the engine (main.ts: discover() when stale)
 export interface Srv { readOnly: boolean; hello: boolean; hub: Hub; now: () => number; out: (line: string) => void; fresh: () => void }
@@ -73,13 +73,16 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   }
   if (m === "sub") {
     const topic = str(p["topic"]);
-    if (topic !== "sessions") return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions");
+    const team = topic === "presence" || topic.startsWith("team:");
+    if (topic !== "sessions" && !team) return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions, team:<team>/<room>, presence");
     const r = sessQ(p); if (r.bad) return errL(id, "bad_param", r.bad, "");
     if (r.q.cursor) return errL(id, "bad_param", "a subscription has no cursor", "");
     if (sv.hub.subs.size >= SUBS_MAX) return errL(id, "too_many", String(SUBS_MAX) + " subscriptions are open", "unsub one first");
+    const tt = team ? teamTopic(topic, str(p["team"])) : { kind: "sessions", team: "", room: "", err: "" };
+    if (tt.err) return errL(id, tt.err.slice(0, tt.err.indexOf(":")), tt.err.slice(tt.err.indexOf(":") + 2), "");
     sv.fresh();
     const now = sv.now();
-    const ot = openTopic(sv.hub, r.q, now); const t = ot.t;
+    const ot = openTopic(sv.hub, r.q, now, tt.kind, tt.team, tt.room); const t = ot.t;
     if (!t) return errL(id, ot.err.startsWith("bad_filter") ? "bad_filter" : ot.err.startsWith("no_team") ? "no_team" : "internal", ot.err, "");
     const a = attach(sv.hub, t, str(p["from"]), now);
     sv.out(okL(id, { sub: a.id, resumed: a.resumed }));

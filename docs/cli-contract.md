@@ -227,7 +227,7 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
 | `meta` | none | `{version, contract, proto, caps[], readOnly, redact, harnesses[], teams[{id, name}]}` |
 | `sessions.list` | `filter` (the filter language: `live is true`, `harness is codex and cost > 1`; a bare word searches title, path, id), `limit` 1–1000 (200), `cursor`, `subagents` bool | `{data: [--json rows], at (ms), gen, next: cursor\|null}` |
 | `sessions.get` | `ref` (required): `<harness>:<id>`, an id or a unique prefix of 6+ characters | the `session <ref>` object (`via` = `"ref"`) |
-| `sub` | `topic`: `sessions`; `filter`, `limit`, `subagents` as `sessions.list`; `from` (an event id) | `{sub, resumed}`, then events |
+| `sub` | `topic`: `sessions` (`filter`, `limit`, `subagents` as `sessions.list`), `team:<team>/<room>` (a team by name or id prefix; the room by name, empty = all rooms) or `presence` (`team`: name or id prefix, empty = the only one); `from` (an event id) | `{sub, resumed}`, then events |
 | `unsub` | `sub` | `{}` |
 | `team.status` | none | `agentglass team --json`: `{teams: [{id, name, mailbox, kind, me, admin, joined, rooms[], members[], pending, problems[]}]}` |
 | `team.report` | `team`, `room`, `member` (a name, an id prefix, `me`), `by` member\|device\|harness\|repo\|room, `period` d\|w\|m | `agentglass team report --json`: `{team, room, period, by, rows[{key, sessions, live, tokens, costUsd, harnesses}], members[], budget, stale[]}` |
@@ -241,6 +241,10 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
   `hb` (no `d`) after 25 s without an event. A row's `key` is `<harness>:<id>` (copies of one session in one list:
   `<harness>:<id>@<path>`); order rows by `updated`, newest first. Patches follow the engine's cadence (1.5 s while
   subscribed; no cadence without subscriptions).
+- **Team topics**: `team:<team>/<room>` rows are `team.sessions` rows with `key` = `<member id>:<device id>:<id>`;
+  `presence` rows are `{key, id, name, mine, devices, online, live, attention, stuck, lastAt}`, one per member. While a team
+  topic is subscribed the process syncs its teams every 60 s (publish, fetch, admit — as the TUI's Team tab) and pushes
+  the rows that changed. Errors as `team.*`: `no_team`, `not_found` (a room).
 - **Resume**: `sub` with `from` = the last event id seen. The process keeps each topic's last 1,000 events (10 minutes):
   inside → the missed events, `resumed: true`; outside, another process (`epoch`) or a topic that was closed meanwhile →
   a `snapshot`, `resumed: false`. A topic closes with its last `unsub`.

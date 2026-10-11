@@ -58,8 +58,25 @@ export interface SessionPage {
 }
 
 export interface ApiPatch {
-  upsert: SessionRow[];
+  upsert: {
+    key: string;
+    [k: string]: unknown;
+  }[];
   remove: string[];
+  [k: string]: unknown;
+}
+
+export interface PresenceRow {
+  key: string;
+  id: string;
+  name: string;
+  mine: boolean;
+  devices: number;
+  online: number;
+  live: number;
+  attention: number;
+  stuck: number;
+  lastAt: string | null;
   [k: string]: unknown;
 }
 
@@ -374,5 +391,19 @@ export interface TeamStatus {
     }[];
     [k: string]: unknown;
   }[];
+  [k: string]: unknown;
+}
+
+/**
+ * a subscription snapshot: the topic's rows, each with a key (sessions: session rows; team:<team>/<room>: team.sessions rows; presence: presence rows)
+ */
+export interface TopicPage {
+  data: {
+    key: string;
+    [k: string]: unknown;
+  }[];
+  at: number;
+  gen: number;
+  next: string | null;
   [k: string]: unknown;
 }

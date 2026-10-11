@@ -1,13 +1,87 @@
-{ "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "event", "title": "ApiEvent", "type": "object",
-  "required": ["sub", "ev", "k"],
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event",
+  "title": "ApiEvent",
+  "type": "object",
+  "required": [
+    "sub",
+    "ev",
+    "k"
+  ],
   "properties": {
-    "sub": { "type": "string" },
-    "ev": { "type": "string", "pattern": "^[^-]+-[0-9]+$", "description": "<epoch>-<seq>: resume with sub {from: ev}" },
-    "k": { "enum": ["snapshot", "patch", "hb"] },
-    "d": { "type": "object" }
+    "sub": {
+      "type": "string"
+    },
+    "ev": {
+      "type": "string",
+      "pattern": "^[^-]+-[0-9]+$",
+      "description": "<epoch>-<seq>: resume with sub {from: ev}"
+    },
+    "k": {
+      "enum": [
+        "snapshot",
+        "patch",
+        "hb"
+      ]
+    },
+    "d": {
+      "type": "object"
+    }
   },
   "allOf": [
-    { "if": { "properties": { "k": { "const": "snapshot" } } }, "then": { "required": ["d"], "properties": { "d": { "$ref": "page" } } } },
-    { "if": { "properties": { "k": { "const": "patch" } } }, "then": { "required": ["d"], "properties": { "d": { "$ref": "patch" } } } },
-    { "if": { "properties": { "k": { "const": "hb" } } }, "then": { "not": { "required": ["d"] } } }
-  ] }
+    {
+      "if": {
+        "properties": {
+          "k": {
+            "const": "snapshot"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "d"
+        ],
+        "properties": {
+          "d": {
+            "$ref": "topic-page"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "k": {
+            "const": "patch"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "d"
+        ],
+        "properties": {
+          "d": {
+            "$ref": "patch"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "k": {
+            "const": "hb"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "d"
+          ]
+        }
+      }
+    }
+  ]
+}
