@@ -23,7 +23,8 @@ import { dirMailbox } from "./mailbox.ts";
 import { publishRoom } from "./publish.ts";
 import { type TeamState, loadTeams } from "./state.ts";
 import { createTeam, makeInvite, readCard, requestJoin, syncOnce, MAX_ROOMS } from "./sync.ts";
-import { statusObj, reportObj, sessionsObj, activityObj, pickTeam as pickTeam_, roomId, BYS } from "../../read/team.ts";
+import { statusObj, reportObj, sessionsObj, activityObj, pickTeam as pickTeam_, roomId, filterErr, BYS, PERIODS } from "../../read/team.ts";
+import { TEAM_KEYS } from "./group.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function flag(a: string[], f: string): boolean { return a.indexOf(f) >= 0; }
@@ -107,13 +108,15 @@ function create(a: string[]): void {
   dir = resolve(dir.startsWith("~/") ? join(HOME, dir.slice(2)) : dir);
   try { if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch (e) { /* createTeam says why */ }
   const level = val(a, "--level") === "titles" ? "titles" : "numbers";
-  const rooms: Room[] = [];
-  for (const r of vals(a, "--room")) { const i = r.indexOf("="); if (i <= 0) cliError("usage", "--room <name>=<pattern>[,<pattern>…]", "--room backend=github.com/acme/api,github.com/acme/web", 2); rooms.push({ id: "", name: r.slice(0, i), scope: list(r.slice(i + 1)), level, budgetUsd: 0, epoch: 1 }); }
+  const rooms: Room[] = []; const bud = new Map<string, number>(); // --budget <room>=<usd a month>
+  for (const b of vals(a, "--budget")) { const i = b.indexOf("="); const usd = Number(b.slice(i + 1)); if (i <= 0 || !(usd > 0)) cliError("usage", "--budget <room>=<usd a month>", "--budget backend=400", 2); bud.set(b.slice(0, i), usd); }
+  for (const r of vals(a, "--room")) { const i = r.indexOf("="); if (i <= 0) cliError("usage", "--room <name>=<pattern>[,<pattern>…]", "--room backend=github.com/acme/api,github.com/acme/web", 2); rooms.push({ id: "", name: r.slice(0, i), scope: list(r.slice(i + 1)), level, budgetUsd: bud.get(r.slice(0, i)) ?? 0, epoch: 1 }); }
   if (!rooms.length) {
-    if (personal) rooms.push({ id: "", name: "all", scope: ["*"], level: "titles", budgetUsd: 0, epoch: 1 });
-    else { discover(); const hv = haveFor(["**"]); const sc: string[] = []; for (const h of hv) if (now - h.since < 30 * 86400000 || true) sc.push(h.repo); if (!sc.length) cliError("usage", "no repo with a git remote here to start a room with", "--room <name>=<pattern>", 2); rooms.push({ id: "", name: "main", scope: sc.slice(0, 50), level, budgetUsd: 0, epoch: 1 }); }
+    if (personal) rooms.push({ id: "", name: "all", scope: ["*"], level: "titles", budgetUsd: bud.get("all") ?? 0, epoch: 1 });
+    else { discover(); const hv = haveFor(["**"]); const sc: string[] = []; for (const h of hv) sc.push(h.repo); if (!sc.length) cliError("usage", "no repo with a git remote here to start a room with", "--room <name>=<pattern>", 2); rooms.push({ id: "", name: "main", scope: sc.slice(0, 50), level, budgetUsd: bud.get("main") ?? 0, epoch: 1 }); }
   }
   if (rooms.length > MAX_ROOMS) cliError("usage", "at most " + String(MAX_ROOMS) + " rooms", "", 2);
+  for (const n of bud.keys()) if (!rooms.some((r: Room) => r.name === n)) cliError("usage", "--budget: no room " + n, "rooms: " + rooms.map((r: Room) => r.name).join(", "), 2);
   const me = val(a, "--name") || process.env["USER"] || "me";
   const c = createTeam(name, dir, rooms, personal, now, me); const t = c.t;
   if (!t) return cliError("mailbox", c.err, "", 5);
@@ -212,16 +215,19 @@ function sync(a: string[]): void {
 
 // ── report, sessions ──
 function room(t: TeamState, a: string[]): string { const r = roomId(t, val(a, "--room")); if (r.err) cliError("not_found", r.err.msg, "", 3); return r.id; }
+function filterOf(a: string[]): string { const f = val(a, "--filter"); const e = filterErr(f); if (e) cliError(e.code, e.msg, e.hint, 2); return f; }
 function report(a: string[]): void {
   const t = pickTeam(a); const by = val(a, "--by") || "member"; const per = val(a, "--period") || "m";
   if (BYS.indexOf(by) < 0) cliError("usage", "--by " + BYS.join("|"), "", 2);
-  const o = reportObj(t, room(t, a), val(a, "--member"), by, per, Date.now());
+  if (PERIODS.indexOf(per) < 0) cliError("usage", "--period " + PERIODS.join("|"), "", 2);
+  const o = reportObj(t, room(t, a), val(a, "--member"), by, per, Date.now(), filterOf(a));
   if (flag(a, "--json")) { out(JSON.stringify(o)); return; }
-  out("team " + (t.priv ? t.priv.name : t.id) + " · by " + by + " · " + (per === "d" ? "today" : per === "w" ? "7 days" : "this month"));
-  for (const g of o["rows"] as Obj[]) out("  " + String(g["key"]).padEnd(20) + "  " + money(num(g["costUsd"])).padStart(9) + "  " + String(g["sessions"]) + " sessions" + (num(g["live"]) ? " · " + String(g["live"]) + " live" : ""));
+  out("team " + (t.priv ? t.priv.name : t.id) + " · by " + by + " · " + (per === "d" ? "today" : per === "w" ? "7 days" : per === "m" ? "this month" : "all kept days"));
+  for (const g of o["rows"] as Obj[]) out("  " + String(g["key"]).padEnd(20) + "  " + money(num(g["costUsd"])).padStart(9) + "  " + String(g["sessions"]) + " sessions" + (num(g["live"]) ? " · " + String(g["live"]) + " live" : "") + (g["costPerCommit"] !== null ? " · " + money(num(g["costPerCommit"])) + "/commit" : ""));
+  for (const b of o["budget"] as Obj[]) out("  " + str(b["room"]) + " budget $" + String(b["usd"]) + "/month: " + money(num(b["spentUsd"])) + " spent · projected " + money(num(b["projectedUsd"])) + " · " + str(b["state"]));
 }
 function sessionsCli(a: string[]): void {
-  const t = pickTeam(a); const o = sessionsObj(t, room(t, a), val(a, "--member"), Number(val(a, "--limit") || "0"), Date.now());
+  const t = pickTeam(a); const o = sessionsObj(t, room(t, a), val(a, "--member"), Number(val(a, "--limit") || "0"), Date.now(), filterOf(a));
   if (flag(a, "--json")) { out(JSON.stringify(o)); return; }
   for (const x of o["rows"] as Obj[]) { const m = obj(x["member"]) ?? {}; const rk = obj(x["repo"]); out(str(x["updated"]).slice(0, 16).split("T").join(" ") + "  " + str(m["name"]).padEnd(12) + "  " + str(x["harness"]).padEnd(8) + "  " + str(x["status"]) + "  " + (str(x["title"]) || (rk ? str(rk["key"]) : ""))); }
 }
@@ -237,13 +243,14 @@ const SUBS = ["create", "invite", "join", "sync", "report", "sessions", "activit
 const JSON_OPT = opt("--json", "", "the result as JSON", "", []);
 const TEAM_OPT = opt("--team", "<t>", "the team (when you are in several)", "", []);
 addCmd({ cmd: "team", usage: "agentglass team [--json]", summary: "your teams: rooms, members online, what you share (private team analytics: sealed, no server)", options: [JSON_OPT], fields: [], group: "cmd" });
-addCmd({ cmd: "team create", usage: "agentglass team create <name> [--dir <path>] [--room <name>=<pattern>[,…]]… [--level numbers|titles] [--personal] [--name <me>]", summary: "a new team in a folder your sync tool shares; prints the first invite", options: [opt("--dir", "<path>", "the shared folder (default: under a detected sync root)", "", []), opt("--room", "<name>=<patterns>", "a room and its repo patterns (* within a segment, ** across)", "", []), opt("--level", "numbers|titles", "what a room shows (titles adds session titles and branches)", "numbers", ["numbers", "titles"]), opt("--personal", "", "a team of one: room all, your other devices join with a device invite", "", []), opt("--name", "<me>", "your display name", "", []), JSON_OPT], fields: [], group: "cmd" });
+addCmd({ cmd: "team create", usage: "agentglass team create <name> [--dir <path>] [--room <name>=<pattern>[,…]]… [--level numbers|titles] [--budget <room>=<usd>]… [--personal] [--name <me>]", summary: "a new team in a folder your sync tool shares; prints the first invite", options: [opt("--dir", "<path>", "the shared folder (default: under a detected sync root)", "", []), opt("--room", "<name>=<patterns>", "a room and its repo patterns (* within a segment, ** across)", "", []), opt("--level", "numbers|titles", "what a room shows (titles adds session titles and branches)", "numbers", ["numbers", "titles"]), opt("--budget", "<room>=<usd>", "a room's monthly budget (the Team tab's budget line, a toast when near or over)", "", []), opt("--personal", "", "a team of one: room all, your other devices join with a device invite", "", []), opt("--name", "<me>", "your display name", "", []), JSON_OPT], fields: [], group: "cmd" });
 addCmd({ cmd: "team invite", usage: "agentglass team invite [--rooms a,b] [--uses N] [--expires 24h] [--device] [--approve]", summary: "an invite code (admins): rooms, uses, expiry; --device joins another device of yours", options: [TEAM_OPT, opt("--rooms", "a,b", "rooms granted (default all)", "", []), opt("--uses", "N", "how many may join with it", "1", []), opt("--expires", "<dur>", "valid for (≤ 30d)", "24h", []), opt("--device", "", "another device of yours", "", []), opt("--approve", "", "an admin admits each request", "", []), JSON_OPT], fields: [], group: "cmd" });
 addCmd({ cmd: "team join", usage: "agentglass team join <code> [--dir <path>] [--name <me>] [--share <room>,…] [--repos <key>…] [--since month|now] [--dry-run] [--yes]", summary: "join with an invite: one consent screen names what leaves; --dry-run prints exactly that plaintext", options: [opt("--dir", "<path>", "the team folder (default: found under your sync roots)", "", []), opt("--name", "<me>", "your display name", "", []), opt("--share", "<rooms>", "rooms to share into (nothing until you pick)", "", []), opt("--repos", "<key>", "only these repos (default: yours in the room's scope)", "", []), opt("--since", "month|now", "history start", "month", ["month", "now"]), opt("--dry-run", "", "print what would leave; join nothing", "", []), opt("--yes", "", "consent without the screen (required in agent mode)", "", []), opt("--wait", "<s>", "wait for an admin to admit", "20", []), JSON_OPT], fields: [], group: "cmd" });
 addCmd({ cmd: "team sync", usage: "agentglass team sync [--json]", summary: "one publish and fetch now (admins also admit, rotate, read leave notices)", options: [TEAM_OPT, JSON_OPT], fields: [], group: "cmd" });
-addCmd({ cmd: "team report", usage: "agentglass team report [--room <r>] [--member <m>] [--by member|device|harness|repo|room] [--period d|w|m]", summary: "the team's cost and sessions per member, device, harness, repo or room", options: [TEAM_OPT, opt("--room", "<r>", "one room", "", []), opt("--member", "<m>", "one member (name, id prefix, me)", "", []), opt("--by", "member|device|harness|repo|room", "grouping", "member", []), opt("--period", "d|w|m", "today, 7 days, this month", "m", []), JSON_OPT], fields: [], group: "cmd" });
+const FILTER_OPT = opt("--filter", "<expr>", "the filter language over shared rows: " + TEAM_KEYS.join(", "), "", []);
+addCmd({ cmd: "team report", usage: "agentglass team report [--room <r>] [--member <m>] [--filter <expr>] [--by member|device|harness|repo|room|skill|model] [--period d|w|m|a]", summary: "the team's cost and sessions per member, device, harness, repo, room, skill or model; room budgets", options: [TEAM_OPT, opt("--room", "<r>", "one room", "", []), opt("--member", "<m>", "one member (name, id prefix, me)", "", []), FILTER_OPT, opt("--by", "member|device|harness|repo|room|skill|model", "grouping", "member", []), opt("--period", "d|w|m|a", "today, 7 days, this month, all kept days", "m", []), JSON_OPT], fields: [], group: "cmd" });
 addCmd({ cmd: "team activity", usage: "agentglass team activity [--since 7d]", summary: "joins, leaves, renames, sharing changes, rooms, key rotations (signed sources; 90 days)", options: [TEAM_OPT, opt("--since", "<dur>", "only this recent", "", []), JSON_OPT], fields: [], group: "cmd" });
-addCmd({ cmd: "team sessions", usage: "agentglass team sessions [--room <r>] [--member <m>] [--limit N]", summary: "the team's sessions as their members shared them (newest first)", options: [TEAM_OPT, opt("--room", "<r>", "one room", "", []), opt("--member", "<m>", "one member", "", []), opt("--limit", "N", "at most N rows", "", []), JSON_OPT], fields: [], group: "cmd" });
+addCmd({ cmd: "team sessions", usage: "agentglass team sessions [--room <r>] [--member <m>] [--filter <expr>] [--limit N]", summary: "the team's sessions as their members shared them (newest first)", options: [TEAM_OPT, opt("--room", "<r>", "one room", "", []), opt("--member", "<m>", "one member", "", []), FILTER_OPT, opt("--limit", "N", "at most N rows", "", []), JSON_OPT], fields: [], group: "cmd" });
 H.cli.unshift((args: string[]): boolean => {
   if (args[0] !== "team") return false;
   const sub = args[1] ?? ""; const name = SUBS.indexOf(sub) >= 0 && sub !== "status" ? "team " + sub : "team";

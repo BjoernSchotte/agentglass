@@ -93,10 +93,12 @@ function usdOf(d: DayRow): number {
   for (const r of d.hx) { const x = Number(r[2] ?? "0"); if (x > 0) u += x; }
   return u;
 }
-// the distinct sessions' cost: today, the last 7 days, this month (USD, as their publishers priced them)
-export function viewCost(v: TeamView): { today: number; week: number; month: number } {
-  const today = dayKey(v.at); const wk = dayKey(v.at - 6 * 86400000); const mo = today.slice(0, 7);
-  let t = 0; let w = 0; let mm = 0;
-  for (const r of v.rows) for (const d of r.days) { const u = usdOf(d); if (d.d === today) t += u; if (d.d >= wk && d.d <= today) w += u; if (d.d.slice(0, 7) === mo) mm += u; }
-  return { today: t, week: w, month: mm };
+// the distinct sessions' cost: today, the last 7 days, this month, every kept day (USD, as their publishers priced them)
+export interface Cost { today: number; week: number; month: number; all: number }
+export function rowsCost(rows: TeamRow[], at: number): Cost {
+  const today = dayKey(at); const wk = dayKey(at - 6 * 86400000); const mo = today.slice(0, 7);
+  let t = 0; let w = 0; let mm = 0; let a = 0;
+  for (const r of rows) for (const d of r.days) { const u = usdOf(d); a += u; if (d.d === today) t += u; if (d.d >= wk && d.d <= today) w += u; if (d.d.slice(0, 7) === mo) mm += u; }
+  return { today: t, week: w, month: mm, all: a };
 }
+export function viewCost(v: TeamView): Cost { return rowsCost(v.rows, v.at); }

@@ -2,14 +2,14 @@
 // contract objects, shared by `agentglass team … --json` and serve --stdio's team.* methods (one builder: the CLI and
 // the protocol answer the same bytes). Names resolve at read time (a rename applies to every row; --redact: fakes).
 // SPDX-License-Identifier: Apache-2.0
-import { type Obj, obj, str } from "../util/json.ts";
+import { type Obj } from "../util/json.ts";
 import { type TeamState, loadTeams } from "../features/team/state.ts";
 import { type MemberPub } from "../features/team/manifest.ts";
-import { type TeamView, type TeamRow, buildView, viewCost } from "../features/team/view.ts";
+import { type TeamView, type TeamRow, buildView } from "../features/team/view.ts";
+import { type RoomBudget, TEAM_KEYS, ctxOf, groupRows, teamFilter, teamMatch, budgets } from "../features/team/group.ts";
 import { activity } from "../features/team/activity.ts";
 
 export interface TeamErr { code: string; msg: string; hint: string }
-function num(v: unknown): number { return typeof v === "number" && Number.isFinite(v) ? v : 0; }
 // the team a request names (id prefix or name; "" = the only one)
 export function pickTeam(want: string): { t: TeamState | null; err: TeamErr | null } {
   const ts = loadTeams();
@@ -44,37 +44,40 @@ export function statusObj(now: number): Obj {
   }
   return { teams: o };
 }
-export const BYS = ["member", "device", "harness", "repo", "room"];
-export function reportObj(t: TeamState, room: string, member: string, by: string, per: string, now: number): Obj {
-  const v = buildView(t, room, now, 0); const groups = new Map<string, Obj>();
-  for (const r of v.rows) {
-    if (!memberIs(v, t, r, member)) continue;
-    const c = viewCost({ team: v.team, room: v.room, at: v.at, members: v.members, rows: [r], skipped: [], truncated: 0 });
-    const usd = per === "d" ? c.today : per === "w" ? c.week : c.month;
-    const rk = obj(r.s["repo"]);
-    const ks: string[] = by === "member" ? [nameOf(v, r.member)] : by === "device" ? [r.device] : by === "harness" ? [str(r.s["harness"])] : by === "repo" ? [rk ? str(rk["key"]) : ""] : r.rooms;
-    for (const k of ks) {
-      let g = groups.get(k); if (!g) { g = { key: k, sessions: 0, live: 0, tokens: 0, costUsd: 0, harnesses: [] as string[] }; groups.set(k, g); }
-      g["sessions"] = num(g["sessions"]) + 1; if (r.s["live"] === true) g["live"] = num(g["live"]) + 1;
-      const tk = obj(r.s["tokens"]); if (tk) g["tokens"] = num(g["tokens"]) + num(tk["in"]) + num(tk["out"]) + num(tk["cacheRead"]) + num(tk["cacheWrite"]);
-      g["costUsd"] = Math.round((num(g["costUsd"]) + usd) * 1e6) / 1e6;
-      const hs = g["harnesses"] as string[]; const h = str(r.s["harness"]); if (h && hs.indexOf(h) < 0) hs.push(h);
-    }
+export { BYS, PERIODS } from "../features/team/group.ts";
+// a filter expression's error as a contract error ("" = none)
+export function filterErr(text: string): TeamErr | null {
+  const f = teamFilter(text); if (!f.err) return null;
+  return { code: "bad_filter", msg: "filter: " + f.err + (f.col >= 0 ? " at column " + String(f.col + 1) : ""), hint: f.col >= 0 ? text + "\n" + " ".repeat(f.col) + "^" : "team keys: " + TEAM_KEYS.join(", ") };
+}
+function pick(t: TeamState, v: TeamView, member: string, filter: string): TeamRow[] {
+  const cx = ctxOf(t, v); const f = teamFilter(filter); const o: TeamRow[] = [];
+  for (const r of v.rows) if (memberIs(v, t, r, member) && teamMatch(f, r, cx)) o.push(r);
+  return o;
+}
+function r6(n: number): number { return Math.round(n * 1e6) / 1e6; }
+function budgetObj(b: RoomBudget): Obj { return { room: b.name, usd: b.usd, spentUsd: r6(b.spent), projectedUsd: r6(b.projected), state: b.state }; }
+export function reportObj(t: TeamState, room: string, member: string, by: string, per: string, now: number, filter = ""): Obj {
+  const v = buildView(t, room, now, 0); const cx = ctxOf(t, v);
+  const rows: Obj[] = [];
+  for (const g of groupRows(v, pick(t, v, member, filter), by, per, cx, true)) {
+    rows.push({ key: by === "repo" ? g.key : g.label, sessions: g.sessions, live: g.live, tokens: g.tokens, costUsd: r6(g.period), unpriced: g.unpriced, commits: g.commits,
+      costPerCommit: g.commits ? r6(g.period / g.commits) : null, skills: g.skills, harnesses: g.harnesses });
   }
-  const rows: Obj[] = []; for (const g of groups.values()) rows.push(g); rows.sort((x: Obj, y: Obj) => num(y["costUsd"]) - num(x["costUsd"]));
   const members: Obj[] = [];
   for (const m of v.members) { let on = false; let at = 0; for (const d of m.devices) { if (d.online) on = true; if (d.at > at) at = d.at; } members.push({ name: m.name, devices: m.devices.length, online: on, lastSyncAt: at ? new Date(at).toISOString() : null }); }
-  return { team: t.id, room: room || null, period: per, by, rows, members, budget: null, stale: [] };
+  const bs: Obj[] = []; for (const b of budgets(t, v, room)) bs.push(budgetObj(b));
+  return { team: t.id, room: room || null, period: per, by, filter: filter || null, rows, members, budget: bs, stale: [] };
 }
-export function sessionsObj(t: TeamState, room: string, member: string, limit: number, now: number): Obj {
+export function sessionsObj(t: TeamState, room: string, member: string, limit: number, now: number, filter = ""): Obj {
   const v = buildView(t, room, now, 0); const rows: Obj[] = [];
-  for (const r of v.rows) {
-    if (!memberIs(v, t, r, member)) continue; if (limit > 0 && rows.length >= limit) break;
+  for (const r of pick(t, v, member, filter)) {
+    if (limit > 0 && rows.length >= limit) break;
     const o: Obj = { member: { id: r.member, name: nameOf(v, r.member) }, device: { id: r.device }, rooms: r.rooms, mine: r.mine };
     for (const k of Object.keys(r.s)) o[k] = r.s[k];
     rows.push(o);
   }
-  return { team: t.id, room: room || null, rows };
+  return { team: t.id, room: room || null, filter: filter || null, rows };
 }
 export function activityObj(t: TeamState, since: number, now: number): Obj {
   const o: Obj[] = []; for (const a of activity(t, since, now)) o.push({ at: new Date(a.at).toISOString(), actor: a.actor, kind: a.kind, room: a.room || null, text: a.text });
