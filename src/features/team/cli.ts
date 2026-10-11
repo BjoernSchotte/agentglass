@@ -23,7 +23,7 @@ import { dirMailbox } from "./mailbox.ts";
 import { publishRoom } from "./publish.ts";
 import { type TeamState, loadTeams } from "./state.ts";
 import { createTeam, makeInvite, readCard, requestJoin, syncOnce, MAX_ROOMS } from "./sync.ts";
-import { type TeamRow, type TeamView, buildView, viewCost } from "./view.ts";
+import { statusObj, reportObj, sessionsObj, activityObj, pickTeam as pickTeam_, roomId, BYS } from "../../read/team.ts";
 
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
 function flag(a: string[], f: string): boolean { return a.indexOf(f) >= 0; }
@@ -57,11 +57,10 @@ function findMailbox(team: string, where: string): string {
   return "";
 }
 function pickTeam(a: string[]): TeamState {
-  const ts = loadTeams(); const want = val(a, "--team");
-  if (!ts.length) cliError("not_found", "no team on this machine", "agentglass team create <name> | agentglass team join <code>", 3);
-  if (!want) { if (ts.length === 1) return ts[0] as TeamState; cliError("usage", "you are in " + String(ts.length) + " teams: name one with --team", ts.map((t: TeamState) => (t.priv ? t.priv.name : t.id)).join(", "), 2); }
-  for (const t of ts) if (t.id.startsWith(want) || (t.priv && t.priv.name === want)) return t;
-  return cliError("not_found", "no team " + want + " here", "agentglass team lists your teams", 3);
+  const r = pickTeam_(val(a, "--team")); const e = r.err;
+  const t = r.t;
+  if (!t || e) { cliError(e ? e.code === "no_team" ? "not_found" : e.code === "bad_param" ? "usage" : e.code : "not_found", e ? e.msg : "no team", e ? e.hint : "", e && e.code === "bad_param" ? 2 : 3); }
+  return t as TeamState;
 }
 
 // ── what this machine has in a room's scope (the consent screen's "you have") ──
@@ -83,21 +82,8 @@ function day(t: number): string { return new Date(t).toISOString().slice(0, 10);
 
 // ── team (status) ──
 function status(a: string[]): void {
-  const ts = loadTeams(); const json = flag(a, "--json"); const now = Date.now();
-  const o: Obj[] = [];
-  for (const t of ts) {
-    const m = t.manifest; const p = t.priv; const v = buildView(t, "", now, 0);
-    let me: MemberPub | null = null; if (m) for (const x of m.members) if (x.id === t.me.id) me = x;
-    const rooms: Obj[] = [];
-    if (p && m) for (const r of p.rooms) {
-      let ep = r.epoch; for (const q of m.rooms) if (q.id === r.id) ep = q.epoch;
-      let sh: Obj | null = null; for (const s of t.policy) if (s.room === r.id) sh = { on: s.on, repos: s.repos, level: s.level, since: s.since, paused: s.paused };
-      rooms.push({ id: r.id, name: r.name, scope: r.scope, level: r.level, epoch: ep, budget: r.budgetUsd || null, share: sh });
-    }
-    const members: Obj[] = []; for (const x of v.members) { let on = false; for (const d of x.devices) if (d.online) on = true; members.push({ id: x.id, name: x.name, devices: x.devices.length, online: on, sessions: x.sessions }); }
-    o.push({ id: t.id, name: p ? p.name : "", mailbox: t.mailbox, kind: t.kind, me: { id: t.me.id, name: t.name, device: t.device }, admin: !!me && me.admin, joined: !!me && !t.req, rooms, members, pending: 0, problems: [] });
-  }
-  if (json) { out(JSON.stringify({ teams: o })); return; }
+  const so = statusObj(Date.now()); const o = so["teams"] as Obj[];
+  if (flag(a, "--json")) { out(JSON.stringify(so)); return; }
   if (!o.length) { out("no team yet: agentglass team create <name> (or team join <code>)"); return; }
   for (const x of o) {
     out(String(x["name"]) + "  (" + String(x["id"]) + ")  " + String(x["mailbox"]));
@@ -225,49 +211,29 @@ function sync(a: string[]): void {
 }
 
 // ── report, sessions ──
-function nameOf(v: TeamView, id: string): string { for (const m of v.members) if (m.id === id) return m.name; return id.slice(0, 8); }
-function memberIs(v: TeamView, t: TeamState, r: TeamRow, want: string): boolean { return !want || (want === "me" ? r.member === t.me.id : nameOf(v, r.member) === want || r.member.startsWith(want)); }
-function roomIs(t: TeamState, want: string): string { if (!want || !t.priv) return ""; for (const r of t.priv.rooms) if (r.name === want || r.id === want) return r.id; cliError("not_found", "no room " + want, "", 3); return ""; }
+function room(t: TeamState, a: string[]): string { const r = roomId(t, val(a, "--room")); if (r.err) cliError("not_found", r.err.msg, "", 3); return r.id; }
 function report(a: string[]): void {
-  const t = pickTeam(a); const now = Date.now(); const by = val(a, "--by") || "member"; const per = val(a, "--period") || "m";
-  if (["member", "device", "harness", "repo", "room"].indexOf(by) < 0) cliError("usage", "--by member|device|harness|repo|room", "", 2);
-  const room = roomIs(t, val(a, "--room")); const v = buildView(t, room, now, 0); const mw = val(a, "--member");
-  const groups = new Map<string, Obj>();
-  for (const r of v.rows) {
-    if (!memberIs(v, t, r, mw)) continue;
-    const one: TeamView = { team: v.team, room: v.room, at: v.at, members: v.members, rows: [r], skipped: [], truncated: 0 }; const c = viewCost(one);
-    const usd = per === "d" ? c.today : per === "w" ? c.week : c.month;
-    const ks: string[] = by === "member" ? [nameOf(v, r.member)] : by === "device" ? [r.device] : by === "harness" ? [str(r.s["harness"])] : by === "repo" ? [str((r.s["repo"] as Obj | null)?.["key"] ?? "")] : r.rooms;
-    for (const k of ks) {
-      let g = groups.get(k); if (!g) { g = { key: k, sessions: 0, live: 0, tokens: 0, costUsd: 0, harnesses: [] as string[] }; groups.set(k, g); }
-      g["sessions"] = (g["sessions"] as number) + 1; if (r.s["live"] === true) g["live"] = (g["live"] as number) + 1;
-      const tk = obj(r.s["tokens"]); if (tk) g["tokens"] = (g["tokens"] as number) + num(tk["in"]) + num(tk["out"]) + num(tk["cacheRead"]) + num(tk["cacheWrite"]);
-      g["costUsd"] = Math.round(((g["costUsd"] as number) + usd) * 1e6) / 1e6;
-      const hs = g["harnesses"] as string[]; const h = str(r.s["harness"]); if (h && hs.indexOf(h) < 0) hs.push(h);
-    }
-  }
-  const rows: Obj[] = []; for (const g of groups.values()) rows.push(g); rows.sort((x: Obj, y: Obj) => (y["costUsd"] as number) - (x["costUsd"] as number));
-  const members: Obj[] = []; for (const m of v.members) { let on = false; let at = 0; for (const d of m.devices) { if (d.online) on = true; if (d.at > at) at = d.at; } members.push({ name: m.name, devices: m.devices.length, online: on, lastSyncAt: at ? new Date(at).toISOString() : null }); }
-  if (flag(a, "--json")) { out(JSON.stringify({ team: t.id, room: room || null, period: per, by, rows, members, budget: null, stale: [] })); return; }
+  const t = pickTeam(a); const by = val(a, "--by") || "member"; const per = val(a, "--period") || "m";
+  if (BYS.indexOf(by) < 0) cliError("usage", "--by " + BYS.join("|"), "", 2);
+  const o = reportObj(t, room(t, a), val(a, "--member"), by, per, Date.now());
+  if (flag(a, "--json")) { out(JSON.stringify(o)); return; }
   out("team " + (t.priv ? t.priv.name : t.id) + " · by " + by + " · " + (per === "d" ? "today" : per === "w" ? "7 days" : "this month"));
-  for (const g of rows) out("  " + String(g["key"]).padEnd(20) + "  " + money(g["costUsd"] as number).padStart(9) + "  " + String(g["sessions"]) + " sessions" + ((g["live"] as number) ? " · " + String(g["live"]) + " live" : ""));
+  for (const g of o["rows"] as Obj[]) out("  " + String(g["key"]).padEnd(20) + "  " + money(num(g["costUsd"])).padStart(9) + "  " + String(g["sessions"]) + " sessions" + (num(g["live"]) ? " · " + String(g["live"]) + " live" : ""));
 }
 function sessionsCli(a: string[]): void {
-  const t = pickTeam(a); const now = Date.now(); const room = roomIs(t, val(a, "--room")); const v = buildView(t, room, now, 0);
-  const mw = val(a, "--member"); const lim = Number(val(a, "--limit") || "0");
-  const rows: Obj[] = [];
-  for (const r of v.rows) {
-    if (!memberIs(v, t, r, mw)) continue; if (lim > 0 && rows.length >= lim) break;
-    const o: Obj = { member: { id: r.member, name: nameOf(v, r.member) }, device: { id: r.device }, rooms: r.rooms, mine: r.mine };
-    for (const k of Object.keys(r.s)) o[k] = r.s[k];
-    rows.push(o);
-  }
-  if (flag(a, "--json")) { out(JSON.stringify({ team: t.id, room: room || null, rows })); return; }
-  for (const o of rows) { const m = o["member"] as Obj; out(String(o["updated"]).slice(0, 16).split("T").join(" ") + "  " + String(m["name"]).padEnd(12) + "  " + String(o["harness"]).padEnd(8) + "  " + String(o["status"]) + "  " + (o["title"] ? String(o["title"]) : String((o["repo"] as Obj | null)?.["key"] ?? ""))); }
+  const t = pickTeam(a); const o = sessionsObj(t, room(t, a), val(a, "--member"), Number(val(a, "--limit") || "0"), Date.now());
+  if (flag(a, "--json")) { out(JSON.stringify(o)); return; }
+  for (const x of o["rows"] as Obj[]) { const m = obj(x["member"]) ?? {}; const rk = obj(x["repo"]); out(str(x["updated"]).slice(0, 16).split("T").join(" ") + "  " + str(m["name"]).padEnd(12) + "  " + str(x["harness"]).padEnd(8) + "  " + str(x["status"]) + "  " + (str(x["title"]) || (rk ? str(rk["key"]) : ""))); }
+}
+function activityCli(a: string[]): void {
+  const t = pickTeam(a); const since = val(a, "--since") ? Date.now() - parseDur(val(a, "--since")) : 0;
+  const o = activityObj(t, since, Date.now());
+  if (flag(a, "--json")) { out(JSON.stringify(o)); return; }
+  for (const e of o["events"] as Obj[]) out("  " + str(e["text"]) + " · " + str(e["at"]).slice(0, 16).split("T").join(" "));
 }
 
 // ── help and dispatch ──
-const SUBS = ["create", "invite", "join", "sync", "report", "sessions", "status"];
+const SUBS = ["create", "invite", "join", "sync", "report", "sessions", "activity", "status"];
 const JSON_OPT = opt("--json", "", "the result as JSON", "", []);
 const TEAM_OPT = opt("--team", "<t>", "the team (when you are in several)", "", []);
 addCmd({ cmd: "team", usage: "agentglass team [--json]", summary: "your teams: rooms, members online, what you share (private team analytics: sealed, no server)", options: [JSON_OPT], fields: [], group: "cmd" });
@@ -276,6 +242,7 @@ addCmd({ cmd: "team invite", usage: "agentglass team invite [--rooms a,b] [--use
 addCmd({ cmd: "team join", usage: "agentglass team join <code> [--dir <path>] [--name <me>] [--share <room>,…] [--repos <key>…] [--since month|now] [--dry-run] [--yes]", summary: "join with an invite: one consent screen names what leaves; --dry-run prints exactly that plaintext", options: [opt("--dir", "<path>", "the team folder (default: found under your sync roots)", "", []), opt("--name", "<me>", "your display name", "", []), opt("--share", "<rooms>", "rooms to share into (nothing until you pick)", "", []), opt("--repos", "<key>", "only these repos (default: yours in the room's scope)", "", []), opt("--since", "month|now", "history start", "month", ["month", "now"]), opt("--dry-run", "", "print what would leave; join nothing", "", []), opt("--yes", "", "consent without the screen (required in agent mode)", "", []), opt("--wait", "<s>", "wait for an admin to admit", "20", []), JSON_OPT], fields: [], group: "cmd" });
 addCmd({ cmd: "team sync", usage: "agentglass team sync [--json]", summary: "one publish and fetch now (admins also admit, rotate, read leave notices)", options: [TEAM_OPT, JSON_OPT], fields: [], group: "cmd" });
 addCmd({ cmd: "team report", usage: "agentglass team report [--room <r>] [--member <m>] [--by member|device|harness|repo|room] [--period d|w|m]", summary: "the team's cost and sessions per member, device, harness, repo or room", options: [TEAM_OPT, opt("--room", "<r>", "one room", "", []), opt("--member", "<m>", "one member (name, id prefix, me)", "", []), opt("--by", "member|device|harness|repo|room", "grouping", "member", []), opt("--period", "d|w|m", "today, 7 days, this month", "m", []), JSON_OPT], fields: [], group: "cmd" });
+addCmd({ cmd: "team activity", usage: "agentglass team activity [--since 7d]", summary: "joins, leaves, renames, sharing changes, rooms, key rotations (signed sources; 90 days)", options: [TEAM_OPT, opt("--since", "<dur>", "only this recent", "", []), JSON_OPT], fields: [], group: "cmd" });
 addCmd({ cmd: "team sessions", usage: "agentglass team sessions [--room <r>] [--member <m>] [--limit N]", summary: "the team's sessions as their members shared them (newest first)", options: [TEAM_OPT, opt("--room", "<r>", "one room", "", []), opt("--member", "<m>", "one member", "", []), opt("--limit", "N", "at most N rows", "", []), JSON_OPT], fields: [], group: "cmd" });
 H.cli.unshift((args: string[]): boolean => {
   if (args[0] !== "team") return false;
@@ -283,8 +250,8 @@ H.cli.unshift((args: string[]): boolean => {
   if (wantsHelp(args)) { const r = cmdOf(name); if (r) out(helpOf(name, args, cmdText(r))); process.exit(0); }
   S.cli = true;
   if (sub === "create") create(args); else if (sub === "invite") invite(args); else if (sub === "join") join_(args);
-  else if (sub === "sync") sync(args); else if (sub === "report") report(args); else if (sub === "sessions") sessionsCli(args);
+  else if (sub === "sync") sync(args); else if (sub === "report") report(args); else if (sub === "sessions") sessionsCli(args); else if (sub === "activity") activityCli(args);
   else if (!sub || sub === "status" || sub.startsWith("-")) status(args);
-  else cliError("usage", "unknown team command " + sub, "agentglass team --help (team, create, invite, join, sync, report, sessions)", 2);
+  else cliError("usage", "unknown team command " + sub, "agentglass team --help (team, create, invite, join, sync, report, sessions, activity)", 2);
   return true;
 });

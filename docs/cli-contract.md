@@ -224,11 +224,15 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
 
 | Method | Params | Result |
 |---|---|---|
-| `meta` | none | `{version, contract, proto, caps[], readOnly, redact, harnesses[], teams[]}` |
+| `meta` | none | `{version, contract, proto, caps[], readOnly, redact, harnesses[], teams[{id, name}]}` |
 | `sessions.list` | `filter` (the filter language: `live is true`, `harness is codex and cost > 1`; a bare word searches title, path, id), `limit` 1–1000 (200), `cursor`, `subagents` bool | `{data: [--json rows], at (ms), gen, next: cursor\|null}` |
 | `sessions.get` | `ref` (required): `<harness>:<id>`, an id or a unique prefix of 6+ characters | the `session <ref>` object (`via` = `"ref"`) |
 | `sub` | `topic`: `sessions`; `filter`, `limit`, `subagents` as `sessions.list`; `from` (an event id) | `{sub, resumed}`, then events |
 | `unsub` | `sub` | `{}` |
+| `team.status` | none | `agentglass team --json`: `{teams: [{id, name, mailbox, kind, me, admin, joined, rooms[], members[], pending, problems[]}]}` |
+| `team.report` | `team`, `room`, `member` (a name, an id prefix, `me`), `by` member\|device\|harness\|repo\|room, `period` d\|w\|m | `agentglass team report --json`: `{team, room, period, by, rows[{key, sessions, live, tokens, costUsd, harnesses}], members[], budget, stale[]}` |
+| `team.sessions` | `team`, `room`, `member`, `limit` 0–1000 | `agentglass team sessions --json`: `{team, room, rows[]}` — each row the member's shared fields plus `member {id, name}`, `device {id}`, `rooms[]`, `mine` |
+| `team.activity` | `team`, `since` (ms) | `agentglass team activity --json`: `{team, events[{at, actor, kind, room, text}]}` |
 
 - **Rows**: `sessions.list` rows equal `agentglass --json` rows for the same filter (the conformance test compares
   them). `gen` moves only when the rows' inputs moved; `next` pages newest first, after the last row shown.
@@ -241,7 +245,8 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
   inside → the missed events, `resumed: true`; outside, another process (`epoch`) or a topic that was closed meanwhile →
   a `snapshot`, `resumed: false`. A topic closes with its last `unsub`.
 - **Errors** (`code`): `proto`, `bad_request` (not a request object), `unknown_method`, `oversize`, `bad_param`,
-  `bad_filter` (`msg` names the column, `hint` the caret line), `not_found`, `ambiguous`, `no_team`, `too_many` (64
+  `bad_filter` (`msg` names the column, `hint` the caret line), `not_found`, `ambiguous`, `no_team` (team.* on a machine
+  without a team), `too_many` (64
   subscriptions per process are open: `unsub` one first), `read_only`
   (`cmd`/`confirm`: commands are not in this release), `internal`.
 - `--redact` applies to every answer and event, as for `--json`.

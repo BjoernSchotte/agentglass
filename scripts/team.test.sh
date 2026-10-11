@@ -76,5 +76,23 @@ hasnt "sessions: no title" "$ss" "\"title\""
 st=$(run A 0 team --json)
 has "status: the team" "$st" "\"acme\""
 has "status: bob a member" "$st" "\"bob\""
+# 5. the protocol (serve --stdio, local-web-api W7): team.report is the CLI's object; no team → no_team; --redact → fakes
+proto() { w=$1; shift; printf '%s\n' '{"id":1,"m":"hello","p":{"want":1}}' "$@" | run "$w" 0 serve --stdio $SERVE_FLAGS; }
+sr=$(SERVE_FLAGS="" proto A '{"id":2,"m":"team.report","p":{"by":"member"}}' '{"id":3,"m":"meta"}' | python3 -c '
+import json,sys
+for l in sys.stdin:
+    o=json.loads(l)
+    if o.get("id")==2: print(json.dumps(o["ok"], sort_keys=True))
+    if o.get("id")==3: print("teams", len(o["ok"]["teams"]))')
+cli=$(run A 0 team report --by member --json | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))')
+eq "team.report = team report --json" "$(printf '%s\n' "$sr" | head -1)" "$cli"
+eq "meta.teams lists the team" "$(printf '%s\n' "$sr" | tail -1)" "teams 1"
+home C 3333333333333333
+nt=$(SERVE_FLAGS="" proto C '{"id":2,"m":"team.report","p":{}}' '{"id":3,"m":"meta"}')
+has "no team: no_team" "$nt" "\"no_team\""
+has "no team: meta.teams []" "$nt" "\"teams\":[]"
+rd=$(SERVE_FLAGS="--redact" proto A '{"id":2,"m":"team.sessions","p":{}}')
+hasnt "--redact: no member name" "$rd" "\"bob\""
+has "--redact: rows still there" "$rd" "\"rows\":[{"
 [ $fail = 0 ] && echo "team.test.sh: ok"
 exit $fail
