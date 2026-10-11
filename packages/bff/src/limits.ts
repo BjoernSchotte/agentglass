@@ -5,7 +5,7 @@ export const STREAMS_MAX = 16;
 export const REQ_PER_S = 50; // per socket and per HTTP session
 export const CMD_PER_S = 20;
 export const QUEUE_MAX = 2 * 1024 * 1024; // a client's unsent bytes; over it the socket closes 1013 / the SSE stream ends
-export const TOKEN_MS = 120_000;
+export const TOKEN_MS = 600_000; // 10 min: long enough to carry a link to another device; single use either way
 export const HB_MS = 25_000;
 
 // a one-second window counter per key

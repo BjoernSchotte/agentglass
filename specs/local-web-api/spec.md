@@ -152,7 +152,7 @@ Framing: one JSON object per line, ≤ 4 MB (the MCP framer, `src/mcp/rpc.ts`, m
 - **Token**: per run, 32 random bytes. `agentglass web` opens `http://127.0.0.1:<port>/#t=<token>`; the page's JS
   posts it once to `POST /api/v1/session`; the server answers `Set-Cookie: agw=<session id>; HttpOnly;
   SameSite=Strict; Path=/` and a CSRF token in the body; the JS removes the fragment (`history.replaceState`). Tokens
-  are single-use (a replay from history fails) and expire after 2 minutes unused. A second `agentglass web` while one
+  are single-use (a replay from history fails) and expire after 10 minutes unused (2026-10-11: 2 minutes were too short to carry a link to another device with `--host 0.0.0.0`; single use is the protection). A second `agentglass web` while one
   runs writes a new token into `run/web.tokens` (0600, hashes only), which the server re-reads. The fragment never
   reaches server logs or `Referer`.
 - **Other local users**: loopback TCP is reachable by every local user; without the cookie every route except the

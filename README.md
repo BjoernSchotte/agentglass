@@ -1627,7 +1627,7 @@ agentglass web --no-open  # prints the link instead · --stop ends it · --redac
   then names this machine's address); Host and Origin must still be one of this machine's addresses or its hostname.
   That is plain HTTP — links and cookies travel unencrypted — so only on networks you trust; elsewhere use an SSH
   tunnel (`ssh -L 8080:127.0.0.1:<port> host`).
-- **One-time links**: each `agentglass web` mints a token that works once, for 2 minutes; the browser trades it for an
+- **One-time links**: each `agentglass web` mints a token that works once, within 10 minutes; the browser trades it for an
   HttpOnly, SameSite=Strict cookie. Pages from other origins (another port included) cannot use the API or the socket.
 - **Read-only**: the web UI shows; it sends nothing to agents in this release.
 - **Same data as the TUI**: `agentglass-web` reads nothing itself — it asks `agentglass serve --stdio`, so privacy

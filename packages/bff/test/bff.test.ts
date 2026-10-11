@@ -34,14 +34,14 @@ test("no cookie → 401; the static shell needs none", async () => {
   expect((await fetch(base + "/api/v1/sessions")).status).toBe(401);
   expect((await fetch(base + "/")).status).toBe(200);
 });
-test("token exchange: cookie flags, single use, expiry after 2 min", async () => {
+test("token exchange: cookie flags, single use, expiry after 10 min", async () => {
   const t = auth.mint();
   const post = (tok: string) => fetch(base + "/api/v1/session", { method: "POST", headers: { ...origin(), "Content-Type": "application/json" }, body: JSON.stringify({ token: tok }) });
   const r = await post(t); expect(r.status).toBe(200);
   const c = r.headers.get("set-cookie") ?? "";
   expect(c).toContain("HttpOnly"); expect(c).toContain("SameSite=Strict"); expect(c).toContain("Path=/");
   expect((await post(t)).status).toBe(401);
-  const t2 = auth.mint(); now += 121_000; expect((await post(t2)).status).toBe(401);
+  const t2 = auth.mint(); now += 601_000; expect((await post(t2)).status).toBe(401);
 });
 test("GET /api/v1/session: the cookie's CSRF token after a reload; none without a cookie", async () => {
   const { cookie, csrf } = await login();

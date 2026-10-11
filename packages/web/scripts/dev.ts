@@ -21,6 +21,6 @@ const vite = await createServer({
 });
 await vite.listen();
 const shown = host === "0.0.0.0" ? (Object.values((await import("node:os")).networkInterfaces()).flat().find((i) => i && !i.internal && i.family === "IPv4")?.address ?? "127.0.0.1") : host;
-console.log("\n  agentglass web (dev, hot reload): http://" + shown + ":" + port + "/#t=" + token + "\n  the link works once, for 2 minutes · ctrl-c stops both\n");
+console.log("\n  agentglass web (dev, hot reload): http://" + shown + ":" + port + "/#t=" + token + "\n  the link works once, for 10 minutes · ctrl-c stops both\n");
 const bye = () => { bff.kill(); void vite.close().finally(() => process.exit(0)); setTimeout(() => process.exit(0), 2000); }; // the BFF first: it holds the serve child
 process.on("SIGINT", bye); process.on("SIGTERM", bye);

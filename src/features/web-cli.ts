@@ -20,7 +20,7 @@ import { isAlive } from "./palette/instance.ts";
 import { detachedPid } from "../platform/posix.ts";
 import { OS } from "../platform/index.ts";
 
-export const TOKEN_MS = 120000;
+export const TOKEN_MS = 600000; // as agentglass-web: a one-time link lives 10 minutes
 export const WAIT_MS = 10000;
 const USAGE = "agentglass web [--port N] [--host 0.0.0.0] [--no-open] [--redact] [--json] | agentglass web --stop";
 
@@ -98,17 +98,17 @@ function webCli(a: string[]): void {
   const shown = "http://" + l.host + ":" + String(l.port) + "/";
   if (!noOpen) {
     const opener = process.platform === "darwin" ? "open" : "xdg-open";
-    if (detachedPid(opener, [openPage(RUN_DIR, url)]) > 0) { process.stdout.write("agentglass web: " + shown + (reused ? " (running)" : "") + " — opened in your browser; the link works once, for 2 minutes\n"); return; }
+    if (detachedPid(opener, [openPage(RUN_DIR, url)]) > 0) { process.stdout.write("agentglass web: " + shown + (reused ? " (running)" : "") + " — opened in your browser; the link works once, for 10 minutes\n"); return; }
   }
   process.stdout.write(url + "\n");
-  process.stderr.write("agentglass web: open this link (it works once, for 2 minutes)" + (reused ? "; the server was already running" : "") + "\n");
+  process.stderr.write("agentglass web: open this link (it works once, for 10 minutes)" + (reused ? "; the server was already running" : "") + "\n");
 }
 
 addCmd({ cmd: "web", usage: USAGE, summary: "the web UI in your browser (starts agentglass-web on 127.0.0.1, a one-time link)", options: [opt("--port", "N", "the port (default: a free one)", "", []), opt("--host", "0.0.0.0", "listen on all interfaces (other devices on your network; plain HTTP: trusted networks only)", "127.0.0.1", []), opt("--no-open", "", "print the link instead of opening the browser", "", []), opt("--redact", "", "fake titles, projects and content", "", []), opt("--json", "", "{url, port, pid, reused}", "", []), opt("--stop", "", "stop the running agentglass-web", "", [])], fields: [], group: "cmd" });
 H.cli.unshift((args: string[]): boolean => {
   if (args[0] !== "web") return false;
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) {
-    process.stdout.write(USAGE + "\n  the web UI: agentglass-web serves it on 127.0.0.1 only; this opens (or with --no-open prints) a one-time link (2 minutes)\n  a running agentglass-web is reused: each run mints a new link; --stop ends it\n");
+    process.stdout.write(USAGE + "\n  the web UI: agentglass-web serves it on 127.0.0.1 only; this opens (or with --no-open prints) a one-time link (10 minutes)\n  a running agentglass-web is reused: each run mints a new link; --stop ends it\n");
     process.exit(0);
   }
   webCli(args.slice(1));

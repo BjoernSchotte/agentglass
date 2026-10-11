@@ -1,4 +1,4 @@
-// per-run auth (local-web-api §4): a one-time token (fragment → POST /api/v1/session, single use, 2 min) → an
+// per-run auth (local-web-api §4): a one-time token (fragment → POST /api/v1/session, single use, 10 min) → an
 // HttpOnly SameSite=Strict cookie and a CSRF token; more tokens arrive as hashes in run/web.tokens (another
 // `agentglass web`); Host and Origin checks against DNS rebinding and cross-site requests. Constant-time compares.
 import { readFileSync } from "node:fs";
