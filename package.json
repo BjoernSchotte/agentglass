@@ -2,7 +2,7 @@
   "name": "agentglass-workspace",
   "private": true,
   "packageManager": "pnpm@10.15.0",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "scripts": {
     "gen": "pnpm --filter @agentglass/api-contract gen",
     "typecheck": "pnpm -r typecheck",

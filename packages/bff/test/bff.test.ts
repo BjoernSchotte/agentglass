@@ -11,7 +11,7 @@ let base = ""; let host = "";
 beforeEach(async () => {
   fk = fake(); now = Date.now(); up = new Upstream(fk.spawn); await up.start();
   auth = new Auth("", () => now); logs = [];
-  srv = startServer({ port: 0, up, auth, assets: new Map([["/index.html", { file: new Blob(["<!doctype html><p>ui"]), type: "text/html" }]]), log: (l) => logs.push(l) });
+  srv = startServer({ port: 0, up, auth, assets: new Map([["/index.html", { file: new Blob(['<!doctype html><meta name="csp-nonce" content="__CSP_NONCE__"><p>ui']), type: "text/html" }]]), log: (l) => logs.push(l) });
   base = "http://127.0.0.1:" + srv.port; host = "127.0.0.1:" + srv.port;
 });
 afterEach(() => { srv.stop(); up.stop(); });
@@ -42,6 +42,11 @@ test("token exchange: cookie flags, single use, expiry after 2 min", async () =>
   expect(c).toContain("HttpOnly"); expect(c).toContain("SameSite=Strict"); expect(c).toContain("Path=/");
   expect((await post(t)).status).toBe(401);
   const t2 = auth.mint(); now += 121_000; expect((await post(t2)).status).toBe(401);
+});
+test("GET /api/v1/session: the cookie's CSRF token after a reload; none without a cookie", async () => {
+  const { cookie, csrf } = await login();
+  expect(((await (await fetch(base + "/api/v1/session", { headers: { Cookie: cookie } })).json()) as { csrf: string }).csrf).toBe(csrf);
+  expect((await fetch(base + "/api/v1/session")).status).toBe(401);
 });
 test("the session reads the API through the child", async () => {
   const { cookie } = await login();
@@ -92,6 +97,17 @@ test("two tabs subscribing sessions → one upstream sub; a patch reaches both; 
   expect(fk.subs).toBe(1);
   a.close(); b.close(); c.close();
 });
+test("the sub's answer comes before its first event", async () => {
+  const { cookie } = await login(); const w = await ws(cookie); const seen: string[] = [];
+  w.addEventListener("message", (e) => { const m = JSON.parse(String(e.data)); seen.push(m.id === 1 ? "ack" : m.k); });
+  const s = next(w, (m) => m.k === "snapshot"); w.send(JSON.stringify({ id: 1, m: "sub", p: { topic: "sessions" } })); await s;
+  // a second socket on the warm topic: the snapshot is replayed at once — still after the answer
+  const w2 = await ws(cookie); const seen2: string[] = [];
+  w2.addEventListener("message", (e) => { const m = JSON.parse(String(e.data)); seen2.push(m.id === 1 ? "ack" : m.k); });
+  const s2 = next(w2, (m) => m.k === "snapshot"); w2.send(JSON.stringify({ id: 1, m: "sub", p: { topic: "sessions" } })); await s2;
+  expect(seen[0]).toBe("ack"); expect(seen2[0]).toBe("ack");
+  w.close(); w2.close();
+});
 test("a slow WebSocket client over 2 MB is closed with 1013", async () => {
   const { cookie } = await login(); const w = await ws(cookie);
   const s = next(w, (m) => m.k === "snapshot"); w.send(JSON.stringify({ id: 1, m: "sub", p: { topic: "sessions" } })); await s;
@@ -111,10 +127,18 @@ test("60 requests in a second → 429", async () => {
   const rs = await Promise.all(Array.from({ length: 60 }, () => fetch(base + "/api/v1/meta", { headers: { Cookie: cookie } })));
   expect(rs.some((r) => r.status === 429)).toBe(true);
 });
+test("the page: a fresh style nonce in the meta tag and the CSP, per response", async () => {
+  const a = await fetch(base + "/"); const b = await fetch(base + "/sessions");
+  const na = /content="([^"]+)"/.exec(await a.text())![1]!; const nb = /content="([^"]+)"/.exec(await b.text())![1]!;
+  expect(na).not.toBe("__CSP_NONCE__"); expect(na).not.toBe(nb);
+  expect(a.headers.get("content-security-policy")).toContain("style-src 'self' 'nonce-" + na + "'");
+  expect(a.headers.get("content-security-policy")).toContain("script-src 'self';");
+});
 test("every response has the security headers and no Access-Control-*", async () => {
   const { cookie } = await login();
   for (const r of [await fetch(base + "/"), await fetch(base + "/api/v1/meta", { headers: { Cookie: cookie } }), await fetch(base + "/api/v1/sessions")]) {
-    for (const [k, v] of Object.entries(HEADERS)) expect(r.headers.get(k)).toBe(v);
+    for (const [k, v] of Object.entries(HEADERS)) if (k !== "Content-Security-Policy") expect(r.headers.get(k)).toBe(v);
+    expect(r.headers.get("content-security-policy")).toMatch(/^default-src 'self'; script-src 'self'; style-src 'self'( 'nonce-[\w-]+')?; style-src-attr 'unsafe-inline';/);
     for (const k of r.headers.keys()) expect(k.toLowerCase().startsWith("access-control-")).toBe(false);
   }
 });

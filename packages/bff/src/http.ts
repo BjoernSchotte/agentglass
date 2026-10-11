@@ -3,7 +3,7 @@
 // (fallback, Last-Event-ID resume). The only data source is the serve child (Upstream); web.log lines carry method,
 // path without query, status and time — never tokens, cookies or values.
 import type { Server, ServerWebSocket } from "bun";
-import { Auth, hostOk, originOk, same } from "./auth.ts";
+import { Auth, hostOk, originOk, same, rand } from "./auth.ts";
 import { Upstream, type Ev, type Obj, type Reply, type Listener } from "./stdio.ts";
 import { BODY_MAX, FRAME_MAX, STREAMS_MAX, REQ_PER_S, QUEUE_MAX, HB_MS, Rate } from "./limits.ts";
 
@@ -54,11 +54,14 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
         if (m === "sub") {
           if (ws.data.subs.size >= 16) { send(ws, { id, err: { code: "too_many", msg: "16 subscriptions per socket" } }); return; }
           const cid = "c" + ++ws.data.n; const from = typeof p.from === "string" ? p.from : ""; const params: Obj = { ...p }; delete params.from;
-          const f: Listener = (e: Ev) => send(ws, { ...e, sub: cid });
+          // events wait until the client has the sub's id: the answer goes out first
+          let held: Ev[] | null = [];
+          const f: Listener = (e: Ev) => { if (held) held.push(e); else send(ws, { ...e, sub: cid }); };
           ws.data.subs.set(cid, { params, f });
           const r = await o.up.subscribe(params, from, f);
           if (r.err) { ws.data.subs.delete(cid); send(ws, { id, err: r.err }); return; }
-          send(ws, { id, ok: { sub: cid, resumed: !!r.resumed } }); return;
+          send(ws, { id, ok: { sub: cid, resumed: !!r.resumed } });
+          const q = held; held = null; for (const e of q) send(ws, { ...e, sub: cid }); return;
         }
         if (m === "unsub") { const s = ws.data.subs.get(String(p.sub)); if (!s) { send(ws, { id, err: { code: "not_found", msg: "no subscription " + String(p.sub) } }); return; } o.up.unsubscribe(s.params, s.f); ws.data.subs.delete(String(p.sub)); send(ws, { id, ok: {} }); return; }
         if (!METHODS.has(m)) { send(ws, { id, err: { code: "unknown_method", msg: "unknown method " + JSON.stringify(m) } }); return; }
@@ -79,7 +82,7 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
     const api = u.pathname.startsWith("/api/");
     if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "POST") return fail(405, "bad_request", "method not allowed");
     if (req.method === "POST" && !originOk(req.headers.get("origin"), port)) return fail(403, "bad_origin", "foreign Origin");
-    if (!api) return asset(u.pathname);
+    if (!api) return await asset(u.pathname);
     let body: Obj = {};
     if (req.method === "POST") {
       if (Number(req.headers.get("content-length") ?? "0") > BODY_MAX) return fail(413, "oversize", "body over 64 KB");
@@ -93,6 +96,7 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
     }
     const s = o.auth.session(req.headers.get("cookie"));
     if (!s) return fail(401, "unauthorized", "no session: open the link agentglass web printed");
+    if (u.pathname === "/api/v1/session") return json({ csrf: s.csrf }); // a reload: the cookie's CSRF token (same-origin reads only: no CORS)
     if (req.method === "POST" && !same(req.headers.get("x-ag-csrf") ?? "", s.csrf)) return fail(403, "bad_csrf", "missing or wrong X-AG-CSRF");
     if (!rate.hit("http:" + s.id)) return fail(429, "too_many", "over " + REQ_PER_S + " requests a second");
     if (o.up.down) return fail(503, "internal", "agentglass serve is down: restart agentglass web");
@@ -137,9 +141,14 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
     return new Response(stream, { headers: { ...HEADERS, "Content-Type": "text/event-stream", "Cache-Control": "no-store" } });
   }
 
-  function asset(path: string): Response {
+  async function asset(path: string): Promise<Response> {
+    const page = !o.assets.has(path) || path === "/index.html"; // the SPA: unknown paths get the page
     const a = o.assets.get(path) ?? o.assets.get("/index.html");
     if (!a) return new Response("agentglass-web: the UI is not built", { status: 404, headers: HEADERS });
+    if (page) { // a fresh nonce per page: <style> elements the UI's libraries inject carry it, nothing else may style
+      const n = rand(16); const html = (await (typeof a.file === "string" ? Bun.file(a.file) : a.file).text()).replace("__CSP_NONCE__", n);
+      return new Response(html, { headers: { ...HEADERS, "Content-Security-Policy": HEADERS["Content-Security-Policy"]!.replace("style-src 'self'", "style-src 'self' 'nonce-" + n + "'"), "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" } });
+    }
     const body = typeof a.file === "string" ? Bun.file(a.file) : a.file;
     return new Response(body, { headers: { ...HEADERS, "Content-Type": a.type, "Cache-Control": path.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache" } });
   }
