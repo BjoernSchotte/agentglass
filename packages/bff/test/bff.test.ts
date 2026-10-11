@@ -86,6 +86,15 @@ test("WebSocket: no cookie → refused; foreign Origin → refused; with both �
   expect(((await q).err as { code: string }).code).toBe("unknown_method");
   w.close();
 });
+test("an answer over 64 KB reaches the client (the frame cap is for what clients send)", async () => {
+  const { cookie } = await login(); const w = await ws(cookie);
+  const p = next(w, (m) => m.id === 7, 3000); w.send(JSON.stringify({ id: 7, m: "sessions.get", p: { ref: "claude:a1" } }));
+  const r = await p; expect(((r.ok as { files: unknown[] }).files).length).toBe(3000);
+  // and a client frame over 64 KB is still refused
+  const closed = new Promise<number>((res) => { w.onclose = (e) => res(e.code); });
+  w.send(JSON.stringify({ id: 8, m: "meta", p: { pad: "x".repeat(70 * 1024) } }));
+  expect([1006, 1009]).toContain(await Promise.race([closed, Bun.sleep(2000).then(() => -1)])); // closed (Bun: abnormal close)
+});
 test("two tabs subscribing sessions → one upstream sub; a patch reaches both; resume from the last id", async () => {
   const { cookie } = await login();
   const a = await ws(cookie); const b = await ws(cookie);

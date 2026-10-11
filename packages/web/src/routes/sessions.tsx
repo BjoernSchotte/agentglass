@@ -1,6 +1,6 @@
 // the live Sessions view: one subscription (the filter in the URL's f), rows newest first with ● ◆ ⚠ ○, an "N new"
 // pill while the reader is away from the top, j/k/↵ and a detail drawer (sessions.get) for the selected row (sel)
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionDetail, SessionRow } from "@agentglass/api-contract";
 import { Badge, Button, Dialog, DialogContent, Kbd, cn } from "@agentglass/ui";
@@ -137,17 +137,50 @@ function Phase({ status }: { status: string }) {
     </div>
   );
 }
+// the drawer: what the list row knows at once, then the session's detail (sessions.get: turns, models, tools, files,
+// errors, subagents, skills, commits) — a big or busy session may take a few seconds, so that part says it is loading
+type Detail = Omit<SessionDetail, "tools" | "subagents" | "skills" | "git"> & { turns?: number; activeMs?: number; wallMs?: number; models?: { model: string; in: number; out: number }[];
+  tools?: { name: string; calls: number; errors: number }[]; files?: { path: string; add: number; del: number }[]; errors?: { ts: string; tool: string; arg: string }[];
+  subagents?: { id: string; kind: string; costUsd: number | null }[]; skills?: { name: string }[]; git?: { commits?: unknown[] } | null };
+function dur(ms: number): string { const m = Math.round(ms / 60000); return m < 60 ? m + " min" : m < 1440 ? (m / 60).toFixed(1) + " h" : (m / 1440).toFixed(1) + " d"; }
+function n(x: number): string { return x >= 1e9 ? (x / 1e9).toFixed(1) + "B" : x >= 1e6 ? (x / 1e6).toFixed(1) + "M" : x >= 1e3 ? (x / 1e3).toFixed(1) + "k" : String(x); }
+function Block({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="mt-4"><h3 className="mb-1 text-[11px] uppercase tracking-wide text-muted">{title}</h3>{children}</section>;
+}
 function Detail({ row, onClose }: { row: SessionRow | undefined; onClose: () => void }) {
-  const live = useLive(); const [d, setD] = useState<SessionDetail | null>(null); const [err, setErr] = useState("");
-  useEffect(() => { setD(null); setErr(""); if (row) live.request<SessionDetail>("sessions.get", { ref: row.harness + ":" + row.id }).then(setD, (e: ApiFail) => setErr(e.message)); }, [live, row?.harness, row?.id]);
-  const fields: [string, string][] = d ? [["Harness", d.harness], ["State", d.state], ["Model", d.model ?? ""], ["Repo", d.repo?.label ?? ""], ["Branch", d.branch ?? ""], ["Directory", d.cwd], ["Cost", money(d.costUsd)], ["Tokens in / out", d.tokens ? d.tokens.in + " / " + d.tokens.out : ""], ["Updated", d.updated], ["Alerts", d.alerts.map((a) => a.message).join("; ") || "none"]] : [];
+  const live = useLive(); const now = useNow(); const [d, setD] = useState<Detail | null>(null); const [err, setErr] = useState("");
+  useEffect(() => { setD(null); setErr(""); if (row) live.request<Detail>("sessions.get", { ref: row.harness + ":" + row.id }).then(setD, (e: ApiFail) => setErr(e.message)); }, [live, row?.harness, row?.id]);
+  if (!row) return <Dialog open={false} onOpenChange={() => {}}><span /></Dialog>;
+  const gl = glyph(row); const tk = row.tokens;
+  const facts: [string, React.ReactNode][] = [
+    ["State", <span className={gl.c}>{gl.g} {row.state}{row.stuck ? " · " + row.stuck : ""}</span>], ["Harness", row.harness], ["Model", row.model ?? ""],
+    ["Repo", row.repo?.label ?? ""], ["Branch", row.branch ?? ""], ["Directory", row.cwd],
+    ["Cost", row.pending ? "… still being counted" : money(row.costUsd)],
+    ["Tokens", tk ? n(tk.in) + " in · " + n(tk.out) + " out · " + n(tk.cacheRead) + " cache read" : ""],
+    ["Updated", ago(now - Date.parse(row.updated)) + " ago"],
+  ];
   return (
-    <Dialog open={!!row} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent title={row?.title || "Session"} side className="overflow-auto p-4">
-        <h2 className="mb-1 text-[15px] font-semibold">{row?.title || row?.id}</h2>
-        <p className="mb-3 text-muted">{row && <Badge>{row.harness}:{row.id.slice(0, 8)}</Badge>}</p>
-        {err && <p role="alert" className="text-error">{err}</p>}
-        <dl className="grid grid-cols-[9rem_1fr] gap-y-1.5">{fields.map(([k, v]) => <><dt key={k + "k"} className="text-muted">{k}</dt><dd key={k + "v"} className="mono break-all text-[12px]">{v || "—"}</dd></>)}</dl>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent title={row.title || "Session"} side className="overflow-auto p-4">
+        <h2 className="mb-1 pr-6 text-[15px] font-semibold">{row.title || row.id}</h2>
+        <p className="mb-3"><Badge>{row.harness}:{row.id.slice(0, 8)}</Badge></p>
+        <dl className="grid grid-cols-[7rem_1fr] gap-y-1.5">{facts.map(([k, v]) => <div key={k} className="contents"><dt className="text-muted">{k}</dt><dd className="mono break-all text-[12px]">{v || "—"}</dd></div>)}</dl>
+        {row.alerts.length > 0 && <Block title="Alerts"><ul>{row.alerts.map((a, i) => <li key={i} className={a.severity === "critical" ? "text-stuck" : "text-attention"}>{a.message}</li>)}</ul></Block>}
+        {err ? <p role="alert" className="mt-4 text-error">{err}</p> : !d ? (
+          <p className="mt-4 flex items-center gap-2 text-muted" aria-live="polite"><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-border border-t-accent" aria-hidden />Loading details…</p>
+        ) : <>
+          <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-y-1.5">
+            {d.turns !== undefined && <div className="contents"><dt className="text-muted">Turns</dt><dd className="mono text-[12px]">{d.turns}</dd></div>}
+            {d.activeMs !== undefined && <div className="contents"><dt className="text-muted">Active</dt><dd className="mono text-[12px]">{dur(d.activeMs)}{d.wallMs ? " of " + dur(d.wallMs) : ""}</dd></div>}
+            {d.git?.commits && <div className="contents"><dt className="text-muted">Commits</dt><dd className="mono text-[12px]">{d.git.commits.length}</dd></div>}
+          </dl>
+          {!!d.models?.length && <Block title="Models"><ul>{d.models.map((m) => <li key={m.model} className="mono flex justify-between text-[12px]"><span>{m.model}</span><span className="text-muted">{n(m.in)} in · {n(m.out)} out</span></li>)}</ul></Block>}
+          {!!d.tools?.length && <Block title="Tools"><ul>{[...d.tools].sort((a, b) => b.calls - a.calls).slice(0, 8).map((t) => <li key={t.name} className="mono flex justify-between text-[12px]"><span>{t.name}</span><span className="text-muted">{t.calls} calls{t.errors ? <span className="text-error"> · {t.errors} errors</span> : null}</span></li>)}</ul></Block>}
+          {!!d.files?.length && <Block title={"Files changed (" + d.files.length + ")"}><ul>{d.files.slice(0, 10).map((f) => <li key={f.path} className="mono flex justify-between gap-2 text-[12px]"><span className="truncate" title={f.path}>{f.path.split("/").slice(-2).join("/")}</span><span className="shrink-0"><span className="text-live">+{f.add}</span> <span className="text-error">−{f.del}</span></span></li>)}</ul></Block>}
+          {!!d.errors?.length && <Block title="Last errors"><ul>{d.errors.slice(-5).reverse().map((e, i) => <li key={i} className="mono truncate text-[12px]" title={e.arg}><span className="text-error">{e.tool}</span> <span className="text-muted">{e.arg}</span></li>)}</ul></Block>}
+          {!!d.subagents?.length && <Block title={"Subagents (" + d.subagents.length + ")"}><ul>{d.subagents.slice(0, 8).map((x) => <li key={x.id} className="mono flex justify-between text-[12px]"><span className="truncate">{x.kind || x.id}</span><span className="text-cost">{money(x.costUsd)}</span></li>)}</ul></Block>}
+          {!!d.skills?.length && <Block title="Skills"><p className="mono text-[12px]">{d.skills.map((x) => x.name).join(", ")}</p></Block>}
+        </>}
       </DialogContent>
     </Dialog>
   );

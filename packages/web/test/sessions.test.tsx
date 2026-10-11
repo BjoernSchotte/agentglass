@@ -28,20 +28,21 @@ test("gauge: percent, bytes left, time", () => {
 });
 
 // a socket whose sessions snapshot carries the rows and an indexing state; held: no snapshot (phases)
-function live(hold = false): Live {
+function live(hold = false, detail: unknown = undefined): Live {
   return new Live(() => {
     const w = { readyState: 0, onopen: null as (() => void) | null, onclose: null as (() => void) | null, onmessage: null as ((e: { data: unknown }) => void) | null,
       send(s: string) { const q = JSON.parse(s); const reply = (o: unknown) => queueMicrotask(() => w.onmessage?.({ data: JSON.stringify(o) }));
         if (q.m === "meta") reply({ id: q.id, ok: { version: "t", contract: 1, proto: 1, caps: [], readOnly: true, redact: false, harnesses: [], teams: [] } });
         else if (q.m === "sub") { reply({ id: q.id, ok: { sub: "c1", resumed: false } }); if (!hold) reply({ sub: "c1", ev: "e-1", k: "snapshot", d: { data: R, at: 1, gen: 1, next: null, indexing: { done: 250e6, total: 1e9, bps: 5e6 } } }); }
+        else if (q.m === "sessions.get") { if (detail !== undefined) reply({ id: q.id, ok: detail }); } // undefined: never answers
         else reply({ id: q.id, ok: {} }); },
       close() {} };
     queueMicrotask(() => { w.readyState = 1; w.onopen?.(); });
     return w;
   }, false, async () => true);
 }
-async function app(l: Live) {
-  l.connect(); const router = makeRouter(createMemoryHistory({ initialEntries: ["/sessions"] }));
+async function app(l: Live, path = "/sessions") {
+  l.connect(); const router = makeRouter(createMemoryHistory({ initialEntries: [path] }));
   render(<LiveCtx.Provider value={l}><QueryClientProvider client={new QueryClient()}><TipProvider><RouterProvider router={router} /></TipProvider></QueryClientProvider></LiveCtx.Provider>);
   return router;
 }
@@ -66,4 +67,17 @@ test("indexing: the gauge, a progress bar, … for costs still being counted", a
 test("before the first rows: what it waits for, not a bare Loading", async () => {
   await app(live(true));
   expect(await screen.findByText("Reading your sessions…")).toBeTruthy();
+});
+test("the drawer: the row's facts at once, the details when they come", async () => {
+  await app(live(false), "/sessions?sel=b");
+  const d = await screen.findByRole("dialog");
+  expect(d.textContent).toContain("alpha"); expect(d.textContent).toContain("$9.00");
+  expect(within(d).getByText("Loading details…")).toBeTruthy();
+});
+test("the drawer: tools, files and errors from the detail", async () => {
+  await app(live(false, { ...R[1], via: "ref", turns: 12, activeMs: 600000, tools: [{ name: "Bash", calls: 40, errors: 3 }], files: [{ path: "/w/src/app.ts", add: 10, del: 2 }], errors: [{ ts: "x", tool: "Bash", arg: "pnpm test" }] }), "/sessions?sel=b");
+  const d = await screen.findByRole("dialog");
+  await within(d).findByText("Tools");
+  expect(d.textContent).toContain("40 calls"); expect(d.textContent).toContain("3 errors"); expect(d.textContent).toContain("src/app.ts"); expect(d.textContent).toContain("+10"); expect(d.textContent).toContain("pnpm test"); expect(d.textContent).toContain("10 min");
+  expect(within(d).queryByText("Loading details…")).toBeNull();
 });
