@@ -6,6 +6,7 @@ export * from "./types.gen.ts";
 
 import alertRow from "../schema/alert-row.json" with { type: "json" };
 import alertsList from "../schema/alerts-list.json" with { type: "json" };
+import callGraph from "../schema/call-graph.json" with { type: "json" };
 import cost from "../schema/cost.json" with { type: "json" };
 import eventsList from "../schema/events-list.json" with { type: "json" };
 import costRows from "../schema/cost-rows.json" with { type: "json" };
@@ -17,6 +18,7 @@ import meta from "../schema/meta.json" with { type: "json" };
 import page from "../schema/page.json" with { type: "json" };
 import patch from "../schema/patch.json" with { type: "json" };
 import request from "../schema/request.json" with { type: "json" };
+import reposList from "../schema/repos-list.json" with { type: "json" };
 import response from "../schema/response.json" with { type: "json" };
 import session from "../schema/session.json" with { type: "json" };
 import sessionDetail from "../schema/session-detail.json" with { type: "json" };
@@ -28,7 +30,7 @@ import waitSchema from "../schema/wait.json" with { type: "json" };
 import topicPage from "../schema/topic-page.json" with { type: "json" };
 import presenceRow from "../schema/presence-row.json" with { type: "json" };
 
-export const SCHEMAS = { "alert-row": alertRow, "alerts-list": alertsList, cost, "cost-rows": costRows, "events-list": eventsList, error, "fleet-status": fleetStatus, event, hello, meta, page, patch, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow, wait: waitSchema };
+export const SCHEMAS = { "alert-row": alertRow, "alerts-list": alertsList, "call-graph": callGraph, cost, "cost-rows": costRows, "events-list": eventsList, error, "fleet-status": fleetStatus, event, hello, meta, page, patch, "repos-list": reposList, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow, wait: waitSchema };
 export type SchemaName = keyof typeof SCHEMAS;
 let ajv: Ajv2020 | null = null;
 function compiled(): Ajv2020 {

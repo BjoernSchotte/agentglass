@@ -40,7 +40,7 @@ AGENTGLASS_REDACT=0
 EOF
 run() { env -i $(cat "$t/env") "$t/ag" "$@"; }
 run --json > "$t/golden.json"
-run events "claude:$B" --json > "$t/events.json"; run events "claude:$B" --preset prompts --json > "$t/events-p.json"; run wait --json > "$t/wait.json"; run wait --by kind --since 1d --json > "$t/wait-k.json"; run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"
+run events "claude:$B" --json > "$t/events.json"; run events "claude:$B" --preset prompts --json > "$t/events-p.json"; run --json --repos > "$t/repos.json"; run --json --repos --days 0 > "$t/repos0.json"; run wait --json > "$t/wait.json"; run wait --by kind --since 1d --json > "$t/wait-k.json"; run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"
 rc=0; run serve > /dev/null 2> "$t/err" || rc=$?
 [ "$rc" = 2 ] || { echo "FAIL serve without --stdio: exit $rc"; cat "$t/err"; exit 1; }
 python3 - "$t" "$d/$A.jsonl" "$A" "$B" << 'PY'
@@ -110,6 +110,26 @@ ok("wait.get by kind since 1d = wait --by kind --since 1d", wk and wOf(wk["ok"])
 for i, (pp, code) in enumerate([({"by": "nope"}, "bad_param"), ({"since": "soon"}, "bad_param"), ({"filter": "tool is"}, "bad_filter"), ({"limit": 0}, "bad_param"), ({"by": 1}, "bad_param")]):
     e = req(72 + i, "wait.get", pp)
     ok("wait.get %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
+# repos.list = --json --repos (rows; plus days, pending, at)
+rp = req(80, "repos.list", {})
+ok("repos.list = --json --repos", rp and rp["ok"]["rows"] == json.load(open(t + "/repos.json")) and rp["ok"]["days"] == 7 and rp["ok"]["pending"] == 0)
+rp0 = req(81, "repos.list", {"days": 0})
+ok("repos.list days 0 = --repos --days 0", rp0 and rp0["ok"]["rows"] == json.load(open(t + "/repos0.json")))
+for i, (pp, code) in enumerate([({"days": -1}, "bad_param"), ({"days": 1.5}, "bad_param"), ({"filter": "cost >"}, "bad_filter")]):
+    e = req(82 + i, "repos.list", pp)
+    ok("repos.list %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
+# graph.get: B's turn and its Bash call as columns; no content (the command line) anywhere
+g = req(90, "graph.get", {"ref": "claude:" + B})
+go = g["ok"] if g and "ok" in g else {}
+sp = go.get("spans", {}); n = go.get("n", -1)
+ok("graph.get: columns of one length", n > 0 and all(len(v) == n for v in sp.values()))
+ok("graph.get: a turn and a Bash call", 0 in sp.get("kind", []) and "Bash" in go.get("names", []) and any(go["names"][x] == "Bash" and go["cats"][c] == "shell" for x, c in zip(sp["name"], sp["cat"])))
+ok("graph.get: no content", "pnpm test" not in json.dumps(go))
+gw = req(91, "graph.get", {"ref": "claude:" + B, "from": go.get("t1", 0) + 60000})
+ok("graph.get window after the end: no span", gw and gw["ok"]["n"] == 0 and gw["ok"]["total"] == n)
+for i, (pp, code) in enumerate([({}, "bad_param"), ({"ref": "claude:ffffffff-0000"}, "not_found"), ({"ref": "claude:" + B, "from": 10, "to": 5}, "bad_param")]):
+    e = req(92 + i, "graph.get", pp)
+    ok("graph.get %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
 s = req(3, "sub", {"topic": "sessions"})
 ok("sub " + json.dumps(s), s and s.get("ok", {}).get("sub") == "s1")
 snap = read(lambda x: x.get("sub") == "s1" and x.get("k") == "snapshot", 5)

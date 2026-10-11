@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "call-graph",
+  "title": "CallGraph",
+  "description": "graph.get: a session's turns, tool calls and subagents as columns (spans.<col>[i]: span i; name and cat index names and cats; kind 0 turn, 1 tool, 2 agent; err -1 unknown, 0 ok, 1 error; parent -1 = root or outside the window). No content.",
+  "type": "object",
+  "required": [
+    "session",
+    "t0",
+    "t1",
+    "noTiming",
+    "rows",
+    "n",
+    "total",
+    "kinds",
+    "cats",
+    "names",
+    "spans",
+    "sources",
+    "truncated",
+    "at"
+  ],
+  "properties": {
+    "session": {
+      "type": "object",
+      "required": [
+        "harness",
+        "id"
+      ],
+      "properties": {
+        "harness": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "t0": {
+      "type": "number"
+    },
+    "t1": {
+      "type": "number"
+    },
+    "noTiming": {
+      "type": "boolean"
+    },
+    "rows": {
+      "type": "integer"
+    },
+    "n": {
+      "type": "integer"
+    },
+    "total": {
+      "type": "integer"
+    },
+    "kinds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "spans": {
+      "type": "object",
+      "required": [
+        "t0",
+        "t1",
+        "depth",
+        "row",
+        "kind",
+        "cat",
+        "name",
+        "err",
+        "open",
+        "est",
+        "parent",
+        "src"
+      ],
+      "properties": {
+        "t0": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "t1": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "depth": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "row": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "kind": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "cat": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "name": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "err": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "open": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "est": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "parent": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "src": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "harness",
+          "id",
+          "kind"
+        ],
+        "properties": {
+          "harness": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "truncated": {
+      "type": "integer",
+      "description": "sources read from their last 8 MB only"
+    },
+    "at": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

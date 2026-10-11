@@ -203,6 +203,9 @@ engine's state: on the 3,400-session reference history main idles at 223 MB subs
 - *The ledger's day heavy texts are kept compressed in serve* (`usage/hvzip.ts`, 51 MB of text → 14 MB, packed in the
   background at ~8 % of a core for about a minute, each day verified to round-trip before its text goes; the cache
   file is unchanged and its texts saved byte-identical): steady 223 MB (main) → 188 MB.
+- *repos.list:* the session walk runs in slices (a first ask reads many heads: 0.5–1.2 s); the aggregation is one step
+  (0.2–0.5 s on 30 days of the reference history, mostly the day heavy texts unpacked). graph.get of a 462-source
+  session: 5.6 s in slices, 2.4 MB of columns.
 - Not done: the rest of the ledger (ownership texts `mo`, ids, memos) and the session model; the TUI keeps texts
   uncompressed (its 5-minute saves would unpack every day).
 

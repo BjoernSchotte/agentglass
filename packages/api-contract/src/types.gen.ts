@@ -48,6 +48,49 @@ export interface AlertsList {
 }
 
 /**
+ * graph.get: a session's turns, tool calls and subagents as columns (spans.<col>[i]: span i; name and cat index names and cats; kind 0 turn, 1 tool, 2 agent; err -1 unknown, 0 ok, 1 error; parent -1 = root or outside the window). No content.
+ */
+export interface CallGraph {
+  session: {
+    harness: string;
+    id: string;
+  };
+  t0: number;
+  t1: number;
+  noTiming: boolean;
+  rows: number;
+  n: number;
+  total: number;
+  kinds: string[];
+  cats: string[];
+  names: string[];
+  spans: {
+    t0: number[];
+    t1: number[];
+    depth: number[];
+    row: number[];
+    kind: number[];
+    cat: number[];
+    name: number[];
+    err: number[];
+    open: number[];
+    est: number[];
+    parent: number[];
+    src: number[];
+  };
+  sources: {
+    harness: string;
+    id: string;
+    kind: string | null;
+  }[];
+  /**
+   * sources read from their last 8 MB only
+   */
+  truncated: number;
+  at: number;
+}
+
+/**
  * cost.get with by, since or filter: the `agentglass cost --by` rows (a final total row) plus by, since, pending, at
  */
 export interface CostRows {
@@ -329,6 +372,61 @@ export interface PresenceRow {
   stuck: number;
   lastAt: string | null;
   [k: string]: unknown;
+}
+
+/**
+ * repos.list: the `agentglass --json --repos` rows plus days, pending, at
+ */
+export interface ReposList {
+  rows: {
+    key: string;
+    label: string;
+    kind: string;
+    worktrees: {
+      name: string;
+      top: string;
+    }[];
+    sessions: number;
+    live: number;
+    last: string;
+    costUsd: number | null;
+    unpricedTokens: number;
+    tokens: {
+      in: number;
+      out: number;
+    };
+    calls: number;
+    errors: number;
+    errorRate: number | null;
+    activeMin: number;
+    agentMin: number;
+    files: {
+      path: string;
+      edits: number;
+      add: number;
+      del: number;
+      harnesses: string[];
+    }[];
+    outsideFiles: number;
+    byHarness: {
+      harness: string;
+      sessions: number;
+      costUsd: number | null;
+    }[];
+    branches: {
+      branch: string;
+      sessions: number;
+      commits: number;
+      costUsd: number | null;
+    }[];
+    commits: number;
+    costPerCommit: number | null;
+    spendWithoutCommits: number;
+    prs: string[];
+  }[];
+  days: number;
+  pending: number;
+  at: number;
 }
 
 export interface ApiRequest {

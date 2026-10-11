@@ -54,6 +54,9 @@ export function packAcc(a: Acc): void {
   }
 }
 export function peekHeavy(d: Day): Heavy { const h = d.hx; if (h) return h; const t = hvText(d); return t ? HEAVY.decode(t) : newHeavy(); }
+// for a pass over many days: the TUI keeps what it decoded (it redoes such passes every few seconds); a reader that packs
+// the texts (serve: HEAVY.zip) looks without keeping, so one aggregate does not unpack the history into memory for good
+export function heavyLook(d: Day): Heavy { return HEAVY.zip ? peekHeavy(d) : heavy(d); }
 export interface Acc {
   off: number; skip: boolean; stall: number; // next unread byte; inside a >1 MB line; size at which only a partial line was left
   ids: Map<string, number>; days: Map<string, Day>; model: string; // claude: booked message id → its output_tokens booked so far

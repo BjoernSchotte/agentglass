@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repos-list",
+  "title": "ReposList",
+  "description": "repos.list: the `agentglass --json --repos` rows plus days, pending, at",
+  "type": "object",
+  "required": [
+    "rows",
+    "days",
+    "pending",
+    "at"
+  ],
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "kind",
+          "worktrees",
+          "sessions",
+          "live",
+          "last",
+          "costUsd",
+          "unpricedTokens",
+          "tokens",
+          "calls",
+          "errors",
+          "errorRate",
+          "activeMin",
+          "agentMin",
+          "files",
+          "outsideFiles",
+          "byHarness",
+          "branches",
+          "commits",
+          "costPerCommit",
+          "spendWithoutCommits",
+          "prs"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "worktrees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "top"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "top": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "sessions": {
+            "type": "number"
+          },
+          "live": {
+            "type": "number"
+          },
+          "last": {
+            "type": "string"
+          },
+          "costUsd": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unpricedTokens": {
+            "type": "number"
+          },
+          "tokens": {
+            "type": "object",
+            "required": [
+              "in",
+              "out"
+            ],
+            "properties": {
+              "in": {
+                "type": "number"
+              },
+              "out": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false
+          },
+          "calls": {
+            "type": "number"
+          },
+          "errors": {
+            "type": "number"
+          },
+          "errorRate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "activeMin": {
+            "type": "number"
+          },
+          "agentMin": {
+            "type": "number"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "edits",
+                "add",
+                "del",
+                "harnesses"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "edits": {
+                  "type": "number"
+                },
+                "add": {
+                  "type": "number"
+                },
+                "del": {
+                  "type": "number"
+                },
+                "harnesses": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "outsideFiles": {
+            "type": "number"
+          },
+          "byHarness": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "harness",
+                "sessions",
+                "costUsd"
+              ],
+              "properties": {
+                "harness": {
+                  "type": "string"
+                },
+                "sessions": {
+                  "type": "number"
+                },
+                "costUsd": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "branches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "branch",
+                "sessions",
+                "commits",
+                "costUsd"
+              ],
+              "properties": {
+                "branch": {
+                  "type": "string"
+                },
+                "sessions": {
+                  "type": "number"
+                },
+                "commits": {
+                  "type": "number"
+                },
+                "costUsd": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "commits": {
+            "type": "number"
+          },
+          "costPerCommit": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "spendWithoutCommits": {
+            "type": "number"
+          },
+          "prs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "days": {
+      "type": "integer"
+    },
+    "pending": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "at": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

@@ -14,7 +14,7 @@ import { fleetHosts } from "./fleet.ts";
 
 export const PROTO = 1; // agentglass-serve/<n> (docs/cli-contract.md)
 // what the resources of this release serve (the command channel, "cmd", arrives with the typed commands)
-export const CAPS = ["sessions", "events", "cost", "wait", "alerts", "fleet", "team"];
+export const CAPS = ["sessions", "events", "cost", "wait", "alerts", "fleet", "repos", "graph", "team"];
 
 // the inputs of the sessions rows: the set (SG), the ledger's booked messages (L), git attribution, and per session
 // what a row shows from its log and process (size, time, pid, status, flags)

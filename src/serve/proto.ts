@@ -19,6 +19,8 @@ import { alertRows } from "../read/alerts.ts";
 import { type EvRead, TAIL_BYTES, viewFor, evRead, evStep, eventsJson } from "../read/events.ts";
 import { waitStart, waitStep, waitOut } from "../read/wait.ts";
 import { readFleet } from "../read/fleet.ts";
+import { reposStart, reposStep, reposOut } from "../read/repos.ts";
+import { graphStart, graphStep, graphOut } from "../read/graph.ts";
 import { indexState, indexing } from "../features/usage/ledger.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
@@ -144,6 +146,28 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     whenDone("wait\t" + id, (ms: number): boolean => waitStep(w, ms), (): void => { sv.out(answer()); });
     return "";
   }
+  if (m === "repos.list") { // --json --repos: one row per project for the last days (0 = all history)
+    if (p["filter"] !== undefined && typeof p["filter"] !== "string") return errL(id, "bad_param", "filter must be a string", "");
+    const days = num(p["days"], 7); sv.fresh();
+    const r = reposStart(days, str(p["filter"])); const e = r.err; if (e) return errL(id, e.code, e.msg, e.hint);
+    const answer = (): string => { const o = reposOut(r); o["at"] = sv.now(); return okL(id, o); };
+    if (reposStep(r, INLINE_MS)) return answer();
+    whenDone("repos\t" + id, (ms: number): boolean => reposStep(r, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
+  if (m === "graph.get") { // the call graph as columns (no content); read source by source in slices
+    const ref = str(p["ref"]); if (!ref) return errL(id, "bad_param", "ref is required", "<harness>:<id>, an id or a unique prefix of 6+ characters");
+    const from = num(p["from"], 0); const to = num(p["to"], 0);
+    if (from < 0 || to < 0 || (from && to && to < from)) return errL(id, "bad_param", "from and to: times in ms, to after from", "");
+    sv.fresh();
+    const f = findSession(ref, (x: Sess): boolean => true); const s = f.s;
+    if (!s) return errL(id, f.code === 4 ? "ambiguous" : f.code === 2 ? "bad_param" : "not_found", f.msg, f.hint);
+    const g = graphStart(s, sv.now());
+    const answer = (): string => { const o = graphOut(g, from, to); o["at"] = sv.now(); return okL(id, o); };
+    if (graphStep(g, INLINE_MS)) { const a = answer(); trimIdle(sv.now()); return a; }
+    whenDone("graph\t" + id, (ms: number): boolean => graphStep(g, ms), (): void => { sv.out(answer()); });
+    return "";
+  }
   if (m === "fleet.hosts") { sv.fresh(); const o = readFleet(sv.now()); o["at"] = sv.now(); return okL(id, o); } // fleet status --json from the cached reports (no pull)
   if (m === "alerts.list") { // the alert transitions of this process, newest first; since (ms) and limit (1–1000, 200)
     const since = num(p["since"], 0); const lim = num(p["limit"], LIMIT_DEF);
@@ -155,7 +179,7 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
   if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, wait.get, alerts.list, fleet.hosts, sub, unsub, team.status, team.report, team.sessions, team.activity");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, events.list, cost.get, wait.get, alerts.list, fleet.hosts, repos.list, graph.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
 }
 // team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
 function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {
