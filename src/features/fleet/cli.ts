@@ -17,7 +17,7 @@ import { agentHost, cliError, errLine } from "../agentenv.ts";
 import { type CmdRec, type OptRec, addCmd, opt, cmdOf, cmdText, helpOf, wantsHelp } from "../clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "../format.ts";
 import { discover, jsonSess, JSON_FIELDS, FILTER_OPT, FORMAT_OPT, FIELDS_OPT } from "../cli.ts";
-import { json, summary } from "../cost-cli.ts";
+import { json, summary } from "../../read/cost.ts";
 import { cliFilter, cliSelect } from "../query/cli.ts";
 import { peers } from "../vcs/json.ts";
 import { MODES } from "../usage/billing.ts";

@@ -34,7 +34,10 @@ run("every answer and event conforms", async () => {
   s.send({ id: 6, m: "nope" });
   s.send({ id: 7, m: "sessions.list", p: { filter: "cost >" } });
   s.send({ id: 8, m: "team.report", p: {} });
-  for (const id of [1, 2, 3, 4, 5, 6, 7, 8]) ok("response", await s.until(byId(id)));
+  s.send({ id: 9, m: "cost.get" });
+  s.send({ id: 10, m: "cost.get", p: { by: "model", since: "7d" } });
+  for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) ok("response", await s.until(byId(id)));
+  ok("cost", (await s.until(byId(9))).ok); ok("cost-rows", (await s.until(byId(10))).ok);
   ok("hello", (await s.until(byId(1))).ok); ok("meta", (await s.until(byId(2))).ok); ok("page", (await s.until(byId(3))).ok);
   ok("session-detail", (await s.until(byId(4))).ok);
   expect(((await s.until(byId(6))).err as { code: string }).code).toBe("unknown_method");

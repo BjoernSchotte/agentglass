@@ -67,6 +67,13 @@ test("the session reads the API through the child", async () => {
   expect(r.status).toBe(200); expect(((await r.json()) as { data: unknown[] }).data.length).toBe(1);
   expect(r.headers.get("cache-control")).toBe("no-store");
 });
+test("GET /api/v1/cost: by, since (as text) and filter reach cost.get; other query keys do not", async () => {
+  const { cookie } = await login();
+  const r = await fetch(base + "/api/v1/cost?by=model&since=7d&filter=harness%20is%20claude&x=1", { headers: { Cookie: cookie } });
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as { params: unknown }).params).toEqual({ by: "model", since: "7d", filter: "harness is claude" });
+});
+
 test("--host 0.0.0.0: this machine's addresses and hostname pass, others do not", () => {
   const n = namesOf("0.0.0.0", { eth0: [{ address: "192.168.1.20", family: "IPv4", internal: false }, { address: "fe80::1", family: "IPv6", internal: false }], lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }] }, "box");
   expect(hostOk("192.168.1.20:8080", 8080, n)).toBe(true); expect(hostOk("box.local:8080", 8080, n)).toBe(true); expect(hostOk("localhost:8080", 8080, n)).toBe(true);

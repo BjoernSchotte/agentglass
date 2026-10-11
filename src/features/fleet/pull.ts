@@ -13,7 +13,7 @@ import { BUILD } from "../../build-info.ts";
 import { hostId, hostName } from "../../util/hostid.ts";
 import { REDACT } from "../redact-on.ts";
 import { discover, jsonSess } from "../cli.ts";
-import { json, summary } from "../cost-cli.ts";
+import { json, summary } from "../../read/cost.ts";
 import { livePid } from "../query/eval.ts";
 import { peers } from "../vcs/json.ts";
 import { allowanceInfo, codexWins } from "../usage/bill-live.ts";

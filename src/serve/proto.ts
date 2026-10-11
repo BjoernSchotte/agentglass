@@ -13,6 +13,8 @@ import type { Sess } from "../model/types.ts";
 import { detailReady, detailStep } from "../features/queries.ts";
 const INLINE_MS = 30;
 import { whenRead } from "./detail.ts";
+import { readCost } from "../read/cost.ts";
+import { indexState, indexing } from "../features/usage/ledger.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
 // hello: a hello was answered; fresh: called before a request that reads the engine (main.ts: discover() when stale)
@@ -103,10 +105,18 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     for (const l of a.lines) sv.out(l);
     return "";
   }
+  if (m === "cost.get") { // cost --json / cost --by rows; a cold start answers at once with pending logs and the index's progress
+    for (const k of ["harness", "by", "since", "filter"]) if (p[k] !== undefined && typeof p[k] !== "string") return errL(id, "bad_param", k + " must be a string", "");
+    sv.fresh();
+    const r = readCost({ harness: str(p["harness"]), by: str(p["by"]), since: str(p["since"]), filter: str(p["filter"]) }); const d = r.data; const e = r.err;
+    if (!d || e) return errL(id, e ? e.code : "internal", e ? e.msg : "no answer", e ? e.hint : "");
+    const st = indexState(); d["at"] = sv.now(); if (indexing() || num(d["pending"], 0) > 0) d["indexing"] = { done: st.done, total: st.total };
+    return okL(id, d);
+  }
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
   if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, cost.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
 }
 // team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
 function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {

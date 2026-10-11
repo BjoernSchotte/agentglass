@@ -17,7 +17,7 @@ import { sha256Hex } from "../../util/sha256.ts";
 import { type Obj, obj, str, parse } from "../../util/json.ts";
 import { REDACT } from "../redact-on.ts";
 import { discover, jsonSess } from "../cli.ts";
-import { json, summary, summaryOf } from "../cost-cli.ts";
+import { json, summary, summaryOf } from "../../read/cost.ts";
 import { livePid } from "../query/eval.ts";
 import { peers } from "../vcs/json.ts";
 import { allowanceInfo, codexWins, modeOf } from "../usage/bill-live.ts";

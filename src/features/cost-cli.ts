@@ -1,11 +1,9 @@
 // agentglass — `agentglass cost`: today / 7 days / month by billing mode, unpriced usage, projection and the budget
 // SPDX-License-Identifier: Apache-2.0
 import { writeSync } from "node:fs";
-import { H, complete, screenOut } from "../hooks.ts";
+import { H, screenOut } from "../hooks.ts";
 import { S, say } from "../state.ts";
-import { sessions, loadHead } from "../model/sessions.ts";
-import { harnessIds, isHarness } from "../harness/index.ts";
-import type { Obj } from "../util/json.ts";
+import { harnessIds } from "../harness/index.ts";
 import { home } from "../util/text.ts";
 import { CONFIG_FILE } from "../util/config.ts";
 import { discover } from "./cli.ts";
@@ -13,14 +11,11 @@ import { agentHost, agentScope, hostObj, cliError } from "./agentenv.ts";
 import { jsonHelp, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs } from "./format.ts";
 import { BY, COST_FIELDS, MODEL_FIELDS, WS_FIELDS, costRows, qopts, qfilter, printEnvelope } from "./queries.ts";
-import { startOfDay, dayKey, todayKey } from "./usage/record.ts";
+import { dayKey, todayKey } from "./usage/record.ts";
 import { MODES } from "./usage/billing.ts";
-import { type ModeSum, money, kfmt, grp, unpricedLine, monthStart } from "./usage/costs.ts";
-import { type CostNow, type Ent, costNow, costOfEnts, budget } from "./usage/summary.ts";
-import type { Sess } from "../model/types.ts";
-import { ledger } from "./usage/ledger.ts";
-import { modeOf } from "./usage/bill-live.ts";
-import type { Bill } from "./usage/billing.ts";
+import { type ModeSum, money, kfmt, grp, unpricedLine } from "./usage/costs.ts";
+import { type CostNow, budget } from "./usage/summary.ts";
+import { json, summary } from "../read/cost.ts";
 
 const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
        agentglass cost [--since today|<n>d|YYYY-MM-DD] [--by day|model|harness|project|session|workspace] [--format F] [--fields a,b]
@@ -53,20 +48,6 @@ let rc = 0; // the exit code a failed write (closed reader, full disk) still rep
 function out(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(rc); } }
 function fail(msg: string): never { cliError("usage", msg, "", 2); }
 
-function byMode(m: ModeSum): Obj { const o: Obj = {}; for (let i = 0; i < MODES.length; i++) o[MODES[i] ?? ""] = round(m.by[i] ?? 0); return o; }
-function unpriced(m: ModeSum): Obj { const bm: Obj = {}; for (const [k, n] of m.um) bm[k] = n; return { tokens: m.unk, byModel: bm, credits: m.uc }; }
-function round(c: number): number { return Math.round(c * 1e6) / 1e6; }
-// the `cost --json` object (fleet pull prints exactly this)
-export function json(c: CostNow): Obj {
-  const pb: Obj = {}; for (let i = 0; i < MODES.length; i++) { const p = c.projByMode[i]; pb[MODES[i] ?? ""] = p && p.month >= 0 ? round(p.month) : null; }
-  const b = c.budget;
-  return {
-    today: { byMode: byMode(c.today), estimatedUsd: round(c.today.est), unpriced: unpriced(c.today) },
-    week: { byMode: byMode(c.week), estimatedUsd: round(c.week.est), unpriced: unpriced(c.week) },
-    month: { byMode: byMode(c.month), estimatedUsd: round(c.month.est), unpriced: unpriced(c.month), projected: c.proj.month >= 0 ? { byMode: pb, total: round(c.proj.month) } : null },
-    budget: b.usd > 0 ? { monthlyUsd: b.usd, counts: b.counts, used: round(c.bs.used), projected: c.bs.projected >= 0 ? round(c.bs.projected) : null, state: c.bs.state, approx: c.bs.approx } : null,
-  };
-}
 interface Row { name: string; m: ModeSum }
 function pad(s: string, w: number): string { return s.length >= w ? s : " ".repeat(w - s.length) + s; }
 function text(c: CostNow): void {
@@ -97,23 +78,6 @@ function text(c: CostNow): void {
     (c.bs.projected >= 0 ? " · projected " + ap + "$" + c.bs.projected.toFixed(2) : "") + " · " + String(Math.round((c.bs.used / b.usd) * 100)) + "% used");
 }
 
-// every session that can hold a day of this month or of the 14-day projection window, indexed to its end
-export function summary(harness: string): CostNow {
-  const from = Math.min(startOfDay() - (monthStart(Date.now()).length - 1) * 86400000, startOfDay() - 15 * 86400000) - 3600000;
-  for (const s of sessions.values()) if (s.mtime >= from && (!harness || s.h === harness)) { loadHead(s); complete(s); }
-  return costNow(harness);
-}
-// summary() over these top-level sessions and their subagents only (a scoped snapshot: fleet-teams spec 6)
-export function summaryOf(top: Sess[]): CostNow {
-  const es: Ent[] = []; const st: Sess[] = []; for (const s of top) st.push(s);
-  while (st.length) {
-    const s = st.pop(); if (!s) break;
-    loadHead(s); complete(s);
-    const a = ledger.get(s.path); if (a) { const x = s; es.push({ a, mode: (p: string): Bill => modeOf(x, p) }); }
-    for (const c of s.subs) st.push(c);
-  }
-  return costOfEnts(es);
-}
 // without --by/--since: the summary (json or its text table); with them: rows per day/model/harness/project/session
 function cost(args: string[]): void {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(agentHost().on || fmtArgs(args).fmt === "json" ? jsonHelp("cost", hostObj(true)) : HELP); process.exit(0); }

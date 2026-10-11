@@ -294,7 +294,8 @@ export const BY = ["day", "model", "harness", "project", "session", "workspace"]
 // Day.um) of the days the filter keeps — the filter language's semantics: a day counts when it passes the day clauses
 // and, with call clauses, holds a matching call row (totals() of the shared aggregation counts the same days);
 // keys from the shared dimensions (project = the repo's name); costUsd null for all-unpriced rows
-export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter): Obj[] {
+// skip: a log not to read to its end here (serve's lazy read: what it booked so far counts)
+export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter, skip: (s: Sess) => boolean = (s: Sess): boolean => false): Obj[] {
   const acc = new Map<string, number[]>(); // key → [in, out, cacheRead, cacheWrite, cost, unpriced]
   const who = new Map<string, number>(); const seen = new Set<string>(); // key → sessions (copyKey: a session's copies count once)
   const tot = [0, 0, 0, 0, 0, 0]; const all = new Set<string>();
@@ -313,7 +314,8 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter)
     if (s.mtime < from || !visible(s, sc)) continue;
     if (cf.needsHead && !s.headDone) loadHead(s);
     if (!sessMatches(f, s)) continue;
-    complete(s); cands.push(s);
+    if (!skip(s)) complete(s);
+    cands.push(s);
   }
   // with call clauses: the session-days holding a matching row
   const hit = new Set<string>();

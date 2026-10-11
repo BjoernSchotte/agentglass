@@ -16,7 +16,7 @@ import { randomBytes, hex } from "../util/rand.ts";
 import { newFramer, push } from "../util/jsonl.ts";
 import { discover } from "../read/index.ts";
 import { LAZY } from "../read/row.ts";
-import { BG, indexTick, indexing } from "../features/usage/ledger.ts";
+import { BG, indexTick, indexing, indexState } from "../features/usage/ledger.ts";
 import { rules } from "../features/rules/state.ts";
 import { flags } from "../features/rules/engine.ts";
 import { watched, looker, observeWith, watchStep, forgetSession, ledgerRule } from "../features/watchdog.ts";
@@ -68,7 +68,10 @@ function flagStep(now: number): void {
 // one engine step while subscribed: logs, processes, view, flags; then patches and heartbeats
 function tick(sv: Srv): void {
   E.timer = false;
-  if (!sv.hub.subs.size) return; // the last unsub stopped the cadence
+  if (!sv.hub.subs.size) { // no subscriber: only the background index runs on (a read answered with pending logs), then rest
+    indexTick(); if (behind()) { E.timer = true; setTimeout(() => { tick(sv); }, INDEX_MS); }
+    return;
+  }
   // the background index (a cold start, a resume far behind): a paced step each INDEX_MS, the rows out once a second
   indexTick();
   if (indexing() && Date.now() - E.stepAt < INDEX_PUSH_MS) { E.timer = true; setTimeout(() => { tick(sv); }, INDEX_MS); return; }
@@ -84,7 +87,9 @@ function tick(sv: Srv): void {
   step(sv.hub, now, team); beat(sv.hub, now);
   arm(sv);
 }
-function arm(sv: Srv): void { if (E.timer || !sv.hub.subs.size) return; E.timer = true; setTimeout(() => { tick(sv); }, indexing() ? INDEX_MS : TICK_MS); }
+// logs the ledger has not indexed to their end: the background index has work
+function behind(): boolean { return indexState().left > 0; }
+function arm(sv: Srv): void { if (E.timer || (!sv.hub.subs.size && !behind())) return; E.timer = true; setTimeout(() => { tick(sv); }, indexing() ? INDEX_MS : TICK_MS); }
 
 function serveCli(args: string[]): void {
   const m = badArg(args.slice(1), [], ["--stdio", "--redact", "--read-only"], []); if (m) cliError("usage", m, "agentglass serve --help", 2);
@@ -94,6 +99,7 @@ function serveCli(args: string[]): void {
   discover(); E.disc = Date.now(); E.slow = E.disc; E.procs = E.disc;
   flagStep(E.disc);
   const sv = newSrv(true, hex(randomBytes(2)), (): number => Date.now(), send, fresh);
+  indexTick(); arm(sv); // the background index starts at once (its totals come from this first step), with or without subscribers
   const F = newFramer();
   process.stdin.on("data", (d: Uint8Array) => { for (const f of push(F, d)) onLine(sv, f.line, f.oversize); arm(sv); });
   process.stdin.on("end", () => { process.exit(0); }); // the ledger cache is saved on exit (usage/cache.ts)

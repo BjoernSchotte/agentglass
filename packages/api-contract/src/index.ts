@@ -4,6 +4,8 @@ import Ajv2020 from "ajv/dist/2020.js";
 import type { ErrorObject } from "ajv";
 export * from "./types.gen.ts";
 
+import cost from "../schema/cost.json" with { type: "json" };
+import costRows from "../schema/cost-rows.json" with { type: "json" };
 import error from "../schema/error.json" with { type: "json" };
 import event from "../schema/event.json" with { type: "json" };
 import hello from "../schema/hello.json" with { type: "json" };
@@ -21,7 +23,7 @@ import teamStatus from "../schema/team-status.json" with { type: "json" };
 import topicPage from "../schema/topic-page.json" with { type: "json" };
 import presenceRow from "../schema/presence-row.json" with { type: "json" };
 
-export const SCHEMAS = { error, event, hello, meta, page, patch, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow };
+export const SCHEMAS = { cost, "cost-rows": costRows, error, event, hello, meta, page, patch, request, response, session, "session-detail": sessionDetail, "team-activity": teamActivity, "team-report": teamReport, "team-sessions": teamSessions, "team-status": teamStatus, "topic-page": topicPage, "presence-row": presenceRow };
 export type SchemaName = keyof typeof SCHEMAS;
 let ajv: Ajv2020 | null = null;
 function compiled(): Ajv2020 {

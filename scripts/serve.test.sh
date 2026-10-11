@@ -12,6 +12,8 @@ A=cccccc01-0000-4000-8000-000000000001; B=cccccc02-0000-4000-8000-000000000002
 day=$(date -u +%Y-%m-%d)
 turn() { printf '{"type":"user","sessionId":"%s","cwd":"/w/srv","timestamp":"%sT00:00:0%s.000Z","message":{"role":"user","content":"%s"}}\n' "$1" "$day" "$2" "$3"; }
 turn "$A" 1 "first serve topic" > "$d/$A.jsonl"; turn "$B" 1 "second serve topic" > "$d/$B.jsonl"
+# B has priced usage today (cost.get)
+printf '{"type":"assistant","sessionId":"%s","cwd":"/w/srv","timestamp":"%sT00:00:02.000Z","message":{"id":"m-b1","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":120000,"output_tokens":3000}}}\n' "$B" "$day" >> "$d/$B.jsonl"
 # the isolation set: nothing of the developer's agentglass state is read or written
 cat > "$t/env" << EOF
 HOME=$h
@@ -35,6 +37,7 @@ AGENTGLASS_REDACT=0
 EOF
 run() { env -i $(cat "$t/env") "$t/ag" "$@"; }
 run --json > "$t/golden.json"
+run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"
 rc=0; run serve > /dev/null 2> "$t/err" || rc=$?
 [ "$rc" = 2 ] || { echo "FAIL serve without --stdio: exit $rc"; cat "$t/err"; exit 1; }
 python3 - "$t" "$d/$A.jsonl" "$A" << 'PY'
@@ -68,6 +71,18 @@ ok("hello " + json.dumps(h), h and h.get("ok", {}).get("proto") == 1)
 golden = json.load(open(t + "/golden.json"))
 lst = req(2, "sessions.list", {"limit": 1000})
 ok("sessions.list = agentglass --json", lst and lst["ok"]["data"] == golden)
+# cost.get = cost --json (plus pending, at); with by/since/filter = the cost --by rows
+def costOf(x): return {k: v for k, v in x.items() if k not in ("pending", "at", "indexing")}
+c = req(20, "cost.get", {})
+ok("cost.get = cost --json", c and costOf(c["ok"]) == json.load(open(t + "/cost.json")) and c["ok"]["pending"] == 0)
+ok("cost.get: B's usage priced today", c and sum(c["ok"]["today"]["byMode"].values()) > 0)
+cm = req(21, "cost.get", {"by": "model"})
+ok("cost.get by model = cost --by model rows", cm and cm["ok"]["rows"] == json.load(open(t + "/cost-model.json"))["rows"] and cm["ok"]["by"] == "model")
+cf = req(22, "cost.get", {"since": "7d", "filter": "harness is claude"})
+ok("cost.get since+filter = cost --since 7d --filter rows (by day)", cf and cf["ok"]["rows"] == json.load(open(t + "/cost-f.json"))["rows"] and cf["ok"]["by"] == "day")
+for i, (pp, code) in enumerate([({"by": "week"}, "bad_param"), ({"since": "yesterday-ish"}, "bad_param"), ({"filter": "harness is"}, "bad_filter"), ({"harness": "nope"}, "bad_param"), ({"by": 3}, "bad_param")]):
+    e = req(30 + i, "cost.get", pp)
+    ok("cost.get %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
 s = req(3, "sub", {"topic": "sessions"})
 ok("sub " + json.dumps(s), s and s.get("ok", {}).get("sub") == "s1")
 snap = read(lambda x: x.get("sub") == "s1" and x.get("k") == "snapshot", 5)
@@ -107,6 +122,9 @@ with open(os.path.dirname(log) + "/" + BIG + ".jsonl", "w") as f:
 env2 = dict(env, AGENTGLASS_CACHE_DIR=tempfile.mkdtemp(dir=t))
 p = subprocess.Popen([t + "/ag", "serve", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env2); buf = b""
 req(1, "hello", {"want": 1})
+t0 = time.time(); c = req(40, "cost.get", {}); dt = time.time() - t0
+if c and "ok" in c: print("serve: cold cost.get %.2f s, pending %s, indexing %s" % (dt, c["ok"]["pending"], c["ok"].get("indexing")))
+ok("cost.get on a cold start answers at once (%.2f s), the big log pending or counted" % dt, c and "ok" in c and dt < 1.5 and (c["ok"]["pending"] >= 1 or "indexing" not in c["ok"]))
 p.stdin.write((json.dumps({"id": 2, "m": "sessions.get", "p": {"ref": "claude:" + BIG}}) + "\n" + json.dumps({"id": 3, "m": "meta"}) + "\n").encode()); p.stdin.flush()
 order = []; got = {}
 def seen(x):
@@ -115,6 +133,13 @@ def seen(x):
 read(seen, 15)
 ok("first full detail: meta first, then the detail (got %s)" % order, order == [3, 2])
 ok("first full detail of the big log: all its turns", 2 in got and got[2].get("ok", {}).get("turns") == BIG_TURNS and got[2]["ok"].get("via") == "ref")
+# no subscription: the background index still runs until every log is counted
+end = time.time() + 15; c = None; i = 41
+while time.time() < end:
+    c = req(i, "cost.get", {}); i += 1
+    if c and c.get("ok", {}).get("pending") == 0: break
+    time.sleep(0.25)
+ok("cost.get without a subscription: pending reaches 0 (%s)" % (c and c.get("ok", {}).get("indexing")), c and c["ok"]["pending"] == 0 and "indexing" not in c["ok"])
 p.stdin.close()
 try: p.wait(timeout=5)
 except subprocess.TimeoutExpired: p.kill()

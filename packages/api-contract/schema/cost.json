@@ -1,0 +1,346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cost",
+  "title": "Cost",
+  "description": "cost.get without by/since/filter: `agentglass cost --json` plus pending, at and (while counting) indexing",
+  "type": "object",
+  "required": [
+    "today",
+    "week",
+    "month",
+    "budget",
+    "pending",
+    "at"
+  ],
+  "properties": {
+    "today": {
+      "type": "object",
+      "required": [
+        "byMode",
+        "estimatedUsd",
+        "unpriced"
+      ],
+      "properties": {
+        "byMode": {
+          "type": "object",
+          "required": [
+            "api",
+            "plan",
+            "metered",
+            "gateway",
+            "unknown"
+          ],
+          "properties": {
+            "api": {
+              "type": "number"
+            },
+            "plan": {
+              "type": "number"
+            },
+            "metered": {
+              "type": "number"
+            },
+            "gateway": {
+              "type": "number"
+            },
+            "unknown": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "estimatedUsd": {
+          "type": "number"
+        },
+        "unpriced": {
+          "type": "object",
+          "required": [
+            "tokens",
+            "byModel",
+            "credits"
+          ],
+          "properties": {
+            "tokens": {
+              "type": "number"
+            },
+            "byModel": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "credits": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "week": {
+      "type": "object",
+      "required": [
+        "byMode",
+        "estimatedUsd",
+        "unpriced"
+      ],
+      "properties": {
+        "byMode": {
+          "type": "object",
+          "required": [
+            "api",
+            "plan",
+            "metered",
+            "gateway",
+            "unknown"
+          ],
+          "properties": {
+            "api": {
+              "type": "number"
+            },
+            "plan": {
+              "type": "number"
+            },
+            "metered": {
+              "type": "number"
+            },
+            "gateway": {
+              "type": "number"
+            },
+            "unknown": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "estimatedUsd": {
+          "type": "number"
+        },
+        "unpriced": {
+          "type": "object",
+          "required": [
+            "tokens",
+            "byModel",
+            "credits"
+          ],
+          "properties": {
+            "tokens": {
+              "type": "number"
+            },
+            "byModel": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "credits": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "month": {
+      "type": "object",
+      "required": [
+        "byMode",
+        "estimatedUsd",
+        "unpriced",
+        "projected"
+      ],
+      "properties": {
+        "byMode": {
+          "type": "object",
+          "required": [
+            "api",
+            "plan",
+            "metered",
+            "gateway",
+            "unknown"
+          ],
+          "properties": {
+            "api": {
+              "type": "number"
+            },
+            "plan": {
+              "type": "number"
+            },
+            "metered": {
+              "type": "number"
+            },
+            "gateway": {
+              "type": "number"
+            },
+            "unknown": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "estimatedUsd": {
+          "type": "number"
+        },
+        "unpriced": {
+          "type": "object",
+          "required": [
+            "tokens",
+            "byModel",
+            "credits"
+          ],
+          "properties": {
+            "tokens": {
+              "type": "number"
+            },
+            "byModel": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "credits": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "projected": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "byMode",
+                "total"
+              ],
+              "properties": {
+                "byMode": {
+                  "type": "object",
+                  "required": [
+                    "api",
+                    "plan",
+                    "metered",
+                    "gateway",
+                    "unknown"
+                  ],
+                  "properties": {
+                    "api": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "plan": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "metered": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "gateway": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "unknown": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "total": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "budget": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "monthlyUsd",
+            "counts",
+            "used",
+            "projected",
+            "state",
+            "approx"
+          ],
+          "properties": {
+            "monthlyUsd": {
+              "type": "number"
+            },
+            "counts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "used": {
+              "type": "number"
+            },
+            "projected": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "state": {
+              "type": "string"
+            },
+            "approx": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "pending": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "logs of the window the background index has not counted to their end yet (their booked part is in the figures)"
+    },
+    "at": {
+      "type": "number"
+    },
+    "indexing": {
+      "type": "object",
+      "required": [
+        "done",
+        "total"
+      ],
+      "properties": {
+        "done": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
