@@ -1,6 +1,6 @@
 // agentglass — the cost read model (local-web-api §2): `cost --json` (today / 7 days / month by billing mode, unpriced,
 // projection, budget) and the `cost --by` rows. The CLI, fleet pull/snapshot and serve --stdio share it.
-// lazy (serve, LAZY.on): a log the background index has not reached is not read here; what it booked so far counts and
+// lazy (serve, LAZY.on): a log the background index is far behind on is not read here; what it booked so far counts and
 // pending says how many logs of the window are still being counted — the answer comes at once on a cold start
 // SPDX-License-Identifier: Apache-2.0
 import { complete } from "../hooks.ts";
@@ -17,7 +17,7 @@ import { startOfDay, dayKey, todayKey } from "../features/usage/record.ts";
 import { BY, costRows, parseSince } from "../features/queries.ts";
 import { filterOf } from "../features/query/cli.ts";
 import { harnessIds } from "../harness/index.ts";
-import { LAZY, indexed } from "./row.ts";
+import { LAZY, farBehind, indexed } from "./row.ts";
 import { type Err } from "./sessions.ts";
 
 function round(c: number): number { return Math.round(c * 1e6) / 1e6; }
@@ -34,8 +34,9 @@ export function json(c: CostNow): Obj {
     budget: b.usd > 0 ? { monthlyUsd: b.usd, counts: b.counts, used: round(c.bs.used), projected: c.bs.projected >= 0 ? round(c.bs.projected) : null, state: c.bs.state, approx: c.bs.approx } : null,
   };
 }
-// a log serve's background index has not reached: counted as booked so far, not read here
-function lazy(s: Sess): boolean { return LAZY.on && !indexed(s); }
+// a log serve's background index is far behind on: counted as booked so far, not read here (a live log's last appends
+// are read: they are small, and a running agent would otherwise count as pending forever)
+function lazy(s: Sess): boolean { return LAZY.on && farBehind(s); }
 // every session that can hold a day of this month or of the 14-day projection window, indexed to its end (serve: the
 // ones indexed already); pending = the window's logs still being counted
 const P = { pending: 0 };
@@ -45,6 +46,7 @@ export function summary(harness: string): CostNow {
   for (const s of sessions.values()) {
     if (s.mtime < from || (harness && s.h !== harness)) continue;
     if (lazy(s)) { P.pending++; continue; }
+    if (LAZY.on && indexed(s)) continue; // serve: the background index keeps it booked to its end already
     loadHead(s); complete(s);
   }
   return costNow(harness);

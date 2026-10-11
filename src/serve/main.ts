@@ -16,6 +16,7 @@ import { randomBytes, hex } from "../util/rand.ts";
 import { newFramer, push } from "../util/jsonl.ts";
 import { discover } from "../read/index.ts";
 import { LAZY } from "../read/row.ts";
+import { summaryInc } from "../features/usage/summary.ts";
 import { BG, indexTick, indexing, indexState } from "../features/usage/ledger.ts";
 import { rules } from "../features/rules/state.ts";
 import { flags } from "../features/rules/engine.ts";
@@ -95,7 +96,7 @@ function serveCli(args: string[]): void {
   const m = badArg(args.slice(1), [], ["--stdio", "--redact", "--read-only"], []); if (m) cliError("usage", m, "agentglass serve --help", 2);
   if (args.indexOf("--stdio") < 0) cliError("usage", "serve needs --stdio (the only transport)", USAGE, 2);
   S.cli = true; // warnings go to stderr, never into the protocol
-  LAZY.on = true; BG.on = true; // rows of logs not indexed yet answer at once (pending); the ledger indexes in the background
+  LAZY.on = true; BG.on = true; summaryInc(); // rows of logs not indexed yet answer at once (pending); the ledger indexes in the background
   discover(); E.disc = Date.now(); E.slow = E.disc; E.procs = E.disc;
   flagStep(E.disc);
   const sv = newSrv(true, hex(randomBytes(2)), (): number => Date.now(), send, fresh);
