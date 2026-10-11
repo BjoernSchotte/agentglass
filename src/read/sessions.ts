@@ -6,8 +6,7 @@ import { type Obj } from "../util/json.ts";
 import type { Sess } from "../model/types.ts";
 import { filterOf } from "../features/query/cli.ts";
 import { findSession } from "../model/sessref.ts";
-import { sessionObj, kidsOf } from "../features/queries.ts";
-import { copiesOf, ledger } from "../features/usage/ledger.ts";
+import { sessionObj } from "../features/queries.ts";
 import { pickSessions, rowsOf } from "./row.ts";
 import { gen } from "./meta.ts";
 
@@ -49,30 +48,13 @@ export function readSessions(p: SessQ): SessR {
   return { page: { data: rowsOf(sel, false, false), at: Date.now(), gen: gen("sessions"), next: to < list.length && last ? cursorOf(last) : null }, err: null };
 }
 // one session in full; ref = <harness>:<id>, an id, or a unique prefix (no current/last: they mean the caller's cwd)
-// fast: sessionObj's index-only answer; the full one is kept per session until its logs or the index move (MEMO), so
-// opening it again is instant
-const MEMO = new Map<string, { sig: string; o: Obj }>(); const MEMO_MAX = 16;
-// this session's own state: its copies' and subagents' sizes and how far the index booked them (not the global
-// generation, which moves with every other session while the history indexes)
-function part(x: Sess): string { const a = ledger.get(x.path); return String(x.size) + ":" + (a && a.off >= x.size ? "i" : "-") + ":" + String(x.pid); } // size, indexed to its end, live
-function sigOf(s: Sess): string { let k = ""; for (const c of copiesOf(s)) { k += "|" + part(c); for (const x of kidsOf(c)) k += "," + part(x); } return k; }
+// fast: sessionObj's index-only answer; full: with the transcript figures, from each log's cursor (runsum.ts) — the
+// first ask of a big session reads it once (serve: in slices, serve/detail.ts), later asks only what was appended
 export function readSession(ref: string, fast = false): OneR {
   const f = findSession(ref, (s: Sess): boolean => true);
   const s = f.s;
   if (!s) return { data: null, err: { code: f.code === 4 ? "ambiguous" : f.code === 2 ? "bad_param" : "not_found", msg: f.msg, hint: f.hint } };
-  if (fast) { const o = sessionObj(s, true); o["via"] = "ref"; o["detail"] = "fast"; return { data: o, err: null }; }
-  const m = memoOf(s); if (m) return { data: m, err: null };
-  const o = sessionObj(s); o["via"] = "ref"; // as session <ref> prints it
-  memoPut(s, o);
+  const o = sessionObj(s, fast); o["via"] = "ref"; // as session <ref> prints it
+  if (fast) o["detail"] = "fast";
   return { data: o, err: null };
 }
-// the full detail of s when it is kept and still current
-export function memoOf(s: Sess): Obj | null { const m = MEMO.get(s.path); return m && m.sig === sigOf(s) ? m.o : null; }
-// the last full detail of s even when it moved since (a live session grows each turn): stale-while-revalidate
-export function memoAny(s: Sess): Obj | null { const m = MEMO.get(s.path); return m ? m.o : null; }
-export function memoPut(s: Sess, o: Obj): void {
-  MEMO.delete(s.path); MEMO.set(s.path, { sig: sigOf(s), o });
-  if (MEMO.size > MEMO_MAX) for (const k of MEMO.keys()) { MEMO.delete(k); break; } // the oldest (insertion order)
-}
-// bytes the full detail reads: the session's logs (its copies and subagents)
-export function detailBytes(s: Sess): number { let n = 0; for (const c of copiesOf(s)) { n += c.size; for (const x of kidsOf(c)) n += x.size; } return n; }

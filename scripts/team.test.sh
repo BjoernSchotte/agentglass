@@ -116,6 +116,7 @@ exec 3> "$t/in"
 printf '%s\n' '{"id":1,"m":"hello","p":{"want":1}}' '{"id":2,"m":"sub","p":{"topic":"presence"}}' '{"id":3,"m":"sub","p":{"topic":"team:acme/backend"}}' '{"id":4,"m":"sub","p":{"topic":"team:acme/nope"}}' >&3
 # team rows carry the team's session ids (hashed): b-api is the row with 100000 input tokens, b-api2 the one with 5000
 i=0; until grep -q '"sub":"s2".*"k":"snapshot".*"in":100000' "$t/sv.out" 2>/dev/null || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done
+i=0; until grep -q '"id":4,' "$t/sv.out" 2>/dev/null || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done
 has "presence snapshot: bob" "$(grep '"k":"snapshot"' "$t/sv.out" | head -2)" '"name":"bob"'
 has "team topic snapshot: bob's api session" "$(grep '"sub":"s2".*"k":"snapshot"' "$t/sv.out")" '"in":100000'
 has "a room that does not exist: not_found" "$(cat "$t/sv.out")" '"id":4,"err":{"code":"not_found"'

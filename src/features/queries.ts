@@ -7,6 +7,7 @@ import { H, complete, display, realCwd, screenOut } from "../hooks.ts";
 import { S } from "../state.ts";
 import { sessions, loadHead, loadTail, subActive, parentOf } from "../model/sessions.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
+import { type LogSum, stateOf, sumStep, sumOut, caughtUp } from "./callgraph/runsum.ts";
 import { accOf, rowsOf, callsOf, copyKey, copiesOf } from "./usage/ledger.ts";
 import { type Acc, modelUses, isoMs, dayKey, heavy, newAcc } from "./usage/record.ts";
 import { type PRow, type SessAcc, priceRows } from "./usage/pricerows.ts";
@@ -126,21 +127,45 @@ function resultTexts(evs: Ev[]): Map<string, string> { const m = new Map<string,
 // fast: only what the index holds (models, tools, errors without their text, files, subagents, cost basis) — no pass
 // over the transcripts, so a 100 MB session answers in milliseconds; turns, wallMs, activeMs are null, repeats [] and
 // errors[].text null (serve's sessions.get {detail: "fast"}, the web drawer's first answer)
+// the logs a session's transcript figures read: this copy (top) and its subagents
+export function familyOf(s: Sess): Sess[] { const fam = [s]; for (const k of kidsOf(s)) if (parentOf(k) === s) fam.push(k); return fam; }
+// read the family's logs on from their cursors (runsum.ts) for about budget ms (0 = to the end); true = all caught up
+export function detailStep(s: Sess, budget: number): boolean {
+  const fam = familyOf(s); const end = budget > 0 ? Date.now() + budget : 0;
+  for (let i = 0; i < fam.length; i++) { const x = fam[i] as Sess; if (!sumStep(stateOf(x, i === 0), x, end ? Math.max(1, end - Date.now()) : 0)) return false; }
+  return true;
+}
+export function detailReady(s: Sess): boolean { const fam = familyOf(s); for (let i = 0; i < fam.length; i++) { const x = fam[i] as Sess; if (!caughtUp(stateOf(x, i === 0), x)) return false; } return true; }
 export function sessionObj(s: Sess, fast = false): Obj {
-  const fam = [s]; for (const k of kidsOf(s)) if (parentOf(k) === s) fam.push(k); // this copy's subagents (twins: each has its own)
+  const fam = familyOf(s); // this copy's subagents (twins: each has its own)
   const agg: Sess[] = []; const seen = new Set<string>();
   for (const c of copiesOf(s)) for (const x of [c].concat(kidsOf(c))) if (!seen.has(x.path)) { seen.add(x.path); agg.push(x); }
   for (const x of fam) { loadHead(x); if (!fast) loadTail(x); }
   for (const x of agg) complete(x);
-  const evs: Ev[][] = []; const srcs: Src[] = [];
-  if (!fast) for (let i = 0; i < fam.length; i++) { const x = fam[i]; const e = allEvents(x); evs.push(e); srcs.push({ evs: e, live: i === 0 ? x.pid > 0 : subActive(x), kind: x.kind, spawn: i === 0 ? "" : spawnOf(x) }); }
   const o = jsonSess(s); o["costUsd"] = s.cost < 0 ? null : r6(s.cost);
+  // the transcript figures: the running summary from each log's cursor (runsum.ts: only what is new since the last ask);
+  // a session it cannot summarize (nothing timed, a one-timestamp subagent) is read in full as before
+  let texts = new Map<string, string>(); const reps: Obj[] = [];
   if (fast) { o["turns"] = null; o["wallMs"] = null; o["activeMs"] = null; }
-  else { const sm = summary(buildGraph(srcs, Date.now())); o["turns"] = sm.turns; o["wallMs"] = Math.round(sm.wall); o["activeMs"] = Math.round(sm.active); }
+  else {
+    detailStep(s, 0);
+    const states: LogSum[] = []; const live: boolean[] = [];
+    for (let i = 0; i < fam.length; i++) { const x = fam[i] as Sess; states.push(stateOf(x, i === 0)); live.push(i === 0 ? x.pid > 0 : subActive(x)); }
+    const r = sumOut(states, live, Date.now());
+    if (r) {
+      o["turns"] = r.turns; o["wallMs"] = Math.round(r.wallMs); o["activeMs"] = Math.round(r.activeMs); texts = r.texts;
+      for (const x of r.runs) { const f = fam[x.i] as Sess; reps.push({ tool: display("tool", x.r.tool, f), arg: argOf(x.r.tool, x.r.arg, f), n: x.r.n, ts: x.r.ts || null, session: f.id }); }
+    } else {
+      const evs: Ev[][] = []; const srcs: Src[] = [];
+      for (let i = 0; i < fam.length; i++) { const x = fam[i] as Sess; const e = allEvents(x); evs.push(e); srcs.push({ evs: e, live: i === 0 ? x.pid > 0 : subActive(x), kind: x.kind, spawn: i === 0 ? "" : spawnOf(x) }); }
+      const sm = summary(buildGraph(srcs, Date.now()));
+      o["turns"] = sm.turns; o["wallMs"] = Math.round(sm.wall); o["activeMs"] = Math.round(sm.active);
+      for (const e of evs) for (const [k, v] of resultTexts(e)) texts.set(k, v);
+      for (let i = 0; i < fam.length; i++) { const f = fam[i] as Sess; for (const r2 of loopRuns(evs[i] ?? [], 3)) reps.push({ tool: display("tool", r2.tool, f), arg: argOf(r2.tool, r2.arg, f), n: r2.n, ts: r2.ts || null, session: f.id }); }
+    }
+  }
   o["models"] = modelRows(agg, null);
   o["tools"] = toolRows(agg, 15);
-  const texts = new Map<string, string>();
-  for (const e of evs) for (const [k, v] of resultTexts(e)) texts.set(k, v);
   let er: ErrRec[] = [];
   for (const x of agg) er = er.concat(errRecs(x, accOf(x)));
   er.sort((x, y) => recMs(y.r) - recMs(x.r));
@@ -148,8 +173,6 @@ export function sessionObj(s: Sess, fast = false): Obj {
   for (const e of er.slice(0, 10)) { const t = e.r.id ? texts.get(e.r.id) : undefined; errs.push({ ts: e.r.ts || null, tool: display("tool", e.tool, e.s), arg: argOf(e.tool, e.r.arg, e.s), text: t === undefined ? null : errText(t), session: e.s.id }); }
   o["errors"] = errs;
   o["files"] = fileRows(agg, 15);
-  const reps: Obj[] = [];
-  for (let i = 0; i < fam.length; i++) for (const r of loopRuns(evs[i] ?? [], 3)) reps.push({ tool: display("tool", r.tool, fam[i]), arg: argOf(r.tool, r.arg, fam[i]), n: r.n, ts: r.ts || null, session: fam[i].id });
   o["repeats"] = reps;
   const subs: Obj[] = [];
   for (const k of fam.slice(1)) subs.push({ id: k.id, kind: k.kind, costUsd: k.cost < 0 ? null : r6(k.cost), tools: k.tools });

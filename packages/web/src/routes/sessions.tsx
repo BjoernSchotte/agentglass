@@ -179,7 +179,7 @@ function Detail({ row, onClose }: { row: SessionRow | undefined; onClose: () => 
         ) : <>
           <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-y-1.5">
             {!full ? <div className="contents"><dt className="text-muted">Turns</dt><dd className="flex items-center gap-1.5 text-[12px] text-muted"><span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-border border-t-accent" aria-hidden />reading the transcript…</dd></div> : <>
-              {d.turns != null && <div className="contents"><dt className="text-muted">Turns</dt><dd className="mono text-[12px]">{d.turns}{(d as { stale?: boolean }).stale && <span className="text-muted" title="the session moved on since these were read; reopen for the latest"> · as of a moment ago</span>}</dd></div>}
+              {d.turns != null && <div className="contents"><dt className="text-muted">Turns</dt><dd className="mono text-[12px]">{d.turns}</dd></div>}
               {d.activeMs != null && <div className="contents"><dt className="text-muted">Active</dt><dd className="mono text-[12px]">{dur(d.activeMs)}{d.wallMs ? " of " + dur(d.wallMs) : ""}</dd></div>}
             </>}
             {d.git?.commits && <div className="contents"><dt className="text-muted">Commits</dt><dd className="mono text-[12px]">{d.git.commits.length}</dd></div>}

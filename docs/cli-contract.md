@@ -219,8 +219,8 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
   `{"id":null,"err":{"code":"oversize",…}}`, and the stream continues.
 - **Requests** `{"id": <string|number>, "m": "<method>", "p": {…}}` → `{"id":…, "ok": {…}}` or
   `{"id":…, "err": {"code", "msg", "hint"?}}` (`id` null when the line had none). Answers come in request order — except a full
-  `sessions.get` of a big session (over 8 MB of logs), which a child process reads: it answers when done, and later
-  requests are not held by it. Match answers by `id`.
+  `sessions.get` whose logs the process has not read yet (a first ask of a big session): it reads them in slices and
+  answers when done, and later requests are not held by it. Match answers by `id`.
 - **`hello` first**: `{"m":"hello","p":{"client":"…","want":1}}` → `{proto, contract, version, readOnly, redact, caps}`;
   `want` above `proto` → `proto` error ("update agentglass"); any other method before `hello` → `proto` error.
 
@@ -228,7 +228,7 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
 |---|---|---|
 | `meta` | none | `{version, contract, proto, caps[], readOnly, redact, harnesses[], teams[{id, name}]}` |
 | `sessions.list` | `filter` (the filter language: `live is true`, `harness is codex and cost > 1`; a bare word searches title, path, id), `limit` 1–1000 (200), `cursor`, `subagents` bool | `{data: [--json rows], at (ms), gen, next: cursor\|null}` |
-| `sessions.get` | `ref` (required): `<harness>:<id>`, an id or a unique prefix of 6+ characters; `detail`: `full` (default) or `fast` | the `session <ref>` object (`via` = `"ref"`); `fast`: only what the index holds, in milliseconds also for a 100 MB log — `turns`, `wallMs`, `activeMs` null, `repeats` [], `errors[].text` null, `detail: "fast"`; a full answer is kept until the session or the index moves; for a big session that moved since (a live one) the kept answer comes at once with `stale: true` while a child process refreshes it |
+| `sessions.get` | `ref` (required): `<harness>:<id>`, an id or a unique prefix of 6+ characters; `detail`: `full` (default) or `fast` | the `session <ref>` object (`via` = `"ref"`); `fast`: only what the index holds, in milliseconds also for a 100 MB log — `turns`, `wallMs`, `activeMs` null, `repeats` [], `errors[].text` null, `detail: "fast"`; the full one's turns, timing, repeats and error texts come from a running summary per log (read from a cursor, kept in the cache dir): after the first ask only appended bytes are read |
 | `sub` | `topic`: `sessions` (`filter`, `limit`, `subagents` as `sessions.list`), `team:<team>/<room>` (a team by name or id prefix; the room by name, empty = all rooms) or `presence` (`team`: name or id prefix, empty = the only one); `from` (an event id) | `{sub, resumed}`, then events |
 | `unsub` | `sub` | `{}` |
 | `team.status` | none | `agentglass team --json`: `{teams: [{id, name, mailbox, kind, me, admin, joined, rooms[], members[], pending, problems[]}]}` |
