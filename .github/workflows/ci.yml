@@ -35,7 +35,7 @@ jobs:
       - run: sh scripts/check.sh
         env: { CHECK_SHARD: "${{ matrix.shard }}/${{ matrix.shards }}", CHECK_RELEASE_OUT: agentglass, SCRIPTC_CACHE_MAX_MB: "4096" }
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
   # the macOS x64 release is built with scriptc's C backend (no LLVM helper there): build it here too, so a construct
   # only that backend rejects fails the PR, not the release (2026.10.3: a Record<string, RegExp> lookup)
@@ -53,7 +53,7 @@ jobs:
       # agentglass-receive-tls is C-backend only (https.createServer): built and smoke-tested over TLS here on every PR
       - run: sh scripts/build-tls.sh
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
   # the web side (local-web-api §11): the pnpm workspace's generated types, typecheck, unit tests, the conformance test
   # and the end-to-end test against a fresh agentglass, the bundle budget, the release build of agentglass-web, audit
@@ -81,7 +81,7 @@ jobs:
         env: { AGENTGLASS_BIN: "${{ github.workspace }}/agentglass", AGENTGLASS_WEB_BIN: "${{ github.workspace }}/packages/bff/dist/agentglass-web" }
       - run: sh scripts/build-web.sh 0.0.0-ci linux-x64 && sh scripts/npm.test.sh 0.0.0-ci
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
   # one status for the whole run: green only when every shard on both OSes, the C-backend build and the web job passed
   ci:
