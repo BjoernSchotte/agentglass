@@ -53,7 +53,7 @@ class AgentglassWeb < Formula
     # a real start on loopback with the agentglass it depends on (an empty HOME: no sessions), then the page
     port = free_port
     ag = formula_opt_bin("bjoernschotte/tap/agentglass")/"agentglass"
-    pid = spawn "#{bin}/agentglass-web", "--agentglass", ag.to_s,
+    pid = spawn bin/"agentglass-web", "--agentglass", ag.to_s,
                 "--port", port.to_s, out: (testpath/"out").to_s, err: (testpath/"err").to_s
     begin
       20.times do
