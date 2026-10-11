@@ -241,6 +241,10 @@ keep `proto`; consumers ignore what they do not know. The process exits 0 when s
   `hb` (no `d`) after 25 s without an event. A row's `key` is `<harness>:<id>` (copies of one session in one list:
   `<harness>:<id>@<path>`); order rows by `updated`, newest first. Patches follow the engine's cadence (1.5 s while
   subscribed; no cadence without subscriptions).
+- **Indexing** (a first run, or a cache far behind): rows of logs not indexed to their end come at once with
+  `pending: true` and the figures booked so far; the history indexes in the background (≤ a fifth of one core, newest
+  first, the TUI's indexer) and the rows follow as patches. While it runs, a sessions topic's snapshot and patches carry
+  `indexing: {done, total, bps}` (bytes; `bps` 0 = not measured yet); its absence means done.
 - **Team topics**: `team:<team>/<room>` rows are `team.sessions` rows with `key` = `<member id>:<device id>:<id>`;
   `presence` rows are `{key, id, name, mine, devices, online, live, attention, stuck, lastAt}`, one per member. While a team
   topic is subscribed the process syncs its teams every 60 s (publish, fetch, admit — as the TUI's Team tab) and pushes

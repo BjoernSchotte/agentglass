@@ -3,15 +3,20 @@
 import type { ApiEvent, SessionRow } from "@agentglass/api-contract";
 export class Rows {
   rows = new Map<string, SessionRow>(); order: string[] = []; at = 0; ready = false;
+  // the history index's progress while agentglass indexes (a first run): bytes done, total, bytes per second (0 = unknown)
+  indexing: { done: number; total: number; bps: number } | null = null;
   private shown: Set<string> | null = null; private ls = new Set<() => void>(); version = 0;
   apply(e: ApiEvent): void {
-    const d = (e.d ?? {}) as { data?: SessionRow[]; upsert?: SessionRow[]; remove?: string[]; at?: number };
+    const d = (e.d ?? {}) as { data?: SessionRow[]; upsert?: SessionRow[]; remove?: string[]; at?: number; indexing?: { done: number; total: number; bps: number } };
+    if (e.k !== "hb") this.indexing = d.indexing ?? null;
     if (e.k === "snapshot") { this.rows.clear(); for (const r of d.data ?? []) this.rows.set(String(r.key), r); this.ready = true; this.at = d.at ?? Date.now(); }
     else if (e.k === "patch") { for (const r of d.upsert ?? []) this.rows.set(String(r.key), r); for (const k of d.remove ?? []) this.rows.delete(k); this.at = Date.now(); }
     else return;
     this.order = [...this.rows.keys()].sort((a, b) => String(this.rows.get(b)!.updated).localeCompare(String(this.rows.get(a)!.updated)));
     this.emit();
   }
+  // another socket (a new server): nothing of the old rows stays
+  reset(): void { this.rows.clear(); this.order = []; this.ready = false; this.indexing = null; this.shown = null; this.emit(); }
   freeze(on: boolean): void { this.shown = on ? new Set(this.visible()) : null; this.emit(); }
   get frozen(): boolean { return this.shown !== null; }
   visible(): string[] { const s = this.shown; return s ? this.order.filter((k) => s.has(k)) : this.order; }

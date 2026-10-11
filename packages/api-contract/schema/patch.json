@@ -27,6 +27,26 @@
       "items": {
         "type": "string"
       }
+    },
+    "indexing": {
+      "type": "object",
+      "description": "the history index's progress while agentglass indexes (a first run): bytes done and total, bytes per second (0 = not measured yet)",
+      "required": [
+        "done",
+        "total",
+        "bps"
+      ],
+      "properties": {
+        "done": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        },
+        "bps": {
+          "type": "number"
+        }
+      }
     }
   }
 }

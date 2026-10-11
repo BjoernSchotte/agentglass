@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type Obj, str } from "../util/json.ts";
 import { type SessQ, readSessions, gen } from "../read/index.ts";
+import { indexing as busy, indexState } from "../features/usage/ledger.ts";
 import { pickTeam, roomId, teamTopicRows, presenceRows } from "../read/team.ts";
 
 export const RING_MAX = 1000;
@@ -77,7 +78,13 @@ export function openTopic(h: Hub, q: SessQ, now: number, kind = "sessions", team
 }
 function snapshotD(t: Topic, now: number): string {
   const rs: string[] = []; for (const k of t.order) rs.push(t.rows.get(k) ?? "null");
-  return "{\"data\":[" + rs.join(",") + "],\"at\":" + String(now) + ",\"gen\":" + String(t.g) + ",\"next\":null}";
+  return "{\"data\":[" + rs.join(",") + "],\"at\":" + String(now) + ",\"gen\":" + String(t.g) + ",\"next\":null" + indexing(t) + "}";
+}
+// a cold start's progress in a sessions topic's events while the history indexes
+// bytes of history indexed and to index, bytes per second (0 = not measured yet): the TUI's ⟳ gauge
+function indexing(t: Topic): string {
+  if (t.kind !== "sessions" || !busy()) return "";
+  const st = indexState(); return ",\"indexing\":{\"done\":" + String(st.done) + ",\"total\":" + String(st.total) + ",\"bps\":" + String(Math.round(st.bps)) + "}";
 }
 // "<epoch>-<seq>" of this run → seq; -1 = another run's or not an id
 export function seqOf(h: Hub, from: string): number {
@@ -126,7 +133,7 @@ export function step(h: Hub, now: number, team = false): number {
     const rm: string[] = []; for (const k of t.order) if (!seen.has(k)) { rm.push(k); t.rows.delete(k); }
     t.order = b.keys;
     if (!up.length && !rm.length) continue;
-    emit(h, t, "patch", "{\"upsert\":[" + up.join(",") + "],\"remove\":" + JSON.stringify(rm) + "}", now); n++;
+    emit(h, t, "patch", "{\"upsert\":[" + up.join(",") + "],\"remove\":" + JSON.stringify(rm) + indexing(t) + "}", now); n++;
   }
   return n;
 }

@@ -63,6 +63,15 @@ export interface ApiPatch {
     [k: string]: unknown;
   }[];
   remove: string[];
+  /**
+   * the history index's progress while agentglass indexes (a first run): bytes done and total, bytes per second (0 = not measured yet)
+   */
+  indexing?: {
+    done: number;
+    total: number;
+    bps: number;
+    [k: string]: unknown;
+  };
   [k: string]: unknown;
 }
 
@@ -171,6 +180,10 @@ export interface SessionDetail {
     [k: string]: unknown;
   } | null;
   via: string;
+  /**
+   * serve only: the log is not indexed to its end yet; tokens and cost are what is booked so far
+   */
+  pending?: boolean;
   [k: string]: unknown;
 }
 
@@ -251,6 +264,10 @@ export interface SessionRow {
   git?: {
     [k: string]: unknown;
   } | null;
+  /**
+   * serve only: the log is not indexed to its end yet; tokens and cost are what is booked so far
+   */
+  pending?: boolean;
   [k: string]: unknown;
 }
 
@@ -405,5 +422,14 @@ export interface TopicPage {
   at: number;
   gen: number;
   next: string | null;
+  /**
+   * the history index's progress while agentglass indexes (a first run): bytes done and total, bytes per second (0 = not measured yet)
+   */
+  indexing?: {
+    done: number;
+    total: number;
+    bps: number;
+    [k: string]: unknown;
+  };
   [k: string]: unknown;
 }

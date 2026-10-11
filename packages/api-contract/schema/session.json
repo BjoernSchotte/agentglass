@@ -256,6 +256,10 @@
         "object",
         "null"
       ]
+    },
+    "pending": {
+      "type": "boolean",
+      "description": "serve only: the log is not indexed to its end yet; tokens and cost are what is booked so far"
     }
   }
 }

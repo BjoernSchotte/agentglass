@@ -15,6 +15,8 @@ import { badArg } from "../util/argv.ts";
 import { randomBytes, hex } from "../util/rand.ts";
 import { newFramer, push } from "../util/jsonl.ts";
 import { discover } from "../read/index.ts";
+import { LAZY } from "../read/row.ts";
+import { BG, indexTick, indexing } from "../features/usage/ledger.ts";
 import { rules } from "../features/rules/state.ts";
 import { flags } from "../features/rules/engine.ts";
 import { watched, looker, observeWith, watchStep, forgetSession, ledgerRule } from "../features/watchdog.ts";
@@ -42,7 +44,8 @@ const SLOW_MS = 5000; // slow process facts, as the TUI
 const FRESH_MS = 1000; // a request reads state at most this old (no subscription: no cadence, discovery on demand)
 // as the TUI's Team tab: publish, fetch, admit — only while a team topic is subscribed (AGENTGLASS_TEAM_SYNC_MS: tests)
 const TEAM_SYNC_MS = Number(process.env["AGENTGLASS_TEAM_SYNC_MS"] ?? "") || 60000;
-const E = { disc: 0, slow: 0, procs: 0, timer: false, ledAt: new Map<string, number>(), teamAt: 0 };
+const INDEX_MS = 250; const INDEX_PUSH_MS = 1000; // background index: a step every 250 ms (the TUI's tick), rows pushed once a second
+const E = { disc: 0, slow: 0, procs: 0, timer: false, ledAt: new Map<string, number>(), teamAt: 0, stepAt: 0 };
 
 // sync write: a closed reader ends the process quietly; the screen filters run as on every CLI line (--redact scrubs)
 function send(line: string): void { try { writeSync(1, screenOut(line) + "\n"); } catch (e) { process.exit(0); } }
@@ -66,7 +69,10 @@ function flagStep(now: number): void {
 function tick(sv: Srv): void {
   E.timer = false;
   if (!sv.hub.subs.size) return; // the last unsub stopped the cadence
-  const now = Date.now();
+  // the background index (a cold start, a resume far behind): a paced step each INDEX_MS, the rows out once a second
+  indexTick();
+  if (indexing() && Date.now() - E.stepAt < INDEX_PUSH_MS) { E.timer = true; setTimeout(() => { tick(sv); }, INDEX_MS); return; }
+  const now = Date.now(); E.stepAt = now;
   scan(); probeLive(); // logs written in the last 10 min each scan, older ones in turns (as the TUI); live ones each tick
   const pr = procs.length > 0 || now - E.procs >= SLOW_MS; // processes as H.onWatch: every tick while agents are live, else every 5 s
   if (pr) { refreshProcs(); E.procs = now; }
@@ -78,12 +84,13 @@ function tick(sv: Srv): void {
   step(sv.hub, now, team); beat(sv.hub, now);
   arm(sv);
 }
-function arm(sv: Srv): void { if (E.timer || !sv.hub.subs.size) return; E.timer = true; setTimeout(() => { tick(sv); }, TICK_MS); }
+function arm(sv: Srv): void { if (E.timer || !sv.hub.subs.size) return; E.timer = true; setTimeout(() => { tick(sv); }, indexing() ? INDEX_MS : TICK_MS); }
 
 function serveCli(args: string[]): void {
   const m = badArg(args.slice(1), [], ["--stdio", "--redact", "--read-only"], []); if (m) cliError("usage", m, "agentglass serve --help", 2);
   if (args.indexOf("--stdio") < 0) cliError("usage", "serve needs --stdio (the only transport)", USAGE, 2);
   S.cli = true; // warnings go to stderr, never into the protocol
+  LAZY.on = true; BG.on = true; // rows of logs not indexed yet answer at once (pending); the ledger indexes in the background
   discover(); E.disc = Date.now(); E.slow = E.disc; E.procs = E.disc;
   flagStep(E.disc);
   const sv = newSrv(true, hex(randomBytes(2)), (): number => Date.now(), send, fresh);

@@ -8,7 +8,7 @@ export interface Reply { ok?: Obj; err?: { code: string; msg: string; hint?: str
 export type Listener = (e: Ev) => void;
 const RING_MAX = 1000; const RING_MS = 600_000;
 
-interface Topic { key: string; params: Obj; up: string; rows: Map<string, Obj>; order: string[]; gen: number; ring: { e: Ev; at: number }[]; last: string; ready: boolean; ls: Set<Listener>; waiting: Listener[] }
+interface Topic { key: string; params: Obj; up: string; indexing: unknown; rows: Map<string, Obj>; order: string[]; gen: number; ring: { e: Ev; at: number }[]; last: string; ready: boolean; ls: Set<Listener>; waiting: Listener[] }
 export interface Child { write(line: string): void; lines(on: (l: string) => void): void; exited: Promise<number>; kill(): void }
 export type Spawn = () => Child;
 export function spawnServe(bin: string, args: string[]): Spawn {
@@ -70,6 +70,7 @@ export class Upstream {
       if (rm.size) { for (const k of rm) t.rows.delete(k); t.order = t.order.filter((k) => !rm.has(k)); }
       t.order.sort((a, b) => String(t.rows.get(b)?.updated ?? "").localeCompare(String(t.rows.get(a)?.updated ?? "")));
     }
+    if (e.k !== "hb") t.indexing = e.d?.indexing; // a cold start's progress, for snapshots of later clients
     t.last = e.ev;
     if (e.k !== "hb") { const now = this.now(); t.ring.push({ e, at: now }); while (t.ring.length > RING_MAX || (t.ring.length && now - t.ring[0]!.at > RING_MS)) t.ring.shift(); }
     if (!t.ready) { t.ready = true; for (const f of t.waiting) this.replay(t, "", f); t.waiting = []; return; }
@@ -79,7 +80,7 @@ export class Upstream {
   async subscribe(params: Obj, from: string, f: Listener): Promise<Reply & { resumed?: boolean }> {
     const key = topicKey(params); let t = this.topics.get(key);
     if (!t) {
-      t = { key, params, up: "", rows: new Map(), order: [], gen: 0, ring: [], last: "", ready: false, ls: new Set(), waiting: [] };
+      t = { key, params, up: "", indexing: undefined, rows: new Map(), order: [], gen: 0, ring: [], last: "", ready: false, ls: new Set(), waiting: [] };
       this.topics.set(key, t);
       const r = await this.resub(t); if (r.err) { this.topics.delete(key); return r; }
     }
@@ -98,7 +99,7 @@ export class Upstream {
       if (a.epoch === first.epoch && a.seq >= first.seq - 1) { for (const x of t.ring) if (seqOf(x.e.ev).seq > a.seq) f(x.e); return true; }
     }
     const data: Obj[] = []; for (const k of t.order) { const r = t.rows.get(k); if (r) data.push(r); }
-    f({ sub: "", ev: t.last, k: "snapshot", d: { data, at: this.now(), gen: t.gen, next: null } });
+    f({ sub: "", ev: t.last, k: "snapshot", d: { data, at: this.now(), gen: t.gen, next: null, ...(t.indexing ? { indexing: t.indexing } : {}) } });
     return false;
   }
   unsubscribe(params: Obj, f: Listener): void {
