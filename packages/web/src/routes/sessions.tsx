@@ -1,6 +1,6 @@
 // the live Sessions view: one subscription (the filter in the URL's f), rows newest first with ● ◆ ⚠ ○, an "N new"
 // pill while the reader is away from the top, j/k/↵ and a detail drawer (sessions.get) for the selected row (sel)
-import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SessionDetail, SessionRow } from "@agentglass/api-contract";
 import { Badge, Button, Dialog, DialogContent, Kbd, cn } from "@agentglass/ui";
@@ -8,6 +8,7 @@ import { Rows } from "../live/store.ts";
 import { type Live, ApiFail } from "../live/socket.ts";
 import { useLive, useNow, useStatus, ago, money } from "../app.tsx";
 import { Events } from "./events.tsx";
+const TimelineTab = lazy(() => import("./timeline-tab.tsx")); // its own chunk with the viz timeline
 
 export const SESSIONS = new Rows();
 // the sessions subscription, kept while the app runs; a new filter replaces it (a bad one: err, the old rows stay)
@@ -160,7 +161,7 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 }
 function Detail({ row, onClose }: { row: SessionRow | undefined; onClose: () => void }) {
   const live = useLive(); const now = useNow(); const [d, setD] = useState<Detail | null>(null); const [err, setErr] = useState("");
-  const [full, setFull] = useState(false); const [tab, setTab] = useState<"overview" | "events">("overview");
+  const [full, setFull] = useState(false); const [tab, setTab] = useState<"overview" | "events" | "timeline">("overview");
   // two answers: the index's at once (detail: fast), then the full one (turns, timing, repeats: a pass over the transcript)
   useEffect(() => {
     setD(null); setErr(""); setFull(false); setTab("overview"); if (!row) return;
@@ -180,13 +181,13 @@ function Detail({ row, onClose }: { row: SessionRow | undefined; onClose: () => 
   ];
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent title={row.title || "Session"} side className="overflow-auto p-4">
+      <DialogContent title={row.title || "Session"} side className={cn("overflow-auto p-4", tab === "timeline" && "w-[min(1200px,100vw)]")}>
         <h2 className="mb-1 pr-6 text-[15px] font-semibold">{row.title || row.id}</h2>
         <p className="mb-2"><Badge>{row.harness}:{row.id.slice(0, 8)}</Badge></p>
         <div role="tablist" aria-label="Session view" className="mb-3 flex gap-0.5 border-b border-border-subtle">
-          {(["overview", "events"] as const).map((t) => <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={cn("h-7 px-2 capitalize", tab === t ? "border-b-2 border-accent text-text" : "text-muted hover:text-text")}>{t}</button>)}
+          {(["overview", "events", "timeline"] as const).map((t) => <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={cn("h-7 px-2 capitalize", tab === t ? "border-b-2 border-accent text-text" : "text-muted hover:text-text")}>{t}</button>)}
         </div>
-        {tab === "events" ? <Events refId={row.harness + ":" + row.id} /> : <>
+        {tab === "events" ? <Events refId={row.harness + ":" + row.id} /> : tab === "timeline" ? <Suspense fallback={<p className="text-muted">Loading the timeline…</p>}><TimelineTab refId={row.harness + ":" + row.id} /></Suspense> : <>
         <dl className="grid grid-cols-[7rem_1fr] gap-y-1.5">{facts.map(([k, v]) => <div key={k} className="contents"><dt className="text-muted">{k}</dt><dd className="mono break-all text-[12px]">{v || "—"}</dd></div>)}</dl>
         {row.alerts.length > 0 && <Block title="Alerts"><ul>{row.alerts.map((a, i) => <li key={i} className={a.severity === "critical" ? "text-stuck" : "text-attention"}>{a.message}</li>)}</ul></Block>}
         {err ? <p role="alert" className="mt-4 text-error">{err}</p> : !d ? (

@@ -4,7 +4,8 @@ import tailwind from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwind()],
   build: { outDir: "dist", emptyOutDir: true, manifest: true, assetsInlineLimit: 0, modulePreload: { polyfill: false }, sourcemap: false,
-    // each chart library its own viz-* chunk (size.mjs: ≤ 250 KB each, outside the route budgets)
+    // each chart library its own viz-* chunk (size.mjs: ≤ 250 KB each, outside the route budgets); only libraries without
+    // dependencies of their own here — a chunk that takes shared modules along becomes a static import of the shell
     rollupOptions: { output: { manualChunks: (id: string) => (id.includes("/node_modules/uplot/") ? "viz-uplot" : undefined) } } },
   test: { environment: "jsdom", globals: true, include: ["test/**/*.test.{ts,tsx}"], setupFiles: ["test/setup.ts"] },
 });

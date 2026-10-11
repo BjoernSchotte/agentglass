@@ -8,7 +8,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bench:build": "vite build -c bench/vite.config.ts",
+    "e2e": "playwright test -c e2e"
   },
   "peerDependencies": {
     "react": "^19.2.0",
@@ -27,6 +29,9 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "typescript": "6.0.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.3",
+    "vite": "8.3.4",
+    "@vitejs/plugin-react": "6.1.2",
+    "@playwright/test": "1.64.0"
   }
 }
