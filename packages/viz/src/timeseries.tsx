@@ -7,12 +7,15 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { type Token, useTokens, rgba } from "@agentglass/ui";
 
-export interface Series { label: string; values: (number | null)[]; color: Token; bars?: boolean; fill?: boolean }
+// right: on a second y scale with its own axis on the right (a series much smaller than the others stays readable)
+export interface Series { label: string; values: (number | null)[]; color: Token; bars?: boolean; fill?: boolean; right?: boolean }
 export interface TsHandle { key: (e: KeyboardEvent<HTMLElement>) => void }
 export interface TsProps {
   x: number[]; series: Series[]; height?: number; syncKey?: string; fmt?: (v: number) => string; xfmt?: (x: number) => string;
   range?: [number, number] | null; onSelect?: (r: [number, number] | null) => void; onCursor?: (i: number | null) => void; handle?: Ref<TsHandle>;
 }
+// ticks on the data's own x values (days), every k-th so labels keep ~56 px apart in a plot w px wide
+export function ticksOn(x: number[], w: number): number[] { const k = Math.max(1, Math.ceil((x.length * 56) / Math.max(1, w))); return x.filter((_, i) => i % k === 0); }
 // the x values inside [a, b] (positions): the first and last, or null when none
 export function xRange(x: number[], a: number, b: number): [number, number] | null {
   let lo = -1; let hi = -1;
@@ -25,7 +28,7 @@ export function TimeSeries({ x, series, height = 160, syncKey, fmt = (v) => Stri
   const cb = useRef({ onSelect, onCursor, range, fmt, xfmt }); cb.current = { onSelect, onCursor, range, fmt, xfmt };
   const data = (): uPlot.AlignedData => [x, ...series.map((s) => s.values)] as uPlot.AlignedData;
   // created per theme and series shape; data changes below
-  const shape = series.map((s) => s.label + (s.bars ? "|b" : "") + s.color).join(",");
+  const shape = series.map((s) => s.label + (s.bars ? "|b" : "") + (s.right ? "|r" : "") + s.color).join(",");
   useEffect(() => {
     const el = box.current; if (!el) return;
     const bw = Math.max(0.2, Math.min(0.8, 1 - 2 / Math.max(2, x.length)));
@@ -34,13 +37,15 @@ export function TimeSeries({ x, series, height = 160, syncKey, fmt = (v) => Stri
       legend: { show: false }, padding: [8, 8, 0, 0],
       cursor: { sync: syncKey ? { key: syncKey, setSeries: false } : undefined, drag: { x: true, y: false, setScale: false }, points: { size: 6 } },
       select: { show: true, left: 0, top: 0, width: 0, height: 0 },
-      scales: { x: { time: false } },
+      // half a step of room on both ends: the first and last bars stay whole, synced charts share one x range
+      scales: { x: { time: false, range: (_u, lo, hi) => { const h = x.length > 1 ? (x[1]! - x[0]!) / 2 : 1; return [lo - h, hi + h]; } }, ...(series.some((s) => s.right) ? { y2: { auto: true } } : {}) },
       axes: [
-        { stroke: tk["text-muted"], grid: { show: false }, ticks: { stroke: tk.border }, values: (_u, vs) => vs.map((v) => (cb.current.xfmt ? cb.current.xfmt(v) : String(v))), font: "11px IBM Plex Sans, sans-serif" },
+        { stroke: tk["text-muted"], grid: { show: false }, ticks: { stroke: tk.border }, splits: (u) => ticksOn(x, u.bbox.width / (devicePixelRatio || 1)), values: (_u, vs) => vs.map((v) => (cb.current.xfmt ? cb.current.xfmt(v) : String(v))), font: "11px IBM Plex Sans, sans-serif" },
         { stroke: tk["text-muted"], grid: { stroke: tk["border-subtle"], width: 1 }, ticks: { show: false }, size: 56, values: (_u, vs) => vs.map((v) => cb.current.fmt(v)), font: "11px IBM Plex Sans, sans-serif" },
+        ...(series.some((s) => s.right) ? [{ scale: "y2", side: 1, stroke: tk["text-muted"], grid: { show: false }, ticks: { show: false }, size: 56, values: (_u: uPlot, vs: number[]) => vs.map((v) => cb.current.fmt(v)), font: "11px IBM Plex Sans, sans-serif" }] : []),
       ],
       series: [{}, ...series.map((s) => ({
-        label: s.label, stroke: tk[s.color], width: s.bars ? 0 : 1.5,
+        label: s.label, stroke: tk[s.color], width: s.bars ? 0 : 1.5, scale: s.right ? "y2" : "y",
         fill: s.bars || s.fill ? rgba(tk[s.color], s.bars ? 0.75 : 0.15) : undefined,
         paths: s.bars ? uPlot.paths.bars!({ size: [bw, 48] }) : undefined, points: { show: false },
       }))],

@@ -40,8 +40,8 @@ export function Trend({ data, since, range, onRange }: { data: CostRows | undefi
         <TimeSeries x={d.x} series={[{ label: "cost", values: d.cost, color: "cost", bars: true }]} syncKey="stats-days" fmt={usd} xfmt={xl} range={r} onSelect={sel} onCursor={setAt} handle={hc} />
       </ChartFrame>
       <ChartFrame title="Tokens per day" summary={"in " + tok(d.inT.reduce((a, b) => a + b, 0)) + " · out " + tok(d.outT.reduce((a, b) => a + b, 0)) + " · cache read " + tok(d.cr.reduce((a, b) => a + b, 0))} cols={cols} rows={rows} onKey={(e) => ht.current?.key(e)}
-        actions={<span className="flex gap-2 text-[11px]"><span style={{ color: "var(--accent)" }}>— in</span><span style={{ color: "var(--live)" }}>— out</span><span style={{ color: "var(--attention)" }}>— cache read</span></span>}>
-        <TimeSeries x={d.x} series={[{ label: "in", values: d.inT, color: "accent" }, { label: "out", values: d.outT, color: "live" }, { label: "cache read", values: d.cr, color: "attention", fill: true }]} syncKey="stats-days" fmt={tok} xfmt={xl} range={r} onSelect={sel} onCursor={setAt} handle={ht} />
+        actions={<span className="flex gap-2 text-[11px]"><span style={{ color: "var(--attention)" }}>▬ cache read (left)</span><span style={{ color: "var(--accent)" }}>— in</span><span style={{ color: "var(--live)" }}>— out (right)</span></span>}>
+        <TimeSeries x={d.x} series={[{ label: "cache read", values: d.cr, color: "attention", fill: true }, { label: "in", values: d.inT, color: "accent", right: true }, { label: "out", values: d.outT, color: "live", right: true }]} syncKey="stats-days" fmt={tok} xfmt={xl} range={r} onSelect={sel} onCursor={setAt} handle={ht} />
       </ChartFrame>
     </div>
   );
