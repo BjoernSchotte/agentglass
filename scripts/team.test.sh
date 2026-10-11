@@ -111,9 +111,9 @@ rd=$(SERVE_FLAGS="--redact" proto A '{"id":2,"m":"team.sessions","p":{}}')
 hasnt "--redact: no member name" "$rd" "\"bob\""
 has "--redact: rows still there" "$rd" "\"rows\":[{"
 # 6. live team topics (W7): A subscribes presence and team:acme/backend; B publishes a new session → A gets a patch
-mkfifo "$t/in"; (TEAM_SYNC_MS=500; export TEAM_SYNC_MS; run A 0 serve --stdio < "$t/in" > "$t/sv.out" 2> "$t/sv.err") & spid=$!
-exec 3> "$t/in"
-printf '%s\n' '{"id":1,"m":"hello","p":{"want":1}}' '{"id":2,"m":"sub","p":{"topic":"presence"}}' '{"id":3,"m":"sub","p":{"topic":"team:acme/backend"}}' '{"id":4,"m":"sub","p":{"topic":"team:acme/nope"}}' >&3
+# stdin is a pipe, as from agentglass-web (a FIFO's close is not seen on macOS while timers run); it closes when $t/close appears
+{ printf '%s\n' '{"id":1,"m":"hello","p":{"want":1}}' '{"id":2,"m":"sub","p":{"topic":"presence"}}' '{"id":3,"m":"sub","p":{"topic":"team:acme/backend"}}' '{"id":4,"m":"sub","p":{"topic":"team:acme/nope"}}'
+  until [ -e "$t/close" ]; do sleep 0.1; done; } | (TEAM_SYNC_MS=500; export TEAM_SYNC_MS; run A 0 serve --stdio > "$t/sv.out" 2> "$t/sv.err") & spid=$!
 # team rows carry the team's session ids (hashed): b-api is the row with 100000 input tokens, b-api2 the one with 5000
 i=0; until grep -q '"sub":"s2".*"k":"snapshot".*"in":100000' "$t/sv.out" 2>/dev/null || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done
 i=0; until grep -q '"id":4,' "$t/sv.out" 2>/dev/null || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done
@@ -124,7 +124,7 @@ repo B api b-api2 5000; run B 0 team sync --json > /dev/null
 i=0; until grep -q '"sub":"s2".*"k":"patch".*"in":5000' "$t/sv.out" 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done
 has "team topic: B's new session arrives as a patch" "$(grep '"sub":"s2".*"k":"patch"' "$t/sv.out" || true)" '"in":5000'
 hasnt "team topic rows: no cwd, no path" "$(grep '"sub":"s2"' "$t/sv.out")" '"cwd"'
-exec 3>&-; i=0; while kill -0 $spid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-kill -0 $spid 2>/dev/null && { echo "FAIL serve did not exit when stdin closed"; kill $spid; fail=1; }
+touch "$t/close"; i=0; while kill -0 $spid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+kill -0 $spid 2>/dev/null && { echo "FAIL serve did not exit when stdin closed (subscribed)"; tail -5 "$t/sv.err"; kill $spid; fail=1; }
 [ $fail = 0 ] && echo "team.test.sh: ok"
 exit $fail

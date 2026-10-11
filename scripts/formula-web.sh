@@ -52,8 +52,9 @@ class AgentglassWeb < Formula
     assert_match version.to_s, shell_output("#{bin}/agentglass-web --version")
     # a real start on loopback with the agentglass it depends on (an empty HOME: no sessions), then the page
     port = free_port
-    pid = spawn bin/"agentglass-web", "--agentglass", formula_opt_bin("bjoernschotte/tap/agentglass")/"agentglass",
-                "--port", port.to_s, out: testpath/"out", err: testpath/"err"
+    ag = formula_opt_bin("bjoernschotte/tap/agentglass")/"agentglass"
+    pid = spawn "#{bin}/agentglass-web", "--agentglass", ag.to_s,
+                "--port", port.to_s, out: (testpath/"out").to_s, err: (testpath/"err").to_s
     begin
       20.times do
         break if (testpath/"out").exist? && (testpath/"out").read.include?("url")

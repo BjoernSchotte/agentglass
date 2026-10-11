@@ -119,6 +119,13 @@ p.stdin.close()
 try: p.wait(timeout=5)
 except subprocess.TimeoutExpired: p.kill()
 ok("the running summary is kept: detail.jsonl", os.path.exists(env2["AGENTGLASS_CACHE_DIR"] + "/detail.jsonl"))
+# stdin closed while a subscription runs (agentglass-web gone): exit 0 within 2 s, the cadence must not hold it
+p = subprocess.Popen([t + "/ag", "serve", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env); buf = b""
+req(1, "hello", {"want": 1}); req(2, "sub", {"topic": "sessions"})
+p.stdin.close()
+try: rc = p.wait(timeout=2)
+except subprocess.TimeoutExpired: rc = None; p.kill()
+ok("stdin closed while subscribed: exit 0 within 2 s (got %s)" % rc, rc == 0)
 for f in fail: print("FAIL " + f)
 sys.exit(1 if fail else 0)
 PY
