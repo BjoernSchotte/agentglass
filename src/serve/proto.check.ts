@@ -10,6 +10,8 @@ import { newFramer, push } from "../util/jsonl.ts";
 import { discover, readSessions } from "../read/index.ts";
 import { type Srv, newSrv, onLine } from "./proto.ts";
 import { RING_MAX, HB_MS, step, beat, emit, openTopic } from "./subs.ts";
+import { recordAlert } from "../read/alerts.ts";
+import { sessions, titleOf } from "../model/sessions.ts";
 import "../features/redact.ts";
 import "../features/skills/marks.ts";
 
@@ -109,6 +111,33 @@ if (t) {
   const r2 = send("{\"id\":16,\"m\":\"sub\",\"p\":{\"topic\":\"sessions\",\"limit\":5,\"from\":\"e3a9-" + String(first + 1) + "\"}}");
   eq("from inside the ring", String((obj((r2[0] ?? {})["ok"]) ?? {})["resumed"]) + " " + String(r2.length), "true " + String(RING_MAX));
 } else { bad++; console.log("FAIL ring topic: " + ot.err); }
+// alerts (W8.2): alerts.list newest first with since/limit; the alerts topic: a snapshot, then each recorded transition
+// as one patch (nothing when none came); the session's title as the screen shows it
+{
+  const s0 = [...sessions.values()][0];
+  if (!s0) { bad++; console.log("FAIL alerts: no session"); } else {
+    const lb = new Map<string, string>(); lb.set("team", "core");
+    const al = (at: number, state: string): void => recordAlert(s0, { at, rule: "stuck", severity: "critical", state, value: 420, threshold: 300, unit: "s", message: "no output for 7m", labels: lb });
+    al(clock.t - 60000, "fire");
+    const sub = send("{\"id\":30,\"m\":\"sub\",\"p\":{\"topic\":\"alerts\"}}");
+    const snap = obj((sub[1] ?? {})["d"]) ?? {}; const rows0 = snap["data"] as Obj[];
+    eq("alerts topic snapshot", str((sub[1] ?? {})["k"]) + " " + String(rows0.length) + " " + str((rows0[0] ?? {})["state"]) + " " + str((rows0[0] ?? {})["title"]), "snapshot 1 fire " + titleOf(s0));
+    out.length = 0; clock.t += 1500; step(sv.hub, clock.t);
+    eq("alerts topic: no transition, no patch", String(out.length), "0");
+    al(clock.t, "resolve"); out.length = 0; clock.t += 1500; step(sv.hub, clock.t);
+    const pt = obj(JSON.parse(out[0] ?? "{}")) ?? {}; const up = (obj(pt["d"]) ?? {})["upsert"] as Obj[];
+    eq("alerts topic: the resolve as a patch", String(out.length) + " " + str(pt["k"]) + " " + String(up.length) + " " + str((up[0] ?? {})["state"]), "1 patch 1 resolve");
+    const ls = ok(one("{\"id\":31,\"m\":\"alerts.list\",\"p\":{}}"))["data"] as Obj[];
+    eq("alerts.list newest first", ls.map((r: Obj): string => str(r["state"])).join(","), "resolve,fire");
+    eq("alerts.list row", JSON.stringify([str((ls[0] ?? {})["rule"]), str((ls[0] ?? {})["harness"]) + ":" + str((ls[0] ?? {})["session"]), (obj((ls[0] ?? {})["labels"]) ?? {})["team"]]), JSON.stringify(["stuck", s0.h + ":" + s0.id, "core"]));
+    eq("alerts.list since", String((ok(one("{\"id\":32,\"m\":\"alerts.list\",\"p\":{\"since\":" + String(clock.t - 30000) + "}}"))["data"] as Obj[]).length), "1");
+    eq("alerts.list limit 1", String((ok(one("{\"id\":33,\"m\":\"alerts.list\",\"p\":{\"limit\":1}}"))["data"] as Obj[]).length), "1");
+    eq("alerts.list bad limit", errCode(one("{\"id\":34,\"m\":\"alerts.list\",\"p\":{\"limit\":0}}")), "bad_param");
+    eq("alerts.list bad since", errCode(one("{\"id\":35,\"m\":\"alerts.list\",\"p\":{\"since\":\"today\"}}")), "bad_param");
+    const so = obj((sub[0] ?? {})["ok"]) ?? {}; one("{\"id\":36,\"m\":\"unsub\",\"p\":{\"sub\":" + JSON.stringify(str(so["sub"])) + "}}");
+  }
+}
+eq("unknown topic", errCode(one("{\"id\":37,\"m\":\"sub\",\"p\":{\"topic\":\"nope\"}}")), "bad_param");
 // errors keep the loop going
 const um: Obj = one("{\"id\":\"x\",\"m\":\"nope\"}");
 eq("unknown method", JSON.stringify([um["id"], errCode(um)]), JSON.stringify(["x", "unknown_method"]));

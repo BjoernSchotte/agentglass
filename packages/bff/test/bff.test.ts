@@ -74,6 +74,13 @@ test("GET /api/v1/cost: by, since (as text) and filter reach cost.get; other que
   expect(((await r.json()) as { params: unknown }).params).toEqual({ by: "model", since: "7d", filter: "harness is claude" });
 });
 
+test("GET /api/v1/alerts: since and limit reach alerts.list as numbers", async () => {
+  const { cookie } = await login();
+  const r = await fetch(base + "/api/v1/alerts?since=1700000000000&limit=5", { headers: { Cookie: cookie } });
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as { params: unknown }).params).toEqual({ since: 1700000000000, limit: 5 });
+});
+
 test("--host 0.0.0.0: this machine's addresses and hostname pass, others do not", () => {
   const n = namesOf("0.0.0.0", { eth0: [{ address: "192.168.1.20", family: "IPv4", internal: false }, { address: "fe80::1", family: "IPv6", internal: false }], lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }] }, "box");
   expect(hostOk("192.168.1.20:8080", 8080, n)).toBe(true); expect(hostOk("box.local:8080", 8080, n)).toBe(true); expect(hostOk("localhost:8080", 8080, n)).toBe(true);

@@ -6,6 +6,7 @@ import { type Obj, str } from "../util/json.ts";
 import { type SessQ, readSessions, gen } from "../read/index.ts";
 import { indexing as busy, indexState } from "../features/usage/ledger.ts";
 import { pickTeam, roomId, teamTopicRows, presenceRows } from "../read/team.ts";
+import { AL, alertRows } from "../read/alerts.ts";
 
 export const RING_MAX = 1000;
 export const RING_MS = 600000;
@@ -19,8 +20,9 @@ export interface REv { seq: number; at: number; k: string; d: string /* the payl
 // rows: key → the row's JSON as last sent; order: the keys newest first; min: the oldest id a resume may name (the topic's
 // creation id, then the newest event dropped from the ring: everything after it is still there); g: the read model's
 // generation the rows were built at
-// kind: "sessions" (q), "team" (a team's shared session rows in a room, "" = all rooms) or "presence" (its members'
-// devices online and live agents); team topics are rebuilt after a team sync (step's team flag), sessions on gen moves
+// kind: "sessions" (q), "team" (a team's shared session rows in a room, "" = all rooms), "presence" (its members'
+// devices online and live agents) or "alerts" (the alert log, newest first, q.limit rows); team topics are rebuilt after
+// a team sync (step's team flag), sessions on gen moves, alerts when a transition was recorded
 export interface Topic { key: string; kind: string; q: SessQ; team: string; room: string; ring: REv[]; min: number; rows: Map<string, string>; order: string[]; g: number; at: number; n: number }
 // last: when this sub was last sent anything (heartbeats go to the quiet ones)
 export interface Sub { id: string; topic: string; last: number }
@@ -54,8 +56,8 @@ export function teamTopic(topic: string, team: string): { kind: string; team: st
 // a topic's rows now (the read model's first page of its query); err: the query's error (a bad filter)
 interface Built { keys: string[]; rows: Obj[]; err: string }
 function build(t: Topic, now: number): Built {
-  if (t.kind !== "sessions") { // rows carry their key already (member:device:id, or the member id)
-    const rows = t.kind === "team" ? teamTopicRows(t.team, t.room, now) : presenceRows(t.team, now);
+  if (t.kind !== "sessions") { // rows carry their key already (member:device:id, the member id, the alert's number)
+    const rows = t.kind === "alerts" ? alertRows(0, t.q.limit) : t.kind === "team" ? teamTopicRows(t.team, t.room, now) : presenceRows(t.team, now);
     const ks: string[] = []; for (const r of rows) ks.push(str(r["key"]));
     return { keys: ks, rows, err: "" };
   }
@@ -68,12 +70,14 @@ function build(t: Topic, now: number): Built {
 export function openTopic(h: Hub, q: SessQ, now: number, kind = "sessions", team = "", room = ""): { t: Topic | null; err: string } {
   const key = kind === "sessions" ? topicKey(q) : kind + "\t" + team + "\t" + room;
   const had = h.topics.get(key); if (had) return { t: had, err: "" };
-  const t: Topic = { key, kind, q, team, room, ring: [], min: 0, rows: new Map<string, string>(), order: [], g: gen("sessions"), at: now, n: 0 };
+  const key2 = kind === "alerts" ? "alerts\t" + String(q.limit) : key;
+  if (key2 !== key) { const had2 = h.topics.get(key2); if (had2) return { t: had2, err: "" }; }
+  const t: Topic = { key: key2, kind, q, team, room, ring: [], min: 0, rows: new Map<string, string>(), order: [], g: kind === "alerts" ? AL.ver : gen("sessions"), at: now, n: 0 };
   const b = build(t, now); if (b.err) return { t: null, err: b.err };
   h.seq++; // the topic's creation id: its first snapshot names it, an id from before it (another incarnation) never resumes
   t.min = h.seq; t.order = b.keys;
   for (let i = 0; i < b.rows.length; i++) t.rows.set(b.keys[i] ?? "", JSON.stringify(b.rows[i] as Obj));
-  h.topics.set(key, t);
+  h.topics.set(t.key, t);
   return { t, err: "" };
 }
 function snapshotD(t: Topic, now: number): string {
@@ -123,7 +127,7 @@ export function step(h: Hub, now: number, team = false): number {
   if (!h.topics.size) return 0;
   const g = gen("sessions"); let n = 0;
   for (const t of h.topics.values()) {
-    if (t.kind === "sessions") { if (t.g === g) continue; t.g = g; } else if (!team) continue;
+    if (t.kind === "sessions") { if (t.g === g) continue; t.g = g; } else if (t.kind === "alerts") { if (t.g === AL.ver) continue; t.g = AL.ver; } else if (!team) continue;
     const b = build(t, now); if (b.err) continue;
     const up: string[] = []; const seen = new Set<string>();
     for (let i = 0; i < b.rows.length; i++) {
@@ -144,4 +148,4 @@ export function beat(h: Hub, now: number): number {
   return n;
 }
 // is a team topic open? (the engine syncs the teams only then)
-export function teamTopics(h: Hub): boolean { for (const t of h.topics.values()) if (t.kind !== "sessions") return true; return false; }
+export function teamTopics(h: Hub): boolean { for (const t of h.topics.values()) if (t.kind === "team" || t.kind === "presence") return true; return false; }

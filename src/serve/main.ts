@@ -20,7 +20,10 @@ import { summaryInc } from "../features/usage/summary.ts";
 import { BG, indexTick, indexing, indexState } from "../features/usage/ledger.ts";
 import { rules } from "../features/rules/state.ts";
 import { flags } from "../features/rules/engine.ts";
-import { watched, looker, observeWith, watchStep, forgetSession, ledgerRule } from "../features/watchdog.ts";
+import { watched, looker, observeWith, watchStep, forgetSession, ledgerRule, ruleOf } from "../features/watchdog.ts";
+import { stateOf, severityOf, render } from "../features/rules/engine.ts";
+import { unitOf } from "../features/rules/config.ts";
+import { recordAlert } from "../read/alerts.ts";
 import { complete as ledgerComplete } from "../features/usage/ledger.ts";
 import { LIVE, collectLive } from "../features/wait/live.ts";
 import { type Srv, newSrv, onLine } from "./proto.ts";
@@ -61,7 +64,10 @@ function flagStep(now: number): void {
     if (!watched(s)) { if (s.attention || s.stuck) { s.attention = false; s.stuck = ""; } forgetSession(s.path); continue; }
     if (led && now - (E.ledAt.get(s.path) ?? 0) >= 10000) { E.ledAt.set(s.path, now); ledgerComplete(s); }
     loadTail(s);
-    watchStep(s, observeWith(s, lk), rs, now);
+    for (const t of watchStep(s, observeWith(s, lk), rs, now)) { // the alerts log (alerts.list, the alerts topic)
+      const r = ruleOf(rs, t.rule); const a = stateOf(s.path, t.rule); if (!r || !a) continue;
+      recordAlert(s, { at: t.at, rule: r.id, severity: severityOf(t.to || t.from), state: t.state, value: t.v, threshold: t.thr, unit: unitOf(r.metric), message: render(r, a.v, t.to || t.from, s), labels: r.labels });
+    }
     const f = flags(rs, s.path); s.attention = f[0] === "1"; s.stuck = f[1] ?? "";
   }
   for (const p of [...E.ledAt.keys()]) if (!sessions.has(p)) E.ledAt.delete(p);

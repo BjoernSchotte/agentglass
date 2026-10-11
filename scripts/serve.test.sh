@@ -139,7 +139,14 @@ while time.time() < end:
     c = req(i, "cost.get", {}); i += 1
     if c and c.get("ok", {}).get("pending") == 0: break
     time.sleep(0.25)
-ok("cost.get without a subscription: pending reaches 0 (%s)" % (c and c.get("ok", {}).get("indexing")), c and c["ok"]["pending"] == 0 and "indexing" not in c["ok"])
+ok("cost.get without a subscription: pending reaches 0 (%s)" % (c and c.get("ok", {}).get("indexing")), c and c["ok"]["pending"] == 0)
+# and the index itself finishes (indexing leaves the answer)
+end = time.time() + 15
+while time.time() < end:
+    c = req(i, "cost.get", {}); i += 1
+    if c and "indexing" not in c.get("ok", {}): break
+    time.sleep(0.25)
+ok("the background index finishes without a subscription", c and "indexing" not in c["ok"])
 p.stdin.close()
 try: p.wait(timeout=5)
 except subprocess.TimeoutExpired: p.kill()

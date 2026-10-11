@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { PanelLeftClose, PanelLeftOpen, List, Users, Settings, ChartColumn } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, List, Users, Settings, ChartColumn, BellRing } from "lucide-react";
 import { Button, Kbd, cn } from "@agentglass/ui";
 import { SECTIONS } from "./shortcuts.ts";
-const ICON: Record<string, typeof List> = { sessions: List, stats: ChartColumn, team: Users, settings: Settings };
+const ICON: Record<string, typeof List> = { sessions: List, stats: ChartColumn, alerts: BellRing, team: Users, settings: Settings };
 export function Sidebar({ collapsed, onToggle, hasTeam, teamName }: { collapsed: boolean; onToggle: () => void; hasTeam: boolean; teamName: string }) {
   const shown = SECTIONS.filter((s) => !s.team || hasTeam);
   return (

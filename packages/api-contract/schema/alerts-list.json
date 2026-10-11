@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "alerts-list",
+  "title": "AlertsList",
+  "description": "alerts.list: the alert transitions of this serve process, newest first",
+  "type": "object",
+  "required": [
+    "data",
+    "at"
+  ],
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "at",
+          "rule",
+          "severity",
+          "state",
+          "value",
+          "threshold",
+          "unit",
+          "message",
+          "harness",
+          "session",
+          "title",
+          "project",
+          "labels"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "degraded",
+              "ok"
+            ]
+          },
+          "state": {
+            "enum": [
+              "fire",
+              "escalate",
+              "deescalate",
+              "resolve"
+            ]
+          },
+          "value": {
+            "type": "number"
+          },
+          "threshold": {
+            "type": "number"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "at": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

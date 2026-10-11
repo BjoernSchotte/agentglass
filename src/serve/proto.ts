@@ -14,6 +14,7 @@ import { detailReady, detailStep } from "../features/queries.ts";
 const INLINE_MS = 30;
 import { whenRead } from "./detail.ts";
 import { readCost } from "../read/cost.ts";
+import { alertRows } from "../read/alerts.ts";
 import { indexState, indexing } from "../features/usage/ledger.ts";
 import { type Hub, LIMIT_DEF, LIMIT_MAX, SUBS_MAX, newHub, openTopic, attach, detach, teamTopic } from "./subs.ts";
 
@@ -90,11 +91,11 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
   if (m === "sub") {
     const topic = str(p["topic"]);
     const team = topic === "presence" || topic.startsWith("team:");
-    if (topic !== "sessions" && !team) return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions, team:<team>/<room>, presence");
+    if (topic !== "sessions" && topic !== "alerts" && !team) return errL(id, "bad_param", "unknown topic " + JSON.stringify(topic), "topics: sessions, alerts, team:<team>/<room>, presence");
     const r = sessQ(p); if (r.bad) return errL(id, "bad_param", r.bad, "");
     if (r.q.cursor) return errL(id, "bad_param", "a subscription has no cursor", "");
     if (sv.hub.subs.size >= SUBS_MAX) return errL(id, "too_many", String(SUBS_MAX) + " subscriptions are open", "unsub one first");
-    const tt = team ? teamTopic(topic, str(p["team"])) : { kind: "sessions", team: "", room: "", err: "" };
+    const tt = team ? teamTopic(topic, str(p["team"])) : { kind: topic, team: "", room: "", err: "" };
     if (tt.err) return errL(id, tt.err.slice(0, tt.err.indexOf(":")), tt.err.slice(tt.err.indexOf(":") + 2), "");
     sv.fresh();
     const now = sv.now();
@@ -113,10 +114,17 @@ function dispatch(sv: Srv, id: string, m: string, p: Obj): string {
     const st = indexState(); d["at"] = sv.now(); if (indexing() || num(d["pending"], 0) > 0) d["indexing"] = { done: st.done, total: st.total };
     return okL(id, d);
   }
+  if (m === "alerts.list") { // the alert transitions of this process, newest first; since (ms) and limit (1–1000, 200)
+    const since = num(p["since"], 0); const lim = num(p["limit"], LIMIT_DEF);
+    if (!(lim >= 1 && lim <= LIMIT_MAX)) return errL(id, "bad_param", "limit must be 1–" + String(LIMIT_MAX), "");
+    if (p["since"] !== undefined && typeof p["since"] !== "number") return errL(id, "bad_param", "since must be a time in ms", "");
+    sv.fresh();
+    return okL(id, { data: alertRows(since, Math.floor(lim)), at: sv.now() });
+  }
   if (m === "unsub") return detach(sv.hub, str(p["sub"])) ? okL(id, {}) : errL(id, "not_found", "no subscription " + str(p["sub"]), "");
   if (m.startsWith("team.")) return teamMethod(sv, id, m, p);
   if (m === "cmd" || m === "confirm") return sv.readOnly ? errL(id, "read_only", "started read-only: commands are off", "agentglass web --allow-commands") : errL(id, "unknown_method", "commands arrive in a later release", "");
-  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, cost.get, sub, unsub, team.status, team.report, team.sessions, team.activity");
+  return errL(id, "unknown_method", "unknown method " + JSON.stringify(m), "methods: hello, meta, sessions.list, sessions.get, cost.get, alerts.list, sub, unsub, team.status, team.report, team.sessions, team.activity");
 }
 // team.* (fleet-teams spec 11, W7): the same objects as `agentglass team … --json` (read/team.ts); no_team without one
 function teamMethod(sv: Srv, id: string, m: string, p: Obj): string {
