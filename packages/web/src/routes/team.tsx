@@ -5,10 +5,9 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TeamActivity, TeamReport, TeamStatus, PresenceRow } from "@agentglass/api-contract";
 import { Button, Kbd, cn } from "@agentglass/ui";
-import { useLive, useMeta, money } from "../app.tsx";
+import { useLive, useMeta, money, hhmm } from "../app.tsx";
 
 const PERIODS: [string, string][] = [["d", "today"], ["w", "7 days"], ["m", "this month"], ["a", "all kept days"]];
-export function hhmm(iso: string): string { const d = new Date(iso); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
 // the presence topic's rows, kept by key (snapshot replaces, patch upserts/removes)
 function usePresence(team: string): PresenceRow[] {
   const live = useLive(); const [rows, setRows] = useState<Map<string, PresenceRow>>(new Map()); const qc = useQueryClient();

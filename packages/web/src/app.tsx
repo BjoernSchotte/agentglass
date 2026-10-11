@@ -16,3 +16,5 @@ export function useTheme(): [string, (t: string) => void] {
 export function useNow(ms = 1000): number { const [n, setN] = useState(Date.now()); useEffect(() => { const i = setInterval(() => setN(Date.now()), ms); return () => clearInterval(i); }, [ms]); return n; }
 export function ago(ms: number): string { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d"; }
 export function money(u: number | null | undefined): string { return u === null || u === undefined ? "—" : "$" + (u >= 100 ? u.toFixed(0) : u.toFixed(2)); }
+// 14:05 from an ISO time, local
+export function hhmm(iso: string): string { const d = new Date(iso); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
