@@ -182,7 +182,9 @@ the now block (running, waiting), rows by family/kind/tool with overlap.
 
 **W8.5 `skills.get {period?, filter?}` + Skills page.** *(2026-10-11: left out of S3a by the user's slice choice —
 W8.4, W8.6, W8.7 — open for a later slice.)* `skills --json` (rows + advice) in slices. Page: table with
-loads, carry, cost share, tier marks, and the advice list.
+loads, carry, cost share, tier marks, and the advice list. *(2026-10-11: done — `skills.get {period, sort, harness, repo, filter, advice}` over the
+CLI's own steps (skills/cli.ts skillsPrep/Step/Json), the Skills page (`g k`): sortable table, tier marks, the hidden
+row, the advice list with evidence, suggestion and session links.)*
 
 **W8.6 `fleet.hosts` + Fleet page.** `fleet status --json` from the cached host reports (no ssh pull from serve;
 `--refresh` stays a CLI action). Page and sidebar entry only when `meta` reports hosts.
@@ -218,6 +220,13 @@ engine's state: on the 3,400-session reference history main idles at 223 MB subs
 - *repos.list:* the session walk runs in slices (a first ask reads many heads: 0.5–1.2 s); the aggregation is one step
   (0.2–0.5 s on 30 days of the reference history, mostly the day heavy texts unpacked). graph.get of a 462-source
   session: 5.6 s in slices, 2.4 MB of columns.
+- *skills.get (W8.5, 30 days of the reference history):* the advice needs the call rows of every family that loaded a
+  skill; serve reads them, and works out their command families, inside the walk's slices, and gives the rows back after
+  the answer (`dropRows`: back to unread when the calls file holds them as they are). A9 (outcomes) asked every
+  session's whole span once per skill of its project: now once per answer (1.3 s → 0.14 s on a repeat). First ask
+  5.7 s (repeat 2.8 s), other requests wait at most 0.5–0.9 s. Memory: +75 MB on the first ask that stay — the command
+  texts the calls files intern into the run's dictionaries (`facts.ts` DICT, kept for the run, as in the TUI); freeing
+  them needs dictionaries that can shrink: open.
 - Not done: the rest of the ledger (ownership texts `mo`, ids, memos) and the session model; the TUI keeps texts
   uncompressed (its 5-minute saves would unpack every day).
 

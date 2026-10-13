@@ -104,6 +104,33 @@ rm -rf "$h/.claude/projects/-w-glob"
 
 has "advise runs" "$(run skills advise --period all)" "no advice in the history"
 # usage
+printf '%s\n' "HOME=$h" "PATH=$PATH" TZ=UTC "AGENTGLASS_CACHE_DIR=$t/cache" "AGENTGLASS_CONFIG=$t/config.json" AGENTGLASS_RULES=/nonexistent "AGENTGLASS_RUN_DIR=$t/run" AGENTGLASS_NOTIFY=0 AGENTGLASS_OFFLINE=1 \
+  AGENTGLASS_AGENT=0 AGENTGLASS_HERDR=off "AGENTGLASS_PRICES=$t/prices.json" "AGENTGLASS_FLEET_DIR=$t/fleet" "AGENTGLASS_HUB_DIR=$t/hub" "AGENTGLASS_OTLP_DIR=$t/otlp" "AG=$t/ag" > "$t/env" # run()'s environment
+# skills.get over serve --stdio (W8.5) = skills --json (plus pending, at); a bad period and filter are error answers
+run skills --period all --advice 10 --json > "$t/sk.json"; run skills --period all --sort tail --filter 'harness is claude' --json > "$t/sk-f.json"
+eq "skills.get = skills --json" "$(python3 - "$t/sk.json" "$t/sk-f.json" "$t/env" << 'PY'
+import json, select, subprocess, sys, time
+env = dict(l.split("=", 1) for l in open(sys.argv[3]).read().splitlines() if l)
+p = subprocess.Popen([env.pop("AG"), "serve", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+for q in [{"id": "0", "m": "hello", "p": {"client": "skills.test", "want": 1}}, {"id": "1", "m": "skills.get", "p": {"period": "all", "advice": 10}}, {"id": "2", "m": "skills.get", "p": {"period": "all", "sort": "tail", "filter": "harness is claude"}},
+          {"id": "3", "m": "skills.get", "p": {"period": "3w"}}, {"id": "4", "m": "skills.get", "p": {"filter": "cost >"}}]:
+    p.stdin.write((json.dumps(q) + "\n").encode()); p.stdin.flush()
+a = {}; buf = b""; end = time.time() + 30
+while len(a) < 5 and time.time() < end:
+    if select.select([p.stdout], [], [], 1)[0]:
+        c = p.stdout.read1(65536)
+        if not c: break
+        buf += c
+        while b"\n" in buf:
+            l, buf = buf.split(b"\n", 1); o = json.loads(l)
+            if "id" in o: a[o["id"]] = o
+p.stdin.close(); p.wait(10)
+def same(i, f):
+    x = a.get(i, {}).get("ok"); y = json.load(open(f))
+    return bool(x) and x.pop("pending", None) == 0 and x.pop("at", None) is not None and x == y and len(y["rows"]) > 0
+print(same("1", sys.argv[1]), same("2", sys.argv[2]), a.get("3", {}).get("err", {}).get("code"), a.get("4", {}).get("err", {}).get("code"))
+PY
+)" "True True bad_param bad_filter"
 eq "bad period" "$(run skills --period 3w > /dev/null 2>&1 && echo 0 || echo $?)" 2
 eq "bad subcommand" "$(run skills frob > /dev/null 2>&1 && echo 0 || echo $?)" 2
 has "--help" "$(run skills --help)" "agentglass skills advise"

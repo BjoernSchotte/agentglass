@@ -38,11 +38,18 @@ export const unread = new Set<string>();
 // the log was reset, re-check all
 export const MOVED = { gen: 0, log: [] as string[] };
 export function moved(path: string): void { if (MOVED.log.length >= 20000) { MOVED.log = []; MOVED.gen++; } MOVED.log.push(path); }
-export const LAZY = { rows: (path: string, a: Acc): boolean => false };
+export const LAZY = { rows: (path: string, a: Acc): boolean => false, drop: (path: string, a: Acc): boolean => false };
 // a reader of call rows (errors, triage: only the sessions of their window): this session's rows, now
 export function rowsOf(s: Sess): void {
   const a = ledger.get(s.path); if (!a || !unread.has(s.path)) return;
   unread.delete(s.path); if (!LAZY.rows(s.path, a)) { ledger.delete(s.path); moved(s.path); } // stale: accOf starts it over
+}
+// a long-lived reader (serve) gives back the rows it read for one answer: they go back to unread — read again from the
+// calls file when asked for or before the log grows — when that file holds them as they are (cache.ts) and no pending
+// call points into them; false = kept
+export function dropRows(s: Sess): boolean {
+  const a = ledger.get(s.path); if (!a || unread.has(s.path)) return false;
+  return LAZY.drop(s.path, a);
 }
 // one-shot runs index a session whose rows turned out stale right away (the answer must be whole); the TUI leaves that to
 // its ticks (term.ts TERM.tui) rather than block a frame on reading a whole log

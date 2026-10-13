@@ -635,6 +635,77 @@ export interface SessionRow {
   [k: string]: unknown;
 }
 
+/**
+ * skills.get: the `agentglass skills --json` object plus pending, at
+ */
+export interface Skills {
+  period: "today" | "7d" | "30d" | "all";
+  rows: {
+    /**
+     * the skill; "(hidden)" sums the hidden ones
+     */
+    name: string;
+    loadsUser: number;
+    loadsModel: number;
+    loadsCompact: number;
+    sessions: number;
+    /**
+     * median loaded size in tokens, null when unknown
+     */
+    sizeP50: number | null;
+    /**
+     * tokens of the load requests
+     */
+    load: number;
+    /**
+     * tokens carried in later requests
+     */
+    carry: number;
+    /**
+     * carry after the skill's turn
+     */
+    tail: number;
+    usd: number;
+    carryUsd: number;
+    tailUsd: number;
+    perSess: number;
+    /**
+     * share of the period's request tokens (0–1)
+     */
+    share: number;
+    /**
+     * exact, ≈ (inferred or cut) or ? (unknown size, not priced)
+     */
+    tier: string;
+    hashes: string[];
+    scope: string;
+    unpriced: boolean;
+  }[];
+  /**
+   * how many skills the (hidden) row sums
+   */
+  hidden: number;
+  advice: {
+    /**
+     * A1–A10
+     */
+    id: string;
+    skill: string;
+    pair: string | null;
+    severityUsd: number;
+    basisDays: number | null;
+    evidence: string[];
+    suggestion: string;
+    sessions: string[];
+  }[];
+  notes: string;
+  /**
+   * logs of the period the background index has not counted to their end yet
+   */
+  pending: number;
+  at: number;
+}
+
 export interface TeamActivity {
   team: string;
   events: {

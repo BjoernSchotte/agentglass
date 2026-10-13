@@ -14,7 +14,7 @@ export const HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
 };
 // methods a client may call; everything else is unknown_method (no generic passthrough)
-const METHODS = new Set(["meta", "sessions.list", "sessions.get", "events.list", "cost.get", "wait.get", "alerts.list", "fleet.hosts", "repos.list", "graph.get", "team.status", "team.report", "team.sessions", "team.activity"]);
+const METHODS = new Set(["meta", "sessions.list", "sessions.get", "events.list", "cost.get", "wait.get", "alerts.list", "fleet.hosts", "repos.list", "skills.get", "graph.get", "team.status", "team.report", "team.sessions", "team.activity"]);
 const HTTP_OF: Record<string, number> = { bad_param: 400, bad_filter: 400, bad_request: 400, unknown_method: 404, not_found: 404, no_team: 404, ambiguous: 409, too_many: 429, read_only: 403, internal: 503 };
 interface WsData { sid: string; subs: Map<string, { params: Obj; f: Listener }>; n: number }
 
@@ -117,6 +117,7 @@ export function startServer(o: Opts): { server: Server<WsData>; port: number; st
     if (em) { const q: Obj = { ref: decodeURIComponent(em[1]!) }; for (const k of ["filter", "preset"]) { const v = u.searchParams.get(k); if (v !== null) q[k] = v; } const l = u.searchParams.get("limit"); if (l !== null) q.limit = Number(l); return replyResponse(await o.up.request("events.list", q)); }
     if (p.startsWith("/api/v1/sessions/")) { const dt = u.searchParams.get("detail"); return replyResponse(await o.up.request("sessions.get", { ref: decodeURIComponent(p.slice(17)), ...(dt ? { detail: dt } : {}) })); }
     if (p === "/api/v1/wait") { const q: Obj = {}; for (const k of ["since", "by", "filter"]) { const v = u.searchParams.get(k); if (v !== null) q[k] = v; } const l = u.searchParams.get("limit"); if (l !== null) q.limit = Number(l); return replyResponse(await o.up.request("wait.get", q)); } // since stays text: 7d
+    if (p === "/api/v1/skills") { const q: Obj = {}; for (const k of ["period", "sort", "harness", "repo", "filter"]) { const v = u.searchParams.get(k); if (v !== null) q[k] = v; } const a = u.searchParams.get("advice"); if (a !== null) q.advice = Number(a); return replyResponse(await o.up.request("skills.get", q)); }
     if (p === "/api/v1/repos") { const q: Obj = {}; const d = u.searchParams.get("days"); if (d !== null) q.days = Number(d); const f = u.searchParams.get("filter"); if (f !== null) q.filter = f; return replyResponse(await o.up.request("repos.list", q)); }
     if (p === "/api/v1/fleet") return replyResponse(await o.up.request("fleet.hosts"));
     if (p === "/api/v1/alerts") return replyResponse(await o.up.request("alerts.list", paramsOf(u)));

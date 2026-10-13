@@ -110,6 +110,12 @@ test("GET /api/v1/repos and /api/v1/sessions/{ref}/graph: their parameters as nu
   expect(((await g.json()) as { params: unknown }).params).toEqual({ ref: "claude:a1", from: 10, to: 20 });
 });
 
+test("GET /api/v1/skills: period, sort, filter as strings, advice as a number", async () => {
+  const { cookie } = await login();
+  const r = await fetch(base + "/api/v1/skills?period=7d&sort=tail&filter=harness%20is%20claude&advice=10", { headers: { Cookie: cookie } });
+  expect(((await r.json()) as { params: unknown }).params).toEqual({ period: "7d", sort: "tail", filter: "harness is claude", advice: 10 });
+});
+
 test("--host 0.0.0.0: this machine's addresses and hostname pass, others do not", () => {
   const n = namesOf("0.0.0.0", { eth0: [{ address: "192.168.1.20", family: "IPv4", internal: false }, { address: "fe80::1", family: "IPv6", internal: false }], lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }] }, "box");
   expect(hostOk("192.168.1.20:8080", 8080, n)).toBe(true); expect(hostOk("box.local:8080", 8080, n)).toBe(true); expect(hostOk("localhost:8080", 8080, n)).toBe(true);
