@@ -21,6 +21,8 @@
 # The shell tests share one agentglass, built here once, in parallel with the checks: AGENTGLASS_BIN uses a prebuilt one
 # instead; else AGENTGLASS_OUT (default .scriptc/check/agentglass) with CHECK_BIN_FLAGS (default: the check flags).
 # CHECK_RELEASE_OUT: also build the release binary (-O2, as shipped) there and smoke-test it, as one more job.
+# CHECK_TEST_LIMIT: seconds a shell test may run before it is killed as hung (default 600; CI: below the job timeout,
+# so a hang is a TIMEOUT line with the test's name and log, not a cancelled job with no output).
 # CHECK_SHARD=<i>/<n> runs only shard i of n (CI splits each OS across runners), balanced by scripts/check-plan.mjs;
 # shard 1 takes the shared binary and the tests that use it.
 set -e
@@ -38,7 +40,7 @@ limit() {
   return $rc
 }
 
-run_test() { limit 600 env $HERDR_UNSET -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR -u AGENTGLASS_PRICES -u AGENTGLASS_FLEET_DIR -u AGENTGLASS_SSH -u AGENTGLASS_FLEET AGENTGLASS_HERDR=off sh "$1" >"$2" 2>&1; } # run_test <file> <log>
+run_test() { limit "${CHECK_TEST_LIMIT:-600}" env $HERDR_UNSET -u AGENTGLASS_CONFIG -u AGENTGLASS_RULES -u AGENTGLASS_CACHE_DIR -u AGENTGLASS_PRICES -u AGENTGLASS_FLEET_DIR -u AGENTGLASS_SSH -u AGENTGLASS_FLEET AGENTGLASS_HERDR=off sh "$1" >"$2" 2>&1; } # run_test <file> <log>
 run_check() { # run_check <id> <executable> <log>: sets rc
   # hermetic: a fresh temp HOME/XDG per check and no agent-dir or agentglass path overrides from the caller, so no check
   # can read or write the user's real home (sessions, ~/.agentglass config, cache, run dir, palette, theme)
