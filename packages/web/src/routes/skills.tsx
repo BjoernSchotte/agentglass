@@ -9,17 +9,8 @@ import type { Skills } from "@agentglass/api-contract";
 import { Button, Kbd, cn } from "@agentglass/ui";
 import { useLive } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
+import { type SkillsSearch, SKILLS_PERIODS as PERIODS, SKILLS_SORTS as SORTS } from "./search.ts";
 
-export interface SkillsSearch { p?: string; sort?: string; f?: string }
-const PERIODS: [string, string, string][] = [["d", "today", "today"], ["w", "7 days", "7d"], ["m", "30 days", "30d"], ["a", "all", "all"]];
-const SORTS = ["cost", "loads", "tail", "size", "share", "persess"];
-export function validateSkills(s: Record<string, unknown>): SkillsSearch {
-  const o: SkillsSearch = {};
-  if (typeof s.p === "string" && PERIODS.some(([k]) => k === s.p)) o.p = s.p;
-  if (typeof s.sort === "string" && SORTS.includes(s.sort)) o.sort = s.sort;
-  if (typeof s.f === "string" && s.f) o.f = s.f;
-  return o;
-}
 // the advice ids' names, as the CLI prints them (skills/advise.ts ADVICE_NAMES)
 const ADVICE: Record<string, string> = { A1: "carried too long", A2: "never auto-loaded", A3: "loaded twice in one context", A4: "lost to compaction", A5: "version changed",
   A6: "listed, never loaded", A7: "loaded, then nothing", A8: "overlap", A9: "outcome (correlation, not cause)", A10: "versions differ across hosts" };

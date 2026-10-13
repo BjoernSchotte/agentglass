@@ -19,11 +19,13 @@ if [ "$cmd" = stop ]; then
   [ -f "$dir/pids" ] || exit 0
   for p in $(cat "$dir/agents" 2> /dev/null); do kill -TERM -- "-$p" 2> /dev/null || true; done # its group: children too
   for p in $(cat "$dir/pids"); do kill -TERM "$p" 2> /dev/null || true; done
+  # wait for every started pid and every agent's group (its children and their exec chains exit with it, a moment later)
   i=0; while [ $i -lt 50 ]; do
     left=""; for p in $(cat "$dir/pids"); do ! kill -0 "$p" 2> /dev/null || left="$left $p"; done
+    for g in $(cat "$dir/agents" 2> /dev/null); do ! kill -0 -- "-$g" 2> /dev/null || left="$left -$g"; done
     [ -n "$left" ] || break; sleep 0.1; i=$((i + 1))
   done
-  for p in $left; do kill -KILL "$p" 2> /dev/null || true; done
+  for p in $left; do kill -KILL -- "$p" 2> /dev/null || true; done
   rm -f "$dir/pids" "$dir/agents"
   exit 0
 fi

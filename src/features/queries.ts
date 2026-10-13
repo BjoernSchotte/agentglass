@@ -10,7 +10,7 @@ import { scrub } from "./skills/watchvis.ts";
 import { harnessOf, sourceOf, parseEvents, window, isHarness, harnessIds } from "../harness/index.ts";
 import { type LogSum, stateOf, sumStep, sumOut, caughtUp } from "./callgraph/runsum.ts";
 import { accOf, rowsOf, callsOf, copyKey, copiesOf } from "./usage/ledger.ts";
-import { type Acc, modelUses, isoMs, dayKey, heavy, newAcc } from "./usage/record.ts";
+import { type Acc, modelUses, isoMs, dayKey, todayKey, heavy, newAcc } from "./usage/record.ts";
 import { type PRow, type SessAcc, priceRows } from "./usage/pricerows.ts";
 import { ROWS, DICT, nameOf, localOf } from "./usage/facts.ts";
 import type { Rows } from "./usage/rows.ts";
@@ -289,6 +289,12 @@ export function errorRows(ref: string, sinceMs: number, limit: number, sc: Scope
   return { rows, source: srcs.join("+") };
 }
 
+// --until / until: today or a real YYYY-MM-DD → its day key; "" when invalid
+export function untilKey(v: string): string {
+  if (v === "today") return todayKey();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return "";
+  return midnightOf(v) >= 0 ? v : ""; // a real day: no Feb 30
+}
 function sessKey(s: Sess, m: Map<string, Sess>): string { const k = s.h + ":" + s.id; m.set(k, s); return k; }
 // ── cost rows ────────────────────────────────────────────────────────────────
 export const BY = ["day", "model", "harness", "project", "session", "workspace"];
@@ -298,7 +304,8 @@ export const BY = ["day", "model", "harness", "project", "session", "workspace"]
 // keys from the shared dimensions (project = the repo's name); costUsd null for all-unpriced rows
 // skip: a log not to read to its end here (serve's lazy read: what it booked so far counts)
 // model: only that model's part of each day (Day.mt / Day.um) counts — which sessions and projects a model's cost came from
-export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter, skip: (s: Sess) => boolean = (s: Sess): boolean => false, model = ""): Obj[] {
+// untilKey: the last day counted (YYYY-MM-DD, inclusive; "" = up to today) — a range brushed on the Stats chart
+export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter, skip: (s: Sess) => boolean = (s: Sess): boolean => false, model = "", untilKey = ""): Obj[] {
   const acc = new Map<string, number[]>(); // key → [in, out, cacheRead, cacheWrite, cost, unpriced]
   const who = new Map<string, number>(); const seen = new Set<string>(); // key → sessions (copyKey: a session's copies count once)
   const tot = [0, 0, 0, 0, 0, 0]; const all = new Set<string>();
@@ -327,7 +334,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
   for (const s of cands) {
     const a = accOf(s); let used = false; const ka = newAcc();
     for (const [k, d] of a.days) {
-      if (k < sinceKey) continue;
+      if (k < sinceKey || (untilKey && k > untilKey)) continue;
       if (f.needsCalls ? !hit.has(s.path + "\t" + k) : !dayMatches(f, s, k, d)) continue;
       let v = [d.inTok, d.outTok, d.cr, d.cw, d.cost, d.unk];
       if (model) { const r = d.mt.get(model); const u = d.um.get(model) ?? 0; if (!r && !u) continue; v = r ? [r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0, u] : [0, 0, 0, 0, 0, u]; }
@@ -363,12 +370,12 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
 // ── CLI ──────────────────────────────────────────────────────────────────────
 // rc: the exit code a failed write (closed reader, full disk) still reports (cost --check: 3 over budget)
 function out(text: string, rc = 0): void { try { writeSync(1, screenOut(text) + "\n"); } catch (e) { process.exit(rc); } }
-export interface QOpts { ref: string; root: boolean; since: string; sinceMs: number; cwd: string; limit: number; live: boolean; subs: boolean; harness: string; by: string; model: string; check: boolean; json: boolean; f: Fmt; filters: string[]; pinned: boolean }
-const VAL = ["--since", "--cwd", "--limit", "--harness", "--format", "--fields", "--by", "--model", "--filter"];
+export interface QOpts { ref: string; root: boolean; since: string; sinceMs: number; cwd: string; limit: number; live: boolean; subs: boolean; harness: string; by: string; model: string; until: string; check: boolean; json: boolean; f: Fmt; filters: string[]; pinned: boolean }
+const VAL = ["--since", "--cwd", "--limit", "--harness", "--format", "--fields", "--by", "--model", "--until", "--filter"];
 const ALWAYS = ["--agent", "--no-agent", "--redact", "--all-projects", "--project-only", "--format", "--fields"];
 // one command's options; anything not in allowed (or ALWAYS) is a usage error
 export function qopts(cmd: string, args: string[], allowed: string[], refOk: boolean): QOpts {
-  const o: QOpts = { ref: "", root: false, since: "", sinceMs: 0, cwd: "", limit: 0, live: false, subs: false, harness: "", by: "", model: "", check: false, json: false, f: fmtArgs(args), filters: [], pinned: false };
+  const o: QOpts = { ref: "", root: false, since: "", sinceMs: 0, cwd: "", limit: 0, live: false, subs: false, harness: "", by: "", model: "", until: "", check: false, json: false, f: fmtArgs(args), filters: [], pinned: false };
   const bad = (m: string): never => cliError("usage", m, "agentglass " + cmd + " --help", 2);
   for (let i = 1; i < args.length; i++) {
     const a = args[i] ?? "";
@@ -387,6 +394,7 @@ export function qopts(cmd: string, args: string[], allowed: string[], refOk: boo
     else if (a === "--cwd") o.cwd = realDir(v);
     else if (a === "--by") o.by = v;
     else if (a === "--model") o.model = v;
+    else if (a === "--until") { o.until = untilKey(v); if (!o.until) bad("--until must be today or YYYY-MM-DD"); }
     else if (a === "--filter") o.filters.push(v);
     else if (a === "--pinned") o.pinned = true;
   }

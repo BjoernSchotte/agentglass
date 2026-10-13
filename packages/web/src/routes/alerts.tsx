@@ -5,8 +5,7 @@ import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { AlertRow } from "@agentglass/api-contract";
 import { cn } from "@agentglass/ui";
-import { useLive, useNow, ago } from "../app.tsx";
-import { hhmm } from "./team.tsx";
+import { useLive, useNow, ago, hhmm } from "../app.tsx";
 
 // the alerts topic's rows by key; newest (highest key) first
 export function useAlerts(): AlertRow[] | null {

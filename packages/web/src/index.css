@@ -2,3 +2,4 @@
 @import "@agentglass/ui/tokens.css";
 @import "@agentglass/ui/theme.css";
 @source "../../ui/src";
+@source "../../viz/src";
