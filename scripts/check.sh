@@ -21,6 +21,7 @@
 # The shell tests share one agentglass, built here once, in parallel with the checks: AGENTGLASS_BIN uses a prebuilt one
 # instead; else AGENTGLASS_OUT (default .scriptc/check/agentglass) with CHECK_BIN_FLAGS (default: the check flags).
 # CHECK_RELEASE_OUT: also build the release binary (-O2, as shipped) there and smoke-test it, as one more job.
+# CHECK_PROGRESS=1: a line on stderr as each job starts and ends (CI: when a job is cancelled, the log still shows what ran).
 # CHECK_TEST_LIMIT: seconds a shell test may run before it is killed as hung (default 600; CI: below the job timeout,
 # so a hang is a TIMEOUT line with the test's name and log, not a cancelled job with no output).
 # CHECK_SHARD=<i>/<n> runs only shard i of n (CI splits each OS across runners), balanced by scripts/check-plan.mjs;
@@ -67,6 +68,7 @@ if [ "${1:-}" = --summary ]; then summary "$2"; exit 0; fi
 # code, "build", or "deferred": a timing check, built, to run alone after the pool) and $CHECK_OUT/<id>.log
 if [ "${1:-}" = --job ]; then
   job=$2; id=$(printf %s "$job" | tr '/:.' '___'); log="$CHECK_OUT/$id.log"; rc=0; t0=$(date +%s)
+  [ -z "${CHECK_PROGRESS:-}" ] || echo "… $(date +%H:%M:%S) start $job" >&2 # CI: a job that never ends is the last start without a done
   case "$job" in
     bin) scriptc build $CHECK_BIN_FLAGS $CHECK_ALLFFI src/main.ts -o "$AGENTGLASS_BIN" >"$log" 2>&1 || rc=$?
          echo $rc > "$CHECK_OUT/bin.done" ;;
@@ -98,7 +100,9 @@ if [ "${1:-}" = --job ]; then
          if [ $rc = 0 ] && grep -q '^# check: timing' "$f"; then rc=deferred # runs after the pool, alone
          else [ $rc != 0 ] || run_test "$f" "$log" || rc=$?; fi ;;
   esac
-  echo "$rc $(($(date +%s) - t0))" > "$CHECK_OUT/$id.status"; exit 0
+  echo "$rc $(($(date +%s) - t0))" > "$CHECK_OUT/$id.status"
+  [ -z "${CHECK_PROGRESS:-}" ] || echo "… $(date +%H:%M:%S) done  $job: $rc in $(($(date +%s) - t0)) s" >&2
+  exit 0
 fi
 
 usage() {

@@ -33,7 +33,7 @@ jobs:
         uses: ./.github/actions/scriptc
         with: { lane: "${{ matrix.shard }}of${{ matrix.shards }}" }
       - run: sh scripts/check.sh
-        env: { CHECK_SHARD: "${{ matrix.shard }}/${{ matrix.shards }}", CHECK_RELEASE_OUT: agentglass, SCRIPTC_CACHE_MAX_MB: "4096", CHECK_TEST_LIMIT: "420" } # slowest test on CI ~230 s
+        env: { CHECK_SHARD: "${{ matrix.shard }}/${{ matrix.shards }}", CHECK_RELEASE_OUT: agentglass, SCRIPTC_CACHE_MAX_MB: "4096", CHECK_TEST_LIMIT: "420", CHECK_PROGRESS: "1" } # slowest test on CI ~230 s
       - if: ${{ !cancelled() && steps.scriptc.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with: { path: "${{ steps.scriptc.outputs.cache-dir }}", key: "${{ steps.scriptc.outputs.cache-key }}" }
