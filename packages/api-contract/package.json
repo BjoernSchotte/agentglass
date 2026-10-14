@@ -13,5 +13,5 @@
     "test": "bun test"
   },
   "dependencies": { "ajv": "8.20.0" },
-  "devDependencies": { "json-schema-to-typescript": "16.0.0", "typescript": "6.0.3", "@types/bun": "1.4.2" }
+  "devDependencies": { "json-schema-to-typescript": "16.0.0", "typescript": "7.0.2", "@types/bun": "1.4.2" }
 }
