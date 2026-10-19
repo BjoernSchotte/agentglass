@@ -15,7 +15,7 @@ import { agentHost, agentScope, cliError } from "../agentenv.ts";
 import { opt, optTable, setOptions, helpOf, wantsHelp, addCmd } from "../clihelp.ts";
 import { type Fmt, fmtArgs, formatRows } from "../format.ts";
 import { parseSince } from "../queries.ts";
-import { pct, fmtMs } from "../usage/calls.ts";
+import { pct, fmtMs, EDGE } from "../usage/calls.ts";
 import { callDays, callCutoff } from "../usage/callcache.ts";
 import { cliFilter } from "../query/cli.ts";
 import { parse } from "../query/parse.ts";
@@ -152,7 +152,7 @@ export function waitJson(rep: WaitReport, ov: GroupOverlap[], live: LiveWait | n
     period: { since: iso(rep.since), until: iso(rep.until), days: rep.days }, previous: rep.complete ? { since: iso(rep.prevSince), until: iso(rep.since) } : null,
     scope, retention: { days: callDays(), complete: rep.complete },
     agentTime: { activeMs: sp.activeMs, toolMs: sp.toolMs, userMs: sp.userMs, modelMs: sp.modelMs, pollingMs: sp.pollMs },
-    rows,
+    rows, histEdgesMs: EDGE.slice(),
     heavy: all ? { peak: all.peak, peakAt: iso(all.peakAt), atLeastMs: all.atLeast.slice(), slowdown: all.slowdown >= 0 ? r4(all.slowdown) : null } : { peak: 0, peakAt: null, atLeastMs: [0, 0, 0, 0, 0, 0, 0], slowdown: null },
     now: live ? nowJson(live) : null,
     guard: rep.since < callCutoff() ? "retention" : rows.length ? null : "empty",

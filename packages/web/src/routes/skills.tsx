@@ -2,7 +2,7 @@
 // the model / after compaction), median size, load and carry tokens, the tail after the skill's turn, $ and $ per
 // session, share of all request tokens, tier marks (≈ inferred, ? unknown size) — and the advice list (skills.get =
 // `agentglass skills --json`). Period, sort and filter live in the URL; a column header sorts as `--sort` does.
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { Skills } from "@agentglass/api-contract";
@@ -24,6 +24,9 @@ export function skUsd(x: number, tier: string, unpriced: boolean): string {
 const COLS: [string, string, string | null][] = [["Loads", "you / model / compact", "loads"], ["Sessions", "", null], ["Size", "median loaded size (tokens)", "size"], ["Load", "tokens of the loading requests", null],
   ["Carry", "tokens carried in later requests", null], ["Tail", "carry after the skill's own turn", "tail"], ["Cost", "", "cost"], ["$/session", "", "persess"], ["Share", "of all request tokens", "share"]];
 
+// the "(hidden)" row says how many it sums
+export function skillName(r: { name: string }, hidden: number): string { return r.name === "(hidden)" ? "(hidden: " + hidden + " skill" + (hidden === 1 ? "" : "s") + ")" : r.name; }
+const SkillBars = lazy(() => import("./skills-bars.tsx").then((m) => ({ default: m.SkillBars }))); // ECharts: its own chunk
 export function SkillsView() {
   const live = useLive(); const nav = useNavigate(); const search = useSearch({ strict: false }) as SkillsSearch;
   const period = search.p ?? "m"; const sort = search.sort ?? "cost"; const filter = search.f ?? "";
@@ -42,7 +45,7 @@ export function SkillsView() {
   });
   const d = q.data; const err = q.error as ApiFail | null;
   const total = d ? d.rows.reduce((a, r) => a + r.usd, 0) : 0; const est = d?.rows.some((r) => r.tier !== "exact") ?? false;
-  const name = (r: Row) => (r.name === "(hidden)" ? "(hidden: " + d!.hidden + " skill" + (d!.hidden === 1 ? "" : "s") + ")" : r.name);
+  const name = (r: Row) => skillName(r, d?.hidden ?? 0);
   return (
     <div className="flex flex-col gap-5 p-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -59,6 +62,7 @@ export function SkillsView() {
         {d.pending > 0 && <p role="status" className="text-muted">⟳ {d.pending} {d.pending === 1 ? "log is" : "logs are"} still being indexed — their loads count as booked so far</p>}
         {!d.rows.length ? <p className="text-muted">No skill loads in this period{filter ? " matching the filter" : ""}. Skills are counted from Claude, Codex, pi, OpenCode and Gemini logs.</p> : <>
           <p className="text-[12px] text-muted">{d.rows.length} skills · <span className="text-cost">{est ? "≈" : ""}${total.toFixed(2)}</span> in the period · tokens are measured request tokens; ≈ inferred or cut, ? unknown size (not priced); $ at current list prices</p>
+          <Suspense fallback={<div className="h-40 rounded border border-border-subtle bg-surface" aria-busy="true" />}><SkillBars d={d} /></Suspense>
           <table aria-label="Skills" className="w-full table-fixed border-collapse">
             <colgroup><col /><col className="w-28" /><col className="w-20" /><col className="w-16" /><col className="w-16" /><col className="w-16" /><col className="w-16" /><col className="w-20" /><col className="w-20" /><col className="w-28" /></colgroup>
             <thead className="text-left text-[11px] uppercase tracking-wide text-muted"><tr><th className="py-1 pl-2 font-medium">Skill</th>

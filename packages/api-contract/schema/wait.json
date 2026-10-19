@@ -11,6 +11,7 @@
     "retention",
     "agentTime",
     "rows",
+    "histEdgesMs",
     "heavy",
     "now",
     "guard",
@@ -291,6 +292,13 @@
         },
         "additionalProperties": false
       }
+    },
+    "histEdgesMs": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "the bucket edges of rows[].hist in ms: bucket 0 below the first, bucket k from edge k-1 to edge k, the last at or above the last edge"
     },
     "heavy": {
       "type": "object",

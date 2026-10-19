@@ -150,6 +150,8 @@ rows only. Inside an agent, history is the current project (`scope.project`); `n
 | `rows[].totalMs` | number | summed wall time of the timed calls |
 | `rows[].share` | number | `totalMs` ÷ the agents' active time (parallel calls each count) |
 | `rows[].p50Ms`, `rows[].p95Ms` | number\|null | ≈ quantiles from a duration histogram; null = no timed call |
+| `rows[].hist` | number[] | timed calls per duration bucket: bucket 0 < `histEdgesMs[0]`, bucket k in [`histEdgesMs[k-1]`, `histEdgesMs[k]`), the last ≥ the last edge |
+| `histEdgesMs` | number[] | the bucket edges of `rows[].hist` in ms (10 ms … 30 min, ×2–3 per step) |
 | `rows[].errors` | number | failed calls |
 | `rows[].trend` | number\|null | `totalMs` ÷ the previous period's − 1; null = no previous data or past retention |
 | `rows[].peak` | number\|null | most calls of this row running at once (heavy calls ≥ `wait.minSec`); null for tools |

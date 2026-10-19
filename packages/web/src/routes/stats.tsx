@@ -4,7 +4,7 @@
 // figures show what is booked so far with "counting…" and refresh every 2 s until it is done.
 // A By-model row opens that model's drill-down (W8.8, ?model= in the URL): one cost.get {by: session, model} — only
 // the model's tokens and cost — grouped here by project, each project's sessions below it; a session opens its drawer.
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { Cost, CostRows } from "@agentglass/api-contract";
@@ -13,6 +13,7 @@ import { useLive, useNow, ago } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
 import { type StatsSearch, STATS_PERIODS as PERIODS } from "./search.ts";
 import { Trend, dayLabel } from "./stats-trend.tsx";
+const HourHeat = lazy(() => import("./stats-heat.tsx").then((m) => ({ default: m.HourHeat }))); // ECharts: its own chunk
 
 // the period's since for cost.get: this month = its first day (local), as the TUI counts a month
 export function sinceOf(p: string, now = new Date()): string {
@@ -152,7 +153,7 @@ export function StatsView() {
   const sumQ = useQuery({ queryKey: ["cost"], queryFn: () => live.request<Cost>("cost.get"), refetchInterval: every });
   const rowsQ = (by: string) => ({ queryKey: ["cost", by, since, until, filter], queryFn: () => live.request<CostRows>("cost.get", { by, since, ...(until ? { until } : {}), ...(filter ? { filter } : {}) }), refetchInterval: every, retry: false });
   const byD = useQuery({ queryKey: ["cost", "day", periodSince, filter], queryFn: () => live.request<CostRows>("cost.get", { by: "day", since: periodSince, ...(filter ? { filter } : {}) }), refetchInterval: every, retry: false });
-  const byH = useQuery(rowsQ("harness")); const byM = useQuery(rowsQ("model"));
+  const byH = useQuery(rowsQ("harness")); const byM = useQuery(rowsQ("model")); const byHr = useQuery(rowsQ("hour"));
   useEffect(() => { // d w m: the period, as in the TUI (not while typing)
     const keys = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null; if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
@@ -160,6 +161,7 @@ export function StatsView() {
     };
     window.addEventListener("keydown", keys); return () => window.removeEventListener("keydown", keys);
   });
+  const rangeLabel = range ? dayLabel(range.since) + (range.until !== range.since ? " – " + dayLabel(range.until) : "") : PERIODS.find(([k]) => k === period)?.[1] ?? "";
   const c = sumQ.data; const ferr = (byH.error ?? byM.error) as ApiFail | null;
   const pending = Math.max(c?.pending ?? 0, byH.data?.pending ?? 0, byM.data?.pending ?? 0); const ix = c?.indexing ?? byH.data?.indexing;
   return (
@@ -188,7 +190,8 @@ export function StatsView() {
         <Table label="By harness" data={byH.data} />
         <Table label="By model" data={byM.data} model open={model} onOpen={(k) => set({ model: model === k ? undefined : k, proj: undefined })} />
       </div>
-      {model && <Drill model={model} since={since} until={until} filter={filter} label={range ? dayLabel(range.since) + (range.until !== range.since ? " – " + dayLabel(range.until) : "") : PERIODS.find(([k]) => k === period)?.[1] ?? ""} sort={search.sort ?? "cost"} proj={search.proj} set={set} onClose={() => set({ model: undefined, proj: undefined, sort: undefined })} />}
+      {model && <Drill model={model} since={since} until={until} filter={filter} label={rangeLabel} sort={search.sort ?? "cost"} proj={search.proj} set={set} onClose={() => set({ model: undefined, proj: undefined, sort: undefined })} />}
+      <Suspense fallback={<div className="h-[300px] rounded border border-border-subtle bg-surface" aria-busy="true" />}><HourHeat data={byHr.data} label={range ? "on " + rangeLabel : period === "w" ? "over 7 days" : rangeLabel} /></Suspense>
     </div>
   );
 }

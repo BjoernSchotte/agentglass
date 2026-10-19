@@ -15,3 +15,12 @@ test("stats: min, p50, p95, max; empty is zeros", () => {
   expect(stats([5, 1, 3, 2, 4])).toEqual({ min: 1, p50: 3, p95: 5, max: 5 });
   expect(stats([])).toEqual({ min: 0, p50: 0, p95: 0, max: 0 });
 });
+test("a chart that throws shows its error in place; the table still works", () => {
+  const Boom = () => { throw new Error("no canvas"); };
+  const err = console.error; console.error = () => {};
+  try {
+    render(<ChartFrame title="T" summary="s" cols={[{ key: "a", label: "A" }]} rows={[{ a: "1" }]}><Boom /></ChartFrame>);
+    expect(screen.getByRole("alert").textContent).toContain("The chart failed to draw: no canvas");
+    fireEvent.click(screen.getByRole("button", { name: "table" })); expect(screen.getByRole("table").textContent).toContain("1");
+  } finally { console.error = err; }
+});
