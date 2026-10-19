@@ -15,8 +15,8 @@
     "@agentglass/api-contract": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "6.0.3",
-    "@types/bun": "1.4.2",
+    "typescript": "7.0.2",
+    "@types/bun": "1.4.3",
     "@agentglass/web": "workspace:*"
   }
 }
