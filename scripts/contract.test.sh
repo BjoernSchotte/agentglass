@@ -113,7 +113,7 @@ rc=0; run cost --by hour --model x > /dev/null 2>&1 || rc=$?; eq "cost --model w
 
 # wait: the report object, its rows (a fake HOME without shell calls: the object's top-level fields), --check's exit
 run wait --json > "$t/w.json"
-eq "wait object" "$(python3 -c 'import json,sys;print(",".join(json.load(open(sys.argv[1])).keys()))' "$t/w.json")" "period,previous,scope,retention,agentTime,rows,heavy,now,guard,warnings"
+eq "wait object" "$(python3 -c 'import json,sys;print(",".join(json.load(open(sys.argv[1])).keys()))' "$t/w.json")" "period,previous,scope,retention,agentTime,rows,histEdgesMs,heavy,now,guard,warnings"
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));json.dump({"agentTime":d["agentTime"],"now":d["now"],"guard":d["guard"],"rows":d["rows"]},open(sys.argv[2],"w"))' "$t/w.json" "$t/w2.json"
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));json.dump(d["now"],open(sys.argv[2],"w"))' "$t/w.json" "$t/wn.json"
 eq "wait now types" "$(types "$t/wn.json" running:array,heavyRunning:number)" ok
