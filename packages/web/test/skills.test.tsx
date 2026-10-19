@@ -7,6 +7,7 @@ import { TipProvider } from "@agentglass/ui";
 import { LiveCtx } from "../src/app.tsx";
 import { makeRouter } from "../src/router.tsx";
 import { skUsd, tk } from "../src/routes/skills.tsx";
+import { splitOf } from "../src/routes/skills-bars.tsx";
 import { fakeLive } from "./fake-live.ts";
 
 const row = (name: string, extra = {}) => ({ name, loadsUser: 2, loadsModel: 5, loadsCompact: 1, sessions: 4, sizeP50: 3200, load: 6400, carry: 1_250_000, tail: 900_000, usd: 4.25, carryUsd: 4, tailUsd: 3, perSess: 1.0625, share: 0.031, tier: "exact", hashes: ["ab12"], scope: "user", unpriced: false, ...extra });
@@ -55,4 +56,16 @@ test("no advice: says why", async () => {
   mount("/skills", false);
   const a = await screen.findByRole("region", { name: "Advice" });
   expect(a.textContent).toContain("No skill crossed a threshold");
+});
+test("splitOf: load, carry within the turn, tail; tail never above carry", () => {
+  expect(splitOf({ load: 10, carry: 100, tail: 40 })).toEqual([10, 60, 40]);
+  expect(splitOf({ load: 0, carry: 5, tail: 9 })).toEqual([0, 0, 5]);
+});
+test("the bars: a stack per skill in the table's order, shares in the summary, the hidden row named", async () => {
+  mount("/skills");
+  const f = await screen.findByRole("region", { name: "Where skill tokens go" });
+  expect(within(f).getByRole("img").getAttribute("aria-label")).toContain("3 skills · 3.8M tokens · load 1% · carry in turn 28% · tail 72%");
+  fireEvent.click(within(f).getByRole("button", { name: "table" }));
+  const tr = within(within(f).getByRole("table")).getAllByRole("row").slice(1).map((r) => r.textContent ?? "");
+  expect(tr[0]).toBe("pdf6.4k350.0k900.0k"); expect(tr[2]).toContain("(hidden: 2 skills)");
 });

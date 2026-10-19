@@ -269,7 +269,13 @@ session with 192 subagents opens and pans smoothly.)*
 **W9.3 ECharts (6.1.0, modular, lazy chunk).** Stats: hour × weekday heatmap of cost (`cost --by hour`: weekday ×
 hour keys from the ledger's per-day hour costs `Day.hc` — nothing new indexed); Wait: p50/p95 distribution per command
 family (boxplot from the wait rows); Skills: carry vs tail bars per skill. `echarts.connect` within a route; theme
-through `resolveTokens()`; `aria` decals.
+through `resolveTokens()`; `aria` decals. *(2026-10-19, done: `cost --by hour` keys "Mon 09" (cost only — the ledger books
+no tokens per hour; `--model` refused, Day.hc is for all models); the boxes from `rows[].hist` with the new
+`histEdgesMs` (one source for the bucket edges), whiskers p5–p95; the skill bars as tokens (load / carry in turn /
+tail), measured for every skill, priced or not. Each chart its own lazy chunk (stats-heat, wait-box, skills-bars), ECharts and
+zrender in viz-echarts (181 KB gzip). Rulings: no `echarts.connect` — every route has one ECharts chart, nothing to
+connect; tooltips are HTML in ECharts, so the wrapper escapes the caller's text (command and skill names come from logs);
+a chart that throws shows its error inside its frame, the page and the table view stay.)*
 
 **W9.4 Diagram (@xyflow/react 12.12.0 + dagre) in the session drawer.** The agent → subagent tree (`sessions.get`
 subagents) with kind, cost and duration per node; click opens the subagent's drawer. Never inside `<Activity>`.

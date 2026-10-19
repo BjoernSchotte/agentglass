@@ -128,7 +128,10 @@ export interface CostRows {
     last?: string | null;
   }[];
   source: "ledger";
-  by: "day" | "model" | "harness" | "project" | "session" | "workspace";
+  /**
+   * hour: key = weekday and local hour ("Mon 09"), Monday first; cost only, the token columns are 0
+   */
+  by: "day" | "model" | "harness" | "project" | "session" | "workspace" | "hour";
   since: string;
   /**
    * the last day counted, when given (cost --until)
@@ -931,6 +934,10 @@ export interface Wait {
     };
     hist: number[];
   }[];
+  /**
+   * the bucket edges of rows[].hist in ms: bucket 0 below the first, bucket k from edge k-1 to edge k, the last at or above the last edge
+   */
+  histEdgesMs: number[];
   heavy: {
     peak: number;
     peakAt: string | null;

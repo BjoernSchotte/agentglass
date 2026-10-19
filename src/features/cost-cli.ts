@@ -11,7 +11,7 @@ import { discover } from "./cli.ts";
 import { agentHost, agentScope, hostObj, cliError } from "./agentenv.ts";
 import { jsonHelp, addCmd, opt } from "./clihelp.ts";
 import { type Fmt, fmtArgs } from "./format.ts";
-import { BY, COST_FIELDS, MODEL_FIELDS, SESS_COST_FIELDS, WS_FIELDS, costRows, qopts, qfilter, printEnvelope } from "./queries.ts";
+import { BY, COST_FIELDS, MODEL_FIELDS, SESS_COST_FIELDS, WS_FIELDS, HOUR_FIELDS, costRows, qopts, qfilter, printEnvelope } from "./queries.ts";
 import { dayKey, todayKey } from "./usage/record.ts";
 import { MODES } from "./usage/billing.ts";
 import { type ModeSum, money, kfmt, grp, unpricedLine } from "./usage/costs.ts";
@@ -19,7 +19,7 @@ import { type CostNow, budget } from "./usage/summary.ts";
 import { json, summary } from "../read/cost.ts";
 
 const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
-       agentglass cost [--since today|<n>d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by day|model|harness|project|session|workspace] [--model m] [--format F] [--fields a,b]
+       agentglass cost [--since today|<n>d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by day|model|harness|project|session|workspace|hour] [--model m] [--format F] [--fields a,b]
 
   costs today, over the last 7 days and this month, by billing mode:
     spend = API key (real spend)   plan = subscription (list-price equivalent)
@@ -38,6 +38,7 @@ const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
     (--by model adds priceSource = user|alias|gateway|community|built-in|harness|unpriced and estimated = alias-priced)
     (--by workspace: key = the herdr workspace label — its id under --redact — or (none); adds workspaceId, null for
     (none); a live session counts for its pane's workspace, an ended one for the workspace whose worktree holds its dir)
+    (--by hour: key = weekday and local hour, "Mon 09", Monday first; cost only, the token columns are 0)
     (--by session adds title, project, cwd, root = the top-level session of a subagent (harness:id, else null) and last)
     (costUsd is null, never 0, for a row whose tokens are all unpriced; csv/jsonl/table print bare rows,
     json the {rows, source, scope} envelope); inside an agent only the current project (--all-projects: every one)
@@ -91,6 +92,7 @@ function cost(args: string[]): void {
   if (o.by && BY.indexOf(o.by) < 0) fail("--by must be one of " + BY.join(", "));
   if (o.until && o.until < (o.since ? dayKey(new Date(o.sinceMs)) : todayKey())) fail("--until is before --since");
   if (o.model && o.by === "model") fail("--model with --by model is one row: pick another --by (session, project, day, …)");
+  if (o.model && o.by === "hour") fail("--model with --by hour: the ledger books cost per hour for all models together — pick another --by (day, session, …)");
   if (!rowsForm && (o.f.fmt === "csv" || o.f.fmt === "jsonl" || o.f.fields.length)) cliError("usage", (o.f.fields.length ? "--fields" : o.f.fmt) + " needs rows: add --by " + BY.join("|"), "e.g. agentglass cost --by model --format " + (o.f.fmt || "csv"), 2);
   S.cli = true;
   if (budget.bad) say("warn", "config budget." + budget.bad.split(",").join(" / budget.") + " invalid — ignored");
@@ -109,12 +111,12 @@ function cost(args: string[]): void {
   const rows = costRows(since, by, sc, qfilter(o), (s: Sess): boolean => false, o.model, o.until);
   const f: Fmt = { fmt: o.f.fmt || (o.json ? "json" : ""), fields: o.f.fields };
   const code = o.check && summary(o.harness).bs.state === "over" ? 3 : 0; // before printing: a failed write keeps it
-  const cols = by === "model" ? MODEL_FIELDS : by === "workspace" ? WS_FIELDS : by === "session" ? SESS_COST_FIELDS : COST_FIELDS;
+  const cols = by === "model" ? MODEL_FIELDS : by === "hour" ? HOUR_FIELDS : by === "workspace" ? WS_FIELDS : by === "session" ? SESS_COST_FIELDS : COST_FIELDS;
   printEnvelope(rows, "ledger", sc, f, by === "session" ? COST_FIELDS.concat(["project"]) : cols, cols, code);
   process.exit(code);
 }
 
-addCmd({ cmd: "cost", usage: "agentglass cost [--json] [--check]", summary: "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget; --since/--by: rows per day|model|harness|project|session|workspace)",
+addCmd({ cmd: "cost", usage: "agentglass cost [--json] [--check]", summary: "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget; --since/--by: rows per day|model|harness|project|session|workspace|hour)",
   options: [opt("--json", "", "the summary as JSON", "", []), opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds()), opt("--check", "", "exit 3 when the month is over budget (after printing)", "", []),
     opt("--since", "today|<n>d|YYYY-MM-DD", "rows from that day on (alone: --by day)", "today", []), opt("--by", BY.join("|"), "one row per key (alone: --since today)", "day", BY),
     opt("--until", "today|YYYY-MM-DD", "the last day counted (with --since: a range)", "today", []), opt("--model", "<model>", "only this model's tokens and cost (a key of --by model)", "", []),

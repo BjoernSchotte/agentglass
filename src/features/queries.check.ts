@@ -9,7 +9,7 @@ import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node
 import type { Ev } from "../model/types.ts";
 import type { Obj } from "../util/json.ts";
 import { arr, obj, str } from "../util/json.ts";
-import { modelRows, sessionObj, errorRows, parseSince, midnightOf, costRows, daysFrom, untilKey } from "./queries.ts";
+import { modelRows, sessionObj, errorRows, parseSince, midnightOf, costRows, daysFrom, untilKey, hourOrd } from "./queries.ts";
 import { type CliFilter, cliFilter } from "./query/cli.ts";
 import { totals } from "./query/agg.ts";
 import { setCallDaysForTest } from "./usage/callcache.ts";
@@ -147,6 +147,15 @@ if (d1 !== d2) {
   eq("cost: since = until = one day", inOf(one, "total"), inOf(one, d2));
   eq("cost: since = until = one day, one row", [...one.keys()].join(","), d2 + ",total");
 }
+// --by hour: weekday × local hour keys (Day.hc, cost only), Monday first; the cells add up to the total's cost
+const byH = costRows("2026-09-01", "hour", all, NOF);
+const hd = new Date(D2); const hk = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][hd.getDay()] + " " + String(hd.getHours()).padStart(2, "0");
+let hSum = 0; for (const r of byH) if (str(r["key"]) !== "total") hSum += num(r["costUsd"]);
+const hTot = keyed(byH).get("total");
+eq("cost: by hour key", String(keyed(byH).has(hk)), "true");
+eq("cost: by hour cells add up to the total", String(Math.round(hSum * 1e6)), hTot ? String(Math.round(num(hTot["costUsd"]) * 1e6)) : "-");
+eq("cost: by hour, cost only", String(byH.every((r: Obj) => str(r["key"]) === "total" || num(r["in"]) + num(r["cacheRead"]) === 0)), "true");
+eq("cost: by hour keys Mon … Sun", String(byH.map((r: Obj) => str(r["key"])).filter((k: string) => k !== "total").every((k: string, i: number, a: string[]) => i === 0 || hourOrd(a[i - 1] ?? "") < hourOrd(k))), "true");
 const bh = keyed(costRows("2026-09-01", "harness", all, fl([], "codex")));
 eq("cost: --harness", [...bh.keys()].join(","), "codex,total");
 const pj = keyed(costRows("2026-09-01", "session", scopeOf(true, [], "", dir + "/p1"), NOF));

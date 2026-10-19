@@ -39,7 +39,7 @@ eq "user time" "$(echo "$j" | jq -r '.agentTime.userMs')" 60000
 eq "guard" "$(echo "$j" | jq -r '.guard')" null
 eq "heavy peak" "$(echo "$j" | jq -r '.heavy.peak')" 2
 eq "field order" "$(echo "$j" | jq -c '.rows[0] | keys_unsorted')" '["key","kind","heavy","calls","timedCalls","totalMs","share","p50Ms","p95Ms","maxMs","errors","errorRate","prevTotalMs","trend","agents","peak","peakAt","atLeast2Ms","atLeast3Ms","slowdown","hist"]'
-eq "top-level order" "$(echo "$j" | jq -c 'keys_unsorted')" '["period","previous","scope","retention","agentTime","rows","heavy","now","guard","warnings"]'
+eq "top-level order" "$(echo "$j" | jq -c 'keys_unsorted')" '["period","previous","scope","retention","agentTime","rows","histEdgesMs","heavy","now","guard","warnings"]'
 eq "hist buckets" "$(echo "$j" | jq -r '.rows[0].hist | length')" 16
 eq "by kind" "$(run wait --json --by kind | jq -c '[(.rows[] | select(.key == "test") | .totalMs), (.rows | map(.key) | index("typecheck") != null)]')" '[310000,true]'
 eq "by tool" "$(run wait --json --by tool | jq -r '.rows[] | select(.key == "AskUserQuestion") | .kind')" user

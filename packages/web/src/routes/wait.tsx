@@ -1,7 +1,7 @@
 // the Wait page (local-web-api §7, W8.4): what agents wait on — wall time per command family, kind or tool, its share
 // of agent time, p50/p95, failures, trend against the period before, heavy commands at once — and what runs now
 // (wait.get = `agentglass wait --json`). Period, grouping and filter live in the URL; it refreshes every 30 s.
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { Wait } from "@agentglass/api-contract";
@@ -9,6 +9,7 @@ import { Button, Kbd, cn } from "@agentglass/ui";
 import { useLive } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
 import { type WaitSearch, WAIT_PERIODS as PERIODS, WAIT_BYS as BYS } from "./search.ts";
+const WaitBox = lazy(() => import("./wait-box.tsx").then((m) => ({ default: m.WaitBox }))); // ECharts: its own chunk
 
 // 3,723,000 ms → "1h 2m"; 42,000 → "42s"; 900 → "0.9s"
 export function dur(ms: number | null | undefined): string {
@@ -69,6 +70,7 @@ export function WaitView() {
           <p className="mt-1 text-[12px] text-muted">heavy at once in the period: {w.heavy.peak > 1 ? "peak " + w.heavy.peak + " · ≥2 for " + dur(w.heavy.atLeastMs[0] ?? 0) + (w.heavy.slowdown !== null ? " · p50 ×" + w.heavy.slowdown.toFixed(1) + " when overlapped" : "") : "never"}</p>
         </section>
         {w.guard === "retention" && <p className="text-attention">Call rows are kept {w.retention.days} days: the older part of this period is missing.</p>}
+        {w.rows.length > 0 && <Suspense fallback={<div className="h-40 rounded border border-border-subtle bg-surface" aria-busy="true" />}><WaitBox w={w} label={BYS.find(([k]) => k === by)?.[1] ?? "command"} /></Suspense>}
         <section aria-label="Wait rows">
           {!w.rows.length ? <p className="text-muted">No {by === "tool" ? "tool calls" : "shell calls"} in this period{filter ? " matching the filter" : ""}.</p> : (
             <table className="w-full table-fixed border-collapse">

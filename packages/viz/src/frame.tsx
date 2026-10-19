@@ -1,7 +1,8 @@
 // every chart sits in a ChartFrame (local-web-api §12, accessibility): a title, a text summary a screen reader gets
 // (the canvas itself is opaque), a "view as table" toggle with the same numbers, and keyboard focus on the chart
-// (its own keys — arrows, [ ] — act while it is focused)
-import { useState, type ReactNode, type KeyboardEvent } from "react";
+// (its own keys — arrows, [ ] — act while it is focused). A chart that throws shows its error in place; the page and
+// the table view stay.
+import { Component, useState, type ReactNode, type KeyboardEvent } from "react";
 import { Button, cn } from "@agentglass/ui";
 
 export interface Col { key: string; label: string; num?: boolean }
@@ -26,10 +27,15 @@ export function ChartFrame({ title, summary, cols, rows, children, actions, onKe
           </table>
         </div>
       ) : (
-        <div role="img" aria-label={title + ": " + summary} tabIndex={0} onKeyDown={onKey} className="mt-2 outline-none focus-visible:ring-1 focus-visible:ring-focus" style={{ height }}>{children}</div>
+        <div role="img" aria-label={title + ": " + summary} tabIndex={0} onKeyDown={onKey} className="mt-2 outline-none focus-visible:ring-1 focus-visible:ring-focus" style={{ height }}><Boundary>{children}</Boundary></div>
       )}
     </section>
   );
+}
+class Boundary extends Component<{ children: ReactNode }, { err: string | null }> {
+  state = { err: null as string | null };
+  static getDerivedStateFromError(e: unknown) { return { err: e instanceof Error ? e.message : String(e) }; }
+  render() { return this.state.err !== null ? <p role="alert" className="text-[12px] text-error">The chart failed to draw: {this.state.err}. The table view has the numbers.</p> : this.props.children; }
 }
 // min · p50 · p95 · max of a series, for a summary line
 export function stats(xs: number[]): { min: number; p50: number; p95: number; max: number } {
