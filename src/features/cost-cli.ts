@@ -19,7 +19,7 @@ import { type CostNow, budget } from "./usage/summary.ts";
 import { json, summary } from "../read/cost.ts";
 
 const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
-       agentglass cost [--since today|<n>d|YYYY-MM-DD] [--by day|model|harness|project|session|workspace] [--model m] [--format F] [--fields a,b]
+       agentglass cost [--since today|<n>d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by day|model|harness|project|session|workspace] [--model m] [--format F] [--fields a,b]
 
   costs today, over the last 7 days and this month, by billing mode:
     spend = API key (real spend)   plan = subscription (list-price equivalent)
@@ -44,6 +44,7 @@ const HELP = `usage: agentglass cost [--json] [--harness h] [--check]
   --format json|jsonl|csv|table   (default: json in an agent or with --json, else table on a terminal)
   --fields a,b,c                  only these columns
   --filter '<expr>'               only matching sessions, days and calls (the filter language; repeatable)
+  --until YYYY-MM-DD              the last day counted (default today): a range with --since
   --model m                       only this model's tokens and cost (a key of --by model): where a model's cost came from,
                                   e.g. agentglass cost --since 30d --by session --model claude-opus-4-7`;
 const WORDS = ["spend", "plan", "cloud", "gateway", "unknown"];
@@ -85,9 +86,10 @@ function text(c: CostNow): void {
 // without --by/--since: the summary (json or its text table); with them: rows per day/model/harness/project/session
 function cost(args: string[]): void {
   if (args.indexOf("--help") >= 0 || args.indexOf("-h") >= 0) { out(agentHost().on || fmtArgs(args).fmt === "json" ? jsonHelp("cost", hostObj(true)) : HELP); process.exit(0); }
-  const o = qopts("cost", args, ["--json", "--check", "--harness", "--since", "--by", "--model", "--filter", "--pinned"], false);
-  const rowsForm = o.by !== "" || o.since !== "" || o.model !== "" || o.filters.length > 0 || o.pinned;
+  const o = qopts("cost", args, ["--json", "--check", "--harness", "--since", "--until", "--by", "--model", "--filter", "--pinned"], false);
+  const rowsForm = o.by !== "" || o.since !== "" || o.until !== "" || o.model !== "" || o.filters.length > 0 || o.pinned;
   if (o.by && BY.indexOf(o.by) < 0) fail("--by must be one of " + BY.join(", "));
+  if (o.until && o.until < (o.since ? dayKey(new Date(o.sinceMs)) : todayKey())) fail("--until is before --since");
   if (o.model && o.by === "model") fail("--model with --by model is one row: pick another --by (session, project, day, …)");
   if (!rowsForm && (o.f.fmt === "csv" || o.f.fmt === "jsonl" || o.f.fields.length)) cliError("usage", (o.f.fields.length ? "--fields" : o.f.fmt) + " needs rows: add --by " + BY.join("|"), "e.g. agentglass cost --by model --format " + (o.f.fmt || "csv"), 2);
   S.cli = true;
@@ -104,7 +106,7 @@ function cost(args: string[]): void {
   }
   const since = o.since ? dayKey(new Date(o.sinceMs)) : todayKey();
   const by = o.by || "day";
-  const rows = costRows(since, by, sc, qfilter(o), (s: Sess): boolean => false, o.model);
+  const rows = costRows(since, by, sc, qfilter(o), (s: Sess): boolean => false, o.model, o.until);
   const f: Fmt = { fmt: o.f.fmt || (o.json ? "json" : ""), fields: o.f.fields };
   const code = o.check && summary(o.harness).bs.state === "over" ? 3 : 0; // before printing: a failed write keeps it
   const cols = by === "model" ? MODEL_FIELDS : by === "workspace" ? WS_FIELDS : by === "session" ? SESS_COST_FIELDS : COST_FIELDS;
@@ -115,7 +117,7 @@ function cost(args: string[]): void {
 addCmd({ cmd: "cost", usage: "agentglass cost [--json] [--check]", summary: "costs today / 7 days / month by billing mode, unpriced usage, projection, budget\n(--harness h: one harness; --check: exit 3 when over budget; --since/--by: rows per day|model|harness|project|session|workspace)",
   options: [opt("--json", "", "the summary as JSON", "", []), opt("--harness", harnessIds().join("|"), "only this harness", "", harnessIds()), opt("--check", "", "exit 3 when the month is over budget (after printing)", "", []),
     opt("--since", "today|<n>d|YYYY-MM-DD", "rows from that day on (alone: --by day)", "today", []), opt("--by", BY.join("|"), "one row per key (alone: --since today)", "day", BY),
-    opt("--model", "<model>", "only this model's tokens and cost (a key of --by model)", "", []),
+    opt("--until", "today|YYYY-MM-DD", "the last day counted (with --since: a range)", "today", []), opt("--model", "<model>", "only this model's tokens and cost (a key of --by model)", "", []),
     opt("--filter", "'<expr>'", "rows of the matching sessions, days and calls only (repeatable)", "", []), opt("--pinned", "", "also apply the filter pinned in the TUI", "", []),
     opt("--format", "json|jsonl|csv|table", "output format (csv/jsonl need rows)", "json in an agent or with --json, else table on a terminal", ["json", "jsonl", "csv", "table"]), opt("--fields", "a,b,c", "only these columns of the rows", "", []),
     opt("--all-projects", "", "inside an agent: rows of every project (default: the current one)", "", []), opt("--project-only", "", "inside an agent: only the current project, over a configured agent.scope all", "", [])],

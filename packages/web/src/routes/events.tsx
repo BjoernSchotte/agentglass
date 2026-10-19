@@ -5,9 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { EventsList } from "@agentglass/api-contract";
 import { Button, cn } from "@agentglass/ui";
-import { useLive } from "../app.tsx";
+import { useLive, hhmm } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
-import { hhmm } from "./team.tsx";
 
 export const PRESETS = ["all", "skills", "mcp", "shell", "errors", "prompts"] as const;
 type Item = EventsList["events"][number];

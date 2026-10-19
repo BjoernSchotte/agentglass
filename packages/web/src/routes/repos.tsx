@@ -8,15 +8,8 @@ import type { ReposList } from "@agentglass/api-contract";
 import { Button, Kbd, cn } from "@agentglass/ui";
 import { useLive, useNow, ago, money } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
+import { type ReposSearch, REPOS_PERIODS as PERIODS } from "./search.ts";
 
-export interface ReposSearch { p?: string; f?: string; sel?: string }
-const PERIODS: [string, string, number][] = [["d", "today", 1], ["w", "7 days", 7], ["m", "30 days", 30], ["a", "all", 0]];
-export function validateRepos(s: Record<string, unknown>): ReposSearch {
-  const o: ReposSearch = {};
-  if (typeof s.p === "string" && PERIODS.some(([k]) => k === s.p)) o.p = s.p;
-  if (typeof s.f === "string" && s.f) o.f = s.f; if (typeof s.sel === "string" && s.sel) o.sel = s.sel;
-  return o;
-}
 type Repo = ReposList["rows"][number];
 function mins(m: number): string { return m < 60 ? Math.round(m) + "m" : Math.floor(m / 60) + "h " + Math.round(m % 60) + "m"; }
 

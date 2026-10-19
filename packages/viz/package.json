@@ -1,0 +1,37 @@
+{
+  "name": "@agentglass/viz",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "bench:build": "vite build -c bench/vite.config.ts",
+    "e2e": "playwright test -c e2e"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "dependencies": {
+    "@agentglass/ui": "workspace:*",
+    "uplot": "1.6.32"
+  },
+  "devDependencies": {
+    "@testing-library/react": "16.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "jsdom": "30.1.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3",
+    "vite": "8.3.4",
+    "@vitejs/plugin-react": "6.1.2",
+    "@playwright/test": "1.64.0"
+  }
+}

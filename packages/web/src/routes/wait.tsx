@@ -8,17 +8,8 @@ import type { Wait } from "@agentglass/api-contract";
 import { Button, Kbd, cn } from "@agentglass/ui";
 import { useLive } from "../app.tsx";
 import type { ApiFail } from "../live/socket.ts";
+import { type WaitSearch, WAIT_PERIODS as PERIODS, WAIT_BYS as BYS } from "./search.ts";
 
-export interface WaitSearch { p?: string; by?: string; f?: string }
-const PERIODS: [string, string, string][] = [["d", "today", "today"], ["w", "7 days", "7d"], ["m", "30 days", "30d"]];
-const BYS: [string, string][] = [["family", "command"], ["kind", "kind"], ["tool", "tool"]];
-export function validateWait(s: Record<string, unknown>): WaitSearch {
-  const o: WaitSearch = {};
-  if (typeof s.p === "string" && PERIODS.some(([k]) => k === s.p)) o.p = s.p;
-  if (typeof s.by === "string" && BYS.some(([k]) => k === s.by)) o.by = s.by;
-  if (typeof s.f === "string" && s.f) o.f = s.f;
-  return o;
-}
 // 3,723,000 ms → "1h 2m"; 42,000 → "42s"; 900 → "0.9s"
 export function dur(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "·";

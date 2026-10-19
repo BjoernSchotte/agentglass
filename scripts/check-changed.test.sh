@@ -11,9 +11,13 @@ all="bin release $(for f in $tests; do echo "test:$f"; done) $(for f in $checks;
 # ("build"".sh" is split like the binary variable: a test naming it builds agentglass)
 # plan <path>…: the jobs the planner selects for these changed paths, one per line; without this test, which names
 # every path it plans for (paths no job may name are built at run time below, so this test does not name them either)
+# (a planner that dies — killed under memory pressure in a busy check.sh run — leaves a cut-off list: said as such,
+# with its exit status and stderr, not as a list of unselected jobs)
 plan() {
   printf '%s\n' "$@" > "$t/changed"
-  node scripts/check-plan.mjs --changed "$t/changed" $all | cut -f1 | grep -vx 'test:scripts/check-changed.test.sh' | sort > "$t/plan"
+  rc=0; node scripts/check-plan.mjs --changed "$t/changed" $all > "$t/raw" 2> "$t/err" || rc=$?
+  [ $rc -eq 0 ] || { bad "planner exited $rc: $(tail -3 "$t/err" | tr '\n' ' ')"; }
+  cut -f1 < "$t/raw" | grep -vx 'test:scripts/check-changed.test.sh' | sort > "$t/plan"
 }
 has() { grep -qxF "$1" "$t/plan" || bad "$2: $1 not selected"; }
 hasnt() { ! grep -qxF "$1" "$t/plan" || bad "$2: $1 selected"; }
