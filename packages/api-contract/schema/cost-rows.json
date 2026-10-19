@@ -119,8 +119,10 @@
         "harness",
         "project",
         "session",
-        "workspace"
-      ]
+        "workspace",
+        "hour"
+      ],
+      "description": "hour: key = weekday and local hour (\"Mon 09\"), Monday first; cost only, the token columns are 0"
     },
     "since": {
       "type": "string",

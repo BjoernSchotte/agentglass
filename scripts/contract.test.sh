@@ -97,7 +97,7 @@ run session abc > /dev/null 2>&1; eq "session prefix too short" $? 2
 set -e
 
 # cost rows
-for by in project harness; do
+for by in project harness hour; do
   run cost --since today --by $by --format json --fields key,costUsd > "$t/c.json"
   eq "cost --by $by types" "$(types "$t/c.json" key:string,costUsd:number)" ok
 done
@@ -109,6 +109,7 @@ eq "cost help workspaceId" "$(helped cost workspaceId)" ok
 run cost --since today --by session --model claude-sonnet-4-5 --format json --fields key,title,project,root,costUsd > "$t/c.json"
 eq "cost --by session --model types" "$(types "$t/c.json" key:string,title:string\|null,project:string\|null,root:string\|null,costUsd:number\|null)" ok
 rc=0; run cost --by model --model x > /dev/null 2>&1 || rc=$?; eq "cost --model with --by model" $rc 2
+rc=0; run cost --by hour --model x > /dev/null 2>&1 || rc=$?; eq "cost --model with --by hour" $rc 2
 
 # wait: the report object, its rows (a fake HOME without shell calls: the object's top-level fields), --check's exit
 run wait --json > "$t/w.json"

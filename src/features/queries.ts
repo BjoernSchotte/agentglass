@@ -297,7 +297,10 @@ export function untilKey(v: string): string {
 }
 function sessKey(s: Sess, m: Map<string, Sess>): string { const k = s.h + ":" + s.id; m.set(k, s); return k; }
 // ── cost rows ────────────────────────────────────────────────────────────────
-export const BY = ["day", "model", "harness", "project", "session", "workspace"];
+export const BY = ["day", "model", "harness", "project", "session", "workspace", "hour"];
+const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// --by hour keys ("Mon 09"): Monday first, then the hour — the order the rows come in
+export function hourOrd(k: string): number { const w = WD.indexOf(k.slice(0, 3)); return ((w + 6) % 7) * 24 + Number(k.slice(4)); }
 // Rows by key (cost desc; days in date order) + a final "total" row, summed from the ledger's day buckets (per model Day.mt /
 // Day.um) of the days the filter keeps — the filter language's semantics: a day counts when it passes the day clauses
 // and, with call clauses, holds a matching call row (totals() of the shared aggregation counts the same days);
@@ -305,6 +308,7 @@ export const BY = ["day", "model", "harness", "project", "session", "workspace"]
 // skip: a log not to read to its end here (serve's lazy read: what it booked so far counts)
 // model: only that model's part of each day (Day.mt / Day.um) counts — which sessions and projects a model's cost came from
 // untilKey: the last day counted (YYYY-MM-DD, inclusive; "" = up to today) — a range brushed on the Stats chart
+// by hour: weekday × local hour ("Mon 09") from each day's cost per hour (Day.hc) — cost only, the token columns are 0
 export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter, skip: (s: Sess) => boolean = (s: Sess): boolean => false, model = "", untilKey = ""): Obj[] {
   const acc = new Map<string, number[]>(); // key → [in, out, cacheRead, cacheWrite, cost, unpriced]
   const who = new Map<string, number>(); const seen = new Set<string>(); // key → sessions (copyKey: a session's copies count once)
@@ -345,6 +349,9 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
         const ms = new Set<string>();
         for (const [m, r] of d.mt) { ms.add(m); add(m, s, [r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, r[3] ?? 0, r[4] ?? 0, d.um.get(m) ?? 0]); }
         for (const [m, n] of d.um) if (!ms.has(m)) add(m, s, [0, 0, 0, 0, 0, n]);
+      } else if (by === "hour") {
+        const wd = WD[new Date(midnightOf(k)).getDay()] ?? "?";
+        for (let h = 0; h < 24; h++) { const c = d.hc[h] ?? 0; if (c > 0) add(wd + " " + String(h).padStart(2, "0"), s, [0, 0, 0, 0, c, 0]); }
       } else add(by === "day" ? k : by === "session" ? sessKey(s, bySess) : by === "workspace" ? wsKey(s) : sessDim(by, s)[0] || "(unknown)", s, v);
     }
     if (used) { all.add(copyKey(s)); if (by === "model") kept.push({ a: ka, h: s.h }); }
@@ -360,7 +367,7 @@ export function costRows(sinceKey: string, by: string, sc: Scope, cf: CliFilter,
   };
   const ks = [...acc.keys()];
   const cost = (k: string): number => { const r = acc.get(k) ?? []; return r[4] ?? 0; };
-  if (by === "day") ks.sort(); else ks.sort((x, y) => cost(y) - cost(x) || (x < y ? -1 : x > y ? 1 : 0));
+  if (by === "day") ks.sort(); else if (by === "hour") ks.sort((x, y) => hourOrd(x) - hourOrd(y)); else ks.sort((x, y) => cost(y) - cost(x) || (x < y ? -1 : x > y ? 1 : 0));
   const out: Obj[] = [];
   for (const k of ks) out.push(row(k, acc.get(k) ?? [], who.get(k) ?? 0));
   out.push(row("total", tot, all.size));
@@ -417,6 +424,7 @@ function resolveOrFail(ref: string, root: boolean, sc: Scope): Resolved {
 export const COST_FIELDS = ["key", "in", "out", "cacheRead", "cacheWrite", "costUsd", "unpricedTokens", "sessions"];
 export const MODEL_FIELDS = COST_FIELDS.concat(["priceSource", "estimated"]); // --by model: where each model's price comes from, alias-priced (≈)
 export const SESS_COST_FIELDS = COST_FIELDS.concat(["title", "project", "cwd", "root", "last"]); // --by session: where the session is
+export const HOUR_FIELDS = ["key", "costUsd", "sessions"]; // --by hour: cost only (the ledger books cost per hour, not tokens)
 export const WS_FIELDS = COST_FIELDS.concat(["workspaceId"]); // --by workspace: the herdr workspace id (null for (none) and total)
 function envelope(rows: Obj[], source: string, sc: Scope): string { return JSON.stringify({ rows, source, scope: sc.name }); }
 // json → the {rows, source, scope} envelope (compact inside an agent and in pipes); other formats → bare rows

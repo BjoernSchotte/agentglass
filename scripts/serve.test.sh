@@ -40,7 +40,7 @@ AGENTGLASS_REDACT=0
 EOF
 run() { env -i $(cat "$t/env") "$t/ag" "$@"; }
 run --json > "$t/golden.json"
-run events "claude:$B" --json > "$t/events.json"; run events "claude:$B" --preset prompts --json > "$t/events-p.json"; run --json --repos > "$t/repos.json"; run --json --repos --days 0 > "$t/repos0.json"; run wait --json > "$t/wait.json"; run wait --by kind --since 1d --json > "$t/wait-k.json"; run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"; run cost --by session --model claude-sonnet-4-5 --json > "$t/cost-ms.json"; run cost --since 7d --until today --by day --json > "$t/cost-u.json"
+run events "claude:$B" --json > "$t/events.json"; run events "claude:$B" --preset prompts --json > "$t/events-p.json"; run --json --repos > "$t/repos.json"; run --json --repos --days 0 > "$t/repos0.json"; run wait --json > "$t/wait.json"; run wait --by kind --since 1d --json > "$t/wait-k.json"; run cost --json > "$t/cost.json"; run cost --by model --json > "$t/cost-model.json"; run cost --since 7d --filter 'harness is claude' --json > "$t/cost-f.json"; run cost --by session --model claude-sonnet-4-5 --json > "$t/cost-ms.json"; run cost --since 7d --until today --by day --json > "$t/cost-u.json"; run cost --since 7d --by hour --json > "$t/cost-h.json"
 rc=0; run serve > /dev/null 2> "$t/err" || rc=$?
 [ "$rc" = 2 ] || { echo "FAIL serve without --stdio: exit $rc"; cat "$t/err"; exit 1; }
 python3 - "$t" "$d/$A.jsonl" "$A" "$B" << 'PY'
@@ -90,7 +90,9 @@ ok("cost.get since+until = cost --since 7d --until today rows", cu and cu["ok"][
 cs = req(23, "cost.get", {"by": "session", "model": "claude-sonnet-4-5"})
 ok("cost.get by session + model = cost --by session --model rows (%s | %s)" % (cs and cs["ok"]["rows"], json.load(open(t + "/cost-ms.json"))["rows"]), cs and cs["ok"]["rows"] == json.load(open(t + "/cost-ms.json"))["rows"] and cs["ok"]["model"] == "claude-sonnet-4-5")
 ok("cost.get by session: where B is", cs and any(r["key"] == "claude:" + sys.argv[4] and r["project"] and r["cwd"] == "/w/srv" and r["root"] is None and r["costUsd"] > 0 for r in cs["ok"]["rows"]))
-for i, (pp, code) in enumerate([({"by": "week"}, "bad_param"), ({"since": "yesterday-ish"}, "bad_param"), ({"filter": "harness is"}, "bad_filter"), ({"harness": "nope"}, "bad_param"), ({"by": 3}, "bad_param"), ({"by": "model", "model": "x"}, "bad_param"), ({"model": 3}, "bad_param"), ({"until": "2026-13-01"}, "bad_param"), ({"since": "today", "until": "2020-01-01"}, "bad_param")]):
+ch = req(26, "cost.get", {"since": "7d", "by": "hour"})
+ok("cost.get by hour = cost --by hour rows (%s)" % (ch and ch.get("err")), ch and "ok" in ch and ch["ok"]["rows"] == json.load(open(t + "/cost-h.json"))["rows"] and any(r["key"][:3] in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") for r in ch["ok"]["rows"]))
+for i, (pp, code) in enumerate([({"by": "week"}, "bad_param"), ({"by": "hour", "model": "x"}, "bad_param"), ({"since": "yesterday-ish"}, "bad_param"), ({"filter": "harness is"}, "bad_filter"), ({"harness": "nope"}, "bad_param"), ({"by": 3}, "bad_param"), ({"by": "model", "model": "x"}, "bad_param"), ({"model": 3}, "bad_param"), ({"until": "2026-13-01"}, "bad_param"), ({"since": "today", "until": "2020-01-01"}, "bad_param")]):
     e = req(30 + i, "cost.get", pp)
     ok("cost.get %s → %s (got %s)" % (json.dumps(pp), code, e), e and e.get("err", {}).get("code") == code)
 # events.list = events --json (plus truncated, at); filter/preset errors before any read; no content over the protocol

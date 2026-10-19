@@ -74,6 +74,7 @@ export function readCost(q: CostQ): CostR {
   const by = q.by || "day";
   if (BY.indexOf(by) < 0) return bad("bad_param", "by: " + BY.join("|"), "");
   if (q.model && by === "model") return bad("bad_param", "model: with by model it is one row — pick another by (session, project, …)", "");
+  if (q.model && by === "hour") return bad("bad_param", "model: by hour is booked for all models together — pick another by (day, session, …)", "");
   const ms = q.since ? parseSince(q.since, Date.now()) : 0; if (ms < 0) return bad("bad_param", "since: today, <n>h, <n>d or YYYY-MM-DD", "");
   const since = q.since ? dayKey(new Date(ms)) : todayKey(); // as cost --since
   const until = q.until ? untilKey(q.until) : ""; if (q.until && !until) return bad("bad_param", "until: today or YYYY-MM-DD", "");

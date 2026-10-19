@@ -108,6 +108,7 @@ Exit 0 found, 2 usage error (prefix too short), 3 no such session, 4 ambiguous p
 agentglass cost --since today|7d|30d --by workspace|project|harness --format json|csv --fields key,workspaceId,costUsd
 agentglass cost --since 30d --by session|project --model <model> --format json   # where one model's cost came from
 agentglass cost --since 2026-10-01 --until 2026-10-07 --by model --format json    # a range of days (--until inclusive)
+agentglass cost --since 30d --by hour --format json                                # weekday × hour of day (local time)
 ```
 
 One row per key over the period, highest cost first, then one row with key `total`. `--format csv`: a header line and one
@@ -115,14 +116,14 @@ line per row. `--format json`: `{"rows": [...], "source": …, "scope": …}` �
 
 | Field | Type | Meaning |
 |---|---|---|
-| `key` | string | the group: workspace label (`(none)` without one), project, or harness |
+| `key` | string | the group: workspace label (`(none)` without one), project, or harness; `--by hour`: weekday and local hour (`Mon 09`), Monday first (cost only: the token columns are 0) |
 | `costUsd` | number | API-equivalent cost in USD over the period |
 | `workspaceId` | string\|null | `--by workspace` only: the herdr workspace id (`w7`), null for `(none)` |
 | `title`, `project`, `cwd` | string\|null | `--by session` only: where the session is (null on the total row) |
 | `root` | string\|null | `--by session` only: a subagent's top-level session (`<harness>:<id>`), else null |
 | `last` | string\|null | `--by session` only: the session's last write (ISO 8601) |
 
-`--model <model>` (a key of `--by model`): only that model's tokens and cost count; not with `--by model` (exit 2).
+`--model <model>` (a key of `--by model`): only that model's tokens and cost count; not with `--by model` or `--by hour` (exit 2).
 
 Exit 0, 2 on a usage error.
 
