@@ -7,7 +7,7 @@ import { TipProvider } from "@agentglass/ui";
 import { LiveCtx } from "../src/app.tsx";
 import { makeRouter } from "../src/router.tsx";
 import { dur } from "../src/routes/wait.tsx";
-import { histQ, boxOf } from "../src/routes/wait-box.tsx";
+import { histQ, boxOf, dms } from "../src/routes/wait-box.tsx";
 import { ApiFail } from "../src/live/socket.ts";
 import { fakeLive } from "./fake-live.ts";
 
@@ -59,6 +59,7 @@ test("histQ: the bucket's geometric middle, never above the max; empty is null",
   expect(histQ(H([[2, 1]]), EDGES, 0.5, 1e9)).toBeCloseTo(Math.sqrt(25 * 50));
   expect(histQ(H([[15, 1]]), EDGES, 0.5, 3_000_000)).toBe(3_000_000); // the open last bucket: the max
   expect(histQ(H([[9, 1]]), EDGES, 0.5, 6000)).toBe(6000);
+  expect([dms(1), dms(35), dms(3536)]).toEqual(["1.0ms", "35ms", "3.5s"]);
   expect(histQ(H([]), EDGES, 0.5, 1)).toBeNull(); expect(boxOf(H([]), EDGES, 1)).toBeNull();
 });
 test("the duration boxes: one per timed row, the slowest median in the summary, quantiles in the table", async () => {

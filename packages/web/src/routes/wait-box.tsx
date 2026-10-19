@@ -24,6 +24,8 @@ export function boxOf(hist: number[], edges: number[], max: number): Box | null 
   return qs.some((x) => x === null) ? null : (qs as Box);
 }
 const TOP = 12;
+// the axis and tips reach down to milliseconds (dur stops at tenths of a second)
+export const dms = (ms: number): string => (ms < 1000 ? (ms < 10 ? ms.toFixed(1) : Math.round(ms)) + "ms" : dur(ms));
 
 // label: what a row is (command, kind, tool)
 export function WaitBox({ w, label }: { w: Wait; label: string }) {
@@ -34,14 +36,14 @@ export function WaitBox({ w, label }: { w: Wait; label: string }) {
   if (!d.rows.length) return null;
   const slow = d.rows.reduce((a, x) => (x.b[2] > a.b[2] ? x : a), d.rows[0]!);
   const wide = d.rows.reduce((a, x) => (x.b[4] - x.b[2] > a.b[4] - a.b[2] ? x : a), d.rows[0]!);
-  const summary = d.rows.length + " " + label + (d.rows.length === 1 ? "" : "s") + " with the most time · slowest median " + slow.r.key + " " + dur(slow.b[2]) + " · widest " + wide.r.key + " p95 " + dur(wide.b[4]);
-  const rows = d.rows.map(({ r, b }) => ({ key: r.key, calls: r.timedCalls, p5: dur(b[0]), p25: dur(b[1]), p50: dur(b[2]), p75: dur(b[3]), p95: dur(b[4]) }));
+  const summary = d.rows.length + " " + label + (d.rows.length === 1 ? "" : "s") + " with the most time · slowest median " + slow.r.key + " " + dms(slow.b[2]) + " · widest " + wide.r.key + " p95 " + dms(wide.b[4]);
+  const rows = d.rows.map(({ r, b }) => ({ key: r.key, calls: r.timedCalls, p5: dms(b[0]), p25: dms(b[1]), p50: dms(b[2]), p75: dms(b[3]), p95: dms(b[4]) }));
   const cols = [{ key: "key", label: label[0]!.toUpperCase() + label.slice(1) }, { key: "calls", label: "Timed", num: true }, { key: "p5", label: "p5", num: true }, { key: "p25", label: "p25", num: true }, { key: "p50", label: "p50", num: true }, { key: "p75", label: "p75", num: true }, { key: "p95", label: "p95", num: true }];
   const h = 32 + 22 * d.cats.length;
   return (
     <ChartFrame title="Call durations" summary={summary} cols={cols} rows={rows} height={h} actions={<span className="text-[11px] text-muted">whiskers p5–p95 · box p25–p75 · log scale</span>}>
-      <Boxplot cats={d.cats} boxes={d.boxes} color="attention" fmt={dur} log height={h}
-        tip={(i) => { const x = d.rows[i]; return x ? x.r.key + "\np5 " + dur(x.b[0]) + " · p25 " + dur(x.b[1]) + " · p50 " + dur(x.b[2]) + " · p75 " + dur(x.b[3]) + " · p95 " + dur(x.b[4]) + "\n" + x.r.timedCalls + " timed calls" : ""; }} />
+      <Boxplot cats={d.cats} boxes={d.boxes} color="attention" fmt={dms} log height={h}
+        tip={(i) => { const x = d.rows[i]; return x ? x.r.key + "\np5 " + dms(x.b[0]) + " · p25 " + dms(x.b[1]) + " · p50 " + dms(x.b[2]) + " · p75 " + dms(x.b[3]) + " · p95 " + dms(x.b[4]) + "\n" + x.r.timedCalls + " timed calls" : ""; }} />
     </ChartFrame>
   );
 }

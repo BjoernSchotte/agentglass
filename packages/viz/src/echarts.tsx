@@ -1,7 +1,7 @@
 // ECharts 6.1.0, modular (local-web-api §12, W9.3): only the heatmap, boxplot and bar charts with grid, tooltip,
 // visualMap, legend and aria are registered, so the viz-echarts chunk carries no more. An imperative wrapper: one instance per
 // mount (init → dispose, StrictMode-safe), options through setOption (notMerge), size through a ResizeObserver; theme
-// colours from the tokens (re-read on a theme change), aria decals (patterns besides colour), no transitions under
+// colours from the tokens (re-read on a theme change), aria decals on stacked bars (patterns besides colour), no transitions under
 // prefers-reduced-motion. A separate entry (@agentglass/viz/echarts): echarts.use() is a side effect, and the shell
 // imports the package index.
 import { useEffect, useMemo, useRef } from "react";
@@ -21,7 +21,7 @@ export const tipHtml = (t: string): string => t.replace(/[&<>"']/g, (c) => "&#" 
 export function baseOption(tk: Tokens): Opt {
   return {
     animation: !reducedMotion(), textStyle: { color: tk["text-muted"], fontFamily: FONT, fontSize: 11 },
-    aria: { enabled: true, label: { enabled: false }, decal: { show: true } }, // the frame names the chart; decals stay
+    aria: { enabled: true, label: { enabled: false }, decal: { show: false } }, // the frame names the chart (decals: barsOption)
     tooltip: { backgroundColor: tk.surface, borderColor: tk.border, textStyle: { color: tk.text, fontFamily: FONT, fontSize: 12 }, confine: true },
   };
 }
@@ -45,7 +45,7 @@ export interface HeatmapProps { x: string[]; y: string[]; cells: [number, number
 export function heatmapOption({ x, y, cells, color, fmt, tip }: HeatmapProps, tk: Tokens): Opt {
   let max = 0; for (const c of cells) if (c[2] > max) max = c[2];
   return { ...baseOption(tk),
-    grid: { left: 36, right: 8, top: 4, bottom: 44 },
+    grid: { left: 36, right: 8, top: 4, bottom: 60 },
     tooltip: { ...(baseOption(tk).tooltip as Opt), formatter: (p: { value: [number, number, number] }) => { const [i, j, v] = p.value; return tipHtml(tip ? tip(x[i] ?? "", y[j] ?? "", v) : (y[j] ?? "") + " " + (x[i] ?? "") + ": " + fmt(v)); } },
     xAxis: axis(tk, { type: "category", data: x, splitArea: { show: false } }), yAxis: axis(tk, { type: "category", data: y, inverse: true }),
     visualMap: { min: 0, max: max || 1, orient: "horizontal", left: "center", bottom: 0, itemHeight: 120, itemWidth: 10, calculable: false, text: [fmt(max), fmt(0)], textStyle: { color: tk["text-muted"] }, inRange: { color: [tk["surface-2"], tk[color]] } },
@@ -62,7 +62,7 @@ export function boxplotOption({ cats, boxes, color, fmt, log, tip }: BoxplotProp
     grid: { left: 8, right: 16, top: 4, bottom: 24, containLabel: true },
     tooltip: { ...(baseOption(tk).tooltip as Opt), trigger: "item", formatter: (p: { dataIndex: number }) => tipHtml(tip ? tip(p.dataIndex) : cats[p.dataIndex] ?? "") },
     xAxis: axis(tk, { type: log ? "log" : "value", axisLabel: { color: tk["text-muted"], formatter: (v: number) => fmt(v) } }),
-    yAxis: axis(tk, { type: "category", data: cats, inverse: true, axisLabel: { color: tk.text, fontFamily: "IBM Plex Mono, monospace", width: 160, overflow: "truncate" } }),
+    yAxis: axis(tk, { type: "category", data: cats, inverse: true, axisLabel: { color: tk.text, fontFamily: "IBM Plex Mono, monospace", width: 220, overflow: "truncate" } }),
     series: [{ type: "boxplot", data: boxes, itemStyle: { color: tk["surface-2"], borderColor: tk[color], borderWidth: 1.5 }, boxWidth: [6, 14] }] };
 }
 export function Boxplot(p: BoxplotProps) { const tk = useTokens(); const o = useMemo(() => boxplotOption(p, tk), [p.cats, p.boxes, p.color, p.log, tk]); return <EChart option={o} height={p.height ?? 32 + 22 * p.cats.length} />; }
@@ -72,12 +72,13 @@ export interface BarSeries { label: string; values: number[]; color: Token }
 export interface BarsProps { cats: string[]; series: BarSeries[]; fmt: (v: number) => string; height?: number }
 export function barsOption({ cats, series, fmt }: BarsProps, tk: Tokens): Opt {
   return { ...baseOption(tk),
+    aria: { enabled: true, label: { enabled: false }, decal: { show: series.length > 1 } }, // stacked series apart by pattern too
     grid: { left: 8, right: 16, top: 24, bottom: 20, containLabel: true },
     legend: { top: 0, left: 0, icon: "rect", itemWidth: 10, itemHeight: 10, textStyle: { color: tk["text-muted"], fontFamily: FONT, fontSize: 11 } },
     tooltip: { ...(baseOption(tk).tooltip as Opt), trigger: "axis", axisPointer: { type: "shadow" },
       formatter: (ps: { name: string; seriesName: string; value: number }[]) => tipHtml((ps[0]?.name ?? "") + ps.map((p) => "\n" + p.seriesName + " " + fmt(p.value)).join("")) },
     xAxis: axis(tk, { type: "value", axisLabel: { color: tk["text-muted"], formatter: (v: number) => fmt(v) } }),
-    yAxis: axis(tk, { type: "category", data: cats, inverse: true, axisLabel: { color: tk.text, fontFamily: "IBM Plex Mono, monospace", width: 160, overflow: "truncate" } }),
+    yAxis: axis(tk, { type: "category", data: cats, inverse: true, axisLabel: { color: tk.text, fontFamily: "IBM Plex Mono, monospace", width: 220, overflow: "truncate" } }),
     series: series.map((s) => ({ type: "bar", name: s.label, stack: "a", data: s.values, barMaxWidth: 14, itemStyle: { color: tk[s.color] } })) };
 }
 export function Bars(p: BarsProps) { const tk = useTokens(); const o = useMemo(() => barsOption(p, tk), [p.cats, p.series, tk]); return <EChart option={o} height={p.height ?? 44 + 22 * p.cats.length} />; }
