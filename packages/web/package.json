@@ -15,10 +15,10 @@
     "@agentglass/api-contract": "workspace:*",
     "@agentglass/ui": "workspace:*",
     "@agentglass/viz": "workspace:*",
-    "@tanstack/react-query": "5.104.1",
-    "@tanstack/react-router": "1.170.42",
+    "@tanstack/react-query": "5.104.3",
+    "@tanstack/react-router": "1.170.45",
     "get-nonce": "1.0.1",
-    "lucide-react": "1.55.0",
+    "lucide-react": "1.59.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
